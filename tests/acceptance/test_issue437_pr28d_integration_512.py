@@ -112,6 +112,7 @@ def test_auto_next_fetches_liquidity_book_outside_admission_lock():
     rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
+    rc.risk_desk.sync_cash_equity(rc.risk_desk.bankroll_current, rc.risk_desk.bankroll_current)  # PFC-008
     owned = []
     _wrap_book(rc, lambda: owned.append(rc._risk_admission_lock._is_owned()))
 
@@ -125,6 +126,7 @@ def test_auto_next_cashout_during_liquidity_fetch_blocks_the_entry():
     rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
+    rc.risk_desk.sync_cash_equity(rc.risk_desk.bankroll_current, rc.risk_desk.bankroll_current)  # PFC-008
 
     def cashout_arrives():
         with rc._risk_admission_lock:
@@ -235,6 +237,7 @@ def test_auto_next_payload_carries_event_identity():
     rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
+    rc.risk_desk.sync_cash_equity(rc.risk_desk.bankroll_current, rc.risk_desk.bankroll_current)  # PFC-008
     close = _auto_next_close()
     close["mm_context"]["next_signal"].update({"event_id": "E9", "event": "Gamma v Delta"})
 
@@ -250,6 +253,7 @@ def test_auto_next_cashout_invalidation_checkpoints_the_cycle_as_not_attempted()
     rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
+    rc.risk_desk.sync_cash_equity(rc.risk_desk.bankroll_current, rc.risk_desk.bankroll_current)  # PFC-008
     checkpoints = []
     original = rc._persist_cycle_checkpoint
 
@@ -326,6 +330,7 @@ def test_auto_next_config_reload_during_network_window_blocks_the_entry():
     rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
+    rc.risk_desk.sync_cash_equity(rc.risk_desk.bankroll_current, rc.risk_desk.bankroll_current)  # PFC-008
     _wrap_book(rc, rc.reload_config)
 
     rc._on_close_position(_auto_next_close())
@@ -963,6 +968,7 @@ def test_auto_next_entry_registers_its_fence_for_the_engine():
     rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
+    rc.risk_desk.sync_cash_equity(rc.risk_desk.bankroll_current, rc.risk_desk.bankroll_current)  # PFC-008
 
     rc._on_close_position(_auto_next_close())
 
@@ -1008,6 +1014,7 @@ def test_direct_orders_respect_the_configured_absolute_drawdown(tmp_path):
     order = {"market_id": "1.234", "selection_id": 11, "bet_type": "BACK", "price": 2.0, "stake": 1.0}
     c = _catena(tmp_path, max_drawdown_abs=200.0)
     c.rc.risk_desk.bankroll_current = 900.0                         # drawdown 100 < 200
+    c.rc.risk_desk.cash_equity_current = c.rc.risk_desk.bankroll_current  # PFC-008: cassa verificata della lettura
     assert c.rc.absolute_cap_reason_for_orders([order]) == ""
 
     c.rc.config.max_drawdown_abs = 50.0                             # drawdown 100 >= 50

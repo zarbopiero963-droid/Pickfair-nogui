@@ -308,10 +308,11 @@ class SettingsService:
             risk_profile_raw = RiskProfile.BALANCED.value
 
         return RoserpinaConfig(
-            target_profit_cycle_pct=self._f(data, "roserpina.target_profit_cycle_pct", 3.0),
-            max_single_bet_pct=self._f(data, "roserpina.max_single_bet_pct", 18.0),
-            max_total_exposure_pct=self._f(data, "roserpina.max_total_exposure_pct", 35.0),
-            max_event_exposure_pct=self._f(data, "roserpina.max_event_exposure_pct", 18.0),
+            # PFC-008 (M019): percentuali di rischio obbligatorie, mai un default di codice.
+            target_profit_cycle_pct=self._required_pct(data, "roserpina.target_profit_cycle_pct"),
+            max_single_bet_pct=self._required_pct(data, "roserpina.max_single_bet_pct"),
+            max_total_exposure_pct=self._required_pct(data, "roserpina.max_total_exposure_pct"),
+            max_event_exposure_pct=self._required_pct(data, "roserpina.max_event_exposure_pct"),
             max_daily_loss=self._optional_hard_stop_value(
                 data,
                 "roserpina.max_daily_loss",
@@ -375,8 +376,9 @@ class SettingsService:
             defense_multiplier=self._f(data, "roserpina.defense_multiplier", 0.80),
             risk_profile=RiskProfile(risk_profile_raw),
             table_count=self._i(data, "roserpina.table_count", 5),
-            max_recovery_tables=self._i(data, "roserpina.max_recovery_tables", 2),
-            allow_recovery=self._b(data, "roserpina.allow_recovery", True),
+            # PFC-008 (M019): chiavi recovery assenti => nessun recovery.
+            max_recovery_tables=self._i(data, "roserpina.max_recovery_tables", 0),
+            allow_recovery=self._b(data, "roserpina.allow_recovery", False),
             anti_duplication_enabled=self._b(data, "roserpina.anti_duplication_enabled", True),
             commission_pct=self._f(data, "roserpina.commission_pct", 4.5),
             min_stake=self._f(data, "roserpina.min_stake", trading_config.MIN_STAKE),
@@ -482,6 +484,23 @@ class SettingsService:
                 logger.info("%s=%s salvato prima della rettifica: non attivo", key, value)
                 return None
         return value
+
+    @staticmethod
+    def _required_pct(data: Dict[str, Any], key: str) -> float | None:
+        """Percentuale di rischio obbligatoria (PFC-008, M019).
+
+        Assente, None o "" => None (non configurata: `validators.risk_pct_reason` nega
+        ogni nuovo ordine); illeggibile o bool => NaN (non valida). Un numero passa
+        cosi' com'e', anche NaN/inf/fuori range: decide il validatore, non il loader."""
+        value = data.get(key)
+        if value is None or (isinstance(value, str) and value.strip() == ""):
+            return None
+        if isinstance(value, bool):
+            return float("nan")
+        try:
+            return float(value)
+        except (TypeError, ValueError, OverflowError):
+            return float("nan")
 
     def _optional_hard_stop_value(
         self,

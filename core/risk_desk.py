@@ -6,6 +6,7 @@ from threading import RLock
 from typing import Any, Dict
 
 from core.system_state import DeskMode, RuntimeMode
+from core.validators import finite_number
 
 
 @dataclass
@@ -51,6 +52,12 @@ class RiskDesk:
         self.bankroll_start = 0.0
         self.bankroll_current = 0.0
         self.equity_peak = 0.0
+        # PFC-008 (decisione owner #426 c.6369802091): cassa complessiva verificata
+        # (disponibile + impegnato) della STESSA lettura che ha dato `bankroll_current`.
+        # E' la base dei cap percentuali di capacita'/esposizione; None = non verificata e le
+        # nuove entrate sono negate (`cassa_non_verificata`), nessun ripiego.
+        self.cash_equity_current = None
+        self.cash_equity_reason = "CASH_NOT_READ"
 
         self.realized_pnl = 0.0
         self.unrealized_pnl = 0.0
@@ -81,6 +88,9 @@ class RiskDesk:
     def sync_bankroll(self, bankroll_current: float) -> None:
         with self._lock:
             bankroll_current = float(bankroll_current or 0.0)
+            # Nuovo disponibile senza la cassa della stessa lettura: la cassa precedente
+            # non e' piu' verificata (`sync_cash_equity` la rifissa).
+            self._invalidate_cash_locked("CASH_NOT_READ")
 
             if self.bankroll_start <= 0.0:
                 self.bankroll_start = bankroll_current
@@ -94,12 +104,37 @@ class RiskDesk:
 
             self._touch()
 
+    def _invalidate_cash_locked(self, reason: str) -> None:
+        self.cash_equity_current = None
+        self.cash_equity_reason = str(reason)
+
+    def sync_cash_equity(self, cash_equity: Any, available: Any, *, reason: str = "") -> None:
+        """Registra la cassa verificata letta insieme al disponibile `available` (PFC-008).
+
+        Vale solo se `available` e' il bankroll corrente (stessa lettura) e la cassa e'
+        un numero finito > 0 non inferiore al disponibile; altrimenti resta non verificata.
+        `reason` non vuoto = la verifica dello snapshot e' gia' fallita: cassa non verificata."""
+        with self._lock:
+            if reason:
+                self._invalidate_cash_locked(reason)
+                return
+            cash = finite_number(cash_equity)
+            avail = finite_number(available)
+            if avail is None or avail != self.bankroll_current:
+                self._invalidate_cash_locked("CASH_READING_MISMATCH")
+            elif cash is None or cash <= 0 or cash < avail:
+                self._invalidate_cash_locked("CASH_INCOHERENT")
+            else:
+                self.cash_equity_current = cash
+                self.cash_equity_reason = ""
+
     def set_bankroll_start(self, bankroll_start: float) -> None:
         with self._lock:
             bankroll_start = float(bankroll_start or 0.0)
             self.bankroll_start = bankroll_start
             if self.bankroll_current <= 0.0:
                 self.bankroll_current = bankroll_start
+                self._invalidate_cash_locked("CASH_NOT_READ")  # PFC-008: bankroll cambiato senza lettura del conto
             if self.equity_peak <= 0.0:
                 self.equity_peak = max(bankroll_start, self.bankroll_current)
             self._touch()
@@ -114,6 +149,7 @@ class RiskDesk:
             pnl = float(pnl or 0.0)
             self.realized_pnl += pnl
             self.bankroll_current += pnl
+            self._invalidate_cash_locked("CASH_NOT_READ")  # PFC-008: bankroll cambiato senza lettura del conto
 
             if self.bankroll_current > self.equity_peak:
                 self.equity_peak = self.bankroll_current
@@ -127,6 +163,7 @@ class RiskDesk:
         with self._lock:
             self.bankroll_current = float(bankroll_current or 0.0)
             self.unrealized_pnl = float(unrealized_pnl or 0.0)
+            self._invalidate_cash_locked("CASH_NOT_READ")  # PFC-008: bankroll cambiato senza lettura del conto
 
             if self.bankroll_start <= 0.0:
                 self.bankroll_start = self.bankroll_current
@@ -273,6 +310,7 @@ class RiskDesk:
         with self._lock:
             self.bankroll_start = float(data.get("bankroll_start", 0.0) or 0.0)
             self.bankroll_current = float(data.get("bankroll_current", 0.0) or 0.0)
+            self._invalidate_cash_locked("CASH_NOT_READ")  # PFC-008: stato ripristinato, cassa da rileggere
             self.equity_peak = float(data.get("equity_peak", 0.0) or 0.0)
             self.realized_pnl = float(data.get("realized_pnl", 0.0) or 0.0)
             self.unrealized_pnl = float(data.get("unrealized_pnl", 0.0) or 0.0)

@@ -12,6 +12,7 @@ montaggio sul bus REALE dell'app e' asserito dal guardrail di cablaggio
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import pytest
@@ -19,6 +20,7 @@ import pytest
 from controllers.dutching_controller import DutchingController
 from core.risk_middleware import RiskMiddleware
 from core.system_state import RuntimeMode
+from tests.risk_config_fixtures import explicit_risk_config
 
 
 class _BusSync:
@@ -47,6 +49,10 @@ class _RuntimeAttivo:
     """Runtime minimo: mode ACTIVE, il resto assente (accessor difensivi)."""
 
     mode = RuntimeMode.ACTIVE
+    # PFC-008: i controlli di esposizione del Dutching richiedono percentuali esplicite e cassa verificata (prima,
+    # con config e RiskDesk assenti, venivano saltati). Cap al 100% e cassa ampia: il test verifica il cablaggio.
+    config = explicit_risk_config(max_single_bet_pct=100.0, max_total_exposure_pct=100.0, max_event_exposure_pct=100.0)
+    risk_desk = SimpleNamespace(bankroll_current=100000.0, cash_equity_current=100000.0)
 
     def admit_controller_entries(self, orders, *, batch_id=""):
         # #523: il controller ammette le gambe tramite il runtime; "" = ammesso

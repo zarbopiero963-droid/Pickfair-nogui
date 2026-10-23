@@ -7,6 +7,7 @@ import pytest
 
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode
+from tests.risk_config_fixtures import legacy_test_config
 
 
 class _Bus:
@@ -27,7 +28,7 @@ class _DB:
 
 class _Settings:
     def load_roserpina_config(self):
-        cfg = RoserpinaConfig()
+        cfg = legacy_test_config()
         cfg.anti_duplication_enabled = False
         return cfg
 
@@ -471,7 +472,7 @@ def test_recovery_failclosed_breach_while_stopped_persists_and_refuses_start():
     riavvio prima di start()/resume() perderebbe il breach e LIVE potrebbe
     ripartire dopo aver sfondato max_daily_loss."""
     rc, bus = _make_controller(responses=[{"available": 85.0}] * 6)
-    cfg = RoserpinaConfig()
+    cfg = legacy_test_config()
     cfg.anti_duplication_enabled = False
     cfg.max_daily_loss = 10.0
     rc.settings_service.load_roserpina_config = lambda: cfg
@@ -696,7 +697,7 @@ def test_start_refuses_live_when_daily_loss_breached_same_day():
     il trading nello stesso giorno con _emergency_stopped=False."""
     rc, bus = _make_controller(responses=[{"available": 50.0}] * 4)
     # le settings devono fornire la soglia: start() ricarica la config.
-    cfg = RoserpinaConfig()
+    cfg = legacy_test_config()
     cfg.anti_duplication_enabled = False
     cfg.max_daily_loss = 10.0
     rc.settings_service.load_roserpina_config = lambda: cfg
@@ -728,7 +729,7 @@ def test_breach_refusal_survives_broker_outage_on_start_and_resume():
     outage = RuntimeError("BROKER_OUTAGE")
 
     rc, _ = _make_controller(responses=[outage, outage, outage, outage])
-    cfg = RoserpinaConfig()
+    cfg = legacy_test_config()
     cfg.anti_duplication_enabled = False
     cfg.max_daily_loss = 10.0
     rc.settings_service.load_roserpina_config = lambda: cfg

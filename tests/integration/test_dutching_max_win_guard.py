@@ -21,10 +21,13 @@ import os
 import sys
 from types import SimpleNamespace
 
+from tests.risk_config_fixtures import EXPLICIT_RISK_PCT
+
 import pytest
 
 import trading_config
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 from services.setting_service import SettingsService
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -51,6 +54,7 @@ class _Config:
 
 class _RiskDesk:
     bankroll_current = 1000.0
+    cash_equity_current = 1000.0  # PFC-008: cassa verificata
 
 
 class _DupGuard:
@@ -425,7 +429,7 @@ class _InMemoryDB:
 def test_max_win_round_trip():
     db = _InMemoryDB()
     SettingsService(db).save_roserpina_config(
-        RoserpinaConfig(table_count=3, max_win=7500.0, max_win_warning_only=False)
+        legacy_test_config(table_count=3, max_win=7500.0, max_win_warning_only=False)
     )
     reloaded = SettingsService(db).load_roserpina_config()
     assert reloaded.max_win == 7500.0
@@ -447,7 +451,9 @@ class _CapturingService(FakeSettingsService):
         self.saved_cfg = None
 
     def load_roserpina_config(self):
-        return SimpleNamespace(max_win=8200.0, max_win_warning_only=False)
+        return SimpleNamespace(
+            **EXPLICIT_RISK_PCT,  # PFC-008: percentuali obbligatorie salvate dall'utente
+            max_win=8200.0, max_win_warning_only=False)
 
     def save_roserpina_config(self, cfg):
         self.saved_cfg = cfg

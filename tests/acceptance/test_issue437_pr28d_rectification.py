@@ -23,6 +23,8 @@ import math
 import pytest
 
 from core.system_state import RoserpinaConfig, RuntimeMode
+
+from tests.risk_config_fixtures import EXPLICIT_RISK_SETTINGS, legacy_test_config
 from database import Database
 from services.setting_service import SettingsService
 from tests.acceptance.test_issue437_pr27 import _catena, _rifiuti
@@ -44,14 +46,15 @@ def _real_settings(tmp_path):
 
 
 def _catena_reale(tmp_path, *, bankroll=100.0, **persisted):
-    """Catena SIM con config caricata dal loader reale (non da RoserpinaConfig())."""
+    """Catena SIM con config caricata dal loader reale (non da legacy_test_config())."""
     db, service = _real_settings(tmp_path)
-    if persisted:
-        db.save_settings(persisted)
+    # PFC-008 (M019): le percentuali di rischio non hanno piu' default nel loader: il seed le dichiara.
+    db.save_settings({**EXPLICIT_RISK_SETTINGS, **persisted})
     c = _catena(tmp_path)
     c.rc.settings_service = service
     c.rc.reload_config()  # passa da load_roserpina_config() vero
     c.rc.risk_desk.bankroll_current = bankroll
+    c.rc.risk_desk.cash_equity_current = c.rc.risk_desk.bankroll_current  # PFC-008: cassa verificata della lettura
     c.rc.risk_desk.equity_peak = bankroll
     # Conto coerente col bankroll: il gate fondi PR28-e verifica il disponibile reale.
     c.rc.betfair_service.get_account_funds = lambda: {"available": bankroll, "exposure": 0.0}
@@ -72,7 +75,7 @@ def test_fresh_config_without_cap_keys_loads_all_four_as_none(tmp_path):
         assert getattr(cfg, field) is None, field
     # Il dataclass non deve reintrodurre un numero di default.
     for field in _CAPS:
-        assert getattr(RoserpinaConfig(), field) is None, field
+        assert getattr(legacy_test_config(), field) is None, field
 
 
 def test_sim_bankroll_100_price_2_mm_stake_3_is_submitted_without_any_cap(tmp_path):
@@ -98,6 +101,7 @@ def test_absent_drawdown_cap_does_not_lockdown_but_percent_limits_still_apply(tm
     c = _catena_reale(tmp_path, bankroll=100.0)
     c.rc.risk_desk.equity_peak = 100.0
     c.rc.risk_desk.bankroll_current = 88.0
+    c.rc.risk_desk.cash_equity_current = c.rc.risk_desk.bankroll_current  # PFC-008: cassa verificata della lettura
     c.rc._on_signal_received(_signal())
 
     assert not any("max_drawdown_abs" in r for r in _rifiuti(c))
@@ -109,6 +113,7 @@ def test_configured_drawdown_cap_keeps_lockdown_semantics(tmp_path):
     c = _catena_reale(tmp_path, bankroll=100.0, **{"roserpina.max_drawdown_abs": 10.0})
     c.rc.risk_desk.equity_peak = 100.0
     c.rc.risk_desk.bankroll_current = 88.0
+    c.rc.risk_desk.cash_equity_current = c.rc.risk_desk.bankroll_current  # PFC-008: cassa verificata della lettura
     c.rc._on_signal_received(_signal())
 
     assert c.broker.state.orders == {}
@@ -163,6 +168,7 @@ def test_invalid_present_value_blocks_auto_next_trade(field):
     rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
+    rc.risk_desk.sync_cash_equity(rc.risk_desk.bankroll_current, rc.risk_desk.bankroll_current)  # PFC-008
     setattr(rc.config, field, 0.0)
     rc._on_close_position(_canonical_close_payload(
         auto_trade_enabled=True, cycle_executor_enabled=True,
@@ -181,6 +187,7 @@ def test_auto_next_trade_with_no_caps_configured_is_risk_approved():
     rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
+    rc.risk_desk.sync_cash_equity(rc.risk_desk.bankroll_current, rc.risk_desk.bankroll_current)  # PFC-008
     for field in _CAPS:
         assert getattr(rc.config, field) is None
     rc._on_close_position(_canonical_close_payload(
@@ -240,7 +247,7 @@ def test_gui_initial_cap_fields_are_blank(monkeypatch):
 
 def test_user_set_valid_values_persist_and_survive_reload_and_blank_save_deactivates(tmp_path):
     db, service = _real_settings(tmp_path)
-    cfg = RoserpinaConfig(
+    cfg = legacy_test_config(
         max_order_exposure=1.5, max_market_exposure=2.5,
         max_event_exposure_abs=3.5, max_drawdown_abs=12.5,
     )
@@ -253,7 +260,7 @@ def test_user_set_valid_values_persist_and_survive_reload_and_blank_save_deactiv
     # PF-CAP-10b (decisione owner 18/10, riesame E1-a): campo vuoto = limite NON attivo
     # anche dopo il salvataggio. Il save con i quattro cap a None li disattiva davvero
     # (prima il valore persistito sopravviveva e l'etichetta "vuoto = non attivo" mentiva).
-    service.save_roserpina_config(RoserpinaConfig())
+    service.save_roserpina_config(legacy_test_config())
     again = service.load_roserpina_config()
     assert (again.max_order_exposure, again.max_market_exposure,
             again.max_event_exposure_abs, again.max_drawdown_abs) == (None, None, None, None)
@@ -295,9 +302,9 @@ def test_text_persisted_value_loads_as_nan_not_none(tmp_path, field):
 @pytest.mark.parametrize("field", _CAPS)
 def test_blank_save_deactivates_a_previously_persisted_cap(tmp_path, field):
     db, service = _real_settings(tmp_path)
-    service.save_roserpina_config(RoserpinaConfig(**{field: 1.0}))
+    service.save_roserpina_config(legacy_test_config(**{field: 1.0}))
     assert getattr(service.load_roserpina_config(), field) == 1.0
-    service.save_roserpina_config(RoserpinaConfig(**{field: None}))      # campo vuoto in GUI
+    service.save_roserpina_config(legacy_test_config(**{field: None}))      # campo vuoto in GUI
     reloaded = SettingsService(Database(str(tmp_path / "rectification.db"))).load_roserpina_config()
     assert getattr(reloaded, field) is None, "campo vuoto: il limite persistito deve risultare non attivo"
 
@@ -307,14 +314,14 @@ def test_blank_save_also_shadows_a_legacy_prefixless_key(tmp_path, field):
     db, service = _real_settings(tmp_path)
     db.save_settings({field: 1.0})                                       # chiave legacy senza prefisso
     assert getattr(service.load_roserpina_config(), field) == 1.0
-    service.save_roserpina_config(RoserpinaConfig(**{field: None}))
+    service.save_roserpina_config(legacy_test_config(**{field: None}))
     assert getattr(service.load_roserpina_config(), field) is None
 
 
 def test_explicit_cap_is_rewritten_exactly_and_other_hard_stops_keep_preserve_semantics(tmp_path):
     db, service = _real_settings(tmp_path)
-    service.save_roserpina_config(RoserpinaConfig(max_order_exposure=1.0, max_daily_loss=50.0))
-    service.save_roserpina_config(RoserpinaConfig(max_order_exposure=4.25, max_daily_loss=None))
+    service.save_roserpina_config(legacy_test_config(max_order_exposure=1.0, max_daily_loss=50.0))
+    service.save_roserpina_config(legacy_test_config(max_order_exposure=4.25, max_daily_loss=None))
     cfg = service.load_roserpina_config()
     assert cfg.max_order_exposure == 4.25
     # gli hard-stop di perdita/esposizione (non cap monetari della rettifica) conservano la
@@ -331,11 +338,12 @@ def test_blank_save_of_order_cap_lets_the_mm_stake_through(tmp_path):
     assert c.broker.state.orders == {}
 
     c.rc.settings_service.save_roserpina_config(
-        RoserpinaConfig(**{f: getattr(c.rc.config, f) for f in ("target_profit_cycle_pct", "max_single_bet_pct",
+        legacy_test_config(**{f: getattr(c.rc.config, f) for f in ("target_profit_cycle_pct", "max_single_bet_pct",
                                                                "max_total_exposure_pct", "max_event_exposure_pct")},
                         max_order_exposure=None))
     c.rc.reload_config()
     c.rc.risk_desk.bankroll_current = 100.0
+    c.rc.risk_desk.cash_equity_current = c.rc.risk_desk.bankroll_current  # PFC-008: cassa verificata della lettura
     c.rc.risk_desk.equity_peak = 100.0
     assert c.rc.config.max_order_exposure is None
     c.rc._on_signal_received(_signal(received_at="2026-10-08T10:00:05.000000+00:00"))
@@ -351,8 +359,8 @@ _LEGACY_CAPS = ("max_stake_abs", "max_win")
 
 
 def test_preexisting_monetary_caps_default_to_not_active(tmp_path):
-    assert RoserpinaConfig().max_stake_abs is None
-    assert RoserpinaConfig().max_win is None
+    assert legacy_test_config().max_stake_abs is None
+    assert legacy_test_config().max_win is None
     _db, service = _real_settings(tmp_path)
     cfg = service.load_roserpina_config()
     assert cfg.max_stake_abs is None and cfg.max_win is None
@@ -412,9 +420,9 @@ def test_gui_initial_legacy_cap_fields_are_blank(monkeypatch):
 def test_money_management_without_max_stake_abs_uses_only_the_approved_percentages():
     from core.money_management import RoserpinaMoneyManagement
 
-    mm = RoserpinaMoneyManagement(RoserpinaConfig())
-    assert mm._max_single_stake_abs(1_000_000.0) == pytest.approx(1_000_000.0 * RoserpinaConfig().max_single_bet_pct / 100)
-    mm_capped = RoserpinaMoneyManagement(RoserpinaConfig(max_stake_abs=50.0))
+    mm = RoserpinaMoneyManagement(legacy_test_config())
+    assert mm._max_single_stake_abs(1_000_000.0) == pytest.approx(1_000_000.0 * legacy_test_config().max_single_bet_pct / 100)
+    mm_capped = RoserpinaMoneyManagement(legacy_test_config(max_stake_abs=50.0))
     assert mm_capped._max_single_stake_abs(1_000_000.0) == 50.0
 
 
@@ -422,7 +430,7 @@ def test_money_management_without_max_stake_abs_uses_only_the_approved_percentag
 def test_money_management_max_stake_abs_configured_but_invalid_allows_no_stake(bad):
     from core.money_management import RoserpinaMoneyManagement
 
-    assert RoserpinaMoneyManagement(RoserpinaConfig(max_stake_abs=bad))._max_single_stake_abs(1000.0) == 0.0
+    assert RoserpinaMoneyManagement(legacy_test_config(max_stake_abs=bad))._max_single_stake_abs(1000.0) == 0.0
 
 
 def test_sim_order_above_the_old_10000_ceiling_is_sized_by_the_approved_strategy(tmp_path):

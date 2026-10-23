@@ -168,6 +168,9 @@ class OrderRouter:
             "stake": payload["stake"],
             "size": payload["stake"],
             "customer_ref": ref,
+            # PFC-008: hedge del cashout = uscita protettiva; il cap temporaneo non la blocca per percentuali
+            # mancanti o cassa non verificata (resta il limite dei fondi disponibili).
+            "protective": True,
         }
         raw = execute(native_payload)
         return self._normalize_native(raw, ref)

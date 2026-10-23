@@ -28,6 +28,7 @@ import pytest
 
 import trading_config
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 from core.money_management import RoserpinaMoneyManagement
 
 
@@ -48,7 +49,7 @@ class _InMemoryDB:
 @pytest.mark.core
 @pytest.mark.safety
 def test_dataclass_default_wired_to_trading_config():
-    assert RoserpinaConfig().min_stake == trading_config.MIN_STAKE
+    assert legacy_test_config().min_stake == trading_config.MIN_STAKE
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +86,7 @@ def test_money_management_fallback_follows_trading_config(monkeypatch):
     dec = mm.calculate(
         signal={"price": 2.0},
         bankroll_current=1000.0,
+        cap_base_cash=1000.0,  # PFC-008: cassa verificata del test
         equity_peak=1000.0,            # niente drawdown => desk NORMAL (x1.0)
         current_total_exposure=0.0,
         event_current_exposure=0.0,
@@ -108,7 +110,7 @@ def test_money_management_fallback_follows_trading_config(monkeypatch):
 @pytest.mark.safety
 def test_real_min_stake_value_unchanged():
     assert trading_config.MIN_STAKE == pytest.approx(0.10)
-    assert RoserpinaConfig().min_stake == pytest.approx(0.10)
+    assert legacy_test_config().min_stake == pytest.approx(0.10)
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +140,7 @@ def test_stake_floor_failsafe_on_corrupt_source(monkeypatch, corrupt_source):
     dec = mm.calculate(
         signal={"price": 2.0},
         bankroll_current=1000.0,
+        cap_base_cash=1000.0,  # PFC-008: cassa verificata del test
         equity_peak=1000.0,
         current_total_exposure=0.0,
         event_current_exposure=0.0,

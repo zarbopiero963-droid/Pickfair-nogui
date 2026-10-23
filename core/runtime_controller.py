@@ -4512,11 +4512,16 @@ class RuntimeController:
         decision = self.mm.calculate(
             signal=self._with_expansion_snapshot(signal),   # F032
             bankroll_current=self.risk_desk.bankroll_current,
+            cap_base_cash=getattr(self.risk_desk, "cash_equity_current", None),  # PFC-008
             equity_peak=self.risk_desk.equity_peak,
             current_total_exposure=total_exposure,
             event_current_exposure=event_exposure,
             table=table,
         )
+        if not decision.approved and decision.reason == "cassa_non_verificata":
+            # PFC-008: diagnostica esplicita del perche' la cassa non e' verificata.
+            decision.reason = "cassa_non_verificata:" + str(
+                getattr(self.risk_desk, "cash_equity_reason", "") or "CASH_NOT_READ")
 
         # Enforcement A2: Max Open Exposure (Cap Assoluto €) (#320)
         order_exposure = validators.order_exposure_or_inf(  # PR28: LAY = liability
@@ -5935,6 +5940,49 @@ class RuntimeController:
         out.update(ok=True, available=available, committed=committed, cash_equity=available + committed)
         return out
 
+    # PFC-008: tolleranza sul confronto disponibile + impegnato == totale dello snapshot SIM (centesimo).
+    _CASH_TOTAL_TOLERANCE = 0.01
+
+    @classmethod
+    def _cash_equity_verification(cls, funds: Any) -> dict:
+        """PFC-008 (decisione owner #426 c.6369802091): cassa complessiva VERIFICATA di uno snapshot fondi.
+
+        La cassa vale disponibile + impegnato solo se lo snapshot e' valido (`_account_from_funds`: nessun
+        errore, campi presenti, finiti, disponibile >= 0) e coerente col contratto del broker:
+        - le riserve unmatched sono una PARTE dell'esposizione (SIM: `reserved_unmatched` <= exposure; LIVE:
+          l'exposure Betfair include gia' la liability degli unmatched), quindi non si sommano di nuovo;
+        - la liability LAY e' gia' nell'exposure (caso peggiore per scenario nel SIM, liability Betfair LIVE);
+        - SIM: disponibile + impegnato deve coincidere con `total` (la cassa del broker), altrimenti la
+          ricostruzione non e' verificata; LIVE: Betfair non espone il saldo e il contratto e'
+          availableToBetBalance + |exposure|.
+        Ritorna ``{"ok", "cash", "reason"}``; ok=False => nuove entrate negate (`cassa_non_verificata`)."""
+        account = cls._account_from_funds(funds)
+        if not account["ok"]:
+            return {"ok": False, "cash": None, "reason": account["reason"] or "CASH_ACCOUNT_INVALID"}
+        available, committed = account["available"], account["committed"]
+        if "reserved_unmatched" in funds:
+            reserved = validators.finite_number(funds.get("reserved_unmatched"))
+            if reserved is None or reserved < 0 or validators.exceeds_cap(reserved, committed):
+                return {"ok": False, "cash": None, "reason": "CASH_RESERVE_INCOHERENT"}
+        cash = available + committed
+        if funds.get("simulated") is True:
+            total = validators.finite_number(funds.get("total"))
+            if total is None or abs(cash - total) > cls._CASH_TOTAL_TOLERANCE:
+                return {"ok": False, "cash": None, "reason": "CASH_TOTAL_MISMATCH"}
+        if not cash > 0:
+            return {"ok": False, "cash": None, "reason": "CASH_NOT_POSITIVE"}
+        return {"ok": True, "cash": cash, "reason": ""}
+
+    def _sync_cash_equity_from_funds(self, funds: Any, available: Any) -> None:
+        """PFC-008: registra nel RiskDesk la cassa verificata dello snapshot che ha dato `available`."""
+        verifica = self._cash_equity_verification(funds)
+        self.risk_desk.sync_cash_equity(verifica["cash"], available, reason=verifica["reason"])
+        motivo = str(getattr(self.risk_desk, "cash_equity_reason", "") or "")
+        if motivo and motivo != getattr(self, "_cash_warning_reason", ""):
+            # Una volta per motivo, non a ogni lettura di stato (la GUI legge i fondi periodicamente).
+            logger.warning("Cassa non verificata (%s): nuove entrate bloccate", motivo)
+        self._cash_warning_reason = motivo
+
     def _read_funds_for_entry(self) -> dict:
         """#461 PR28-e: lettura fresca del conto per il gate fondi di una nuova entrata, da eseguire FUORI dal
         lock d'ammissione (rete). ``{"funds", "read_at"}``: ``read_at`` e' l'istante monotonic d'inizio lettura.
@@ -5991,6 +6039,7 @@ class RuntimeController:
         account = self._record_account_snapshot(funds, source="start", read_at=read_at)  # PF-ALL-F026
         if account["ok"]:
             self.risk_desk.sync_bankroll(account["available"])
+            self._sync_cash_equity_from_funds(funds, account["available"])  # PFC-008
             if not self._load_expansion_baseline():                   # F032: primo avvio => apre il ciclo
                 self._start_expansion_cycle("first_start", funds=funds)
         else:
@@ -7248,6 +7297,7 @@ class RuntimeController:
             return result
 
         self.risk_desk.sync_bankroll(available_f)
+        self._sync_cash_equity_from_funds(funds, available_f)  # PFC-008: cassa della stessa lettura
         self._processed_bankroll_sync_keys.add(settlement_key)
         result["bankroll_after"] = float(self.risk_desk.bankroll_current)
         result["bankroll_sync_status"] = "SYNC_SUCCESS"
@@ -7487,6 +7537,7 @@ class RuntimeController:
         decision = self.mm.evaluate_next_trade_after_settlement(
             signal=self._with_expansion_snapshot(signal) if isinstance(signal, dict) else signal,   # F032
             bankroll_current=float(self.risk_desk.bankroll_current),
+            cap_base_cash=getattr(self.risk_desk, "cash_equity_current", None),  # PFC-008
             equity_peak=float(self.risk_desk.equity_peak),
             current_total_exposure=self.table_manager.total_exposure(),
             event_current_exposure=next_event_exposure,
@@ -7555,6 +7606,9 @@ class RuntimeController:
                 result["cycle_executor_status"] = "CYCLE_SKIPPED_MM_BLOCKED"
                 result["recovery_status"] = "RECOVERY_SKIPPED_MM_BLOCKED" if has_checkpoint else result["recovery_status"]
             result["reason"] = str(decision.stop_reason or "mm_blocked")
+            if result["reason"] == "cassa_non_verificata":
+                # PFC-008: stessa diagnostica esplicita del percorso segnale.
+                result["reason"] += ":" + str(getattr(self.risk_desk, "cash_equity_reason", "") or "CASH_NOT_READ")
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
             return result
@@ -8040,6 +8094,9 @@ class RuntimeController:
         if lettura["ok"] and lettura["available"] > 0.0 and lettura["available"] != bankroll_current:
             bankroll_current = lettura["available"]
             self.risk_desk.sync_bankroll(bankroll_current)
+        # PFC-008: cassa verificata della stessa lettura (anche a disponibile invariato); una lettura non
+        # valida la rende non verificata, mai la cassa di una lettura precedente.
+        self._sync_cash_equity_from_funds(funds, lettura["available"] if lettura["ok"] else None)
 
         snapshot = self.risk_desk.build_snapshot(
             runtime_mode=self.mode,
@@ -8057,6 +8114,9 @@ class RuntimeController:
         data["tables"] = self.table_manager.snapshot()
         data["duplication_guard"] = self.duplication_guard.snapshot()
         data["simulation_mode"] = bool(self.simulation_mode)
+        # PFC-008: diagnostica della base dei cap percentuali (None = cassa non verificata, entrate bloccate).
+        data["cash_equity_verified"] = getattr(self.risk_desk, "cash_equity_current", None)
+        data["cash_equity_reason"] = str(getattr(self.risk_desk, "cash_equity_reason", "") or "")
         data["execution_mode"] = str(self.execution_mode)
         data["live_enabled"] = bool(self.live_enabled)
         data["live_readiness_ok"] = bool(self.live_readiness_ok)

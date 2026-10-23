@@ -38,6 +38,7 @@ import pytest
 from core.pnl_engine import PnLEngine
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode
+from tests.risk_config_fixtures import legacy_test_config
 from simulation_broker import SimulationBroker
 
 COMMISSIONE = 4.5
@@ -393,7 +394,7 @@ class _ServizioLive:
 
 class _ImpostazioniLive:
     def load_roserpina_config(self):
-        return RoserpinaConfig()
+        return legacy_test_config()
 
     def load_market_data_config(self):
         return {"market_data_mode": "poll", "enabled": False, "market_ids": []}

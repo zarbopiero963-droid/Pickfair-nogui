@@ -18,10 +18,11 @@ import pytest
 
 from core.money_management import RoserpinaMoneyManagement
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 
 
 def _mm(**overrides):
-    cfg = RoserpinaConfig(
+    cfg = legacy_test_config(
         target_profit_cycle_pct=3.0,
         max_single_bet_pct=25.0,
         max_total_exposure_pct=50.0,
@@ -31,10 +32,11 @@ def _mm(**overrides):
     return RoserpinaMoneyManagement(cfg)
 
 
-def _calc(mm, price, *, br=100.0, peak=100.0, tot=0.0, ev=0.0, table=None):
+def _calc(mm, price, *, br=100.0, peak=100.0, tot=0.0, ev=0.0, table=None, cash=None):
     return mm.calculate(
         signal={"price": price},
         bankroll_current=br,
+        cap_base_cash=br if cash is None else cash,  # PFC-008: cassa verificata del test
         equity_peak=peak,
         current_total_exposure=tot,
         event_current_exposure=ev,
@@ -178,10 +180,14 @@ def test_malformed_price_is_fail_safe(bad_price):
 @pytest.mark.parametrize("bad_bankroll", [float("nan"), float("inf"), float("-inf"), "garbage", None, -100.0, 0.0])
 def test_malformed_bankroll_blocks_with_zero_stake(bad_bankroll):
     mm = _mm()
-    decision = _calc(mm, price=2.0, br=bad_bankroll)
+    # PFC-008: cassa verificata valida (100), cosi' il blocco viene dal bankroll malformato e non dalla cassa.
+    decision = _calc(mm, price=2.0, br=bad_bankroll, cash=100.0)
     assert decision.approved is False
     assert decision.recommended_stake == 0.0
-    assert decision.reason == "bankroll_non_valido"
+    # PFC-008: un disponibile negativo rende la lettura incoerente (cassa non verificabile), controllo che precede
+    # quello del bankroll; NaN/inf/testo/None diventano 0 e cadono su bankroll_non_valido come prima.
+    atteso = "cassa_non_verificata" if bad_bankroll == -100.0 else "bankroll_non_valido"
+    assert decision.reason == atteso
 
 
 @pytest.mark.core

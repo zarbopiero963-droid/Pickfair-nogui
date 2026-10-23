@@ -313,8 +313,13 @@ Si valuta la **sola operazione** (stand-alone): non `total_stake` (sottostima i
 LAY), non la somma cumulativa.
 
 **Distinto dai gate bloccanti.** I tre gate di esposizione — `max_single_bet_pct`
-(18%, per-gamba), `max_total_exposure_pct` (35%, **cumulativo**),
-`max_event_exposure_pct` (18%, per-evento) — **bloccano**. `MAX_STAKE_PCT` (30%) e'
+(per-gamba), `max_total_exposure_pct` (**cumulativo**), `max_event_exposure_pct`
+(per-evento) — **bloccano**. Da PFC-008 sono **obbligatori**: chiave assente =>
+`<chiave>_non_configurato`, valore illeggibile/NaN/inf/<=0/>100 => `<chiave>_non_valido`,
+nessun nuovo ordine finche' l'utente non li salva (F10). La base e' la **cassa
+complessiva verificata** (disponibile + impegnato della stessa lettura, decisione owner
+#426 c.6369802091) e l'esposizione corrente si sottrae una sola volta; senza cassa
+verificata le nuove entrate sono negate (`cassa_non_verificata:<motivo>`), nessun ripiego. `MAX_STAKE_PCT` (30%) e'
 un **warning** distinto sulla singola operazione, che tipicamente scatta prima del
 blocco cumulativo al 35%. **Warning-only per definizione**: nessuna checkbox
 "togliere = blocca", nessun path `_fail`.

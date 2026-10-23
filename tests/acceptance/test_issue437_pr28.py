@@ -33,6 +33,7 @@ import pytest
 
 from core.risk_gate import RiskGate
 from core.system_state import RoserpinaConfig, RuntimeMode
+from tests.risk_config_fixtures import legacy_test_config
 from core import validators
 from core.money_management import RoserpinaMoneyManagement
 from tests.acceptance.test_issue437_pr27 import _catena, _rifiuti, _tavoli_occupati
@@ -98,13 +99,14 @@ def test_block_risk_gate_lay_oltre_la_soglia():
 # 1. Money management: la LAY si misura sulla liability
 # ==========================================================================
 def _mm(**cfg):
-    return RoserpinaMoneyManagement(RoserpinaConfig(**cfg))
+    return RoserpinaMoneyManagement(legacy_test_config(**cfg))
 
 
 def _calcola(mm, *, signal, totale=0.0, evento=0.0):
     return mm.calculate(
         signal=signal,
         bankroll_current=1000.0,
+        cap_base_cash=1000.0,  # PFC-008: cassa verificata del test
         equity_peak=1000.0,
         current_total_exposure=totale,
         event_current_exposure=evento,
@@ -293,7 +295,7 @@ def test_pass_reload_config_applica_i_nuovi_limiti(tmp_path):
 
     class _NuoviLimiti:
         def load_roserpina_config(self):
-            cfg = RoserpinaConfig()
+            cfg = legacy_test_config()
             cfg.max_open_exposure = 12.5
             cfg.table_count = 7
             return cfg
@@ -319,7 +321,7 @@ def test_block_reload_config_con_meno_tavoli_non_scarta_quelli_occupati(tmp_path
 
     class _DueTavoli:
         def load_roserpina_config(self):
-            cfg = RoserpinaConfig()
+            cfg = legacy_test_config()
             cfg.table_count = 2
             return cfg
 
@@ -432,6 +434,7 @@ def test_pass_gia_corretto_a1_drawdown_illeggibile_in_live_fermato_dal_gate(tmp_
     c = _catena(tmp_path, max_drawdown_hard_stop_pct=valore)
     c.rc.execution_mode = "LIVE"
     c.rc.risk_desk.bankroll_current = 500.0
+    c.rc.risk_desk.cash_equity_current = c.rc.risk_desk.bankroll_current  # PFC-008: cassa verificata della lettura
     c.rc.risk_desk.equity_peak = 1000.0
 
     c.rc._on_signal_received(_signal())

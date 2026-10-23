@@ -8,14 +8,32 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
 
 | Grandezza | Fonte | Uso |
 |---|---|---|
-| `bankroll_current` (RiskDesk) | saldo **disponibile** dell'exchange | base invariata di stake, limiti %, difesa e lockdown |
+| `bankroll_current` (RiskDesk) | saldo **disponibile** dell'exchange | base di stake target, difesa e lockdown |
+| `cash_equity_current` (RiskDesk, PFC-008) | `cash_equity` della **stessa** lettura che ha dato `bankroll_current` | base dei cap percentuali di capacità ed esposizione (singolo, totale, evento, headroom Microstake) |
 | `available`, `committed` = \|exposure\|, `cash_equity` = disponibile + impegnato | `RuntimeController._account_from_funds` (soli campi exchange) | snapshot del conto (`_account_snapshot`) e picco di cassa (`_cash_equity_peak`) |
 
-- `cash_equity` è il **saldo di cassa regolato**, non un'equity mark-to-market. Non decide né stake, né limiti,
-  né ammissione degli ordini.
+- `cash_equity` è il **saldo di cassa regolato**, non un'equity mark-to-market. Non decide né lo stake target
+  né l'ammissione degli ordini (che resta sui fondi disponibili e sulle riserve).
+- **Cap percentuali sulla cassa (PFC-008, decisione owner #426 c.6369802091).** I cap `max_single_bet_pct`,
+  `max_total_exposure_pct` e `max_event_exposure_pct` si calcolano sulla cassa complessiva verificata e
+  l'esposizione corrente si sottrae una sola volta. Esempio: cassa 100, esposizione 20, cap 35% ⇒ totale
+  ammesso 35, nuova esposizione 15 (prima: 35% di 80 = 28 ⇒ solo 8).
+- **Cassa verificata** (`RuntimeController._cash_equity_verification`): disponibile + impegnato solo da uno
+  snapshot valido e coerente col contratto del broker. Le riserve unmatched sono una parte dell'esposizione
+  (SIM: `reserved_unmatched` ≤ `exposure`; LIVE: l'exposure Betfair include la liability degli unmatched) e la
+  liability LAY è già nell'esposizione: niente si somma due volte. In SIM disponibile + impegnato deve
+  coincidere con `total` (tolleranza 1 centesimo); in LIVE vale availableToBetBalance + |exposure|.
+  `RiskDesk.sync_cash_equity` la registra solo se il disponibile è quello della stessa lettura; ogni altro
+  cambio del bankroll (`sync_bankroll`, PnL applicato, snapshot, ripristino) o una lettura fallita la azzera,
+  con il motivo in `cash_equity_reason` (`CASH_NOT_READ`, `CASH_TOTAL_MISMATCH`, `CASH_RESERVE_INCOHERENT`,
+  `BALANCE_ERROR:…`, …), esposto anche da `get_status` (`cash_equity_verified`, `cash_equity_reason`).
+- **Cassa non verificata ⇒ BLOCKED** delle nuove entrate (MM `cassa_non_verificata:<motivo>`, Dutching,
+  cap temporaneo Microstake), nessun ripiego neppure sul disponibile. Le uscite protettive (hedge del cashout,
+  `protective` dall'`OrderRouter`) non vengono bloccate: il loro cap temporaneo resta limitato ai fondi
+  disponibili (`validators.verified_cap_base`).
 - Un campo mancante, non numerico, non finito o negativo rende lo snapshot non valido. Un'esposizione mancante
   **non** vale zero.
-- La base di stake e limiti non cambia rispetto a prima di F026. È provato da `stake_base_unchanged` nei test
+- La base dello stake target non cambia rispetto a prima di F026. È provato da `stake_base_unchanged` nei test
   d'integrazione: ogni sincronizzazione dall'exchange usa il disponibile di quell'istante.
 
 ## Auto-reset

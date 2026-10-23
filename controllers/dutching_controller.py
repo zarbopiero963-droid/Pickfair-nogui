@@ -65,6 +65,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# PFC-008 (M019): cap percentuali obbligatori nei controlli di esposizione del Dutching.
+_DUTCHING_PCT_FIELDS = ("max_single_bet_pct", "max_total_exposure_pct", "max_event_exposure_pct")
+
 
 def _side(value: Any) -> str:
     """#523: lato BACK/LAY esplicito, con lo stesso contratto dei segnali (`validators.signal_side`).
@@ -721,6 +724,24 @@ class DutchingController:
             return float(getattr(risk_desk, "bankroll_current", 0.0) or 0.0)
         return 0.0
 
+    def _cap_base(self, bankroll: float) -> Optional[float]:
+        """PFC-008: base dei cap percentuali = cassa verificata del RiskDesk (stessa regola del MM); None = BLOCKED."""
+        risk_desk = self._risk_desk()
+        return validators.verified_cap_base(getattr(risk_desk, "cash_equity_current", None), bankroll)
+
+    def _risk_caps_failure(self, config: Any, bankroll: float) -> Optional[Dict[str, Any]]:
+        """PFC-008: percentuali obbligatorie e cassa verificata prima di ogni controllo di esposizione.
+
+        Ritorna il risultato di rifiuto, oppure None se i cap si possono calcolare."""
+        pct_reason = validators.risk_pcts_reason(config, _DUTCHING_PCT_FIELDS)
+        if pct_reason:
+            return self._fail("Limite di rischio % non configurato o non valido", reason=pct_reason)
+        if self._cap_base(bankroll) is None:
+            risk_desk = self._risk_desk()
+            return self._fail("Cassa non verificata: nessun nuovo ingresso", reason="cassa_non_verificata",
+                              cash_reason=str(getattr(risk_desk, "cash_equity_reason", "") or "CASH_NOT_READ"))
+        return None
+
     def _compute_order_exposure(self, item: Dict[str, Any]) -> float:
         side = _side(item.get("side"))
         stake = float(item.get("stake", 0.0) or 0.0)
@@ -762,7 +783,8 @@ class DutchingController:
         if table_manager is None:
             return None
 
-        allow_recovery = bool(getattr(config, "allow_recovery", True)) if config else True
+        # PFC-008 (M019): recovery solo se configurato esplicitamente.
+        allow_recovery = getattr(config, "allow_recovery", False) is True
 
         table = None
         if hasattr(table_manager, "allocate"):
@@ -1290,47 +1312,47 @@ class DutchingController:
             profit_epsilon_enabled and raw_spread is not None and raw_spread > profit_epsilon + 1e-9
         )
 
-        if bankroll > 0 and config is not None:
-            max_total_exposure = bankroll * (
-                float(getattr(config, "max_total_exposure_pct", 35.0)) / 100.0
-            )
-            max_event_exposure = bankroll * (
-                float(getattr(config, "max_event_exposure_pct", 18.0)) / 100.0
-            )
-            max_single_bet = bankroll * (
-                float(getattr(config, "max_single_bet_pct", 18.0)) / 100.0
+        # PFC-008 (M019): percentuale assente o non valida, o cassa non verificata => blocco esplicito.
+        # Prima un default di codice sostituiva la percentuale, un NaN rendeva sempre falso il confronto
+        # e con bankroll <= 0 o config assente i controlli di esposizione venivano saltati (fail-open).
+        failure = self._risk_caps_failure(config, bankroll)
+        if failure is not None:
+            return failure
+        cap_base = self._cap_base(bankroll)
+        max_total_exposure = cap_base * (float(config.max_total_exposure_pct) / 100.0)
+        max_event_exposure = cap_base * (float(config.max_event_exposure_pct) / 100.0)
+        max_single_bet = cap_base * (float(config.max_single_bet_pct) / 100.0)
+
+        if current_total_exposure + batch_exposure > max_total_exposure + 1e-9:
+            return self._fail(
+                "Esposizione globale oltre limite",
+                batch_exposure=round(batch_exposure, 2),
+                current_total_exposure=round(current_total_exposure, 2),
+                max_total_exposure=round(max_total_exposure, 2),
             )
 
-            if current_total_exposure + batch_exposure > max_total_exposure + 1e-9:
-                return self._fail(
-                    "Esposizione globale oltre limite",
-                    batch_exposure=round(batch_exposure, 2),
-                    current_total_exposure=round(current_total_exposure, 2),
-                    max_total_exposure=round(max_total_exposure, 2),
-                )
+        if event_current_exposure + batch_exposure > max_event_exposure + 1e-9:
+            return self._fail(
+                "Esposizione evento oltre limite",
+                batch_exposure=round(batch_exposure, 2),
+                event_current_exposure=round(event_current_exposure, 2),
+                max_event_exposure=round(max_event_exposure, 2),
+            )
 
-            if event_current_exposure + batch_exposure > max_event_exposure + 1e-9:
-                return self._fail(
-                    "Esposizione evento oltre limite",
-                    batch_exposure=round(batch_exposure, 2),
-                    event_current_exposure=round(event_current_exposure, 2),
-                    max_event_exposure=round(max_event_exposure, 2),
-                )
-
-            too_large = [
-                {
-                    "selectionId": int(item["selectionId"]),
-                    "stake": round(float(item["stake"]), 2),
-                    "limit": round(max_single_bet, 2),
-                }
-                for item in results
-                if self._compute_order_exposure(item) > max_single_bet + 1e-9
-            ]
-            if too_large:
-                return self._fail(
-                    "Una o più gambe superano max_single_bet",
-                    violations=too_large,
-                )
+        too_large = [
+            {
+                "selectionId": int(item["selectionId"]),
+                "stake": round(float(item["stake"]), 2),
+                "limit": round(max_single_bet, 2),
+            }
+            for item in results
+            if self._compute_order_exposure(item) > max_single_bet + 1e-9
+        ]
+        if too_large:
+            return self._fail(
+                "Una o più gambe superano max_single_bet",
+                violations=too_large,
+            )
 
         # #529 ciclo A2 (rilievo Codex r4326488216): il precheck e' PRIVO di effetti permanenti: controlla soltanto
         # (in lettura) che la chiave non sia gia' attiva. L'acquisizione, fissata, avviene nella fase controllata
@@ -1742,20 +1764,19 @@ class DutchingController:
             exposure = validators.order_exposure(side, stake, price)
 
             bankroll = self._bankroll_current()
-            if bankroll > 0 and config is not None:
-                current_total_exposure = self._table_total_exposure()
-                max_total_exposure = bankroll * (
-                    float(getattr(config, "max_total_exposure_pct", 35.0)) / 100.0
-                )
-                max_single_bet = bankroll * (
-                    float(getattr(config, "max_single_bet_pct", 18.0)) / 100.0
-                )
+            failure = self._risk_caps_failure(config, bankroll)   # PFC-008, come nel precheck
+            if failure is not None:
+                return failure
+            current_total_exposure = self._table_total_exposure()
+            cap_base = self._cap_base(bankroll)
+            max_total_exposure = cap_base * (float(config.max_total_exposure_pct) / 100.0)
+            max_single_bet = cap_base * (float(config.max_single_bet_pct) / 100.0)
 
-                if exposure > max_single_bet + 1e-9:
-                    return self._fail("Stake oltre max_single_bet")
+            if exposure > max_single_bet + 1e-9:
+                return self._fail("Stake oltre max_single_bet")
 
-                if current_total_exposure + exposure > max_total_exposure + 1e-9:
-                    return self._fail("Esposizione globale oltre limite")
+            if current_total_exposure + exposure > max_total_exposure + 1e-9:
+                return self._fail("Esposizione globale oltre limite")
 
             guarded = bool(duplication_guard) and bool(getattr(config, "anti_duplication_enabled", True))
             if guarded:

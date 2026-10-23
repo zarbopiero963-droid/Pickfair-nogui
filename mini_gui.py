@@ -231,6 +231,7 @@ from executor_manager import ExecutorManager
 from shutdown_manager import ShutdownManager
 
 import trading_config
+from core import validators
 from services.settings_service import SettingsService
 from services.betfair_service import BetfairService
 from services.telegram_service import TelegramService
@@ -279,6 +280,20 @@ from headless_ui_stubs import (  # noqa: E402
     _DummyButton,
     _DummyTree,
     _DummyLog,
+)
+
+
+# PFC-008 (M019): le quattro percentuali obbligatorie del Money Management, con la spiegazione mostrata
+# nella tab Roserpina. Nessun valore predefinito: l'utente le sceglie e le salva una volta.
+RISK_PCT_GUIDE = (
+    ("target_profit_cycle_pct", "Target Profit Cycle %",
+     "Profitto obiettivo del ciclo, in % del saldo disponibile: determina lo stake base."),
+    ("max_single_bet_pct", "Max Single Bet %",
+     "Rischio massimo di un singolo ordine (BACK = stake, LAY = liability), in % della cassa verificata."),
+    ("max_total_exposure_pct", "Max Total Exposure %",
+     "Esposizione aperta complessiva massima, in % della cassa verificata."),
+    ("max_event_exposure_pct", "Max Event Exposure %",
+     "Esposizione massima su un singolo evento, in % della cassa verificata."),
 )
 
 
@@ -694,10 +709,15 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.bf_cert_var = self._make_string_var()
         self.bf_key_var = self._make_string_var()
 
-        self.rs_target_var = self._make_string_var("5.0")
-        self.rs_max_single_var = self._make_string_var("1.0")
-        self.rs_max_total_var = self._make_string_var("10.0")
-        self.rs_max_event_var = self._make_string_var("2.5")
+        # PFC-008: le quattro percentuali obbligatorie partono vuote, mai un valore scelto dal software.
+        self.rs_target_var = self._make_string_var("")
+        self.rs_max_single_var = self._make_string_var("")
+        self.rs_max_total_var = self._make_string_var("")
+        self.rs_max_event_var = self._make_string_var("")
+        # Avviso di configurazione guidata (vuoto = percentuali obbligatorie tutte valide).
+        self.rs_pct_notice_var = self._make_string_var("")
+        self._risk_pct_missing = []
+        self._roserpina_setup_opened = False
         self.rs_auto_reset_var = self._make_string_var("5.0")
         self.rs_defense_var = self._make_string_var("15.0")
         self.rs_lockdown_var = self._make_string_var("25.0")
@@ -781,7 +801,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         # nessun segreto qui, solo id/titolo della chat.
         self.tg_bot_chat_id_var = self._make_string_var("")
         self.tg_bot_chat_title_var = self._make_string_var("")
-        self.rs_allow_recovery_var = self._make_bool_var(True)
+        self.rs_allow_recovery_var = self._make_bool_var(False)  # PFC-008: mai attiva senza scelta esplicita
         self.rs_anti_dup_var = self._make_bool_var(True)
         self.rs_risk_profile_var = self._make_string_var("BALANCED")
 
@@ -978,6 +998,13 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         )
         self.btn_refresh_control_plane.grid(row=0, column=8, sticky="e")
 
+        # PFC-008: avviso di configurazione guidata, visibile solo se manca una percentuale obbligatoria.
+        self.risk_pct_notice_frame = ctk.CTkFrame(top, fg_color="transparent")
+        ctk.CTkLabel(self.risk_pct_notice_frame, textvariable=self.rs_pct_notice_var, text_color="#e0a030",
+                     anchor="w", justify="left", wraplength=900).pack(side=tk.LEFT, padx=(0, 12))
+        ctk.CTkButton(self.risk_pct_notice_frame, text="Configura Money Management",
+                      command=self._open_roserpina_setup, width=220).pack(side=tk.LEFT)
+
     def _build_dashboard_tab(self):
         if self._test_mode:
             self.btn_start = _DummyButton(self._runtime_start)
@@ -1126,10 +1153,20 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         ctk.CTkLabel(outer, text="Roserpina Cycle Configuration", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=12, pady=8)
 
-        self._labeled_entry(outer, "Target Profit Cycle %", self.rs_target_var)
-        self._labeled_entry(outer, "Max Single Bet %", self.rs_max_single_var)
-        self._labeled_entry(outer, "Max Total Exposure %", self.rs_max_total_var)
-        self._labeled_entry(outer, "Max Event Exposure %", self.rs_max_event_var)
+        # PFC-008: configurazione guidata. L'avviso elenca le percentuali obbligatorie mancanti o non valide
+        # (vuoto quando sono tutte valide); ogni campo spiega a cosa serve.
+        ctk.CTkLabel(outer, textvariable=self.rs_pct_notice_var, text_color="#e0a030", anchor="w",
+                     justify="left", wraplength=900).pack(anchor="w", padx=12, pady=(0, 4))
+        pct_vars = {
+            "target_profit_cycle_pct": self.rs_target_var,
+            "max_single_bet_pct": self.rs_max_single_var,
+            "max_total_exposure_pct": self.rs_max_total_var,
+            "max_event_exposure_pct": self.rs_max_event_var,
+        }
+        for field, label, help_text in RISK_PCT_GUIDE:
+            self._labeled_entry(outer, label, pct_vars[field])
+            ctk.CTkLabel(outer, text=f"{help_text} Obbligatorio: maggiore di 0 e al massimo 100.",
+                         anchor="w", text_color="gray").pack(anchor="w", padx=(240, 12), pady=(0, 4))
         self._labeled_entry(outer, "Auto Reset Drawdown %", self.rs_auto_reset_var)
         self._labeled_entry(outer, "Defense Drawdown %", self.rs_defense_var)
         self._labeled_entry(outer, "Lockdown Drawdown %", self.rs_lockdown_var)
@@ -1624,10 +1661,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         try:
             if hasattr(self.settings_service, "load_roserpina_config"):
                 rs = self.settings_service.load_roserpina_config()
-                self.rs_target_var.set(str(getattr(rs, "target_profit_cycle_pct", self.rs_target_var.get())))
-                self.rs_max_single_var.set(str(getattr(rs, "max_single_bet_pct", self.rs_max_single_var.get())))
-                self.rs_max_total_var.set(str(getattr(rs, "max_total_exposure_pct", self.rs_max_total_var.get())))
-                self.rs_max_event_var.set(str(getattr(rs, "max_event_exposure_pct", self.rs_max_event_var.get())))
+                self.rs_target_var.set(self._hard_stop_to_str(getattr(rs, "target_profit_cycle_pct", None)))
+                self.rs_max_single_var.set(self._hard_stop_to_str(getattr(rs, "max_single_bet_pct", None)))
+                self.rs_max_total_var.set(self._hard_stop_to_str(getattr(rs, "max_total_exposure_pct", None)))
+                self.rs_max_event_var.set(self._hard_stop_to_str(getattr(rs, "max_event_exposure_pct", None)))
                 self.rs_auto_reset_var.set(str(getattr(rs, "auto_reset_drawdown_pct", self.rs_auto_reset_var.get())))
                 self.rs_defense_var.set(str(getattr(rs, "defense_drawdown_pct", self.rs_defense_var.get())))
                 self.rs_lockdown_var.set(str(getattr(rs, "lockdown_drawdown_pct", self.rs_lockdown_var.get())))
@@ -1668,9 +1705,14 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 risk_profile_value = getattr(risk_profile, "value", self.rs_risk_profile_var.get())
                 self.rs_risk_profile_var.set(str(risk_profile_value))
                 self._roserpina_loaded_ok = True
+                # PFC-008: configurazione guidata solo se manca qualcosa (mai a ogni avvio).
+                if self._refresh_risk_pct_notice(rs):
+                    self._open_roserpina_setup()
         except Exception:
             _LOGGER.exception("Caricamento configurazione Roserpina fallito: salvataggio Roserpina bloccato")
             self._roserpina_loaded_ok = False
+            self._set_risk_pct_notice(
+                "Configurazione Money Management non leggibile: nuovi ingressi bloccati, salvataggio sospeso.")
 
         try:
             if hasattr(self.settings_service, "load_simulation_config"):
@@ -1867,6 +1909,23 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         return str(value)
 
     @staticmethod
+    def _parse_risk_pct(raw, label):
+        """Percentuale di rischio obbligatoria (PFC-008, M019): numero finito in (0, 100].
+
+        Vuoto, testo, NaN/inf, <= 0 o > 100 annullano il salvataggio: il runtime
+        negherebbe comunque ogni ordine, meglio dirlo subito all'utente."""
+        text = str(raw or "").strip().replace(",", ".")
+        if not text:
+            raise ValueError(f"{label}: obbligatorio (percentuale tra 0 e 100).")
+        try:
+            value = float(text)
+        except ValueError:
+            raise ValueError(f"{label}: valore non numerico.") from None
+        if not math.isfinite(value) or value <= 0 or value > 100:
+            raise ValueError(f"{label}: deve essere maggiore di 0 e al massimo 100.")
+        return value
+
+    @staticmethod
     def _parse_hard_stop(raw, label, *, is_pct=False):
         """Parsa un campo hard-stop dalla GUI in modo FAIL-CLOSED.
 
@@ -2042,10 +2101,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                     auto_green_delay_sec = float(trading_config.AUTO_GREEN_DELAY_SEC)
 
             cfg = RoserpinaConfig(
-                target_profit_cycle_pct=float(self.rs_target_var.get()),
-                max_single_bet_pct=float(self.rs_max_single_var.get()),
-                max_total_exposure_pct=float(self.rs_max_total_var.get()),
-                max_event_exposure_pct=float(self.rs_max_event_var.get()),
+                target_profit_cycle_pct=self._parse_risk_pct(self.rs_target_var.get(), "Target Profit Cycle %"),
+                max_single_bet_pct=self._parse_risk_pct(self.rs_max_single_var.get(), "Max Single Bet %"),
+                max_total_exposure_pct=self._parse_risk_pct(self.rs_max_total_var.get(), "Max Total Exposure %"),
+                max_event_exposure_pct=self._parse_risk_pct(self.rs_max_event_var.get(), "Max Event Exposure %"),
                 auto_reset_drawdown_pct=float(self.rs_auto_reset_var.get()),
                 defense_drawdown_pct=float(self.rs_defense_var.get()),
                 lockdown_drawdown_pct=float(self.rs_lockdown_var.get()),
@@ -2110,6 +2169,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         # invisibile). Refresh mirato ai soli hard-stop, per non toccare gli
         # altri tab ne' la logica force-simulation di _load_initial_settings.
         self._refresh_hard_stop_vars()
+        try:
+            self._refresh_risk_pct_notice(self.settings_service.load_roserpina_config())  # PFC-008
+        except Exception:
+            _LOGGER.exception("Rilettura configurazione Roserpina dopo il salvataggio fallita")
         if reload_error is not None:
             # Divergenza safety-critical: la config e' su DB ma il runtime NON e'
             # stato riallineato. Il messaggio DEVE essere esplicito che i nuovi
@@ -2125,6 +2188,44 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             )
         else:
             self._safe_show_info("OK", "Configurazione Roserpina salvata.")
+
+    def _refresh_risk_pct_notice(self, rs):
+        """PFC-008: aggiorna l'avviso delle percentuali obbligatorie mancanti o non valide.
+
+        Ritorna la lista dei campi da configurare (vuota = nessun avviso, nessuna richiesta)."""
+        missing = [label for field, label, _help in RISK_PCT_GUIDE
+                   if validators.risk_pct_reason(field, getattr(rs, field, None))]
+        self._risk_pct_missing = missing
+        if missing:
+            self._set_risk_pct_notice(
+                "Money Management da configurare: " + ", ".join(missing)
+                + ". Nuovi ingressi bloccati finché non salvi valori validi (tab Roserpina).")
+        else:
+            self._set_risk_pct_notice("")
+        return missing
+
+    def _set_risk_pct_notice(self, text):
+        self.rs_pct_notice_var.set(text)
+        frame = getattr(self, "risk_pct_notice_frame", None)
+        if frame is None:
+            return
+        try:
+            if text:
+                frame.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            else:
+                frame.grid_remove()
+        except Exception:
+            pass
+
+    def _open_roserpina_setup(self):
+        """PFC-008: porta l'utente alla tab Roserpina (configurazione delle percentuali obbligatorie)."""
+        self._roserpina_setup_opened = True
+        tabs = getattr(self, "tabs", None)
+        if hasattr(tabs, "set"):
+            try:
+                tabs.set("Roserpina")
+            except Exception:
+                pass
 
     def _refresh_hard_stop_vars(self):
         """Rilegge gli hard-stop persistiti e riallinea i campi GUI (post-save).

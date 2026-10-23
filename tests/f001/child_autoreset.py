@@ -19,7 +19,12 @@ try:
     orig = app.bus.publish
     app.bus.publish = lambda e, d=None: (EV.append((e, d if isinstance(d, dict) else {})), orig(e, d))[1]
     app.settings_service.save_settings({"simulation.starting_balance": 100.0, "settlement.poll_enabled": True,
-                                        "settlement.poll_sec": 1, "roserpina.auto_reset_drawdown_pct": 1.0})
+                                        "settlement.poll_sec": 1, "roserpina.auto_reset_drawdown_pct": 1.0,
+                                        # PFC-008 (M019): percentuali e recovery senza default di codice,
+                                        # dichiarate con i valori che il loader usava prima.
+                                        "roserpina.target_profit_cycle_pct": 3.0, "roserpina.max_single_bet_pct": 18.0,
+                                        "roserpina.max_total_exposure_pct": 35.0, "roserpina.max_event_exposure_pct": 18.0,
+                                        "roserpina.allow_recovery": True, "roserpina.max_recovery_tables": 2})
     rt = app.runtime
     rt.start(simulation_mode=True, execution_mode="SIM")
     brk = app.betfair_service.get_simulation_broker()

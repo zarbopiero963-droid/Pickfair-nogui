@@ -6,6 +6,7 @@ import pytest  # type: ignore[reportMissingImports]
 
 from core.money_management import RoserpinaMoneyManagement
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 from dutching import calculate_dutching_stakes
 from pnl_engine import PnLEngine
 
@@ -13,7 +14,7 @@ from pnl_engine import PnLEngine
 @pytest.mark.unit
 def test_mm_inputs_fail_closed() -> None:
     """Money management should reject non-finite numeric inputs."""
-    manager = RoserpinaMoneyManagement(RoserpinaConfig())
+    manager = RoserpinaMoneyManagement(legacy_test_config())
     decision = manager.calculate(
         signal={"price": 2.0},
         bankroll_current=float("nan"),

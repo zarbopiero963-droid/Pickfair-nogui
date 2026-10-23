@@ -16,10 +16,13 @@ import os
 import sys
 from types import SimpleNamespace
 
+from tests.risk_config_fixtures import EXPLICIT_RISK_PCT
+
 import pytest
 
 import trading_config
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 from services.settings_service import SettingsService
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -115,7 +118,7 @@ class _InMemoryDB:
 
 def test_min_price_round_trip():
     db = _InMemoryDB()
-    SettingsService(db).save_roserpina_config(RoserpinaConfig(table_count=3, min_price=1.35))
+    SettingsService(db).save_roserpina_config(legacy_test_config(table_count=3, min_price=1.35))
     assert SettingsService(db).load_roserpina_config().min_price == 1.35
 
 
@@ -132,7 +135,9 @@ class _CapturingService(FakeSettingsService):
         self.saved_cfg = None
 
     def load_roserpina_config(self):
-        return SimpleNamespace(min_price=1.40)
+        return SimpleNamespace(
+            **EXPLICIT_RISK_PCT,  # PFC-008: percentuali obbligatorie salvate dall'utente
+            min_price=1.40)
 
     def save_roserpina_config(self, cfg):
         self.saved_cfg = cfg

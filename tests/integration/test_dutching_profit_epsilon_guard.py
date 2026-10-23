@@ -19,10 +19,13 @@ import os
 import sys
 from types import SimpleNamespace
 
+from tests.risk_config_fixtures import EXPLICIT_RISK_PCT
+
 import pytest
 
 import trading_config
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 from services.setting_service import SettingsService
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -47,6 +50,7 @@ class _Config:
 
 class _RiskDesk:
     bankroll_current = 1000.0
+    cash_equity_current = 1000.0  # PFC-008: cassa verificata
 
 
 class _DupGuard:
@@ -298,7 +302,7 @@ class _InMemoryDB:
 
 def test_profit_epsilon_round_trip():
     db = _InMemoryDB()
-    SettingsService(db).save_roserpina_config(RoserpinaConfig(table_count=3, profit_epsilon=0.75))
+    SettingsService(db).save_roserpina_config(legacy_test_config(table_count=3, profit_epsilon=0.75))
     assert SettingsService(db).load_roserpina_config().profit_epsilon == 0.75
 
 
@@ -309,7 +313,7 @@ def test_profit_epsilon_default_from_constant():
 
 def test_profit_epsilon_enabled_round_trip():
     db = _InMemoryDB()
-    SettingsService(db).save_roserpina_config(RoserpinaConfig(table_count=3, profit_epsilon_enabled=False))
+    SettingsService(db).save_roserpina_config(legacy_test_config(table_count=3, profit_epsilon_enabled=False))
     assert SettingsService(db).load_roserpina_config().profit_epsilon_enabled is False
     # Default (assente) => True.
     assert SettingsService(_InMemoryDB()).load_roserpina_config().profit_epsilon_enabled is True
@@ -324,7 +328,9 @@ class _CapturingService(FakeSettingsService):
         self.saved_cfg = None
 
     def load_roserpina_config(self):
-        return SimpleNamespace(profit_epsilon=0.80, profit_epsilon_enabled=False)
+        return SimpleNamespace(
+            **EXPLICIT_RISK_PCT,  # PFC-008: percentuali obbligatorie salvate dall'utente
+            profit_epsilon=0.80, profit_epsilon_enabled=False)
 
     def save_roserpina_config(self, cfg):
         self.saved_cfg = cfg

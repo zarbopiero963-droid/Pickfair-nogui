@@ -12,6 +12,7 @@ import pytest
 
 from core.money_management import RoserpinaMoneyManagement
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 from core.trading_engine import TradingEngine
 from simulation_broker import SimulationBroker
 
@@ -84,7 +85,7 @@ class _Inline:
 
 
 def _runtime(broker, *, mode="SIMULATION", max_win=10000.0, bankroll=100.0, available=None, open_exposure=0.0):
-    cfg = RoserpinaConfig()
+    cfg = legacy_test_config()
     cfg.max_win = max_win
     funds = {"available": broker.get_account_funds()["available"] if available is None else available,
              "exposure": open_exposure, "ok": True}
@@ -93,7 +94,7 @@ def _runtime(broker, *, mode="SIMULATION", max_win=10000.0, bankroll=100.0, avai
         is_live_allowed=lambda: False,
         betfair_service=SimpleNamespace(simulation_broker=broker, _session_invalid=False,
                                         get_account_funds=lambda: dict(funds)),
-        config=cfg, mm=RoserpinaMoneyManagement(cfg), risk_desk=SimpleNamespace(bankroll_current=bankroll),
+        config=cfg, mm=RoserpinaMoneyManagement(cfg), risk_desk=SimpleNamespace(bankroll_current=bankroll, cash_equity_current=bankroll),
         table_manager=SimpleNamespace(total_exposure=lambda: open_exposure),
     )
 

@@ -157,8 +157,8 @@ def _auto_next(next_signal, *, funds, riservato=0.0, pct_totale=None):
     rc, bus = _make_controller(responses=[funds])
     rc.mode = RuntimeMode.ACTIVE
     if pct_totale is not None:
-        # La percentuale di esposizione totale del MM non ha tetto superiore in config: oltre il 100%
-        # il cap percentuale non protegge piu' la cassa, resta solo il gate dei fondi.
+        # PFC-008: la percentuale di esposizione totale e' ammessa solo in (0, 100] e si applica alla cassa
+        # verificata (disponibile + impegnato); al 100% il cap percentuale lascia lavorare il gate dei fondi.
         rc.config.max_total_exposure_pct = pct_totale
     if riservato:
         # Un altro tavolo (id 2) tiene gia' un'entrata aperta: la sua esposizione impegna la cassa.
@@ -184,16 +184,18 @@ def _auto_next(next_signal, *, funds, riservato=0.0, pct_totale=None):
 def test_auto_next_lay_liability_oltre_i_fondi_e_rifiutato():
     rc, bus, esito = _auto_next(
         # Il tavolo 2 ha riservato 95 non ancora a mercato (l'exchange non lo vede: exposure 0).
-        # Cassa 100; liability LAY 2*(6-1)=10 entro max_single_bet (18% di 100) e, con
-        # max_total_exposure_pct=200, entro il cap percentuale (105 <= 200); ma
+        # Cassa verificata 100; liability LAY 2*(6-1)=10 entro max_single_bet (18% di 100); ma
         # 95 + 10 = 105 > 100 di cassa => la nuova entrata eccede i fondi.
+        # PFC-008: una percentuale > 100 non e' piu' ammessa (max_total_exposure_pct_non_valido) e al 100%
+        # il cap sulla cassa verificata ferma l'entrata prima del gate dei fondi (che resta provato da
+        # test_auto_next_con_impegnato_esterno_e_riserva_pendente_e_rifiutato, dove la cassa e' 200).
         {"market_id": "1.2", "selection_id": 2, "price": 6.0, "stake": 2.0, "bet_type": "LAY"},
         funds={"available": 100.0, "exposure": 0.0},
         riservato=95.0,
-        pct_totale=200.0,
+        pct_totale=100.0,
     )
     assert [e for e in bus.events if e[0] == "CMD_QUICK_BET"] == [], esito
-    assert esito["reason"].startswith("fondi_insufficienti"), esito
+    assert esito["reason"] == "supera_max_total_exposure", esito
 
 
 def test_auto_next_entro_i_fondi_passa():
@@ -210,7 +212,8 @@ def test_auto_next_con_fondi_non_validi_e_rifiutato():
         funds={"available": 150.0},                     # esposizione mancante: dato non valido
     )
     assert [e for e in bus.events if e[0] == "CMD_QUICK_BET"] == [], esito
-    assert esito["reason"] == "fondi_non_verificabili", esito
+    # PFC-008: con l'esposizione mancante la cassa non e' verificabile e il MM nega prima del gate dei fondi.
+    assert esito["reason"] == "cassa_non_verificata:BALANCE_FIELD_MISSING", esito   # PFC-008: motivo esplicito
 
 
 # ---------------------------------------------------------------- servizio reale: lettura fallita
@@ -311,11 +314,12 @@ def test_ack_a_mercato_marca_il_tavolo_della_riserva_e_il_rilascio_lo_azzera():
 def test_auto_next_con_impegnato_esterno_e_riserva_pendente_e_rifiutato():
     # Snapshot del settlement: 100 disponibili + 100 impegnati esterni; tavolo 2 pendente da 95. LAY 2@6
     # (liability 10): 95 + 10 = 105 > 100 disponibili.
+    # PFC-008: cassa verificata 200 => al 100% il cap percentuale ammette 105, ferma il gate dei fondi.
     rc, bus, esito = _auto_next(
         {"market_id": "1.2", "selection_id": 2, "price": 6.0, "stake": 2.0, "bet_type": "LAY"},
         funds={"available": 100.0, "exposure": 100.0},
         riservato=95.0,
-        pct_totale=200.0,
+        pct_totale=100.0,
     )
     assert [e for e in bus.events if e[0] == "CMD_QUICK_BET"] == [], esito
     assert esito["reason"].startswith("fondi_insufficienti"), esito

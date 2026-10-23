@@ -34,13 +34,14 @@ import pytest
 
 from core.money_management import RoserpinaMoneyManagement
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 
 
 # ---------------------------------------------------------------------------
 # HELPERS
 # ---------------------------------------------------------------------------
 def _mm(**overrides) -> RoserpinaMoneyManagement:
-    cfg = RoserpinaConfig(
+    cfg = legacy_test_config(
         target_profit_cycle_pct=3.0,
         max_single_bet_pct=25.0,
         max_total_exposure_pct=50.0,
@@ -60,6 +61,7 @@ def _calc(mm: RoserpinaMoneyManagement, *, loss: float, price: float = 2.0, br: 
     return mm.calculate(
         signal={"price": price},
         bankroll_current=br,
+        cap_base_cash=br,  # PFC-008: cassa verificata del test
         equity_peak=br,  # niente drawdown => desk NORMAL (moltiplicatore 1.0)
         current_total_exposure=0.0,
         event_current_exposure=0.0,

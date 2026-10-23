@@ -276,6 +276,55 @@ def absolute_cap_reason(name, cap_raw, current, order_risk) -> str:
     return ""
 
 
+# PFC-008 (roadmap #461, M019 C3): percentuali di rischio Roserpina OBBLIGATORIE.
+# Una chiave assente non riceve piu' un valore di codice: il loader la passa come
+# None e ogni nuovo ordine viene negato finche' l'utente non la salva (F10).
+RISK_PCT_FIELDS = (
+    "target_profit_cycle_pct",
+    "max_single_bet_pct",
+    "max_total_exposure_pct",
+    "max_event_exposure_pct",
+)
+
+
+def risk_pct_reason(name, raw) -> str:
+    """Percentuale di rischio obbligatoria: "" se valida, altrimenti il motivo.
+
+    None (chiave assente) => `<name>_non_configurato`; non numerica, bool, NaN/inf,
+    <= 0 o > 100 => `<name>_non_valido`. Un confronto con NaN e' sempre falso e
+    lascerebbe passare qualunque esposizione: qui si nega prima."""
+    if raw is None:
+        return f"{name}_non_configurato"
+    pct = finite_number(raw)
+    if pct is None or pct <= 0 or pct > 100:
+        return f"{name}_non_valido"
+    return ""
+
+
+def risk_pcts_reason(config, names=RISK_PCT_FIELDS) -> str:
+    """Primo motivo di rifiuto fra le percentuali `names` di `config`, oppure ""."""
+    for name in names:
+        reason = risk_pct_reason(name, getattr(config, name, None))
+        if reason:
+            return reason
+    return ""
+
+
+def verified_cap_base(cash_equity, available):
+    """Base dei cap percentuali di capacita'/esposizione (PFC-008, decisione owner #426 c.6369802091).
+
+    La cassa complessiva VERIFICATA (disponibile + impegnato di uno stesso snapshot coerente, vedi
+    `RuntimeController._cash_equity_verification`), oppure None: cassa assente, non finita, <= 0 o
+    inferiore al disponibile. None => i chiamanti negano le nuove entrate (`cassa_non_verificata`):
+    nessun ripiego, neppure sul disponibile. L'esposizione corrente si sottrae una sola volta, nel
+    confronto del chiamante."""
+    cash = finite_number(cash_equity)
+    avail = finite_number(available)
+    if cash is None or avail is None or avail < 0 or cash <= 0 or cash < avail:
+        return None
+    return cash
+
+
 def reaches_limit(amount, limit) -> bool:
     """True se `amount` raggiunge `limit` (soglia di arresto, con tolleranza)."""
     return amount >= limit or math.isclose(amount, limit, rel_tol=EXPOSURE_REL_TOL, abs_tol=EXPOSURE_ABS_TOL)

@@ -2576,7 +2576,7 @@ class TradingEngine:
           bankroll noto meno l'esposizione aperta), quando il runtime la espone.
         Nessuna fonte leggibile => None => BLOCKED (`transient_cap_unavailable`).
         """
-        _ = payload
+        payload = payload if isinstance(payload, dict) else {}
         candidates = []
         rc = self.runtime_controller
         funds = None
@@ -2618,13 +2618,25 @@ class TradingEngine:
         open_exposure = getattr(tables, "total_exposure", None)
         if (callable(total_cap) and callable(open_exposure) and isinstance(bankroll, (int, float))
                 and not isinstance(bankroll, bool) and math.isfinite(bankroll) and bankroll > 0):
-            try:
-                headroom = float(total_cap(bankroll)) - float(open_exposure())
-            except Exception:
-                return None
-            if not math.isfinite(headroom):
-                return None
-            candidates.append(max(0.0, headroom))
+            # PFC-008: base = cassa verificata (decisione owner #426 c.6369802091), l'esposizione aperta si
+            # sottrae una sola volta. Percentuale non configurata/non valida o cassa non verificata => per un
+            # ingresso il cap non e' disponibile (BLOCKED); per un'uscita protettiva (hedge del cashout,
+            # `protective`) l'headroom non si puo' calcolare e resta il solo limite dei fondi disponibili:
+            # il blocco delle nuove entrate non ferma la riduzione dell'esposizione gia' aperta.
+            pct_reason = validators.risk_pct_reason(
+                "max_total_exposure_pct", getattr(getattr(mm, "config", None), "max_total_exposure_pct", None))
+            cap_base = validators.verified_cap_base(getattr(desk, "cash_equity_current", None), bankroll)
+            if pct_reason or cap_base is None:
+                if payload.get("protective") is not True:
+                    return None
+            else:
+                try:
+                    headroom = float(total_cap(cap_base)) - float(open_exposure())
+                except Exception:
+                    return None
+                if not math.isfinite(headroom):
+                    return None
+                candidates.append(max(0.0, headroom))
         return min(candidates) if candidates else None
 
     def _classify_ambiguity(self, exc: Exception) -> str:

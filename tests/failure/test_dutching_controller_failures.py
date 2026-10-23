@@ -47,6 +47,7 @@ class FakeConfig:
 
 class FakeRiskDesk:
     bankroll_current = 1000.0
+    cash_equity_current = 1000.0  # PFC-008: cassa verificata
 
 
 class FakeDuplicationGuard:

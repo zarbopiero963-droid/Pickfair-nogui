@@ -34,7 +34,11 @@ def q(x):
 
 # Parametro SIM dichiarato: soglia di lockdown alta, per isolare F026/F2 dal lockdown sul drawdown del disponibile
 # (base «caso peggiore», invariata: la base del drawdown e' una decisione owner aperta, D04 6.O2).
-SETTINGS = {"roserpina.lockdown_drawdown_pct": 60.0}
+# PFC-008 (M019): le percentuali di rischio non hanno piu' un default di codice; la harness le configura
+# esplicitamente con i valori che il loader metteva prima (3/18/35/18).
+SETTINGS = {"roserpina.lockdown_drawdown_pct": 60.0, "roserpina.target_profit_cycle_pct": 3.0,
+            "roserpina.max_single_bet_pct": 18.0, "roserpina.max_total_exposure_pct": 35.0,
+            "roserpina.max_event_exposure_pct": 18.0}
 
 
 def run(steps, home=None, settings=None, **flags):

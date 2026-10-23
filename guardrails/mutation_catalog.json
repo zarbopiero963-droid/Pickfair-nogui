@@ -2565,6 +2565,174 @@
         "tests/unit/test_pfc007_funds_unverifiable.py"
       ],
       "rationale": "PFC-007: fondi con errore (registro SIM incoerente, campo mancante) varrebbero come saldo valido: bankroll e baseline su dati non verificabili."
+    },
+    {
+      "id": "mm_risk_pct_missing_not_blocking",
+      "module": "core.money_management",
+      "area": "money_management",
+      "file": "core/money_management.py",
+      "original": "        pct_reason = validators.risk_pcts_reason(self.config)\n        if pct_reason:",
+      "mutated": "        pct_reason = validators.risk_pcts_reason(self.config)\n        if False:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008 M019: percentuale di rischio assente/non valida non bloccherebbe il MM (default permissivo)."
+    },
+    {
+      "id": "validators_risk_pct_range_unchecked",
+      "module": "core.validators",
+      "area": "money_management",
+      "file": "core/validators.py",
+      "original": "    if pct is None or pct <= 0 or pct > 100:\n        return f\"{name}_non_valido\"",
+      "mutated": "    if pct is None:\n        return f\"{name}_non_valido\"",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008 M019: percentuale 0, negativa o > 100 passerebbe come valida."
+    },
+    {
+      "id": "validators_cap_base_ignores_cash",
+      "module": "core.validators",
+      "area": "money_management",
+      "file": "core/validators.py",
+      "original": "    if cash is None or avail is None or avail < 0 or cash <= 0 or cash < avail:\n        return None\n    return cash",
+      "mutated": "    if cash is None or avail is None or avail < 0 or cash <= 0 or cash < avail:\n        return None\n    return avail",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Decisione owner #426 c.6369802091: i cap tornerebbero sul disponibile, esposizione sottratta due volte."
+    },
+    {
+      "id": "validators_cap_base_accepts_incoherent_cash",
+      "module": "core.validators",
+      "area": "money_management",
+      "file": "core/validators.py",
+      "original": "    if cash is None or avail is None or avail < 0 or cash <= 0 or cash < avail:",
+      "mutated": "    if cash is None or avail is None or avail < 0 or cash <= 0:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008: una cassa inferiore al disponibile (snapshot incoerente) diventerebbe base dei cap."
+    },
+    {
+      "id": "mm_cap_base_double_counts_exposure",
+      "module": "core.money_management",
+      "area": "money_management",
+      "file": "core/money_management.py",
+      "original": "        cap_base = validators.verified_cap_base(cap_base_cash, bankroll_current)\n        if cap_base is None:",
+      "mutated": "        cap_base = validators.verified_cap_base(cap_base_cash, bankroll_current) or bankroll_current\n        if cap_base is None:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Mandato owner PFC-008: senza cassa verificata il MM ricadrebbe sul disponibile invece di bloccare (BLOCKED)."
+    },
+    {
+      "id": "dutching_risk_pct_nan_fail_open",
+      "module": "controllers.dutching_controller",
+      "area": "money_management",
+      "file": "controllers/dutching_controller.py",
+      "original": "        pct_reason = validators.risk_pcts_reason(config, _DUTCHING_PCT_FIELDS)\n        if pct_reason:",
+      "mutated": "        pct_reason = validators.risk_pcts_reason(config, _DUTCHING_PCT_FIELDS)\n        if False:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008 M019: NaN/assente nel Dutching renderebbe sempre falso il confronto (fail-open)."
+    },
+    {
+      "id": "dutching_recovery_default_on",
+      "module": "controllers.dutching_controller",
+      "area": "money_management",
+      "file": "controllers/dutching_controller.py",
+      "original": "        allow_recovery = getattr(config, \"allow_recovery\", False) is True",
+      "mutated": "        allow_recovery = bool(getattr(config, \"allow_recovery\", True))",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008 M019: recovery attivo senza configurazione esplicita."
+    },
+    {
+      "id": "riskdesk_cash_survives_bankroll_sync",
+      "module": "core.risk_desk",
+      "area": "money_management",
+      "file": "core/risk_desk.py",
+      "original": "            # non e' piu' verificata (`sync_cash_equity` la rifissa).\n            self._invalidate_cash_locked(\"CASH_NOT_READ\")",
+      "mutated": "            # non e' piu' verificata (`sync_cash_equity` la rifissa).\n            pass",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008: cassa di una lettura precedente resterebbe base dei cap dopo un nuovo disponibile."
+    },
+    {
+      "id": "riskdesk_cash_from_other_reading",
+      "module": "core.risk_desk",
+      "area": "money_management",
+      "file": "core/risk_desk.py",
+      "original": "            if avail is None or avail != self.bankroll_current:",
+      "mutated": "            if avail is None:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008: cassa registrata da una lettura diversa da quella del bankroll corrente."
+    },
+    {
+      "id": "runtime_mm_without_verified_cash",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            bankroll_current=self.risk_desk.bankroll_current,\n            cap_base_cash=getattr(self.risk_desk, \"cash_equity_current\", None),  # PFC-008",
+      "mutated": "            bankroll_current=self.risk_desk.bankroll_current,\n            cap_base_cash=None,  # PFC-008",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Decisione owner #426 c.6369802091: il runtime non passerebbe la cassa verificata al MM."
+    },
+    {
+      "id": "microstake_headroom_double_counts_exposure",
+      "module": "core.trading_engine",
+      "area": "money_management",
+      "file": "core/trading_engine.py",
+      "original": "                if payload.get(\"protective\") is not True:\n                    return None",
+      "mutated": "                if True:\n                    return None",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Mandato owner PFC-008 punto 5: l'hedge del cashout (uscita protettiva) verrebbe bloccato da percentuali mancanti o cassa non verificata."
+    },
+    {
+      "id": "runtime_cash_total_mismatch_accepted",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if total is None or abs(cash - total) > cls._CASH_TOTAL_TOLERANCE:",
+      "mutated": "            if total is None:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Mandato owner PFC-008 punto 2: una ricostruzione SIM che non coincide con la cassa del broker varrebbe come verificata."
+    },
+    {
+      "id": "runtime_cash_reserve_double_counted",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if reserved is None or reserved < 0 or validators.exceeds_cap(reserved, committed):",
+      "mutated": "            if reserved is None or reserved < 0:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Mandato owner PFC-008 punto 2: riserve unmatched oltre l'esposizione (contate due volte) non bloccherebbero la cassa."
+    },
+    {
+      "id": "microstake_entry_without_cash_uses_funds",
+      "module": "core.trading_engine",
+      "area": "money_management",
+      "file": "core/trading_engine.py",
+      "original": "            if pct_reason or cap_base is None:",
+      "mutated": "            if pct_reason:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008: senza cassa verificata il cap temporaneo d'ingresso userebbe total_cap(None) => eccezione o base non verificata."
     }
   ]
 }

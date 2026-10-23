@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode
+from tests.risk_config_fixtures import legacy_test_config
 
 
 class _Bus:
@@ -30,7 +31,7 @@ class _DB:
 
 class _Settings:
     def load_roserpina_config(self):
-        cfg = RoserpinaConfig()
+        cfg = legacy_test_config()
         cfg.anti_duplication_enabled = False
         return cfg
 

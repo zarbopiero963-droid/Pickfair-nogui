@@ -25,6 +25,7 @@ import pytest
 
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode
+from tests.risk_config_fixtures import legacy_test_config
 from services.betfair_service import BetfairService
 
 
@@ -86,7 +87,7 @@ class _Settings:
         self.extra = dict(extra or {})
 
     def load_roserpina_config(self):
-        cfg = RoserpinaConfig()
+        cfg = legacy_test_config()
         cfg.anti_duplication_enabled = False
         cfg.max_daily_loss = 100.0
         cfg.max_drawdown_hard_stop_pct = 20.0
