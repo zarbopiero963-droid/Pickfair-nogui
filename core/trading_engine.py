@@ -900,10 +900,9 @@ class TradingEngine:
         Uno snapshot di reload non scritto significa che un riavvio ripartirebbe da uno stato precedente: nessuna
         NUOVA esposizione finche' una scrittura non riesce (``ensure_durable`` la ritenta, stato intero). Le uscite
         protettive non passano di qui (OrderRouter del cashout)."""
-        runtime = getattr(self, "runtime_controller", None)
-        mode_fn = getattr(runtime, "get_effective_execution_mode", None)
-        if not callable(mode_fn) or str(mode_fn() or "").upper() != "SIMULATION":
-            return ""
+        # Nessuna lettura della modalita' effettiva: `get_effective_execution_mode` verifica anche l'autorita' del
+        # runtime e ne registrerebbe la perdita qui invece che al suo controllo. Con LIVE dichiarato ma non
+        # consentito l'ordine va comunque al SIM: il gate vale per ogni broker SIM della sessione (fail-closed).
         broker = self._current_simulation_broker()
         ensure = getattr(broker, "ensure_durable", None)
         if not callable(ensure):
