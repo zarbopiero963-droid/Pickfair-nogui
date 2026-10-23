@@ -511,3 +511,32 @@ def test_quota_non_valida_per_l_exchange_non_cancella_il_consumo(quota):
         "availableToBack": [livello]}}]})
     _book(b, runners={1: (2.0, 2.02, 10.0)})
     assert b.state.orders[rep["betId"]].matched_size == pytest.approx(10.0)
+
+
+# --- sesto giro Codex su #542 -----------------------------------------------------------------------
+
+def test_l_ordine_piu_vecchio_esaurisce_i_livelli_prima_del_successivo():
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (2.0, 2.02, 100.0)})
+    _, vecchio = _place(b, "BACK", 3.5, 20.0)
+    _, nuovo = _place(b, "BACK", 3.5, 10.0)
+    b.update_market_book("1.1", {"status": "OPEN", "runners": [{"selectionId": 1, "status": "ACTIVE", "ex": {
+        "availableToBack": [{"price": 3.6, "size": 10.0}, {"price": 3.5, "size": 10.0}]}}]})
+    assert b.state.orders[vecchio["betId"]].matched_size == pytest.approx(20.0)
+    assert b.state.orders[nuovo["betId"]].matched_size == 0.0
+
+
+@pytest.mark.parametrize("guasto", ["assente", "vecchio"])
+def test_ledger_vivo_incoerente_blocca_l_abbinamento_differito(guasto):
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (2.0, 2.02, 10.0)})
+    _, rep = _place(b, "BACK", 2.0, 100.0)  # 10 abbinati
+    stato = json.loads(json.dumps(b.state.to_dict()))
+    if guasto == "assente":
+        stato["position_ledgers"] = {}
+    else:
+        next(iter(stato["position_ledgers"].values()))["snapshot"]["open_size"] = 3.0
+    nuovo = _broker(balance=1000.0)
+    nuovo.state.load_from_dict(stato)
+    _book(nuovo, runners={1: (2.0, 2.02, 30.0)})
+    assert nuovo.state.orders[rep["betId"]].matched_size == pytest.approx(10.0)

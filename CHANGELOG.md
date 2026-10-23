@@ -42,6 +42,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - modello della liquidita' consumata riscritto (rilievi Sol e Codex su #542): si toglie da ogni livello della
     scala e da tutti i runner, decade solo se la sua quota sparisce dalla scala di un book aperto e valido; un
     book e' valido solo con struttura corretta e quote > 1.0; gli id dei fill sono sempre liberi;
+  - abbinamento differito con priorita' temporale piena (l'ordine piu' vecchio esaurisce i livelli raggiungibili
+    prima del successivo) e solo se il PositionLedger vivo torna con la ricostruzione dei fill, come al
+    settlement (altrimenti nessun fill: il mercato resterebbe non regolabile);
   - due test che codificavano il credito anticipato (disponibile 1010 prima del settlement di BACK 10@3 +
     LAY 10@2, i due esiti sono +10 o 0) aggiornati a 1000; 4 mutazioni nuove, 3 di PFC-004 riallineate.
 - **PFC-004 — G7-a: il SimulationBroker riserva i fondi come Betfair (roadmap #461, decisione owner #531):**

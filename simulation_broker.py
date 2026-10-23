@@ -746,11 +746,20 @@ class SimulationBroker:
             logger.warning("Book SIM %s con prezzi/dimensioni non numerici: nessun abbinamento differito", market_id)
             return []
         try:
-            self._ricostruisci_fill_mercato_locked(market_id)
+            _, esposizioni = self._ricostruisci_fill_mercato_locked(market_id)
         except (TypeError, ValueError):
             # Codex su #542: con la contabilita' non verificabile nessun nuovo fill,
             # come per i nuovi ordini (fail-closed).
             logger.warning("Registro dei fill SIM del mercato %s incoerente: nessun abbinamento differito", market_id)
+            return []
+        # Il ledger vivo deve tornare con la ricostruzione, come al settlement
+        # (Codex su #542): un fill su un ledger mancante o vecchio renderebbe il
+        # mercato non piu' regolabile.
+        prefisso = f"{market_id}::"
+        vive = {int(l.snapshot().runner_id): float(l.snapshot().exposure)
+                for k, l in self.state.position_ledgers.items() if k.startswith(prefisso)}
+        if any(abs(vive.get(sel, 0.0) - esposizioni.get(sel, 0.0)) > 1e-6 for sel in set(vive) | set(esposizioni)):
+            logger.warning("Ledger SIM del mercato %s incoerente con i fill: nessun abbinamento differito", market_id)
             return []
         sospesi = set()
         for runner in market_book.get("runners") or []:
@@ -766,7 +775,13 @@ class SimulationBroker:
                     or int(order.selection_id) in sospesi or self._residuo(order) <= 0.0):
                 continue
             prima = float(order.matched_size)
-            self._match_order(order)
+            # Priorita' temporale (Codex su #542): l'ordine piu' vecchio esaurisce
+            # i livelli raggiungibili prima che si passi al successivo.
+            while order.status == "EXECUTABLE" and self._residuo(order) > 0.0:
+                gia = float(order.matched_size)
+                self._match_order(order)
+                if order.matched_size <= gia:
+                    break
             if order.matched_size > prima:
                 cambiati.append(order)
         if cambiati:
