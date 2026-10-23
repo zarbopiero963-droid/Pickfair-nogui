@@ -95,9 +95,12 @@ def test_sim_broker_snapshot_is_persisted_after_each_saga_operation():
     broker = SimulationBroker(starting_balance=100.0, db=db)
     port = SimulationExchangePort(broker)
     o = port.place(market_id="1.1", selection_id=7, side=Side.BACK, size=D("2.00"), price=D("3.00"), customer_ref="s1")
-    assert len(db.states) == 1 and o.bet_id in db.states[-1][1]["orders"], "stub non nello snapshot di reload"
+    # Dal PFC-006 anche il broker salva lo snapshot a ogni operazione: conta che l'ULTIMO snapshot
+    # di reload abbia lo stato giusto dopo ogni passo della saga, non quante scritture ci sono state.
+    assert db.states and o.bet_id in db.states[-1][1]["orders"], "stub non nello snapshot di reload"
+    scritture = len(db.states)
     port.cancel_reduction(o.bet_id, D("1.90"))
-    assert len(db.states) == 2 and db.states[-1][1]["orders"][o.bet_id]["size"] == pytest.approx(0.10)
+    assert len(db.states) > scritture and db.states[-1][1]["orders"][o.bet_id]["size"] == pytest.approx(0.10)
     assert broker.persist_snapshot() is True
     assert SimulationBroker(starting_balance=1.0).persist_snapshot() is False  # senza db: dichiarato, non silenzioso
 

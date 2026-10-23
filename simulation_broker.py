@@ -630,10 +630,16 @@ class SimulationBroker:
 
         for order in da_persistere:
             self._persist_order(order)
+        if da_persistere:
+            # PFC-006: fill differiti, decadenze e settlement durevoli nella
+            # fonte di reload, come piazzamento e cancellazione.
+            salvato = self._salva_snapshot()  # PFC-006: book
+        else:
+            salvato = None
         esito: Dict[str, Any] = {"ok": True, "market_id": market_id, "simulated": True}
         if esito_settlement is not None:
             esito.update(esito_settlement)
-        return esito
+        return self._con_durabilita(esito, salvato)
 
     @staticmethod
     def _chiave_liquidita(market_id: str, selection_id: int, lato: str, price: float) -> str:
@@ -1259,13 +1265,17 @@ class SimulationBroker:
             self._match_order(order)
             self.state.orders[order.bet_id] = order
         self._persist_order(order)
+        # PFC-006 (G7-c): l'ordine accettato e' durevole nella fonte di reload
+        # (lo snapshot `simulation_state`) prima della risposta: un crash subito
+        # dopo non deve far sparire l'ordine e liberare la sua riserva.
+        salvato = self._salva_snapshot()  # PFC-006: piazzamento
 
         # F8 (#453, #461 PR26): an accepted order that rests unmatched is a
         # Betfair SUCCESS with orderStatus EXECUTABLE, not a FAILURE. Only an
         # order that cannot rest (LAPSED: market already settled) is reported
         # as a failure, as before.
         accepted = order.matched_size > 0 or order.status != "LAPSED"
-        return {
+        return self._con_durabilita({
             "status": "SUCCESS",
             "marketId": order.market_id,
             "instructionReports": [
@@ -1278,7 +1288,7 @@ class SimulationBroker:
                 }
             ],
             "simulated": True,
-        }
+        }, salvato)
 
     def place_orders(
         self,
@@ -1341,6 +1351,7 @@ class SimulationBroker:
                 self._candidati_batch(str(market_id), instructions)):
             return self._rifiuto_fondi(str(market_id), len(instructions or []))
         reports = []
+        snapshot_fallito = False
         # NOTE: oltre al controllo dei fondi qui sopra, place_orders non e' atomico:
         # ogni istruzione valida passa da place_bet, e una gamba non valida non
         # ferma le altre.
@@ -1402,23 +1413,31 @@ class SimulationBroker:
                 })
                 continue
             reports.extend(result.get("instructionReports") or [])
+            if result.get("snapshot_persisted") is False:
+                snapshot_fallito = True
 
-        return {
+        return self._con_durabilita({
             "status": "SUCCESS",
             "marketId": str(market_id),
             "instructionReports": reports,
             "simulated": True,
-        }
+        }, False if snapshot_fallito else None)
 
     def persist_snapshot(self) -> bool:
         """Salva lo snapshot `simulation_state` (la fonte di RELOAD del broker).
 
         `_persist_order` scrive solo la cronologia per-bet: un processo che muore
-        dopo un `place_bet` ricostruirebbe il broker senza quell'ordine. La saga
-        Microstake lo chiama dopo ogni operazione (rilievo Codex PR #512).
+        dopo un `place_bet` ricostruirebbe il broker senza quell'ordine. Dal
+        PFC-006 il broker lo scrive da solo dopo ogni operazione che cambia
+        ordini o fondi (`_salva_snapshot`); la saga Microstake lo chiama
+        comunque dopo ogni operazione e ne conta i fallimenti (rilievo Codex PR #512).
         """
+        return bool(self._salva_snapshot())
+
+    def _salva_snapshot(self) -> Optional[bool]:
+        """True/False = snapshot scritto o no; None = nessun DB configurato (nulla da scrivere)."""
         if not (self.db and hasattr(self.db, "save_simulation_state")):
-            return False
+            return None
         try:
             # Salvataggio SOTTO il lock (rilievo Grok #512): due saghe concorrenti non possono
             # pubblicare uno snapshot piu' vecchio dopo uno piu' nuovo (lost update).
@@ -1429,6 +1448,18 @@ class SimulationBroker:
         except Exception:
             logger.exception("Errore save_simulation_state (persist_snapshot)")
             return False
+
+    @staticmethod
+    def _con_durabilita(risposta: Dict[str, Any], salvato: Optional[bool]) -> Dict[str, Any]:
+        """PFC-006 (Codex su #542): uno snapshot di reload NON scritto si dichiara nell'esito.
+
+        L'operazione e' avvenuta in memoria ma un riavvio ripartirebbe dallo
+        snapshot precedente: il chiamante lo deve sapere, non scoprirlo dopo.
+        """
+        if salvato is False:
+            risposta["snapshot_persisted"] = False
+            logger.error("SIM: operazione eseguita ma snapshot di reload NON scritto")
+        return risposta
 
     def best_counterparty_price(self, market_id: str, selection_id: int, side: str) -> Optional[float]:
         """Miglior prezzo della controparte sul book simulato, o None se assente.
@@ -1570,19 +1601,15 @@ class SimulationBroker:
                     if order.status == "EXECUTABLE":
                         order.status = "CANCELLED"
                         order.updated_at = datetime.utcnow().isoformat()
+                        da_persistere_cancel.append(order)
                         reports.append(
                             {
                                 "status": "SUCCESS",
                                 "sizeCancelled": max(0.0, order.size - order.matched_size),
                             }
                         )
-                return {
-                    "status": "SUCCESS",
-                    "instructionReports": reports,
-                    "simulated": True,
-                }
 
-            for item in instructions:
+            for item in instructions or []:
                 bet_id = str(item.get("betId") or item.get("bet_id") or "")
                 if not bet_id:
                     continue
@@ -1635,12 +1662,16 @@ class SimulationBroker:
         # sostituzione: un reload non deve resuscitare il residuo cancellato.
         for order in da_persistere_cancel:
             self._persist_order(order)
+        salvato = None
+        if da_persistere_cancel:
+            # PFC-006: anche lo snapshot di reload, non solo la cronologia per-bet.
+            salvato = self._salva_snapshot()  # PFC-006: cancellazione
 
-        return {
+        return self._con_durabilita({
             "status": "SUCCESS",
             "instructionReports": reports,
             "simulated": True,
-        }
+        }, salvato)
 
     def replace_orders(
         self,
@@ -1741,13 +1772,10 @@ class SimulationBroker:
         # Codex P2: durabilità sul reload-source.
         # Forza il salvataggio dello snapshot dello stato globale per garantire che
         # un restart non resusciti il vecchio ordine dallo snapshot simulation_state.
-        if self.db and hasattr(self.db, "save_simulation_state"):
-            try:
-                self.db.save_simulation_state("default", self.state.to_dict())
-            except Exception:
-                logger.exception("Errore save_simulation_state durante replace_orders")
+        # Sotto il lock (_salva_snapshot): nessuno snapshot piu' vecchio scritto dopo uno piu' nuovo.
+        salvato = self._salva_snapshot()
 
-        return {
+        return self._con_durabilita({
             "status": "SUCCESS",
             "marketId": new_order.market_id,
             "instructionReports": [
@@ -1759,7 +1787,7 @@ class SimulationBroker:
                 }
             ],
             "simulated": True,
-        }
+        }, salvato)
 
     # =========================================================
     # MATCHING

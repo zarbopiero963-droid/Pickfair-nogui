@@ -2552,6 +2552,20 @@
         "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
       "max_files": 8
+    },
+    "pfc006-g7c-sim-restart-durability": {
+      "description": "Roadmap canonica #461, PFC-006 = M010 G7-c + RST-EXEC (riavvio con ordine EXECUTABLE non abbinato), decisione owner #531, mandato owner del 23/10/2026. Il SimulationBroker scrive lo snapshot di reload dopo ogni operazione che cambia ordini o fondi (piazzamento, batch, cancellazione anche di tutto il mercato, sostituzione, fill differiti, settlement): un crash non fa sparire un ordine accettato ne' resuscita una cancellazione; uno snapshot NON scritto si dichiara nell'esito (snapshot_persisted: false), rilievo Codex rinviato da #542. Tocca solo simulation_broker.py in produzione (modalita' SIM, nessun effetto LIVE); un test della saga Microstake che contava le scritture ora verifica il contenuto dello snapshot; 3 mutazioni nuove, docs di verifica e tracciabilita'.",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/traceability/requirements.json",
+        "docs/verification/continuous_formal_verification.md",
+        "guardrails/mutation_catalog.json",
+        "simulation_broker.py",
+        "tests/test_pr512_codex_findings.py",
+        "tests/unit/test_pfc006_sim_restart_durability.py"
+      ],
+      "max_files": 8
     }
   }
 }

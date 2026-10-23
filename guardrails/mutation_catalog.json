@@ -2516,6 +2516,42 @@
         "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
       "rationale": "PFC-005 (Codex su #542): una dimensione NaN nel book varrebbe liquidita' illimitata e abbinerebbe tutto l'ordine."
+    },
+    {
+      "id": "recovery_sim_place_not_durable",
+      "module": "simulation_broker",
+      "area": "recovery",
+      "file": "simulation_broker.py",
+      "original": "        salvato = self._salva_snapshot()  # PFC-006: piazzamento",
+      "mutated": "        salvato = None",
+      "tests": [
+        "tests/unit/test_pfc006_sim_restart_durability.py"
+      ],
+      "rationale": "PFC-006: un crash subito dopo un piazzamento farebbe sparire l'ordine e liberare la sua riserva."
+    },
+    {
+      "id": "recovery_sim_cancel_not_durable",
+      "module": "simulation_broker",
+      "area": "recovery",
+      "file": "simulation_broker.py",
+      "original": "            salvato = self._salva_snapshot()  # PFC-006: cancellazione",
+      "mutated": "            salvato = None",
+      "tests": [
+        "tests/unit/test_pfc006_sim_restart_durability.py"
+      ],
+      "rationale": "PFC-006: un crash subito dopo una cancellazione resusciterebbe l'ordine EXECUTABLE."
+    },
+    {
+      "id": "recovery_sim_deferred_fill_not_durable",
+      "module": "simulation_broker",
+      "area": "recovery",
+      "file": "simulation_broker.py",
+      "original": "            salvato = self._salva_snapshot()  # PFC-006: book",
+      "mutated": "            salvato = None",
+      "tests": [
+        "tests/unit/test_pfc006_sim_restart_durability.py"
+      ],
+      "rationale": "PFC-006: fill differiti e settlement andrebbero persi a un crash (se il chiamante non salva lo snapshot)."
     }
   ]
 }
