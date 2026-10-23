@@ -398,6 +398,15 @@ jobs:
 
               try:
                   compared = compare_range(base, HEAD_SHA)
+                  # Force-push o rebase (rilievo Codex su #539): BEFORE_SHA non e'
+                  # antenato del nuovo head, la Compare API risponde lo stesso
+                  # (status "diverged") ma il range parte da un commit che non e'
+                  # piu' della PR, e la catena delle attestazioni si spezza. Si
+                  # rivede l'intera PR dalla base.
+                  if base != BASE_SHA and compared.get("status") not in ("ahead", "identical"):
+                      print(f"::notice::{REVIEW_ID}: {BEFORE_SHA[:12]} non e' antenato di {HEAD_SHA[:12]} "
+                            f"(status {compared.get('status')!r}, force-push?): review dell'intera PR")
+                      return BASE_SHA, HEAD_SHA, "force-push: intera PR", compare_range(BASE_SHA, HEAD_SHA)
                   return base, HEAD_SHA, scope, compared
               except Exception as first_error:
                   # BEFORE_SHA non più disponibile (es. force-push multi-commit):
@@ -681,8 +690,13 @@ jobs:
                       gh_request("PATCH", f"/repos/{REPO}/issues/comments/{existing['id']}", {"body": body})
                   else:
                       gh_request("POST", f"/repos/{REPO}/issues/{PR_NUMBER}/comments", {"body": body})
+                  return True
               except Exception as exc:
-                  print(f"::warning::{REVIEW_ID}: impossibile pubblicare il commento (PR non bloccata; abilita 'Read and write permissions' in Settings -> Actions -> General): {redact(str(exc))[:500]}")
+                  # PFC-002 (rilievo Codex su #539): una review non pubblicata non
+                  # e' leggibile da nessuno, quindi non copre niente. Il chiamante
+                  # rende incompleta l'attestazione e il check resta rosso.
+                  print(f"::error::{REVIEW_ID}: impossibile pubblicare il commento, copertura NON provata (abilita 'Read and write permissions' in Settings -> Actions -> General): {redact(str(exc))[:500]}")
+                  return False
 
           def call_model(system_prompt: str, user_prompt: str):
               payload = {
@@ -1031,7 +1045,7 @@ jobs:
                   )
               else:
                   motivo = "Nessun patch testuale analizzabile trovato."
-              upsert_comment(marker, f"""{marker}{done_marker if att["complete"] else ""}
+              pubblicato = upsert_comment(marker, f"""{marker}{done_marker if att["complete"] else ""}
           # GPT-6.1 Sol PR Review
 
           {motivo}
@@ -1047,6 +1061,10 @@ jobs:
 
           Modalità sicurezza: niente checkout, niente esecuzione codice PR, niente auto-merge.
           """[:64000])
+              if not pubblicato:
+                  scrivi_attestazione(range_base, range_head, plan, [], compare_truncated=compare_truncated,
+                                      esclusi=files_dal_base,
+                                      reasons=["commento della review non pubblicato: la review non e' leggibile"])
               sys.exit(0)
 
           system_prompt = """
@@ -1140,7 +1158,10 @@ jobs:
 
           # I lotti girano in parallelo: il tempo del job resta quello di una chiamata,
           # e il timeout del job (calcolato sul caso peggiore di UNA chiamata) regge.
-          with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(plan.batches))) as pool:
+          # Tutti i lotti nello stesso momento (al massimo MAX_REVIEW_CALLS): con
+          # meno worker che lotti le chiamate andrebbero in piu' ondate e il
+          # caso peggiore supererebbe il timeout del job (rilievo Codex su #539).
+          with concurrent.futures.ThreadPoolExecutor(max_workers=len(plan.batches)) as pool:
               risultati = list(pool.map(esegui_lotto, range(len(plan.batches))))
 
           att = scrivi_attestazione(range_base, range_head, plan, [r[4] for r in risultati],
@@ -1192,7 +1213,10 @@ jobs:
           Nota: questa review AI è un filtro tecnico, non sostituisce il controllo umano.
           """
 
-          upsert_comment(marker, body[:64000])
+          if not upsert_comment(marker, body[:64000]):
+              scrivi_attestazione(range_base, range_head, plan, [r[4] for r in risultati],
+                                  compare_truncated=compare_truncated, esclusi=files_dal_base,
+                                  reasons=["commento della review non pubblicato: la review non e' leggibile"])
           PY
 
       - name: Upload review coverage attestation

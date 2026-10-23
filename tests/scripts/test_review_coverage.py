@@ -136,7 +136,7 @@ def test_oltre_il_tetto_di_chiamate_nessun_lotto_viene_speso():
     assert any("tetto" in m for m in att["reasons"])
 
 
-def test_file_senza_patch_testo_blocca_binario_e_rename_no():
+def test_file_senza_patch_testo_e_binario_bloccano_rename_no():
     files = [
         {"filename": "img/logo.png", "patch": None, "changes": 10},
         {"filename": "rinominato.py", "patch": None, "changes": 0},
@@ -149,10 +149,17 @@ def test_file_senza_patch_testo_blocca_binario_e_rename_no():
     att = rc.build_attestation(reviewer="r", model="m", repo=REPO, pr=1, range_base=SHA_BASE, range_head=SHA_1,
                                run_id=1, run_attempt=1, workflow_file="w.yml", plan=plan, outcomes=[])
     assert att["complete"] is False and any("enorme.py" in m for m in att["reasons"])
+    # Rilievo Codex su #539: un binario non e' stato visto da nessuno => incompleta
     solo_binari = rc.plan_review(files[:2], max_segment_chars=7000, max_batch_chars=24000, max_calls=8)
     att2 = rc.build_attestation(reviewer="r", model="m", repo=REPO, pr=1, range_base=SHA_BASE, range_head=SHA_1,
                                 run_id=1, run_attempt=1, workflow_file="w.yml", plan=solo_binari, outcomes=[])
-    assert att2["complete"] is True and att2["binary_files"] == ["img/logo.png"]
+    assert att2["complete"] is False and att2["binary_files"] == ["img/logo.png"]
+    assert any("binari" in m and "img/logo.png" in m for m in att2["reasons"])
+    # un rename senza modifiche resta neutro
+    solo_rename = rc.plan_review(files[1:2], max_segment_chars=7000, max_batch_chars=24000, max_calls=8)
+    att3 = rc.build_attestation(reviewer="r", model="m", repo=REPO, pr=1, range_base=SHA_BASE, range_head=SHA_1,
+                                run_id=1, run_attempt=1, workflow_file="w.yml", plan=solo_rename, outcomes=[])
+    assert att3["complete"] is True
 
 
 # ---------------------------------------------------------------------------

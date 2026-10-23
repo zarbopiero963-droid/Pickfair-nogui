@@ -64,10 +64,11 @@ ACK_PREFIX = "SEGMENTI ESAMINATI:"
 _ACK_RE = re.compile(r"^\s*\**\s*SEGMENTI ESAMINATI\s*\**\s*:\s*(.*?)\s*\**\s*$", re.IGNORECASE)
 _SEG_ID_RE = re.compile(r"\bF\d{3}S\d{2,}\b")
 
-# File senza patch testuale che nessun revisore diff-only puo' leggere. Sono
-# dichiarati nell'attestazione e non bloccano: non contengono codice. Un file di
-# TESTO senza patch (GitHub omette il patch oltre una certa dimensione) invece
-# blocca: li' dentro c'e' codice che nessuno ha visto.
+# File senza patch testuale che nessun revisore diff-only puo' leggere. Rendono
+# INCOMPLETA l'attestazione, come un file di testo senza patch: un eseguibile, un
+# database o un archivio non sono stati visti da nessuno, e AGENTS.md vieta i
+# binari salvo richiesta (rilievo Codex su #539). Si distinguono solo nel motivo,
+# cosi' l'owner sa che cosa decidere. Restano fuori solo i rename senza modifiche.
 BINARY_SUFFIXES = (
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".svgz",
     ".pdf", ".zip", ".gz", ".tgz", ".xz", ".bz2", ".7z",
@@ -308,6 +309,11 @@ def build_attestation(
     if plan.budget_exceeded:
         motivi.append(
             f"servono {len(plan.batches)} chiamate, tetto {plan.max_calls}: nessun modello chiamato"
+        )
+    if plan.binary:
+        motivi.append(
+            "file binari che nessun revisore diff-only puo' leggere (decisione owner): "
+            + ", ".join(sorted(plan.binary)[:20])
         )
     if plan.unreviewable:
         motivi.append(

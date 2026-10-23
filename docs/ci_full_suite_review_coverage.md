@@ -136,8 +136,9 @@ workflow di Sol e Grok.
 - I segmenti si impacchettano in **lotti** entro `MAX_TOTAL_PATCH_CHARS`, nel
   testo esatto che finisce nel prompt. Un lotto corrisponde a una chiamata al
   modello.
-- I lotti girano in parallelo, quindi il job dura quanto una chiamata e il
-  timeout del job resta valido.
+- I lotti girano **tutti insieme**, uno per worker, quindi il job dura quanto una
+  chiamata e il timeout del job resta valido. Con meno worker che lotti le
+  chiamate andrebbero in più ondate (rilievo Codex su #539).
 - `MAX_PATCH_PER_FILE_CHARS` (7000 Sol / 5000 Grok) diventa la dimensione del
   segmento. `MAX_TOTAL_PATCH_CHARS` (24 000 / 18 000) diventa quella del lotto.
 - **Tetto di spesa:** `MAX_REVIEW_CALLS` (8). Se un range richiede più lotti, non
@@ -176,10 +177,15 @@ Rendono l'attestazione **incompleta**:
 - un lotto non revisionato;
 - un file di testo senza patch (GitHub non lo fornisce oltre una certa
   dimensione);
+- un file **binario**: un eseguibile, un database o un archivio non li ha visti
+  nessuno, e AGENTS.md vieta i binari salvo richiesta. Il motivo lo nomina, così
+  l'owner sa cosa decidere (rilievo Codex su #539);
 - la Compare API al tetto di 300 file;
-- il tetto di lotti superato.
+- il tetto di lotti superato;
+- il **commento della review non pubblicato** (403, 5xx): una review che nessuno
+  può leggere non copre niente (rilievo Codex su #539).
 
-I binari non bloccano, ma sono elencati. Il `done_marker` del commento, che
+Restano neutri solo i rename senza modifiche. Il `done_marker` del commento, che
 evita di ripagare lo stesso range, si scrive **solo** con attestazione completa.
 
 La dedup salta la review solo se esiste anche l'**artifact ufficiale** del range.
@@ -233,8 +239,10 @@ required soddisfatto.
 - *Push senza review completa* (per esempio provider in timeout): si rilancia
   quel run (re-run del job). Il nuovo tentativo produce l'attestazione per lo
   stesso range, e la dedup evita di ripagare i range già completi.
-- *Force-push*: il range passa per un head che non è più della PR. Chiudere e
-  riaprire la PR produce una review `base...head` dell'intera PR.
+- *Force-push o rebase*: il workflow lo riconosce da sé. Se il `before` del push
+  non è antenato del nuovo head (Compare API `status` diverso da
+  `ahead`/`identical`), rivede l'intera PR `base...head` invece del range della
+  push (rilievo Codex su #539).
 - *Artifact scaduti*: la conservazione è di 90 giorni. Riaprire la PR produce
   una review completa nuova.
 
