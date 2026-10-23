@@ -217,8 +217,11 @@ class SimulationState:
                 self.settlements[str(market_id)] = copy.deepcopy(record)
 
         self.fills = []
-        if isinstance(data.get("fills"), list):
-            for item in data["fills"]:
+        if "fills" in data:
+            # Registro presente: si usa solo se e' una lista; altrimenti resta vuoto
+            # e, con ordini abbinati, il registro non torna (fail-closed). Mai la
+            # ricostruzione dagli ordini, che perderebbe la cronologia dei fill.
+            for item in data["fills"] if isinstance(data["fills"], list) else []:
                 fill = _fill_valido(item)
                 if fill is not None:  # una voce scartata rende il registro incoerente: fail-closed
                     self.fills.append(fill)

@@ -176,6 +176,21 @@ def test_fill_persistito_malformato_e_un_rifiuto_pulito_non_un_eccezione(guasto)
     assert _chiuso(nuovo, "1.1", {1: "WINNER"})["settlement_status"] == "LEDGER_INCONSISTENT"
 
 
+@pytest.mark.parametrize("registro", [None, {}, "x", 7])
+def test_registro_dei_fill_presente_ma_non_lista_non_si_ricostruisce_dagli_ordini(registro):
+    # GPT-6.1 Sol su #542: "fills" presente ma non lista non e' uno stato precedente a PFC-005.
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (3.0, 3.1, 100.0)})
+    _place(b, "BACK", 3.0, 10.0)
+    stato = json.loads(json.dumps(b.state.to_dict()))
+    stato["fills"] = registro
+    nuovo = _broker(balance=1000.0)
+    nuovo.state.load_from_dict(stato)
+    assert nuovo.state.fills == []
+    assert nuovo.get_account_funds()["error"] == "FILL_LEDGER_INCONSISTENT"
+    assert _chiuso(nuovo, "1.1", {1: "WINNER"})["settlement_status"] == "LEDGER_INCONSISTENT"
+
+
 # --- liquidita' gia' consumata ----------------------------------------------------------------------
 
 def test_book_riletto_non_ripresenta_la_liquidita_gia_presa():
