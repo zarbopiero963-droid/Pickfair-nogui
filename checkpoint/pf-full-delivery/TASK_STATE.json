@@ -54,11 +54,12 @@
   "PR #530 fix loop 10 cicli: squash 2141031 (merge manuale owner sull'head 2ecc4a4); CI post-merge 12/12",
   "#534 PR29-b (PF-C29-01.17): squash 409bcf9 (merge autonomo safety-critical, fix loop 4/10); CI post-merge main 14/14 (12 sempre attivi + reconciliation-engine e dutching filtrati per percorso; test focalizzati skipped/advisory, backstop completo success)",
   "#536 PR #537 cicli fix 1-6 fino a ae10708 (seq 62-63)",
-  "#536 PR #537 MERGED 3bb4477 (autorizzazione owner); CI main 14/14; registri #536 c.6347834878, #453 c.6347836040, #506 c.6347837024 (seq 64)"
+  "#536 PR #537 MERGED 3bb4477 (autorizzazione owner); CI main 14/14; registri #536 c.6347834878, #453 c.6347836040, #506 c.6347837024 (seq 64)",
+  "PFC-002 PR #539 cicli fix 7-9 fino a 36feca0; verdetto READY_FOR_OWNER_MANUAL_MERGE (seq 70)"
  ],
- "lotto_corrente": "PFC-002 PR #539 aperta su 96d61de; STOP CREDITI ESAURITI Grok (xAI 403) sul range 50a8427...96d61de",
+ "lotto_corrente": "PFC-002 PR #539 su 36feca0: READY_FOR_OWNER_MANUAL_MERGE (IMPLEMENTATION READY / ENFORCEMENT PENDING OWNER); in attesa merge owner",
  "mandate_id": "PF-PFC002-EXECUTION-01 (owner 23/10/2026) su PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01",
- "next_atomic_action": "Attendere ricarica crediti xAI e \"prosegui\" owner. Poi: rerun Grok su 96d61de, triage Codex su 96d61de, CI settled (full-suite, mutation, Merge Readiness), risolvere i thread corretti, verdetto READY_FOR_OWNER_MANUAL_MERGE con IMPLEMENTATION READY / ENFORCEMENT PENDING OWNER. Nessun merge autonomo, nessun LIVE, PFC-003 non si apre.",
+ "next_atomic_action": "Attendere il merge MANUALE owner della #539 (READY_FOR_OWNER_MANUAL_MERGE, verdetto #539 c.6361041885). Dopo il merge: verificare merge SHA e CI post-merge su main, aggiornare #453/#461/#506, poi istruire/verificare il ruleset PICKFAIR-MAIN-PROTECTION (required checks, integration_id 15368) \u2014 ENFORCEMENT PENDING OWNER. Nessun merge autonomo, nessun LIVE, PFC-003 non si apre senza mandato.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [

@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 69,
- "updated_at": "2026-10-22T18:10:15Z",
+ "seq": 70,
+ "updated_at": "2026-10-23T08:44:10Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere ricarica crediti xAI e \"prosegui\" owner. Poi: rerun Grok su 96d61de, triage Codex su 96d61de, CI settled (full-suite, mutation, Merge Readiness), risolvere i thread corretti, verdetto READY_FOR_OWNER_MANUAL_MERGE con IMPLEMENTATION READY / ENFORCEMENT PENDING OWNER. Nessun merge autonomo, nessun LIVE, PFC-003 non si apre.",
+ "next_atomic_action": "Attendere il merge MANUALE owner della #539 (READY_FOR_OWNER_MANUAL_MERGE, verdetto #539 c.6361041885). Dopo il merge: verificare merge SHA e CI post-merge su main, aggiornare #453/#461/#506, poi istruire/verificare il ruleset PICKFAIR-MAIN-PROTECTION (required checks, integration_id 15368) — ENFORCEMENT PENDING OWNER. Nessun merge autonomo, nessun LIVE, PFC-003 non si apre senza mandato.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,8 +515,8 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "d3921afb3ec38d3f0582bc6ad0972e6f8dd5c8bd",
- "lotto_corrente": "PFC-002 PR #539 aperta su 96d61de; STOP CREDITI ESAURITI Grok (xAI 403) sul range 50a8427...96d61de",
+ "previous_checkpoint_sha": "c50f96fac8fc247af96d300e21734689a170e032",
+ "lotto_corrente": "PFC-002 PR #539 su 36feca0: READY_FOR_OWNER_MANUAL_MERGE (IMPLEMENTATION READY / ENFORCEMENT PENDING OWNER); in attesa merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -552,7 +552,8 @@
   "PR #530 fix loop 10 cicli: squash 2141031 (merge manuale owner sull'head 2ecc4a4); CI post-merge 12/12",
   "#534 PR29-b (PF-C29-01.17): squash 409bcf9 (merge autonomo safety-critical, fix loop 4/10); CI post-merge main 14/14 (12 sempre attivi + reconciliation-engine e dutching filtrati per percorso; test focalizzati skipped/advisory, backstop completo success)",
   "#536 PR #537 cicli fix 1-6 fino a ae10708 (seq 62-63)",
-  "#536 PR #537 MERGED 3bb4477 (autorizzazione owner); CI main 14/14; registri #536 c.6347834878, #453 c.6347836040, #506 c.6347837024 (seq 64)"
+  "#536 PR #537 MERGED 3bb4477 (autorizzazione owner); CI main 14/14; registri #536 c.6347834878, #453 c.6347836040, #506 c.6347837024 (seq 64)",
+  "PFC-002 PR #539 cicli fix 7-9 fino a 36feca0; verdetto READY_FOR_OWNER_MANUAL_MERGE (seq 70)"
  ],
  "lotti_pendenti": [
   "Decisione owner sui range numerici generali per 37 celle VALID",
@@ -601,11 +602,11 @@
  "mandate_id": "PF-PFC002-EXECUTION-01 (owner 23/10/2026) su PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01",
  "code": {
   "branch": "ccr-764b0316-9r1a1d",
-  "sha": "96d61defa9480a7e25e0cc1c5ff64b9c3dea5c89",
+  "sha": "36feca0c6ea81637a50c0a7e1614fce0f90bdc70",
   "patch": {
-   "head": "96d61defa9480a7e25e0cc1c5ff64b9c3dea5c89",
-   "tree": "0d38c410eca21e7da0a87a79f79f3faf9859eba9",
-   "captured_at": "2026-10-23T07:49:20+00:00",
+   "head": "36feca0c6ea81637a50c0a7e1614fce0f90bdc70",
+   "tree": "39775bb489a7f1352e1c594d34c439ccd3bba423",
+   "captured_at": "2026-10-23T08:44:10+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -1423,10 +1424,12 @@
  },
  "pfc002": {
   "pr": 539,
-  "head": "96d61defa9480a7e25e0cc1c5ff64b9c3dea5c89",
-  "fix_loop": "6/10",
-  "ci_measured": "e4ca0ec: full-suite 9049 raccolti/9029 passed/15 skipped/5 xfailed in 742s; 52.8 job-min, wall 15m43s (prima 342-391 job-min, 25-30 min)",
+  "head": "36feca0c6ea81637a50c0a7e1614fce0f90bdc70",
+  "fix_loop": "9/10",
+  "ci_measured": "36feca0: full-suite SUCCESS 9092 raccolti/9072 passed/15 skipped/5 xfailed in 702.6s (artifact 12489531139); mutation SUCCESS; Merge Readiness ready_to_merge; 52.8 job-min per push (prima 342-391)",
   "local": "regressione gate 9021 raccolti (2 transitori poi verdi), mutation 195 score 100 PASS, policy suite 2933 passed",
-  "stop": "CREDITI_ESAURITI Grok, #539 c.6360141896, #426 c.6360142758"
+  "stop": "risolto: crediti ricaricati dall'owner",
+  "reviews": "Sol pulito (copertura parziale: workflow base tronca); Grok 1 bloccante falso positivo diff-only (c.6360802222) + non-review su 96d61de...060b5ee; Codex 16 rilievi corretti, usage-limit su 36feca0; 16/16 thread risolti",
+  "verdict": "READY_FOR_OWNER_MANUAL_MERGE, #539 c.6361041885"
  }
 }
