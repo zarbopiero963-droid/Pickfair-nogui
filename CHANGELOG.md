@@ -10,6 +10,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **PFC-007 — fondi non verificabili non valgono come saldo (roadmap #461, M013 PF-FIN-02 residuo; #544):**
+  - `BetfairClient.get_account_funds`: un `availableToBetBalance`/`exposure` assente, non numerico o non finito
+    e' `None`, non 0.0: il servizio lo marca `BALANCE_FIELD_MISSING`;
+  - `BetfairService.get_account_funds` conserva l'`error` del broker (es. `FILL_LEDGER_INCONSISTENT` del SIM) e
+    `reserved_unmatched`; un valore non finito diventa `BALANCE_NOT_FINITE`, mai un saldo;
+  - `RuntimeController`: un payload con `error` non e' un conto valido (`_account_from_funds` ok=False). All'avvio
+    (`_applica_fondi_avvio`) bankroll e baseline del ciclo restano invariati e nessuna baseline viene persistita su
+    dati non validi; dopo il settlement nessuna sincronizzazione (`SYNC_FAILED_BALANCE_UNAVAILABLE`); `get_status`
+    allinea il bankroll solo a una lettura valida (prima un NaN arrivava a `sync_bankroll`);
+  - `TradingEngine`: con fondi in errore il cap temporaneo Microstake non e' disponibile (BLOCKED);
+  - `StreamingFeed` passa `numberOfWinners` dalla marketDefinition: il SimulationBroker calcola l'esposizione del
+    mercato a vincitore unico anche sui book dello stream (Dutching LAY);
+  - il gate dei fondi delle nuove entrate (PR28-e) NON conta due volte le riserve (verificato); il possibile
+    doppio conteggio nei cap percentuali di Money Management (base = disponibile netto piu' esposizione) resta
+    invariato in attesa di decisione owner; 1 mutazione nuova, `funds_gate_snapshot_error_ignored` ora equivalente
+    (seconda difesa dietro il nuovo controllo).
 - **PFC-006 — G7-c: riavvio con ordini SIM non abbinati (roadmap #461, decisione owner #531):**
   - il `SimulationBroker` scrive lo snapshot di reload (`simulation_state`) dopo ogni operazione che cambia
     ordini o fondi, prima di rispondere: piazzamento, batch, cancellazione (singola, parziale, di tutto il

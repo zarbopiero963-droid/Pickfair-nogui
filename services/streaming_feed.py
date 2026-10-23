@@ -752,6 +752,11 @@ class StreamingFeed:
             )
         if runners_out:
             out["runners"] = runners_out
+        # PFC-007 (#544): il numero di vincitori serve al SimulationBroker per l'esposizione del mercato
+        # (Dutching LAY a vincitore unico) e per distinguere un dead heat al settlement.
+        vincitori = getattr(market_definition, "number_of_winners", None)
+        if isinstance(vincitori, int) and not isinstance(vincitori, bool) and vincitori > 0:
+            out["numberOfWinners"] = vincitori
         return out
 
     def _coerce_price_ladder(self, points: Any) -> List[Dict[str, Any]]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -651,17 +652,34 @@ class BetfairService:
 
         try:
             funds = broker.get_account_funds() or {}
+
+            def _numero(chiave: str) -> Optional[float]:
+                try:
+                    valore = float(funds.get(chiave))
+                except (TypeError, ValueError):
+                    return None
+                return valore if math.isfinite(valore) else None
+
             out = {
-                "available": float(funds.get("available", 0.0) or 0.0),
-                "exposure": float(funds.get("exposure", 0.0) or 0.0),
-                "total": float(funds.get("total", 0.0) or 0.0),
+                "available": _numero("available") or 0.0,
+                "exposure": _numero("exposure") or 0.0,
+                "total": _numero("total") or 0.0,
                 "simulated": bool(funds.get("simulated", self.simulation_mode)),
             }
+            if funds.get("reserved_unmatched") is not None and _numero("reserved_unmatched") is not None:
+                out["reserved_unmatched"] = _numero("reserved_unmatched")
             # #461 PR28-e: un campo assente dal broker non vale 0 (OD-PF-RECON-02): il default resta per i
             # chiamanti esistenti, ma `error` rende il payload fondi non verificabili per il gate.
+            # PFC-007 (PF-FIN-02): l'errore del broker (es. FILL_LEDGER_INCONSISTENT del SIM) passa al
+            # chiamante, e un valore non numerico o non finito e' un errore, non un saldo.
             missing = [k for k in ("available", "exposure") if funds.get(k) is None]
-            if missing:
+            invalidi = [k for k in ("available", "exposure") if funds.get(k) is not None and _numero(k) is None]
+            if funds.get("error"):
+                out["error"] = str(funds.get("error"))
+            elif missing:
                 out["error"] = "BALANCE_FIELD_MISSING:" + ",".join(missing)
+            elif invalidi:
+                out["error"] = "BALANCE_NOT_FINITE:" + ",".join(invalidi)
             return out
         except Exception as exc:
             error_text = str(exc)

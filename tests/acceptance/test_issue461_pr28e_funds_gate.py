@@ -497,14 +497,15 @@ def test_auto_next_senza_tavolo_e_rifiutato():
 
 
 def test_auto_next_con_snapshot_del_settlement_in_errore_e_rifiutato():
-    # Codex r4330918407: risposta del broker senza exposure => BetfairService aggiunge `error`; lo snapshot del
-    # settlement deve conservarlo e l'auto-next rifiutare (fondi non verificabili).
+    # Codex r4330918407: risposta del broker senza exposure => BetfairService aggiunge `error`; l'auto-next va
+    # rifiutato. Dal PFC-007 (PF-FIN-02) il rifiuto arriva un passo prima: con `error` la sincronizzazione del
+    # bankroll dopo il settlement non avviene (bankroll invariato), quindi l'auto-next si ferma li'.
     rc, bus, esito = _auto_next(
         {"market_id": "1.2", "selection_id": 2, "price": 2.0, "stake": 2.0, "bet_type": "BACK"},
         funds={"available": 150.0, "exposure": 0.0, "error": "BALANCE_FIELD_MISSING:exposure"},
     )
     assert [e for e in bus.events if e[0] == "CMD_QUICK_BET"] == [], esito
-    assert esito["reason"] == "fondi_non_verificabili", esito
+    assert esito["reason"] == "bankroll_sync_not_success", esito
 
 
 def test_lettura_iniziata_prima_del_success_vede_ancora_la_riserva_rilasciata(tmp_path):
