@@ -346,3 +346,36 @@ def test_fill_id_ripetuto_nel_registro_persistito_e_incoerente():
     nuovo.state.load_from_dict(stato)
     fondi = nuovo.get_account_funds()
     assert fondi["error"] == "FILL_LEDGER_INCONSISTENT" and fondi["available"] == 0.0
+
+
+@pytest.mark.parametrize("campo,valore", [("price", 100.0), ("side", "LAY"), ("selection_id", 9)])
+def test_fill_persistito_con_metadati_diversi_dall_ordine_e_incoerente(campo, valore):
+    # Codex su #542: quota del primo fill portata a 100 dopo BACK 10@3 + LAY 10@2 => disponibile 30.
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (3.0, 3.1, 100.0)})
+    _place(b, "BACK", 3.0, 10.0)
+    _book(b, runners={1: (1.98, 2.0, 100.0)})
+    _place(b, "LAY", 2.0, 10.0)
+    stato = json.loads(json.dumps(b.state.to_dict()))
+    stato["fills"][0][campo] = valore
+    nuovo = _broker(balance=1000.0)
+    nuovo.state.load_from_dict(stato)
+    assert nuovo.get_account_funds()["error"] == "FILL_LEDGER_INCONSISTENT"
+    assert _chiuso(nuovo, "1.1", {1: "WINNER"})["settlement_status"] == "LEDGER_INCONSISTENT"
+
+
+@pytest.mark.parametrize("prezzo,dimensione", [(2.5, float("nan")), (float("inf"), 100.0), (float("nan"), 100.0)])
+def test_valori_non_finiti_nel_book_non_abbinano(prezzo, dimensione):
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (1.8, 1.82, 100.0)})
+    _, rep = _place(b, "BACK", 2.0, 60.0)
+    b.update_market_book("1.1", {"status": "OPEN", "runners": [{"selectionId": 1, "status": "ACTIVE", "ex": {
+        "availableToBack": [{"price": prezzo, "size": dimensione}]}}]})
+    assert b.state.orders[rep["betId"]].matched_size == 0.0 and b.state.fills == []
+
+
+def test_dimensione_nan_al_piazzamento_non_vale_liquidita_illimitata():
+    b = _broker(balance=1000.0)
+    b.update_market_book("1.1", {"status": "OPEN", "runners": [{"selectionId": 1, "status": "ACTIVE", "ex": {
+        "availableToBack": [{"price": 2.5, "size": float("nan")}]}}]})
+    assert _place(b, "BACK", 2.0, 60.0)[1]["sizeMatched"] == 0.0

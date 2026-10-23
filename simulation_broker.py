@@ -689,8 +689,10 @@ class SimulationBroker:
                     if valore is None:
                         continue
                     try:
-                        float(valore)
+                        numerico = float(valore)
                     except (TypeError, ValueError):
+                        return False
+                    if not math.isfinite(numerico):
                         return False
         return True
 
@@ -778,7 +780,10 @@ class SimulationBroker:
             visti.add(fill["fill_id"])
             selezione = int(fill["selection_id"])
             size = float(fill["size"])
-            per_ordine[str(fill.get("bet_id"))] = per_ordine.get(str(fill.get("bet_id")), 0.0) + size
+            voce = per_ordine.setdefault(str(fill.get("bet_id")), {"size": 0.0, "nozionale": 0.0, "chiavi": set()})
+            voce["size"] += size
+            voce["nozionale"] += size * float(fill["price"])
+            voce["chiavi"].add((selezione, str(fill["side"])))
             ledger = ledgers.get(selezione)
             if ledger is None:
                 ledger = PositionLedger(market_id=market_id, runner_id=selezione)
@@ -799,7 +804,17 @@ class SimulationBroker:
         for order in self.state.orders.values():
             if str(order.market_id) != market_id:
                 continue
-            if abs(per_ordine.pop(order.bet_id, 0.0) - float(order.matched_size)) > 1e-6:
+            voce = per_ordine.pop(order.bet_id, None)
+            if voce is None:
+                if float(order.matched_size) > 1e-6:
+                    raise _RegistroFillIncoerente(f"ordine {order.bet_id} abbinato senza fill")
+                continue
+            # Codex su #542: non basta l'importo, anche runner, lato e quota media
+            # dei fill devono essere quelli dell'ordine.
+            media = voce["nozionale"] / voce["size"] if voce["size"] > 0.0 else 0.0
+            if (abs(voce["size"] - float(order.matched_size)) > 1e-6
+                    or voce["chiavi"] != {(int(order.selection_id), order.side)}
+                    or abs(media - float(order.avg_price_matched)) > 1e-6 * max(1.0, media)):
                 raise _RegistroFillIncoerente(f"fill dell'ordine {order.bet_id} incoerenti con l'abbinato")
         if per_ordine:
             raise _RegistroFillIncoerente(f"fill senza ordine: {sorted(per_ordine)}")
@@ -1755,7 +1770,9 @@ class SimulationBroker:
         best_price = float(best_counter.get("price") or 0.0)
         available_size = float(best_counter.get("size") or 0.0)
 
-        if best_price <= 1.0:
+        # Codex su #542: una dimensione NaN farebbe saltare entrambi i rami
+        # "available_size > 0" e varrebbe come liquidita' illimitata.
+        if not math.isfinite(best_price) or not math.isfinite(available_size) or best_price <= 1.0:
             order.status = "EXECUTABLE"
             return
 

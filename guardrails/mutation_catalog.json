@@ -2504,6 +2504,18 @@
         "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
       "rationale": "PFC-005: un book riletto ripresenterebbe la liquidita' gia' presa e la SIM sovrastimerebbe i fill."
+    },
+    {
+      "id": "live_safety_sim_nan_liquidity_unlimited",
+      "module": "simulation_broker",
+      "area": "live_safety",
+      "file": "simulation_broker.py",
+      "original": "        if not math.isfinite(best_price) or not math.isfinite(available_size) or best_price <= 1.0:",
+      "mutated": "        if best_price <= 1.0:",
+      "tests": [
+        "tests/unit/test_pfc005_sim_fill_transitions.py"
+      ],
+      "rationale": "PFC-005 (Codex su #542): una dimensione NaN nel book varrebbe liquidita' illimitata e abbinerebbe tutto l'ordine."
     }
   ]
 }

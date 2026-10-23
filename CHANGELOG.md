@@ -33,6 +33,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     la cassa risultava sovrastimata); un book con prezzi/dimensioni non numerici non abbina nessun ordine a
     riposo (prima si fermava a meta' ciclo); la liquidita' consumata sopravvive a sospensioni e scale vuote e,
     per uno stato precedente a PFC-005, si ricostruisce dai fill;
+  - ogni ordine deve tornare con i suoi fill anche per runner, lato e quota media, non solo per importo; un
+    prezzo o una dimensione NaN/infinita nel book non abbina (prima una dimensione NaN valeva "illimitata",
+    anche al piazzamento);
   - due test che codificavano il credito anticipato (disponibile 1010 prima del settlement di BACK 10@3 +
     LAY 10@2, i due esiti sono +10 o 0) aggiornati a 1000; 4 mutazioni nuove, 3 di PFC-004 riallineate.
 - **PFC-004 — G7-a: il SimulationBroker riserva i fondi come Betfair (roadmap #461, decisione owner #531):**
