@@ -248,21 +248,29 @@ def _zip(*contenuti: dict) -> bytes:
 
 
 class FakeGitHub(rc.GitHub):
-    def __init__(self, runs, artifacts, commits=(SHA_1, SHA_2, SHA_3), base_ancestors=()):
+    def __init__(self, runs, artifacts, commits=(SHA_1, SHA_2, SHA_3), base_ancestors=(), comments=(),
+                 expired=()):
         super().__init__(REPO, "token")
         self.runs = runs
         self.artifacts = artifacts  # run_id -> list[(name, bytes)]
         self.commits = list(commits)
         self.base_ancestors = set(base_ancestors)
+        self.comments = list(comments)
+        self.expired = set(expired)  # run_id con artifact scaduti
 
     def get(self, path):
         if "/pulls/7/commits" in path:
             return [{"sha": s} for s in self.commits] if "page=1" in path else []
+        if path.split("?")[0].endswith("/pulls/7"):
+            return {"created_at": "2026-10-01T00:00:00Z", "head": {"ref": "feature"}}
+        if "/issues/7/comments" in path:
+            return self.comments if "page=1" in path else []
         if "/actions/workflows/" in path:
             return {"workflow_runs": self.runs} if "page=1" in path else {"workflow_runs": []}
         if path.endswith("/artifacts?per_page=100"):
             run_id = int(path.split("/runs/")[1].split("/")[0])
-            return {"artifacts": [{"name": n, "archive_download_url": f"zip:{run_id}:{i}", "expired": False}
+            return {"artifacts": [{"name": n, "archive_download_url": f"zip:{run_id}:{i}",
+                                   "expired": run_id in self.expired}
                                   for i, (n, _b) in enumerate(self.artifacts.get(run_id, []))]}
         if "/compare/" in path:
             sha = path.split("/compare/")[1].split("...")[0]
@@ -275,7 +283,7 @@ class FakeGitHub(rc.GitHub):
 
 
 def _run(run_id, head, event="pull_request_target", path=".github/workflows/pr-review.yml"):
-    return {"id": run_id, "head_sha": head, "event": event, "path": path}
+    return {"id": run_id, "head_sha": head, "event": event, "path": path, "status": "completed"}
 
 
 def test_solo_i_run_ufficiali_del_workflow_del_revisore_contano():
@@ -530,11 +538,322 @@ def test_bloccanti_della_review_sul_head_rendono_rossa_la_verifica(monkeypatch, 
     assert code == 1 and any("non registrato" in m for m in out["reasons"])
 
 
-def test_bloccanti_di_un_range_precedente_non_bloccano_il_head_pulito(monkeypatch, tmp_path):
-    # Come validate_review: conta la review del range che termina sul head.
-    nome = "review-coverage-gpt56sol-x"
+# ---------------------------------------------------------------------------
+# Persistenza dei bloccanti (decisione owner D1-D4 su #539): un bloccante resta
+# aperto attraverso rerun, push successivi, commit vuoti, merge di main,
+# modifiche di titolo e force-push, finche' l'owner non registra il triage.
+# ---------------------------------------------------------------------------
+NOME_ART = "review-coverage-gpt56sol-x"
+BLOCCANTE = "[lotto 1/2] money.py: stake raddoppiato"
+
+
+def _commento_triage(bid, *, login="owner", assoc="OWNER", app=None, modificato=False,
+                     motivo="falso positivo: lo stake e' calcolato una volta sola in money.py, vedi test_x",
+                     reviewer="gpt56sol"):
+    return {"user": {"login": login}, "author_association": assoc, "performed_via_github_app": app,
+            "created_at": "2026-10-23T09:00:00Z",
+            "updated_at": "2026-10-23T09:05:00Z" if modificato else "2026-10-23T09:00:00Z",
+            "body": f"<!-- pfc-triage-bloccante:{reviewer}:{bid} -->\n{motivo}"}
+
+
+def _catena_con_bloccante_vecchio(**kw):
+    """BASE..1 con un bloccante, 1..2 pulito: il caso del commit vuoto / merge di main (D2)."""
     runs = [_run(11, SHA_1), _run(12, SHA_2)]
-    vecchia = _attestazione(SHA_BASE, SHA_1, 11, bloccanti=["[lotto 1/1] vecchio rilievo"])
-    gh = FakeGitHub(runs, {11: [(nome, _zip(vecchia))]})
+    vecchia = _attestazione(SHA_BASE, SHA_1, 11, bloccanti=[BLOCCANTE])
+    return FakeGitHub(runs, {11: [(NOME_ART, _zip(vecchia))]}, **kw)
+
+
+def test_d2_bloccante_di_un_range_precedente_resta_aperto(monkeypatch, tmp_path):
+    # Prima: conta solo il range sul head, quindi un commit vuoto o un merge di
+    # main (range senza segmenti, review "pulita") rendeva verde il check.
+    code, out = _verify(monkeypatch, tmp_path, _catena_con_bloccante_vecchio(), SHA_2,
+                        locale=_attestazione(SHA_1, SHA_2, 12))
+    assert code == 1 and out["ok"] is False
+    bid = rc.blocker_id("gpt56sol", BLOCCANTE, f"{SHA_BASE}...{SHA_1}")
+    assert any(bid in m and "stake raddoppiato" in m for m in out["reasons"])
+    assert out["open_blockers"][0]["id"] == bid
+
+
+def test_d1_bloccante_di_un_tentativo_incompleto_sopravvive_al_rerun(monkeypatch, tmp_path):
+    # Tentativo 1: un lotto trova il bloccante, un altro e' troncato (incompleta).
+    # Tentativo 2 dello stesso run: review pulita e completa. Prima la verifica
+    # scartava l'incompleta e il bloccante spariva.
+    incompleta = _attestazione(SHA_BASE, SHA_1, 4242, completa=False, bloccanti=[BLOCCANTE])
+    pulita = dict(_attestazione(SHA_BASE, SHA_1, 4242), run_attempt=2)
+    gh = FakeGitHub([_run(4242, SHA_1)], {4242: [("review-coverage-gpt56sol-a1", _zip(incompleta)),
+                                                 ("review-coverage-gpt56sol-a2", _zip(pulita))]})
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_1)
+    assert code == 1 and any("stake raddoppiato" in m for m in out["reasons"])
+
+
+def test_bloccante_su_un_commit_tolto_dal_force_push_resta_aperto(monkeypatch, tmp_path):
+    # Il run del commit riscritto e' ancora della PR (pull_requests), il suo
+    # head non e' piu' fra i commit: il bloccante non deve sparire.
+    riscritto = "f" * 40
+    vecchio = dict(_run(10, riscritto), pull_requests=[{"number": 7}])
+    runs = [vecchio, _run(11, SHA_1)]
+    arts = {10: [(NOME_ART, _zip(_attestazione(SHA_BASE, riscritto, 10, bloccanti=[BLOCCANTE])))],
+            11: [(NOME_ART, _zip(_attestazione(SHA_BASE, SHA_1, 11)))]}
+    code, out = _verify(monkeypatch, tmp_path, FakeGitHub(runs, arts), SHA_1)
+    assert code == 1 and any("stake raddoppiato" in m for m in out["reasons"])
+
+
+def test_triage_dell_owner_chiude_il_bloccante(monkeypatch, tmp_path):
+    bid = rc.blocker_id("gpt56sol", BLOCCANTE, f"{SHA_BASE}...{SHA_1}")
+    gh = _catena_con_bloccante_vecchio(comments=[_commento_triage(bid)])
     code, out = _verify(monkeypatch, tmp_path, gh, SHA_2, locale=_attestazione(SHA_1, SHA_2, 12))
     assert code == 0 and out["ok"] is True
+    assert out["triaged_blockers"] == [bid]
+
+
+@pytest.mark.parametrize("variante", [
+    {"app": {"slug": "claude"}},           # pubblicato da un'app: e' l'agente, non l'owner
+    {"modificato": True},                  # commento modificato dopo la pubblicazione
+    {"login": "altro", "assoc": "MEMBER"},  # non e' l'owner del repository
+    {"assoc": "COLLABORATOR"},
+    {"motivo": ""},                        # senza motivazione documentata
+    {"reviewer": "grok46"},                # triage di un altro revisore
+])
+def test_triage_non_valido_non_chiude_niente(variante, monkeypatch, tmp_path):
+    bid = rc.blocker_id("gpt56sol", BLOCCANTE, f"{SHA_BASE}...{SHA_1}")
+    gh = _catena_con_bloccante_vecchio(comments=[_commento_triage(bid, **variante)])
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_2, locale=_attestazione(SHA_1, SHA_2, 12))
+    assert code == 1 and out["ok"] is False
+
+
+def test_id_del_bloccante_stabile_fra_lotti_e_rerun_dello_stesso_range():
+    # stesso range = stesso piano dei lotti: l'etichetta del lotto e' stabile
+    rng = f"{SHA_BASE}...{SHA_1}"
+    a = rc.blocker_id("gpt56sol", "[lotto 1/2] money.py: stake   raddoppiato", rng)
+    b = rc.blocker_id("gpt56sol", "[lotto 1/2]  Money.py: stake raddoppiato", rng)
+    assert a == b and re.fullmatch(r"[0-9a-f]{12}", a)
+    assert rc.blocker_id("grok46", "money.py: stake raddoppiato", rng) != a
+
+
+def test_id_dipende_dal_range_un_triage_non_copre_le_ripetizioni(monkeypatch, tmp_path):
+    # Secondo audit su #539: l'id senza range faceva valere un triage per ogni
+    # ripetizione dello stesso testo, compreso il bloccante sintetico
+    # "lotto non leggibile", che nasconde il contenuto vero del lotto.
+    sintetico = "[lotto 1/1] sezione Bloccanti assente, vuota o duplicata: lotto non leggibile"
+    assert rc.blocker_id("gpt56sol", sintetico, f"{SHA_BASE}...{SHA_1}") != \
+        rc.blocker_id("gpt56sol", sintetico, f"{SHA_1}...{SHA_2}")
+    primo = rc.blocker_id("gpt56sol", sintetico, f"{SHA_BASE}...{SHA_1}")
+    runs = [_run(11, SHA_1), _run(12, SHA_2)]
+    gh = FakeGitHub(runs, {11: [(NOME_ART, _zip(_attestazione(SHA_BASE, SHA_1, 11, bloccanti=[sintetico])))]},
+                    comments=[_commento_triage(primo)])
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_2,
+                        locale=_attestazione(SHA_1, SHA_2, 12, bloccanti=[sintetico]))
+    assert code == 1 and primo in out["triaged_blockers"]
+    assert any("lotto non leggibile" in m for m in out["reasons"])
+
+
+def test_run_della_pr_in_corso_rende_rossa_anche_una_catena_completa(monkeypatch, tmp_path):
+    # Secondo audit su #539: con un range dal base (force-push, reopen) la
+    # catena e' completa con la sola attestazione locale; il run del push
+    # precedente, ancora in corso, non era aspettato e i suoi bloccanti sparivano.
+    monkeypatch.setenv("GITHUB_RUN_ID", "12")
+    in_corso = dict(_run(10, SHA_1), status="in_progress")
+    gh = FakeGitHub([in_corso, dict(_run(12, SHA_2), status="in_progress")], {})
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_2, locale=_attestazione(SHA_BASE, SHA_2, 12))
+    assert code == 1 and any("in corso" in m for m in out["reasons"])
+
+
+def test_run_in_corso_si_aspetta_e_poi_si_leggono_i_suoi_bloccanti(monkeypatch, tmp_path):
+    monkeypatch.setenv("GITHUB_RUN_ID", "12")
+    in_corso = dict(_run(10, SHA_1), status="in_progress")
+    gh = FakeGitHub([in_corso, dict(_run(12, SHA_2), status="in_progress")], {})
+
+    def finisce(_secondi):
+        in_corso["status"] = "completed"
+        gh.artifacts[10] = [(NOME_ART, _zip(_attestazione(SHA_BASE, SHA_1, 10, bloccanti=[BLOCCANTE])))]
+    monkeypatch.setattr(rc.time, "sleep", finisce)
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setattr(rc, "GitHub", lambda repo, token: gh)
+    loc = tmp_path / "l.json"
+    loc.write_text(json.dumps(_attestazione(SHA_BASE, SHA_2, 12)))
+    out_path = tmp_path / "o.json"
+    code = rc.main(["verify", "--repo", REPO, "--pr", "7", "--reviewer", "gpt56sol", "--workflow-file",
+                    "pr-review.yml", "--base-sha", SHA_BASE, "--head-sha", SHA_2, "--output", str(out_path),
+                    "--local-attestation", str(loc), "--wait-seconds", "600", "--poll-seconds", "1"])
+    out = json.loads(out_path.read_text())
+    assert code == 1 and any("stake raddoppiato" in m for m in out["reasons"])
+
+
+def test_esito_non_registrato_e_artifact_scaduto_si_possono_triagiare(monkeypatch, tmp_path):
+    # Liveness (secondo audit): senza un id la PR restava rossa per sempre.
+    strana = dict(_attestazione(SHA_BASE, SHA_1, 11), blocking_findings="?")
+    runs = [_run(11, SHA_1), _run(12, SHA_2), _run(13, SHA_2)]
+    arts = {11: [(NOME_ART, _zip(strana))], 13: [("review-coverage-gpt56sol-vecchio", b"x")]}
+    gh = FakeGitHub(runs, arts, expired={13})
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_2, locale=_attestazione(SHA_1, SHA_2, 12))
+    assert code == 1
+    ids = [b["id"] for b in out["open_blockers"]]
+    assert len(ids) == 2 and all(re.fullmatch(r"[0-9a-f]{12}", i) for i in ids)
+    gh2 = FakeGitHub(runs, arts, expired={13}, comments=[_commento_triage(i) for i in ids])
+    code, out = _verify(monkeypatch, tmp_path, gh2, SHA_2, locale=_attestazione(SHA_1, SHA_2, 12))
+    assert code == 0, out["reasons"]
+
+
+def test_artifact_scaduto_della_pr_e_rosso(monkeypatch, tmp_path):
+    # Un artifact scaduto puo' contenere bloccanti: non si sa, quindi rosso.
+    gh = _catena_con_bloccante_vecchio(expired={11})
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_2, locale=_attestazione(SHA_1, SHA_2, 12))
+    assert code == 1 and any("scadut" in m for m in out["reasons"])
+
+
+def test_storico_dei_run_non_letto_per_intero_e_rosso(monkeypatch, tmp_path):
+    class Piena(FakeGitHub):
+        def get(self, path):
+            if "/actions/workflows/" in path and "event=pull_request_target" in path:
+                riempitivo = [{"id": 900000 + i, "head_sha": "e" * 40, "event": "pull_request_target",
+                               "path": ".github/workflows/pr-review.yml"} for i in range(100)]
+                return {"workflow_runs": (self.runs if "page=1&" in path or path.endswith("page=1") else [])
+                        + riempitivo}
+            return super().get(path)
+    gh = Piena([_run(11, SHA_1)], {11: [(NOME_ART, _zip(_attestazione(SHA_BASE, SHA_1, 11)))]})
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_1)
+    assert code == 1 and any("storico" in m for m in out["reasons"])
+
+
+def test_attestazione_di_versione_precedente_senza_campo_non_blocca_ma_si_annota(monkeypatch, tmp_path):
+    vecchia = _attestazione(SHA_BASE, SHA_1, 11)
+    del vecchia["blocking_findings"]
+    gh = FakeGitHub([_run(11, SHA_1), _run(12, SHA_2)], {11: [(NOME_ART, _zip(vecchia))]})
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_2, locale=_attestazione(SHA_1, SHA_2, 12))
+    assert code == 0 and any("versione precedente" in n for n in out["notes"])
+
+
+# ---------------------------------------------------------------------------
+# Terzo audit indipendente su #539
+# ---------------------------------------------------------------------------
+def test_run_in_corso_legato_alla_pr_solo_dal_branch_si_aspetta(monkeypatch, tmp_path):
+    # Head riscritto da un force-push e `pull_requests` vuoto: il run e' della
+    # PR solo per il branch. Prima `runs_in_corso` non lo vedeva e il check del
+    # nuovo head era verde prima che il run caricasse i suoi bloccanti.
+    monkeypatch.setenv("GITHUB_RUN_ID", "12")
+    vecchio = dict(_run(10, "f" * 40), status="in_progress", head_branch="feature", pull_requests=[])
+    gh = FakeGitHub([vecchio, dict(_run(12, SHA_2), status="in_progress")], {})
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_2, locale=_attestazione(SHA_BASE, SHA_2, 12))
+    assert code == 1 and any("in corso" in m for m in out["reasons"])
+
+
+def test_bloccanti_dell_attestazione_locale_incompleta_contano(monkeypatch, tmp_path):
+    # L'artifact di questo run puo' non essere ancora elencato: i bloccanti
+    # della sua attestazione, anche incompleta, si leggono dal file locale.
+    runs = [_run(11, SHA_1), _run(12, SHA_1)]
+    arts = {11: [(NOME_ART, _zip(_attestazione(SHA_BASE, SHA_1, 11)))]}
+    loc = _attestazione(SHA_BASE, SHA_1, 12, completa=False, bloccanti=[BLOCCANTE])
+    code, out = _verify(monkeypatch, tmp_path, FakeGitHub(runs, arts), SHA_1, locale=loc)
+    assert code == 1 and any("stake raddoppiato" in m for m in out["reasons"])
+
+
+def test_lotto_con_risposta_incompleta_non_crea_bloccanti_sintetici():
+    # Liveness: un errore del provider o un troncamento rendono gia' incompleta
+    # la copertura; il marcatore «lotto non leggibile» lo trasformava anche in
+    # un bloccante persistente, da triagiare dopo ogni errore transitorio.
+    # I bloccanti reali estratti dal testo parziale restano.
+    errore = {"indice": 1, "totale": 3, "text": "HTTP 401 no credit", "completo": False}
+    troncato = {"indice": 2, "totale": 3, "completo": False,
+                "text": "## Bloccanti\n- money.py: stake raddoppiato\n## Verdetto fin"}
+    malformato = {"indice": 3, "totale": 3, "completo": True, "text": "## Problemi\n- x\n## Verdetto finale\nNo"}
+    unita = rc.aggregate_reviews([errore, troncato, malformato])
+    assert unita["lista_bloccanti"] == [
+        "[lotto 2/3] money.py: stake raddoppiato",
+        "[lotto 3/3] sezione Bloccanti assente, vuota o duplicata: lotto non leggibile",
+    ]
+
+
+# Decisione owner sul terzo audit (#539): i bloccanti sono legati anche ai commit.
+class _NuovaPR(FakeGitHub):
+    """La PR 8 riapre gli stessi commit della PR 7, chiusa con un bloccante aperto."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.query_per_sha = []
+
+    def get(self, path):
+        if "head_sha=" in path:
+            self.query_per_sha.append(path.split("head_sha=")[1].split("&")[0])
+        if path.split("?")[0].endswith("/pulls/8"):
+            return {"created_at": "2026-10-23T12:00:00Z", "head": {"ref": "feature-2"}}
+        return super().get(path.replace("/pulls/8/commits", "/pulls/7/commits")
+                           .replace("/issues/8/comments", "/issues/7/comments"))
+
+
+def test_nuova_pr_sugli_stessi_commit_eredita_i_bloccanti(monkeypatch, tmp_path):
+    vecchia = dict(_run(11, SHA_1), pull_requests=[{"number": 7}])
+    arts = {11: [(NOME_ART, _zip(_attestazione(SHA_BASE, SHA_1, 11, bloccanti=[BLOCCANTE])))]}
+    gh = _NuovaPR([vecchia, _run(12, SHA_1)], arts)
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setattr(rc, "GitHub", lambda repo, token: gh)
+    loc = tmp_path / "l.json"
+    loc.write_text(json.dumps(_attestazione(SHA_BASE, SHA_1, 12, pr=8)))
+    out_path = tmp_path / "o.json"
+    code = rc.main(["verify", "--repo", REPO, "--pr", "8", "--reviewer", "gpt56sol", "--workflow-file",
+                    "pr-review.yml", "--base-sha", SHA_BASE, "--head-sha", SHA_1, "--output", str(out_path),
+                    "--local-attestation", str(loc)])
+    out = json.loads(out_path.read_text())
+    assert code == 1 and any("stake raddoppiato" in m for m in out["reasons"]), out["reasons"]
+    # i run si cercano per SHA, non solo per data: quelli della PR chiusa sono
+    # nati prima della PR nuova
+    assert set(gh.query_per_sha) >= {SHA_1}
+    # il triage dell'owner, anche sulla PR nuova, chiude il bloccante (l'id dipende dal range, non dalla PR)
+    bid = rc.blocker_id("gpt56sol", BLOCCANTE, f"{SHA_BASE}...{SHA_1}")
+    gh2 = _NuovaPR([vecchia, _run(12, SHA_1)], arts, comments=[_commento_triage(bid)])
+    monkeypatch.setattr(rc, "GitHub", lambda repo, token: gh2)
+    code = rc.main(["verify", "--repo", REPO, "--pr", "8", "--reviewer", "gpt56sol", "--workflow-file",
+                    "pr-review.yml", "--base-sha", SHA_BASE, "--head-sha", SHA_1, "--output", str(out_path),
+                    "--local-attestation", str(loc)])
+    assert code == 0, json.loads(out_path.read_text())["reasons"]
+
+
+def test_attestazione_di_un_altra_pr_su_commit_estranei_non_conta(monkeypatch, tmp_path):
+    estraneo = "e" * 40
+    altra = dict(_run(11, estraneo), pull_requests=[{"number": 9}])
+    a = dict(_attestazione(SHA_BASE, estraneo, 11, bloccanti=[BLOCCANTE]), pr=9)
+    gh = FakeGitHub([altra, _run(12, SHA_1)], {11: [(NOME_ART, _zip(a))]})
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_1, locale=_attestazione(SHA_BASE, SHA_1, 12))
+    assert code == 0, out["reasons"]
+
+
+# Quarto audit indipendente su #539
+def test_bloccanti_sintetici_di_lotti_diversi_si_triagiano_uno_per_uno(monkeypatch, tmp_path):
+    rng = f"{SHA_BASE}...{SHA_1}"
+    l1 = "[lotto 1/3] sezione Bloccanti assente, vuota o duplicata: lotto non leggibile"
+    l3 = "[lotto 3/3] sezione Bloccanti assente, vuota o duplicata: lotto non leggibile"
+    assert rc.blocker_id("gpt56sol", l1, rng) != rc.blocker_id("gpt56sol", l3, rng)
+    a = _attestazione(SHA_BASE, SHA_1, 11, bloccanti=[l1, l3])
+    gh = FakeGitHub([_run(11, SHA_1)], {11: [(NOME_ART, _zip(a))]},
+                    comments=[_commento_triage(rc.blocker_id("gpt56sol", l1, rng))])
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_1)
+    assert code == 1 and [b["text"] for b in out["open_blockers"]] == [l3]
+
+
+def test_run_accodato_sullo_stesso_head_non_si_aspetta(monkeypatch, tmp_path):
+    # Un `edited` durante la review accoda un run sullo stesso head (stessa
+    # concurrency): parte solo dopo questo e vedra' tutto. Aspettarlo dava un
+    # rosso a vuoto dopo 600 s.
+    monkeypatch.setenv("GITHUB_RUN_ID", "12")
+    accodato = dict(_run(13, SHA_1), status="queued")
+    gh = FakeGitHub([_run(11, SHA_1), dict(_run(12, SHA_1), status="in_progress"), accodato],
+                    {11: [(NOME_ART, _zip(_attestazione(SHA_BASE, SHA_1, 11)))]})
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_1)
+    assert code == 0, out["reasons"]
+    # ma un run in esecuzione sullo stesso head si aspetta comunque
+    gh2 = FakeGitHub([_run(11, SHA_1), dict(_run(12, SHA_1), status="in_progress"),
+                      dict(_run(13, SHA_1), status="in_progress")],
+                     {11: [(NOME_ART, _zip(_attestazione(SHA_BASE, SHA_1, 11)))]})
+    code, out = _verify(monkeypatch, tmp_path, gh2, SHA_1)
+    assert code == 1
+
+
+def test_id_di_un_artifact_illeggibile_non_dipende_dal_messaggio_di_errore():
+    gh = FakeGitHub([_run(11, SHA_1)], {11: [(NOME_ART, b"non e' uno zip")]})
+    _t, _m, _n, illeggibili = rc.attestazioni_con_bloccanti(
+        gh, pr=7, reviewer="gpt56sol", workflow_file="pr-review.yml", pr_commits={SHA_1}, head_ref="",
+        created_since="")
+    gh2 = FakeGitHub([_run(11, SHA_1)], {11: [(NOME_ART, b"altro contenuto rotto")]})
+    _t, _m, _n, illeggibili2 = rc.attestazioni_con_bloccanti(
+        gh2, pr=7, reviewer="gpt56sol", workflow_file="pr-review.yml", pr_commits={SHA_1}, head_ref="",
+        created_since="")
+    assert illeggibili[0]["id"] == illeggibili2[0]["id"]

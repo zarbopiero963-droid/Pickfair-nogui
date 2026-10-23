@@ -119,3 +119,18 @@ def test_gate_con_manifest_illeggibile_non_e_mai_verde(monkeypatch):
     d = flow._readiness_decision("o/r", "1", True)
     assert d["can_merge"] is False
     assert any("manifest unreadable" in p["name"] for p in d["pending"])
+
+
+# D3 (audit indipendente su #539): il nome non basta, conta la provenienza.
+def test_d3_status_omonimo_non_sostituisce_il_check_obbligatorio(monkeypatch):
+    # check reale assente; uno StatusContext con lo stesso nome (basta un token con statuses:write)
+    status = {"__typename": "StatusContext", "context": "full-suite", "state": "SUCCESS"}
+    d = _decidi(monkeypatch, _tutti_verdi(**{"full-suite": status}), REQ)
+    assert d["can_merge"] is False
+    assert any(b.get("name") == "full-suite" and b.get("required") for b in d["blockers"])
+
+
+def test_d3_check_senza_tipo_dichiarato_non_conta_come_obbligatorio(monkeypatch):
+    anonimo = {"name": "full-suite", "status": "COMPLETED", "conclusion": "SUCCESS"}
+    d = _decidi(monkeypatch, _tutti_verdi(**{"full-suite": anonimo}), REQ)
+    assert d["can_merge"] is False

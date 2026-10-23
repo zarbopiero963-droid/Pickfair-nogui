@@ -363,3 +363,120 @@ def test_review_oltre_il_limite_del_commento_non_copre(nome, tmp_path, monkeypat
     fake, att, env = _esegui(nome, _diff_grande(2, 220), tmp_path, monkeypatch, modo="lungo")
     assert att["complete"] is False and any("oltre il limite" in m for m in att["reasons"])
     assert "-pr-review-done:" not in fake.commenti[0]
+
+
+# ---------------------------------------------------------------------------
+# Audit indipendente su #539 (D1/D2): i due falsi verdi riprodotti end-to-end,
+# con lo script vero dei workflow e la verifica vera. Ora restano rossi.
+# ---------------------------------------------------------------------------
+def _moduli_verifica():
+    import importlib.util
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts" / "ci"))
+    spec = importlib.util.spec_from_file_location("trc_e2e", ROOT / "tests" / "scripts" / "test_review_coverage.py")
+    trc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(trc)
+    return trc
+
+
+def _verifica(trc, monkeypatch, tmp_path, gh, head):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setattr(trc.rc, "GitHub", lambda repo, token: gh)
+    out = tmp_path / "verifica.json"
+    code = trc.rc.main(["verify", "--repo", "owner/repo", "--pr", "7", "--reviewer", "gpt56sol",
+                        "--workflow-file", "pr-review.yml", "--base-sha", BASE, "--head-sha", head,
+                        "--output", str(out)])
+    return code, json.loads(out.read_text())
+
+
+def _zip_att(att):
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("attestation.json", json.dumps(att))
+    return buf.getvalue()
+
+
+def _ufficiale(att, run_id, attempt=1):
+    return {**att, "reviewer": "gpt56sol", "run_id": run_id, "run_attempt": attempt}
+
+
+class _BloccantePoiTroncato(Fake):
+    """Tentativo 1: lotto 1 con un bloccante, lotto 2 troncato. Tentativo 2: tutto pulito."""
+
+    def _modello(self, req):
+        prompt = json.loads(req.data.decode())["messages"][1]["content"]
+        self.prompt_ricevuti.append(prompt)
+        ids = re.findall(r"### SEGMENTO (F\d{3}S\d{2,})", prompt)
+        if self.modo == "tentativo1" and len(self.prompt_ricevuti) == 1:
+            testo, fine = ("## Bloccanti\n- money.py: stake raddoppiato\n## Verdetto finale\nNo\n"
+                           "SEGMENTI ESAMINATI: " + ", ".join(ids)), "stop"
+        elif self.modo == "tentativo1":
+            testo, fine = "## Bloccanti\nNessun", "length"
+        else:
+            testo, fine = ("## Bloccanti\nNessun bloccante evidente\n## Verdetto finale\nOK\n"
+                           "SEGMENTI ESAMINATI: " + ", ".join(ids)), "stop"
+        return _Risposta(json.dumps({"choices": [{"message": {"content": testo}, "finish_reason": fine}],
+                                     "usage": {"prompt_tokens": 1, "completion_tokens": 1}}).encode())
+
+
+@pytest.mark.parametrize("nome", sorted(WORKFLOWS))
+def test_d1_rerun_dopo_lotto_troncato_non_cancella_il_bloccante(nome, tmp_path, monkeypatch):
+    trc = _moduli_verifica()
+    files = _diff_grande(4, 220)
+    originale = globals()["Fake"]
+    try:
+        globals()["Fake"] = lambda f, m: _BloccantePoiTroncato(f, "tentativo1")
+        _f1, att1, _ = _esegui(nome, files, tmp_path / "t1", monkeypatch)
+        globals()["Fake"] = lambda f, m: _BloccantePoiTroncato(f, "tentativo2")
+        monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+        _f2, att2, _ = _esegui(nome, files, tmp_path / "t2", monkeypatch)
+    finally:
+        globals()["Fake"] = originale
+    assert att1["complete"] is False and any("stake raddoppiato" in b for b in att1["blocking_findings"])
+    assert att2["complete"] is True and att2["blocking_findings"] == []
+    run = {"id": 4242, "head_sha": HEAD, "event": "pull_request_target", "path": ".github/workflows/pr-review.yml",
+            "status": "completed"}
+    gh = trc.FakeGitHub([run], {4242: [("review-coverage-gpt56sol-a1", _zip_att(_ufficiale(att1, 4242, 1))),
+                                       ("review-coverage-gpt56sol-a2", _zip_att(_ufficiale(att2, 4242, 2)))]},
+                        commits=(HEAD,))
+    code, out = _verifica(trc, monkeypatch, tmp_path, gh, HEAD)
+    assert code == 1 and any("stake raddoppiato" in m for m in out["reasons"])
+
+
+@pytest.mark.parametrize("nome", sorted(WORKFLOWS))
+def test_d2_commit_vuoto_dopo_un_bloccante_resta_rosso(nome, tmp_path, monkeypatch):
+    trc = _moduli_verifica()
+    intermedio = "d" * 40
+    fake, att_vuota, _ = _esegui(nome, [], tmp_path, monkeypatch, evento="synchronize", before=intermedio)
+    assert fake.prompt_ricevuti == [] and att_vuota["complete"] is True and att_vuota["blocking_findings"] == []
+    att_x = trc._attestazione(BASE, intermedio, 11, bloccanti=["money.py: stake raddoppiato"])
+    runs = [{"id": 11, "head_sha": intermedio, "event": "pull_request_target", "path": ".github/workflows/pr-review.yml",
+            "status": "completed"},
+            {"id": 4242, "head_sha": HEAD, "event": "pull_request_target", "path": ".github/workflows/pr-review.yml",
+            "status": "completed"}]
+    gh = trc.FakeGitHub(runs, {11: [("review-coverage-gpt56sol-x", _zip_att(att_x))],
+                               4242: [("review-coverage-gpt56sol-y", _zip_att(_ufficiale(att_vuota, 4242)))]},
+                        commits=(intermedio, HEAD))
+    code, out = _verifica(trc, monkeypatch, tmp_path, gh, HEAD)
+    assert code == 1 and any("stake raddoppiato" in m for m in out["reasons"])
+
+
+@pytest.mark.parametrize("nome", sorted(WORKFLOWS))
+def test_errore_del_provider_poi_rerun_pulito_non_chiede_triage(nome, tmp_path, monkeypatch):
+    # Terzo audit su #539: l'errore transitorio (crediti, 5xx) lasciava un
+    # bloccante sintetico persistente anche dopo un rerun pulito.
+    trc = _moduli_verifica()
+    files = _diff_grande(1, 20)
+    _f, att1, _ = _esegui(nome, files, tmp_path / "t1", monkeypatch, modo="errore")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    _f, att2, _ = _esegui(nome, files, tmp_path / "t2", monkeypatch, modo="ok")
+    assert att1["complete"] is False and att1["blocking_findings"] == []
+    assert att2["complete"] is True and att2["blocking_findings"] == []
+    run = {"id": 4242, "head_sha": HEAD, "event": "pull_request_target", "path": ".github/workflows/pr-review.yml",
+           "status": "completed"}
+    gh = trc.FakeGitHub([run], {4242: [("review-coverage-gpt56sol-a1", _zip_att(_ufficiale(att1, 4242, 1))),
+                                       ("review-coverage-gpt56sol-a2", _zip_att(_ufficiale(att2, 4242, 2)))]},
+                        commits=(HEAD,))
+    code, out = _verifica(trc, monkeypatch, tmp_path, gh, HEAD)
+    assert code == 0, out["reasons"]

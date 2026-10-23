@@ -179,14 +179,28 @@ def _required_check_verdicts(
     modulo si saltano da sole quando il diff non le riguarda). Per un check
     OBBLIGATORIO no: SKIPPED non prova niente, e GitHub stesso conta un
     required check skipped come soddisfatto. Qui vale solo SUCCESS.
+
+    Conta anche la provenienza (D3, audit indipendente su #539): un check
+    obbligatorio vale solo come CheckRun. Uno status commit con lo stesso nome
+    (basta un token con `statuses: write`) o una voce senza tipo dichiarato non
+    lo sostituiscono, e se ci sono bloccano. Che il CheckRun venga proprio dal
+    workflow atteso non si vede dal rollup: lo fissa il ruleset (GitHub Actions,
+    integration_id 15368) e resta un rischio tracciato.
     """
     blockers: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     for name in required:
-        items = [i for i in seen if i["name"] == name]
+        omonimi = [i for i in seen if i["name"] == name]
+        for item in omonimi:
+            if item.get("rollup_typename") != "CheckRun":
+                blockers.append({**item, "required": True,
+                                 "reason": f"required check reported as {item.get('rollup_typename') or 'untyped'}"
+                                           ", only a CheckRun counts"})
+        items = [i for i in omonimi if i.get("rollup_typename") == "CheckRun"]
         if not items:
-            pending.append({"name": name, "state": "MISSING", "required": True,
-                            "reason": "required check not reported on the head"})
+            if not omonimi:
+                pending.append({"name": name, "state": "MISSING", "required": True,
+                                "reason": "required check not reported on the head"})
             continue
         for item in items:
             if item["state"] in PENDING_STATES:

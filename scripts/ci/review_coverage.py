@@ -268,7 +268,8 @@ def aggregate_reviews(lotti: list[dict[str, Any]]) -> dict[str, str]:
     vuoto, e' esso stesso un bloccante (non si legge, quindi non e' pulito). Il testo integrale dei lotti resta nei dettagli, con i
     titoli abbassati a `####`, cosi' non crea sezioni di primo livello.
 
-    `lotti`: dict con `indice` (1-based), `totale`, `text`.
+    `lotti`: dict con `indice` (1-based), `totale`, `text` e, facoltativo,
+    `completo` (False = risposta incompleta: niente marcatori sintetici).
     """
     bloccanti: list[str] = []
     verdetti: list[str] = []
@@ -279,10 +280,16 @@ def aggregate_reviews(lotti: list[dict[str, Any]]) -> dict[str, str]:
         # la riga di riscontro chiude la risposta e cade dentro l'ultima sezione:
         # non e' contenuto della review, quindi non conta per nessuna delle due
         corpo = re.sub(r"(?im)^\s*\**\s*SEGMENTI ESAMINATI\s*\**\s*:.*$", "", testo)
+        # Risposta incompleta (errore del provider, troncamento): la copertura
+        # e' gia' incompleta per questo, e un marcatore sintetico diventerebbe
+        # un bloccante persistente da triagiare dopo ogni errore transitorio
+        # (terzo audit su #539). I bloccanti reali del testo parziale restano.
+        completo = lotto.get("completo", True) is not False
         sezioni = _SEZIONE["Bloccanti"].findall(corpo)
         contenuto = sezioni[0].strip() if len(sezioni) == 1 else None
         if not contenuto:
-            bloccanti.append(f"- {tag} sezione Bloccanti assente, vuota o duplicata: lotto non leggibile")
+            if completo:
+                bloccanti.append(f"- {tag} sezione Bloccanti assente, vuota o duplicata: lotto non leggibile")
         elif not _NESSUN_BLOCCANTE.fullmatch(contenuto):
             for riga in contenuto.splitlines():
                 riga = riga.strip().lstrip("-*").strip()
@@ -291,6 +298,8 @@ def aggregate_reviews(lotti: list[dict[str, Any]]) -> dict[str, str]:
         ver = _SEZIONE["Verdetto finale"].findall(corpo)
         if len(ver) == 1 and ver[0].strip():
             verdetti.append(f"- {tag} {' '.join(ver[0].split())}")
+        elif not completo:
+            verdetti.append(f"- {tag} (risposta incompleta: lotto non revisionato)")
         else:
             # Verdetto assente, vuoto o duplicato = lotto malformato, quindi non
             # pulito: normalizzarlo in silenzio farebbe sembrare VALID_CLEAN una
@@ -581,14 +590,25 @@ def _run_della_pr(run: dict[str, Any], pr: int, pr_commits: set[str]) -> bool:
     return run.get("head_sha") in pr_commits or int(pr) in _numeri_pr(run)
 
 
+_ACCODATO = ("queued", "waiting", "pending", "requested")
+
+
 def runs_in_corso(gh: "GitHub", *, pr: int, workflow_file: str, pr_commits: set[str],
-                  escludi_run: int = 0) -> list[int]:
-    """Run ufficiali della PR non ancora conclusi (escluso quello corrente)."""
+                  escludi_run: int = 0, head_ref: str = "", head_sha: str = "") -> list[int]:
+    """Run ufficiali della PR non ancora conclusi (escluso quello corrente).
+
+    Stessa associazione dei bloccanti (`_run_associato`): conta anche il run
+    legato alla PR solo dal branch, dopo un force-push (terzo audit su #539).
+    Un run ACCODATO sullo stesso head non si aspetta (quarto audit): e' nella
+    stessa concurrency di questo, parte solo dopo e vedra' tutto; aspettarlo
+    dava un rosso a vuoto.
+    """
     dati = gh.get(
         f"/repos/{gh.repo}/actions/workflows/{workflow_file}/runs?event=pull_request_target&per_page=100&page=1"
     ) or {}
     return [int(r["id"]) for r in dati.get("workflow_runs") or []
-            if _run_della_pr(r, pr, pr_commits) and r.get("status") != "completed"
+            if _run_associato(r, pr, pr_commits, head_ref) and r.get("status") != "completed"
+            and not (head_sha and r.get("head_sha") == head_sha and r.get("status") in _ACCODATO)
             and int(r.get("id") or 0) != int(escludi_run)]
 
 
@@ -700,27 +720,199 @@ def _root_checker(gh: GitHub, base_sha: str, pr_commits: set[str]) -> Callable[[
     return is_root
 
 
-def bloccanti_sul_head(attestations: list[dict[str, Any]], head_sha: str) -> list[str]:
-    """Motivi per cui la review sul head corrente non e' pulita (vuota = pulita).
+def esito_non_registrato_sul_head(attestations: list[dict[str, Any]], head_sha: str) -> list[str]:
+    """La review sul head deve aver registrato il proprio esito (lista, anche vuota)."""
+    return [
+        f"range {str(att.get('range_base'))[:12]}...{head_sha[:12]}: esito della review non registrato "
+        "nell'attestazione"
+        for att in attestations
+        if att.get("range_head") == head_sha and not isinstance(att.get("blocking_findings"), list)
+    ]
 
-    Conta la review del range che termina sul head, come `validate_review` di
-    `pr_autonomy_policy`: un bloccante di una push precedente e' gia' passato
-    dal triage (fix nella push successiva, o risposta nel thread). Con piu'
-    attestazioni sullo stesso head basta un bloccante in una sola. Rilievo
-    Codex su #539: prima la copertura completa bastava al check, e Merge
-    Readiness ne leggeva solo il SUCCESS anche con `## Bloccanti` non vuota.
+
+# --------------------------------------------------------------------------
+# Persistenza dei bloccanti (decisione owner D1-D4 su #539)
+# --------------------------------------------------------------------------
+# Un bloccante trovato da un revisore resta aperto per tutta la vita della PR:
+# attraverso rerun, push successivi, commit vuoti, merge di main, modifiche di
+# titolo/descrizione e force-push. Si chiude SOLO con il triage dell'owner.
+# La chiusura automatica "da review" non c'e': una review successiva pulita che
+# non cita il bloccante non prova che sia stato corretto (decisione owner:
+# senza una chiusura automatica dimostrabile vale la regola fail-closed).
+
+TRIAGE_MARKER = re.compile(r"<!--\s*pfc-triage-bloccante:([a-z0-9]+):([0-9a-f]{12})\s*-->")
+MIN_MOTIVAZIONE = 20
+
+
+def blocker_id(reviewer: str, testo: str, dove: str) -> str:
+    """Id di un bloccante: revisore, testo e DOVE e' stato trovato.
+
+    Non dipende dagli spazi o dalle maiuscole. Dipende dal range (secondo
+    audit su #539) e dall'etichetta del lotto (quarto audit): senza, un triage
+    dell'owner chiudeva ogni ripetizione dello stesso testo, compreso il
+    bloccante sintetico «lotto non leggibile» di un ALTRO lotto, che nasconde il
+    contenuto vero di quel lotto. Il piano dei lotti e' deterministico per lo
+    stesso range, quindi l'id resta lo stesso fra i rerun.
     """
+    corpo = " ".join(str(testo).split()).lower()
+    return hashlib.sha256(f"{reviewer}\n{dove}\n{corpo}".encode("utf-8")).hexdigest()[:12]
+
+
+def _run_associato(run: dict[str, Any], pr: int, pr_commits: set[str], head_ref: str) -> bool:
+    return _run_della_pr(run, pr, pr_commits) or (bool(head_ref) and run.get("head_branch") == head_ref)
+
+
+def attestazioni_con_bloccanti(
+    gh: GitHub,
+    *,
+    pr: int,
+    reviewer: str,
+    workflow_file: str,
+    pr_commits: set[str],
+    head_ref: str,
+    created_since: str,
+    max_pages: int = 10,
+) -> tuple[list[dict[str, Any]], list[str], list[str], list[dict[str, Any]]]:
+    """TUTTE le attestazioni ufficiali della PR, complete o no, di ogni tentativo.
+
+    Differenze da `official_attestations`, che serve alla catena di copertura:
+    - le incomplete contano (D1: un lotto troncato non cancella il bloccante
+      trovato da un altro lotto, e il rerun non lo cancella);
+    - contano anche i range sui commit tolti da un force-push, purche' il run
+      sia della PR (`pull_requests` o branch della PR);
+    - contano le attestazioni di QUALUNQUE PR che terminano su un commit di
+      questa (decisione owner sul terzo audit di #539): chiudere la PR e
+      riaprirla con gli stessi commit non azzera i bloccanti. I run si cercano
+      anche per SHA, perche' quelli della PR chiusa sono nati prima di questa;
+    - cio' che impedisce di leggerle tutte e' rosso, non uno scarto
+      silenzioso: un'attestazione non letta puo' contenere bloccanti. Un
+      artifact scaduto o illeggibile diventa un bloccante con il suo id, che
+      l'owner puo' triagiare (altrimenti la PR resterebbe rossa per sempre);
+      lo storico dei run oltre il limite di pagine e' rosso senza id.
+
+    Ritorna (attestazioni, motivi_di_rosso, note, bloccanti_illeggibili).
+    """
+    trovate: list[dict[str, Any]] = []
     motivi: list[str] = []
+    note: list[str] = []
+    illeggibili: list[dict[str, Any]] = []
+
+    def illeggibile(run_id: Any, nome: Any, testo: str, dettaglio: str = "") -> None:
+        # l'id non dipende dal dettaglio (messaggio d'errore), che puo' cambiare fra due verifiche
+        dove = f"run {run_id} artifact {nome}"
+        illeggibili.append({"id": blocker_id(reviewer, testo, dove), "range": dove,
+                            "text": f"{testo} ({dettaglio})" if dettaglio else testo})
+
+    percorso = f".github/workflows/{workflow_file}"
+    base_url = f"/repos/{gh.repo}/actions/workflows/{workflow_file}/runs?event=pull_request_target&per_page=100"
+    candidati: dict[str, dict[str, Any]] = {}
+    # 1) i run della PR dalla sua creazione (anche dopo un force-push)
+    filtro = f"&created=%3E%3D{created_since}" if created_since else ""
+    letto_per_intero = False
+    for page in range(1, max_pages + 1):
+        runs = (gh.get(f"{base_url}&page={page}{filtro}") or {}).get("workflow_runs") or []
+        for run in runs:
+            if _run_associato(run, pr, pr_commits, head_ref):
+                candidati.setdefault(str(run.get("id")), run)
+        if len(runs) < 100:
+            letto_per_intero = True
+            break
+    if not letto_per_intero:
+        motivi.append(f"storico dei run non letto per intero (oltre {max_pages} pagine): bloccanti non verificabili")
+    # 2) i run di qualunque PR su un commit di questa, anche precedenti alla sua creazione
+    for sha in sorted(pr_commits):
+        runs = (gh.get(f"{base_url}&head_sha={sha}&page=1") or {}).get("workflow_runs") or []
+        if len(runs) >= 100:
+            motivi.append(f"oltre 100 run sul commit {sha[:12]}: bloccanti non verificabili")
+        for run in runs:
+            if run.get("head_sha") == sha:
+                candidati.setdefault(str(run.get("id")), run)
+    for run in candidati.values():
+        if run.get("event") != "pull_request_target" or str(run.get("path") or "").split("@")[0] != percorso:
+            continue
+        artifacts = (gh.get(f"/repos/{gh.repo}/actions/runs/{run['id']}/artifacts?per_page=100") or {}).get(
+            "artifacts"
+        ) or []
+        for art in artifacts:
+            if not str(art.get("name") or "").startswith(f"{ARTIFACT_PREFIX}-{reviewer}-"):
+                continue
+            if art.get("expired"):
+                illeggibile(run["id"], art.get("name"), "artifact scaduto: i suoi bloccanti non sono leggibili")
+                continue
+            try:
+                contenuto = gh.download(art["archive_download_url"])
+                with zipfile.ZipFile(io.BytesIO(contenuto)) as zf:
+                    nomi = [n for n in zf.namelist() if n.endswith(".json")]
+                    if len(nomi) != 1:
+                        raise ValueError(f"{len(nomi)} file JSON nell'artifact, atteso 1")
+                    att = json.loads(zf.read(nomi[0]).decode("utf-8"))
+            except Exception as exc:  # non letto = bloccanti non verificabili
+                illeggibile(run["id"], art.get("name"), "artifact illeggibile, bloccanti non verificabili",
+                            str(exc)[:120])
+                continue
+            della_pr = isinstance(att, dict) and (str(att.get("pr")) == str(pr)
+                                                  or att.get("range_head") in pr_commits)
+            if (not della_pr or att.get("schema") != SCHEMA or att.get("reviewer") != reviewer
+                    or att.get("repo") != gh.repo or str(att.get("run_id")) != str(run["id"])):
+                note.append(f"run {run['id']}: artifact {art.get('name')} non e' un'attestazione di questa PR "
+                            "ne' dei suoi commit")
+                continue
+            trovate.append(att)
+    return trovate, motivi, note, illeggibili
+
+
+def triage_dell_owner(gh: GitHub, *, pr: int, reviewer: str) -> set[str]:
+    """Id dei bloccanti che l'owner ha triagiato con un commento verificabile.
+
+    Vale solo un commento che:
+    - e' dell'owner del repository (login e `author_association` OWNER);
+    - NON e' stato pubblicato tramite un'app (`performed_via_github_app`
+      vuoto): l'agente scrive con l'account dell'owner ma sempre attraverso
+      un'app, quindi non puo' assolversi da solo;
+    - non e' mai stato modificato: un'app potrebbe modificare un commento
+      dell'owner senza cambiarne l'autore;
+    - porta il marker `<!-- pfc-triage-bloccante:<revisore>:<id> -->` e una
+      motivazione di almeno MIN_MOTIVAZIONE caratteri.
+    """
+    owner = gh.repo.split("/")[0]
+    ids: set[str] = set()
+    for page in range(1, 11):
+        commenti = gh.get(f"/repos/{gh.repo}/issues/{pr}/comments?per_page=100&page={page}") or []
+        for c in commenti:
+            if (c.get("user") or {}).get("login") != owner or c.get("author_association") != "OWNER":
+                continue
+            if c.get("performed_via_github_app"):
+                continue
+            if not c.get("created_at") or c.get("created_at") != c.get("updated_at"):
+                continue
+            corpo = str(c.get("body") or "")
+            if len(TRIAGE_MARKER.sub("", corpo).strip()) < MIN_MOTIVAZIONE:
+                continue
+            ids.update(bid for rev, bid in TRIAGE_MARKER.findall(corpo) if rev == reviewer)
+        if len(commenti) < 100:
+            break
+    return ids
+
+
+def bloccanti_aperti(attestations: list[dict[str, Any]], *, reviewer: str,
+                     triaged: set[str]) -> tuple[list[dict[str, Any]], list[str]]:
+    """(bloccanti aperti, note). Attestazione senza il campo = versione precedente del workflow."""
+    aperti: dict[str, dict[str, Any]] = {}
+    note: list[str] = []
     for att in attestations:
-        if att.get("range_head") != head_sha:
+        rng = f"{str(att.get('range_base'))[:12]}...{str(att.get('range_head'))[:12]}"
+        dove = f"{att.get('range_base')}...{att.get('range_head')}"
+        if "blocking_findings" not in att:
+            note.append(f"range {rng}: attestazione di una versione precedente, senza esito registrato")
             continue
         trovati = att.get("blocking_findings")
-        rng = f"{str(att.get('range_base'))[:12]}...{head_sha[:12]}"
         if not isinstance(trovati, list):
-            motivi.append(f"range {rng}: esito della review non registrato nell'attestazione")
-        else:
-            motivi.extend(f"range {rng}: bloccante della review: {b}" for b in trovati)
-    return motivi
+            trovati = ["esito della review non registrato nell'attestazione"]
+        for testo in trovati:
+            bid = blocker_id(reviewer, testo, dove)
+            if bid not in triaged:
+                aperti.setdefault(bid, {"id": bid, "range": rng, "text": str(testo)})
+    return list(aperti.values()), note
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
@@ -741,6 +933,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
         if args.head_sha not in commits:
             raise RuntimeError("il head indicato non e' un commit della PR")
         is_root = _root_checker(gh, args.base_sha, commits)
+        info = gh.get(f"/repos/{gh.repo}/pulls/{args.pr}") or {}
+        head_ref = str((info.get("head") or {}).get("ref") or "")
         scadenza = time.monotonic() + max(0, args.wait_seconds)
         while True:
             atts, scarti = official_attestations(
@@ -750,22 +944,46 @@ def cmd_verify(args: argparse.Namespace) -> int:
             catena = verify_chain(atts, head_sha=args.head_sha, is_root=is_root)
             # Push ravvicinati: il run del push precedente puo' non aver ancora
             # caricato la sua attestazione (rilievo Codex su #539). Finche' ci
-            # sono run ufficiali della PR in corso si aspetta e si rilegge;
-            # scaduta l'attesa vale lo stato reale (fail-closed).
-            if catena["ok"] or time.monotonic() >= scadenza:
-                break
+            # sono run ufficiali della PR in corso si aspetta e si rilegge,
+            # ANCHE con la catena gia' completa (secondo audit su #539): con un
+            # range dal base la catena si chiude con la sola attestazione locale,
+            # e i bloccanti del run in corso andrebbero persi. Scaduta l'attesa
+            # vale lo stato reale, e un run ancora in corso e' rosso.
             in_corso = runs_in_corso(gh, pr=args.pr, workflow_file=args.workflow_file, pr_commits=commits,
-                                     escludi_run=int(os.environ.get("GITHUB_RUN_ID") or 0))
-            if not in_corso:
+                                     escludi_run=int(os.environ.get("GITHUB_RUN_ID") or 0), head_ref=head_ref,
+                                     head_sha=args.head_sha)
+            if not in_corso or time.monotonic() >= scadenza:
                 break
             esito["waited_for_runs"] = in_corso
             time.sleep(max(1, args.poll_seconds))
         esito.update(catena)
-        if catena["ok"]:
-            bloccanti = bloccanti_sul_head(atts, args.head_sha)
-            if bloccanti:
-                esito["ok"] = False
-                esito["reasons"] = bloccanti
+        motivi = list(catena.get("reasons") or []) + esito_non_registrato_sul_head(atts, args.head_sha)
+        if in_corso:
+            motivi.append(f"run della PR ancora in corso {sorted(in_corso)}: i loro bloccanti non sono ancora "
+                          "leggibili, si rilancia la verifica quando finiscono")
+        # Bloccanti persistenti: tutte le attestazioni della PR, di ogni tentativo
+        # e di ogni range, piu' quella di questo run (non ancora fra gli artifact).
+        tutte, motivi_scan, note, illeggibili = attestazioni_con_bloccanti(
+            gh, pr=args.pr, reviewer=args.reviewer, workflow_file=args.workflow_file, pr_commits=commits,
+            head_ref=head_ref, created_since=str(info.get("created_at") or ""),
+        )
+        # Quella di questo run anche se incompleta: il suo artifact puo' non
+        # essere ancora elencato (terzo audit su #539).
+        visti = {(str(a.get("run_id")), str(a.get("run_attempt"))) for a in tutte}
+        tutte += [a for a in atts + _attestazione_locale_grezza(args)
+                  if (str(a.get("run_id")), str(a.get("run_attempt"))) not in visti]
+        triaged = triage_dell_owner(gh, pr=args.pr, reviewer=args.reviewer)
+        aperti, note_b = bloccanti_aperti(tutte, reviewer=args.reviewer, triaged=triaged)
+        aperti += [b for b in illeggibili if b["id"] not in triaged]
+        motivi += motivi_scan
+        motivi += [f"bloccante aperto {b['id'] or '(senza id)'} (range {b['range']}): {b['text']}" for b in aperti]
+        trovati = {b["id"] for b in bloccanti_aperti(tutte, reviewer=args.reviewer, triaged=set())[0]}
+        trovati |= {b["id"] for b in illeggibili}
+        esito["open_blockers"] = aperti
+        esito["triaged_blockers"] = sorted(triaged & trovati)
+        esito["notes"] = note + note_b
+        esito["reasons"] = motivi
+        esito["ok"] = bool(catena["ok"]) and not motivi
         esito["attestations_used"] = len(atts)
         esito["discarded"] = scarti
     except Exception as exc:
@@ -775,6 +993,18 @@ def cmd_verify(args: argparse.Namespace) -> int:
             json.dump(esito, fh, indent=2, ensure_ascii=False)
     print(json.dumps(esito, indent=2, ensure_ascii=False))
     return 0 if esito.get("ok") is True else 1
+
+
+def _attestazione_locale_grezza(args: argparse.Namespace) -> list[dict[str, Any]]:
+    """L'attestazione di QUESTO run per i bloccanti: completa o no, purche' sia sua."""
+    if not (args.local_attestation and os.path.exists(args.local_attestation)):
+        return []
+    with open(args.local_attestation, encoding="utf-8") as fh:
+        locale = json.load(fh)
+    if (isinstance(locale, dict) and locale.get("schema") == SCHEMA and locale.get("reviewer") == args.reviewer
+            and locale.get("repo") == args.repo and str(locale.get("pr")) == str(args.pr)):
+        return [locale]
+    return []
 
 
 def _attestazione_locale(args: argparse.Namespace, scarti: list[str]) -> list[dict[str, Any]]:

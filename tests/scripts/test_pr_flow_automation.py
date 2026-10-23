@@ -2328,7 +2328,7 @@ def _ready_to_merge_pr_view(_repo: str, _pr: str) -> dict[str, object]:
         "headRefOid": "abc123",
         # PFC-002: "pronta" richiede anche i check obbligatori SUCCESS
         "statusCheckRollup": [_check("Unit tests", "SUCCESS")]
-        + [_check(nome, "SUCCESS") for nome in flow.load_required_checks()],
+        + [{**_check(nome, "SUCCESS"), "__typename": "CheckRun"} for nome in flow.load_required_checks()],
     }
 
 

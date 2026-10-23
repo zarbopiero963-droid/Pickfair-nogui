@@ -190,15 +190,130 @@ la copertura è completa, l'elenco dei motivi se non lo è (tetto di lotti). Pri
 il commento portava il `done_marker` senza sezioni e il gate lo leggeva UNKNOWN
 (rilievo Codex su #539).
 
-**Un bloccante rende rosso il check.** I bloccanti aggregati entrano
-nell'attestazione (`blocking_findings`). La verifica (§4.4) è rossa se la review
-del range che termina sul head ne ha anche uno solo, o se l'esito non è
-registrato. Prima bastava la copertura completa, e Merge Readiness leggeva solo
-il SUCCESS del check anche con `## Bloccanti` piena (rilievo Codex su #539).
-Conta il range sul head, come in `validate_review`: un bloccante di una push
-precedente si chiude con la push che lo corregge (che viene rivista) o con la
-risposta nel thread. Un falso positivo sul head tiene il check rosso finché
-una push successiva non riceve una review pulita.
+**Un bloccante rende rosso il check, e resta aperto finché l'owner non lo
+chiude.** I bloccanti aggregati entrano nell'attestazione (`blocking_findings`).
+Prima bastava la copertura completa, e Merge Readiness leggeva solo il SUCCESS
+del check anche con `## Bloccanti` piena (rilievo Codex su #539).
+
+Decisione owner D1–D4 su #539, dopo un audit indipendente che aveva riprodotto
+due falsi verdi:
+- **D1:** il rerun di un run con un lotto troncato cancellava il bloccante
+  trovato da un altro lotto;
+- **D2:** un commit vuoto o un merge di main dopo un head con bloccanti dava una
+  review «pulita» e il check verde.
+
+Regole in vigore (`review_coverage.py`: `attestazioni_con_bloccanti`,
+`bloccanti_aperti`, `triage_dell_owner`):
+1. La verifica raccoglie i bloccanti di **tutte** le attestazioni ufficiali
+   della PR e del revisore: ogni range, ogni tentativo, anche quelle
+   **incomplete** e quelle sui commit tolti da un force-push (il run è della PR
+   per `pull_requests` o per il branch). Un bloccante resta aperto attraverso
+   rerun, commit vuoti, merge di main, modifiche di titolo/descrizione, cambio
+   di base e modifiche non pertinenti.
+
+   **Legame ai commit** (decisione owner sul terzo audit di #539). Contano
+   anche le attestazioni di **qualunque PR** che terminano su un commit di
+   questa: chiudere la PR e aprirne una nuova con gli stessi commit non azzera
+   i bloccanti. I run si cercano anche per SHA (`head_sha`), perché quelli
+   della PR chiusa sono nati prima della nuova. Il triage si fa sulla PR in
+   cui si verifica: l'id dipende dal range, non dal numero di PR.
+
+   **Divieto di governance.** L'agente non chiude, ricrea o riapre una PR, né
+   riscrive i commit, per azzerare i bloccanti di una review. Una PR nuova con
+   commit riscritti su un altro branch è codice nuovo: riceve la review
+   **completa** dal branch base (il primo evento di una PR rivede sempre
+   `BASE...HEAD`), ma i bloccanti della PR precedente non la seguono. È un
+   **rischio residuo, non risolto dal codice**: lo copre la policy, che va
+   riportata anche in AGENTS.md (file dell'owner, modifica a suo carico).
+2. Cio' che impedisce di leggere tutte le attestazioni è rosso, non uno scarto
+   silenzioso:
+   - un **run della PR ancora in corso** (anche legato alla PR solo dal
+     branch, dopo un force-push) si aspetta (fino a `--wait-seconds`) anche
+     quando la catena è già completa, e se è ancora in corso il check è
+     rosso. L'attestazione di questo stesso run conta per i bloccanti anche se
+     incompleta e anche se il suo artifact non è ancora elencato. Un run
+     soltanto **accodato sullo stesso head** non si aspetta: è nella stessa
+     concurrency, parte dopo e vedrà tutto (quarto audit su #539); Con un range dal base (force-push, reopen) la catena si chiude con
+     la sola attestazione locale, e i bloccanti del run in corso andavano persi
+     (secondo audit su #539);
+   - un artifact scaduto o illeggibile diventa un bloccante con il suo id,
+     triagiabile dall'owner (senza id la PR resterebbe rossa per sempre);
+   - uno storico dei run oltre 10 pagine dalla creazione della PR è rosso senza
+     id: rimedio, una PR nuova.
+3. **Nessuna chiusura automatica.** Una review successiva pulita che non cita
+   il bloccante non prova che sia stato corretto, e il modello non è un
+   verificatore dimostrabile offline. Per decisione owner, senza una chiusura
+   automatica dimostrabile vale la regola fail-closed.
+4. **Si chiude solo con il triage dell'owner**, per id. Ogni bloccante ha un
+   id di 12 caratteri (`blocker_id`: sha256 di revisore, range e testo, con
+   l'etichetta del lotto), stampato nel motivo del check rosso («bloccante
+   aperto `<id>`»). L'id resta lo stesso fra i rerun dello stesso range (il
+   piano dei lotti è deterministico), e cambia da un range all'altro e da un
+   lotto all'altro: un triage non copre le ripetizioni dello stesso testo in
+   altri push o in altri lotti, compreso il bloccante sintetico «lotto non
+   leggibile» (secondo e quarto audit su #539). Un esito non registrato e un artifact
+   illeggibile hanno anch'essi un id. Il marcatore «lotto non leggibile» vale
+   solo per una risposta **completa** ma malformata: un errore del provider o
+   un troncamento rendono già incompleta la copertura, e non lasciano un
+   bloccante da triagiare dopo il rerun (terzo audit su #539). I bloccanti reali
+   estratti da un testo parziale restano. Un solo commento può triagiare più
+   bloccanti, con una motivazione comune. L'owner pubblica sulla PR, **dalla UI di GitHub**, un
+   commento con il marker e una motivazione di almeno 20 caratteri:
+
+   ```
+   <!-- pfc-triage-bloccante:gpt56sol:<id> -->
+   Corretto in <sha>: <cosa e perche'>   (oppure: falso positivo, perche' ...)
+   ```
+
+   Il revisore è `gpt56sol` o `grok46`. Poi si rilancia il job del revisore:
+   la dedup non ripaga la review, la verifica rilegge i triage.
+5. **L'agente non può assolversi da solo.** Vale solo un commento:
+   - dell'owner (login e `author_association` OWNER);
+   - **senza** `performed_via_github_app`. L'agente scrive con l'account
+     dell'owner ma sempre tramite l'app Claude (verificato sui commenti di
+     #539), quindi i suoi commenti non contano;
+   - **mai modificato**: un'app potrebbe modificare un commento dell'owner
+     senza cambiarne l'autore. Per correggere un triage se ne pubblica uno
+     nuovo.
+
+   Un revisore indipendente abilitato diverso dall'owner non c'è ancora: oggi
+   il triage è solo dell'owner.
+
+**Rischi residui della persistenza** (secondo audit indipendente su #539), non
+chiusi dal codice:
+- **Cancellazione di prove.** Chi ha `actions: write` sull'account dell'owner
+  (quindi anche l'agente) può cancellare un artifact o un run via API: il
+  bloccante sparisce senza lasciare traccia, e dopo un force-push la catena si
+  ricostruisce. Lo vieta la policy dell'agente (azione distruttiva); il codice
+  non lo può rilevare.
+- **Token diversi dall'app.** `performed_via_github_app` è valorizzato per le
+  GitHub App. Un token personale o di una OAuth App (per esempio `gh auth
+  login`) sull'account dell'owner pubblicherebbe un commento senza app, che
+  varrebbe come triage. La garanzia regge finché l'agente usa solo l'app
+  Claude: non va dato all'agente un token personale dell'owner.
+- **Tentativi precedenti di un run.** I test assumono che
+  `/runs/{id}/artifacts` elenchi gli artifact di tutti i tentativi (i nomi
+  portano `-a<tentativo>` per questo). Va misurato sulla prima PR dopo il
+  merge.
+- **Rerun di un run vecchio dopo il verde.** Se un run di un push precedente
+  viene rilanciato dopo che il check del head è già verde e trova un
+  bloccante, il check del head non si ricalcola da solo: lo ricalcola il push
+  o il rerun successivo.
+- **Attestazioni della versione precedente** (senza il campo dei bloccanti):
+  non bloccano, sono annotate nelle `notes`. Riguarda solo le PR aperte a
+  cavallo del merge.
+- **Costo per l'owner.** Ogni bloccante, anche corretto, chiede un triage; una
+  riformulazione del modello a ogni push genera un id nuovo.
+- **Rossi senza id** (probabilità bassa): «storico dei run oltre 10 pagine» e
+  «oltre 100 run sul commit» non si possono triagiare; rimedio, una PR nuova
+  con commit nuovi (review completa).
+- **Owner = login del proprietario del repository.** Vale per questo
+  repository personale; in un repository di un'organizzazione nessun triage
+  passerebbe e andrebbe definito chi lo autorizza.
+- **Da misurare su GitHub reale:** se `updated_at` di un commento può cambiare
+  senza modifica del testo (invaliderebbe il triage: fail-closed), e se un
+  check rosso di un run superato resta nel riepilogo dei check accanto al
+  verde dello stesso nome.
 
 **`edited` senza cambio di base** (titolo, descrizione): nessuna chiamata al
 modello e nessuna attestazione nuova; la verifica legge quelle già caricate. Con
@@ -247,8 +362,11 @@ quel range (rilievo Codex su #539).
 L'ultimo step del job (`Verify review coverage of the whole PR`, `if: always()`)
 esegue `review_coverage.py verify`. Il check del revisore è verde **solo se**
 le attestazioni complete formano una **catena di range** che parte da un commit
-del branch base e arriva al head corrente, **e** la review del range che termina
-sul head non riporta bloccanti (`blocking_findings` vuota; assente = rosso).
+del branch base e arriva al head corrente, **e** nessuna attestazione della PR
+ha un bloccante non triagiato dall'owner (§4.2), **e** la review sul head ha
+registrato il proprio esito (`blocking_findings` assente = rosso). Le
+attestazioni di una versione precedente del workflow, senza il campo, non
+bloccano ma sono annotate nelle `notes` della verifica.
 
 Ogni riga del diff finale è stata scritta da una push, e quella push è un
 anello della catena.
@@ -342,8 +460,11 @@ merge**: lo blocca solo la disciplina owner/agente. Quindi:
 > **IMPLEMENTATION READY / ENFORCEMENT PENDING OWNER.** Il merge automatico resta
 > vietato.
 
-**Azione owner, dopo il merge della PFC-002** (prima i check nuovi non esistono
-su `main`):
+**Azione owner, dopo il merge della PFC-002** (D4: prima i check nuovi non
+esistono su `main`, e il check di Sol su `main` non ha ancora lo step di
+verifica, quindi oggi è verde senza nessuna attestazione). Prima di attivarlo,
+verificare su una PR di prova che i nuovi check girino e che un check mancante
+o fallito blocchi:
 
 1. *Settings → Rules → Rulesets → PICKFAIR-MAIN-PROTECTION → Add rule →
    Require status checks to pass*.
@@ -397,11 +518,18 @@ merge automatico resta vietato anche dopo l'azione qui sopra.
      aggiornarlo è un'azione owner.
    - I check dei reviewer invece girano da `pull_request_target`, cioè dalla
      base, e la PR non li può cambiare.
-2. **Il nome di un check non identifica il workflow.** Un altro job chiamato
-   `full-suite` in un workflow aggiunto dalla PR soddisferebbe il nome. Merge
-   Readiness esige che **tutte** le esecuzioni con quel nome siano SUCCESS, ma
-   non può impedire una copia verde se l'originale viene rimosso nello stesso
-   diff. Anche questo caso è coperto solo dal merge owner sui workflow.
+2. **Il nome di un check non identifica il workflow** (D3, rischio tracciato).
+   - Neutralizzato in parte: Merge Readiness conta un check obbligatorio solo
+     se è un **CheckRun**. Uno status commit con lo stesso nome (basta un token
+     con `statuses: write`) o una voce senza tipo non lo sostituiscono, e se ci
+     sono bloccano.
+   - Resta aperto: un altro job chiamato `full-suite` in un workflow aggiunto
+     dalla PR è anch'esso un CheckRun di GitHub Actions. Merge Readiness esige
+     che **tutte** le esecuzioni con quel nome siano SUCCESS, ma non può
+     impedire una copia verde se l'originale viene rimosso nello stesso diff.
+     Il rollup non dice da quale workflow viene un CheckRun, e il ruleset fissa
+     solo l'app (`integration_id` 15368). Lo coprono il merge owner sui workflow
+     e `manual-review-required`.
 3. **Identità dell'agente.** L'agente lavora con l'account dell'owner. GitHub
    non permette di approvare la propria PR, quindi «review del code owner
    obbligatoria» bloccherebbe ogni PR, senza aggiungere un controllo

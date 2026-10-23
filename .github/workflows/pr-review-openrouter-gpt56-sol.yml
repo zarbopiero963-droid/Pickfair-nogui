@@ -1196,7 +1196,8 @@ jobs:
           # renderebbero la review UNKNOWN per il lettore del gate. I bloccanti
           # vanno anche nell'attestazione: con uno solo la verifica e' rossa.
           unita = rc.aggregate_reviews([
-              {"indice": r[0] + 1, "totale": len(plan.batches), "text": r[1]} for r in risultati
+              {"indice": r[0] + 1, "totale": len(plan.batches), "text": r[1],
+               "completo": bool(r[4].get("response_complete"))} for r in risultati
           ])
           att = scrivi_attestazione(range_base, range_head, plan, [r[4] for r in risultati],
                                     compare_truncated=compare_truncated, esclusi=files_dal_base,
