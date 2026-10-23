@@ -2584,7 +2584,7 @@
       "max_files": 10
     },
     "pfc008-risk-pct-required-verified-cash": {
-      "description": "Roadmap canonica #461, PFC-008 = M019 (C3/t80u: chiavi pct e recovery assenti => blocco / nessun recovery, +F10 loader/GUI) + M020 (C1: nessun cap monetario fisso, config.example + test di guardia), con le decisioni owner #426 c.6369802091 (cap percentuali sulla cassa complessiva verificata, esposizione contata una volta) e i mandati owner PF-AUTONOMOUS-ENGINEERING-EXECUTION-01 e PFC-008 del 23/10/2026 (cassa non verificabile => BLOCKED senza ripiego; configurazione guidata F10 minimale; uscite protettive non bloccate). Le quattro percentuali non hanno default (loader, dataclass, GUI); MM, Dutching e cap temporaneo Microstake negano con <chiave>_non_configurato/_non_valido e cassa_non_verificata:<motivo>; RiskDesk tiene la cassa verificata della stessa lettura; l'hedge del cashout e' marcato protective. Test adeguati ai default rimossi con fixture esplicite (tests/risk_config_fixtures.py). Merge manuale owner. LIVE resta disabilitato. Estensione dichiarata dei files della propria task key: docs/microstake_native.md (eccezione dell'hedge protettivo dall'headroom, #548).",
+      "description": "Roadmap canonica #461, PFC-008 = M019 (C3/t80u: chiavi pct e recovery assenti => blocco / nessun recovery, +F10 loader/GUI) + M020 (C1: nessun cap monetario fisso, config.example + test di guardia), con le decisioni owner #426 c.6369802091 (cap percentuali sulla cassa complessiva verificata, esposizione contata una volta) e i mandati owner PF-AUTONOMOUS-ENGINEERING-EXECUTION-01 e PFC-008 del 23/10/2026 (cassa non verificabile => BLOCKED senza ripiego; configurazione guidata F10 minimale; uscite protettive non bloccate). Le quattro percentuali non hanno default (loader, dataclass, GUI); MM, Dutching e cap temporaneo Microstake negano con <chiave>_non_configurato/_non_valido e cassa_non_verificata:<motivo>; RiskDesk tiene la cassa verificata della stessa lettura; l'hedge del cashout e' marcato protective. Test adeguati ai default rimossi con fixture esplicite (tests/risk_config_fixtures.py). Merge manuale owner. LIVE resta disabilitato. Estensione dichiarata dei files della propria task key: docs/microstake_native.md (eccezione dell'hedge protettivo dall'headroom, #548). Estensione dichiarata: core/table_manager.py (lotto Dutching a mercato solo con tutte le gambe, review PFC-008) e tests/unit/test_pfc008_exposure_beyond_tables.py.",
       "files": [
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
@@ -2595,6 +2595,7 @@
         "core/risk_desk.py",
         "core/runtime_controller.py",
         "core/system_state.py",
+        "core/table_manager.py",
         "core/trading_engine.py",
         "core/validators.py",
         "docs/design/design_handoff.md",
@@ -2656,10 +2657,11 @@
         "tests/test_microstake_engine_native.py",
         "tests/unit/test_auto_green_delay_trigger.py",
         "tests/unit/test_dutching_controller.py",
+        "tests/unit/test_pfc008_exposure_beyond_tables.py",
         "tests/unit/test_pfc008_risk_pct_required.py",
         "tests/unit/test_pr5_numeric_guardrails.py"
       ],
-      "max_files": 72
+      "max_files": 74
     }
   }
 }

@@ -29,10 +29,14 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   snapshot, ripristino) o una lettura fallita, anche per eccezione, la azzera,
   con il motivo in `cash_equity_reason` (`CASH_NOT_READ`, `CASH_TOTAL_MISMATCH`, `CASH_RESERVE_INCOHERENT`,
   `BALANCE_ERROR:…`, …), esposto anche da `get_status` (`cash_equity_verified`, `cash_equity_reason`).
-- **Esposizione esterna:** con la cassa si registra `cash_external_exposure` = impegnato dello snapshot meno
-  l'esposizione dei tavoli del bot in quel momento (mai negativa): bet manuali, altre applicazioni o posizioni
-  non ricostruite entrano nella cassa e quindi si sottraggono anch'esse (MM `external_exposure`, Dutching,
-  headroom Microstake). Esempio: cassa 100 con 20 impegnati fuori dai tavoli, cap 35% ⇒ 15 di nuova esposizione.
+- **Esposizione oltre i tavoli:** con la cassa si registrano l'impegnato dello snapshot (`cash_committed_exposure`)
+  e l'istante di lettura. Al momento della decisione (`validators.desk_cash_basis`) l'esposizione che il cap totale
+  vede è la maggiore fra quella dei tavoli del bot e impegnato + riserve del bot non ancora riflesse nella lettura
+  (`TableManager.pending_exposure(since=read_at)`, come il gate fondi PR28-e). Così bet manuali, altre
+  applicazioni o posizioni non ricostruite si sottraggono, e una riserva pendente non le «assorbe». Esempi:
+  cassa 100 con 20 impegnati esterni, cap 35% ⇒ 15; con in più una riserva pendente del bot da 10 ⇒ 5.
+  Il tavolo di un lotto Dutching (`legs_total`) risulta a mercato solo quando tutte le gambe distinte
+  (`customer_ref`) hanno avuto un esito a mercato: le gambe ancora in volo restano riserve pendenti.
 - **Cassa non verificata ⇒ BLOCKED** delle nuove entrate (MM `cassa_non_verificata:<motivo>`, Dutching,
   cap temporaneo Microstake), nessun ripiego neppure sul disponibile. Le uscite protettive (hedge del cashout,
   `protective` dall'`OrderRouter`, che l'engine toglie dagli ingressi) non vengono bloccate né dall'headroom del

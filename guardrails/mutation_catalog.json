@@ -897,7 +897,8 @@
       "tests": [
         "tests/acceptance/test_issue461_pr28e_funds_gate.py"
       ],
-      "rationale": "#461 PR28-e: l'auto-next ignora le riserve pendenti degli altri tavoli."
+      "rationale": "#461 PR28-e: l'auto-next ignora le riserve pendenti degli altri tavoli.",
+      "equivalent": "Da PFC-008 il cap totale del MM vede max(tavoli, impegnato + riserve pendenti dalla stessa lettura) + nuovo ordine <= pct * (disponibile + impegnato), con pct <= 100 (validators.risk_pct_reason): ne segue riserve pendenti + nuovo <= disponibile, la stessa condizione del gate fondi, letta dallo stesso snapshot del settlement. Il gate non puo' quindi bloccare per primo: senza il termine `pending` il risultato osservabile e' identico (l'auto-next e' rifiutato dal cap, supera_max_total_exposure). Comportamento verificato da test_auto_next_con_impegnato_esterno_e_riserva_pendente_e_rifiutato e test_auto_next_riserva_pendente_e_impegnato_esterno. Il termine resta come seconda difesa."
     },
     {
       "id": "funds_gate_stale_funds_read",
@@ -2679,7 +2680,7 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        cassa_e_esterna = self.risk_desk.cash_basis()   # PFC-008: un'unica lettura coerente sotto lock\n        decision = self.mm.calculate(",
+      "original": "        cassa_e_esterna = validators.desk_cash_basis(self.risk_desk, self.risk_desk.bankroll_current,\n                                                     self.table_manager)\n        decision = self.mm.calculate(",
       "mutated": "        cassa_e_esterna = (None, 0.0)\n        decision = self.mm.calculate(",
       "tests": [
         "tests/unit/test_pfc008_risk_pct_required.py"
@@ -2773,15 +2774,15 @@
     },
     {
       "id": "runtime_external_exposure_ignored",
-      "module": "core.runtime_controller",
+      "module": "core.validators",
       "area": "money_management",
-      "file": "core/runtime_controller.py",
-      "original": "            external = max(0.0, committed - tavoli) if math.isfinite(tavoli) else float(\"nan\")",
-      "mutated": "            external = 0.0",
+      "file": "core/validators.py",
+      "original": "    return base, max(0.0, committed + max(0.0, pending) - max(0.0, tables_now))",
+      "mutated": "    return base, max(0.0, committed - max(0.0, tables_now))",
       "tests": [
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
-      "rationale": "Review PFC-008 P1: l'impegnato dello snapshot fuori dai tavoli non verrebbe registrato come esposizione esterna."
+      "rationale": "Rilievo Codex P1 su dd0b02b: una riserva del bot non ancora a mercato assorbirebbe l'impegnato esterno (cap allargato)."
     },
     {
       "id": "engine_entry_keeps_spoofed_protective",
@@ -2800,12 +2801,36 @@
       "module": "core.validators",
       "area": "money_management",
       "file": "core/validators.py",
-      "original": "    if base is None or external is None or external < 0:\n        return None, None",
+      "original": "    if base is None or committed is None or committed < 0:\n        return None, None",
       "mutated": "    if base is None:\n        return None, None",
       "tests": [
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
-      "rationale": "Review Grok PFC-008: un RiskDesk senza esposizione esterna leggibile varrebbe 'nessun impegnato esterno' (fail-open)."
+      "rationale": "Review Grok PFC-008: un RiskDesk senza impegnato leggibile varrebbe 'nessun impegnato' (fail-open)."
+    },
+    {
+      "id": "validators_committed_ignored_beyond_tables",
+      "module": "core.validators",
+      "area": "money_management",
+      "file": "core/validators.py",
+      "original": "    return base, max(0.0, committed + max(0.0, pending) - max(0.0, tables_now))",
+      "mutated": "    return base, 0.0",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Review PFC-008 P1: l'impegnato dello snapshot fuori dai tavoli del bot non verrebbe sottratto dai cap."
+    },
+    {
+      "id": "table_batch_placed_on_first_leg",
+      "module": "core.table_manager",
+      "area": "exposure",
+      "file": "core/table_manager.py",
+      "original": "                if len(acked) < int(legs_total):\n                    return False",
+      "mutated": "                if False:\n                    return False",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Review PFC-008 (S4): il lotto Dutching risulterebbe a mercato al primo esito di una gamba e le gambe in volo assorbirebbero l'impegnato esterno."
     }
   ]
 }

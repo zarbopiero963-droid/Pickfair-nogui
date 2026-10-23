@@ -52,7 +52,7 @@ class _RuntimeAttivo:
     # PFC-008: i controlli di esposizione del Dutching richiedono percentuali esplicite e cassa verificata (prima,
     # con config e RiskDesk assenti, venivano saltati). Cap al 100% e cassa ampia: il test verifica il cablaggio.
     config = explicit_risk_config(max_single_bet_pct=100.0, max_total_exposure_pct=100.0, max_event_exposure_pct=100.0)
-    risk_desk = SimpleNamespace(bankroll_current=100000.0, cash_equity_current=100000.0, cash_external_exposure=0.0)
+    risk_desk = SimpleNamespace(bankroll_current=100000.0, cash_equity_current=100000.0, cash_committed_exposure=0.0)
 
     def admit_controller_entries(self, orders, *, batch_id=""):
         # #523: il controller ammette le gambe tramite il runtime; "" = ammesso

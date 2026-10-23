@@ -734,7 +734,7 @@ class DutchingController:
         if pct_reason:
             return self._fail("Limite di rischio % non configurato o non valido", reason=pct_reason), None, None
         risk_desk = self._risk_desk()
-        cap_base, external = validators.desk_cash_basis(risk_desk, bankroll)
+        cap_base, external = validators.desk_cash_basis(risk_desk, bankroll, self._table_manager())
         if cap_base is None:
             return self._fail("Cassa non verificata: nessun nuovo ingresso", reason="cassa_non_verificata",
                               cash_reason=str(getattr(risk_desk, "cash_equity_reason", "") or "CASH_NOT_READ")
@@ -1500,6 +1500,8 @@ class DutchingController:
                     "market_name": payload.get("market_name", ""),
                     "type": "dutching_batch",
                     "batch_id": batch_id,
+                    # PFC-008: il tavolo del lotto e' a mercato solo quando tutte le gambe lo sono.
+                    "legs_total": len(results),
                 },
             )
         except Exception as exc:

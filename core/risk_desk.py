@@ -58,9 +58,10 @@ class RiskDesk:
         # nuove entrate sono negate (`cassa_non_verificata`), nessun ripiego.
         self.cash_equity_current = None
         self.cash_equity_reason = "CASH_NOT_READ"
-        # Esposizione della stessa lettura non presente nei tavoli del bot (si sottrae anch'essa dai cap) e
-        # istante monotonic d'inizio dell'ultima lettura applicata: una lettura piu' vecchia non la sovrascrive.
-        self.cash_external_exposure = 0.0
+        # Impegnato (|exposure|) della stessa lettura e istante monotonic d'inizio dell'ultima lettura applicata:
+        # con le riserve del bot piazzate DOPO quella lettura danno l'esposizione che il cap totale deve vedere
+        # (validators.desk_cash_basis). Una lettura iniziata prima dell'ultima applicata non la sovrascrive.
+        self.cash_committed_exposure = 0.0
         self._cash_read_at = None
 
         self.realized_pnl = 0.0
@@ -111,10 +112,10 @@ class RiskDesk:
     def _invalidate_cash_locked(self, reason: str) -> None:
         self.cash_equity_current = None
         self.cash_equity_reason = str(reason)
-        self.cash_external_exposure = 0.0
+        self.cash_committed_exposure = 0.0
 
     def sync_cash_equity(self, cash_equity: Any, available: Any, *, reason: str = "",
-                         external_exposure: Any = 0.0, read_at: Any = None) -> None:
+                         committed_exposure: Any = 0.0, read_at: Any = None) -> None:
         """Registra la cassa verificata letta insieme al disponibile `available` (PFC-008).
 
         Vale solo se `available` e' il bankroll corrente (stessa lettura) e la cassa e'
@@ -133,21 +134,21 @@ class RiskDesk:
                 return
             cash = finite_number(cash_equity)
             avail = finite_number(available)
-            external = finite_number(external_exposure)
+            committed = finite_number(committed_exposure)
             if avail is None or avail != self.bankroll_current:
                 self._invalidate_cash_locked("CASH_READING_MISMATCH")
-            elif cash is None or cash <= 0 or cash < avail or external is None or external < 0:
+            elif cash is None or cash <= 0 or cash < avail or committed is None or committed < 0:
                 self._invalidate_cash_locked("CASH_INCOHERENT")
             else:
                 self.cash_equity_current = cash
                 self.cash_equity_reason = ""
-                self.cash_external_exposure = external
+                self.cash_committed_exposure = committed
 
     def cash_basis(self) -> tuple:
-        """PFC-008: ``(cassa, esposizione_esterna)`` letti insieme sotto lock: base dei cap e impegnato fuori dai
-        tavoli appartengono sempre alla stessa lettura. Cassa None = non verificata."""
+        """PFC-008: ``(cassa, impegnato, read_at)`` della stessa lettura, letti insieme sotto lock.
+        Cassa None = non verificata."""
         with self._lock:
-            return self.cash_equity_current, self.cash_external_exposure
+            return self.cash_equity_current, self.cash_committed_exposure, self._cash_read_at
 
     def set_bankroll_start(self, bankroll_start: float) -> None:
         with self._lock:

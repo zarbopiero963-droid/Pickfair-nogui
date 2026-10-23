@@ -564,7 +564,7 @@ class _DutchRuntime:
     def __init__(self):
         self.mode = self._Mode()
         self.config = self._Config()
-        self.risk_desk = SimpleNamespace(bankroll_current=1000.0, cash_equity_current=1000.0, cash_external_exposure=0.0)
+        self.risk_desk = SimpleNamespace(bankroll_current=1000.0, cash_equity_current=1000.0, cash_committed_exposure=0.0)
         self.duplication_guard = self._Guard()
         self.table_manager = self._Tables()
         self.dutching_batch_manager = None

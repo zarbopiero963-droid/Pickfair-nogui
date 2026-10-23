@@ -314,7 +314,9 @@ def test_ack_a_mercato_marca_il_tavolo_della_riserva_e_il_rilascio_lo_azzera():
 def test_auto_next_con_impegnato_esterno_e_riserva_pendente_e_rifiutato():
     # Snapshot del settlement: 100 disponibili + 100 impegnati esterni; tavolo 2 pendente da 95. LAY 2@6
     # (liability 10): 95 + 10 = 105 > 100 disponibili.
-    # PFC-008: cassa verificata 200 => al 100% il cap percentuale ammette 105, ferma il gate dei fondi.
+    # PFC-008: il cap totale sulla cassa verificata (200) vede impegnato 100 + riserva pendente 95 + 10 = 205
+    # (rilievo Codex: una riserva pendente non "assorbe" l'impegnato esterno). Con cap <= 100% della cassa questo
+    # caso fallisce sempre prima il cap del gate fondi; il gate fondi resta provato dagli altri test del file.
     rc, bus, esito = _auto_next(
         {"market_id": "1.2", "selection_id": 2, "price": 6.0, "stake": 2.0, "bet_type": "LAY"},
         funds={"available": 100.0, "exposure": 100.0},
@@ -322,7 +324,7 @@ def test_auto_next_con_impegnato_esterno_e_riserva_pendente_e_rifiutato():
         pct_totale=100.0,
     )
     assert [e for e in bus.events if e[0] == "CMD_QUICK_BET"] == [], esito
-    assert esito["reason"].startswith("fondi_insufficienti"), esito
+    assert esito["reason"] == "supera_max_total_exposure", esito
 
 
 # ---------------------------------------------------------------- verifiche owner prima del merge (#531)

@@ -199,7 +199,7 @@ def _dutching(monkeypatch, *, legs, cash=None, available=80.0, total=20.0, **pct
 
     monkeypatch.setattr("controllers.dutching_controller.calculate_dutching", fake_calculate_dutching)
     runtime = FakeRuntime()
-    runtime.risk_desk = SimpleNamespace(bankroll_current=available, cash_equity_current=cash, cash_external_exposure=0.0)
+    runtime.risk_desk = SimpleNamespace(bankroll_current=available, cash_equity_current=cash, cash_committed_exposure=0.0)
     runtime.table_manager.total_exposure = lambda: total
     for k, v in pct.items():
         setattr(runtime.config, k, v)
@@ -241,7 +241,7 @@ def test_dutching_config_assente_nega(monkeypatch):
     monkeypatch.setattr("controllers.dutching_controller.calculate_dutching", fake_calculate_dutching)
     runtime = FakeRuntime()
     runtime.config = None
-    runtime.risk_desk = SimpleNamespace(bankroll_current=80.0, cash_equity_current=100.0, cash_external_exposure=0.0)
+    runtime.risk_desk = SimpleNamespace(bankroll_current=80.0, cash_equity_current=100.0, cash_committed_exposure=0.0)
     ctrl = DutchingController(bus=SimpleNamespace(publish=lambda *a, **k: None), runtime_controller=runtime)
     out = ctrl.precheck({"market_id": "1.300", "total_stake": 1.0, "simulation_mode": True,
                          "selections": [{"selectionId": 1, "price": 3.0, "side": "BACK"}]})
@@ -566,7 +566,7 @@ def test_runtime_registra_e_passa_l_esposizione_esterna(monkeypatch):
     # Avvio con 20 impegnati e nessun tavolo del bot: tutta l'esposizione e' esterna.
     rc, _bus = _make_controller(responses=[])
     rc._applica_fondi_avvio({"available": 80.0, "exposure": -20.0})
-    assert rc.risk_desk.cash_external_exposure == 20.0
+    assert rc.risk_desk.cash_committed_exposure == 20.0
     rc.mode = RuntimeMode.ACTIVE
     visti = []
 
@@ -581,10 +581,36 @@ def test_runtime_registra_e_passa_l_esposizione_esterna(monkeypatch):
 
 
 def test_runtime_esposizione_dei_tavoli_non_e_esterna():
+    # I 20 impegnati sono del bot, gia' a mercato prima della lettura: nessuna esposizione oltre i tavoli.
     rc, _bus = _make_controller(responses=[])
-    rc.table_manager.total_exposure = lambda: 20.0           # i 20 impegnati sono del bot
-    rc._applica_fondi_avvio({"available": 80.0, "exposure": -20.0})
-    assert rc.risk_desk.cash_external_exposure == 0.0
+    rc.table_manager.total_exposure = lambda: 20.0
+    rc.table_manager.pending_exposure = lambda since: 0.0
+    rc._applica_fondi_avvio({"available": 80.0, "exposure": -20.0}, read_at=5.0)
+    assert rc.risk_desk.cash_committed_exposure == 20.0
+    assert validators.desk_cash_basis(rc.risk_desk, 80.0, rc.table_manager) == (100.0, 0.0)
+
+
+def test_riserva_pendente_non_assorbe_l_esposizione_esterna():
+    # Rilievo Codex P1 su dd0b02b: cassa 100, 20 impegnati esterni, riserva del bot da 10 non ancora a mercato.
+    # L'esposizione che il cap deve vedere e' 30 (non 20): con cap 35% restano 5, non 15.
+    from core.table_manager import TableManager
+    tm = TableManager(table_count=2)
+    tm.activate(table_id=1, event_key="E1", exposure=10.0, market_id="1.1", selection_id=1)   # pendente
+    desk = RiskDesk()
+    desk.sync_bankroll(80.0)
+    desk.sync_cash_equity(100.0, 80.0, committed_exposure=20.0, read_at=1.0)
+    base, oltre = validators.desk_cash_basis(desk, 80.0, tm)
+    assert (base, oltre) == (100.0, 20.0)                       # tavoli 10 + oltre 20 = 30
+    mm = RoserpinaMoneyManagement(_cfg(max_total_exposure_pct=35.0))
+    kw = dict(bankroll_current=80.0, equity_peak=80.0, current_total_exposure=tm.total_exposure(),
+              event_current_exposure=0.0, table=None, cap_base_cash=base, external_exposure=oltre)
+    assert mm.calculate(signal={"price": 3.0, "side": "BACK", "stake": 5.0}, **kw).approved is True
+    d = mm.calculate(signal={"price": 3.0, "side": "BACK", "stake": 15.0}, **kw)
+    assert d.approved is False and d.reason == "supera_max_total_exposure"
+    # Piazzata prima della lettura: ora e' dentro l'impegnato letto (che la conterebbe), niente doppio conteggio.
+    tm.mark_placed(1, "E1", at=0.5)
+    desk.sync_cash_equity(100.0, 80.0, committed_exposure=30.0, read_at=2.0)
+    assert validators.desk_cash_basis(desk, 80.0, tm) == (100.0, 20.0)
 
 
 def test_dutching_esposizione_esterna_si_sottrae(monkeypatch):
@@ -596,7 +622,7 @@ def test_dutching_esposizione_esterna_si_sottrae(monkeypatch):
         monkeypatch.setattr("controllers.dutching_controller.calculate_dutching", fake_calculate_dutching)
         runtime = FakeRuntime()
         runtime.risk_desk = SimpleNamespace(bankroll_current=80.0, cash_equity_current=100.0,
-                                            cash_external_exposure=external)
+                                            cash_committed_exposure=external)
         runtime.config.max_total_exposure_pct = 35.0
         runtime.config.target_profit_cycle_pct = 3.0
         ctrl = DutchingController(bus=SimpleNamespace(publish=lambda *a, **k: None), runtime_controller=runtime)
@@ -611,7 +637,7 @@ def test_dutching_esposizione_esterna_si_sottrae(monkeypatch):
 def test_microstake_headroom_sottrae_l_esposizione_esterna():
     m = _motore(35.0, 100.0)
     m.runtime_controller.table_manager = SimpleNamespace(total_exposure=lambda: 0.0)
-    m.runtime_controller.risk_desk.sync_cash_equity(100.0, 80.0, external_exposure=20.0)
+    m.runtime_controller.risk_desk.sync_cash_equity(100.0, 80.0, committed_exposure=20.0)
     assert TradingEngine._native_transient_cap(m, {}) == pytest.approx(15.0)
 
 
@@ -670,9 +696,9 @@ def test_ingresso_con_protective_spoofato_non_aggira_il_cap_temporaneo():
 
 @pytest.mark.parametrize("desk", [
     SimpleNamespace(cash_equity_current=100.0),                               # campo esterno mancante
-    SimpleNamespace(cash_equity_current=100.0, cash_external_exposure=None),
-    SimpleNamespace(cash_equity_current=100.0, cash_external_exposure=float("nan")),
-    SimpleNamespace(cash_equity_current=None, cash_external_exposure=0.0),
+    SimpleNamespace(cash_equity_current=100.0, cash_committed_exposure=None),
+    SimpleNamespace(cash_equity_current=100.0, cash_committed_exposure=float("nan")),
+    SimpleNamespace(cash_equity_current=None, cash_committed_exposure=0.0),
 ])
 def test_base_e_esterna_assenti_non_valgono_zero(desk):
     assert validators.desk_cash_basis(desk, 80.0) == (None, None)
@@ -681,8 +707,8 @@ def test_base_e_esterna_assenti_non_valgono_zero(desk):
 def test_base_e_esterna_dalla_stessa_lettura():
     desk = RiskDesk()
     desk.sync_bankroll(80.0)
-    desk.sync_cash_equity(100.0, 80.0, external_exposure=20.0)
-    assert desk.cash_basis() == (100.0, 20.0)
+    desk.sync_cash_equity(100.0, 80.0, committed_exposure=20.0, read_at=3.0)
+    assert desk.cash_basis() == (100.0, 20.0, 3.0)
     assert validators.desk_cash_basis(desk, 80.0) == (100.0, 20.0)
 
 
