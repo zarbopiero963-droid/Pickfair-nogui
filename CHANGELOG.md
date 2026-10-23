@@ -39,6 +39,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - una voce del registro scartata al caricamento lo marca inaffidabile in modo persistente (`fills_corrupted`,
     azzerato solo da `reset()`); con il registro non verificabile neanche l'abbinamento differito avviene; una
     quota illeggibile non cancella la liquidita' consumata; una dimensione negativa non vale "illimitata";
+  - modello della liquidita' consumata riscritto (rilievi Sol e Codex su #542): si toglie da ogni livello della
+    scala e da tutti i runner, decade solo se la sua quota sparisce dalla scala di un book aperto e valido; un
+    book e' valido solo con struttura corretta e quote > 1.0; gli id dei fill sono sempre liberi;
   - due test che codificavano il credito anticipato (disponibile 1010 prima del settlement di BACK 10@3 +
     LAY 10@2, i due esiti sono +10 o 0) aggiornati a 1000; 4 mutazioni nuove, 3 di PFC-004 riallineate.
 - **PFC-004 — G7-a: il SimulationBroker riserva i fondi come Betfair (roadmap #461, decisione owner #531):**

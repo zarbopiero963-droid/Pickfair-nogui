@@ -2474,8 +2474,8 @@
       "module": "simulation_broker",
       "area": "reconciliation",
       "file": "simulation_broker.py",
-      "original": "        fill_id = str(order.bet_id) if n == 1 else f\"{order.bet_id}#{n}\"",
-      "mutated": "        fill_id = str(order.bet_id)",
+      "original": "            fill_id = f\"{order.bet_id}#{n}\"",
+      "mutated": "            fill_id = str(order.bet_id); break",
       "tests": [
         "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
@@ -2498,8 +2498,8 @@
       "module": "simulation_broker",
       "area": "funds",
       "file": "simulation_broker.py",
-      "original": "                self._applica_liquidita_consumata_locked(market_id, normalized)",
-      "mutated": "                pass",
+      "original": "            self._applica_liquidita_consumata_locked(",
+      "mutated": "            (lambda *a, **k: None)(",
       "tests": [
         "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],

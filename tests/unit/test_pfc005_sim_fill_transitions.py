@@ -438,3 +438,76 @@ def test_dimensione_negativa_non_vale_liquidita_illimitata(fase):
         _, rep = _place(b, "BACK", 2.0, 60.0)
         b.update_market_book("1.1", negativo)
         assert b.state.orders[rep["betId"]].matched_size == 0.0
+
+
+def test_book_in_parte_malformato_non_ripresenta_la_liquidita_degli_altri_runner():
+    # GPT-6.1 Sol su #542: R1 consumato, quota illeggibile su R2: R1 non deve tornare pieno.
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (2.0, 2.02, 10.0), 2: (3.0, 3.1, 10.0)})
+    assert _place(b, "BACK", 2.0, 10.0, sel=1)[1]["sizeMatched"] == pytest.approx(10.0)
+    b.update_market_book("1.1", {"status": "OPEN", "runners": [
+        {"selectionId": 1, "status": "ACTIVE", "ex": {"availableToBack": [{"price": 2.0, "size": 10.0}]}},
+        {"selectionId": 2, "status": "ACTIVE", "ex": {"availableToBack": [{"price": "abc", "size": 10.0}]}}]})
+    assert _place(b, "BACK", 2.0, 50.0, sel=1)[1]["sizeMatched"] == 0.0  # nessun doppio consumo
+    _book(b, runners={1: (2.0, 2.02, 10.0), 2: (3.0, 3.1, 10.0)})
+    assert sum(o.matched_size for o in b.state.orders.values()) == pytest.approx(10.0)
+
+
+# --- quinto giro Codex su #542 ----------------------------------------------------------------------
+
+def test_id_del_fill_libero_anche_con_registro_ripristinato_a_numerazione_diversa():
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (2.0, 2.02, 10.0)})
+    _, rep = _place(b, "BACK", 2.0, 100.0)
+    bet = rep["betId"]
+    stato = json.loads(json.dumps(b.state.to_dict()))
+    stato["fills"][0]["fill_id"] = bet + "#2"  # id opaco gia' "occupato"
+    nuovo = _broker(balance=1000.0)
+    nuovo.state.load_from_dict(stato)
+    _book(nuovo, runners={1: (2.0, 2.02, 30.0)})
+    ids = [f["fill_id"] for f in nuovo.state.fills]
+    assert len(ids) == len(set(ids)) == 2 and "error" not in nuovo.get_account_funds()
+
+
+@pytest.mark.parametrize("runners", [
+    ["non un dizionario"],
+    [{"selectionId": 1, "status": "ACTIVE", "ex": "non un dizionario"}],
+    [{"selectionId": 1, "status": "ACTIVE", "ex": {"availableToBack": "x"}}],
+    [{"selectionId": 1, "status": "ACTIVE", "ex": {"availableToBack": ["x"]}}],
+])
+def test_book_strutturalmente_malformato_non_abbina_e_non_solleva(runners):
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (1.8, 1.82, 100.0)})
+    _, rep = _place(b, "BACK", 2.0, 60.0)
+    validi = [{"selectionId": 1, "status": "ACTIVE", "ex": {"availableToBack": [{"price": 2.5, "size": 100.0}]}}]
+    assert b.update_market_book("1.1", {"status": "OPEN", "runners": validi + runners})["ok"] is True
+    assert b.state.orders[rep["betId"]].matched_size == 0.0 and b.state.fills == []
+
+
+def test_consumo_dei_livelli_inferiori_resta_se_il_livello_compare_ancora():
+    # due livelli consumati; il primo si ricarica: il secondo non deve ripresentarsi intero
+    b = _broker(balance=1000.0)
+    b.update_market_book("1.1", {"status": "OPEN", "runners": [{"selectionId": 1, "status": "ACTIVE", "ex": {
+        "availableToBack": [{"price": 2.2, "size": 10.0}, {"price": 2.1, "size": 10.0}]}}]})
+    _place(b, "BACK", 2.2, 10.0)          # consuma 2.2
+    b.update_market_book("1.1", {"status": "OPEN", "runners": [{"selectionId": 1, "status": "ACTIVE", "ex": {
+        "availableToBack": [{"price": 2.2, "size": 10.0}, {"price": 2.1, "size": 10.0}]}}]})
+    _place(b, "BACK", 2.1, 10.0)          # consuma 2.1
+    b.update_market_book("1.1", {"status": "OPEN", "runners": [{"selectionId": 1, "status": "ACTIVE", "ex": {
+        "availableToBack": [{"price": 2.2, "size": 20.0}, {"price": 2.1, "size": 10.0}]}}]})  # 2.2 ricaricato
+    assert _place(b, "BACK", 2.1, 50.0)[1]["sizeMatched"] == pytest.approx(10.0)  # solo i 10 nuovi a 2.2
+    b.update_market_book("1.1", {"status": "OPEN", "runners": [{"selectionId": 1, "status": "ACTIVE", "ex": {
+        "availableToBack": [{"price": 2.2, "size": 20.0}, {"price": 2.1, "size": 10.0}]}}]})
+    assert sum(o.matched_size for o in b.state.orders.values()) == pytest.approx(30.0)  # 2.1 gia' preso
+
+
+@pytest.mark.parametrize("quota", [1.0, 0.0, None])
+def test_quota_non_valida_per_l_exchange_non_cancella_il_consumo(quota):
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (2.0, 2.02, 10.0)})
+    _, rep = _place(b, "BACK", 2.0, 100.0)
+    livello = {"size": 10.0} if quota is None else {"price": quota, "size": 10.0}
+    b.update_market_book("1.1", {"status": "OPEN", "runners": [{"selectionId": 1, "status": "ACTIVE", "ex": {
+        "availableToBack": [livello]}}]})
+    _book(b, runners={1: (2.0, 2.02, 10.0)})
+    assert b.state.orders[rep["betId"]].matched_size == pytest.approx(10.0)

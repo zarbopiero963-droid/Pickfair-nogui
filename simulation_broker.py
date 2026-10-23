@@ -573,10 +573,12 @@ class SimulationBroker:
         esito_settlement: Optional[Dict[str, Any]] = None
         da_persistere: List[SimOrder] = []
         with self._lock:
-            # Book non numerico: nessuna pulizia del consumo (una quota illeggibile
-            # non e' "un'altra quota", Codex su #542) e nessun abbinamento differito.
-            if self._book_numerico(normalized):
-                self._applica_liquidita_consumata_locked(market_id, normalized)
+            # La liquidita' gia' presa si toglie sempre (anche dagli altri runner di
+            # un book in parte malformato, Sol su #542); su un book non numerico non
+            # si cancella pero' nessun conteggio (una quota illeggibile non e'
+            # "un'altra quota", Codex su #542) e non c'e' abbinamento differito.
+            self._applica_liquidita_consumata_locked(
+                market_id, normalized, pulisci=self._book_numerico(normalized))
             self.state.market_books[market_id] = normalized
             self._refresh_unrealized_for_market(market_id)
             event_name = str(
@@ -637,75 +639,91 @@ class SimulationBroker:
     def _chiave_liquidita(market_id: str, selection_id: int, lato: str, price: float) -> str:
         return _chiave_liquidita(market_id, selection_id, lato, price)
 
-    def _applica_liquidita_consumata_locked(self, market_id: str, market_book: Dict[str, Any]) -> None:
+    def _applica_liquidita_consumata_locked(self, market_id: str, market_book: Dict[str, Any],
+                                            pulisci: bool = True) -> None:
         """Il book riletto non ripresenta la liquidita' gia' presa (review PFC-005).
 
-        Sul miglior livello di ogni lato si toglie quanto i nostri ordini hanno
-        gia' abbinato a quella quota; se la quota del miglior livello cambia, il
-        conteggio di quel livello decade. Una dimensione in crescita lascia
-        abbinare solo l'incremento: la SIM non sovrastima i fill.
+        Da OGNI livello della scala si toglie quanto i nostri ordini hanno gia'
+        abbinato a quella quota (un livello esaurito esce dal book: nel SIM una
+        dimensione 0 o assente vale "illimitata"); una dimensione in crescita
+        lascia abbinare solo l'incremento. Un conteggio decade solo quando la sua
+        quota non compare piu' nella scala di quel runner e lato su un book
+        APERTO e valido (``pulisci``), o alla chiusura del mercato: un book
+        sospeso, con scale vuote o malformato non cancella nulla.
         """
         prefisso = f"{market_id}|"
-        vivi = set()
-        # (selezione, lato) con un miglior livello visibile su un book APERTO: solo
-        # li' un conteggio a un'altra quota decade. Un book sospeso o con le scale
-        # vuote non cancella nulla (Codex su #542): alla riapertura il feed
-        # ripresenterebbe la stessa liquidita'.
-        osservati = set()
-        aperto = isinstance(market_book.get("status"), str) and market_book["status"].strip().upper() == "OPEN"
-        if not self._book_chiuso(market_book):
-            for runner in market_book.get("runners") or []:
-                if not isinstance(runner, dict):
-                    continue
-                selezione = _to_int(runner.get("selectionId") or runner.get("selection_id"), 0)
-                ex = runner.get("ex") if isinstance(runner.get("ex"), dict) else {}
-                for lato in ("availableToBack", "availableToLay"):
-                    livelli = ex.get(lato)
-                    if aperto and isinstance(livelli, list) and livelli:
-                        osservati.add(f"{prefisso}{int(selezione)}|{lato}|")
-                    # Un livello esaurito si toglie: nel SIM una dimensione 0 o
-                    # assente vale "liquidita' illimitata".
-                    while isinstance(livelli, list) and livelli and isinstance(livelli[0], dict):
-                        chiave = self._chiave_liquidita(
-                            market_id, selezione, lato, _to_float(livelli[0].get("price"), 0.0))
-                        consumato = self.state.liquidity_consumed.get(chiave, 0.0)
-                        if consumato <= 0.0:
-                            break
-                        vivi.add(chiave)
-                        residuo = _to_float(livelli[0].get("size"), 0.0) - consumato
-                        if residuo > 0.0:
-                            livelli[0]["size"] = residuo
-                            break
-                        livelli.pop(0)
         chiuso = self._book_chiuso(market_book)
-        for chiave in [k for k in self.state.liquidity_consumed if k.startswith(prefisso) and k not in vivi]:
-            if chiuso or chiave.rsplit("|", 1)[0] + "|" in osservati:
+        aperto = isinstance(market_book.get("status"), str) and market_book["status"].strip().upper() == "OPEN"
+        presenti = set()   # conteggi la cui quota e' nella scala in arrivo
+        osservati = set()  # (selezione, lato) con una scala non vuota su un book aperto
+        runners = market_book.get("runners") if not chiuso else None
+        for runner in runners if isinstance(runners, list) else []:
+            if not isinstance(runner, dict) or not isinstance(runner.get("ex"), dict):
+                continue
+            selezione = _to_int(runner.get("selectionId") or runner.get("selection_id"), 0)
+            for lato in ("availableToBack", "availableToLay"):
+                livelli = runner["ex"].get(lato)
+                if not isinstance(livelli, list):
+                    continue
+                if aperto and livelli:
+                    osservati.add(f"{prefisso}{int(selezione)}|{lato}|")
+                rimasti = []
+                for livello in livelli:
+                    if isinstance(livello, dict):
+                        chiave = self._chiave_liquidita(
+                            market_id, selezione, lato, _to_float(livello.get("price"), 0.0))
+                        consumato = self.state.liquidity_consumed.get(chiave, 0.0)
+                        if consumato > 0.0:
+                            presenti.add(chiave)
+                            residuo = _to_float(livello.get("size"), 0.0) - consumato
+                            if residuo <= 0.0:
+                                continue  # livello esaurito
+                            livello["size"] = residuo
+                    rimasti.append(livello)
+                livelli[:] = rimasti
+        if not (pulisci or chiuso):
+            return
+        for chiave in [k for k in self.state.liquidity_consumed if k.startswith(prefisso)]:
+            if chiuso or (chiave not in presenti and chiave.rsplit("|", 1)[0] + "|" in osservati):
                 del self.state.liquidity_consumed[chiave]
 
     @staticmethod
     def _book_numerico(market_book: Dict[str, Any]) -> bool:
-        """Ogni miglior livello ha prezzo e dimensione convertibili (assenti ammessi)."""
-        for runner in market_book.get("runners") or []:
+        """Book strutturalmente valido e abbinabile senza eccezioni (review PFC-005).
+
+        Runner come dizionari, ``ex`` dizionario (o assente), scale come liste di
+        livelli; ogni livello con quota finita > 1.0 (valida per l'exchange) e
+        dimensione finita >= 0 o assente. Altrimenti nessun abbinamento
+        differito e nessuna pulizia della liquidita' consumata.
+        """
+        runners = market_book.get("runners")
+        if runners is None:
+            return True
+        if not isinstance(runners, list):
+            return False
+        for runner in runners:
             if not isinstance(runner, dict):
+                return False
+            ex = runner.get("ex")
+            if ex is None:
                 continue
-            ex = runner.get("ex") if isinstance(runner.get("ex"), dict) else {}
+            if not isinstance(ex, dict):
+                return False
             for lato in ("availableToBack", "availableToLay"):
-                livelli = ex.get(lato) or []
+                livelli = ex.get(lato)
+                if livelli is None:
+                    continue
                 if not isinstance(livelli, list):
                     return False
-                if not livelli:
-                    continue
-                if not isinstance(livelli[0], dict):
-                    return False
-                for campo in ("price", "size"):
-                    valore = livelli[0].get(campo)
-                    if valore is None:
-                        continue
+                for livello in livelli:
+                    if not isinstance(livello, dict):
+                        return False
                     try:
-                        numerico = float(valore)
+                        quota = float(livello.get("price"))
+                        dimensione = float(livello["size"]) if livello.get("size") is not None else 0.0
                     except (TypeError, ValueError):
                         return False
-                    if not math.isfinite(numerico) or (campo == "size" and numerico < 0.0):
+                    if not (math.isfinite(quota) and quota > 1.0 and math.isfinite(dimensione) and dimensione >= 0.0):
                         return False
         return True
 
@@ -1857,8 +1875,13 @@ class SimulationBroker:
         # Il primo fill di un ordine si chiama come l'ordine (stato precedente a
         # PFC-005 compatibile); i successivi bet_id#2, #3...: il ledger scarta
         # come duplicato un fill_id gia' visto.
-        n = 1 + sum(1 for f in self.state.fills if f.get("bet_id") == order.bet_id)
-        fill_id = str(order.bet_id) if n == 1 else f"{order.bet_id}#{n}"
+        # Un id davvero libero (Codex su #542): un registro ripristinato puo' gia'
+        # contenere bet_id#2 anche se il fill dell'ordine e' uno solo.
+        usati = {str(f.get("fill_id")) for f in self.state.fills}
+        fill_id, n = str(order.bet_id), 1
+        while fill_id in usati:
+            n += 1
+            fill_id = f"{order.bet_id}#{n}"
         self.state.fills.append({
             "fill_id": fill_id, "bet_id": str(order.bet_id), "market_id": str(order.market_id),
             "selection_id": int(order.selection_id), "side": order.side,
