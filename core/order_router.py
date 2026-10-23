@@ -265,6 +265,12 @@ class OrderRouter:
         # segnala che esiste (registra il bet_id => niente orphan/retry
         # duplicato), mentre "ok" richiede l'abbinamento.
         placed = status == "SUCCESS" and bool(reports)
+        if placed and raw.get("snapshot_persisted") is False:
+            # #545: ordine creato in memoria ma snapshot di reload NON scritto: un riavvio lo perderebbe. Esito
+            # incerto come un ordine live senza risposta: ne' riuscito ne' fallito, riconciliazione e mai retry.
+            return cls._result(
+                ok=False, placed=True, order_unknown=True, status="AMBIGUOUS", matched=matched,
+                bet_id=bet_id, error="SIM_SNAPSHOT_NOT_PERSISTED", raw=raw)
         return cls._result(
             ok=placed and matched > 0.0,
             placed=placed,

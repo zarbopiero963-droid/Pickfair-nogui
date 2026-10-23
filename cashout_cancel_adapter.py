@@ -84,6 +84,10 @@ def response_confirms_cancel(result: Any) -> bool:
         return False  # shape inattesa (non-dict) => non confermato (fail-closed)
     if result.get("ok") is False:
         return False
+    if result.get("snapshot_persisted") is False:
+        # #545: cancellazione eseguita in memoria ma snapshot SIM di reload non scritto: un riavvio la
+        # annullerebbe (l'ordine tornerebbe EXECUTABLE). Non e' una conferma (fail-closed).
+        return False
     nested = result.get("result")
     containers = [result] + ([nested] if isinstance(nested, dict) else [])
     saw_confirmation = False

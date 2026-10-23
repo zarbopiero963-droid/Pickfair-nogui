@@ -894,6 +894,26 @@ class TradingEngine:
             return text if text.startswith("runtime_authority") else f"runtime_authority_check_failed:{text}"
         return ""
 
+    def _sim_durability_admission_block(self) -> str:
+        """#545: '' se il broker SIM della sessione e' durevole (o non c'e' un broker SIM); altrimenti il motivo.
+
+        Uno snapshot di reload non scritto significa che un riavvio ripartirebbe da uno stato precedente: nessuna
+        NUOVA esposizione finche' una scrittura non riesce (``ensure_durable`` la ritenta, stato intero). Le uscite
+        protettive non passano di qui (OrderRouter del cashout)."""
+        runtime = getattr(self, "runtime_controller", None)
+        mode_fn = getattr(runtime, "get_effective_execution_mode", None)
+        if not callable(mode_fn) or str(mode_fn() or "").upper() != "SIMULATION":
+            return ""
+        broker = self._current_simulation_broker()
+        ensure = getattr(broker, "ensure_durable", None)
+        if not callable(ensure):
+            return ""
+        try:
+            return "" if ensure() is True else "SIM_SNAPSHOT_NON_DUREVOLE"
+        except Exception:  # noqa: BLE001 - durabilita' non dimostrabile => nessuna nuova entrata
+            logger.exception("Verifica della durabilita' del broker SIM fallita")
+            return "SIM_SNAPSHOT_NON_DUREVOLE"
+
     def _discard_unchecked_admission_fence(self, payload: Dict[str, Any]) -> None:
         """Ordine rifiutato prima del controllo del fence: il runtime scarta il fence in coda della richiesta.
         Senza, una riconsegna con lo stesso customer_ref troverebbe due fence e resterebbe in conflitto."""
@@ -1059,6 +1079,14 @@ class TradingEngine:
                 self._emit(ctx, audit, "RUNTIME_AUTHORITY_DENIED", {"reason": authority_block}, category="guard")
                 return self._complete_order_lifecycle(
                     ctx, audit, order_id=None, status=STATUS_DENIED, reason=authority_block,
+                    extra_fields=extra_fields)
+            # #545: broker SIM non durevole (snapshot di reload non scritto) => nessuna nuova esposizione.
+            durability_block = self._sim_durability_admission_block()
+            if durability_block:
+                self._consume_admission_fence(normalized)
+                self._emit(ctx, audit, "SIM_DURABILITY_DENIED", {"reason": durability_block}, category="guard")
+                return self._complete_order_lifecycle(
+                    ctx, audit, order_id=None, status=STATUS_DENIED, reason=durability_block,
                     extra_fields=extra_fields)
 
             with self._lock:
@@ -1398,6 +1426,16 @@ class TradingEngine:
                 f"DOWNSTREAM_AMBIGUOUS_RESPONSE:{response}",
                 error_type=ERROR_AMBIGUOUS,
                 ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+            )
+
+        # #545: il broker SIM ha eseguito l'operazione in memoria ma NON ha scritto lo snapshot di reload: un
+        # riavvio ripartirebbe da prima. Non e' un esito certo: AMBIGUOUS, riserva e chiavi trattenute, riga
+        # AMBIGUOUS che F018 rileva come incerta (stessa semantica di `_demote_unpersisted_active` del Microstake).
+        if response.get("snapshot_persisted") is False:
+            raise ExecutionError(
+                f"SIM_SNAPSHOT_NOT_PERSISTED:{response.get('status')}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_PERSISTED_NOT_CONFIRMED,
             )
 
         semantic_failure = (

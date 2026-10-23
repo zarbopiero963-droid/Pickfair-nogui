@@ -2951,6 +2951,54 @@
         "tests/unit/test_pfc008_exposure_beyond_tables.py"
       ],
       "rationale": "Rilievo Codex P1 su 0dbadbb: una lettura d'ingresso superata da una lettura piu' recente (cassa scesa o non verificata) approva ancora sulla cassa vecchia."
+    },
+    {
+      "id": "engine_snapshot_unpersisted_is_certain",
+      "module": "core.trading_engine",
+      "area": "ambiguous",
+      "file": "core/trading_engine.py",
+      "original": "        if response.get(\"snapshot_persisted\") is False:\n            raise ExecutionError(\n                f\"SIM_SNAPSHOT_NOT_PERSISTED:",
+      "mutated": "        if False:\n            raise ExecutionError(\n                f\"SIM_SNAPSHOT_NOT_PERSISTED:",
+      "tests": [
+        "tests/unit/test_545_sim_snapshot_not_persisted.py"
+      ],
+      "rationale": "#545: un esito SIM con snapshot di reload non scritto diventa SUBMITTED; dopo un crash l'ordine sparisce e la riserva viene liberata."
+    },
+    {
+      "id": "engine_sim_durability_gate_skipped",
+      "module": "core.trading_engine",
+      "area": "recovery",
+      "file": "core/trading_engine.py",
+      "original": "            durability_block = self._sim_durability_admission_block()\n",
+      "mutated": "            durability_block = \"\"\n",
+      "tests": [
+        "tests/unit/test_545_sim_snapshot_not_persisted.py"
+      ],
+      "rationale": "#545: con il broker SIM non durevole una nuova entrata aggiunge esposizione su uno stato che un riavvio perderebbe."
+    },
+    {
+      "id": "broker_durability_flag_never_cleared",
+      "module": "simulation_broker",
+      "area": "recovery",
+      "file": "simulation_broker.py",
+      "original": "                self.db.save_simulation_state(\"default\", snapshot)\n                self._snapshot_durevole = True\n",
+      "mutated": "                self.db.save_simulation_state(\"default\", snapshot)\n",
+      "tests": [
+        "tests/unit/test_545_sim_snapshot_not_persisted.py"
+      ],
+      "rationale": "#545: una scrittura riuscita dopo il guasto non ripara lo stato: le entrate resterebbero bloccate per sempre."
+    },
+    {
+      "id": "router_sim_unpersisted_hedge_is_success",
+      "module": "core.order_router",
+      "area": "cashout",
+      "file": "core/order_router.py",
+      "original": "        if placed and raw.get(\"snapshot_persisted\") is False:\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/unit/test_545_sim_snapshot_not_persisted.py"
+      ],
+      "rationale": "#545: un hedge SIM con snapshot non scritto risulta piazzato con certezza; un riavvio lo perderebbe lasciando la posizione scoperta."
     }
   ]
 }
