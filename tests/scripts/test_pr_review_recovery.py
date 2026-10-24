@@ -40,7 +40,7 @@ HEAD = "b" * 40
 NEW_HEAD = "c" * 40
 BEGIN, END = "# >>> REVIEW_RECOVERY_CORE >>>", "# <<< REVIEW_RECOVERY_CORE <<<"
 
-VALID = "## Bloccanti\nNessun bloccante evidente\n\n## Verdetto finale\nNessuna regressione nel range."
+VALID = "## Bloccanti\nNessun bloccante evidente\n\n## Verdetto finale\nCopertura: COMPLETA\nNessuna regressione nel range."
 WITH_P1 = "## Bloccanti\n- P1: `core/x.py` rilascia la riserva senza conferma.\n\n## Verdetto finale\nDa correggere."
 CASE_547 = "Il range modifica solo test e documentazione; nessun problema."  # ~32 token, nessuna sezione
 
@@ -142,6 +142,7 @@ class FakeWorld:
         self.comment_get_failures = 0      # le prossime N letture dei commenti falliscono (guasto transitorio)
         self.write_failures = 0            # le prossime N scritture (POST/PATCH) falliscono
         self.extra_files: list[str] = []   # file aggiunti senza patch (binari): finiscono nella nota dei saltati
+        self.compare_files: list[dict] | None = None   # file della Compare API al posto di quello di default
 
     def add_comment(self, login, body, **extra):
         c = {"id": next(_IDS), "user": {"login": login}, "body": body,
@@ -166,8 +167,9 @@ class FakeWorld:
                           "usage": {"prompt_tokens": 100, "completion_tokens": 32, "total_tokens": 132}})
         path = url.replace("https://api.github.com", "")
         if "/compare/" in path:
-            files = [{"filename": "core/x.py", "status": "modified", "additions": 1,
-                      "deletions": 1, "changes": 2, "patch": "@@ -1 +1 @@\n-a = 1\n+a = 2"}]
+            files = self.compare_files if self.compare_files is not None else [
+                {"filename": "core/x.py", "status": "modified", "additions": 1,
+                 "deletions": 1, "changes": 2, "patch": "@@ -1 +1 @@\n-a = 1\n+a = 2"}]
             files += [{"filename": f, "status": "added", "additions": 0, "deletions": 0, "changes": 0}
                       for f in self.extra_files]
             return _Resp({"files": files, "commits": [{"sha": HEAD}]})
@@ -645,3 +647,210 @@ def test_a_decision_marker_without_two_counted_attempts_is_not_trusted():
             + policy.rr_owner_decision_marker("grok46", BASE, HEAD) + "\n# Grok\n")
     res = policy.validate_review({"reviewer": "grok", "author": policy.REVIEW_BOT_LOGIN, "body": body}, HEAD)
     assert res["status"] == "INCOMPLETE" and res["attempts"] == 1
+
+
+# ----------------------------------------------------------------------------- governance post-#556: verdetto
+# Verdetti REALI pubblicati su #556 (testo verbatim del «Verdetto finale»). Tutti avevano «Nessun bloccante
+# evidente» e il workflow li aveva registrati come VALID_PASS, anche quando dicevano troncato, non
+# verificabile o merge non approvato (commento di Phase 0 su #556).
+SOL_556_R1 = ("Review limitata alle porzioni visibili: il diff di `simulation_broker.py` è troncato e "
+              "`tests/unit/test_543_sim_funds_recompute.py` non è fornito. Il resto della memoizzazione dei fill, "
+              "la modifica agli ID e la copertura differenziale sono **NON VERIFICABILI**. Non è quindi possibile "
+              "confermare l’equivalenza contabile dichiarata.")
+GROK_556_R2 = ("Nel diff visibile il memo fondi/esposizione in `simulation_broker.py` non riusa più chiavi ambigue "
+               "(1/1.0/True, `fill_id` assente, book non dict): ricade nel calcolo pieno, come prima di #543. I test "
+               "differenziali e le mutazioni `i543_*` coprono il fail-open sulla cassa. Il tail di "
+               "`_ricostruisci_fill_mercato_memo_locked` è troncato, quindi la review non è chiusa. Merge non approvato.")
+GROK_556_R3 = ("Non approvo il merge. Il range modifica solo `docs/performance/sim_funds_recompute.md` e "
+               "`tests/unit/test_543_sim_funds_recompute.py`: nessun cambiamento a fondi, dutching, Betfair, parser o "
+               "log. La rettifica (stesso NaN riusa il memo, NaN nuovo ricalcola) è coerente con il confronto tuple "
+               "per identità; il test copre quel caso. Nessun segreto esposto.")
+SOL_556_R2 = ("Non emergono regressioni bloccanti nelle modifiche alle chiavi del memo. Valutazione limitata al diff "
+              "dei cinque file: test non eseguiti ed esito CI non verificato.")
+SOL_556_R3 = "Non emergono regressioni bloccanti dal diff fornito. Valutazione esclusivamente statica: test non eseguiti."
+REAL_556 = {"sol_r1": SOL_556_R1, "grok_r2": GROK_556_R2, "grok_r3": GROK_556_R3,
+            "sol_r2": SOL_556_R2, "sol_r3": SOL_556_R3}
+# Verdetti che negano la completezza dell'esame, e cosa deve rilevare il classificatore.
+NEGATIVE_556 = {"sol_r1": {"troncato", "non_verificabile", "non_conclusiva"},
+                "grok_r2": {"troncato", "non_conclusiva", "merge_non_approvato"},
+                "grok_r3": {"merge_non_approvato"}}
+
+
+def _model_text(verdict: str, coverage: str | None = "Copertura: COMPLETA") -> str:
+    head = f"{coverage}\n" if coverage is not None else ""
+    return f"## Bloccanti\nNessun bloccante evidente\n\n## Verdetto finale\n{head}{verdict}"
+
+
+def _published(reviewer: str, verdict: str, state: str = "VALID_PASS") -> dict:
+    """Commento del bot come lo scriveva il workflow su #556 (struttura reale: intestazione, sezioni, costo)."""
+    rid = WORKFLOWS[reviewer][1]
+    first = (f"<!-- {rid}-pr-review:pickfair-nogui:{BASE[:12]}...{HEAD[:12]} -->{done_marker(reviewer)}"
+             + policy.rr_attempt_marker(rid, BASE, HEAD, 1, state))
+    body = (f"{first}\n# Review\n\n**Range:** `{BASE[:12]}...{HEAD[:12]}`\n\n## Bloccanti\nNessun bloccante evidente\n\n"
+            f"## Verdetto finale\n{verdict}\n\n\n## Uso token / costo stimato\n- Costo stimato base: `~$0.04`\n\n"
+            "---\nNota: questa review AI è un filtro tecnico, non sostituisce il controllo umano.\n")
+    return {"reviewer": reviewer, "author": policy.REVIEW_BOT_LOGIN, "body": body}
+
+
+@pytest.mark.parametrize("name", sorted(REAL_556))
+def test_real_556_verdicts_are_never_pass_as_published(name):
+    # Prima: VALID_PASS per tutti e cinque (il classificatore leggeva solo «Bloccanti»). Senza riga di
+    # copertura: un verdetto negativo e' gia' non conclusivo (ripetere non lo cambia), gli altri si ripetono.
+    state, reason = policy.rr_classify_output(_model_text(REAL_556[name], coverage=None))
+    if name in NEGATIVE_556:
+        assert state == policy.RR_VALID_INCONCLUSIVE and "copertura_non_dichiarata" in reason
+    else:
+        assert state == policy.RR_INCOMPLETE and "Copertura" in reason
+
+
+@pytest.mark.parametrize("name", sorted(NEGATIVE_556))
+def test_real_556_negative_verdicts_contradict_a_complete_coverage(name):
+    state, reason = policy.rr_classify_output(_model_text(REAL_556[name]))
+    assert state == policy.RR_VALID_INCONCLUSIVE
+    assert set(policy.rr_verdict_concerns("Copertura: COMPLETA\n" + REAL_556[name])) == NEGATIVE_556[name], reason
+
+
+@pytest.mark.parametrize("name", ["sol_r2", "sol_r3"])
+def test_role_disclaimers_with_complete_coverage_stay_pass(name):
+    # «test non eseguiti», «CI non verificato»: i reviewer sono diff-only per contratto, non e' un esame parziale.
+    assert policy.rr_classify_output(_model_text(REAL_556[name])) == (policy.RR_VALID_PASS, "")
+
+
+@pytest.mark.parametrize("name", sorted(REAL_556))
+@pytest.mark.parametrize("reviewer", sorted(WORKFLOWS))
+def test_real_556_comments_already_published_are_not_clean_at_the_gate(name, reviewer):
+    # Commenti scritti dal workflow di prima (stato VALID_PASS registrato): il gate rilegge il verdetto.
+    res = policy.validate_review(_published(reviewer, REAL_556[name]), HEAD)
+    assert res["status"] == "VALID_INCONCLUSIVE", res
+    other = {"status": "VALID_CLEAN"}
+    gate_res = policy.reviewer_gate({reviewer: res, _other(reviewer): other})
+    assert gate_res["status"] == "STOP_OWNER" and gate_res["inconclusive"] == [reviewer]
+
+
+@pytest.mark.parametrize("verdict,concerns", [
+    ("Copertura: COMPLETA\nNessuna regressione.", []),
+    ("**Copertura:** COMPLETA — tutti i file visti.", []),
+    ("Copertura: COMPLETA\nNessun file troncato, tutto visibile.", []),
+    ("Copertura: COMPLETA\nIl diff non è troncato.", []),
+    ("Copertura: PARZIALE — `core/x.py` oltre budget", ["copertura_parziale"]),
+    ("copertura: parziale", ["copertura_parziale"]),
+    ("Nessuna regressione.\nCopertura: COMPLETA", ["copertura_non_dichiarata"]),        # non in prima riga
+    ("Copertura: COMPLETAMENTE vista", ["copertura_non_dichiarata"]),                   # valore fuori schema
+    ("Copertura: COMPLETA\nNON APPROVO IL MERGE.", ["merge_non_approvato"]),
+    ("Copertura: COMPLETA\nDo not merge this.", ["merge_non_approvato"]),
+    ("Copertura: COMPLETA\nLa PR non è mergeabile.", ["merge_non_approvato"]),
+    ("Copertura: COMPLETA\nPatch truncated at the end.", ["troncato"]),
+    ("Copertura: COMPLETA\nIl file è troncato; nessun file troncato altrove.", ["troncato"]),
+    ("Copertura: COMPLETA\nRischio non verificabile dal diff.", ["non_verificabile"]),
+    ("Copertura: COMPLETA\nSenza checkout il saldo non è verificabile.", ["non_verificabile"]),
+    ("Copertura: COMPLETA\nSenza alcun dubbio merge non approvato.", ["merge_non_approvato"]),
+    ("Copertura: COMPLETA\nReview limitata alle parti visibili del diff.", ["non_conclusiva"]),
+    ("Copertura: COMPLETA\nImpossibile concludere sul memo.", ["non_conclusiva"]),
+    ("Copertura: COMPLETA\nNon e’ dunque possibile certificare il saldo.", ["non_conclusiva"]),
+    ("Copertura: COMPLETA\nCannot confirm the ledger.", ["non_conclusiva"]),
+])
+def test_verdict_concerns_adversarial(verdict, concerns):
+    assert policy.rr_verdict_concerns(verdict) == concerns
+
+
+def test_blockers_dominate_an_inconclusive_verdict():
+    text = "## Bloccanti\n- P1: riserva rilasciata.\n\n## Verdetto finale\nCopertura: PARZIALE — troncato"
+    assert policy.rr_classify_output(text)[0] == policy.RR_VALID_BLOCKERS
+
+
+def _patch(lines: int) -> str:
+    return "@@ -1 +1 @@\n" + "\n".join(f"+riga_{i} = {i}" for i in range(lines))
+
+
+def test_coverage_gaps_are_measured_on_the_payload():
+    files = [{"filename": "a.py", "patch": _patch(1)}, {"filename": "b.py", "patch": _patch(1)},
+             {"filename": "img.png"}]                                  # binario: non e' testo da rivedere
+    one_block = "\n\n### FILE: a.py\nstatus: modified\n```diff\n+x\n```"
+    assert policy.rr_coverage_gaps(files, one_block + one_block, False) == []
+    assert policy.rr_coverage_gaps(files, one_block, False) == ["1_file_oltre_budget"]
+    cut = one_block + one_block.replace("+x", "+x\n...[PATCH FILE TRONCATO PER BUDGET TOKEN]...")
+    assert policy.rr_coverage_gaps(files, cut, False) == ["1_patch_tagliate"]
+    assert policy.rr_coverage_gaps(files, one_block + one_block, True) == ["compare_api_troncata"]
+    # Rilievo Codex P2 su #559: una patch inviata per intero che CONTIENE il testo del segnaposto (come le
+    # righe `+` di questa stessa PR) non e' una patch tagliata.
+    literal = one_block.replace("+x", '+    cut = "[PATCH FILE TRONCATO PER BUDGET TOKEN]"')
+    assert policy.rr_coverage_gaps(files, literal + one_block, False) == []
+    # Una riga della patch non puo' fingere un blocco in piu' (le righe di patch iniziano con +, -, spazio).
+    forged = one_block.replace("+x", "+x\n+\n+### FILE: b.py")
+    assert policy.rr_coverage_gaps(files, forged, False) == ["1_file_oltre_budget"]
+
+
+def test_measured_gap_is_never_pass_even_if_the_model_says_complete():
+    assert policy.rr_classify_output(VALID, coverage_gaps=["1_patch_tagliate"])[0] == policy.RR_VALID_INCONCLUSIVE
+    assert policy.rr_classify_output(VALID, coverage_gaps=[]) == (policy.RR_VALID_PASS, "")
+    # Rilievo Codex P2 su #559: senza riga di copertura MA con un buco misurato, ripetere non recupera il
+    # codice escluso: esito terminale, non un secondo tentativo a pagamento.
+    no_line = _model_text(SOL_556_R3, coverage=None)
+    assert policy.rr_classify_output(no_line, coverage_gaps=["1_patch_tagliate"])[0] == policy.RR_VALID_INCONCLUSIVE
+    assert policy.rr_classify_output(no_line)[0] == policy.RR_INCOMPLETE
+
+
+def test_inconclusive_review_is_not_waivable_and_does_not_hide_blockers_or_credits():
+    inc = {"status": "VALID_INCONCLUSIVE"}
+    waiver = {r: {"valid": True, "reviewer": r, "head": HEAD, "reason": "x"} for r in WORKFLOWS}
+    assert policy.reviewer_gate({"sol": inc, "grok": {"status": "VALID_CLEAN"}}, waivers=waiver,
+                                head_sha=HEAD)["status"] == "STOP_OWNER"
+    assert policy.reviewer_gate({"sol": inc, "grok": {"status": "VALID_WITH_BLOCKERS"}})["status"] == "BLOCKED"
+    quota = policy.reviewer_gate({"sol": inc, "grok": {"status": "QUOTA"}})
+    assert quota["status"] == "STOP_OWNER" and "CREDITI" in quota["reason"]
+
+
+def test_stop_owner_from_an_inconclusive_review_blocks_the_merge_decision():
+    res = policy.merge_decision(_merge_state(reviewer_gate="STOP_OWNER"))
+    assert res["status"] != "READY_FOR_AUTO_MERGE"
+
+
+# --------------------------------------------------------------------- end-to-end sul workflow vero (Sol e Grok)
+def test_contradicted_verdict_is_valid_inconclusive_and_never_paid_again(world, reviewer, monkeypatch):
+    world.model_queue = [("text", _model_text(GROK_556_R2))]
+    run_review(world, reviewer, monkeypatch)
+    body = bot_body(world, reviewer)
+    assert done_marker(reviewer) in body and ":1:VALID_INCONCLUSIVE -->" in body
+    calls = world.model_calls
+    run_review(world, reviewer, monkeypatch)                 # rerun: ripetere non toglie un troncamento
+    assert world.model_calls == calls
+    _clean_other(world, reviewer, monkeypatch)
+    world.add_comment(OWNER, _waiver(reviewer))
+    res = gate(world)
+    assert res["reviews"][reviewer]["status"] == "VALID_INCONCLUSIVE"
+    assert res["gate"]["status"] == "STOP_OWNER" and res["gate"]["inconclusive"] == [reviewer]
+
+
+def test_verdict_without_coverage_line_is_retried_once(world, reviewer, monkeypatch):
+    world.model_queue = [("text", _model_text(SOL_556_R3, coverage=None))]
+    run_review(world, reviewer, monkeypatch)
+    body = bot_body(world, reviewer)
+    assert done_marker(reviewer) not in body and ":1:INCOMPLETE -->" in body
+    _clean_other(world, reviewer, monkeypatch)
+    assert gate(world)["gate"]["status"] == "RERUN_REVIEW_ONCE"
+
+
+def test_patch_cut_for_budget_is_measured_by_the_workflow(world, reviewer, monkeypatch):
+    world.compare_files = [{"filename": "docs/lungo.md", "status": "modified", "additions": 4000, "deletions": 0,
+                            "changes": 4000, "patch": _patch(4000)}]
+    run_review(world, reviewer, monkeypatch)                 # il modello risponde VALID con «Copertura: COMPLETA»
+    body = bot_body(world, reviewer)
+    assert ":1:VALID_INCONCLUSIVE -->" in body and "patch_tagliate" in body
+    _clean_other(world, reviewer, monkeypatch)
+    assert gate(world)["gate"]["status"] == "STOP_OWNER"
+
+
+def test_file_left_out_for_budget_is_measured_by_the_workflow(world, reviewer, monkeypatch):
+    world.compare_files = [{"filename": f"docs/f{i}.md", "status": "modified", "additions": 300, "deletions": 0,
+                            "changes": 300, "patch": _patch(300)} for i in range(12)]
+    run_review(world, reviewer, monkeypatch)
+    body = bot_body(world, reviewer)
+    assert ":1:VALID_INCONCLUSIVE -->" in body and "file_oltre_budget" in body
+
+
+@pytest.mark.parametrize("path", [p for p, *_ in WORKFLOWS.values()])
+def test_prompt_asks_for_the_coverage_line_and_no_merge_verdict(path):
+    text = (ROOT / path).read_text(encoding="utf-8")
+    assert "Non approvare merge." not in text                 # induceva «merge non approvato» in ogni verdetto
+    assert '"Copertura: COMPLETA"' in text and '"Copertura: PARZIALE' in text
+    assert "coverage_gaps=rr_coverage_gaps(files, diff_text, compare_truncated)" in text

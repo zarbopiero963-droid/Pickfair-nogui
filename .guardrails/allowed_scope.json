@@ -2804,6 +2804,22 @@
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
       "max_files": 12
+    },
+    "review-verdict-inconclusive-governance": {
+      "description": "Governance post-#556 (mandato PF-POST-556-AUTONOMOUS-EXECUTION-02, fase 3, merge owner): una review AI senza bloccanti e' VALID_PASS solo con riga strutturata 'Copertura: COMPLETA', nessuna conclusione negativa che la contraddica (troncato, non verificabile, merge non approvato, impossibile concludere) e nessun buco di copertura misurato dal workflow; altrimenti VALID_INCONCLUSIVE => STOP_OWNER (escalation, nessuna deroga). Nucleo REVIEW_RECOVERY_CORE copiato identico nei workflow di Sol e Grok; prompt aggiornati.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ai_audit_workflows.md",
+        "docs/auto_pr_flow_spec.md",
+        "scripts/pr_autonomy_policy.py",
+        "tests/scripts/test_pr_autonomy_policy.py",
+        "tests/scripts/test_pr_review_recovery.py"
+      ],
+      "max_files": 9
     }
   }
 }
