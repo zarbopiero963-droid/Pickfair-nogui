@@ -2,7 +2,8 @@
 
 argv: TREE OUT SCENARIO_JSON HOME
 SCENARIO_JSON: {"steps": [...]} con passi:
-  {"op": "signal", "m": "1.701", "price": 2.0, "side": "BACK"}       segnale reale (Roserpina decide lo stake)
+  {"op": "signal", "m": "1.701", "price": 2.0, "side": "BACK"}       segnale reale (Roserpina decide lo stake;
+                                                                    con "stake" lo stake fisso del segnale)
   {"op": "mode", "m": "1.701", "mode": "lost"|"partial"|"ok"}       comportamento del trasporto (SIM)
   {"op": "settle", "m": "1.701", "win": true}                       mercato CLOSED (settlement reale via poller)
   {"op": "resettle", "m": "1.701"}                                  stesso settlement ripubblicato (duplicato)
@@ -17,6 +18,8 @@ SCENARIO_JSON: {"steps": [...]} con passi:
   {"op": "lockdown"} / {"op": "pause"} / {"op": "emergency"}         LOCKDOWN, PAUSED, emergency stop (PF-ALL-F027)
   {"op": "wait", "s": 3}
   {"op": "replay_cmd", "m": "1.701"}                                ripubblica l'ultimo CMD_QUICK_BET del mercato (PR29-a)
+  {"op": "crash_on_next_place"}                                     os._exit(1) appena l'exchange ha accettato il
+                                                                    prossimo ordine (ingresso, gamba o hedge di cashout)
 Ogni passo produce uno snapshot: fondi exchange, bankroll Roserpina, picco, drawdown, realizzato, tavoli,
 ordini (SQLite), eventi. Nessun calcolo atteso qui: l'oracolo vive nei test.
 """
@@ -113,12 +116,27 @@ try:
     MODE = {}
     real = brk.place_bet
 
+    def crash_if_armed(where):
+        # Fase 4: l'exchange ha gia' accettato l'ordine (stato SIM durevole), il bot muore prima di registrarne l'esito.
+        if CRASH.get("on_place"):
+            app.betfair_service._persist_simulation_state_if_needed(force=True)
+            R["crashed_at"] = where; dump(); os._exit(1)
+
     def place_bet(*a, **k):
         m = str(k.get("market_id") or "")
         if MODE.get(m) == "lost":
             real(*a, **k); raise TimeoutError("response lost after send")
-        return real(*a, **k)
+        out = real(*a, **k)
+        crash_if_armed("PLACE_BET:" + m)
+        return out
     brk.place_bet = place_bet
+    real_orders = brk.place_orders
+
+    def place_orders(*a, **k):
+        out = real_orders(*a, **k)
+        crash_if_armed("PLACE_ORDERS:" + str(k.get("market_id") or ""))
+        return out
+    brk.place_orders = place_orders
     BOOK = {}
 
     def book(m, status="OPEN", winner=None, back_size=100.0):
@@ -150,7 +168,16 @@ try:
                            "side": p.get("bet_type"), "matched": rep.get("sizeMatched")})
         d = rt.risk_desk
         acct = dict(getattr(rt, "_account_snapshot", None) or {})
+        exch = [{"bet_id": o.get("betId"), "ref": o.get("customerOrderRef"), "market_id": o.get("marketId"),
+                 "selection_id": o.get("selectionId"), "side": o.get("side"),
+                 "price": (o.get("priceSize") or {}).get("price"), "size": (o.get("priceSize") or {}).get("size"),
+                 "matched": o.get("sizeMatched"), "status": o.get("status")}
+                for o in (brk.list_current_orders().get("currentOrders") or [])]
+        settled = [{"market_id": x.get("market_id"), "settlement_id": x.get("settlement_id"),
+                    "gross_pnl": x.get("gross_pnl"), "net_pnl": x.get("net_pnl")}
+                   for x in brk.list_settlements()]
         R["snaps"].append({"tag": tag, "mode": getattr(rt.mode, "value", str(rt.mode)),
+                           "exch_orders": exch, "exch_settlements": settled,
                            "emergency": bool(getattr(rt, "_emergency_stopped", False)), "funds": funds, "bankroll": d.bankroll_current, "peak": d.equity_peak,
                            "account": acct, "cash_peak": getattr(rt, "_cash_equity_peak", None),
                            "drawdown_pct": d.drawdown_pct(), "realized": d.realized_pnl, "tables": tabs, "orders": orders,
@@ -219,16 +246,21 @@ try:
             side = st.get("side", "BACK")
             t_sig = time.time()
             rows_before = order_rows(st["m"])
-            app.bus.publish("SIGNAL_RECEIVED", {"market_id": st["m"], "selection_id": 11, "price": st.get("price", 2.0),
-                                                "side": side, "bet_type": side, "event_name": st.get("event", f"Ev{st['m']} v X"),
-                                                "market_name": "Match Odds", "runner_name": f"Ev{st['m']}",
-                                                "simulation_mode": True, "source": "F026"})
+            sig = {"market_id": st["m"], "selection_id": 11, "price": st.get("price", 2.0),
+                   "side": side, "bet_type": side, "event_name": st.get("event", f"Ev{st['m']} v X"),
+                   "market_name": "Match Odds", "runner_name": f"Ev{st['m']}",
+                   "simulation_mode": True, "source": "F026"}
+            if "stake" in st:
+                sig["stake"] = st["stake"]          # stake fisso del segnale (es. Telegram), deciso dal produttore
+            app.bus.publish("SIGNAL_RECEIVED", sig)
             # Il segnale e' concluso quando il suo ordine ha lasciato INFLIGHT (un ordine SIM a mercato resta SUBMITTED e
             # non pubblica un evento terminale), oppure c'e' un esito o un rifiuto esplicito; in ogni caso a bus fermo.
             wait_for(f"{i}:signal:{st['m']}",
                      lambda: any(r not in rows_before and r[1] != "INFLIGHT" for r in order_rows(st["m"]))
                      or since(t_sig, OUTCOMES, st["m"], SUB) or since(t_sig, {"SIGNAL_REJECTED"}, None, SUB)
                      or since(t_sig, {"SIGNAL_REJECTED"}))
+        elif op == "crash_on_next_place":
+            CRASH["on_place"] = True; continue
         elif op == "settle":
             t_settle = time.time()
             book(st["m"], status="CLOSED", winner=11 if st.get("win") else 12)
@@ -259,7 +291,7 @@ try:
         elif op == "risk_stop":
             R["risk_stop"] = str(rt.risk_stop("f026_test"))[:200]; time.sleep(4); wait_for(f"{i}:risk_stop", lambda: True)
         elif op == "cashout":
-            app.bus.publish("SIGNAL_RECEIVED", {"signal_type": "CASHOUT", "event_name": f"Ev{st['m']} v X",
+            app.bus.publish("SIGNAL_RECEIVED", {"signal_type": "CASHOUT", "event_name": st.get("event", f"Ev{st['m']} v X"),
                                                 "source": "F026"})
             time.sleep(4); wait_for(f"{i}:cashout", lambda: True)
         elif op == "replay_cmd":

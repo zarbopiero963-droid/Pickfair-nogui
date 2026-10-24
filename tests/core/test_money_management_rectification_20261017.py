@@ -25,11 +25,16 @@ def _calc(mm, bankroll=30.0, price=2.0):
                         equity_peak=bankroll, current_total_exposure=0.0, event_current_exposure=0.0, table=None)
 
 
-@pytest.mark.parametrize("bankroll,expected", [(30.0, 0.90), (10.0, 0.30), (3.34, 0.1002), (50.0, 1.50), (200.0, 6.0)])
-def test_calculated_stake_is_requested_exactly_without_rounding_to_any_minimum(bankroll, expected):
+# PF-STAKE-PRECISION-MICROSTAKE-01 (decisione owner 24/10/2026): lo stake richiesto e' il calcolato PER DIFETTO al
+# centesimo. 3.34 -> calcolato 0.1002, richiesto 0.10 (prima 0.1002, che il Microstake bloccava per precisione);
+# il calcolato resta nei metadati. Nessun arrotondamento verso l'alto, nessun minimo nuovo.
+@pytest.mark.parametrize("bankroll,expected,calculated", [(30.0, 0.90, 0.90), (10.0, 0.30, 0.30), (3.34, 0.10, 0.1002),
+                                                          (50.0, 1.50, 1.50), (200.0, 6.0, 6.0)])
+def test_calculated_stake_is_requested_exactly_without_rounding_to_any_minimum(bankroll, expected, calculated):
     d = _calc(_mm(min_stake=0.10), bankroll=bankroll)                    # stake = bankroll*3%/(2-1)
     assert d.approved is True and d.desk_mode is DeskMode.NORMAL
     assert d.recommended_stake == pytest.approx(expected, abs=1e-9), "stake sostituito con un importo diverso"
+    assert float(d.metadata["requested_stake"]) == pytest.approx(calculated, abs=1e-9)
 
 
 def test_configured_minimum_is_an_explicit_rejection_not_a_silent_round_up():

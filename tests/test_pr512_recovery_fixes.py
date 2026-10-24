@@ -73,14 +73,25 @@ def test_resume_becomes_active_only_when_both_recovery_paths_succeed():
 
 
 # ---------------------------------------------------------------- 4303374312: precisione e residuo
-@pytest.mark.parametrize("size", [0.105, 0.111, 1.999])
-def test_stake_with_more_than_two_decimals_is_rejected_before_any_exchange_operation(size):
+# PF-STAKE-PRECISION-MICROSTAKE-FINAL-01 (owner 24/10): l'engine non rifiuta piu' uno stake con piu' di due
+# decimali, lo tronca al centesimo (mai verso l'alto) PRIMA della scelta del percorso. L'importo non rappresentabile
+# continua a non raggiungere mai l'exchange; il blocco del coordinatore resta come difesa (test sotto).
+@pytest.mark.parametrize("size,floored", [(0.105, 0.10), (0.111, 0.11), (1.999, 1.99)])
+def test_stake_with_more_than_two_decimals_is_floored_never_sent_raw(size, floored):
     engine, broker, _ = _engine()
     res = engine.submit_quick_bet(_payload("prec", size=size, price=3.0))
-    assert res["status"] == "FAILED" and "invalid_size_precision" in str(res["error"]), res
-    assert _orders(broker) == [], "un importo non rappresentabile in centesimi e' stato inviato"
-    retry = engine.submit_quick_bet(_payload("prec", size=0.10, price=3.0))
-    assert retry["ok"] is True, "blocco pre-invio: l'intento deve restare ritentabile"
+    assert res["ok"] is True, res
+    assert [o["sizeRemaining"] for o in _orders(broker)] == [pytest.approx(floored, abs=1e-12)], \
+        "un importo non rappresentabile in centesimi e' stato inviato"
+
+
+@pytest.mark.parametrize("size", [0.105, 0.111, 1.999])
+def test_coordinator_still_rejects_more_than_two_decimals_before_any_exchange_operation(size):
+    engine, broker, _ = _engine()
+    engine._default_native_microstake_executor("SIMULATION")
+    res = engine.microstake_executor.execute(_payload("prec-direct", size=size, price=3.0))
+    assert "invalid_size_precision" in str(res), res
+    assert _orders(broker) == [], "difesa del coordinatore aggirata"
 
 
 def test_two_decimal_stake_still_executes_exactly():

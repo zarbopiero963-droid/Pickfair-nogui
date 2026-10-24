@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
+from fractions import Fraction
 from typing import Any, Dict, Optional
 
 import trading_config
-from core import validators
+from core import stake_precision, validators
 from core.system_state import DeskMode, RiskProfile, RoserpinaConfig
 from core.type_helpers import safe_float
 
@@ -278,6 +279,14 @@ class RoserpinaMoneyManagement:
         # "configurato ma illeggibile" (NaN/inf => massima protezione, chase 0).
         # Nessun blocco dell'ordine: lo stake resta positivo (target_profit),
         # niente DoS sul recovery; i cap single/total/event a valle restano.
+        chase = self._recovery_chase(table_loss)
+        to_recover = target_profit + chase
+
+        stake = to_recover / (price - 1.0)
+        return max(0.0, stake)
+
+    def _recovery_chase(self, table_loss: float) -> float:
+        """Quota di perdita del tavolo da inseguire, con il cap anti-martingala descritto sopra."""
         chase = max(0.0, table_loss)
         cap = getattr(self.config, "max_recovery_chase_abs", None)
         if cap is not None:
@@ -292,10 +301,28 @@ class RoserpinaMoneyManagement:
             elif cap > 0.0:
                 chase = min(chase, cap)
             # cap finito <= 0.0 => opt-out esplicito => chase storico invariato
-        to_recover = target_profit + chase
+        return chase
 
-        stake = to_recover / (price - 1.0)
-        return max(0.0, stake)
+    def _base_stake_decimal(self, *, price: float, bankroll_current: float, table_loss: float,
+                            risk_mult: float, desk_mult: float) -> Fraction:
+        """PF-STAKE-PRECISION-MICROSTAKE-FINAL-01: la STESSA formula di `_calculate_base_stake` (target del ciclo
+        + chase, diviso (quota - 1), per i moltiplicatori), calcolata in aritmetica razionale ESATTA sugli
+        operandi originali (letti dalla loro forma decimale).
+
+        Corregge la rappresentazione alla fonte: in float 3.3333333333333335 * 3% dava 0.09999999999999999 (che
+        troncato diventa 0,09) mentre il valore esatto degli stessi operandi e' 0,100000000000000005 (0,10).
+        Razionale e non Decimal: una divisione periodica (1,25 / 11) non si arrotonda a 28 cifre prima dei
+        moltiplicatori (rilievo Codex P2 su #560). Nessuna tolleranza: valore esatto, poi un solo troncamento."""
+        price = self._safe_float(price, 0.0)
+        bankroll_current = self._safe_float(bankroll_current, 0.0)
+        if price <= 1.0:
+            return Fraction(0)
+        fr = stake_precision.to_fraction
+        pct = self._safe_float(self.config.target_profit_cycle_pct, 0.0)
+        target = max(Fraction(0), fr(bankroll_current) * fr(pct) / 100)
+        chase = fr(self._recovery_chase(self._safe_float(table_loss, 0.0)))
+        stake = (target + chase) / (fr(price) - 1) * fr(risk_mult) * fr(desk_mult)
+        return max(Fraction(0), stake)
 
     # =========================================================
     # MAIN DECISION
@@ -463,6 +490,10 @@ class RoserpinaMoneyManagement:
             base_stake = recommended # Per i metadati
             risk_mult = 1.0
             desk_mult = 1.0
+            # Stake del segnale come l'ha scritto il produttore (testo "0.30" resta 0.30, il float dalla sua forma
+            # decimale): nessuna conversione binaria in mezzo.
+            recommended_exact = stake_precision.to_fraction(
+                fixed_stake_raw if isinstance(fixed_stake_raw, str) else fixed_stake)
         else:
             base_stake = self._calculate_base_stake(
                 price=price,
@@ -472,6 +503,9 @@ class RoserpinaMoneyManagement:
             risk_mult = self._risk_profile_multiplier()
             desk_mult = self._desk_mode_multiplier(desk_mode)
             recommended = base_stake * risk_mult * desk_mult
+            recommended_exact = self._base_stake_decimal(price=price, bankroll_current=bankroll_current,
+                                                         table_loss=table_loss, risk_mult=risk_mult,
+                                                         desk_mult=desk_mult)
 
         # Fallback su trading_config.MIN_STAKE (fonte unica #320-D2), non su un
         # literal duplicato: se il floor globale cambia, anche la difesa lo segue.
@@ -496,6 +530,25 @@ class RoserpinaMoneyManagement:
                 },
             )
 
+        # PF-STAKE-PRECISION-MICROSTAKE-01 (decisione owner 24/10/2026): passaggio tecnico finale, la formula
+        # sopra non cambia. Lo stake richiesto all'exchange e' quello calcolato PER DIFETTO al centesimo
+        # (core.stake_precision): mai piu' alto del calcolato, mai un minimo nuovo. Prima un importo come
+        # 1.96476 veniva bloccato dal Microstake (invalid_size_precision) e 3.08595 arrivava all'exchange cosi'
+        # com'era. Minimo e cap si confrontano sull'importo normalizzato; il calcolato resta nei metadati.
+        stake_calcolato = recommended
+        try:
+            recommended = float(stake_precision.normalize_stake(recommended_exact))
+        except ValueError:
+            return MoneyManagementDecision(
+                approved=False,
+                recommended_stake=0.0,
+                desk_mode=desk_mode,
+                reason="stake_calcolato_non_valido",
+                table_id=table_id,
+                metadata={"base_stake": base_stake, "requested_stake": repr(stake_calcolato)},
+            )
+        precisione = stake_precision.normalization_record(recommended_exact, stake_precision.to_decimal(recommended))
+
         # PF-MICROSTAKE-OWNER-RECTIFICATION-20261017: lo stake calcolato NON si
         # arrotonda mai verso l'alto fino al minimo. Il minimo configurato resta un
         # limite: sotto, rifiuto ESPLICITO con lo stake richiesto in chiaro (il
@@ -504,7 +557,7 @@ class RoserpinaMoneyManagement:
         if recommended < min_stake and not math.isclose(recommended, min_stake, rel_tol=0.0, abs_tol=1e-9):
             return MoneyManagementDecision(
                 approved=False,
-                recommended_stake=recommended,
+                recommended_stake=stake_calcolato,          # lo stake RICHIESTO resta visibile
                 desk_mode=desk_mode,
                 reason="stake_sotto_min_stake",
                 table_id=table_id,
@@ -512,9 +565,20 @@ class RoserpinaMoneyManagement:
                     "base_stake": base_stake,
                     "risk_mult": risk_mult,
                     "desk_mult": desk_mult,
-                    "requested_stake": recommended,
+                    "requested_stake": stake_calcolato,
                     "min_stake": min_stake,
+                    **precisione,
                 },
+            )
+        if recommended <= 0.0:
+            # Minimo configurato a 0 e stake sotto il centesimo: nessun ordine da 0 EUR.
+            return MoneyManagementDecision(
+                approved=False,
+                recommended_stake=0.0,
+                desk_mode=desk_mode,
+                reason="stake_sotto_un_centesimo",
+                table_id=table_id,
+                metadata={"base_stake": base_stake, "requested_stake": stake_calcolato, **precisione},
             )
         # Decisione owner 2 (PF-PR-RECOVERY-DECISIONS-02, 17/10/2026): lo stake calcolato non si
         # ridimensiona MAI in silenzio al tetto del singolo ordine. Il cap resta un limite di
@@ -532,10 +596,11 @@ class RoserpinaMoneyManagement:
                 table_id=table_id,
                 metadata={
                     "recommended": recommended,
-                    "requested_stake": recommended,
+                    "requested_stake": stake_calcolato,
                     "exposure": exposure,
                     "side": side,
                     "max_single": max_single,
+                    **precisione,
                 },
             )
 
@@ -592,6 +657,8 @@ class RoserpinaMoneyManagement:
                 "max_total": max_total,
                 "max_event": max_event,
                 "in_recovery": in_recovery,
+                "requested_stake": stake_calcolato,
+                **precisione,
             },
         )
 

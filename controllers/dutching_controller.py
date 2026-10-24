@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import trading_config
 from core import liquidity
-from core import validators
+from core import stake_precision, validators
 from core.order_identity import (
     derive_customer_ref,
     new_operation_customer_ref,
@@ -1808,6 +1808,9 @@ class DutchingController:
                 selection_id = validators.order_selection_id(payload["selection_id"])
                 price = validators.order_price(payload["price"])
                 stake = validators.order_stake(payload["stake"])
+                # PF-STAKE-PRECISION-MICROSTAKE-01: stake per difetto al centesimo PRIMA di cap, tavolo e riserva,
+                # cosi' la riserva e' quella dell'ordine inviato (mai piu' alto dell'importo indicato).
+                stake = float(stake_precision.normalize_stake(stake))
             except ValueError as exc:
                 return self._fail(f"Ordine non valido: {exc}")
 
