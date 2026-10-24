@@ -3872,12 +3872,12 @@
       "module": "core.microstake_safe",
       "area": "reconciliation",
       "file": "core/microstake_safe.py",
-      "original": "            return not (saved.get(\"rollback_intent\") is True and str(order.bet_id) == str(saved.get(\"bet_id\") or \"\"))",
-      "mutated": "            return False",
+      "original": "            no_replacement = not saved.get(\"replacement_bet_id\") and saved.get(\"replace_sent\") is not True",
+      "mutated": "            no_replacement = True",
       "tests": [
         "tests/core/test_microstake_live_adapter.py"
       ],
-      "rationale": "Rilievo GPT-6.1 Sol su 844ae41: identita' dello stub ignota trattata come esposizione zero."
+      "rationale": "Rilievi GPT-6.1 Sol su 844ae41 e Grok su d62267b: identita' dello stub ignota trattata come esposizione zero dopo un replace."
     }
   ]
 }

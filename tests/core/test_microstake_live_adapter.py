@@ -1045,6 +1045,27 @@ def test_rollback_pending_with_a_known_replacement_cancels_the_replacement_not_t
     assert out["ok"] is True and out["results"] == {"rb2": "ROLLED_BACK"}, out
 
 
+def test_rollback_without_stub_identity_after_a_replace_never_trusts_the_replacement_alone():
+    """Rilievo Grok su d62267b: saga senza `stub_bet_id`, `bet_id` gia' sul replacement, rollback deciso. Lo stub
+    (abbinato 0.04) non e' verificabile: mai ROLLED_BACK solo perche' il replacement e' a residuo zero."""
+    fake = _FakeBetfair()
+    client = _client(fake)
+    client.place_bet(market_id="1.200", selection_id=7, side="BACK", price=1000.0, size=1.0, customer_order_ref="gk")
+    (stub_id,) = fake.orders
+    fake.orders[stub_id].update(matched=D("0.04"), remaining=D("0.06"))
+    client.replace_orders(market_id="1.200", bet_id=stub_id, new_price=3.0)
+    new_id = [b for b in fake.orders if b != stub_id][0]
+    engine, fake, db = _live_engine(fake, client=client)
+    req = MicrostakeRequest("1.200", 7, Side.BACK, D("0.10"), D("3.0"), "gk")
+    DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).save(
+        "gk", phase="ROLLBACK_PENDING", rollback_intent=True, reservation_held=True, transient_exposure="1.00",
+        stub_price="1000", bet_id=new_id, replacement_bet_id=new_id, replace_sent=True,
+        request=MicrostakeCoordinator._request_json(req))
+    out = engine.recover_native_microstake_sagas()
+    assert out["ok"] is False and out["pending"] == ["gk"], out
+    assert engine._live_microstake_executor.port.has_reservation("gk")
+
+
 def test_new_session_client_restores_the_reservations_of_pending_sagas():
     """F2: re-auth => nuovo BetfairClient => nuovo esecutore LIVE. Le riserve delle saghe pendenti si ripristinano
     alla costruzione: lo stub vivo resta contato nel cap temporaneo."""

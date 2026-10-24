@@ -689,7 +689,11 @@ class MicrostakeCoordinator:
         if not stub_id:
             if saved.get("replace_sent") is False:
                 return False
-            return not (saved.get("rollback_intent") is True and str(order.bet_id) == str(saved.get("bet_id") or ""))
+            # Eccezione SOLO per un rollback dopo un replace RIFIUTATO, senza alcun replacement noto ne' replace
+            # registrato come inviato: allora l'ordine persistito e' lo stub stesso (rilievo Grok su d62267b).
+            no_replacement = not saved.get("replacement_bet_id") and saved.get("replace_sent") is not True
+            return not (no_replacement and saved.get("rollback_intent") is True
+                        and str(order.bet_id) == str(saved.get("bet_id") or ""))
         if stub_id == str(order.bet_id):
             return False
         try:
