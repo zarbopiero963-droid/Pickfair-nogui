@@ -363,3 +363,12 @@ def test_hedge_sizing_is_unchanged_cent_exact_and_its_residual_is_bounded(stake,
     win = D(str(stake)) * (D(str(entry)) - 1) - hedge * (D(str(cur)) - 1)     # selezione vince
     lose = -D(str(stake)) + hedge                                             # selezione perde
     assert abs(win - lose) <= D("0.005") * D(str(cur)) + D("1e-12"), (win, lose)
+
+
+def test_mm_exact_arithmetic_has_no_intermediate_rounding():
+    """Rilievo Codex P2 su #560: 1.25 / 11 e' periodico; con Decimal a 28 cifre la divisione si arrotondava PRIMA
+    dei moltiplicatori e 0,10 esatto diventava 0.0999...97 => 0,09 => rifiutato sotto il minimo. Bankroll 125,
+    target 1%, quota 12, CONSERVATIVE 0,8, EXPANSION 1,1: (125 * 1%) / 11 * 0,8 * 1,1 = 0,10 esatto."""
+    mm = _mm(target_profit_cycle_pct=1.0)
+    exact = mm._base_stake_decimal(price=12.0, bankroll_current=125.0, table_loss=0.0, risk_mult=0.8, desk_mult=1.1)
+    assert stake_precision.normalize_stake(exact) == D("0.10")

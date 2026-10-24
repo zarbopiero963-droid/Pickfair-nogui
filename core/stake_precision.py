@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
+from fractions import Fraction
 from typing import Any, Dict
 
 CENT = Decimal("0.01")
@@ -34,6 +35,9 @@ def to_decimal(value: Any) -> Decimal:
     """`value` come Decimal finito. bool, NaN, inf, testo non numerico => ValueError (fail-closed)."""
     if isinstance(value, bool) or value is None:
         raise ValueError("STAKE_NOT_NUMERIC")
+    if isinstance(value, Fraction):
+        # valore razionale esatto (money management): solo per il registro, 28 cifre bastano
+        return Decimal(value.numerator) / Decimal(value.denominator)
     if isinstance(value, Decimal):
         out = value
     elif isinstance(value, float):
@@ -50,8 +54,26 @@ def to_decimal(value: Any) -> Decimal:
     return out
 
 
+def to_fraction(value: Any) -> Fraction:
+    """`value` come razionale esatto, dalla sua forma decimale (stessi rifiuti di `to_decimal`)."""
+    if isinstance(value, Fraction):
+        return value
+    return Fraction(to_decimal(value))
+
+
 def normalize_stake(value: Any) -> Decimal:
-    """Stake per difetto al centesimo. Negativo o non numerico => ValueError: nessuno stake inventato."""
+    """Stake per difetto al centesimo. Negativo o non numerico => ValueError: nessuno stake inventato.
+
+    Un `Fraction` (calcolo esatto del money management) si tronca senza alcun arrotondamento intermedio: una
+    divisione periodica come 1,25 / 11 non perde il centesimo (rilievo Codex P2 su #560)."""
+    if isinstance(value, Fraction):
+        if value < 0:
+            raise ValueError("STAKE_NEGATIVE")
+        cents = math.floor(value * 100)
+        try:
+            return (Decimal(cents) / Decimal(100)).quantize(CENT)
+        except InvalidOperation as exc:
+            raise ValueError("STAKE_NOT_REPRESENTABLE") from exc
     raw = to_decimal(value)
     if raw < 0:
         raise ValueError("STAKE_NEGATIVE")

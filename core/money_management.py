@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
-from decimal import Decimal
+from fractions import Fraction
 from typing import Any, Dict, Optional
 
 import trading_config
@@ -304,23 +304,25 @@ class RoserpinaMoneyManagement:
         return chase
 
     def _base_stake_decimal(self, *, price: float, bankroll_current: float, table_loss: float,
-                            risk_mult: float, desk_mult: float) -> Decimal:
+                            risk_mult: float, desk_mult: float) -> Fraction:
         """PF-STAKE-PRECISION-MICROSTAKE-FINAL-01: la STESSA formula di `_calculate_base_stake` (target del ciclo
-        + chase, diviso (quota - 1), per i moltiplicatori), calcolata in Decimal sugli operandi originali.
+        + chase, diviso (quota - 1), per i moltiplicatori), calcolata in aritmetica razionale ESATTA sugli
+        operandi originali (letti dalla loro forma decimale).
 
         Corregge la rappresentazione alla fonte: in float 3.3333333333333335 * 3% dava 0.09999999999999999 (che
-        troncato diventa 0,09) mentre il valore esatto degli stessi operandi e' 0,1000000000000000050 (0,10).
-        Nessuna tolleranza: il valore e' quello esatto degli operandi, poi si tronca."""
+        troncato diventa 0,09) mentre il valore esatto degli stessi operandi e' 0,100000000000000005 (0,10).
+        Razionale e non Decimal: una divisione periodica (1,25 / 11) non si arrotonda a 28 cifre prima dei
+        moltiplicatori (rilievo Codex P2 su #560). Nessuna tolleranza: valore esatto, poi un solo troncamento."""
         price = self._safe_float(price, 0.0)
         bankroll_current = self._safe_float(bankroll_current, 0.0)
         if price <= 1.0:
-            return Decimal(0)
-        dec = stake_precision.to_decimal
+            return Fraction(0)
+        fr = stake_precision.to_fraction
         pct = self._safe_float(self.config.target_profit_cycle_pct, 0.0)
-        target = max(Decimal(0), dec(bankroll_current) * dec(pct) / Decimal(100))
-        chase = dec(self._recovery_chase(self._safe_float(table_loss, 0.0)))
-        stake = (target + chase) / (dec(price) - Decimal(1)) * dec(risk_mult) * dec(desk_mult)
-        return max(Decimal(0), stake)
+        target = max(Fraction(0), fr(bankroll_current) * fr(pct) / 100)
+        chase = fr(self._recovery_chase(self._safe_float(table_loss, 0.0)))
+        stake = (target + chase) / (fr(price) - 1) * fr(risk_mult) * fr(desk_mult)
+        return max(Fraction(0), stake)
 
     # =========================================================
     # MAIN DECISION
@@ -490,7 +492,7 @@ class RoserpinaMoneyManagement:
             desk_mult = 1.0
             # Stake del segnale come l'ha scritto il produttore (testo "0.30" resta 0.30, il float dalla sua forma
             # decimale): nessuna conversione binaria in mezzo.
-            recommended_exact = stake_precision.to_decimal(
+            recommended_exact = stake_precision.to_fraction(
                 fixed_stake_raw if isinstance(fixed_stake_raw, str) else fixed_stake)
         else:
             base_stake = self._calculate_base_stake(
