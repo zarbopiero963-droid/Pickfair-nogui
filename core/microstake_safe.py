@@ -740,8 +740,22 @@ class MicrostakeCoordinator:
             return self._result(Phase.AMBIGUOUS, req=req, reason="existing_customer_ref",
                                 max_exposure=transient, held=True)
         rollback_intent = saved.get("rollback_intent") is True or saved.get("phase") == Phase.ROLLBACK_PENDING.value
-        order = self.exchange.find_by_ref(customer_ref)
-        if order is None and rollback_intent and saved.get("bet_id"):
+        replacement_id = str(saved.get("replacement_bet_id") or "")
+        replacement_gone = False
+        if replacement_id:
+            # Replace ACCETTATO con identita' persistita: l'ordine della saga e' il REPLACEMENT, in ogni fase, rollback
+            # compreso (rilievo Codex P1 su d62267b: in ROLLBACK_PENDING si rileggeva il vecchio stub cancellato e si
+            # chiudeva ROLLED_BACK con il replacement ancora eseguibile). Letto per id, anche da listClearedOrders;
+            # illeggibile => saga pendente. Lo stub resta verificato a parte (`_stub_unaccounted`).
+            try:
+                order = self.exchange.order(replacement_id)
+            except Exception:
+                order = None
+            if order is not None and not rollback_intent:
+                replacement_gone = order.remaining == 0 and order.matched == 0
+        else:
+            order = self.exchange.find_by_ref(customer_ref)
+        if order is None and not replacement_id and rollback_intent and saved.get("bet_id"):
             # Rollback gia' deciso: un ordine interamente cancellato puo' sparire dagli ordini correnti
             # (broker SIM reale). Si cerca per bet id persistito, ma si accetta SOLO una riga terminale
             # senza residuo: un ordine ancora vivo resta "non trovato" e la saga resta pendente
@@ -752,17 +766,6 @@ class MicrostakeCoordinator:
                 by_id = None
             if by_id is not None and by_id.remaining == 0:
                 order = by_id
-        replacement_gone = False
-        if order is None and not rollback_intent and saved.get("replacement_bet_id"):
-            # Replace accettato con identita' nota (persistita): il nuovo ordine si cerca per id, anche fra gli esiti
-            # di listClearedOrders, invece di dipendere dal riferimento conservato o meno dal replace.
-            try:
-                by_id = self.exchange.order(str(saved["replacement_bet_id"]))
-            except Exception:
-                by_id = None
-            if by_id is not None:
-                order = by_id
-                replacement_gone = by_id.remaining == 0 and by_id.matched == 0
         stub_gone = False
         # `replace_sent is False` ESPLICITO (scritto alla creazione della saga): una saga persistita prima di questo
         # campo non dice se il replace e' partito, quindi non si chiude per stub sparito (rilievo GPT-6.1 Sol).

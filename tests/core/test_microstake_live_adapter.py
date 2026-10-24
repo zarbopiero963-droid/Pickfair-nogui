@@ -1019,6 +1019,32 @@ def test_saga_with_a_replacement_but_no_stub_identity_never_rolls_back_without_p
     assert out["ok"] is False and out["pending"] == ["mid"], out
 
 
+def test_rollback_pending_with_a_known_replacement_cancels_the_replacement_not_the_old_stub():
+    """Rilievo Codex P1 su d62267b: replacement accettato (identita' persistita), senza ref, ridotto a 0.06 prima del
+    recovery; una prima cancellazione protettiva fallita lascia ROLLBACK_PENDING. Il recovery successivo deve gestire
+    il REPLACEMENT (cancellarlo e verificarlo), non rileggere il vecchio stub cancellato e dichiarare ROLLED_BACK."""
+    fake = _FakeBetfair(carry_ref=False)
+    client = _client(fake)
+    client.place_bet(market_id="1.200", selection_id=7, side="BACK", price=1000.0, size=1.0, customer_order_ref="rb2")
+    (stub_id,) = fake.orders
+    client.reduce_order(market_id="1.200", bet_id=stub_id, size_reduction=0.9)
+    client.replace_orders(market_id="1.200", bet_id=stub_id, new_price=3.0)
+    new_id = [b for b in fake.orders if b != stub_id][0]
+    client.reduce_order(market_id="1.200", bet_id=new_id, size_reduction=0.04)          # 0.06 ancora eseguibili
+    engine, fake, db = _live_engine(fake, client=client)
+    req = MicrostakeRequest("1.200", 7, Side.BACK, D("0.10"), D("3.0"), "rb2")
+    DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).save(
+        "rb2", phase="ROLLBACK_PENDING", rollback_intent=True, reservation_held=True, transient_exposure="1.00",
+        stub_price="1000", stub_size="1.00", bet_id=stub_id, stub_bet_id=stub_id, replacement_bet_id=new_id,
+        replace_sent=True, request=MicrostakeCoordinator._request_json(req))
+    out = engine.recover_native_microstake_sagas()
+    cancelled = [c[1]["instructions"][0]["betId"] for c in fake.calls if c[0] == "cancelOrders"
+                 and not any("sizeReduction" in i for i in c[1]["instructions"])]
+    assert cancelled == [new_id], "la cancellazione protettiva va sul replacement"
+    assert fake.live() == [], "nessun residuo eseguibile"                 # prima: ROLLED_BACK con 0.06 vivi
+    assert out["ok"] is True and out["results"] == {"rb2": "ROLLED_BACK"}, out
+
+
 def test_new_session_client_restores_the_reservations_of_pending_sagas():
     """F2: re-auth => nuovo BetfairClient => nuovo esecutore LIVE. Le riserve delle saghe pendenti si ripristinano
     alla costruzione: lo stub vivo resta contato nel cap temporaneo."""

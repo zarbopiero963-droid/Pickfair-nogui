@@ -3763,12 +3763,12 @@
       "module": "core.microstake_safe",
       "area": "recovery",
       "file": "core/microstake_safe.py",
-      "original": "        if order is None and not rollback_intent and saved.get(\"replacement_bet_id\"):",
+      "original": "        if replacement_id:",
       "mutated": "        if False:",
       "tests": [
         "tests/core/test_microstake_live_adapter.py"
       ],
-      "rationale": "Rilievo Codex P2 su #561: identita' del replacement persistita ma non usata dal recovery."
+      "rationale": "Rilievi Codex P2/P1 su #561: identita' del replacement persistita ma non usata dal recovery (anche in rollback: chiusura ROLLED_BACK sul vecchio stub con il replacement eseguibile)."
     },
     {
       "id": "ms_saga_accepted_stub_id_dropped",
