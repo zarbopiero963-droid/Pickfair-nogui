@@ -3071,6 +3071,54 @@
         "tests/unit/test_546_d2_549_controller_entry_funds.py"
       ],
       "rationale": "#549: i tavoli dello stesso mercato con un nome evento scritto diversamente escono dal cap evento della bet manuale (unione evento + mercato, rilievo Sol su 743bf8f)."
+    },
+    {
+      "id": "i543_exposure_memo_ignores_key",
+      "module": "simulation_broker",
+      "area": "funds",
+      "file": "simulation_broker.py",
+      "original": "            memo = self._memo_esposizione_mercato.get((market_id, solo_abbinato))\n            if memo is not None and memo[0] == chiave:",
+      "mutated": "            memo = self._memo_esposizione_mercato.get((market_id, solo_abbinato))\n            if memo is not None:",
+      "tests": [
+        "tests/unit/test_543_sim_funds_recompute.py"
+      ],
+      "rationale": "#543: il memo dell'esposizione restituisce un valore vecchio dopo un cambio di ordini: riserva sottostimata."
+    },
+    {
+      "id": "i543_fill_memo_ignores_key",
+      "module": "simulation_broker",
+      "area": "funds",
+      "file": "simulation_broker.py",
+      "original": "            memo = self._memo_fill_mercato.get(market_id)\n            if memo is not None and memo[0] == chiave:",
+      "mutated": "            memo = self._memo_fill_mercato.get(market_id)\n            if memo is not None:",
+      "tests": [
+        "tests/unit/test_543_sim_funds_recompute.py"
+      ],
+      "rationale": "#543: il memo della cassa restituisce un valore vecchio dopo un fill: disponibile sbagliato."
+    },
+    {
+      "id": "i543_fill_memo_key_without_matched",
+      "module": "simulation_broker",
+      "area": "funds",
+      "file": "simulation_broker.py",
+      "original": "                tuple((o.bet_id, o.market_id, o.selection_id, o.side, o.matched_size, o.avg_price_matched)",
+      "mutated": "                tuple((o.bet_id, o.market_id, o.selection_id, o.side, o.avg_price_matched)",
+      "tests": [
+        "tests/unit/test_543_sim_funds_recompute.py"
+      ],
+      "rationale": "#543: un abbinato incoerente con i fill non rende piu' i fondi non verificabili (fail-open)."
+    },
+    {
+      "id": "i543_exposure_memo_key_without_winners",
+      "module": "simulation_broker",
+      "area": "exposure",
+      "file": "simulation_broker.py",
+      "original": "            chiave = (self._vincitori_attesi(self.state.market_books.get(market_id) or {}), tuple(",
+      "mutated": "            chiave = (None, tuple(",
+      "tests": [
+        "tests/unit/test_543_sim_funds_recompute.py"
+      ],
+      "rationale": "#543: il cambio del numero di vincitori del mercato non ricalcola l'esposizione per scenario."
     }
   ]
 }

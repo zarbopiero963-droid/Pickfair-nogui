@@ -330,6 +330,10 @@ class SimulationBroker:
         self._lock = threading.RLock()
         # #545: False dall'ultima scrittura fallita dello snapshot di reload finche' una successiva non riesce.
         self._snapshot_durevole = True
+        # #543: memo per mercato indirizzato dal CONTENUTO (chiave = tutti i campi letti dal calcolo), non da
+        # un'invalidazione esplicita: un input cambiato cambia la chiave e il mercato si ricalcola.
+        self._memo_fill_mercato: Dict[str, Tuple[Any, Tuple[float, Dict[int, float]]]] = {}
+        self._memo_esposizione_mercato: Dict[Tuple[str, bool], Tuple[Any, float]] = {}
 
     @staticmethod
     def _ledger_key(market_id: str, selection_id: int) -> str:
@@ -411,11 +415,22 @@ class SimulationBroker:
             return size * (price - 1.0) if vince else -size
         return -size * (price - 1.0) if vince else size
 
+    def _ordini_per_mercato_locked(self) -> Dict[str, List[SimOrder]]:
+        """#543: gli ordini raggruppati per mercato in UNA passata, nell'ordine di inserimento. Chi ricalcola
+        tutti i mercati non riscorre piu' l'intero registro per ciascuno (costo mercati x ordini)."""
+        gruppi: Dict[str, List[SimOrder]] = {}
+        for order in self.state.orders.values():
+            gruppi.setdefault(str(order.market_id), []).append(order)
+        return gruppi
+
     def _esposizione_mercato_locked(self, market_id: str, candidati: List[SimOrder],
-                                    escludi: set, solo_abbinato: bool = False) -> float:
+                                    escludi: set, solo_abbinato: bool = False,
+                                    ordini_mercato: Optional[List[SimOrder]] = None) -> float:
         abbinate: List[Tuple[int, str, float, float]] = []
         non_abbinate: List[Tuple[int, str, float, float]] = []
-        for order in self.state.orders.values():
+        # ``ordini_mercato`` (#543): gli ordini gia' filtrati per questo mercato, nello stesso ordine.
+        sorgente = self.state.orders.values() if ordini_mercato is None else ordini_mercato
+        for order in sorgente:
             if str(order.market_id) != market_id:
                 continue
             if order.matched_size > 0.0:
@@ -453,18 +468,78 @@ class SimulationBroker:
         mercati = {str(o.market_id) for o in self.state.orders.values()} | {
             str(o.market_id) for o in candidati or []}
         mercati -= set(self.state.settlements)
+        per_mercato = self._ordini_per_mercato_locked()
+        for chiave in [k for k in self._memo_esposizione_mercato if k[0] not in mercati]:
+            del self._memo_esposizione_mercato[chiave]     # mercati regolati o spariti: niente memoria H24
         return float(sum(
-            self._esposizione_mercato_locked(
-                m, [o for o in candidati or [] if str(o.market_id) == m], escludi or set(), solo_abbinato)
+            self._esposizione_mercato_memo_locked(
+                m, [o for o in candidati or [] if str(o.market_id) == m], escludi or set(), solo_abbinato,
+                per_mercato.get(m, []))
             for m in mercati))
+
+    def _esposizione_mercato_memo_locked(self, market_id: str, candidati: List[SimOrder], escludi: set,
+                                         solo_abbinato: bool, ordini_mercato: List[SimOrder]) -> float:
+        """#543: come ``_esposizione_mercato_locked``; senza candidati ne' esclusi il risultato si riusa finche'
+        non cambia nessun campo letto (ordini del mercato e numero di vincitori del book)."""
+        if candidati or escludi:
+            return self._esposizione_mercato_locked(market_id, candidati, escludi, solo_abbinato,
+                                                    ordini_mercato=ordini_mercato)
+        try:
+            chiave = (self._vincitori_attesi(self.state.market_books.get(market_id) or {}), tuple(
+                (o.bet_id, o.selection_id, o.side, o.price, o.size, o.matched_size, o.avg_price_matched, o.status)
+                for o in ordini_mercato))
+            memo = self._memo_esposizione_mercato.get((market_id, solo_abbinato))
+            if memo is not None and memo[0] == chiave:
+                return memo[1]
+        except TypeError:          # campo non hashabile: nessun memo, si ricalcola
+            return self._esposizione_mercato_locked(market_id, candidati, escludi, solo_abbinato,
+                                                    ordini_mercato=ordini_mercato)
+        valore = self._esposizione_mercato_locked(market_id, candidati, escludi, solo_abbinato,
+                                                  ordini_mercato=ordini_mercato)
+        self._memo_esposizione_mercato[(market_id, solo_abbinato)] = (chiave, valore)
+        return valore
 
     def _cassa_locked(self) -> float:
         """Saldo senza gli effetti dei fill sui mercati non ancora regolati."""
         mercati = {str(f.get("market_id")) for f in self.state.fills} | {
             str(o.market_id) for o in self.state.orders.values() if o.matched_size > 0.0}
         mercati -= set(self.state.settlements)
+        # #543: fill e ordini raggruppati per mercato in una passata (ordine cronologico conservato).
+        fill_per_mercato: Dict[str, List[Dict[str, Any]]] = {}
+        for fill in self.state.fills:
+            fill_per_mercato.setdefault(str(fill.get("market_id")), []).append(fill)
+        per_mercato = self._ordini_per_mercato_locked()
+        for chiave in [k for k in self._memo_fill_mercato if k not in mercati]:
+            del self._memo_fill_mercato[chiave]            # mercati regolati o spariti: niente memoria H24
         return float(self.state.balance) - float(
-            sum(self._ricostruisci_fill_mercato_locked(m)[0] for m in mercati))
+            sum(self._ricostruisci_fill_mercato_memo_locked(
+                m, fill_per_mercato.get(m, []), per_mercato.get(m, []))[0]
+                for m in mercati))
+
+    def _ricostruisci_fill_mercato_memo_locked(
+            self, market_id: str, fills_mercato: List[Dict[str, Any]],
+            ordini_mercato: List[SimOrder]) -> Tuple[float, Dict[int, float]]:
+        """#543: come ``_ricostruisci_fill_mercato_locked``; il risultato si riusa finche' non cambia nessun
+        campo letto (fill e ordini del mercato). Registro corrotto ed eccezioni non si memorizzano mai."""
+        if self.state.fills_corrupted:
+            return self._ricostruisci_fill_mercato_locked(
+                market_id, fills_mercato=fills_mercato, ordini_mercato=ordini_mercato)
+        try:
+            chiave = (
+                tuple((f.get("fill_id"), f.get("bet_id"), f.get("market_id"), f.get("selection_id"), f.get("side"),
+                       f.get("price"), f.get("size")) for f in fills_mercato),
+                tuple((o.bet_id, o.market_id, o.selection_id, o.side, o.matched_size, o.avg_price_matched)
+                      for o in ordini_mercato))
+            memo = self._memo_fill_mercato.get(market_id)
+            if memo is not None and memo[0] == chiave:
+                return memo[1][0], dict(memo[1][1])
+        except (TypeError, AttributeError):   # voce non hashabile o malformata: si ricalcola (e si solleva li')
+            return self._ricostruisci_fill_mercato_locked(
+                market_id, fills_mercato=fills_mercato, ordini_mercato=ordini_mercato)
+        cassa, esposizioni = self._ricostruisci_fill_mercato_locked(
+            market_id, fills_mercato=fills_mercato, ordini_mercato=ordini_mercato)
+        self._memo_fill_mercato[market_id] = (chiave, (cassa, dict(esposizioni)))
+        return cassa, esposizioni
 
     def _fondi_sufficienti_locked(self, candidati: List[SimOrder], escludi: Optional[set] = None) -> bool:
         """I candidati, contati come interamente NON abbinati (caso peggiore), stanno nella cassa?
@@ -816,7 +891,9 @@ class SimulationBroker:
                     return valore
         return None
 
-    def _ricostruisci_fill_mercato_locked(self, market_id: str) -> Tuple[float, Dict[int, float]]:
+    def _ricostruisci_fill_mercato_locked(
+            self, market_id: str, *, fills_mercato: Optional[List[Dict[str, Any]]] = None,
+            ordini_mercato: Optional[List[SimOrder]] = None) -> Tuple[float, Dict[int, float]]:
         """Effetto di cassa gia' applicato al saldo dai fill del mercato, ed
         esposizione residua per selezione, ricostruiti dal registro dei fill.
 
@@ -826,6 +903,9 @@ class SimulationBroker:
         un riavvio non conserva il realizzato gia' accreditato. Il registro
         deve tornare con gli ordini (somma dei fill = abbinato di ogni ordine):
         altrimenti, come per valori non validi, ``ValueError``.
+
+        ``fills_mercato`` / ``ordini_mercato`` (#543): gli stessi elementi gia' raggruppati per questo mercato,
+        nello stesso ordine; il filtro sul mercato resta, quindi il risultato e' identico.
         """
         if self.state.fills_corrupted:
             raise _RegistroFillIncoerente("registro dei fill con voci malformate al caricamento")
@@ -833,7 +913,7 @@ class SimulationBroker:
         cassa = 0.0
         per_ordine: Dict[str, float] = {}
         visti: set = set()
-        for fill in self.state.fills:
+        for fill in self.state.fills if fills_mercato is None else fills_mercato:
             if str(fill.get("market_id")) != market_id:
                 continue
             if fill["fill_id"] in visti:
@@ -864,7 +944,7 @@ class SimulationBroker:
             cassa += (float(prima.exposure) - float(dopo.exposure)) + float(
                 applicato.get("realized_delta") or 0.0
             )
-        for order in self.state.orders.values():
+        for order in self.state.orders.values() if ordini_mercato is None else ordini_mercato:
             if str(order.market_id) != market_id:
                 continue
             voce = per_ordine.pop(order.bet_id, None)
@@ -1942,7 +2022,10 @@ class SimulationBroker:
         # come duplicato un fill_id gia' visto.
         # Un id davvero libero (Codex su #542): un registro ripristinato puo' gia'
         # contenere bet_id#2 anche se il fill dell'ordine e' uno solo.
-        usati = {str(f.get("fill_id")) for f in self.state.fills}
+        # #543: ogni id candidato comincia con il bet_id, quindi basta guardare quelli (stesso risultato,
+        # senza costruire l'insieme di tutto il registro a ogni fill).
+        prefisso_id = str(order.bet_id)
+        usati = {fid for fid in (str(f.get("fill_id")) for f in self.state.fills) if fid.startswith(prefisso_id)}
         fill_id, n = str(order.bet_id), 1
         while fill_id in usati:
             n += 1
