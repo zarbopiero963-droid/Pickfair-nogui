@@ -229,8 +229,10 @@ def test_auto_next_con_fondi_non_validi_e_rifiutato():
         funds={"available": 150.0},                     # esposizione mancante: dato non valido
     )
     assert [e for e in bus.events if e[0] == "CMD_QUICK_BET"] == [], esito
-    # PFC-008: con l'esposizione mancante la cassa non e' verificabile e il MM nega prima del gate dei fondi.
-    assert esito["reason"] == "cassa_non_verificata:BALANCE_FIELD_MISSING", esito   # PFC-008: motivo esplicito
+    # Phase 2: con l'esposizione mancante la lettura del settlement non e' verificabile (stesso contratto di avvio e
+    # get_status): niente sincronizzazione, l'auto-next si ferma gia' li' (prima: sul MM, cassa non verificata).
+    assert esito["reason"] == "bankroll_sync_not_success", esito
+    assert rc._last_bankroll_sync_result["reason"] == "BALANCE_FIELD_MISSING", rc._last_bankroll_sync_result
 
 
 # ---------------------------------------------------------------- servizio reale: lettura fallita

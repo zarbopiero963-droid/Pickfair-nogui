@@ -2765,7 +2765,7 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "            self.risk_desk.sync_cash_equity(None, None, reason=\"BALANCE_READ_EXCEPTION\", read_at=started_at)",
+      "original": "            self._apply_funds_reading(None, source=\"status\", read_at=started_at,\n                                      account={\"ok\": False, \"reason\": \"BALANCE_READ_EXCEPTION\"})",
       "mutated": "            pass",
       "tests": [
         "tests/unit/test_pfc008_risk_pct_required.py"
@@ -3263,6 +3263,66 @@
         "tests/unit/test_554_dutching_event_cap_unified.py"
       ],
       "rationale": "#554 (Codex P1 su e0dacbb): il runtime confronta l'id grezzo del tavolo salvato (123.0 -> \"123.0\") con quello canonico dell'ingresso (\"123\"): il tavolo da segnale esce dal cap evento."
+    },
+    {
+      "id": "p2_zero_available_aligns_bankroll",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "        elif float(account[\"available\"]) > 0.0:\n            state = self.ACCOUNT_FUNDS_VERIFIED",
+      "mutated": "        elif float(account[\"available\"]) >= 0.0:\n            state = self.ACCOUNT_FUNDS_VERIFIED",
+      "tests": [
+        "tests/unit/test_p2_zero_balance_unified.py"
+      ],
+      "rationale": "Phase 2: un disponibile 0 verificato torna ad allineare il bankroll a 0 (falso drawdown/LOCKDOWN all'avvio e in get_status)."
+    },
+    {
+      "id": "p2_zero_keeps_stale_cash",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "                applied = self.risk_desk.sync_funds_reading(None, None, None, reason=state, read_at=read_at)",
+      "mutated": "                applied = True",
+      "tests": [
+        "tests/unit/test_p2_zero_balance_unified.py"
+      ],
+      "rationale": "Phase 2: con lo zero verificato la cassa vecchia resta in uso dal MM (PFC-008: deve essere non verificata con motivo esplicito)."
+    },
+    {
+      "id": "p2_no_recovery_at_entry",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "        self._recover_funds_at_entry(funds, started_at)        # Phase 2, caso D: fondi tornati",
+      "mutated": "        pass",
+      "tests": [
+        "tests/unit/test_p2_zero_balance_unified.py"
+      ],
+      "rationale": "Phase 2, caso D: dopo uno zero o una lettura non valida le entrate non riprendono al ritorno dei fondi senza get_status (headless)."
+    },
+    {
+      "id": "p2_cash_invalidated_not_recovered",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "        return state != self.ACCOUNT_FUNDS_VERIFIED or getattr(self.risk_desk, \"cash_equity_current\", None) is None",
+      "mutated": "        return state != self.ACCOUNT_FUNDS_VERIFIED",
+      "tests": [
+        "tests/unit/test_p2_zero_balance_unified.py"
+      ],
+      "rationale": "Phase 2 (review indipendente, P2): una cassa invalidata fuori da una lettura (P&L, snapshot, ripristino) con stato FUNDS_VERIFIED non riprende all'ingresso."
+    },
+    {
+      "id": "p2_read_exception_keeps_verified_state",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "            self._apply_funds_reading(None, source=\"status\", read_at=started_at,\n                                      account={\"ok\": False, \"reason\": \"BALANCE_READ_EXCEPTION\"})",
+      "mutated": "            self.risk_desk.sync_cash_equity(None, None, reason=\"BALANCE_READ_EXCEPTION\", read_at=started_at)",
+      "tests": [
+        "tests/unit/test_p2_zero_balance_unified.py"
+      ],
+      "rationale": "Phase 2 (review indipendente, P2): un'eccezione nella lettura di get_status lascia lo stato FUNDS_VERIFIED e la ripresa non scatta."
     }
   ]
 }

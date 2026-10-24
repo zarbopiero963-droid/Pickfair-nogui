@@ -522,8 +522,10 @@ def test_runtime_auto_next_senza_cassa_verificata_motivo_esplicito():
 
 
 def test_runtime_disponibile_verificato_zero_non_usa_il_bankroll_precedente():
-    # #546: get_status non riallinea il bankroll a un disponibile 0; con PFC-008 la cassa di quella lettura non
-    # appartiene al bankroll corrente (100 della lettura precedente) => cassa non verificata, entrate bloccate.
+    # #546: get_status non riallinea il bankroll a un disponibile 0; con PFC-008 la cassa precedente non resta in uso
+    # => cassa non verificata, entrate bloccate. Phase 2: motivo esplicito dello stato del conto (prima
+    # CASH_READING_MISMATCH). Qui si chiama direttamente il percorso seriale (senza la lettura pre-ammissione di
+    # `_on_signal_received`): con la cassa non verificata il MM rifiuta con il motivo dello stato del conto.
     rc, _bus = _make_controller(responses=[{"available": 0.0, "exposure": -20.0}])
     with_explicit_risk_pct(rc.mm.config)
     rc._applica_fondi_avvio({"available": 100.0, "exposure": 0.0})
@@ -531,12 +533,12 @@ def test_runtime_disponibile_verificato_zero_non_usa_il_bankroll_precedente():
     rc.get_status()
     assert rc.risk_desk.bankroll_current == 100.0                       # bankroll vecchio, non riallineato
     assert rc.risk_desk.cash_equity_current is None
-    assert rc.risk_desk.cash_equity_reason == "CASH_READING_MISMATCH"
+    assert rc.risk_desk.cash_equity_reason == "BALANCE_ZERO_COMMITTED"
     rc.mode = RuntimeMode.ACTIVE
     rifiuti = []
     rc._reject_signal = lambda _s, motivo: rifiuti.append(motivo)
     rc._on_signal_received_serial(dict(_SEGNALE, stake=0.5))
-    assert rifiuti == ["cassa_non_verificata:CASH_READING_MISMATCH"]
+    assert rifiuti == ["cassa_non_verificata:BALANCE_ZERO_COMMITTED"]
 
 
 # --- review indipendente PFC-008 (rilievi corretti) --------------------------------------------------------------

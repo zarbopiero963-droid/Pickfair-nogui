@@ -57,7 +57,7 @@ class _Betfair:
 
     def get_account_funds(self):
         if not self._responses:
-            return {"available": 0.0}
+            return {"available": 0.0, "exposure": 0.0}
         item = self._responses.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -110,7 +110,7 @@ def _close_payload(*, event_key: str, batch_id: str, correlation_id: str, gross_
 
 
 def test_bankroll_sync_success_on_settlement_close_event():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
@@ -130,7 +130,7 @@ def test_bankroll_sync_success_on_settlement_close_event():
 
 
 def test_bankroll_sync_duplicate_settlement_is_idempotent():
-    rc, _ = _make_controller(responses=[{"available": 150.0}, {"available": 999.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}, {"available": 999.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
     payload = _close_payload(event_key="evt-dup", batch_id="batch-dup", correlation_id="corr-dup", gross_pnl=10.0)
 
@@ -180,8 +180,10 @@ def test_bankroll_sync_rejects_ambiguous_zero_fallback_balance():
     assert float(rc.risk_desk.bankroll_current) == 100.0
 
 
-def test_bankroll_sync_accepts_explicitly_confirmed_zero_balance():
-    rc, _ = _make_controller(responses=[{"available": 0.0, "ok": True}])
+def test_bankroll_sync_never_zeroes_the_bankroll_even_on_a_confirmed_zero_balance():
+    # Phase 2 (decisione owner PF-POST-556): uno zero, anche marcato `ok`, non azzera MAI il bankroll (prima
+    # questo test chiedeva SYNC_SUCCESS e bankroll 0: falso drawdown/LOCKDOWN). Auto-next resta saltato.
+    rc, _ = _make_controller(responses=[{"available": 0.0, "exposure": 5.0, "ok": True}])
     rc.risk_desk.sync_bankroll(10.0)
 
     rc._on_close_position(
@@ -194,8 +196,9 @@ def test_bankroll_sync_accepts_explicitly_confirmed_zero_balance():
     )
 
     result = rc._last_bankroll_sync_result
-    assert result["bankroll_sync_status"] == "SYNC_SUCCESS"
-    assert float(rc.risk_desk.bankroll_current) == 0.0
+    assert result["bankroll_sync_status"] == "SYNC_FAILED_BALANCE_UNAVAILABLE"
+    assert result["account_state"] == "BALANCE_ZERO_COMMITTED"
+    assert float(rc.risk_desk.bankroll_current) == 10.0
 
 
 def test_bankroll_sync_fails_closed_when_balance_invalid():
@@ -212,7 +215,7 @@ def test_bankroll_sync_fails_closed_when_balance_invalid():
 
 
 def test_realized_pnl_is_preserved_on_close_while_bankroll_sync_runs():
-    rc, _ = _make_controller(responses=[{"available": 140.0}])
+    rc, _ = _make_controller(responses=[{"available": 140.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
     realized_before = float(rc.risk_desk.realized_pnl)
 

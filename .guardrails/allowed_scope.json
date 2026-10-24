@@ -2785,6 +2785,25 @@
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
       "max_files": 25
+    },
+    "zero-balance-unified-p2": {
+      "description": "PF-POST-556 Phase 2 (decisione owner, safety-critical): un solo contratto per la lettura del conto (RuntimeController._apply_funds_reading) per avvio, get_status, settlement e ripresa all'ingresso; stati FUNDS_VERIFIED / BALANCE_ZERO_COMMITTED / ACCOUNT_EMPTY_VERIFIED / FUNDS_UNVERIFIABLE; il bankroll non si azzera mai per un disponibile 0; cassa non verificata con motivo esplicito; ripresa automatica al ritorno dei fondi; ordine delle letture. Aspettative superate dalla decisione owner riallineate nei test.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/runtime_controller.py",
+        "docs/roserpina_bankroll_equity.md",
+        "guardrails/mutation_catalog.json",
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py",
+        "tests/core/test_bankroll_sync.py",
+        "tests/f026/child_f026.py",
+        "tests/integration/test_runtime_controller_bankroll_sync.py",
+        "tests/unit/test_546_d2_549_controller_entry_funds.py",
+        "tests/unit/test_p2_zero_balance_unified.py",
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "max_files": 12
     }
   }
 }

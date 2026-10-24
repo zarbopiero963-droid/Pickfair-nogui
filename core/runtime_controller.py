@@ -3679,6 +3679,11 @@ class RuntimeController:
                 with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
                     self._end_cashout_barrier(barrier_id)
             return
+        if self._needs_funds_recovery() and getattr(self.mode, "value", self.mode) == RuntimeMode.ACTIVE.value:
+            # Phase 2, caso D: con la cassa non verificata il money management rifiuterebbe prima della lettura fresca
+            # d'ingresso. Una lettura del conto PRIMA dell'ammissione (fuori dal lock, rete), solo a runtime attivo,
+            # riallinea bankroll e cassa se i fondi sono tornati; altrimenti il segnale si ferma sui gate come prima.
+            self._read_funds_for_entry()
         with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
             fence = self._capture_admission_fence(signal)
             if not self._admission_fence_valid(fence):
@@ -6072,6 +6077,7 @@ class RuntimeController:
         error = funds.get("error") if isinstance(funds, dict) else None
         self._record_runtime_io(operation="betfair_get_account_funds", started_at=started_at, ok=not error,
                                 error=str(error or ""))
+        self._recover_funds_at_entry(funds, started_at)        # Phase 2, caso D: fondi tornati
         return {"funds": funds, "read_at": started_at}
 
     def _entry_total_cap_reason(self, funds: Any, read_at: Optional[float], *, order_exposure: Any,
@@ -6148,6 +6154,79 @@ class RuntimeController:
             return f"fondi_insufficienti:riserve_pendenti={pending_exposure:.2f}€,disponibile={available:.2f}€"
         return ""
 
+    # Phase 2 (PF-POST-556, decisione owner): stati della lettura del conto, uguali per avvio, stato e settlement.
+    ACCOUNT_FUNDS_VERIFIED = "FUNDS_VERIFIED"               # disponibile > 0: bankroll e cassa allineati
+    ACCOUNT_ZERO_COMMITTED = "BALANCE_ZERO_COMMITTED"       # A: disponibile 0, impegnato > 0 (non e' una perdita)
+    ACCOUNT_EMPTY_VERIFIED = "ACCOUNT_EMPTY_VERIFIED"       # B: disponibile 0 e impegnato 0 (patrimonio zero)
+    ACCOUNT_UNVERIFIABLE = "FUNDS_UNVERIFIABLE"             # C: lettura non valida (errore, campo, valore)
+    _account_state_lock = threading.Lock()                   # stato del conto + ordine delle letture
+
+    def _apply_funds_reading(self, funds: Any, *, source: str, read_at: Optional[float] = None,
+                             account: Optional[dict] = None) -> dict:
+        """Phase 2: contratto UNICO per applicare una lettura del conto al RiskDesk (avvio, `get_status`,
+        settlement, ripresa all'ingresso). ``{"state", "applied", "account"}``.
+
+        - disponibile > 0 (FUNDS_VERIFIED): bankroll = disponibile e cassa della stessa lettura (PFC-008);
+        - disponibile 0 verificato, con impegnato (A, BALANCE_ZERO_COMMITTED) o senza (B, ACCOUNT_EMPTY_VERIFIED):
+          il bankroll NON si azzera (nessun falso drawdown/LOCKDOWN, posizioni e tavoli intatti); la cassa
+          registrata non e' piu' verificata, con lo stato come motivo esplicito (PFC-008): nuove entrate bloccate;
+          al ritorno dei fondi la prima lettura d'ingresso riallinea tutto (`_recover_funds_at_entry`);
+        - lettura non valida (C, FUNDS_UNVERIFIABLE): nessun valore inventato, bankroll invariato, cassa non
+          verificata (PFC-008) => nuove entrate bloccate.
+        Una lettura iniziata prima dell'ultima applicata non cambia nulla (`read_at`, `applied` False).
+        ``account``: `_account_from_funds` gia' calcolato (lo snapshot lo registra il chiamante, se serve)."""
+        if account is None:
+            account = self._account_from_funds(funds)
+        if not account.get("ok"):
+            state = self.ACCOUNT_UNVERIFIABLE
+        elif float(account["available"]) > 0.0:
+            state = self.ACCOUNT_FUNDS_VERIFIED
+        else:
+            state = self.ACCOUNT_ZERO_COMMITTED if float(account["committed"]) > 0.0 else self.ACCOUNT_EMPTY_VERIFIED
+        with RuntimeController._account_state_lock:
+            # Ordine delle letture per TUTTI gli stati: ogni ramo passa dal RiskDesk con `read_at`, che scarta una
+            # lettura iniziata prima dell'ultima applicata (`applied` False: stato, bankroll e cassa invariati). Il
+            # lock tiene insieme l'applicazione al RiskDesk e lo stato del conto.
+            if state == self.ACCOUNT_UNVERIFIABLE:
+                applied = self.risk_desk.sync_funds_reading(
+                    None, None, None, reason=str(account.get("reason") or "BALANCE_UNVERIFIABLE"), read_at=read_at)
+            elif state == self.ACCOUNT_FUNDS_VERIFIED:
+                applied = self._sync_cash_equity_from_funds(funds, account["available"], read_at=read_at,
+                                                            bankroll=account["available"])
+            else:
+                # Nessun allineamento del bankroll: la lettura e' valida ma non dice che il capitale e' perso. La
+                # cassa registrata pero' non vale piu' (PFC-008): motivo esplicito, il MM non usa la cassa vecchia.
+                applied = self.risk_desk.sync_funds_reading(None, None, None, reason=state, read_at=read_at)
+            if applied:
+                self._account_state = state
+                self._account_state_source = str(source)
+            current = str(getattr(self, "_account_state", "") or "")
+        return {"state": state if applied else current, "applied": bool(applied), "account": account}
+
+    def _needs_funds_recovery(self) -> bool:
+        """Phase 2, caso D: dopo uno zero (A/B), una lettura non valida o un errore di lettura (C), oppure una cassa
+        invalidata fuori da una lettura (P&L applicato, snapshot, ripristino), la prossima lettura valida deve
+        riallineare bankroll e cassa. Nessuna lettura ancora applicata (stato None) => niente da riprendere."""
+        state = getattr(self, "_account_state", None)
+        if state is None:
+            return False
+        return state != self.ACCOUNT_FUNDS_VERIFIED or getattr(self.risk_desk, "cash_equity_current", None) is None
+
+    def _recover_funds_at_entry(self, funds: Any, read_at: Optional[float]) -> None:
+        """Phase 2, caso D: la prima lettura d'ingresso valida con disponibile > 0 riallinea bankroll e cassa con lo
+        stesso contratto, senza aspettare `get_status` o un settlement (headless). Se nella sessione non c'e' ancora
+        una baseline del ciclo (avvio a zero, F032), si apre adesso come al primo avvio. Niente da riprendere =>
+        nessun effetto."""
+        if not self._needs_funds_recovery():
+            return
+        account = self._account_from_funds(funds)
+        if not (account["ok"] and float(account["available"]) > 0.0):
+            return
+        esito = self._apply_funds_reading(funds, source="entry", read_at=read_at, account=account)
+        if esito["applied"] and esito["state"] == self.ACCOUNT_FUNDS_VERIFIED \
+                and getattr(self, "_expansion_baseline", None) is None and not self._load_expansion_baseline():
+            self._start_expansion_cycle("first_start", funds=funds)
+
     def _applica_fondi_avvio(self, funds: Any, *, read_at: Optional[float] = None) -> dict:
         """Fondi letti all'avvio: snapshot (F026), bankroll e baseline del primo ciclo (F032).
 
@@ -6156,14 +6235,14 @@ class RuntimeController:
         non validi; il gate dei fondi blocca le nuove entrate finche' una lettura valida non arriva.
         """
         account = self._record_account_snapshot(funds, source="start", read_at=read_at)  # PF-ALL-F026
-        if account["ok"]:
-            self._sync_cash_equity_from_funds(funds, account["available"], read_at=read_at,  # PFC-008
-                                              bankroll=account["available"])
+        # Phase 2: stesso contratto del settlement e di get_status (prima l'avvio allineava il bankroll anche a 0).
+        esito = self._apply_funds_reading(funds, source="start", read_at=read_at, account=account)
+        if esito["state"] == self.ACCOUNT_FUNDS_VERIFIED:
             if not self._load_expansion_baseline():                   # F032: primo avvio => apre il ciclo
                 self._start_expansion_cycle("first_start", funds=funds)
         else:
-            logger.warning("Avvio con fondi non verificabili (%s): bankroll e baseline invariati",
-                           account.get("reason"))
+            logger.warning("Avvio con conto %s (%s): bankroll e baseline invariati, nuove entrate bloccate",
+                           esito["state"], account.get("reason") or "disponibile 0")
             self._load_expansion_baseline()
         return account
 
@@ -7387,16 +7466,21 @@ class RuntimeController:
             )
             result["bankroll_sync_status"] = "SYNC_FAILED_BALANCE_UNAVAILABLE"
             result["reason"] = f"BALANCE_FETCH_ERROR:{type(exc).__name__}"
+            result["account_state"] = self._apply_funds_reading(  # Phase 2: come get_status
+                None, source="settlement", read_at=started_at, account={"ok": False, "reason": result["reason"]})["state"]
             return result
 
         if not isinstance(funds, dict):
             result["bankroll_sync_status"] = "SYNC_FAILED_BALANCE_UNAVAILABLE"
             result["reason"] = "BALANCE_PAYLOAD_NOT_DICT"
+            result["account_state"] = self._apply_funds_reading(funds, source="settlement", read_at=started_at)["state"]
             return result
         if funds.get("error"):
-            # PFC-007: fondi non verificabili => nessuna sincronizzazione del bankroll.
+            # PFC-007: fondi non verificabili => nessuna sincronizzazione del bankroll (Phase 2: cassa non verificata
+            # come all'avvio e in get_status).
             result["bankroll_sync_status"] = "SYNC_FAILED_BALANCE_UNAVAILABLE"
             result["reason"] = "BALANCE_ERROR:" + str(funds.get("error"))
+            result["account_state"] = self._apply_funds_reading(funds, source="settlement", read_at=started_at)["state"]
             return result
 
         available = funds.get("available")
@@ -7405,35 +7489,42 @@ class RuntimeController:
         except Exception:
             result["bankroll_sync_status"] = "SYNC_FAILED_INVALID_BALANCE"
             result["reason"] = "BALANCE_NOT_NUMERIC"
+            result["account_state"] = self._apply_funds_reading(funds, source="settlement", read_at=started_at)["state"]
             return result
 
         if not math.isfinite(available_f) or available_f < 0.0:
             result["bankroll_sync_status"] = "SYNC_FAILED_INVALID_BALANCE"
             result["reason"] = "BALANCE_NOT_FINITE_OR_NEGATIVE"
+            result["account_state"] = self._apply_funds_reading(funds, source="settlement", read_at=started_at)["state"]
             return result
 
-        trusted_zero = bool(
-            funds.get("ok")
-            or funds.get("authoritative")
-            or funds.get("balance_confirmed")
-        )
-        if available_f == 0.0 and not trusted_zero:
+        # Phase 2 (decisione owner): uno zero non azzera MAI il bankroll, nemmeno se marcato confermato dal servizio
+        # (prima `ok`/`authoritative`/`balance_confirmed` lo allineavano a 0: falso drawdown/LOCKDOWN).
+        if available_f == 0.0:
             # #546 D1: dal PFC-007 ogni zero di ripiego del servizio porta `error` (gestito sopra): uno zero senza
-            # errore e' un saldo LETTO. Bankroll invariato (nessun allineamento a 0 qui) e auto-next saltato come
-            # prima, ma con motivo distinto e snapshot del conto registrato: la diagnostica non resta su una
-            # lettura precedente. La cassa del RiskDesk NON si risincronizza qui: con bankroll invariato
-            # `sync_cash_equity` la invaliderebbe (CASH_READING_MISMATCH) e bloccherebbe le entrate anche dopo il
-            # ritorno dei fondi; il freno sul conto vuoto resta il gate fondi freschi d'ingresso (#546 D2).
+            # errore e' un saldo LETTO. Bankroll invariato (nessun allineamento a 0) e auto-next saltato, con motivo
+            # distinto e snapshot del conto registrato. Phase 2: stesso contratto di avvio e get_status (cassa non
+            # verificata con motivo esplicito); al ritorno dei fondi la prima lettura d'ingresso riallinea tutto.
             result["bankroll_sync_status"] = "SYNC_FAILED_BALANCE_UNAVAILABLE"
             result["reason"] = "BALANCE_ZERO_VERIFIED"
             account = self._record_account_snapshot(funds, source="settlement", read_at=started_at)
+            result["account_state"] = self._apply_funds_reading(funds, source="settlement", read_at=started_at,
+                                                                account=account)["state"]
             result["available_balance"] = account["available"]
             result["committed_funds"] = account["committed"]
             result["cash_equity"] = account["cash_equity"] if account["ok"] else None
             return result
 
         # PFC-008: bankroll e cassa della stessa lettura in un'unica operazione (una lettura tardiva non li tocca).
-        self._sync_cash_equity_from_funds(funds, available_f, read_at=started_at, bankroll=available_f)
+        # Phase 2: stesso contratto di avvio e get_status.
+        esito = self._apply_funds_reading(funds, source="settlement", read_at=started_at)
+        result["account_state"] = esito["state"]
+        if esito["account"].get("ok") is not True:
+            # Phase 2: campo mancante o non valido (es. `exposure`) => lettura non verificabile come all'avvio e in
+            # get_status: nessuna sincronizzazione (prima il bankroll si allineava al solo disponibile).
+            result["bankroll_sync_status"] = "SYNC_FAILED_BALANCE_UNAVAILABLE"
+            result["reason"] = str(esito["account"].get("reason") or "BALANCE_UNVERIFIABLE")
+            return result
         self._processed_bankroll_sync_keys.add(settlement_key)
         result["bankroll_after"] = float(self.risk_desk.bankroll_current)
         result["bankroll_sync_status"] = "SYNC_SUCCESS"
@@ -8228,21 +8319,15 @@ class RuntimeController:
                 ok=False,
                 error=str(exc),
             )
-            # PFC-008: lettura fallita => la cassa precedente non resta verificata.
-            self.risk_desk.sync_cash_equity(None, None, reason="BALANCE_READ_EXCEPTION", read_at=started_at)
+            # PFC-008 + Phase 2: lettura fallita => stato FUNDS_UNVERIFIABLE, la cassa precedente non resta verificata.
+            self._apply_funds_reading(None, source="status", read_at=started_at,
+                                      account={"ok": False, "reason": "BALANCE_READ_EXCEPTION"})
             raise
-        bankroll_current = float(self.risk_desk.bankroll_current)
-        # PFC-007: il bankroll si allinea solo a una lettura valida (niente errore, finita, non negativa);
-        # prima un NaN arrivava a sync_bankroll e un errore con available 0 veniva ignorato a caso.
-        lettura = self._account_from_funds(funds)
-        nuovo_bankroll = None
-        if lettura["ok"] and lettura["available"] > 0.0 and lettura["available"] != bankroll_current:
-            nuovo_bankroll = lettura["available"]
-        # PFC-008: cassa verificata della stessa lettura (anche a disponibile invariato); una lettura non
-        # valida la rende non verificata, mai la cassa di una lettura precedente. Bankroll e cassa insieme, dopo
-        # il controllo di read_at: una lettura arrivata tardi non li tocca (rilievo Codex su 4ce44a7).
-        self._sync_cash_equity_from_funds(funds, lettura["available"] if lettura["ok"] else None,
-                                          read_at=started_at, bankroll=nuovo_bankroll)
+        # PFC-007/PFC-008 + Phase 2: stesso contratto di avvio e settlement (`_apply_funds_reading`). Il bankroll si
+        # allinea solo a un disponibile valido > 0; lo zero verificato non lo azzera e marca la cassa non verificata
+        # con lo stato come motivo (prima CASH_READING_MISMATCH); una lettura non valida la rende non verificata; una
+        # lettura arrivata tardi non tocca nulla (rilievo Codex su 4ce44a7).
+        self._apply_funds_reading(funds, source="status", read_at=started_at)
 
         snapshot = self.risk_desk.build_snapshot(
             runtime_mode=self.mode,
@@ -8282,6 +8367,10 @@ class RuntimeController:
         data["runtime_io"] = self.runtime_io_snapshot()
         data["broker_status"] = self.betfair_service.status()
         data["account_funds"] = funds
+        # Phase 2: stato esplicito del conto (FUNDS_VERIFIED / BALANCE_ZERO_COMMITTED / ACCOUNT_EMPTY_VERIFIED /
+        # FUNDS_UNVERIFIABLE) e lettura che lo ha fissato.
+        data["account_state"] = getattr(self, "_account_state", None)
+        data["account_state_source"] = getattr(self, "_account_state_source", None)
         data["bankroll_sync"] = dict(self._last_bankroll_sync_result or {})
         data["auto_trade_mm"] = dict(self._last_auto_trade_result or {})
         data["cycle_executor"] = dict(self._last_cycle_executor_result or {})

@@ -9,6 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **PF-POST-556 Phase 2 — un solo contratto per la lettura del conto (avvio, `get_status`, settlement, ripresa;
+  decisione owner):** `RuntimeController._apply_funds_reading` con quattro stati espliciti: `FUNDS_VERIFIED`,
+  `BALANCE_ZERO_COMMITTED`, `ACCOUNT_EMPTY_VERIFIED`, `FUNDS_UNVERIFIABLE`.
+  - Il bankroll non si azzera più per un disponibile 0. Prima lo facevano l'avvio e il settlement con lo zero
+    «confermato»: falso drawdown e LOCKDOWN.
+  - Lo zero marca la cassa non verificata con motivo esplicito.
+  - Il settlement tratta un campo mancante come avvio e `get_status`.
+  - Al ritorno dei fondi la prima lettura d'ingresso valida riallinea bankroll e cassa, anche headless.
+  - Lo stato del conto è esposto in `get_status`, con ordine delle letture garantito.
+
+  Test: `tests/unit/test_p2_zero_balance_unified.py`. Aspettative superate dalla decisione owner riallineate
+  (`test_bankroll_sync_never_zeroes_...`, motivi `BALANCE_ZERO_COMMITTED`, fake con `exposure`). LIVE resta NO-GO.
 - **#554 — cap evento del lotto Dutching con la stessa misura della bet manuale e dei segnali (P3,
   preesistente):** il `precheck` del lotto misurava solo il tavolo con la propria chiave. Restavano fuori i tavoli
   da segnale e manuali dello stesso evento, e quelli dello stesso mercato; un'eccezione valeva 0 (fail-open). Ora
