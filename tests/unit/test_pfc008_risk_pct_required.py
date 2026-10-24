@@ -205,6 +205,7 @@ def _dutching(monkeypatch, *, legs, cash=None, available=80.0, total=20.0, **pct
         setattr(runtime.config, k, v)
     ctrl = DutchingController(bus=SimpleNamespace(publish=lambda *a, **k: None), runtime_controller=runtime)
     return ctrl.precheck({"market_id": "1.300", "total_stake": sum(legs), "simulation_mode": True,
+                          "event_name": "Casa v Ospite",  # #554: identita' evento per il cap evento
                           "selections": [{"selectionId": i + 1, "price": 3.0, "side": "BACK"}
                                          for i in range(len(legs))]})
 
@@ -244,6 +245,7 @@ def test_dutching_config_assente_nega(monkeypatch):
     runtime.risk_desk = SimpleNamespace(bankroll_current=80.0, cash_equity_current=100.0, cash_committed_exposure=0.0)
     ctrl = DutchingController(bus=SimpleNamespace(publish=lambda *a, **k: None), runtime_controller=runtime)
     out = ctrl.precheck({"market_id": "1.300", "total_stake": 1.0, "simulation_mode": True,
+                         "event_name": "Casa v Ospite",  # #554: identita' evento per il cap evento
                          "selections": [{"selectionId": 1, "price": 3.0, "side": "BACK"}]})
     assert out["ok"] is False and out["reason"].endswith("_non_configurato")
 
@@ -627,6 +629,7 @@ def test_dutching_esposizione_esterna_si_sottrae(monkeypatch):
         runtime.config.target_profit_cycle_pct = 3.0
         ctrl = DutchingController(bus=SimpleNamespace(publish=lambda *a, **k: None), runtime_controller=runtime)
         return ctrl.precheck({"market_id": "1.300", "total_stake": sum(legs), "simulation_mode": True,
+                              "event_name": "Casa v Ospite",  # #554: identita' evento per il cap evento
                               "selections": [{"selectionId": i + 1, "price": 3.0, "side": "BACK"}
                                              for i in range(len(legs))]})
     assert _dutch([7.5, 7.5], 20.0)["ok"] is True
@@ -721,5 +724,6 @@ def test_dutching_risk_desk_senza_esposizione_esterna_blocca(monkeypatch):
     runtime.risk_desk = SimpleNamespace(bankroll_current=80.0, cash_equity_current=100.0)
     ctrl = DutchingController(bus=SimpleNamespace(publish=lambda *a, **k: None), runtime_controller=runtime)
     out = ctrl.precheck({"market_id": "1.300", "total_stake": 0.5, "simulation_mode": True,
+                         "event_name": "Casa v Ospite",  # #554: identita' evento per il cap evento
                          "selections": [{"selectionId": 1, "price": 3.0, "side": "BACK"}]})
     assert out["ok"] is False and out["reason"] == "cassa_non_verificata"

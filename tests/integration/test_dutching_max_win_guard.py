@@ -123,10 +123,16 @@ class _Runtime:
     def withdraw_controller_entries(self, orders):
         return None
 
+    def controller_event_exposure(self, entry, *, event_key=""):
+        # #554: misura evento del runtime (qui: il tavolo con la chiave, come la vecchia misura del controller)
+        table = self.table_manager.find_by_event_key(event_key)
+        return float(getattr(table, "current_exposure", 0.0) or 0.0) if table else 0.0
+
 
 def _payload():
     return {
         "market_id": "1.300",
+        "event_name": "Casa v Ospite",  # #554: il cap evento richiede l'identita' dell'evento
         "total_stake": 100.0,
         "selections": [
             {"selectionId": 1, "price": 2.0, "side": "BACK"},

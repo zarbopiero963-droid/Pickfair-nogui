@@ -216,7 +216,10 @@ class RiskMiddleware:
             normalized = {
                 "market_id": str(payload.get("market_id", "")),
                 "market_type": str(payload.get("market_type", "MATCH_ODDS")),
-                "event_name": str(payload.get("event_name", "")),
+                # #554: un nome assente resta vuoto (prima `str(None)` dava "None", preso per un'identita')
+                "event_name": str(payload.get("event_name") or ""),
+                # #554: l'id evento serve al cap evento del lotto; assente resta assente (nessun id inventato)
+                "event_id": payload.get("event_id"),
                 "market_name": str(payload.get("market_name", "")),
                 "results": normalized_results,
                 "bet_type": batch_side,

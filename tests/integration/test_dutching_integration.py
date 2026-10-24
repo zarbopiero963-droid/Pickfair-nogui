@@ -22,6 +22,12 @@ class _Runtime:
     risk_desk = SimpleNamespace(bankroll_current=100000.0, cash_equity_current=100000.0, cash_committed_exposure=0.0)
     dutching_batch_manager = None
 
+    def controller_event_exposure(self, entry, *, event_key=""):
+        # #554: misura evento del runtime (qui: il tavolo con la chiave, come la vecchia misura del controller)
+        table_manager = getattr(self, "table_manager", None)
+        table = table_manager.find_by_event_key(event_key) if table_manager is not None else None
+        return float(getattr(table, "current_exposure", 0.0) or 0.0) if table else 0.0
+
 
 def _controller_payload(odds, total_stake=100.0, commission=4.5):
     return {

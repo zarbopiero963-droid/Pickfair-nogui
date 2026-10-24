@@ -708,17 +708,6 @@ class DutchingController:
                 return 0.0
         return 0.0
 
-    def _event_current_exposure(self, event_key: str) -> float:
-        table_manager = self._table_manager()
-        if table_manager and hasattr(table_manager, "find_by_event_key"):
-            try:
-                table = table_manager.find_by_event_key(event_key)
-                if table:
-                    return float(getattr(table, "current_exposure", 0.0) or 0.0)
-            except Exception:
-                return 0.0
-        return 0.0
-
     def _bankroll_current(self) -> float:
         risk_desk = self._risk_desk()
         if risk_desk:
@@ -1191,6 +1180,7 @@ class DutchingController:
     # PRECHECK RISCHIO / DUPLICATI
     # =========================================================
     def precheck(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        payload = self._with_canonical_event_identity(payload)   # #554: id evento in forma unica
         validation = self.validate(payload)
         if not validation["ok"]:
             return validation
@@ -1229,7 +1219,6 @@ class DutchingController:
         config = self._config()
         bankroll = self._bankroll_current()
         current_total_exposure = self._table_total_exposure()
-        event_current_exposure = self._event_current_exposure(event_key)
 
         # Book % guard (PR2a): blocca il submit se il book totale del dutching
         # (over-round) raggiunge/supera la soglia di blocco configurata. Gate
@@ -1359,11 +1348,19 @@ class DutchingController:
                 max_total_exposure=round(max_total_exposure, 2),
             )
 
-        if event_current_exposure + batch_exposure > max_event_exposure + 1e-9:
+        # #554: stessa misura della bet manuale e dei segnali (prima solo il tavolo con la chiave del lotto,
+        # e un'eccezione valeva 0). Identita' evento assente o misura non verificabile => rifiuto.
+        if self._event_identity_missing(payload):
+            return self._fail("Esposizione evento non verificabile", batch_exposure=round(batch_exposure, 2))
+        event_current_exposure = self._entry_event_exposure(
+            event_key, payload, str(payload.get("market_id") or ""))
+        if not math.isfinite(event_current_exposure) or \
+                event_current_exposure + batch_exposure > max_event_exposure + 1e-9:
             return self._fail(
                 "Esposizione evento oltre limite",
                 batch_exposure=round(batch_exposure, 2),
-                event_current_exposure=round(event_current_exposure, 2),
+                event_current_exposure=(round(event_current_exposure, 2)
+                                        if math.isfinite(event_current_exposure) else None),
                 max_event_exposure=round(max_event_exposure, 2),
             )
 
@@ -1473,6 +1470,7 @@ class DutchingController:
         """Controlli, tavolo e ammissione sotto il lock d'ammissione; `unlock()` prima di pubblicare.
         ``funds_read``: lettura fresca del conto fatta prima del lock (#546 D2); assente => fondi non
         verificabili, nessun ordine."""
+        payload = self._with_canonical_event_identity(payload)   # #554: stessa forma per precheck e meta del tavolo
         pre = self.precheck(payload)
         if not pre["ok"]:
             self._publish_audit(
@@ -1530,6 +1528,8 @@ class DutchingController:
                 meta={
                     "market_id": payload.get("market_id"),
                     "event_name": payload.get("event_name", ""),
+                    # #554: l'id evento resta sul tavolo, cosi' la misura degli ingressi successivi lo riconosce
+                    "event_id": payload.get("event_id"),
                     "market_name": payload.get("market_name", ""),
                     "type": "dutching_batch",
                     "batch_id": batch_id,
@@ -1732,25 +1732,56 @@ class DutchingController:
         return self._locked_entry(
             lambda body, unlock: self._manual_bet_reserved(body, unlock, funds_read=funds_read), payload)
 
-    def _manual_event_exposure(self, event_key: str, payload: Dict[str, Any], market_id: str) -> float:
-        """#549: esposizione corrente dell'evento della bet manuale: la maggiore fra il tavolo con la stessa
-        chiave e tutti i tavoli dello stesso evento reale (event_id / nome, misura dei segnali)."""
-        exposure = self._event_current_exposure(event_key)
+    @staticmethod
+    def _canonical_event_id(value: Any) -> Optional[str]:
+        """#554: la stessa forma canonica del runtime (`validators.canonical_event_id`), per gate, misura, meta del
+        tavolo e ordini."""
+        return validators.canonical_event_id(value)
+
+    def _with_canonical_event_identity(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """#554: copia del payload con `event_id` canonico e `event_name` mai None. La stessa forma va al gate
+        d'identita', alla misura dell'evento, al meta del tavolo e agli ordini."""
+        if not isinstance(payload, dict):
+            return payload
+        out = dict(payload)
+        out["event_id"] = self._canonical_event_id(payload.get("event_id"))
+        if out.get("event_name") is None:
+            out["event_name"] = ""
+        return out
+
+    @staticmethod
+    def _event_identity_missing(payload: Dict[str, Any]) -> bool:
+        """#549/#554: senza nome o id evento i tavoli da segnale dello stesso evento non sono riconoscibili: il
+        cap evento non e' verificabile (il controller non inventa l'evento). Stesse regole della misura del
+        runtime (`RuntimeController._event_identity_parts`): un id vuoto, di soli spazi, 0 o bool non vale."""
+        event_name = payload.get("event_name")
+        event_id = payload.get("event_id")
+        has_name = isinstance(event_name, str) and bool(event_name.strip())
+        has_id = DutchingController._canonical_event_id(event_id) is not None
+        return not (has_name or has_id)
+
+    def _entry_event_exposure(self, event_key: str, payload: Dict[str, Any], market_id: str) -> float:
+        """#549/#554: esposizione corrente dell'evento di un ingresso del controller (lotto Dutching o bet
+        manuale), con la STESSA misura dei segnali (`RuntimeController.controller_event_exposure`): tavoli dello
+        stesso evento reale, dello stesso mercato o con la stessa chiave, ciascuno una volta sola. Runtime senza
+        la misura, eccezione o valore non finito/negativo => inf (il cap rifiuta, mai 0)."""
         measure = getattr(self.runtime, "controller_event_exposure", None)
-        if callable(measure):
-            try:
-                exposure = max(exposure, float(measure({"market_id": market_id,
-                                                        "event_name": payload.get("event_name", ""),
-                                                        "event_id": payload.get("event_id")})))
-            except Exception:
-                return float("inf")
-        return exposure
+        if not callable(measure):
+            return float("inf")
+        try:
+            value = float(measure({"market_id": market_id,
+                                   "event_name": payload.get("event_name", ""),
+                                   "event_id": payload.get("event_id")}, event_key=event_key))
+        except Exception:
+            return float("inf")
+        return value if math.isfinite(value) and value >= 0.0 else float("inf")
 
     def _manual_bet_reserved(self, payload: Dict[str, Any], unlock,
                              funds_read: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Cap, dedupe, tavolo e ammissione sotto il lock d'ammissione; `unlock()` prima di pubblicare.
         ``funds_read``: lettura fresca del conto fatta prima del lock (#546 D2); assente => fondi non
         verificabili, nessun ordine."""
+        payload = self._with_canonical_event_identity(payload)   # #554: id evento in forma unica
         try:
             required = ["market_id", "selection_id", "price", "stake"]
             for key in required:
@@ -1848,12 +1879,9 @@ class DutchingController:
             # #549: cap evento come nel precheck del Dutching e nel MM dei segnali (prima non era valutato).
             # Senza nome o id evento i tavoli da segnale dello stesso evento non sono riconoscibili: il cap
             # non e' verificabile e l'ingresso si rifiuta (il controller non inventa l'evento).
-            event_name = payload.get("event_name")
-            event_id = payload.get("event_id")
-            if not (isinstance(event_name, str) and event_name.strip()) and \
-                    (event_id in (None, "") or isinstance(event_id, bool)):
+            if self._event_identity_missing(payload):
                 return self._fail("Esposizione evento non verificabile", order_exposure=round(exposure, 2))
-            event_current_exposure = self._manual_event_exposure(event_key, payload, market_id)
+            event_current_exposure = self._entry_event_exposure(event_key, payload, market_id)
             if not math.isfinite(event_current_exposure) or \
                     event_current_exposure + exposure > max_event_exposure + 1e-9:
                 return self._fail(

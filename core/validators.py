@@ -77,6 +77,21 @@ def require_finite_now(now) -> float:
 # l'invalido si ferma prima di persistenza, anti-duplicazione, tavoli e
 # trasporto. Gli errori portano gli stessi codici del client.
 # ---------------------------------------------------------------------------
+def canonical_event_id(value):
+    """#554: forma unica dell'id evento (Betfair: stringa), uguale per ingressi e tavoli salvati, cosi' 123.0, 123 e
+    "123" sono lo stesso evento. Stringa non vuota (spazi tolti), intero o float intero finito -> stringa; tutto il
+    resto (None, bool, 0, float non interi, NaN/inf, altri tipi) -> None, cioe' nessun id."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, int):
+        return str(value) if value else None
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return str(int(value)) if value else None
+    return None
+
+
 def finite_number(value):
     """`value` come float finito, altrimenti `None`.
 

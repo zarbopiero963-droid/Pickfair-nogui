@@ -163,6 +163,7 @@ def test_dutching_precheck_riserva_pendente_e_impegnato_esterno(monkeypatch, leg
     monkeypatch.setattr("controllers.dutching_controller.calculate_dutching", fake_calculate_dutching)
     ctrl = DutchingController(bus=SimpleNamespace(publish=lambda *a, **k: None), runtime_controller=_dutching_runtime())
     out = ctrl.precheck({"market_id": "1.300", "total_stake": sum(legs), "simulation_mode": True,
+                         "event_name": "Casa v Ospite",  # #554: identita' evento per il cap evento
                          "selections": [{"selectionId": i + 1, "price": 3.0, "side": "BACK"}
                                         for i in range(len(legs))]})
     if ammesso:

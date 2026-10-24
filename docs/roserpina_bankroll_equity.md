@@ -65,13 +65,31 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   `fondi_non_verificabili`. Rifiuto ⇒ nessun `CMD_QUICK_BET`, tavolo e chiave rilasciati. Prima l'unico freno con
   una cassa vecchia era il rifiuto a valle dell'exchange. I tre cap percentuali restano calcolati sulla cassa
   registrata (a differenza del segnale, che li ricontrolla anche sulla lettura fresca).
-- **Cap evento sulla bet manuale (#549):** `manual_bet` applica anche `max_event_exposure_pct` (cassa
-  verificata·%). L'esposizione dell'evento è la maggiore fra i tavoli Dutching/manuali dello stesso evento e quella
-  del runtime (`controller_event_exposure`, tavoli da segnale compresi, e tavoli con lo stesso `market_id`
-  anche se il nome evento è scritto diversamente, ogni tavolo contato una volta: unione, non il maggiore dei due
-  aggregati); esposizione illeggibile ⇒ rifiuto
-  `Esposizione evento oltre limite`. Senza nome né id evento il cap non è verificabile ⇒ rifiuto
-  `Esposizione evento non verificabile` (il controller non inventa l'evento). LAY: conta la liability.
+- **Cap evento di lotto Dutching e bet manuale, misura unica (#549, #554):** `precheck` del lotto e `manual_bet`
+  applicano `max_event_exposure_pct` (cassa verificata·%) con la STESSA misura dei segnali,
+  `RuntimeController.controller_event_exposure(entry, event_key=…)`. Conta i tavoli attivi:
+  - dello stesso evento reale (event_id, poi nome);
+  - dello stesso `market_id`, anche se il nome evento è scritto diversamente;
+  - con la stessa chiave dell'ingresso.
+
+  Ogni tavolo conta una volta (unione, nessun doppio conteggio). Dentro ci sono tavoli da segnale, Dutching e
+  manuali, abbinato e non abbinato, riserve non ancora a mercato ed esiti incerti trattenuti: sono tutti tavoli
+  attivi. Per i LAY conta la liability. L'impegnato esterno non attribuibile a un evento resta nel cap globale.
+
+  L'id evento ha un'unica forma canonica (`validators.canonical_event_id`, usata dal controller e dal matcher
+  del runtime per ingressi e tavoli salvati): 123.0, 123 e «123» sono lo
+  stesso evento; float non interi, NaN/inf e altri tipi non valgono come id. Il tavolo del lotto conserva
+  `event_id`, come quello della bet manuale. Anche la corsia bus (`RiskMiddleware`) lo conserva, e
+  non trasforma più un nome assente nel nome «None». Così un ingresso successivo dello stesso evento, identificato dal solo id, lo riconosce anche su
+  un altro mercato.
+
+  Rifiuti:
+  - senza nome né id evento il cap non è verificabile ⇒ `Esposizione evento non verificabile` (il controller non
+    inventa l'evento). Valgono le regole della misura: un id vuoto, di soli spazi, 0 o bool non è un'identità;
+  - runtime senza la misura, eccezione, valore non finito o negativo ⇒ `Esposizione evento oltre limite`.
+
+  Prima del #554 il lotto misurava solo il tavolo con la propria chiave, e un'eccezione valeva 0 (fail-open). La
+  bet manuale, con un runtime senza misura, ripiegava sullo stesso tavolo.
 - **Zero verificato dopo il settlement (#546 D1):** un disponibile pari a 0 senza `error` è un saldo letto, non un
   ripiego (dal PFC-007 ogni ripiego del servizio porta `error`): motivo `BALANCE_ZERO_VERIFIED` (prima
   `BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK`), snapshot di conto `source=settlement` registrato (la cassa del RiskDesk non si risincronizza: con bankroll
