@@ -822,6 +822,8 @@ jobs:
               "quota exceeded", "usage-quota", "http 402", "http error 402", "payment required",
               "credit_balance_exhausted", "credit balance", "exceeded your current quota",
               "insufficient_balance", "out of credits",
+              # Rate limit = stessa fermata dei crediti (AGENTS.md, «OUT OF CREDITS»): mai un errore derogabile.
+              "rate limit", "rate-limit", "rate_limit", "http 429", "http error 429", "too many requests",
           )
           _RR_TIMEOUT_HINTS = ("timed out", "timeout", "read operation timed out", "http error 408")
           _RR_NO_BLOCKERS = re.compile(
@@ -1047,10 +1049,21 @@ jobs:
               # Storia illeggibile => nessuna chiamata a pagamento e nessuna riscrittura
               # del commento: si ripartirebbe dal tentativo 1 e il tetto non varrebbe
               # piu' (rilievo Codex P1 su #552). Un rerun riprova quando GitHub risponde.
-              print(f"::warning::{REVIEW_ID}: storia dei tentativi illeggibile, review non eseguita: "
+              print(f"::error::{REVIEW_ID}: storia dei tentativi illeggibile, review non eseguita: "
                     f"{redact(str(exc))[:300]}")
+              # Job ROSSO (rilievo Grok su #552): un job verde senza review sembrerebbe
+              # una review fatta. Il rerun riprova quando GitHub risponde.
+              sys.exit(1)
+          intestazione_storica = existing_body.partition("\n")[0]
+          previous_attempts = rr_attempts(intestazione_storica, REVIEW_ID, range_base, range_head)
+          if done_marker in intestazione_storica:
+              # Review gia' completata, letta qui anche se il controllo iniziale del
+              # marker era fallito (rilievo Codex P1 su #552): niente nuova chiamata,
+              # e la review (con i suoi bloccanti) non viene sovrascritta.
+              if manual_files or compare_truncated:
+                  try_add_label()
+              print(f"{REVIEW_ID}: review gia' completata per {range_base[:12]}...{range_head[:12]} → nessuna chiamata.")
               sys.exit(0)
-          previous_attempts = rr_attempts(existing_body, REVIEW_ID, range_base, range_head)
           run_url = (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{REPO}/actions/runs/"
                      f"{os.environ.get('GITHUB_RUN_ID', '?')}")
           if rr_next_action(previous_attempts, False) == "OWNER_DECISION":
@@ -1181,8 +1194,8 @@ jobs:
           if not upsert_comment(marker, f"{marker}{in_corso}\n# {MODEL_LABEL} PR Review\n\n"
                                         f"Tentativo `{len(previous_attempts) + 1}/{RR_MAX_ATTEMPTS}` in corso sul range "
                                         f"`{range_base[:12]}...{range_head[:12]}`.\n"):
-              print(f"::warning::{REVIEW_ID}: tentativo non registrabile, nessuna chiamata al modello.")
-              sys.exit(0)
+              print(f"::error::{REVIEW_ID}: tentativo non registrabile, nessuna chiamata al modello.")
+              sys.exit(1)
 
           try:
               review, usage = call_model(system_prompt, user_prompt)

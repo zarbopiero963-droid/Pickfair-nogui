@@ -181,12 +181,15 @@ validi; l'output del modello e i nomi file vengono sanificati (nessun `<!--`).
 Ogni tentativo lascia un marker `<!-- <id>-pr-review-attempt:…:<n>:<STATO> -->`
 nella PRIMA riga del commento del range, registrato (come `UNKNOWN`) PRIMA della
 chiamata al modello: se la registrazione non riesce, o la storia è illeggibile,
-il modello non si chiama. Il lettore considera solo i marker della prima riga,
+il modello non si chiama e il job esce ROSSO (mai un verde senza review); se la
+storia contiene già il marker di completamento, nessuna nuova chiamata e la
+review resta com'è. Il lettore considera solo i marker della prima riga,
 con range esatto. Al massimo **2 tentativi in totale** per reviewer e range
 (originale più una ripetizione, con un rerun del workflow fidato; niente commit
 vuoti, niente marker cancellati). Timeout, errore del provider e testo
 incompleto danno diritto alla stessa unica ripetizione (`RERUN_REVIEW_ONCE`); i
-crediti esauriti fermano subito (STOP crediti, mai derogabile) e non consumano
+crediti esauriti — compreso il rate limit, HTTP 429 — fermano subito (STOP
+crediti, mai derogabile) e non consumano
 il tetto: dopo la ricarica un rerun revisiona il range. Dopo il secondo tentativo non valido il workflow non
 chiama più il modello e scrive, una sola volta, la richiesta
 `REVIEW_UNKNOWN_OWNER_DECISION` (reviewer, head, run, prove sostitutive): il

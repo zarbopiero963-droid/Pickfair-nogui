@@ -200,7 +200,7 @@ def _script(workflow: str) -> str:
     return run[run.index("python3 <<'PY'\n") + len("python3 <<'PY'\n"):run.rindex("\nPY")]
 
 
-def run_review(world: FakeWorld, reviewer: str, monkeypatch, head: str = HEAD) -> None:
+def run_review(world: FakeWorld, reviewer: str, monkeypatch, head: str = HEAD, exit_code: int = 0) -> None:
     path, review_id, key_env, _host = WORKFLOWS[reviewer]
     env = {"REPO": REPO, "PR_NUMBER": str(PR), "EVENT_ACTION": "opened", "BEFORE_SHA": "", "HEAD_SHA": head,
            "BASE_SHA": BASE, "GITHUB_TOKEN": "t", key_env: "k", "REVIEW_ID": review_id,
@@ -212,7 +212,9 @@ def run_review(world: FakeWorld, reviewer: str, monkeypatch, head: str = HEAD) -
     try:
         exec(compile(_script(path), path, "exec"), {"__name__": "__main__"})
     except SystemExit as exc:
-        assert exc.code in (None, 0), exc.code
+        assert (exc.code or 0) == exit_code, exc.code
+    else:
+        assert exit_code == 0, "atteso un job rosso"
 
 
 def bot_body(world: FakeWorld, reviewer: str, head: str = HEAD) -> str:
@@ -277,6 +279,7 @@ def test_review_with_p1_is_valid_but_blocks(world, reviewer, monkeypatch):
     (("timeout", None), "TIMEOUT"),
     (("http", (401, "Unauthorized")), "PROVIDER_ERROR"),
     (("http", (402, "Payment Required")), "CREDITS_EXHAUSTED"),
+    (("http", (429, "Rate limit exceeded")), "CREDITS_EXHAUSTED"),   # rate limit: stessa fermata
 ])
 def test_invalid_review_never_writes_the_done_marker(world, reviewer, monkeypatch, reply, state):
     world.model_queue = [reply] * 3          # anche i ritentativi di trasporto falliscono
@@ -504,7 +507,7 @@ def test_unreadable_attempt_history_neither_pays_nor_resets_the_budget(world, re
     # Guasto transitorio: falliscono il controllo del done marker e la lettura della storia,
     # la lettura successiva (upsert) riuscirebbe.
     world.comment_get_failures = 2
-    run_review(world, reviewer, monkeypatch)
+    run_review(world, reviewer, monkeypatch, exit_code=1)   # job rosso, non un verde senza review
     assert world.model_calls == calls                       # prima: terzo tentativo pagato
     assert bot_body(world, reviewer) == before              # prima: storia riscritta da 1
     assert policy.rr_attempts(before, WORKFLOWS[reviewer][1], BASE, HEAD) == ["INCOMPLETE", "INCOMPLETE"]
@@ -559,7 +562,7 @@ def test_reader_ignores_markers_outside_the_header_line():
 
 def test_failed_attempt_record_blocks_the_paid_call(world, reviewer, monkeypatch):
     world.write_failures = 1                                 # la registrazione del tentativo fallisce
-    run_review(world, reviewer, monkeypatch)
+    run_review(world, reviewer, monkeypatch, exit_code=1)
     assert world.model_calls == 0
 
 
@@ -593,3 +596,31 @@ def test_edited_owner_comment_is_not_a_waiver():
     assert policy.parse_owner_waiver(comment, owner_login=OWNER, pr_number=PR, head_sha=HEAD)["valid"] is False
     comment["updated_at"] = comment["created_at"]
     assert policy.parse_owner_waiver(comment, owner_login=OWNER, pr_number=PR, head_sha=HEAD)["valid"] is True
+
+
+# ----------------------------------------------------------------------------- rilievi Codex/Grok su f6ef003
+def test_completed_review_recovered_by_the_history_read_is_not_paid_again(world, reviewer, monkeypatch):
+    world.model_queue = [("text", WITH_P1)]
+    run_review(world, reviewer, monkeypatch)
+    before, calls = bot_body(world, reviewer), world.model_calls
+    world.model_queue = [("text", CASE_547)]
+    world.comment_get_failures = 1                           # fallisce solo il controllo iniziale del done marker
+    run_review(world, reviewer, monkeypatch)
+    assert world.model_calls == calls and bot_body(world, reviewer) == before   # prima: pagata e sovrascritta
+    _clean_other(world, reviewer, monkeypatch)
+    world.add_comment(OWNER, _waiver(reviewer))
+    assert gate(world)["gate"]["status"] == "BLOCKED"
+
+
+def test_a_valid_attempt_in_a_rewritten_history_is_never_waivable():
+    body = (f"<!-- grok46-pr-review:pickfair-nogui:{BASE[:12]}...{HEAD[:12]} -->"
+            + policy.rr_attempt_marker("grok46", BASE, HEAD, 1, "VALID_BLOCKERS")
+            + policy.rr_attempt_marker("grok46", BASE, HEAD, 2, "INCOMPLETE") + "\n# Grok\n")
+    res = policy.validate_review({"reviewer": "grok", "author": policy.REVIEW_BOT_LOGIN, "body": body}, HEAD)
+    assert res["status"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize("error", ["HTTP 429: Rate limit exceeded", "xAI request failed after retries: HTTP 429: {}",
+                                   "Too Many Requests"])
+def test_rate_limit_is_a_credit_stop(error):
+    assert policy.rr_classify_error(error) == policy.RR_CREDITS_EXHAUSTED

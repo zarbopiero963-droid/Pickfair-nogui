@@ -94,6 +94,7 @@ _QUOTA_HINTS = (
     "quota exceeded", "usage-quota", "http 402", "http error 402", "payment required",
     "credit_balance_exhausted", "credit balance", "exceeded your current quota",
     "insufficient_balance", "out of credits",
+    "rate limit", "rate-limit", "rate_limit", "http 429", "http error 429", "too many requests",
 )
 # Solo segnali di timeout VERI (rilievo Codex #499): l'intestazione generica
 # «non completata» compare in OGNI errore del provider (auth, modello invalido,
@@ -469,6 +470,8 @@ _RR_CREDIT_HINTS = (
     "quota exceeded", "usage-quota", "http 402", "http error 402", "payment required",
     "credit_balance_exhausted", "credit balance", "exceeded your current quota",
     "insufficient_balance", "out of credits",
+    # Rate limit = stessa fermata dei crediti (AGENTS.md, «OUT OF CREDITS»): mai un errore derogabile.
+    "rate limit", "rate-limit", "rate_limit", "http 429", "http error 429", "too many requests",
 )
 _RR_TIMEOUT_HINTS = ("timed out", "timeout", "read operation timed out", "http error 408")
 _RR_NO_BLOCKERS = re.compile(
@@ -694,15 +697,16 @@ def _validate_review_body(body: str, head_sha: str, markers: Mapping[str, Any]) 
                 # Prima del tetto dei tentativi (rilievo Codex P1 su #552): i crediti
                 # esauriti restano STOP crediti, mai una decisione owner derogabile.
                 return {"status": "QUOTA", "classification": last, "reason": "crediti/quota esauriti"}
+            if any(a in RR_VALID_STATES for a in attempts):
+                # Un tentativo valido scrive SEMPRE il marker di completamento:
+                # uno stato valido senza marker (anche non l'ultimo) = storia
+                # alterata o riscritta, mai una decisione owner derogabile.
+                return {"status": "UNKNOWN", "classification": RR_UNKNOWN,
+                        "reason": "tentativo valido senza marker di completamento"}
             counted = rr_counted(attempts)
             if markers["decision"] or len(counted) >= RR_MAX_ATTEMPTS:
                 return {"status": RR_OWNER_DECISION, "classification": last,
                         "reason": f"{len(counted)} tentativi non validi ({', '.join(attempts)}): decide l'owner"}
-            if last in RR_VALID_STATES:
-                # Un tentativo valido scrive SEMPRE il marker di completamento:
-                # stato valido senza marker = commento alterato, mai PASS.
-                return {"status": "UNKNOWN", "classification": RR_UNKNOWN,
-                        "reason": "tentativo valido senza marker di completamento"}
             return {"status": _ATTEMPT_STATUS.get(last, "INCOMPLETE"), "classification": last,
                     "reason": f"tentativo {len(counted)}/{RR_MAX_ATTEMPTS} non valido: {last}"}
         if markers["decision"]:
