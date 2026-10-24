@@ -166,12 +166,50 @@ Una review conta solo se: è sul current head o il suo range finisce sul head;
 porta il proprio marker di completamento; non ha bloccanti irrisolti (la
 sezione «Bloccanti» — unica — è pulita solo se è interamente «Nessun
 bloccante [evidente]»; sezioni duplicate → UNKNOWN); è leggibile (non un errore). Schema/API incompleti → UNKNOWN.
-Timeout Grok (solo segnali di timeout veri): un solo rerun; secondo timeout →
-STOP owner («PRONTA PER MERGE — Grok assente per timeout») solo se Sol è
-pulita sul current head; altrimenti BLOCKED/UNKNOWN. Quota/crediti
-(incluso `credit_balance_exhausted`) → STOP (P41, CREDITI ESAURITI). Altro
-errore del provider → PROVIDER_ERROR, review non valida. Prima del merge:
-zero thread irrisolti.
+Quota/crediti (incluso `credit_balance_exhausted`) → STOP (P41, CREDITI
+ESAURITI). Prima del merge: zero thread irrisolti.
+
+**Recupero delle review (PF-REVIEW-RECOVERY-01, #550).** Il workflow classifica
+ogni tentativo PRIMA di scrivere marker: `VALID_PASS` / `VALID_BLOCKERS` /
+`INCOMPLETE` / `TIMEOUT` / `PROVIDER_ERROR` / `CREDITS_EXHAUSTED` / `UNKNOWN`
+(`rr_classify_output`, `rr_classify_error`). Valida è solo una review con le
+due sezioni «Bloccanti» e «Verdetto finale», uniche, in quest'ordine, non
+vuote, senza testo prima né sezioni in più; testo vuoto, troncato o senza
+sezioni → INCOMPLETE; schema inatteso o commento HTML nell'output (marker
+forgiato) → UNKNOWN. Il marker di completamento si scrive SOLO per gli stati
+validi; l'output del modello e i nomi file vengono sanificati (nessun `<!--`).
+Ogni tentativo lascia un marker `<!-- <id>-pr-review-attempt:…:<n>:<STATO> -->`
+nella PRIMA riga del commento del range, registrato (come `UNKNOWN`) PRIMA della
+chiamata al modello: se la registrazione non riesce, o la storia è illeggibile,
+il modello non si chiama e il job esce ROSSO (mai un verde senza review); se la
+storia contiene già il marker di completamento, nessuna nuova chiamata e la
+review resta com'è. Il lettore considera solo i marker della prima riga,
+con range esatto. Al massimo **2 tentativi in totale** per reviewer e range
+(originale più una ripetizione, con un rerun del workflow fidato; niente commit
+vuoti, niente marker cancellati). Timeout, errore del provider e testo
+incompleto danno diritto alla stessa unica ripetizione (`RERUN_REVIEW_ONCE`); i
+crediti esauriti — compreso il rate limit, HTTP 429 — fermano subito (STOP
+crediti, mai derogabile) e non consumano
+il tetto: dopo la ricarica un rerun revisiona il range. Dopo il secondo tentativo non valido il workflow non
+chiama più il modello e scrive, una sola volta, la richiesta
+`REVIEW_UNKNOWN_OWNER_DECISION` (reviewer, head, run, prove sostitutive): il
+gate è STOP owner («PRONTA PER MERGE — <reviewer> assente:
+REVIEW_UNKNOWN_OWNER_DECISION») se l'altro reviewer è pulito, altrimenti
+BLOCKED/UNKNOWN. **Mai PASS.**
+
+**Deroga owner.** Valida solo come riga
+`PF-REVIEW-WAIVER pr=<n> head=<sha 40> reviewer=<sol|grok> reason=<motivo>` in
+un commento dell'owner (`author_association` OWNER, login dell'owner) scritto a
+mano su GitHub: un commento creato tramite un'app (`performed_via_github_app`,
+come quelli dell'agente), firmato dall'agente o modificato dopo la creazione non
+vale. Se nessun reviewer ha una review valida, il gate è BLOCKED anche con le
+deroghe. Copre solo quella PR,
+quell'head esatto e quel reviewer: un nuovo push la fa scadere. Non copre
+bloccanti, crediti esauriti, CI rossa, hard verify o altri gate; il gate
+diventa `PASS_WITH_OWNER_WAIVER` e `merge_decision` lo accetta solo con la
+deroga riportata per l'head valutato e tutti gli altri gate PASS.
+`scripts/pr_autonomy_policy.py review-gate` calcola il gate dai commenti
+grezzi della REST API.
 
 ### 0.8 Label: safety-critical informativo, manuale bloccante
 

@@ -2683,6 +2683,26 @@
         "tests/unit/test_545_sim_snapshot_not_persisted.py"
       ],
       "max_files": 11
+    },
+    "pf-review-recovery-01": {
+      "description": "Issue #550 (PF-REVIEW-RECOVERY-01, mandato owner PF-AUTONOMOUS-CONTINUATION-REVIEW-RECOVERY-01): review AI incomplete/troncate/senza sezioni mai PASS e senza marker di completamento; al massimo 2 tentativi per reviewer e range; REVIEW_UNKNOWN_OWNER_DECISION al secondo insuccesso; deroga owner autenticata (PF-REVIEW-WAIVER, solo PR/head/reviewer esatti, mai via app o agente, mai su bloccanti o crediti). PR di governance: merge manuale dell'owner.",
+      "files": [
+        ".github/workflows/pr-merge-readiness.yml",
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "AGENTS.md",
+        "CHANGELOG.md",
+        "CLAUDE.md",
+        "docs/ai_audit_workflows.md",
+        "docs/auto_pr_flow_spec.md",
+        "scripts/pr_autonomy_policy.py",
+        "scripts/pr_flow_automation.py",
+        "tests/guardrails/test_gpt56sol_su_openrouter.py",
+        "tests/scripts/test_pr_autonomy_policy.py",
+        "tests/scripts/test_pr_review_recovery.py"
+      ],
+      "max_files": 14
     }
   }
 }

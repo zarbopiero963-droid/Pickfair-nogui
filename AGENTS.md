@@ -1060,9 +1060,13 @@ section REPLACES the earlier five-reviewer / label-round operating text.
 the head), carries its completion marker (`gpt56sol-pr-review-done` /
 `grok46-pr-review-done`), has no unresolved blockers, and is readable — not an
 error comment. A green job without the marker is a failure; incomplete
-schema/API is UNKNOWN. Grok timeout: one rerun; a second timeout → STOP to the
-owner ("PRONTA PER MERGE — Grok assente per timeout"). Usage-quota / credits on
-Sol or Grok → OUT OF CREDITS (see "Auto-merge").
+schema/API is UNKNOWN. An incomplete, truncated or section-less review, a
+timeout or a provider error writes no marker and gets at most 2 attempts in
+total per reviewer and range (one workflow rerun); a second failure is
+`REVIEW_UNKNOWN_OWNER_DECISION`, never PASS. A waiver is only the
+`PF-REVIEW-WAIVER` line typed by the owner for that PR, head and reviewer
+(spec §0.7, PF-REVIEW-RECOVERY-01). Usage-quota / credits on Sol or Grok → OUT
+OF CREDITS (see "Auto-merge").
 
 **Labels (spec §0.8).** "Safety-critical" (`CRITICAL_PATTERNS`, listed in the
 review comment) is INFORMATIONAL: full review and hard verify are mandatory,

@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **PF-REVIEW-RECOVERY-01 (#550) — review AI incomplete, retry controllato, deroga owner verificabile:**
+  - Sol e Grok classificano ogni tentativo prima di scrivere marker (`VALID_PASS`, `VALID_BLOCKERS`,
+    `INCOMPLETE`, `TIMEOUT`, `PROVIDER_ERROR`, `CREDITS_EXHAUSTED`, `UNKNOWN`): il marker di completamento
+    solo con le due sezioni «Bloccanti»/«Verdetto finale» valide. Prima (#547) 32 token senza sezioni
+    scrivevano il marker e bloccavano ogni nuovo tentativo; un marker scritto dal modello nell'output veniva
+    pubblicato.
+  - Al massimo 2 tentativi per reviewer e range (marker `-pr-review-attempt`); poi nessuna chiamata a pagamento
+    e una sola richiesta `REVIEW_UNKNOWN_OWNER_DECISION`. Output del modello sanificato (nessun commento HTML).
+  - `scripts/pr_autonomy_policy.py`: `validate_review` legge tentativi e decisione owner; `reviewer_gate`
+    `RERUN_REVIEW_ONCE` / STOP owner / `PASS_WITH_OWNER_WAIVER`; `parse_owner_waiver` (riga `PF-REVIEW-WAIVER`
+    scritta a mano dall'owner, per PR, head esatto e reviewer; mai tramite app o dall'agente; mai su bloccanti
+    o crediti); `merge_decision` accetta la deroga solo per l'head valutato; nuovo comando `review-gate`.
+  - Merge readiness riporta `ai_review_gate` (informativo, dai commenti grezzi della REST API).
+  - Test: `tests/scripts/test_pr_review_recovery.py` esegue il Python reale dei due workflow con GitHub e
+    modello finti.
 
 - **#545 — snapshot SIM non scritto mai come esito certo (follow-up PFC-006, roadmap #461, P1):**
   - `TradingEngine`: un esito con `snapshot_persisted: false` (piazzamento, batch) e' AMBIGUOUS

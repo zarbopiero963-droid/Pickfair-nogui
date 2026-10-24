@@ -264,7 +264,10 @@ def test_errori_provider_non_sono_timeout(errore, atteso):
     status = policy.validate_review({"reviewer": "grok", "author": policy.REVIEW_BOT_LOGIN, "body": body}, HEAD)
     assert status["status"] == atteso
     gate = policy.reviewer_gate({"sol": {"status": "VALID_CLEAN"}, "grok": status}, 1)["status"]
-    assert gate == {"PROVIDER_ERROR": "BLOCKED", "QUOTA": "STOP_OWNER", "TIMEOUT": "RERUN_GROK_ONCE"}[atteso]
+    # PF-REVIEW-RECOVERY-01 (#550): timeout ed errore del provider hanno lo stesso
+    # diritto a UNA sola ripetizione; i crediti esauriti fermano subito (P41).
+    assert gate == {"PROVIDER_ERROR": "RERUN_REVIEW_ONCE", "QUOTA": "STOP_OWNER",
+                    "TIMEOUT": "RERUN_REVIEW_ONCE"}[atteso]
 
 
 @pytest.mark.parametrize("body_fn", [
@@ -305,9 +308,11 @@ def test_grok_primo_timeout_rerun_secondo_stop():
     status = policy.validate_review(timeout, HEAD)
     assert status["status"] == "TIMEOUT"
     results = {"sol": {"status": "VALID_CLEAN"}, "grok": status}
-    assert policy.reviewer_gate(results, 1)["status"] == "RERUN_GROK_ONCE"
+    assert policy.reviewer_gate(results, 1)["status"] == "RERUN_REVIEW_ONCE"
     second = policy.reviewer_gate(results, 2)
-    assert second["status"] == "STOP_OWNER" and "Grok assente per timeout" in second["reason"]
+    # #550: dopo il secondo tentativo non valido decide l'owner, con il motivo esplicito.
+    assert second["status"] == "STOP_OWNER" and second["owner_decision"] == ["grok"]
+    assert "PRONTA PER MERGE — grok assente: REVIEW_UNKNOWN_OWNER_DECISION" in second["reason"]
 
 
 def test_quota_esaurita_ferma_per_p41():

@@ -184,6 +184,19 @@ modello lascerebbe il difetto intatto con un test verde sopra.
   volutamente corti.
 - Un `done_marker` per range evita di ripagare la stessa review su re-run del
   workflow o togli/rimetti label. Un nuovo push = nuovo range = nuova review.
+- **Recupero delle review incomplete (PF-REVIEW-RECOVERY-01, #550; Sol e
+  Grok).** Il `done_marker` si scrive solo se il testo del modello ha le due
+  sezioni «Bloccanti» e «Verdetto finale» valide (stato `VALID_PASS` o
+  `VALID_BLOCKERS`). Testo vuoto, troncato, senza sezioni, timeout, errore del
+  provider o crediti esauriti lasciano solo il marker del tentativo
+  (`<id>-pr-review-attempt`, nella prima riga, registrato prima della chiamata).
+  Un rerun del workflow fa al massimo il secondo tentativo (i crediti esauriti
+  non contano); dal terzo run in poi il modello non viene più chiamato e il
+  commento riporta, una sola volta, `REVIEW_UNKNOWN_OWNER_DECISION` con le
+  istruzioni per la deroga `PF-REVIEW-WAIVER`. L'output del modello viene
+  sanificato: nessun commento HTML, quindi nessun marker forgiato. Il blocco
+  `REVIEW_RECOVERY_CORE` è copiato identico da `scripts/pr_autonomy_policy.py`
+  (test `tests/scripts/test_pr_review_recovery.py`). Dettaglio in spec §0.7.
 - **Attesa del provider.** La richiesta al modello non è in streaming: la
   risposta arriva tutta alla fine, dopo il ragionamento. Ogni reviewer fa tre
   tentativi, ciascuno con un limite di attesa, e dopo ogni tentativo fallito
