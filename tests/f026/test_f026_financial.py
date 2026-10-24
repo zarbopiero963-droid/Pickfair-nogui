@@ -16,7 +16,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from decimal import Decimal as D, ROUND_HALF_UP
+from decimal import Decimal as D, ROUND_DOWN, ROUND_HALF_UP
 
 import pytest
 
@@ -581,6 +581,11 @@ def _stake(s, m):
     return D(str(next(x for x in s["orders"] if x["market_id"] == m and x["status"] == "SUBMITTED")["stake"]))
 
 
+def _cent(x):
+    """PF-STAKE-PRECISION-MICROSTAKE-FINAL-01 (owner 24/10): lo stake inviato e' il calcolato per difetto al centesimo."""
+    return D(x).quantize(D("0.01"), rounding=ROUND_DOWN)
+
+
 def test_F032_01_expansion_after_net_profit_and_after_restart():
     home = tempfile.mkdtemp(prefix="f032_")
     first = run([{"op": "signal", "m": "1.961", "price": 2.0}, {"op": "settle", "m": "1.961", "win": True},
@@ -591,7 +596,7 @@ def test_F032_01_expansion_after_net_profit_and_after_restart():
     growth = (cash - START) / START * 100
     assert growth >= 2, "precondizione: crescita netta oltre soglia"
     expected = cash * D("0.03") / (D("2.0") - 1) * D("1.5")       # target 3%, BALANCED, EXPANSION 1.5
-    assert q(_stake(s, "1.962")) == q(expected), f"stake {_stake(s, '1.962')} != atteso in espansione {q(expected)}"
+    assert q(_stake(s, "1.962")) == q(_cent(expected)), f"stake {_stake(s, '1.962')} != atteso in espansione {_cent(expected)}"
     second = run([{"op": "signal", "m": "1.963", "price": 2.0}], home=home)
     s2 = second["snaps"][-1]
     assert _stake(s2, "1.963") > cash * D("0.03"), "dopo il riavvio la baseline del ciclo e' persa (F032)"
@@ -603,7 +608,7 @@ def test_F032_02_below_threshold_no_expansion():
     s = r["snaps"][-1]
     o = Oracle(s, {"1.971": True})
     cash = START + o.realized()
-    assert q(_stake(s, "1.972")) == q(cash * D("0.03")), "espansione sotto soglia"
+    assert q(_stake(s, "1.972")) == q(_cent(cash * D("0.03"))), "espansione sotto soglia"
 
 
 def test_F032_03_losses_never_expand():

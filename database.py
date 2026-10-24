@@ -2354,13 +2354,21 @@ class Database:
         giudizio finale di apertura. Eventuali bet_id stale sono innocui (non
         compaiono tra gli ordini correnti live e i bet_id Betfair sono univoci).
         """
-        seen: set = set()
+        by_bet: Dict[str, Dict[str, str]] = {}
         out: List[Dict[str, str]] = []
         for order in self._sim_bot_orders() + self._live_bot_orders():
             bet_id = order["bet_id"]
-            if bet_id and order["market_id"] and bet_id not in seen:
-                seen.add(bet_id)
+            if not (bet_id and order["market_id"]):
+                continue
+            seen = by_bet.get(bet_id)
+            if seen is None:
+                by_bet[bet_id] = order
                 out.append(order)
+            elif not seen["event_name"] and order["event_name"] and seen["market_id"] == order["market_id"]:
+                # PF-STAKE-PRECISION-MICROSTAKE-01: l'ordine economico del Microstake e' nel ledger SIM senza
+                # event_name (la saga piazza via porta SIM); la riga `orders` dello STESSO bet e mercato porta la
+                # partita. Senza, un CASHOUT della partita non trovava la posizione. L'identita' resta il bet_id.
+                seen["event_name"] = order["event_name"]
         return out
 
     def _sim_bot_orders(self) -> List[Dict[str, str]]:

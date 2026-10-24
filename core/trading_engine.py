@@ -12,7 +12,7 @@ from collections import deque
 from typing import Any, Callable, Deque, Dict, Optional, Set
 
 from circuit_breaker import CircuitBreaker
-from core import validators
+from core import stake_precision, validators
 from core.trading_constants import (  # noqa: F401 – re-exported for backward compat
     _ACK_STATES,
     _PASSTHROUGH_KEYS,
@@ -1654,6 +1654,7 @@ class TradingEngine:
         normalized = dict(request)
         normalized["customer_ref"] = customer_ref
         normalized["correlation_id"] = correlation_id
+        self._normalizza_stake(normalized)
 
         copy_meta = request.get("copy_meta")
         pattern_meta = request.get("pattern_meta")
@@ -1676,6 +1677,32 @@ class TradingEngine:
             normalized["order_origin"] = ORIGIN_NORMAL
 
         return normalized
+
+    @staticmethod
+    def _normalizza_stake(normalized: Dict[str, Any]) -> None:
+        """PF-STAKE-PRECISION-MICROSTAKE-01: contratto comune della precisione, PRIMA di risk gate, persistenza
+        e scelta del percorso (diretto o Microstake, che resta deciso dall'importo come prima).
+
+        I produttori normalizzano gia' alla fonte (money management, bet manuale), cosi' la riserva coincide con
+        l'ordine; qui la stessa funzione e' idempotente e copre chiunque arrivi all'engine con un importo non al
+        centesimo: sempre per difetto, mai piu' alto. Un artefatto binario sotto 2,00 (es. 1.9999999999) torna
+        2,00 e va diretto invece di essere rifiutato dal Microstake. Sotto un centesimo => ValueError
+        (INVALID_REQUEST, nessun ordine)."""
+        for chiave in ("stake", "size"):
+            calcolato = normalized.get(chiave)
+            if calcolato is None:
+                continue
+            valore = stake_precision.normalize_stake(calcolato)
+            if valore <= 0:
+                raise ValueError("STAKE_BELOW_ONE_CENT")
+            normalized[chiave] = float(valore)
+            if "stake_precision" not in normalized:
+                record = stake_precision.normalization_record(calcolato, valore)
+                record["modalita_ordine"] = "MICROSTAKE" if valore < stake_precision.EXCHANGE_MIN_ORDER else "DIRETTO"
+                normalized["stake_precision"] = record
+                if record["motivo_normalizzazione"] != stake_precision.REASON_UNCHANGED:
+                    logger.info("Stake normalizzato per difetto: %s -> %s (%s) ref=%s", record["stake_calcolato"],
+                                record["stake_normalizzato"], record["modalita_ordine"], normalized.get("customer_ref"))
 
     @staticmethod
     def _valida_campi_numerici(request: Dict[str, Any]) -> None:

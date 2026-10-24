@@ -3383,6 +3383,66 @@
         "tests/unit/test_p2_zero_balance_unified.py"
       ],
       "rationale": "Phase 2 (Grok su de79088): flag della baseline differita azzerato anche se l'apertura fallisce: F032 spenta per la sessione."
+    },
+    {
+      "id": "sp_mm_stake_not_floored",
+      "module": "core.money_management",
+      "area": "money_management",
+      "file": "core/money_management.py",
+      "original": "            recommended = float(stake_precision.normalize_stake(recommended_exact))",
+      "mutated": "            recommended = float(recommended_exact)",
+      "tests": [
+        "tests/core/test_stake_precision_microstake_01.py"
+      ],
+      "rationale": "PF-STAKE-PRECISION-MICROSTAKE-01: lo stake calcolato arriva all'exchange senza troncamento al centesimo (3.08595)."
+    },
+    {
+      "id": "sp_mm_floor_on_binary_float",
+      "module": "core.money_management",
+      "area": "money_management",
+      "file": "core/money_management.py",
+      "original": "            recommended = float(stake_precision.normalize_stake(recommended_exact))",
+      "mutated": "            recommended = float(stake_precision.normalize_stake(recommended))",
+      "tests": [
+        "tests/core/test_stake_precision_microstake_01.py"
+      ],
+      "rationale": "FINAL-01: troncamento del float binario invece del valore esatto degli operandi (0,10 -> 0,09; 0,69 -> 0,70)."
+    },
+    {
+      "id": "sp_engine_no_precision_contract",
+      "module": "core.trading_engine",
+      "area": "money_management",
+      "file": "core/trading_engine.py",
+      "original": "        self._normalizza_stake(normalized)\n",
+      "mutated": "",
+      "tests": [
+        "tests/core/test_stake_precision_microstake_01.py"
+      ],
+      "rationale": "PF-STAKE-PRECISION-MICROSTAKE-01: l'engine non applica il contratto comune della precisione prima di risk gate e instradamento."
+    },
+    {
+      "id": "sp_manual_bet_not_floored",
+      "module": "controllers.dutching_controller",
+      "area": "money_management",
+      "file": "controllers/dutching_controller.py",
+      "original": "                stake = float(stake_precision.normalize_stake(stake))",
+      "mutated": "                stake = float(stake)",
+      "tests": [
+        "tests/core/test_stake_precision_microstake_01.py"
+      ],
+      "rationale": "PF-STAKE-PRECISION-MICROSTAKE-01: la bet manuale riserva lo stake grezzo (3.08595) invece di quello inviato."
+    },
+    {
+      "id": "sp_db_microstake_event_lost",
+      "module": "database",
+      "area": "cashout",
+      "file": "database.py",
+      "original": "                seen[\"event_name\"] = order[\"event_name\"]",
+      "mutated": "                pass",
+      "tests": [
+        "tests/core/test_stake_precision_microstake_01.py"
+      ],
+      "rationale": "PF-STAKE-PRECISION-MICROSTAKE-01: posizione Microstake senza partita nell'identita' del bot, il CASHOUT non la chiude."
     }
   ]
 }

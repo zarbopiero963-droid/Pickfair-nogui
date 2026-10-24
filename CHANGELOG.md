@@ -9,6 +9,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **PF-STAKE-PRECISION-MICROSTAKE-01 / -FINAL-01 — stake per difetto al centesimo, Microstake preservato (decisione
+  owner 24/10/2026):** emerso dalla prima sessione integrata della Fase 4. Dopo un settlement il money management
+  chiedeva `1.9647599999999998`: il Microstake lo bloccava (`invalid_size_precision`) e sopra il minimo l'exchange
+  riceveva `3.08595`. Ora lo stake inviato è lo stake economico troncato al centesimo (`core/stake_precision.py`,
+  Decimal, ROUND_DOWN, nessuna tolleranza: 1,9999999999 è 1,99).
+  - Il money management calcola la stessa formula in Decimal sugli operandi: l'errore binario si corregge alla fonte.
+  - Normalizzazione prima della riserva: money management e bet manuale.
+  - Difesa del contratto nell'engine, prima di risk gate e della scelta diretto/Microstake.
+  - Dutching e hedge invariati.
+  - Corretto anche il cashout delle posizioni Microstake, che non trovava la partita (identità del bot in
+    `Database.get_bot_active_orders`).
+  - Aspettative superate dalla decisione riallineate: rettifica 17/10 (0,1002 → 0,10), F032 (stake troncato),
+    `test_pr512_recovery_fixes` (l'engine tronca invece di rifiutare; il coordinatore rifiuta ancora).
+
+  Test: `tests/core/test_stake_precision_microstake_01.py`, `tests/f026/test_stake_precision_e2e.py`. Mutazioni
+  `sp_*`. LIVE resta NO-GO: Microstake LIVE non implementato, adapter nella PR successiva (rettifica owner, soglia
+  1 EUR).
 - **Governance post-#556: una review AI senza bloccanti non è un PASS se il verdetto non è conclusivo (owner
   merge):** su #556 il classificatore di #552 registrava `VALID_PASS` per verdetti che dicevano «troncato», «NON
   VERIFICABILI», «merge non approvato». Un PASS richiede ora tre condizioni:

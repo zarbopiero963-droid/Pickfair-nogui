@@ -24,6 +24,74 @@ l'importo economico richiesto è sotto il minimo del singolo ordine dell'exchang
 solo l'importo. Se la sequenza sicura non esiste, l'ordine **fallisce esplicitamente**: mai un ordine forzato, mai un
 importo alzato per superare il minimo, mai un bypass di RiskGate, cap, idempotenza, persistenza o riconciliazione.
 
+## 1-bis. Precisione dello stake (PF-STAKE-PRECISION-MICROSTAKE-01 e -FINAL-01, owner 24/10/2026)
+
+Lo stake inviato è lo stake economico **per difetto al centesimo** (`core/stake_precision.normalize_stake`,
+`Decimal` + `ROUND_DOWN`), mai più alto, nessun minimo nuovo, **nessuna tolleranza**: 1,9999999999 è 1,99.
+
+| Stake economico | Inviato |
+| --- | --- |
+| 0,10 | 0,10 |
+| 0,10599 | 0,10 |
+| 1,96476 | 1,96 |
+| 1,9999999999 | 1,99 |
+| 2,00 | 2,00 |
+| 3,08595 | 3,08 |
+| 10,99999 | 10,99 |
+
+Difetto corretto, emerso dalla sessione integrata della Fase 4.
+
+- Dopo un settlement il money management chiedeva `1.9647599999999998`. Il Microstake lo bloccava
+  (`invalid_size_precision`), quindi ogni ingresso Roserpina sotto il minimo falliva.
+- Sopra il minimo l'exchange riceveva `3.08595`.
+
+Dove si applica:
+
+- **Money management, alla fonte** (`RoserpinaMoneyManagement.calculate`). Lo stesso punto copre segnali Roserpina,
+  stake fisso del segnale (Telegram) e passo successivo / recovery (`evaluate_next_trade_after_settlement`).
+  - La formula è la stessa di prima, calcolata in `Decimal` sugli operandi originali (`_base_stake_decimal`). Così
+    l'errore binario del float si corregge alla fonte. Esempio: con bankroll 3,333…, in float il 3% dà
+    0,0999…; in Decimal dà 0,100000000000000005, quindi 0,10.
+  - Il float poteva anche arrotondare in su di nascosto: con bankroll 23,333333333333332 dava 0,7, mentre il valore
+    esatto è 0,6999…, quindi 0,69.
+  - Minimo, cap e liability LAY si valutano sull'importo troncato.
+  - Lo stake calcolato resta nei metadati: `requested_stake`, `stake_calcolato`, `stake_normalizzato`,
+    `motivo_normalizzazione`.
+- **Bet manuale** (`DutchingController.manual_bet`), prima di cap, tavolo e riserva: la riserva è l'ordine inviato.
+- **Engine** (`TradingEngine._normalize_request`), come difesa del contratto e prima di risk gate, persistenza e
+  scelta diretto/Microstake.
+  - È idempotente.
+  - Sotto un centesimo l'esito è `INVALID_REQUEST`.
+  - Il registro `stake_precision` nel payload dell'ordine riporta `stake_calcolato`, `stake_normalizzato`,
+    `motivo_normalizzazione` e `modalita_ordine` (`DIRETTO` / `MICROSTAKE`).
+  - Il coordinatore Microstake rifiuta ancora da solo un importo non al centesimo (`invalid_size_precision`).
+- **Invariati di proposito:**
+  - **Dutching:** gambe già al centesimo (HALF_UP), somma uguale al totale; la normalizzazione è l'identità.
+  - **Hedge del cashout:** al centesimo più vicino; non è uno stake d'ingresso e nessun ROUND_DOWN viene applicato.
+    L'esposizione residua è entro mezzo centesimo per la quota di chiusura.
+
+Cashout di una posizione Microstake, difetto preesistente scoperto qui. L'ordine economico (nuovo betId del
+REPLACE) è nel ledger SIM senza `event_name`, perché la saga piazza via porta SIM. La deduplica per `bet_id` di
+`Database.get_bot_active_orders` scartava la riga `orders` con la partita, così un CASHOUT della partita trovava
+`positions: 0`. Ora l'`event_name` vuoto si completa con quello dello stesso bet e mercato; l'identità resta il
+`bet_id`.
+
+Dutching, comportamento preesistente da decidere a parte (non modificato). `_initial_dutching_stakes` alza una gamba
+sotto 0,10 a 0,10, ma l'ultima gamba assorbe la differenza e l'equalizzazione riequilibra:
+
+- nei casi provati la somma resta il totale;
+- una gamba può uscire sotto 0,10 (es. 1,00 su quote 1,5/30 → 0,95 + 0,05);
+- quella gamba fallisce al minimo del Microstake e il lotto diventa parziale (PF-EXEC-02).
+
+Rifiutare il lotto in anticipo è una decisione owner aperta.
+
+Prove:
+
+- `tests/core/test_stake_precision_microstake_01.py`: contratto, MM, catena reale SIM, engine, saga nativa, bet
+  manuale, concorrenza, payload LIVE intercettato, Dutching e hedge invariati, identità del cashout;
+- `tests/f026/test_stake_precision_e2e.py`: HeadlessApp reale; dopo un settlement, Roserpina 0,10, crash dopo
+  l'invio, parziale, cashout Microstake.
+
 ## 2. Dove agisce (choke point unici)
 
 | Percorso | Punto di ingresso | Comportamento sotto 2 EUR |
@@ -156,6 +224,10 @@ snapshot del broker: finché non riesce, nessuna saga pendente viene promossa (r
 - **LIVE**: nessun adapter `BetfairClient` per la saga; in LIVE ogni importo sotto 2 EUR fallisce chiuso
   (`MICROSTAKE_EXECUTOR_UNAVAILABLE`), hedge del cashout compreso. L'accettazione Betfair della sequenza
   PLACE → cancel parziale → replace **non è dimostrata** qui: NOT VERIFIED.
+- **Soglia e importo temporaneo da 2 EUR: in revisione.** La rettifica owner
+  PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01 (24/10/2026) fissa come riferimento 1 EUR, non 2 EUR, e chiede l'adapter
+  Microstake LIVE. Nella PR successiva ogni uso di 2 EUR (soglia di instradamento, stub della saga, costanti, test,
+  documentazione) viene classificato e corretto. Questa sezione descrive il codice com'è oggi.
 - Riserva transitoria in-process (MS-NI-004 Codex): non è un'autorità finanziaria multi-processo.
 - `customer_ref` del cashout = `source` del comando (non unico): il router genera un ref proprio per la saga
   (`raw["microstake_ref"]`); il cashout non ritenta mai un esito AMBIGUO. Mitigazione fail-closed (ciclo 4 #512):
