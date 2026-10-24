@@ -3353,12 +3353,36 @@
       "module": "core.runtime_controller",
       "area": "funds",
       "file": "core/runtime_controller.py",
-      "original": "                                 and getattr(self, \"_pending_cycle_reset\", None) is None\n",
+      "original": "            if getattr(self, \"_pending_cycle_reset\", None) is not None or getattr(self, \"_recovery_state_unreadable\",\n                                                                                  False):\n                return\n",
       "mutated": "",
       "tests": [
         "tests/unit/test_p2_zero_balance_unified.py"
       ],
       "rationale": "Phase 2 (review indipendente su ea285d8): la baseline F032 rinviata si apre (first_start) sopra un reset di ciclo non persistito."
+    },
+    {
+      "id": "p2_deferred_baseline_outside_reset_lock",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "        with self._recovery_write_lock():\n            if not getattr(self, \"_expansion_baseline_deferred\", False):",
+      "mutated": "        with contextlib.nullcontext():\n            if not getattr(self, \"_expansion_baseline_deferred\", False):",
+      "tests": [
+        "tests/unit/test_p2_zero_balance_unified.py"
+      ],
+      "rationale": "Phase 2 (Grok su de79088): apertura della baseline differita fuori dal lock dei reset di ciclo: un first_start puo' sovrascrivere un reset concorrente."
+    },
+    {
+      "id": "p2_deferred_baseline_flag_cleared_on_failure",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "            if self._load_expansion_baseline() or self._start_expansion_cycle(\"first_start\", funds=funds):\n                self._expansion_baseline_deferred = False",
+      "mutated": "            self._expansion_baseline_deferred = False\n            if not self._load_expansion_baseline():\n                self._start_expansion_cycle(\"first_start\", funds=funds)",
+      "tests": [
+        "tests/unit/test_p2_zero_balance_unified.py"
+      ],
+      "rationale": "Phase 2 (Grok su de79088): flag della baseline differita azzerato anche se l'apertura fallisce: F032 spenta per la sessione."
     }
   ]
 }

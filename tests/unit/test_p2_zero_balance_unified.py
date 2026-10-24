@@ -383,3 +383,38 @@ def test_baseline_differita_non_si_apre_con_un_reset_di_ciclo_in_sospeso(tmp_pat
     c.rc.get_status()
     assert c.rc._expansion_baseline is None
     assert c.rc._expansion_baseline_deferred is True
+
+
+# ----------------------------------------------------------------------------- Grok (2/2) su de79088
+def test_apertura_della_baseline_differita_sotto_il_lock_dei_reset(tmp_path, monkeypatch):
+    """Grok su de79088: il controllo del reset in sospeso avveniva sotto `_account_state_lock` ma la scrittura
+    `first_start` dopo il rilascio: un reset di ciclo concorrente (scritto sotto il lock dei tavoli) poteva essere
+    sovrascritto. Ora controllo e scrittura avvengono sotto lo stesso lock dei reset (`_recovery_write_lock`)."""
+    c = _catena(tmp_path)
+    c.rc._applica_fondi_avvio(dict(A), read_at=time.monotonic())
+    sotto_lock = []
+    originale = c.rc._start_expansion_cycle
+
+    def spia(*a, **k):
+        sotto_lock.append(c.rc.table_manager.locked()._is_owned())
+        return originale(*a, **k)
+    monkeypatch.setattr(c.rc, "_start_expansion_cycle", spia)
+    _conto(c, VALIDO)
+    c.rc.get_status()
+    assert sotto_lock == [True]
+
+
+def test_apertura_fallita_della_baseline_si_ritenta_alla_lettura_successiva(tmp_path, monkeypatch):
+    """Grok su de79088: con il flag azzerato prima dell'apertura, una scrittura fallita lasciava F032 spenta per tutta
+    la sessione. Ora il flag resta finche' l'apertura non riesce."""
+    c = _catena(tmp_path)
+    c.rc._applica_fondi_avvio(dict(A), read_at=time.monotonic())
+    esiti = iter([False, True])
+    originale = c.rc._start_expansion_cycle
+    monkeypatch.setattr(c.rc, "_start_expansion_cycle",
+                        lambda *a, **k: originale(*a, **k) if next(esiti) else False)
+    _conto(c, VALIDO)
+    c.rc.get_status()
+    assert c.rc._expansion_baseline_deferred is True             # prima apertura fallita: si riprova
+    c.rc.get_status()
+    assert c.rc._expansion_baseline_deferred is False and c.rc._expansion_baseline is not None

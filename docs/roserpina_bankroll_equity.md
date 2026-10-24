@@ -115,7 +115,9 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
     manuale lo fanno nella lettura dei fondi d'ingresso. La lettura del segnale avviene fuori dal lock, con il fence
     d'ammissione catturato prima e rivalidato dopo: un cashout completato nel frattempo invalida il segnale. Se
     l'avvio a zero non ha aperto la baseline del ciclo (F032), si apre alla prima lettura verificata, da qualunque
-    percorso (stato, settlement, ingresso). Così anche headless,
+    percorso (stato, settlement, ingresso). L'apertura avviene sotto il lock con cui un reset di ciclo scrive
+    baseline e marker: non sovrascrive mai un reset concorrente e si rinvia se un reset è in sospeso. Un'apertura
+    fallita si ritenta alla lettura successiva. Così anche headless,
     senza `get_status`, le entrate riprendono, senza doppi conteggi: il bankroll è il disponibile letto.
   - Il settlement con zero mantiene motivo `BALANCE_ZERO_VERIFIED` e stato `SYNC_FAILED_BALANCE_UNAVAILABLE`
     (auto-next saltato) e riporta `account_state`. `get_status` espone `account_state` e `account_state_source`.
