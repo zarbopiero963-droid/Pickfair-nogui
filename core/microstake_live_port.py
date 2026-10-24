@@ -41,6 +41,9 @@ PRE_SEND_REJECTIONS = frozenset({
     "CIRCUIT_BREAKER_OPEN", "DUPLICATE_CUSTOMER_REF",
 })
 _DEAD_STATUSES = frozenset({"EXECUTION_COMPLETE"})
+#: Esiti di listClearedOrders senza esposizione residua (ordine sparito dagli ordini correnti senza abbinato), e
+#: SETTLED (abbinato e regolato). Interrogati in quest'ordine solo quando un betId non e' fra gli ordini correnti.
+_CLEARED_STATUSES = ("CANCELLED", "LAPSED", "VOIDED", "SETTLED")
 
 
 def _first_report(result: Any) -> Dict[str, Any]:
@@ -58,7 +61,8 @@ class LiveExchangePort:
     snapshot_failures = 0
 
     def __init__(self, client: Any) -> None:
-        for name in ("place_bet", "reduce_order", "cancel_orders", "replace_orders", "get_current_orders"):
+        for name in ("place_bet", "reduce_order", "cancel_orders", "replace_orders", "get_current_orders",
+                     "list_cleared_orders"):
             if not callable(getattr(client, name, None)):
                 raise TypeError(f"client senza {name}")
         self.client = client
@@ -90,9 +94,26 @@ class LiveExchangePort:
         return list(self.client.get_current_orders([market_id] if market_id else None) or [])
 
     def order(self, bet_id: str) -> SimOrder:
+        """Ordine per betId: dagli ordini correnti o, se non c'e' piu', dal suo esito in listClearedOrders.
+
+        Un ordine cancellato/lapsato/annullato senza abbinato sparisce dagli ordini correnti: senza questa lettura
+        la saga non saprebbe distinguerlo da un ordine non (ancora) visibile e resterebbe pendente per sempre.
+        Lo si restituisce con residuo zero e abbinato zero (nessuna esposizione); SETTLED con l'abbinato regolato.
+        Assente anche li' => KeyError (identita' non dimostrata: il chiamante resta fail-closed)."""
         for row in self._rows():
             if str(row.get("betId")) == str(bet_id):
                 return self._to_order(row)
+        for status in _CLEARED_STATUSES:
+            for row in self.client.list_cleared_orders(bet_status=status, bet_ids=[str(bet_id)]) or []:
+                if str(row.get("betId")) != str(bet_id):
+                    continue
+                matched = _dec(row.get("sizeSettled", 0)) if status == "SETTLED" else D("0")
+                return SimOrder(
+                    bet_id=str(bet_id), market_id=str(row.get("marketId")),
+                    selection_id=int(row.get("selectionId")), side=Side(str(row.get("side")).upper()),
+                    price=_dec(row.get("priceRequested") or row.get("priceMatched") or 0), size=matched,
+                    matched=matched, remaining=D("0"), customer_ref=str(row.get("customerOrderRef") or ""),
+                )
         raise KeyError(bet_id)
 
     @staticmethod
@@ -205,9 +226,17 @@ class LiveExchangePort:
             raise LostResponse(f"replace outcome unknown: {type(exc).__name__}") from exc
         report = _first_report(res)
         new_id = str(report.get("betId") or "")
-        if str(report.get("status")).upper() != "SUCCESS" or not new_id or new_id == str(bet_id):
+        status = str(report.get("status") or (res or {}).get("status") or "").upper()
+        if status == "FAILURE":
+            # Rifiuto ESPLICITO: nessun nuovo ordine (Betfair non annulla la cancellazione gia' fatta: il rollback
+            # trova lo stub a residuo zero e non chiama un'altra cancellazione).
             self.operation_log.append(("REPLACE_REJECTED", bet_id, str(new_price), ""))
             raise RuntimeError("REPLACE_REJECTED")
+        if status != "SUCCESS" or not new_id or new_id == str(bet_id):
+            # TIMEOUT, status mancante o SUCCESS senza nuovo betId: il nuovo ordine puo' esistere. Mai un rollback
+            # come se non ci fosse: esito ignoto, riconciliazione (rilievo della review indipendente, P2).
+            self.operation_log.append(("REPLACE", bet_id, str(new_price), ""))
+            raise LostResponse(f"replace outcome unknown: status={status or 'missing'}")
         self.operation_log.append(("REPLACE", bet_id, str(new_price), new_id))
         try:
             return self.order(new_id)
@@ -216,17 +245,13 @@ class LiveExchangePort:
 
     def cancel_all_remaining(self, bet_id: str) -> SimOrder:
         current = self.order(bet_id)
+        if current.remaining == 0:
+            return current                      # niente da cancellare (es. replace che ha gia' cancellato lo stub)
         res = self.client.cancel_orders(market_id=current.market_id, bet_ids=[bet_id])
         self.operation_log.append(("CANCEL", bet_id, str(current.remaining)))
         if not isinstance(res, dict) or res.get("ok") is not True:
             raise RuntimeError("CANCEL_REJECTED")
-        try:
-            return self.order(bet_id)
-        except KeyError:
-            # Un ordine interamente cancellato senza abbinamento sparisce da listCurrentOrders: residuo zero e
-            # nessun abbinato (un abbinamento lo terrebbe fra gli ordini correnti fino al settlement).
-            return SimOrder(current.bet_id, current.market_id, current.selection_id, current.side, current.price,
-                            D("0"), D("0"), D("0"), current.customer_ref)
+        return self.order(bet_id)               # dagli ordini correnti o dal suo esito (listClearedOrders)
 
 
 class LiveQuoteProvider:

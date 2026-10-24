@@ -183,6 +183,23 @@ class _FakeBetfair:
                 if (self.keep_dead or not self._dead(o)) and (not wanted or o["marketId"] in wanted)]
         return {"currentOrders": rows, "moreAvailable": False}
 
+    def _listClearedOrders(self, params):
+        """Ordini spariti dai correnti senza abbinato: CANCELLED (o LAPSED se segnato), come listClearedOrders."""
+        wanted = set(params.get("betIds") or [])
+        rows = []
+        for o in self.orders.values():
+            if not self._dead(o) or (wanted and o["betId"] not in wanted):
+                continue
+            status = "LAPSED" if o.get("lapsed") else "CANCELLED"
+            if status != params["betStatus"]:
+                continue
+            row = {"betId": o["betId"], "marketId": o["marketId"], "selectionId": o["selectionId"],
+                   "side": o["side"], "priceRequested": float(o["price"]), "sizeCancelled": float(o["cancelled"])}
+            if o["ref"]:
+                row["customerOrderRef"] = o["ref"]
+            rows.append(row)
+        return {"clearedOrders": rows, "moreAvailable": False}
+
     def _listMarketBook(self, params):
         (market,) = params["marketIds"]
         empty = {"availableToBack": [], "availableToLay": []}
@@ -447,6 +464,131 @@ def test_rejected_replace_rolls_the_stub_back_and_leaves_no_exposure():
     assert engine._live_microstake_executor.port._reservations == {}
 
 
+# ------------------------------------------------------------------------------------------- review indipendente (P2)
+class _ReplaceTimeoutButApplied(_FakeBetfair):
+    """replaceOrders avvenuto davvero, ma con ExecutionReportStatus TIMEOUT (esito ignoto per Betfair)."""
+
+    def _replaceOrders(self, params):
+        out = super()._replaceOrders(params)
+        new_id = out["instructionReports"][0]["placeInstructionReport"]["betId"]
+        return {"status": "TIMEOUT", "instructionReports": [
+            {"status": "TIMEOUT", "placeInstructionReport": {"status": "TIMEOUT", "betId": new_id}}]}
+
+
+def test_replace_with_timeout_status_is_an_unknown_outcome_never_a_rollback():
+    fake = _ReplaceTimeoutButApplied(carry_ref=False, keep_dead=True)
+    engine, fake, db = _live_engine(fake)
+    res = engine.submit_quick_bet(_bet("rto", size=0.10))
+    assert res["status"] == "AMBIGUOUS", res                     # prima: ROLLED_BACK => FAILED con l'ordine vivo
+    assert DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).pending_refs() == ["rto"]
+    assert engine._live_microstake_executor.port.has_reservation("rto")
+    assert _the_position(fake)["remaining"] == D("0.10")        # l'ordine vivo resta seguito dalla saga
+
+
+class _ReplaceCancelsThenPlaceFails(_FakeBetfair):
+    """Semantica Betfair: il replace cancella e poi piazza; se il piazzamento fallisce la cancellazione resta."""
+
+    def _replaceOrders(self, params):
+        (ins,) = params["instructions"]
+        old = self.orders[ins["betId"]]
+        size, old["remaining"] = old["remaining"], D("0")
+        old["cancelled"] += size
+        old["status"] = "EXECUTION_COMPLETE"
+        return {"status": "FAILURE", "errorCode": "BET_ACTION_ERROR", "instructionReports": [{
+            "status": "FAILURE", "errorCode": "MARKET_SUSPENDED",
+            "cancelInstructionReport": {"status": "SUCCESS", "betId": old["betId"], "sizeCancelled": float(size)},
+            "placeInstructionReport": {"status": "FAILURE", "errorCode": "MARKET_SUSPENDED"}}]}
+
+
+def test_replace_that_cancelled_the_stub_and_failed_to_place_closes_without_exposure():
+    fake = _ReplaceCancelsThenPlaceFails()                      # lo stub cancellato sparisce dai correnti
+    engine, fake, db = _live_engine(fake)
+    res = engine.submit_quick_bet(_bet("rpf", size=0.10))
+    assert res["ok"] is False and fake.live() == [] and fake.exposure() == 0
+    assert DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("rpf")["phase"] == "ROLLED_BACK"
+    assert DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).pending_refs() == []   # prima: ROLLBACK_PENDING per sempre
+    assert _names(fake).count("cancelOrders") == 1, "nessuna cancellazione di uno stub gia' cancellato"
+
+
+def test_stub_lapsed_by_the_exchange_closes_the_saga_without_exposure():
+    fake = _FakeBetfair()
+    engine, fake, db = _live_engine(fake)
+    real_cancel = fake._cancelOrders
+
+    def lapse_then_cancel(params):                              # mercato sospeso: Betfair lapsa gli unmatched
+        for o in fake.orders.values():
+            o["cancelled"] += o["remaining"]
+            o["remaining"], o["status"], o["lapsed"] = D("0"), "EXECUTION_COMPLETE", True
+        return real_cancel(params)
+    fake._cancelOrders = lapse_then_cancel
+    assert engine.submit_quick_bet(_bet("lap", size=0.10))["ok"] is False
+    assert fake.exposure() == 0
+    restarted, _, _ = _live_engine(fake, db=db)
+    out = restarted.recover_native_microstake_sagas()
+    assert out["ok"] is True and out["results"] == {"lap": "ROLLED_BACK"}, out   # prima: AMBIGUOUS per sempre
+    assert _names(fake).count("placeOrders") == 1
+
+
+def test_lost_replace_response_with_the_economic_order_already_matched_concludes_active():
+    fake = _FakeBetfair()
+    engine, fake, db = _live_engine(fake)
+    fake.book("1.200", 7, back=[(3.0, 50.0)])                   # il target e' il best: l'ordine si abbina subito
+    fake.lose.add("replaceOrders")
+    assert engine.submit_quick_bet(_bet("rpm", size=0.10))["status"] == "AMBIGUOUS"
+    restarted, _, _ = _live_engine(fake, db=db)
+    out = restarted.recover_native_microstake_sagas()
+    assert out["ok"] is True and out["results"] == {"rpm": "ACTIVE"}, out        # prima: pendente per sempre
+    assert _the_position(fake)["matched"] == D("0.10") and _names(fake).count("placeOrders") == 1
+
+
+def test_pre_send_read_failure_then_retry_of_the_same_ref_executes_once():
+    fake = _FakeBetfair()
+    engine, fake, db = _live_engine(fake)
+    real = fake._listCurrentOrders
+    calls = {"n": 0}
+
+    def flaky(params):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("REQUEST_FAILED: NETWORK_ERROR: reset")
+        return real(params)
+    fake._listCurrentOrders = flaky
+    first = engine.submit_quick_bet(_bet("pre", size=0.10))
+    assert first["ok"] is False and _names(fake) == []
+    again = engine.submit_quick_bet(_bet("pre", size=0.10))     # intento rilasciato: nuovo tentativo
+    assert again["ok"] is True, again                           # prima: AMBIGUOUS con riserva tenuta per sempre
+    assert _names(fake).count("placeOrders") == 1 and DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).pending_refs() == []
+
+
+def test_pending_saga_with_a_legacy_two_euro_stub_is_completed_after_the_upgrade(tmp_path):
+    """Migrazione RECTIFICATION-01: una saga SIM pendente creata con lo stub da 2 EUR (nessun `stub_size`
+    persistito) viene ridotta dallo stub che ha DAVVERO piazzato, non dal nuovo minimo da 1 EUR."""
+    from core.microstake_safe import JsonSagaStore, StatefulExchangeSimulator
+    ex = StatefulExchangeSimulator()
+    store = JsonSagaStore(tmp_path / "s.json")
+    req = MicrostakeRequest("1.1", 7, Side.BACK, D("0.50"), D("3.0"), "legacy")
+    store.save("legacy", phase=Phase.PREPARED, reservation_held=True, transient_exposure=D("2.00"),
+               request=MicrostakeCoordinator._request_json(req), stub_price=D("1000"))
+    stub = ex.place(market_id="1.1", selection_id=7, side=Side.BACK, size=D("2.00"), price=D("1000"),
+                    customer_ref="legacy")
+    store.save("legacy", phase=Phase.STUB_ACCEPTED, bet_id=stub.bet_id)
+    res = MicrostakeCoordinator(ex.restart(), store, MicrostakePolicy()).recover("legacy")
+    assert res.phase is Phase.ACTIVE, res                       # prima: AMBIGUOUS unexpected_residual_size
+    live = [o for o in ex._state["orders"].values() if o.remaining > 0]
+    assert [(o.remaining, o.price) for o in live] == [(D("0.50"), D("3.0"))]
+
+
+def test_live_microstake_outcomes_feed_the_submission_circuit_breaker():
+    engine, fake, _ = _live_engine(funds=lambda: {"ok": True, "available": 100.0})
+    seen = []
+    engine._order_submission_breaker.record_success = lambda: seen.append("ok")
+    engine._order_submission_breaker.record_failure = lambda exc: seen.append(f"ko:{exc}")
+    assert engine.submit_quick_bet(_bet("cb-ok", size=0.10))["ok"] is True
+    fake.balance = D("0")                                        # l'exchange rifiuta lo stub
+    assert engine.submit_quick_bet(_bet("cb-ko", size=0.10))["ok"] is False
+    assert seen[0] == "ok" and seen[1].startswith("ko:")
+
+
 # ------------------------------------------------------------------------------------------- crash e riavvio
 @pytest.mark.parametrize("crash_at,calls_after", [
     ("placeOrders", ["cancelOrders", "replaceOrders"]),          # stub intero sull'exchange
@@ -527,7 +669,8 @@ def test_a_client_that_is_not_the_real_betfair_client_never_gets_the_live_adapte
     class _Double:                    # stesse operazioni del client reale, ma non e' il BetfairClient
         def _never(self, *a, **k):  # pragma: no cover - non deve essere chiamato
             raise AssertionError("chiamata a un doppio in LIVE")
-        place_bet = reduce_order = cancel_orders = replace_orders = get_current_orders = get_market_book = _never
+        place_bet = reduce_order = cancel_orders = replace_orders = get_current_orders = _never
+        get_market_book = list_cleared_orders = _never
     engine, fake, _ = _live_engine(client=_Double())
     res = engine.submit_quick_bet(_bet("double", size=0.10))
     assert res["ok"] is False and "MICROSTAKE_EXECUTOR_UNAVAILABLE" in str(res["error"])

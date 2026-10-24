@@ -2845,7 +2845,7 @@
       "max_files": 16
     },
     "microstake-live-adapter-01": {
-      "description": "PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01 (decisione owner 24/10/2026, safety-critical): minimo exchange = riferimento owner 1 EUR in una fonte unica (core/stake_precision.EXCHANGE_MIN_ORDER) per engine, OrderRouter, saga e safety layer, stub temporaneo al minimo; audit degli usi di 2 EUR; adapter Microstake LIVE (core/microstake_live_port.py) sul BetfairClient reale con customerOrderRef e sizeReduction single-shot (betfair_client.place_bet/reduce_order), store separato per modalita' e recovery con blocco delle saghe dell'altra modalita'; guardrail (snapshot API, layer di invio, lettori dello snapshot) e test con la vecchia soglia riallineati; LIVE NO-GO.",
+      "description": "PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01 (decisione owner 24/10/2026, safety-critical): minimo exchange = riferimento owner 1 EUR in una fonte unica (core/stake_precision.EXCHANGE_MIN_ORDER) per engine, OrderRouter, saga e safety layer, stub temporaneo al minimo; audit degli usi di 2 EUR; adapter Microstake LIVE (core/microstake_live_port.py) sul BetfairClient reale con customerOrderRef e sizeReduction single-shot (betfair_client.place_bet/reduce_order), store separato per modalita' e recovery con blocco delle saghe dell'altra modalita'; guardrail (snapshot API, layer di invio, lettori dello snapshot) e test con la vecchia soglia riallineati; LIVE NO-GO; correzioni della review indipendente sul diff completo (replace in TIMEOUT = esito ignoto, esito degli ordini spariti da listClearedOrders, chiusure del recovery, importo dello stub persistito, circuit breaker).",
       "allow_tests": true,
       "files": [
         ".guardrails/allowed_scope.json",

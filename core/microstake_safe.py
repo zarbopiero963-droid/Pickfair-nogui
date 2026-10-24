@@ -468,14 +468,22 @@ class MicrostakeCoordinator:
             if not pre_existing:
                 self.exchange.release_reservation(req.customer_ref)
             raise
+        if existing and self._failed_without_order(existing):
+            # Saga FAILED senza alcun ordine (rifiuto pre-invio o rifiuto esplicito dell'exchange): nulla e' sul
+            # mercato, il nuovo tentativo dello stesso intento (l'engine ha rilasciato l'intento dedupe) riparte da
+            # capo. recover() la salverebbe AMBIGUOUS con la riserva tenuta per sempre (review indipendente, P2).
+            existing = None
         if existing:
             # Saga gia' avviata (invio precedente / AMBIGUOUS): la riserva copre esposizione REALE
             # e resta anche se recover() fallisce (rilievi Sol/Grok #512 su 464f347).
             return self.recover(req.customer_ref)
         try:
+            # `stub_size` persistito: il recovery riduce lo stub che la saga ha DAVVERO piazzato, anche se il minimo
+            # exchange cambia fra un avvio e l'altro (saghe pendenti con lo stub da 2 EUR, RECTIFICATION-01).
             self.store.save(req.customer_ref, phase=Phase.PREPARED, reservation_held=True,
                             transient_exposure=transient, request=self._request_json(req),
-                            stub_price=stub_price)
+                            stub_price=stub_price, stub_size=p.exchange_stub_size, replace_sent=False,
+                            bet_id="", rollback_intent=False, foreign_ref=False)
         except Exception:
             self.exchange.release_reservation(req.customer_ref)   # nuova saga, nulla e' partito
             raise
@@ -536,6 +544,9 @@ class MicrostakeCoordinator:
             # Stub passivo gia' al prezzo target (nessuna controparte da evitare):
             # il replace sarebbe un no-op che Betfair rifiuta. Identita' invariata.
             return self._activate(req, order, transient)
+        # Flag durevole PRIMA del replace: da qui un nuovo ordine puo' esistere anche se lo stub sparisce, quindi il
+        # recovery non chiude mai la saga solo perche' lo stub non c'e' piu'.
+        self.store.save(req.customer_ref, replace_sent=True)
         try:
             order = self.exchange.replace(order.bet_id, req.target_price)
         except LostResponse as exc:
@@ -560,6 +571,20 @@ class MicrostakeCoordinator:
             return self._terminal_or_ambiguous(req.customer_ref, req, Phase.ROLLED_BACK, order, transient,
                                                reason="replace_failed")
         return self._activate(req, order, transient)
+
+    @staticmethod
+    def _failed_without_order(saved: dict[str, Any]) -> bool:
+        return saved.get("phase") == Phase.FAILED.value and not saved.get("bet_id")
+
+    @staticmethod
+    def _saved_stub_size(saved: dict[str, Any]) -> Decimal:
+        """Importo dello stub piazzato da QUESTA saga; assente (saga precedente a RECTIFICATION-01) => 2.00, il
+        solo stub che quel codice piazzava."""
+        try:
+            value = D(str(saved.get("stub_size") or "2.00"))
+        except (InvalidOperation, ValueError):
+            value = D("2.00")
+        return value if value.is_finite() and value > 0 else D("2.00")
 
     def _mode_allowed(self) -> bool:
         """SIM: policy `simulation_only` sopra una porta che NON si dichiara LIVE. LIVE: policy `live_adapter`
@@ -615,6 +640,11 @@ class MicrostakeCoordinator:
             # Porta e policy di modalita' diverse: nessuna operazione exchange, la saga resta pendente.
             return self._result(Phase.AMBIGUOUS, req=req, reason="adapter_mode_not_allowed",
                                 max_exposure=transient, held=True)
+        if self._failed_without_order(saved):
+            # Terminale e senza ordine: nulla da riconciliare, nessuna operazione exchange.
+            self.exchange.release_reservation(customer_ref)
+            return self._result(Phase.FAILED, req=req, reason=str(saved.get("reason") or "failed"),
+                                max_exposure=transient)
         if saved.get("foreign_ref") is True:
             # Ordine preesistente con lo stesso customer_ref, non piazzato da questa saga (riesame indipendente
             # ciclo 14 #512): la saga non lo adotta MAI come proprio stub (niente riduzione/replace/cancel).
@@ -635,6 +665,17 @@ class MicrostakeCoordinator:
                 by_id = None
             if by_id is not None and by_id.remaining == 0:
                 order = by_id
+        stub_gone = False
+        if order is None and not rollback_intent and saved.get("bet_id") and saved.get("replace_sent") is not True:
+            # Stub piazzato (betId noto) e MAI sostituito: se non e' piu' fra gli ordini correnti si legge il suo
+            # esito. Cancellato/lapsato senza abbinato => nessuna esposizione, la saga si chiude (review indipendente,
+            # P2: prima restava pendente per sempre). Con un replace inviato no: il nuovo ordine potrebbe esistere.
+            try:
+                by_id = self.exchange.order(str(saved["bet_id"]))
+            except Exception:
+                by_id = None
+            if by_id is not None and by_id.remaining == 0:
+                order, stub_gone = by_id, True
         if order is None:
             # Ordine non (ancora) visibile: riconciliazione incompleta. Un rollback gia' deciso resta
             # ROLLBACK_PENDING, mai declassato ad AMBIGUOUS generico (riesame indipendente ciclo 9 #512:
@@ -649,6 +690,15 @@ class MicrostakeCoordinator:
             self.exchange.release_reservation(customer_ref)
             return self._result(phase, req=req, order=order,
                                 max_exposure=transient, held=False)
+        if stub_gone and order.matched == 0:
+            return self._terminal_or_ambiguous(customer_ref, req, Phase.ROLLED_BACK, order, transient,
+                                               reason="stub_gone_unmatched")
+        if (not rollback_intent and order.price == req.target_price
+                and order.matched + order.remaining == req.economic_stake):
+            # E' l'ordine richiesto: prezzo target e importo esatto (dopo riduzione e, se serviva, replace), anche se
+            # gia' abbinato. Mai "stub abbinato" pendente per sempre su un ordine che e' il risultato voluto
+            # (review indipendente, P2: in LIVE il replace c'e' sempre e l'ordine finale si abbina subito).
+            return self._activate(req, order, transient)
         # Resume only through execute's idempotent reconciliation path.  An
         # accepted stub is never placed again.
         # Con rollback deciso il residuo si cancella PRIMA di classificare l'abbinato: un abbinamento parziale
@@ -675,9 +725,10 @@ class MicrostakeCoordinator:
                                     order=order, max_exposure=transient, held=True)
             return self._terminal_or_ambiguous(customer_ref, req, Phase.ROLLED_BACK, order, transient,
                                                reason="replace_failed")
-        # Complete a known accepted, fully-unmatched stub.
-        reduction = self.policy.exchange_stub_size - req.economic_stake
-        if order.remaining == self.policy.exchange_stub_size:
+        # Complete a known accepted, fully-unmatched stub (importo dello stub persistito dalla saga).
+        stub_size = self._saved_stub_size(saved)
+        reduction = stub_size - req.economic_stake
+        if order.remaining == stub_size:
             order = self.exchange.cancel_reduction(order.bet_id, reduction)
         if order.remaining != req.economic_stake:
             self.store.save(customer_ref, phase=Phase.AMBIGUOUS)
@@ -685,6 +736,7 @@ class MicrostakeCoordinator:
                                 order=order, max_exposure=transient, held=True)
         if order.price == req.target_price:
             return self._activate(req, order, transient)
+        self.store.save(customer_ref, replace_sent=True)
         try:
             order = self.exchange.replace(order.bet_id, req.target_price)
         except Exception:

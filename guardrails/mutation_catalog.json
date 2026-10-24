@@ -3565,6 +3565,90 @@
         "tests/core/test_microstake_live_adapter.py"
       ],
       "rationale": "RECTIFICATION-01: il circuit breaker degli invii non ferma il Microstake LIVE."
+    },
+    {
+      "id": "ms_live_replace_timeout_as_rejection",
+      "module": "core.microstake_live_port",
+      "area": "ambiguous",
+      "file": "core/microstake_live_port.py",
+      "original": "        if status == \"FAILURE\":",
+      "mutated": "        if status != \"SUCCESS\":",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Review indipendente P2: un replace in TIMEOUT diventa rollback, l'ordine vivo resta senza saga."
+    },
+    {
+      "id": "ms_live_no_cleared_lookup",
+      "module": "core.microstake_live_port",
+      "area": "reconciliation",
+      "file": "core/microstake_live_port.py",
+      "original": "        for status in _CLEARED_STATUSES:",
+      "mutated": "        for status in ():",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Review indipendente P2: uno stub sparito dagli ordini correnti non si ritrova piu', saga pendente per sempre."
+    },
+    {
+      "id": "ms_saga_failed_retry_goes_to_recover",
+      "module": "core.microstake_safe",
+      "area": "recovery",
+      "file": "core/microstake_safe.py",
+      "original": "        if existing and self._failed_without_order(existing):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Review indipendente P2: retry dopo un blocco pre-invio diventa AMBIGUOUS con riserva tenuta per sempre."
+    },
+    {
+      "id": "ms_saga_gone_stub_not_closed",
+      "module": "core.microstake_safe",
+      "area": "recovery",
+      "file": "core/microstake_safe.py",
+      "original": "        if stub_gone and order.matched == 0:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Review indipendente P2: stub cancellato/lapsato senza abbinato non chiude la saga."
+    },
+    {
+      "id": "ms_saga_matched_economic_order_not_activated",
+      "module": "core.microstake_safe",
+      "area": "recovery",
+      "file": "core/microstake_safe.py",
+      "original": "                and order.matched + order.remaining == req.economic_stake):",
+      "mutated": "                and order.matched + order.remaining == req.economic_stake and False):",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Review indipendente P2: l'ordine richiesto gia' abbinato resta pendente per sempre dopo una risposta persa."
+    },
+    {
+      "id": "ms_saga_legacy_stub_size_ignored",
+      "module": "core.microstake_safe",
+      "area": "recovery",
+      "file": "core/microstake_safe.py",
+      "original": "        stub_size = self._saved_stub_size(saved)",
+      "mutated": "        stub_size = self.policy.exchange_stub_size",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "RECTIFICATION-01: una saga pendente con lo stub da 2 EUR viene ridotta come se lo stub fosse da 1 EUR."
+    },
+    {
+      "id": "ms_engine_live_breaker_not_fed",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "            self._registra_esito_microstake_live(result)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Review indipendente P3: i Microstake LIVE non alimentano il circuit breaker degli invii."
     }
   ]
 }

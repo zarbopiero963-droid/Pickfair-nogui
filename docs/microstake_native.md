@@ -210,7 +210,12 @@ Stessa saga, stesso esecutore (`NativeLiveMicrostakeExecutor` estende l'esecutor
 - Esiti: rifiuto esplicito di Betfair (fondi, importo, mercato) ⇒ FAILED, nessun ordine, riserva rilasciata, intento
   dedupe consumato (nessun nuovo invio automatico); qualunque esito non dimostrato (timeout, `DUPLICATE_TRANSACTION`,
   risposta illeggibile, accettato senza betId o non rileggibile) ⇒ `LostResponse` ⇒ riconciliazione per
-  `customerOrderRef` o AMBIGUOUS con riserva tenuta, mai un secondo PLACE.
+  `customerOrderRef` o AMBIGUOUS con riserva tenuta, mai un secondo PLACE. Un `replaceOrders` è un rifiuto solo con
+  status `FAILURE` esplicito (nessun nuovo ordine; la cancellazione già fatta da Betfair resta e il rollback non la
+  ripete); `TIMEOUT`, status mancante o `SUCCESS` senza nuovo betId sono esito ignoto, mai un rollback.
+- Lettura per betId (`LiveExchangePort.order`): ordini correnti e, se l'ordine non c'è più, il suo esito in
+  `listClearedOrders` (CANCELLED/LAPSED/VOIDED = nessuna esposizione; SETTLED = abbinato regolato); assente anche lì
+  ⇒ identità non dimostrata, fail-closed.
 - `LiveQuoteProvider`: `listMarketBook` con `EX_BEST_OFFERS`; mercato `OPEN` e selezione `ACTIVE` obbligatori;
   qualunque errore di lettura ⇒ nessuna prova ⇒ BLOCKED pre-invio (mai un'eccezione letta come esito ignoto). Uno stub
   che incrocerebbe il book (es. qualcuno offre a 1000) ⇒ BLOCKED `stub_price_would_cross_book`.
@@ -225,7 +230,7 @@ Stessa saga, stesso esecutore (`NativeLiveMicrostakeExecutor` estende l'esecutor
   dell'esecutore SIM (mai riusato in SIMULATION). Raggiunto solo dal ramo LIVE dopo `is_live_allowed()` e con lo
   stesso circuit breaker degli invii diretti; l'hedge del cashout usa lo stesso esecutore via `OrderRouter`.
 
-Certificazione offline: `tests/core/test_microstake_live_adapter.py` (57 test), `BetfairClient` reale con il solo
+Certificazione offline: `tests/core/test_microstake_live_adapter.py` (64 test), `BetfairClient` reale con il solo
 trasporto JSON-RPC sostituito da un exchange finto con stato: importi 0,10 · 0,20 · 0,30 · 0,50 · 0,90 (Microstake) e
 1,00 · 1,50 · 2,00 · 5,00 (diretti), BACK e LAY; lotto Dutching misto; fondi insufficienti (cap e rifiuto
 dell'exchange); book sospeso/illeggibile/incrociato; risposte perse su place, cancel e replace; crash del processo dopo
@@ -260,6 +265,17 @@ Store per modalità (RECTIFICATION-01): si riprendono le saghe della modalità c
 `microstake.sagas.live` in LIVE); le saghe pendenti dell'altra modalità non si possono riprendere (porta diversa) e
 lasciano `ok` False (`LIVE_SAGAS_PENDING` / `SIM_SAGAS_PENDING`) finché una sessione di quella modalità non le
 riconcilia: nessuna saga dimenticata, in particolare nessuno stub LIVE.
+Chiusure del recovery (review indipendente della RECTIFICATION-01, comuni a SIM e LIVE):
+- stub con betId noto, **mai sostituito** (flag durevole `replace_sent`, scritto prima del replace) e ormai a residuo
+  zero senza abbinato (cancellato o lapsato dall'exchange) ⇒ ROLLED_BACK `stub_gone_unmatched`, nessuna esposizione;
+  con un replace inviato no: il nuovo ordine potrebbe esistere e la saga resta pendente;
+- ordine trovato al prezzo target con importo esatto (abbinato + residuo = stake richiesto), anche già abbinato ⇒
+  ACTIVE: è il risultato richiesto, non uno "stub abbinato";
+- saga FAILED senza ordine (rifiuto pre-invio o rifiuto esplicito) è terminale: un nuovo tentativo dello stesso
+  intento riparte da capo invece di diventare AMBIGUOUS con la riserva tenuta per sempre;
+- importo dello stub persistito nella saga (`stub_size`): una saga pendente creata con lo stub da 2 EUR (prima della
+  RECTIFICATION-01, campo assente ⇒ 2,00) viene ridotta dallo stub che ha davvero piazzato.
+
 `resume()` ritenta **entrambe** le riconciliazioni (saghe Microstake e F018) e diventa ACTIVE solo se entrambe
 riescono (rilievo Codex #512: prima ritentava solo F018).
 
@@ -284,9 +300,18 @@ snapshot del broker: finché non riesce, nessuna saga pendente viene promossa (r
   2. accettazione di `sizeReduction` fino a 0,10 (vincolo dei multipli di 0,50, se in vigore);
   3. `replaceOrders` conserva `customerOrderRef` sul nuovo ordine (se no: dopo una risposta persa del replace la saga
      resta pendente con riserva tenuta, fail-closed, `test_lost_replace_response_stays_pending_when_the_ref_...`);
-  4. uno stub cancellato con zero abbinato sparisce da `listCurrentOrders` (gestito in entrambi i casi);
+  4. uno stub cancellato con zero abbinato sparisce da `listCurrentOrders` (gestito in entrambi i casi: dai correnti o
+     dal suo esito in `listClearedOrders`); se l'esito tarda a comparire la saga resta pendente fino al riavvio
+     successivo, mai chiusa per assenza di dati;
   5. accettazione di un LAY 1 EUR a 1.01 e di un BACK 1 EUR a 1000 sul mercato reale.
 - Riserva transitoria in-process anche in LIVE: non è un'autorità finanziaria multi-processo (come in SIM).
+- Preesistente (coordinatore, non introdotto qui): se lo stub si abbina in parte prima della riduzione
+  (`stub_matched` / `match_cancel_race`) la sua parte non abbinata non viene cancellata in automatico; la saga resta
+  AMBIGUOUS con riserva tenuta per la riconciliazione. Improbabile in LIVE (stub a 1000 / 1.01).
+- **Decisione owner aperta (non implementata):** al riavvio il recovery completa una saga interrotta fino al prezzo
+  target (riduzione e replace), cioè porta a termine l'ordine richiesto senza rivalidare il segnale. È il
+  comportamento SIM già approvato (#512); in LIVE va confrontato con PF-EXEC-06 e PF-OD12 (segnali validati prima
+  dell'esecuzione). Alternativa possibile: al riavvio in LIVE solo rollback dello stub.
 - Riserva transitoria in-process (MS-NI-004 Codex): non è un'autorità finanziaria multi-processo.
 - `customer_ref` del cashout = `source` del comando (non unico): il router genera un ref proprio per la saga
   (`raw["microstake_ref"]`); il cashout non ritenta mai un esito AMBIGUO. Mitigazione fail-closed (ciclo 4 #512):

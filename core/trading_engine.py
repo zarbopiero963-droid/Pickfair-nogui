@@ -2517,7 +2517,26 @@ class TradingEngine:
             return res
 
         result = self._invia_marcando_l_intento(ctx, mode, coordinator, _invia)
+        if str(mode or "").upper() == "LIVE":
+            self._registra_esito_microstake_live(result)
         return True, result
+
+    def _registra_esito_microstake_live(self, result: Any) -> None:
+        """Esito di un Microstake LIVE nel circuit breaker degli invii, come il percorso diretto: SUCCESS => successo,
+        ogni altro esito dopo l'invio (rifiuto, AMBIGUOUS) => fallimento; sessione scaduta => gestione della sessione.
+        I blocchi pre-invio non arrivano qui (sono `_ErrorePrimaDellInvio`) e non contano, come sul diretto."""
+        status = str((result or {}).get("status") or "").upper() if isinstance(result, dict) else ""
+        if status == "SUCCESS":
+            self._order_submission_breaker.record_success()
+            return
+        error = str((result or {}).get("error") or status or "MICROSTAKE_FAILED") if isinstance(result, dict) \
+            else "MICROSTAKE_NON_DICT_RESULT"
+        if "SESSION_EXPIRED" in error.upper() or "INVALID_SESSION" in error.upper():
+            svc = getattr(self.runtime_controller, "betfair_service", None)
+            handle = getattr(svc, "handle_session_expiry", None)
+            if callable(handle):
+                handle(reason=error)
+        self._order_submission_breaker.record_failure(RuntimeError(error))
 
     def native_microstake_executor(self) -> Any:
         """Esecutore Microstake nativo per la modalita' corrente (None = non disponibile, fail-closed).

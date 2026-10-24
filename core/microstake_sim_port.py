@@ -413,7 +413,7 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
         try:
             side = Side(str(((saved.get("request") or {}).get("side")) or "").upper())
             price = Decimal(str(saved.get("stub_price")))
-            stub = Decimal(str(self.coordinator.policy.exchange_stub_size))
+            stub = self.coordinator._saved_stub_size(saved)        # lo stub che QUESTA saga ha piazzato
             if not price.is_finite() or price <= 1:
                 raise ValueError
             value = order_exposure(side, stub, price)
