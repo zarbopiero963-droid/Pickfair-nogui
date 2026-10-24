@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#532 G7 — chiusura del perimetro SIM (criterio owner, 23/10/2026):**
+  - prove G7-a/b/c, #545 e #546 rieseguite su `fd5e3c4`: 214 test PASS;
+  - nuovo `tests/acceptance/test_g7_closure_verified_zero_entries.py`: con zero verificato nessun percorso d'ingresso
+    produce un ordine (segnale, Microstake, lotto Dutching, bet manuale, auto-next); con fondi validi le entrate
+    riprendono; due piazzamenti concorrenti oltre il disponibile: ne passa uno solo;
+  - `docs/verification/continuous_formal_verification.md` (riga G7) e `docs/traceability/requirements.json`:
+    perimetro G7 SIM comprovato. Esiti incerti dell'exchange e parita' SIM/LIVE con dati Betfair reali NON
+    VERIFICATI, spostati in #351/#506; LIVE NO-GO.
+
 - **#546 D2 + #549 + #546 D1 — ingressi del DutchingController e zero verificato (follow-up PFC-007, P2/P3):**
   - D2: lotto Dutching e bet manuale rileggono il conto fuori dal lock e, sotto il lock, confrontano il disponibile
     fresco con impegnato + riserve non ancora a mercato (compresa la propria) prima di qualsiasi ordine
