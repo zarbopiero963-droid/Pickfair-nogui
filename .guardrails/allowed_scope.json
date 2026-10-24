@@ -2727,6 +2727,18 @@
         "tests/unit/test_dutching_controller.py"
       ],
       "max_files": 17
+    },
+    "g7-closure-sim-perimeter": {
+      "description": "#532 G7, criterio di chiusura owner (23/10/2026): prove G7-a/b/c/#545/#546 sullo SHA corrente fd5e3c4; matrice d'ingresso con zero verificato (segnale, Microstake, lotto Dutching, bet manuale, auto-next) e ripresa con fondi validi; concorrenza multi-tavolo sulla riserva del SimulationBroker; docs di verifica e tracciabilita' aggiornate; casi non collaudabili in SIM (esiti incerti dell'exchange, parita' con dati Betfair reali) dichiarati NON VERIFICATI e spostati in #351/#506. Solo test e docs: nessun codice di produzione.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/traceability/requirements.json",
+        "docs/verification/continuous_formal_verification.md",
+        "tests/acceptance/test_g7_closure_verified_zero_entries.py"
+      ],
+      "max_files": 5
     }
   }
 }
