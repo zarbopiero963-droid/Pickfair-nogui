@@ -61,14 +61,6 @@ def normalize_stake(value: Any) -> Decimal:
         raise ValueError("STAKE_NOT_REPRESENTABLE") from exc
 
 
-def is_cent_exact(value: Any) -> bool:
-    """True se `value` e' gia' rappresentabile in centesimi."""
-    try:
-        return normalize_stake(value) == to_decimal(value)
-    except ValueError:
-        return False
-
-
 def normalization_record(calculated: Any, normalized: Decimal) -> Dict[str, Any]:
     """Campi del registro per un ordine: stake calcolato, stake normalizzato e motivo (leggeri, senza I/O)."""
     try:
