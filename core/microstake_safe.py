@@ -676,12 +676,21 @@ class MicrostakeCoordinator:
         return self._result(phase, req=req, reason=reason, order=order, max_exposure=transient, held=False)
 
     def _stub_unaccounted(self, customer_ref: str, order: SimOrder) -> bool:
-        """True se lo stub di questa saga e' un ordine DIVERSO da `order` e non e' dimostrato a esposizione zero."""
+        """True se lo stub di questa saga e' un ordine DIVERSO da `order` e non e' dimostrato a esposizione zero.
+
+        Identita' dello stub ignota (saga persistita prima di `stub_bet_id`): si accetta solo se il replace non e' mai
+        partito (`replace_sent is False`) o se e' un rollback dopo un replace RIFIUTATO sullo stesso betId persistito
+        (nessun nuovo ordine). Altrimenti non dimostrato => True (rilievo GPT-6.1 Sol su 844ae41)."""
         try:
-            stub_id = str((self.store.load(customer_ref) or {}).get("stub_bet_id") or "")
+            saved = self.store.load(customer_ref) or {}
         except Exception:
             return True
-        if not stub_id or stub_id == str(order.bet_id):
+        stub_id = str(saved.get("stub_bet_id") or "")
+        if not stub_id:
+            if saved.get("replace_sent") is False:
+                return False
+            return not (saved.get("rollback_intent") is True and str(order.bet_id) == str(saved.get("bet_id") or ""))
+        if stub_id == str(order.bet_id):
             return False
         try:
             stub = self.exchange.order(stub_id)
@@ -755,7 +764,9 @@ class MicrostakeCoordinator:
                 order = by_id
                 replacement_gone = by_id.remaining == 0 and by_id.matched == 0
         stub_gone = False
-        if order is None and not rollback_intent and saved.get("bet_id") and saved.get("replace_sent") is not True:
+        # `replace_sent is False` ESPLICITO (scritto alla creazione della saga): una saga persistita prima di questo
+        # campo non dice se il replace e' partito, quindi non si chiude per stub sparito (rilievo GPT-6.1 Sol).
+        if order is None and not rollback_intent and saved.get("bet_id") and saved.get("replace_sent") is False:
             # Stub piazzato (betId noto) e MAI sostituito: se non e' piu' fra gli ordini correnti si legge il suo
             # esito. Cancellato/lapsato senza abbinato => nessuna esposizione, la saga si chiude (review indipendente,
             # P2: prima restava pendente per sempre). Con un replace inviato no: il nuovo ordine potrebbe esistere.

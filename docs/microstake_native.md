@@ -232,7 +232,7 @@ Stessa saga, stesso esecutore (`NativeLiveMicrostakeExecutor` estende l'esecutor
   dell'esecutore SIM (mai riusato in SIMULATION). Raggiunto solo dal ramo LIVE dopo `is_live_allowed()` e con lo
   stesso circuit breaker degli invii diretti; l'hedge del cashout usa lo stesso esecutore via `OrderRouter`.
 
-Certificazione offline: `tests/core/test_microstake_live_adapter.py` (104 test), `BetfairClient` reale con il solo
+Certificazione offline: `tests/core/test_microstake_live_adapter.py` (105 test), `BetfairClient` reale con il solo
 trasporto JSON-RPC sostituito da un exchange finto con stato: importi 0,10 · 0,20 · 0,30 · 0,50 · 0,90 (Microstake) e
 1,00 · 1,50 · 2,00 · 5,00 (diretti), BACK e LAY; lotto Dutching misto; fondi insufficienti (cap e rifiuto
 dell'exchange); book sospeso/illeggibile/incrociato; risposte perse su place, cancel e replace; crash del processo dopo
@@ -311,6 +311,9 @@ betId). Prima la saga si chiudeva ROLLED_BACK con lo stub vivo e la riserva rila
   replace) mai ACTIVE (`replacement_size_mismatch`); identità del replacement persistita prima di ogni lettura.
 
 **Review indipendente del diff completo (f1594fb), correzioni:**
+- saghe persistite prima di questi campi (niente `replace_sent`/`stub_bet_id`, rilievo GPT-6.1 Sol su 844ae41): non si
+  sa se il replace è partito, quindi mai chiuse per stub sparito né ROLLED_BACK senza identità dello stub: AMBIGUOUS fino
+  alla riconciliazione (l'eccezione è il rollback dopo un replace RIFIUTATO sullo stesso betId);
 - F1: la saga conserva `stub_bet_id` accanto all'identità del replacement; ROLLED_BACK solo se anche lo stub, riletto
   per id (correnti o `listClearedOrders`), è a residuo e abbinato zero (`stub_unaccounted` altrimenti);
 - F2: un nuovo esecutore LIVE (nuova sessione Betfair, nuovo client) ripristina subito le riserve delle saghe pendenti;

@@ -3853,6 +3853,31 @@
         "tests/core/test_microstake_live_adapter.py"
       ],
       "rationale": "Review P3 #561: due ordini vivi con lo stesso ref trattati come fallimento senza ordine."
+    },
+    {
+      "id": "ms_saga_legacy_replace_unknown_closed",
+      "module": "core.microstake_safe",
+      "area": "recovery",
+      "file": "core/microstake_safe.py",
+      "original": "        if order is None and not rollback_intent and saved.get(\"bet_id\") and saved.get(\"replace_sent\") is False:",
+      "mutated": "        if order is None and not rollback_intent and saved.get(\"bet_id\") and saved.get(\"replace_sent\") is not True:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Rilievo GPT-6.1 Sol su 844ae41: saga senza flag di replace chiusa ROLLED_BACK su uno stub sparito con il nuovo ordine vivo.",
+      "equivalent": "Ogni saga creata da questo codice scrive `replace_sent=False` alla creazione e `stub_bet_id` all'accettazione dello stub: senza il flag esplicito resta solo il caso legacy (nessun `stub_bet_id`), dove `_stub_unaccounted` rifiuta comunque ROLLED_BACK (seconda difesa, mutazione ms_saga_legacy_stub_identity_assumed). Esito osservabile identico; il controllo resta come prima difesa. Verificato da test_legacy_saga_without_replace_flag_is_never_rolled_back_on_a_vanished_stub."
+    },
+    {
+      "id": "ms_saga_legacy_stub_identity_assumed",
+      "module": "core.microstake_safe",
+      "area": "reconciliation",
+      "file": "core/microstake_safe.py",
+      "original": "            return not (saved.get(\"rollback_intent\") is True and str(order.bet_id) == str(saved.get(\"bet_id\") or \"\"))",
+      "mutated": "            return False",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Rilievo GPT-6.1 Sol su 844ae41: identita' dello stub ignota trattata come esposizione zero."
     }
   ]
 }

@@ -975,6 +975,50 @@ def test_replacement_gone_never_rolls_back_while_the_stub_holds_a_settled_matche
     assert DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("f1")["phase"] == "AMBIGUOUS"
 
 
+def test_legacy_saga_without_replace_flag_is_never_rolled_back_on_a_vanished_stub():
+    """Rilievo GPT-6.1 Sol su 844ae41: una saga persistita prima di questi campi (niente `replace_sent` ne'
+    `stub_bet_id`) non dice se il replace e' partito. Stub cancellato + nuovo ordine vivo senza ref: mai ROLLED_BACK
+    (riserva rilasciata con l'ordine vivo); resta AMBIGUOUS finche' non e' riconciliata."""
+    fake = _FakeBetfair(carry_ref=False)
+    client = _client(fake)
+    client.place_bet(market_id="1.200", selection_id=7, side="BACK", price=1000.0, size=1.0, customer_order_ref="old")
+    (stub_id,) = fake.orders
+    client.reduce_order(market_id="1.200", bet_id=stub_id, size_reduction=0.9)
+    client.replace_orders(market_id="1.200", bet_id=stub_id, new_price=3.0)          # replace avvenuto, risposta persa
+    engine, fake, db = _live_engine(fake, client=client)
+    req = MicrostakeRequest("1.200", 7, Side.BACK, D("0.10"), D("3.0"), "old")
+    DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).save("old", phase="AMBIGUOUS", reservation_held=True,
+                                                 transient_exposure="1.00", stub_price="1000", bet_id=stub_id,
+                                                 request=MicrostakeCoordinator._request_json(req))
+    out = engine.recover_native_microstake_sagas()
+    assert out["ok"] is False and out["pending"] == ["old"], out          # prima: ROLLED_BACK con 0.10 vivo
+    assert [o["remaining"] for o in fake.live()] == [D("0.10")]
+
+
+def test_saga_with_a_replacement_but_no_stub_identity_never_rolls_back_without_proof():
+    """Saga di un head intermedio: `replacement_bet_id` persistito ma niente `stub_bet_id`. Replacement lapsato senza
+    abbinato, stub originale abbinato in parte: senza l'identita' dello stub non c'e' prova => mai ROLLED_BACK."""
+    fake = _FakeBetfair()
+    client = _client(fake)
+    client.place_bet(market_id="1.200", selection_id=7, side="BACK", price=1000.0, size=1.0, customer_order_ref="mid")
+    (stub_id,) = fake.orders
+    fake.orders[stub_id].update(matched=D("0.04"), remaining=D("0.06"))
+    client.replace_orders(market_id="1.200", bet_id=stub_id, new_price=3.0)
+    new_id = [b for b in fake.orders if b != stub_id][0]
+    new = fake.orders[new_id]
+    new["cancelled"], new["remaining"], new["status"], new["lapsed"] = new["remaining"], D("0"), "EXECUTION_COMPLETE", True
+    for o in fake.orders.values():
+        o["ref"] = ""                                              # nessun ref utile: identita' solo dalla saga
+    engine, fake, db = _live_engine(fake, client=client)
+    req = MicrostakeRequest("1.200", 7, Side.BACK, D("0.10"), D("3.0"), "mid")
+    DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).save("mid", phase="AMBIGUOUS", reservation_held=True,
+                                                 transient_exposure="1.00", stub_price="1000", bet_id=new_id,
+                                                 replacement_bet_id=new_id, replace_sent=True,
+                                                 request=MicrostakeCoordinator._request_json(req))
+    out = engine.recover_native_microstake_sagas()
+    assert out["ok"] is False and out["pending"] == ["mid"], out
+
+
 def test_new_session_client_restores_the_reservations_of_pending_sagas():
     """F2: re-auth => nuovo BetfairClient => nuovo esecutore LIVE. Le riserve delle saghe pendenti si ripristinano
     alla costruzione: lo stub vivo resta contato nel cap temporaneo."""
