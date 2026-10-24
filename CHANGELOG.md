@@ -9,6 +9,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **Governance post-#556: una review AI senza bloccanti non è un PASS se il verdetto non è conclusivo (owner
+  merge):** su #556 il classificatore di #552 registrava `VALID_PASS` per verdetti che dicevano «troncato», «NON
+  VERIFICABILI», «merge non approvato». Un PASS richiede ora tre condizioni:
+  - la riga strutturata `Copertura: COMPLETA` in testa al verdetto;
+  - nessuna conclusione negativa che la contraddica;
+  - nessun buco di copertura misurato dal workflow (`rr_coverage_gaps`: file oltre budget, patch tagliate,
+    Compare API troncata).
+
+  Altrimenti la review è `VALID_INCONCLUSIVE`: escalation owner (`STOP_OWNER`), nessuna deroga, nessun tentativo
+  in più a pagamento. Il gate rilegge anche i commenti già pubblicati. Prompt di Sol e Grok aggiornati: non
+  chiedono più «Non approvare merge.».
+
+  Test: i cinque verdetti reali di #556 (prima tutti PASS) e casi avversariali, anche end-to-end sullo script
+  vero dei due workflow (`tests/scripts/test_pr_review_recovery.py`). Mutazioni ad hoc: 18/18 uccise.
 - **PF-POST-556 Phase 2 — un solo contratto per la lettura del conto (avvio, `get_status`, settlement, ripresa;
   decisione owner):** `RuntimeController._apply_funds_reading` con quattro stati espliciti: `FUNDS_VERIFIED`,
   `BALANCE_ZERO_COMMITTED`, `ACCOUNT_EMPTY_VERIFIED`, `FUNDS_UNVERIFIABLE`.

@@ -171,7 +171,7 @@ ESAURITI). Prima del merge: zero thread irrisolti.
 
 **Recupero delle review (PF-REVIEW-RECOVERY-01, #550).** Il workflow classifica
 ogni tentativo PRIMA di scrivere marker: `VALID_PASS` / `VALID_BLOCKERS` /
-`INCOMPLETE` / `TIMEOUT` / `PROVIDER_ERROR` / `CREDITS_EXHAUSTED` / `UNKNOWN`
+`VALID_INCONCLUSIVE` / `INCOMPLETE` / `TIMEOUT` / `PROVIDER_ERROR` / `CREDITS_EXHAUSTED` / `UNKNOWN`
 (`rr_classify_output`, `rr_classify_error`). Valida è solo una review con le
 due sezioni «Bloccanti» e «Verdetto finale», uniche, in quest'ordine, non
 vuote, senza testo prima né sezioni in più; testo vuoto, troncato o senza
@@ -196,6 +196,35 @@ chiama più il modello e scrive, una sola volta, la richiesta
 gate è STOP owner («PRONTA PER MERGE — <reviewer> assente:
 REVIEW_UNKNOWN_OWNER_DECISION») se l'altro reviewer è pulito, altrimenti
 BLOCKED/UNKNOWN. **Mai PASS.**
+
+**Verdetto non conclusivo (governance post-#556).** «Nessun bloccante» non basta
+per un PASS: su #556 Sol e Grok avevano scritto nel «Verdetto finale» «troncato»,
+«NON VERIFICABILI», «merge non approvato», e il workflow li aveva registrati come
+`VALID_PASS`. Ora un PASS richiede tre condizioni, tutte verificabili:
+1. **Riga strutturata.** La prima riga del «Verdetto finale» deve essere
+   `Copertura: COMPLETA` oppure `Copertura: PARZIALE — <cosa manca>`. Il prompt
+   la chiede e non chiede più al reviewer di pronunciarsi sul merge.
+2. **Nessuna contraddizione** fra quella riga e il testo del verdetto:
+   merge non approvato, troncato (salvo negato: «nessun file troncato»), non
+   verificabile, impossibile concludere, review non chiusa, review limitata alle
+   parti visibili (`rr_verdict_concerns`).
+3. **Nessun buco misurato dal workflow** sul payload inviato (`rr_coverage_gaps`):
+   file con patch esclusi per budget, patch tagliate, Compare API troncata.
+   Questa condizione non dipende da ciò che scrive il modello.
+
+Esiti:
+- con bloccanti: `VALID_BLOCKERS`;
+- riga di copertura assente e nessun altro motivo: `INCOMPLETE`, cioè l'unica
+  ripetizione;
+- altrimenti: `VALID_INCONCLUSIVE`. È valido (marker di completamento, nessun
+  altro tentativo a pagamento, perché ripetere non toglie un troncamento) ma
+  **non è mai un PASS**.
+
+Il gate rilegge il verdetto anche nei commenti già pubblicati (stato
+`VALID_INCONCLUSIVE`). `reviewer_gate` dà `BLOCKED` se c'è un'altra review con
+bloccanti, STOP crediti se un reviewer è a secco, altrimenti `STOP_OWNER` con
+`inconclusive`: escalation all'owner, che giudica con le prove sostitutive. La
+deroga `PF-REVIEW-WAIVER` non la copre: vale solo per un reviewer senza esito.
 
 **Deroga owner.** Valida solo come riga
 `PF-REVIEW-WAIVER pr=<n> head=<sha 40> reviewer=<sol|grok> reason=<motivo>` in

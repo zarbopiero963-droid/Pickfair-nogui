@@ -198,7 +198,7 @@ def test_triage_codex_completa_solo_con_prove_e_zero_thread():
 def review_body(reviewer: str, head: str = HEAD, bloccanti: str = "Nessun bloccante evidente.") -> str:
     marker = policy.ACTIVE_REVIEWERS[reviewer]
     return (f"<!-- {marker}:pickfair-nogui:{BASE[:12]}...{head[:12]} -->\n"
-            f"# Review\n\n## Bloccanti\n{bloccanti}\n\n## Verdetto finale\nOK\n")
+            f"# Review\n\n## Bloccanti\n{bloccanti}\n\n## Verdetto finale\nCopertura: COMPLETA\nOK\n")
 
 
 def review(reviewer: str, **extra):
@@ -271,8 +271,8 @@ def test_errori_provider_non_sono_timeout(errore, atteso):
 
 
 @pytest.mark.parametrize("body_fn", [
-    lambda r: review_body(r).replace("## Verdetto finale\nOK\n", ""),
-    lambda r: review_body(r).replace("## Verdetto finale\nOK\n", "## Verdetto finale\n"),
+    lambda r: review_body(r).replace("## Verdetto finale\nCopertura: COMPLETA\nOK\n", ""),
+    lambda r: review_body(r).replace("## Verdetto finale\nCopertura: COMPLETA\nOK\n", "## Verdetto finale\n"),
     lambda r: review_body(r, bloccanti=""),
 ])
 def test_review_con_schema_incompleto_e_unknown(body_fn):

@@ -197,6 +197,20 @@ modello lascerebbe il difetto intatto con un test verde sopra.
   sanificato: nessun commento HTML, quindi nessun marker forgiato. Il blocco
   `REVIEW_RECOVERY_CORE` è copiato identico da `scripts/pr_autonomy_policy.py`
   (test `tests/scripts/test_pr_review_recovery.py`). Dettaglio in spec §0.7.
+- **Verdetto non conclusivo (governance post-#556; Sol e Grok).** Senza
+  bloccanti la review è `VALID_PASS` solo se:
+  - la prima riga del «Verdetto finale» è `Copertura: COMPLETA`;
+  - il verdetto non la contraddice (troncato, non verificabile, merge non
+    approvato, impossibile concludere);
+  - il workflow non ha misurato buchi nel payload inviato al modello (file oltre
+    budget, patch tagliate, Compare API troncata).
+
+  Altrimenti è `VALID_INCONCLUSIVE`: ha il marker di completamento, non si
+  ripaga e al gate dà `STOP_OWNER` (escalation, nessuna deroga). Se manca solo
+  la riga di copertura il tentativo è `INCOMPLETE` e si ripete una volta. I
+  prompt non chiedono più «Non approvare merge.», la frase che faceva scrivere a
+  Grok «merge non approvato» in ogni verdetto. Il gate rilegge anche i commenti
+  già pubblicati. Dettaglio in spec §0.7.
 - **Attesa del provider.** La richiesta al modello non è in streaming: la
   risposta arriva tutta alla fine, dopo il ragionamento. Ogni reviewer fa tre
   tentativi, ciascuno con un limite di attesa, e dopo ogni tentativo fallito

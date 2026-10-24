@@ -453,14 +453,18 @@ def codex_triage_complete(findings: Sequence[Mapping[str, Any]], unresolved_thre
 # >>> REVIEW_RECOVERY_CORE >>>
 RR_VALID_PASS = "VALID_PASS"
 RR_VALID_BLOCKERS = "VALID_BLOCKERS"
+# Governance post-#556: review ben formata e senza bloccanti ma con copertura dichiarata PARZIALE o un verdetto
+# che la contraddice (troncato, non verificabile, merge non approvato, impossibile concludere). Valida (marker
+# di completamento, nessun altro tentativo a pagamento: ripetere non toglie un troncamento) ma MAI un PASS.
+RR_VALID_INCONCLUSIVE = "VALID_INCONCLUSIVE"
 RR_INCOMPLETE = "INCOMPLETE"
 RR_TIMEOUT = "TIMEOUT"
 RR_PROVIDER_ERROR = "PROVIDER_ERROR"
 RR_CREDITS_EXHAUSTED = "CREDITS_EXHAUSTED"
 RR_UNKNOWN = "UNKNOWN"
-RR_STATES = (RR_VALID_PASS, RR_VALID_BLOCKERS, RR_INCOMPLETE, RR_TIMEOUT,
+RR_STATES = (RR_VALID_PASS, RR_VALID_BLOCKERS, RR_VALID_INCONCLUSIVE, RR_INCOMPLETE, RR_TIMEOUT,
              RR_PROVIDER_ERROR, RR_CREDITS_EXHAUSTED, RR_UNKNOWN)
-RR_VALID_STATES = (RR_VALID_PASS, RR_VALID_BLOCKERS)
+RR_VALID_STATES = (RR_VALID_PASS, RR_VALID_BLOCKERS, RR_VALID_INCONCLUSIVE)
 # Tentativi TOTALI per reviewer e range: l'originale piu' una sola ripetizione.
 RR_MAX_ATTEMPTS = 2
 RR_OWNER_DECISION = "REVIEW_UNKNOWN_OWNER_DECISION"
@@ -478,6 +482,31 @@ _RR_NO_BLOCKERS = re.compile(
     r"[-*]?\s*nessun(?:o)?\s+bloccante(?:\s+(?:evidente|rilevato|rilevante|trovato|individuato))?\s*[.!]?",
     re.IGNORECASE)
 _RR_H2 = re.compile(r"^##(?!#)[ \t]*(.*?)[ \t]*#*[ \t]*$", re.MULTILINE)
+# Prima riga del «Verdetto finale»: dichiarazione strutturata della copertura (chiesta dal prompt), cosi' il
+# giudizio non dipende da parole isolate nel testo libero. Grassetto e trattini ammessi.
+_RR_COVERAGE = re.compile(r"[*_\s]*copertura[*_\s]*:[*_\s]*(completa|parziale)\b", re.IGNORECASE)
+# Conclusioni che negano la completezza dell'esame. Si cercano in tutto il verdetto: con «Copertura: COMPLETA»
+# sono una contraddizione, e una contraddizione non e' mai un PASS. Fail-closed: anche un «non approvo il merge»
+# di ruolo conta, percio' il prompt chiede di non pronunciarsi sul merge. «Test non eseguiti» non e' cercato:
+# i reviewer sono diff-only per contratto.
+_RR_NEGATIVE_VERDICT = (
+    ("merge_non_approvato", re.compile(
+        r"\bmerge\s+non\s+approvat|\bnon\s+approv[oai]\w*\s+(?:il\s+)?merge|\bnot\s+approv|\bdo\s+not\s+merge"
+        r"|\bnon\s+(?:e'|è|e)?\s*(?:mergeabil|mergiabil)", re.IGNORECASE)),
+    ("troncato", re.compile(r"\b(?:troncat|truncat)\w*", re.IGNORECASE)),
+    ("non_verificabile", re.compile(
+        r"\bnon\s+(?:(?:e['’]?|è)\s+)?verificabil\w*|\bnot\s+verifiable|\bunverifiable|\bnon\s+(?:ho\s+)?potuto\s+verificare",
+        re.IGNORECASE)),
+    ("non_conclusiva", re.compile(
+        r"\bimpossibile\s+(?:concludere|verificare|confermare|certificare)"
+        r"|\bnon\s+(?:posso|si\s+pu[oò]|(?:e['’]?|è)\s+(?:\w+\s+){0,2}possibile)\s+"
+        r"(?:confermare|concludere|certificare|verificare)"
+        r"|\breview\s+non\s+(?:(?:e['’]?|è)\s+)?(?:chiusa|conclusa|completa)"
+        r"|\blimitat\w*\s+(?:a(?:lle?|i|gli)?\s+)?(?:porzion|part|tratt)\w*\s+visibil"
+        r"|\bcannot\s+(?:conclude|confirm|certify)",
+        re.IGNORECASE)),
+)
+_RR_TRUNC_NEGATED = re.compile(r"\b(?:non|nessun\w*|senza|niente|not|no)\s+(?:\w+\s+){0,2}$", re.IGNORECASE)
 _RR_ATTEMPT_RE = re.compile(
     r"<!-- ([a-z0-9]+)-pr-review-attempt:pickfair-nogui:([0-9a-f]{7,40})\.\.\.([0-9a-f]{7,40}):([0-9]+):([A-Z_]+) -->")
 
@@ -497,12 +526,63 @@ def rr_classify_error(error_text):
     return RR_PROVIDER_ERROR
 
 
-def rr_classify_output(text, truncated=False):
+def rr_coverage_gaps(files, diff_text, compare_truncated):
+    """Parti del range che il modello NON ha visto, misurate sul payload inviato (lista vuota = nessuna).
+
+    Un file con patch ma senza blocco `### FILE:` e' stato escluso per budget; il segnaposto di taglio
+    indica una patch inviata solo in parte. I file senza patch (binari) non sono testo da rivedere. Un
+    blocco si riconosce solo a inizio riga dopo una riga vuota: le righe di una patch iniziano sempre
+    con `+`, `-`, spazio, `@@` o `\\`, quindi il diff non puo' fingere un blocco in piu'."""
+    sent_text = str(diff_text or "")
+    with_patch = sum(1 for f in (files or ()) if isinstance(f, dict) and f.get("patch"))
+    sent = sent_text.count("\n\n### FILE: ")
+    cut = sent_text.count("[PATCH FILE TRONCATO PER BUDGET TOKEN]")
+    gaps = []
+    if compare_truncated:
+        gaps.append("compare_api_troncata")
+    if with_patch > sent:
+        gaps.append(f"{with_patch - sent}_file_oltre_budget")
+    if cut:
+        gaps.append(f"{cut}_patch_tagliate")
+    return gaps
+
+
+def rr_verdict_concerns(verdict):
+    """Motivi per cui un «Verdetto finale» non certifica un esame completo (lista vuota = nessuno).
+
+    1. La prima riga non vuota deve dichiarare `Copertura: COMPLETA` o `Copertura: PARZIALE`: assente =>
+       `copertura_non_dichiarata`; PARZIALE => `copertura_parziale`.
+    2. Nel testo, conclusioni che negano la completezza: merge non approvato, troncato (salvo negato: «nessun
+       file troncato»), non verificabile, impossibile concludere. Con COMPLETA sono una contraddizione."""
+    text = str(verdict or "").strip()
+    concerns = []
+    first = next((line for line in text.splitlines() if line.strip()), "")
+    coverage = _RR_COVERAGE.match(first)
+    if coverage is None:
+        concerns.append("copertura_non_dichiarata")
+    elif coverage.group(1).lower() == "parziale":
+        concerns.append("copertura_parziale")
+    for name, pattern in _RR_NEGATIVE_VERDICT:
+        for match in pattern.finditer(text):
+            if name == "troncato" and _RR_TRUNC_NEGATED.search(text[max(0, match.start() - 40):match.start()]):
+                continue
+            concerns.append(name)
+            break
+    return concerns
+
+
+def rr_classify_output(text, truncated=False, coverage_gaps=()):
     """(stato, motivo) del TESTO restituito dal modello, prima di qualunque marker.
 
     Valida e' solo una review con le due sezioni obbligatorie, uniche, in ordine
     e non vuote. Il testo troncato, vuoto o senza sezioni e' INCOMPLETE; uno
     schema inatteso (sezioni duplicate o in piu', commenti HTML) e' UNKNOWN.
+    Senza bloccanti: VALID_PASS solo con `Copertura: COMPLETA` e nessuna conclusione
+    che la contraddica; verdetto senza la riga di copertura => INCOMPLETE (si ripete);
+    copertura parziale o contraddetta => VALID_INCONCLUSIVE (mai PASS, escalation).
+    `coverage_gaps` sono i buchi MISURATI dal workflow (file con patch non inviati per
+    budget, patch tagliate, Compare API troncata): non dipendono da cio' che il modello
+    scrive, e con un buco la review non e' mai un PASS.
     """
     body = str(text or "").strip()
     if truncated:
@@ -528,9 +608,15 @@ def rr_classify_output(text, truncated=False):
         return RR_INCOMPLETE, "sezione Bloccanti vuota"
     if not verdict:
         return RR_INCOMPLETE, "Verdetto finale vuoto"
-    if _RR_NO_BLOCKERS.fullmatch(blockers):
-        return RR_VALID_PASS, ""
-    return RR_VALID_BLOCKERS, "bloccanti da triagiare"
+    if not _RR_NO_BLOCKERS.fullmatch(blockers):
+        return RR_VALID_BLOCKERS, "bloccanti da triagiare"
+    concerns = rr_verdict_concerns(verdict)
+    if concerns == ["copertura_non_dichiarata"]:
+        return RR_INCOMPLETE, "riga «Copertura:» assente nel Verdetto finale"
+    concerns += [f"diff_non_visto:{gap}" for gap in (coverage_gaps or ())]
+    if concerns:
+        return RR_VALID_INCONCLUSIVE, "verdetto non conclusivo: " + ", ".join(concerns)
+    return RR_VALID_PASS, ""
 
 
 def rr_attempt_marker(review_id, base, head, number, state):
@@ -738,12 +824,23 @@ def _validate_review_body(body: str, head_sha: str, markers: Mapping[str, Any]) 
     # o «Verdetto finale» assente/vuoto = review incompleta, mai pulita.
     if not section:
         return {"status": "UNKNOWN", "classification": RR_INCOMPLETE, "reason": "sezione Bloccanti vuota: review incompleta"}
-    if not _section(body, "Verdetto finale"):
+    verdict = _section(body, "Verdetto finale")
+    if not verdict:
         return {"status": "UNKNOWN", "classification": RR_INCOMPLETE,
                 "reason": "Verdetto finale assente o vuoto: review incompleta"}
-    if _NO_BLOCKERS.fullmatch(section.strip()):
-        return {"status": "VALID_CLEAN", "classification": RR_VALID_PASS, "reason": ""}
-    return {"status": "VALID_WITH_BLOCKERS", "classification": RR_VALID_BLOCKERS, "reason": "bloccanti da triagiare"}
+    if not _NO_BLOCKERS.fullmatch(section.strip()):
+        return {"status": "VALID_WITH_BLOCKERS", "classification": RR_VALID_BLOCKERS,
+                "reason": "bloccanti da triagiare"}
+    # Governance post-#556: senza bloccanti non basta. Lo stato registrato dal workflow (buchi di copertura
+    # misurati) e il verdetto riletto qui (commenti scritti prima di questa regola, deriva fra le copie)
+    # devono entrambi certificare un esame completo; altrimenti escalation, mai PASS.
+    concerns = rr_verdict_concerns(verdict)
+    if attempts and attempts[-1] == RR_VALID_INCONCLUSIVE and not concerns:
+        concerns = ["copertura_misurata_parziale"]
+    if concerns:
+        return {"status": "VALID_INCONCLUSIVE", "classification": RR_VALID_INCONCLUSIVE, "concerns": concerns,
+                "reason": "verdetto non conclusivo: " + ", ".join(concerns)}
+    return {"status": "VALID_CLEAN", "classification": RR_VALID_PASS, "reason": ""}
 
 
 # ---------------------------------------------------------------------------
@@ -852,9 +949,16 @@ def reviewer_gate(results: Mapping[str, Mapping[str, Any]], grok_attempts: Any =
     others = {n: s for n, s in statuses.items() if n not in exhausted}
     if any(s in (None, "UNKNOWN") for s in others.values()):
         return {"status": "UNKNOWN", "reason": "review non leggibile o assente"}
-    bad = {n: s for n, s in others.items() if s != "VALID_CLEAN"}
+    bad = {n: s for n, s in others.items() if s not in ("VALID_CLEAN", "VALID_INCONCLUSIVE")}
     if bad:
         return {"status": "BLOCKED", "reason": f"review non valide sul current head: {bad}"}
+    inconclusive = sorted(n for n, s in others.items() if s == "VALID_INCONCLUSIVE")
+    if inconclusive:
+        # Review senza bloccanti ma che non certifica un esame completo: decide l'owner. Nessuna
+        # deroga PF-REVIEW-WAIVER la copre (vale solo per un reviewer senza esito) e non si ripete:
+        # un nuovo tentativo sullo stesso range non toglie un troncamento.
+        return {"status": "STOP_OWNER", "inconclusive": inconclusive,
+                "reason": f"review non conclusiva ({', '.join(inconclusive)}): escalation owner, mai PASS"}
     if not exhausted:
         return {"status": "PASS", "reason": ""}
     if not others:
