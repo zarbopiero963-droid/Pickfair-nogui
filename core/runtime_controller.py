@@ -3987,9 +3987,25 @@ class RuntimeController:
 
     def controller_event_exposure(self, entry: dict) -> float:
         """#549: esposizione corrente dell'evento reale dell'ingresso (event_id, poi nome), su tutti i tavoli:
-        stessa misura dei segnali. Illeggibile => inf (il cap rifiuta)."""
+        stessa misura dei segnali. Un mercato appartiene a un solo evento: i tavoli con lo stesso `market_id`
+        nei meta contano anche se il nome evento e' scritto diversamente (vale la misura maggiore).
+        Illeggibile => inf (il cap rifiuta)."""
         try:
-            return float(self._event_current_exposure(entry or {}))
+            entry = entry or {}
+            exposure = float(self._event_current_exposure(entry))
+            market_id = str(entry.get("market_id") or "").strip()
+            if market_id:
+                same_market = 0.0
+                for table in self.table_manager.active_tables():
+                    meta = table.meta if isinstance(table.meta, dict) else {}
+                    if str(meta.get("market_id") or "").strip() != market_id:
+                        continue
+                    value = validators.finite_number(table.current_exposure)
+                    if value is None or value < 0:
+                        return float("inf")
+                    same_market += value
+                exposure = max(exposure, same_market)
+            return exposure
         except Exception:
             return float("inf")
 

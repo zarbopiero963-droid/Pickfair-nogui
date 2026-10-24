@@ -367,6 +367,7 @@ def _manual_payload(price, stake, bet_type="BACK"):
         "price": price,
         "stake": stake,
         "bet_type": bet_type,
+        "event_name": "Evento manuale",   # #549: il cap evento richiede l'identita' dell'evento
     }
 
 

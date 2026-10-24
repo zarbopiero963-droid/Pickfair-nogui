@@ -67,8 +67,10 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   registrata (a differenza del segnale, che li ricontrolla anche sulla lettura fresca).
 - **Cap evento sulla bet manuale (#549):** `manual_bet` applica anche `max_event_exposure_pct` (cassa
   verificata·%). L'esposizione dell'evento è la maggiore fra i tavoli Dutching/manuali dello stesso evento e quella
-  del runtime (`controller_event_exposure`, tavoli da segnale compresi); esposizione illeggibile ⇒ rifiuto
-  `Esposizione evento oltre limite`. LAY: conta la liability.
+  del runtime (`controller_event_exposure`, tavoli da segnale compresi, e tavoli con lo stesso `market_id`
+  anche se il nome evento è scritto diversamente); esposizione illeggibile ⇒ rifiuto
+  `Esposizione evento oltre limite`. Senza nome né id evento il cap non è verificabile ⇒ rifiuto
+  `Esposizione evento non verificabile` (il controller non inventa l'evento). LAY: conta la liability.
 - **Zero verificato dopo il settlement (#546 D1):** un disponibile pari a 0 senza `error` è un saldo letto, non un
   ripiego (dal PFC-007 ogni ripiego del servizio porta `error`): motivo `BALANCE_ZERO_VERIFIED` (prima
   `BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK`), snapshot di conto `source=settlement` e cassa registrati, stato

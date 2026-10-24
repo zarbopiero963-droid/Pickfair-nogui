@@ -725,6 +725,7 @@ def _manual_payload(**overrides):
         "stake": 10.0,
         "bet_type": "BACK",
         "simulation_mode": True,
+        "event_name": "Evento manuale",   # #549: il cap evento richiede l'identita' dell'evento
     }
     payload.update(overrides)
     return payload

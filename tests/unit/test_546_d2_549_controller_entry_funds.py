@@ -200,3 +200,28 @@ def test_without_a_table_the_entry_exposure_is_added_to_the_pending_ones(tmp_pat
     res = dc.submit_dutching(_batch(total_stake=8.0))
     assert res["ok"] is False and str(res.get("reason", "")).startswith("fondi_insufficienti"), res
     assert c.bus.payloads("CMD_QUICK_BET") == []
+
+
+@pytest.mark.parametrize("identity", [{}, {"event_name": ""}, {"event_name": "   "}])
+def test_manual_bet_without_an_event_identity_is_rejected(tmp_path, identity):
+    """Rilievo della review indipendente su 35abf40: senza nome/id evento la misura dei segnali vale 0 e un
+    tavolo da segnale sullo stesso mercato non entrava nel cap evento (fail-open). Ora il cap non e'
+    verificabile => rifiuto, prima di tavolo e chiave."""
+    c = _catena(tmp_path)
+    c.rc._on_signal_received(_signal())                      # esposizione evento 30 sul mercato 1.234
+    c.rc.config.max_event_exposure_pct = 3.1                 # cap 31
+    payload = _manual(selection_id=99, stake=2.0)
+    payload.pop("event_name")
+    payload.update(identity)
+    res = _dutching(c).manual_bet(payload)
+    assert res["ok"] is False and res["error"] == "Esposizione evento non verificabile", res
+    assert len(c.bus.payloads("CMD_QUICK_BET")) == 1           # solo il segnale
+
+
+def test_manual_bet_event_cap_counts_the_tables_of_the_same_market(tmp_path):
+    """Un tavolo manuale sullo stesso mercato con un nome evento diverso resta nel cap evento."""
+    c = _catena(tmp_path)
+    dc = _dutching(c)
+    assert dc.manual_bet(_manual(selection_id=11, stake=150.0))["ok"] is True
+    res = dc.manual_bet(_manual(selection_id=12, stake=50.0, event_name="Alpha - Beta"))   # 200 > 180
+    assert res["ok"] is False and res["error"] == "Esposizione evento oltre limite", res

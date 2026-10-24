@@ -1846,6 +1846,13 @@ class DutchingController:
                 return self._fail("Esposizione globale oltre limite")
 
             # #549: cap evento come nel precheck del Dutching e nel MM dei segnali (prima non era valutato).
+            # Senza nome o id evento i tavoli da segnale dello stesso evento non sono riconoscibili: il cap
+            # non e' verificabile e l'ingresso si rifiuta (il controller non inventa l'evento).
+            event_name = payload.get("event_name")
+            event_id = payload.get("event_id")
+            if not (isinstance(event_name, str) and event_name.strip()) and \
+                    (event_id in (None, "") or isinstance(event_id, bool)):
+                return self._fail("Esposizione evento non verificabile", order_exposure=round(exposure, 2))
             event_current_exposure = self._manual_event_exposure(event_key, payload, market_id)
             if not math.isfinite(event_current_exposure) or \
                     event_current_exposure + exposure > max_event_exposure + 1e-9:

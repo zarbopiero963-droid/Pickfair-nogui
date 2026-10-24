@@ -3047,6 +3047,30 @@
         "tests/unit/test_546_d2_549_controller_entry_funds.py"
       ],
       "rationale": "#546 D2: il gate fondi degli ingressi del controller ignora le riserve non ancora a mercato."
+    },
+    {
+      "id": "i549_manual_bet_event_identity_skipped",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "                return self._fail(\"Esposizione evento non verificabile\", order_exposure=round(exposure, 2))",
+      "mutated": "                pass",
+      "tests": [
+        "tests/unit/test_546_d2_549_controller_entry_funds.py"
+      ],
+      "rationale": "#549 (review indipendente su 35abf40): senza nome/id evento il tavolo da segnale dello stesso evento non entra nel cap evento."
+    },
+    {
+      "id": "i549_same_market_tables_ignored",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "                exposure = max(exposure, same_market)",
+      "mutated": "                exposure = exposure",
+      "tests": [
+        "tests/unit/test_546_d2_549_controller_entry_funds.py"
+      ],
+      "rationale": "#549: i tavoli dello stesso mercato con un nome evento scritto diversamente escono dal cap evento della bet manuale."
     }
   ]
 }
