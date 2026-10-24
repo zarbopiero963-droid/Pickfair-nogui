@@ -946,6 +946,89 @@ def test_multi_table_microstakes_and_direct_orders_keep_exposure_and_reservation
     assert _names(fake).count("replaceOrders") == 3 and _names(fake).count("placeOrders") == 5
 
 
+# ------------------------------------------------------------------------------------------- review del diff completo
+def test_replacement_gone_never_rolls_back_while_the_stub_holds_a_settled_matched_part():
+    """F1: stub abbinato 0.04 durante il replace, nuovo ordine (0.06) poi lapsato, stub regolato e uscito dai
+    correnti (SETTLED 0.04). Il recovery non chiude ROLLED_BACK guardando solo il replacement."""
+    fake = _StubMatchesDuringReplace()
+    engine, fake, db = _live_engine(fake)
+    assert engine.submit_quick_bet(_bet("f1", size=0.10))["status"] == "AMBIGUOUS"
+    saga = DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("f1")
+    stub_id = [o for o in fake.orders.values() if o["price"] == D("1000")][0]["betId"]
+    assert saga["stub_bet_id"] == stub_id, "identita' dello stub conservata accanto a quella del replacement"
+    new = fake.orders[saga["replacement_bet_id"]]
+    new["cancelled"] += new["remaining"]
+    new["remaining"], new["status"], new["lapsed"] = D("0"), "EXECUTION_COMPLETE", True
+    del fake.orders[stub_id]
+    real = fake._listClearedOrders
+
+    def cleared(params):
+        out = real(params)
+        if params["betStatus"] == "SETTLED" and stub_id in (params.get("betIds") or [stub_id]):
+            out["clearedOrders"].append({"betId": stub_id, "marketId": "1.200", "selectionId": 7, "side": "BACK",
+                                         "priceRequested": 1000.0, "sizeSettled": 0.04, "customerOrderRef": "f1"})
+        return out
+    fake._listClearedOrders = cleared
+    restarted, _, _ = _live_engine(fake, db=db)
+    out = restarted.recover_native_microstake_sagas()
+    assert out["ok"] is False and out["pending"] == ["f1"], out        # prima: ROLLED_BACK, 0.04 non contabilizzati
+    assert DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("f1")["phase"] == "AMBIGUOUS"
+
+
+def test_new_session_client_restores_the_reservations_of_pending_sagas():
+    """F2: re-auth => nuovo BetfairClient => nuovo esecutore LIVE. Le riserve delle saghe pendenti si ripristinano
+    alla costruzione: lo stub vivo resta contato nel cap temporaneo."""
+    engine, fake, db = _live_engine()
+    fake.lose.add("cancelOrders")
+    assert engine.submit_quick_bet(_bet("f2", size=0.10))["status"] == "AMBIGUOUS"
+    old = engine._live_microstake_executor
+    engine.betfair_client = _client(fake)                           # BetfairService._connect_live(force=True)
+    new = engine.native_microstake_executor()
+    assert new is not old and new.port.has_reservation("f2"), "riserva della saga pendente persa"
+
+
+def test_live_blocked_restart_still_cancels_the_live_stub_protectively():
+    """F3: con LIVE non consentito il runtime reale dichiara SIMULATION. Le saghe LIVE pendenti si riprendono
+    comunque in sola protezione sul client reale (cancellazione verificata), mai lasciate eseguibili."""
+    fake = _FakeBetfair()
+    engine, fake, db = _live_engine(fake)
+    fake.crash.add("placeOrders")
+    with pytest.raises(_Crash):
+        engine.submit_quick_bet(_bet("f3", size=0.10))
+    before = len(_names(fake))
+    restarted, _, _ = _live_engine(fake, db=db, live_allowed=False)
+    restarted.runtime_controller.get_effective_execution_mode = (
+        lambda: "LIVE" if restarted.runtime_controller.is_live_allowed() else "SIMULATION")
+    out = restarted.recover_native_microstake_sagas()
+    assert _names(fake)[before:] == ["cancelOrders"], "cancellazione protettiva, nessuna riduzione ne' replace"
+    assert fake.live() == [] and out["ok"] is True, out
+
+
+def test_replace_timeout_with_the_new_bet_id_in_the_report_is_persisted():
+    """P3: replace in TIMEOUT con il betId nel placeInstructionReport => identita' persistita e usata."""
+    fake = _ReplaceTimeoutButApplied(carry_ref=False)
+    engine, fake, db = _live_engine(fake)
+    assert engine.submit_quick_bet(_bet("rtid", size=0.10))["status"] == "AMBIGUOUS"
+    saga = DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("rtid")
+    assert saga.get("replacement_bet_id"), saga
+    restarted, _, _ = _live_engine(fake, db=db)
+    assert restarted.recover_native_microstake_sagas()["results"] == {"rtid": "ACTIVE"}
+
+
+def test_two_live_orders_with_the_same_ref_before_place_are_ambiguous_never_failed():
+    """P3: `find_by_ref` che trova due ordini vivi con lo stesso ref (store perso) => mai FAILED senza ordine (che
+    rilascerebbe riserva e intento): AMBIGUOUS, nessun invio."""
+    fake = _FakeBetfair()
+    client = _client(fake)
+    for _ in range(2):
+        client.place_bet(market_id="1.200", selection_id=7, side="BACK", price=1000.0, size=1.0,
+                         customer_order_ref="dup")
+    engine, fake, db = _live_engine(fake, client=client)
+    res = engine.submit_quick_bet(_bet("dup", size=0.10))
+    assert res["status"] == "AMBIGUOUS", res
+    assert _names(fake).count("placeOrders") == 2                    # solo i due preesistenti
+
+
 # ------------------------------------------------------------------------------------------- difese indipendenti
 # Ogni difesa del P1 e' provata DA SOLA: la porta senza il coordinatore e il coordinatore senza la porta.
 def test_port_never_confirms_a_cancel_that_left_a_residual():

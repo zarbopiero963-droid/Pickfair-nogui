@@ -3775,7 +3775,7 @@
       "module": "core.microstake_safe",
       "area": "recovery",
       "file": "core/microstake_safe.py",
-      "original": "                self.store.save(req.customer_ref, bet_id=exc.bet_id)",
+      "original": "                self.store.save(req.customer_ref, bet_id=exc.bet_id, stub_bet_id=exc.bet_id)",
       "mutated": "                pass",
       "tests": [
         "tests/core/test_microstake_live_adapter.py"
@@ -3793,6 +3793,66 @@
         "tests/core/test_microstake_live_adapter.py"
       ],
       "rationale": "Rilievo Grok su f1594fb: il gate di recovery ignora l'emergenza quando c'e' il blocco giornaliero."
+    },
+    {
+      "id": "ms_saga_stub_unaccounted_ignored",
+      "module": "core.microstake_safe",
+      "area": "reconciliation",
+      "file": "core/microstake_safe.py",
+      "original": "        if phase is Phase.ROLLED_BACK and self._stub_unaccounted(customer_ref, order):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Review F1 #561: ROLLED_BACK guardando solo il replacement, con l'abbinato dello stub non contabilizzato."
+    },
+    {
+      "id": "ms_live_reservations_not_restored",
+      "module": "core.microstake_live_port",
+      "area": "exposure",
+      "file": "core/microstake_live_port.py",
+      "original": "        self.restore_reservations(self.store.pending_refs())",
+      "mutated": "        pass",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Review F2 #561: nuovo esecutore LIVE (nuova sessione) senza le riserve delle saghe pendenti."
+    },
+    {
+      "id": "ms_engine_live_sagas_not_protected",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "        if other and not live:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Review F3 #561: con LIVE non consentito gli stub LIVE pendenti restano eseguibili, nessuna cancellazione protettiva."
+    },
+    {
+      "id": "ms_live_replace_timeout_id_dropped",
+      "module": "core.microstake_live_port",
+      "area": "recovery",
+      "file": "core/microstake_live_port.py",
+      "original": "                               bet_id=new_id if new_id and new_id != str(bet_id) else \"\")",
+      "mutated": "                               bet_id=\"\")",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Review P3 #561: betId del replacement noto in TIMEOUT non persistito."
+    },
+    {
+      "id": "ms_live_duplicate_ref_as_failure",
+      "module": "core.microstake_live_port",
+      "area": "ambiguous",
+      "file": "core/microstake_live_port.py",
+      "original": "                raise RuntimeError(\"DUPLICATE_CUSTOMER_REF\") from exc",
+      "mutated": "                raise",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Review P3 #561: due ordini vivi con lo stesso ref trattati come fallimento senza ordine."
     }
   ]
 }

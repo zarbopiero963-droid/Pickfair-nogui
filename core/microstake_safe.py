@@ -488,7 +488,7 @@ class MicrostakeCoordinator:
             self.store.save(req.customer_ref, phase=Phase.PREPARED, reservation_held=True,
                             transient_exposure=transient, request=self._request_json(req),
                             stub_price=stub_price, stub_size=p.exchange_stub_size, replace_sent=False,
-                            bet_id="", rollback_intent=False, foreign_ref=False)
+                            bet_id="", stub_bet_id="", rollback_intent=False, foreign_ref=False)
         except Exception:
             self.exchange.release_reservation(req.customer_ref)   # nuova saga, nulla e' partito
             raise
@@ -503,7 +503,7 @@ class MicrostakeCoordinator:
             if getattr(exc, "bet_id", ""):
                 # Stub ACCETTATO con betId noto: identita' persistita prima di ogni altra lettura, cosi' il recovery
                 # puo' leggerne l'esito anche se sparisce dagli ordini correnti (rilievo Codex P2 su f1594fb).
-                self.store.save(req.customer_ref, bet_id=exc.bet_id)
+                self.store.save(req.customer_ref, bet_id=exc.bet_id, stub_bet_id=exc.bet_id)
             order = self.exchange.find_by_ref(req.customer_ref)
             if order is None:
                 self.store.save(req.customer_ref, phase=Phase.AMBIGUOUS)
@@ -525,7 +525,8 @@ class MicrostakeCoordinator:
                                 max_exposure=transient)
 
         assert order is not None
-        self.store.save(req.customer_ref, phase=Phase.STUB_ACCEPTED, bet_id=order.bet_id)
+        # `stub_bet_id` resta l'identita' dello STUB anche quando `bet_id` passa al replacement (review F1).
+        self.store.save(req.customer_ref, phase=Phase.STUB_ACCEPTED, bet_id=order.bet_id, stub_bet_id=order.bet_id)
         if order.matched > 0:
             self.store.save(req.customer_ref, phase=Phase.AMBIGUOUS, matched=order.matched)
             return self._result(Phase.AMBIGUOUS, req=req, reason="stub_matched",
@@ -650,6 +651,13 @@ class MicrostakeCoordinator:
                             reason="active_size_mismatch")
             return self._result(Phase.AMBIGUOUS, req=req, reason="active_size_mismatch",
                                 order=order, max_exposure=transient, held=True)
+        if phase is Phase.ROLLED_BACK and self._stub_unaccounted(customer_ref, order):
+            # Review F1 (diff completo #561): dopo un replace la chiusura non guarda solo il replacement. Lo stub
+            # originale, riletto per id (correnti o listClearedOrders), deve essere a residuo e abbinato zero; un
+            # abbinato dello stub (es. regolato e uscito dai correnti) o uno stub non rileggibile non sono un rollback.
+            self.store.save(customer_ref, phase=Phase.AMBIGUOUS, reservation_held=True, reason="stub_unaccounted")
+            return self._result(Phase.AMBIGUOUS, req=req, reason="stub_unaccounted",
+                                order=order, max_exposure=transient, held=True)
         if phase is Phase.ROLLED_BACK and order.matched > 0:
             # Lo stub si e' abbinato (anche in parte) prima della cancellazione di rollback: esiste uno stake
             # reale. ROLLED_BACK verrebbe registrato FAILED dall'engine, che libera tavolo e chiave: mai.
@@ -666,6 +674,20 @@ class MicrostakeCoordinator:
         self.store.save(customer_ref, phase=phase, bet_id=order.bet_id, reservation_held=False)
         self.exchange.release_reservation(customer_ref)
         return self._result(phase, req=req, reason=reason, order=order, max_exposure=transient, held=False)
+
+    def _stub_unaccounted(self, customer_ref: str, order: SimOrder) -> bool:
+        """True se lo stub di questa saga e' un ordine DIVERSO da `order` e non e' dimostrato a esposizione zero."""
+        try:
+            stub_id = str((self.store.load(customer_ref) or {}).get("stub_bet_id") or "")
+        except Exception:
+            return True
+        if not stub_id or stub_id == str(order.bet_id):
+            return False
+        try:
+            stub = self.exchange.order(stub_id)
+        except Exception:
+            return True
+        return stub.matched > 0 or stub.remaining > 0
 
     def _activate(self, req: MicrostakeRequest, order: SimOrder, transient: Decimal) -> MicrostakeResult:
         """Saga conclusa: l'ordine economico e' sull'exchange e i suoi fondi li contabilizza

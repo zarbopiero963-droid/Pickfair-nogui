@@ -194,7 +194,14 @@ class LiveExchangePort:
               customer_ref: str) -> SimOrder:
         # Lettura PRIMA dell'invio: un ordine con lo stesso ref esiste gia' => nessun secondo invio. Una lettura
         # fallita qui e' pre-invio (l'eccezione esce, nulla e' partito).
-        if self.find_by_ref(customer_ref) is not None:
+        try:
+            existing = self.find_by_ref(customer_ref)
+        except RuntimeError as exc:
+            if "duplicate customer reference" in str(exc):
+                # Piu' ordini vivi con questo ref: esistono ordini, mai un "fallimento senza ordine" (review P3).
+                raise RuntimeError("DUPLICATE_CUSTOMER_REF") from exc
+            raise
+        if existing is not None:
             raise RuntimeError("DUPLICATE_CUSTOMER_REF")
         try:
             res = self.client.place_bet(market_id=str(market_id), selection_id=int(selection_id), side=side.value,
@@ -273,8 +280,10 @@ class LiveExchangePort:
         if status != "SUCCESS" or not new_id or new_id == str(bet_id):
             # TIMEOUT, status mancante o SUCCESS senza nuovo betId: il nuovo ordine puo' esistere. Mai un rollback
             # come se non ci fosse: esito ignoto, riconciliazione (rilievo della review indipendente, P2).
-            self.operation_log.append(("REPLACE", bet_id, str(new_price), ""))
-            raise LostResponse(f"replace outcome unknown: status={status or 'missing'}")
+            self.operation_log.append(("REPLACE", bet_id, str(new_price), new_id))
+            # betId del nuovo ordine noto anche in TIMEOUT: viaggia con l'eccezione e si persiste (review P3).
+            raise LostResponse(f"replace outcome unknown: status={status or 'missing'}",
+                               bet_id=new_id if new_id and new_id != str(bet_id) else "")
         self.operation_log.append(("REPLACE", bet_id, str(new_price), new_id))
         try:
             return self.order(new_id)
@@ -351,6 +360,10 @@ class NativeLiveMicrostakeExecutor(NativeSimMicrostakeExecutor):
             raise TypeError("porta non LIVE")
         super().__init__(port, store, quote_provider=quote_provider, transient_exposure_cap=transient_exposure_cap,
                          policy=MicrostakePolicy(simulation_only=False, live_adapter=True))
+        # Nuova sessione Betfair => nuovo client => nuovo esecutore: le riserve delle saghe pendenti (stub che
+        # possono essere vivi) si ripristinano SUBITO, non solo al recovery d'avvio (review F2 su #561). Store
+        # illeggibile => eccezione: l'engine non costruisce l'esecutore (fail-closed).
+        self.restore_reservations(self.store.pending_refs())
 
     @property
     def client(self) -> Any:

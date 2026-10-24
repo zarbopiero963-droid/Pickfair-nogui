@@ -430,6 +430,19 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
         stato vecchio sotto una saga ACTIVE)."""
         out: Dict[str, str] = {}
         pending = self.store.pending_refs()
+        self.restore_reservations(pending)
+        if pending and not self.port._snapshot():
+            return {ref: Phase.AMBIGUOUS.value for ref in pending}
+        for ref in pending:
+            try:
+                out[ref] = self.coordinator.recover(ref, entry_allowed=entry_allowed).phase.value
+            except Exception as exc:  # noqa: BLE001 - riportato, mai nascosto
+                out[ref] = f"ERROR:{type(exc).__name__}"
+        return out
+
+    def restore_reservations(self, pending: List[str]) -> None:
+        """Riserve transitorie delle saghe pendenti ripristinate sulla porta (anche alla costruzione di un nuovo
+        esecutore LIVE dopo una nuova sessione Betfair, review F2 su #561)."""
         # Riserve transitorie ripristinate PRIMA di snapshot e recovery (rilievo Codex r4308704071): dopo un
         # riavvio la porta parte senza riserve, ma ogni saga pendente che le tiene (`reservation_held`, assente
         # = tenuta) copre uno stub che puo' essere sull'exchange; senza di esse un altro microstake supererebbe
@@ -448,14 +461,6 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
                 # quelli mancano, riserva illimitata: nessun altro microstake finche' la saga non e' riconciliata.
                 exposure = self._recomputed_stub_exposure(saved)
             self.port.hold_reservation(ref, exposure)
-        if pending and not self.port._snapshot():
-            return {ref: Phase.AMBIGUOUS.value for ref in pending}
-        for ref in pending:
-            try:
-                out[ref] = self.coordinator.recover(ref, entry_allowed=entry_allowed).phase.value
-            except Exception as exc:  # noqa: BLE001 - riportato, mai nascosto
-                out[ref] = f"ERROR:{type(exc).__name__}"
-        return out
 
 
 def build_native_microstake_executor(broker: Any, db: Any, transient_cap_provider: Callable[[Dict[str, Any]], Any]

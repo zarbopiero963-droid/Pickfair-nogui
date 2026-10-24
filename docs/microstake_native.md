@@ -232,7 +232,7 @@ Stessa saga, stesso esecutore (`NativeLiveMicrostakeExecutor` estende l'esecutor
   dell'esecutore SIM (mai riusato in SIMULATION). Raggiunto solo dal ramo LIVE dopo `is_live_allowed()` e con lo
   stesso circuit breaker degli invii diretti; l'hedge del cashout usa lo stesso esecutore via `OrderRouter`.
 
-Certificazione offline: `tests/core/test_microstake_live_adapter.py` (93 test), `BetfairClient` reale con il solo
+Certificazione offline: `tests/core/test_microstake_live_adapter.py` (104 test), `BetfairClient` reale con il solo
 trasporto JSON-RPC sostituito da un exchange finto con stato: importi 0,10 · 0,20 · 0,30 · 0,50 · 0,90 (Microstake) e
 1,00 · 1,50 · 2,00 · 5,00 (diretti), BACK e LAY; lotto Dutching misto; fondi insufficienti (cap e rifiuto
 dell'exchange); book sospeso/illeggibile/incrociato; risposte perse su place, cancel e replace; crash del processo dopo
@@ -310,6 +310,16 @@ betId). Prima la saga si chiudeva ROLLED_BACK con lo stub vivo e la riserva rila
   sull'importo richiesto esatto (`active_size_mismatch`); replacement più piccolo dello stake (stub abbinato durante il
   replace) mai ACTIVE (`replacement_size_mismatch`); identità del replacement persistita prima di ogni lettura.
 
+**Review indipendente del diff completo (f1594fb), correzioni:**
+- F1: la saga conserva `stub_bet_id` accanto all'identità del replacement; ROLLED_BACK solo se anche lo stub, riletto
+  per id (correnti o `listClearedOrders`), è a residuo e abbinato zero (`stub_unaccounted` altrimenti);
+- F2: un nuovo esecutore LIVE (nuova sessione Betfair, nuovo client) ripristina subito le riserve delle saghe pendenti;
+- F3: con LIVE non consentito il runtime dichiara SIMULATION; le saghe LIVE pendenti si riprendono comunque in sola
+  protezione sul `BetfairClient` reale della sessione (cancellazione verificata, mai riduzione né replace), senza
+  client restano pendenti e bloccano;
+- identità dello stub accettato e del replacement in TIMEOUT persistite anche quando la lettura successiva fallisce;
+  due ordini vivi con lo stesso ref prima dell'invio ⇒ AMBIGUOUS `existing_customer_ref`, mai FAILED senza ordine.
+
 `resume()` ritenta **entrambe** le riconciliazioni (saghe Microstake e F018) e diventa ACTIVE solo se entrambe
 riescono (rilievo Codex #512: prima ritentava solo F018).
 
@@ -342,6 +352,10 @@ snapshot del broker: finché non riesce, nessuna saga pendente viene promossa (r
 - Preesistente (coordinatore, non introdotto qui): se lo stub si abbina in parte prima della riduzione
   (`stub_matched` / `match_cancel_race`) la sua parte non abbinata non viene cancellata in automatico; la saga resta
   AMBIGUOUS con riserva tenuta per la riconciliazione. Improbabile in LIVE (stub a 1000 / 1.01).
+- Aperti, non bloccanti (fail-closed): uno STOP attivato DURANTE una saga in corso non interrompe la riduzione e il
+  replace di quell'ordine (già autorizzato, pochi istanti); dopo un recovery ACTIVE/ROLLED_BACK la riga ordine nel DB
+  resta AMBIGUOUS e la ricostruzione F018 la tratta come incerta (lato prudente); il ghost detector della
+  riconciliazione non è stato verificato sugli stub durante la saga.
 - Riserva temporanea in-process: due processi sullo stesso DB non condividono il cap temporaneo (la deduplica durevole
   degli intenti impedisce comunque due invii dello stesso ref; l'autorità esclusiva del runtime, #536, impedisce due
   runtime attivi). Riserva durevole cross-process: PR29 (#461), fuori scope.

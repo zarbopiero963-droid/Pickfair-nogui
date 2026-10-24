@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from typing import Any, Callable, Deque, Dict, Optional, Set
+from typing import Any, Callable, Deque, Dict, List, Optional, Set
 
 from circuit_breaker import CircuitBreaker
 from core import stake_precision, validators
@@ -2664,9 +2664,32 @@ class TradingEngine:
         except SagaStoreError as exc:
             return {"ok": False, "status": "STORE_UNREADABLE", "error": str(exc), "pending": [],
                     "results": out.get("results", {})}
+        if other and not live:
+            other = self._protect_pending_live_sagas(DbSagaStore(self.db, LIVE_SAGA_SETTINGS_KEY), SagaStoreError,
+                                                     other)
         if other:
             return dict(out, ok=False, status=f"{'SIM' if live else 'LIVE'}_SAGAS_PENDING", pending=sorted(other))
         return out
+
+    def _protect_pending_live_sagas(self, store: Any, store_error: type, pending: List[str]) -> List[str]:
+        """Saghe LIVE pendenti con LIVE non consentito (il runtime dichiara allora SIMULATION, review F3 su #561):
+        se il `BetfairClient` reale della sessione c'e', si riprendono in SOLA protezione (`entry_allowed=False`, e
+        comunque la policy LIVE non completa mai un ingresso): rilettura e cancellazione verificata degli stub,
+        mai riduzione ne' replace. Senza client restano pendenti e bloccano (fail-closed). Ritorna i ref ancora
+        pendenti."""
+        with self._microstake_executor_lock:
+            executor = self._live_native_microstake_executor()
+        recover = getattr(executor, "recover_pending", None)
+        if not callable(recover):
+            return pending
+        try:
+            recover(entry_allowed=False)
+            return sorted(store.pending_refs())
+        except store_error:
+            return pending
+        except Exception:
+            logger.exception("Microstake LIVE: recovery protettivo fallito")
+            return pending
 
     def _microstake_recovery_entry_allowed(self, live: bool) -> bool:
         """Il recovery puo' portare una saga LIVE al prezzo d'ingresso (riduzione + replace) solo se un invio LIVE
