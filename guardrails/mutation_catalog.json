@@ -3649,6 +3649,18 @@
         "tests/core/test_microstake_live_adapter.py"
       ],
       "rationale": "Review indipendente P3: i Microstake LIVE non alimentano il circuit breaker degli invii."
+    },
+    {
+      "id": "ms_live_cleared_settled_ignored",
+      "module": "core.microstake_live_port",
+      "area": "reconciliation",
+      "file": "core/microstake_live_port.py",
+      "original": "                    matched += _dec(row.get(\"sizeSettled\", 0))",
+      "mutated": "                    matched += D(\"0\")",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Rilievo GPT-6.1 Sol su #561: la quota SETTLED di uno stub in parte abbinato e cancellato viene ignorata, il recovery lo chiude come non abbinato."
     }
   ]
 }

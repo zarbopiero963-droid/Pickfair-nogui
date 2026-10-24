@@ -214,7 +214,9 @@ Stessa saga, stesso esecutore (`NativeLiveMicrostakeExecutor` estende l'esecutor
   status `FAILURE` esplicito (nessun nuovo ordine; la cancellazione già fatta da Betfair resta e il rollback non la
   ripete); `TIMEOUT`, status mancante o `SUCCESS` senza nuovo betId sono esito ignoto, mai un rollback.
 - Lettura per betId (`LiveExchangePort.order`): ordini correnti e, se l'ordine non c'è più, il suo esito in
-  `listClearedOrders` (CANCELLED/LAPSED/VOIDED = nessuna esposizione; SETTLED = abbinato regolato); assente anche lì
+  `listClearedOrders`, letti TUTTI (lo stesso betId può essere CANCELLED per la quota cancellata e SETTLED per quella
+  abbinata: l'abbinato è la somma dei SETTLED, rilievo GPT-6.1 Sol su #561; solo CANCELLED/LAPSED/VOIDED = nessuna
+  esposizione); assente anche lì
   ⇒ identità non dimostrata, fail-closed.
 - `LiveQuoteProvider`: `listMarketBook` con `EX_BEST_OFFERS`; mercato `OPEN` e selezione `ACTIVE` obbligatori;
   qualunque errore di lettura ⇒ nessuna prova ⇒ BLOCKED pre-invio (mai un'eccezione letta come esito ignoto). Uno stub
@@ -230,7 +232,7 @@ Stessa saga, stesso esecutore (`NativeLiveMicrostakeExecutor` estende l'esecutor
   dell'esecutore SIM (mai riusato in SIMULATION). Raggiunto solo dal ramo LIVE dopo `is_live_allowed()` e con lo
   stesso circuit breaker degli invii diretti; l'hedge del cashout usa lo stesso esecutore via `OrderRouter`.
 
-Certificazione offline: `tests/core/test_microstake_live_adapter.py` (64 test), `BetfairClient` reale con il solo
+Certificazione offline: `tests/core/test_microstake_live_adapter.py` (65 test), `BetfairClient` reale con il solo
 trasporto JSON-RPC sostituito da un exchange finto con stato: importi 0,10 · 0,20 · 0,30 · 0,50 · 0,90 (Microstake) e
 1,00 · 1,50 · 2,00 · 5,00 (diretti), BACK e LAY; lotto Dutching misto; fondi insufficienti (cap e rifiuto
 dell'exchange); book sospeso/illeggibile/incrociato; risposte perse su place, cancel e replace; crash del processo dopo

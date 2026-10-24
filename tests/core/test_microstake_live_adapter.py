@@ -529,6 +529,30 @@ def test_stub_lapsed_by_the_exchange_closes_the_saga_without_exposure():
     assert _names(fake).count("placeOrders") == 1
 
 
+def test_stub_partly_matched_then_cancelled_is_never_read_as_unmatched_after_settlement():
+    """Rilievo GPT-6.1 Sol: lo stesso betId puo' comparire in listClearedOrders sia CANCELLED (quota cancellata)
+    sia SETTLED (quota abbinata). L'esito deve sommare l'abbinato regolato, mai fermarsi a CANCELLED con zero."""
+    fake = _FakeBetfair()
+    engine, fake, db = _live_engine(fake)
+    fake.crash.add("placeOrders")
+    with pytest.raises(_Crash):
+        engine.submit_quick_bet(_bet("part", size=0.10))
+    (stub,) = fake.orders.values()
+    # lo stub si abbina per 0.30 e il resto viene cancellato; dopo il settlement non e' piu' fra i correnti
+    stub.update(matched=D("0.30"), remaining=D("0"), cancelled=D("0.70"), status="EXECUTION_COMPLETE")
+    fake.orders.clear()
+    base = {"betId": stub["betId"], "marketId": stub["marketId"], "selectionId": stub["selectionId"],
+            "side": stub["side"], "priceRequested": 1000.0, "customerOrderRef": stub["ref"]}
+    fake._listClearedOrders = lambda params: {"moreAvailable": False, "clearedOrders": {
+        "CANCELLED": [dict(base, sizeCancelled=0.70)],
+        "SETTLED": [dict(base, sizeSettled=0.30, betOutcome="LOSE")]}.get(params["betStatus"], [])}
+    DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).save("part", phase="STUB_ACCEPTED", bet_id=stub["betId"])
+    restarted, _, _ = _live_engine(fake, db=db)
+    out = restarted.recover_native_microstake_sagas()
+    assert out["ok"] is False and out["pending"] == ["part"], out    # abbinato reale: riconciliazione, mai ROLLED_BACK
+    assert DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("part")["phase"] == "AMBIGUOUS"
+
+
 def test_lost_replace_response_with_the_economic_order_already_matched_concludes_active():
     fake = _FakeBetfair()
     engine, fake, db = _live_engine(fake)

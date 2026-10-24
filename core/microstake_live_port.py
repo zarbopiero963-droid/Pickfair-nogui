@@ -98,22 +98,28 @@ class LiveExchangePort:
 
         Un ordine cancellato/lapsato/annullato senza abbinato sparisce dagli ordini correnti: senza questa lettura
         la saga non saprebbe distinguerlo da un ordine non (ancora) visibile e resterebbe pendente per sempre.
-        Lo si restituisce con residuo zero e abbinato zero (nessuna esposizione); SETTLED con l'abbinato regolato.
+        Lo si restituisce con residuo zero; abbinato = somma delle quote SETTLED (zero se nessuna: nessuna esposizione).
         Assente anche li' => KeyError (identita' non dimostrata: il chiamante resta fail-closed)."""
         for row in self._rows():
             if str(row.get("betId")) == str(bet_id):
                 return self._to_order(row)
+        # TUTTI gli esiti: lo stesso betId puo' comparire CANCELLED (quota cancellata) e SETTLED (quota abbinata,
+        # rilievo GPT-6.1 Sol su #561). L'abbinato e' la somma dei SETTLED, mai lo zero del primo esito trovato.
+        found, matched = None, D("0")
         for status in _CLEARED_STATUSES:
             for row in self.client.list_cleared_orders(bet_status=status, bet_ids=[str(bet_id)]) or []:
                 if str(row.get("betId")) != str(bet_id):
                     continue
-                matched = _dec(row.get("sizeSettled", 0)) if status == "SETTLED" else D("0")
-                return SimOrder(
-                    bet_id=str(bet_id), market_id=str(row.get("marketId")),
-                    selection_id=int(row.get("selectionId")), side=Side(str(row.get("side")).upper()),
-                    price=_dec(row.get("priceRequested") or row.get("priceMatched") or 0), size=matched,
-                    matched=matched, remaining=D("0"), customer_ref=str(row.get("customerOrderRef") or ""),
-                )
+                found = found or row
+                if status == "SETTLED":
+                    matched += _dec(row.get("sizeSettled", 0))
+        if found is not None:
+            return SimOrder(
+                bet_id=str(bet_id), market_id=str(found.get("marketId")),
+                selection_id=int(found.get("selectionId")), side=Side(str(found.get("side")).upper()),
+                price=_dec(found.get("priceRequested") or found.get("priceMatched") or 0), size=matched,
+                matched=matched, remaining=D("0"), customer_ref=str(found.get("customerOrderRef") or ""),
+            )
         raise KeyError(bet_id)
 
     @staticmethod
