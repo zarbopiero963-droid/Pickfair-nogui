@@ -47,7 +47,10 @@ Tre interventi. Nessun limite al numero di ordini o mercati, e nessun mercato es
    - non si usa mai con candidati o esclusioni (controllo del singolo ordine);
    - non si usa con registro dei fill corrotto;
    - non memorizza mai un'eccezione;
-   - una chiave con NaN non coincide mai, quindi si ricalcola.
+   - una chiave con un NaN nuovo non coincide, quindi si ricalcola. Lo **stesso** oggetto NaN invece coincide
+     con se stesso, perché il confronto fra tuple controlla prima l'identità, e il memo si riusa. È innocuo:
+     gli oggetti in ingresso sono gli stessi, il calcolo è deterministico e un'eccezione non si memorizza mai.
+     Rettifica della review completa su `699d4b0`.
 
    I mercati regolati escono dal memo, che quindi non cresce con la storia della sessione.
 3. **Id del fill.** `_apply_balance_effect` considera solo gli id che cominciano con il bet_id dell'ordine.
@@ -97,6 +100,7 @@ valgono su questa macchina; non sono un obiettivo né una garanzia per altri car
   - piazzamenti e book da più thread, senza stalli e con fondi finali uguali al riferimento;
   - book non dizionario su un mercato senza esposizione;
   - valori uguali per `==` ma letti in modo diverso (`fill_id` 1.0→1, `bet_id` 1→1.0, `fill_id` None→assente);
+  - NaN: lo stesso oggetto riusa il memo con il risultato del riferimento, un NaN nuovo ricalcola;
   - riuso effettivo del memo nel caso normale, perché una chiave che fallisce sempre farebbe sparire
     l'ottimizzazione in silenzio.
 - **Mutazioni `i543_*` nel catalogo.** Coprono:

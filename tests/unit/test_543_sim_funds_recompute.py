@@ -372,3 +372,31 @@ def test_nel_caso_normale_il_memo_viene_davvero_riusato(monkeypatch):
     monkeypatch.setattr(SimulationBroker, "_esposizione_mercato_locked", conta_esp)
     assert _fondi(b) == atteso
     assert chiamate == {"fill": 0, "esposizione": 0}, chiamate
+
+
+# ----------------------------------------------------------------------------- Phase 0 PF-POST-556 su 699d4b0
+def test_nan_nello_stesso_oggetto_riusa_il_memo_con_lo_stesso_risultato(monkeypatch):
+    """Review completa su 699d4b0: il confronto fra tuple controlla prima l'identita', quindi lo STESSO oggetto
+    NaN coincide con se stesso e il memo si riusa (la doc diceva il contrario). Il riuso e' innocuo: stessi
+    oggetti in ingresso, calcolo deterministico, eccezioni mai memorizzate. Un NaN nuovo invece ricalcola."""
+    from simulation_broker import SimOrder
+    nan = float("nan")
+    esiti = []
+    for b in (SimulationBroker(starting_balance=1000.0), _Riferimento(starting_balance=1000.0)):
+        b.state.orders["N"] = SimOrder(bet_id="N", market_id="M", selection_id=1, side="LAY", price=nan,
+                                       size=5.0, status="EXECUTABLE")
+        esiti.append((_fondi_o_errore(b), _fondi_o_errore(b)))
+    assert esiti[0] == esiti[1], esiti
+    b = SimulationBroker(starting_balance=1000.0)
+    b.state.orders["N"] = SimOrder(bet_id="N", market_id="M", selection_id=1, side="LAY", price=nan, size=5.0,
+                                   status="EXECUTABLE")
+    b.get_account_funds()
+    chiamate = []
+    originale = SimulationBroker._esposizione_mercato_locked
+    monkeypatch.setattr(SimulationBroker, "_esposizione_mercato_locked",
+                        lambda self, *a, **k: chiamate.append(1) or originale(self, *a, **k))
+    b.get_account_funds()
+    assert chiamate == []                              # stesso oggetto NaN: memo riusato
+    b.state.orders["N"].price = float("nan")           # NaN nuovo: la chiave non coincide piu'
+    b.get_account_funds()
+    assert chiamate                                    # ricalcolo
