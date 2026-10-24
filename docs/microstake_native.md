@@ -232,11 +232,14 @@ Stessa saga, stesso esecutore (`NativeLiveMicrostakeExecutor` estende l'esecutor
   dell'esecutore SIM (mai riusato in SIMULATION). Raggiunto solo dal ramo LIVE dopo `is_live_allowed()` e con lo
   stesso circuit breaker degli invii diretti; l'hedge del cashout usa lo stesso esecutore via `OrderRouter`.
 
-Certificazione offline: `tests/core/test_microstake_live_adapter.py` (65 test), `BetfairClient` reale con il solo
+Certificazione offline: `tests/core/test_microstake_live_adapter.py` (93 test), `BetfairClient` reale con il solo
 trasporto JSON-RPC sostituito da un exchange finto con stato: importi 0,10 · 0,20 · 0,30 · 0,50 · 0,90 (Microstake) e
 1,00 · 1,50 · 2,00 · 5,00 (diretti), BACK e LAY; lotto Dutching misto; fondi insufficienti (cap e rifiuto
 dell'exchange); book sospeso/illeggibile/incrociato; risposte perse su place, cancel e replace; crash del processo dopo
-place, cancel e replace con recovery idempotente su riavvii ripetuti e nessun duplicato; concorrenza fra ingresso e
+place, cancel e replace con recovery idempotente su riavvii ripetuti e nessun duplicato (casi A-D della decisione
+owner, BACK e LAY); rollback con cancellazione non confermata in cinque forme (P1); store corrotto; due processi sullo
+stesso DB; multi-tavolo con ordini Microstake e diretti; difese della porta e del coordinatore provate ciascuna da
+sola; concorrenza fra ingresso e
 hedge con il cap temporaneo; rollback su replace rifiutato; circuit breaker; gate LIVE; doppio del client; policy/porta
 non coerenti; payload e rifiuti pre-invio del `BetfairClient`. Prova di logica e contratto, **non di accettazione
 Betfair**.
@@ -278,6 +281,35 @@ Chiusure del recovery (review indipendente della RECTIFICATION-01, comuni a SIM 
 - importo dello stub persistito nella saga (`stub_size`): una saga pendente creata con lo stub da 2 EUR (prima della
   RECTIFICATION-01, campo assente ⇒ 2,00) viene ridotta dallo stub che ha davvero piazzato.
 
+**Recovery LIVE dopo crash o riavvio — decisione owner PF-561-LIVE-MICROSTAKE-P1-HARDENING-01 §4 (ratificata,
+implementata in `MicrostakeCoordinator.recover`):** in LIVE il recovery **non completa mai** un vecchio ingresso dalla
+sola saga persistita (PF-EXEC-06, PF-OD12: il segnale potrebbe non essere più valido). La differenza con la SIM è
+intenzionale: in SIM la saga si completa come approvato con #512.
+- **Caso A** (stub intero o ridotto, ingresso non completato): nessun replace al target; cancellazione dell'intero
+  residuo, verificata rileggendo l'ordine; ROLLED_BACK solo a residuo zero.
+- **Caso B** (ordine richiesto già sull'exchange: prezzo target e importo esatto, trovato per ref o per l'identità
+  del replacement persistita): riconciliato ACTIVE, nessun secondo ordine, nessuna cancellazione della posizione.
+- **Caso C** (non dimostrabile cosa esiste): AMBIGUOUS con riserva tenuta, nessun PLACE ne' replace, nuovi ingressi
+  bloccati dal recovery non ok.
+- **Caso D** (quota abbinata): residuo cancellato, abbinato conservato e contabilizzato (AMBIGUOUS `rollback_matched`
+  con riserva tenuta), mai un rollback totale.
+In più, in ogni modalità, con `is_live_allowed()` falso o uno STOP attivo il recovery non riprezza mai (rilievo Codex
+P1 su #561).
+
+**Rollback verificato (P1 del mandato PF-561, riprodotto e corretto):** `BetfairClient.cancel_orders` torna `ok=True`
+anche con l'istruzione fallita (`PROCESSED_WITH_ERRORS`, report `FAILURE`, `TIMEOUT`, report assente o di un altro
+betId). Prima la saga si chiudeva ROLLED_BACK con lo stub vivo e la riserva rilasciata. Ora:
+- `LiveExchangePort.cancel_all_remaining` prende come prova la **rilettura** dell'ordine (correnti, poi
+  `listClearedOrders`): residuo positivo ⇒ `CANCEL_NOT_CONFIRMED`; rilettura impossibile ⇒ esito ignoto; residuo già
+  zero (anche dopo una risposta persa) ⇒ nessun secondo invio;
+- la riduzione (`cancel_reduction`) è confermata solo dal report SUCCESS della propria istruzione; TIMEOUT, report
+  assente o contraddittorio ⇒ esito ignoto, mai ripetuta;
+- una riga di `listCurrentOrders` senza `sizeRemaining`/`sizeMatched` non è un residuo zero (`CURRENT_ORDER_INCOMPLETE`);
+- **invarianti del coordinatore**, indipendenti dalla porta: ROLLED_BACK mai con residuo eseguibile
+  (`rollback_residual_open`, ROLLBACK_PENDING con riserva tenuta) né con abbinato (`rollback_matched`); ACTIVE solo
+  sull'importo richiesto esatto (`active_size_mismatch`); replacement più piccolo dello stake (stub abbinato durante il
+  replace) mai ACTIVE (`replacement_size_mismatch`); identità del replacement persistita prima di ogni lettura.
+
 `resume()` ritenta **entrambe** le riconciliazioni (saghe Microstake e F018) e diventa ACTIVE solo se entrambe
 riescono (rilievo Codex #512: prima ritentava solo F018).
 
@@ -310,10 +342,9 @@ snapshot del broker: finché non riesce, nessuna saga pendente viene promossa (r
 - Preesistente (coordinatore, non introdotto qui): se lo stub si abbina in parte prima della riduzione
   (`stub_matched` / `match_cancel_race`) la sua parte non abbinata non viene cancellata in automatico; la saga resta
   AMBIGUOUS con riserva tenuta per la riconciliazione. Improbabile in LIVE (stub a 1000 / 1.01).
-- **Decisione owner aperta (non implementata):** al riavvio il recovery completa una saga interrotta fino al prezzo
-  target (riduzione e replace), cioè porta a termine l'ordine richiesto senza rivalidare il segnale. È il
-  comportamento SIM già approvato (#512); in LIVE va confrontato con PF-EXEC-06 e PF-OD12 (segnali validati prima
-  dell'esecuzione). Alternativa possibile: al riavvio in LIVE solo rollback dello stub.
+- Riserva temporanea in-process: due processi sullo stesso DB non condividono il cap temporaneo (la deduplica durevole
+  degli intenti impedisce comunque due invii dello stesso ref; l'autorità esclusiva del runtime, #536, impedisce due
+  runtime attivi). Riserva durevole cross-process: PR29 (#461), fuori scope.
 - Riserva transitoria in-process (MS-NI-004 Codex): non è un'autorità finanziaria multi-processo.
 - `customer_ref` del cashout = `source` del comando (non unico): il router genera un ref proprio per la saga
   (`raw["microstake_ref"]`); il cashout non ritenta mai un esito AMBIGUO. Mitigazione fail-closed (ciclo 4 #512):

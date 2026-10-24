@@ -3571,8 +3571,8 @@
       "module": "core.microstake_live_port",
       "area": "ambiguous",
       "file": "core/microstake_live_port.py",
-      "original": "        if status == \"FAILURE\":",
-      "mutated": "        if status != \"SUCCESS\":",
+      "original": "        if status == \"FAILURE\":\n            # Rifiuto ESPLICITO",
+      "mutated": "        if status != \"SUCCESS\":\n            # Rifiuto ESPLICITO",
       "tests": [
         "tests/core/test_microstake_live_adapter.py"
       ],
@@ -3607,7 +3607,7 @@
       "module": "core.microstake_safe",
       "area": "recovery",
       "file": "core/microstake_safe.py",
-      "original": "        if stub_gone and order.matched == 0:",
+      "original": "        if (stub_gone or replacement_gone) and order.matched == 0:",
       "mutated": "        if False:",
       "tests": [
         "tests/core/test_microstake_live_adapter.py"
@@ -3661,6 +3661,114 @@
         "tests/core/test_microstake_live_adapter.py"
       ],
       "rationale": "Rilievo GPT-6.1 Sol su #561: la quota SETTLED di uno stub in parte abbinato e cancellato viene ignorata, il recovery lo chiude come non abbinato."
+    },
+    {
+      "id": "ms_live_cancel_unverified",
+      "module": "core.microstake_live_port",
+      "area": "reconciliation",
+      "file": "core/microstake_live_port.py",
+      "original": "        if after.remaining > 0:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "P1 PF-561: rollback accettato senza verificare che il residuo sia davvero cancellato."
+    },
+    {
+      "id": "ms_live_reduce_status_unverified",
+      "module": "core.microstake_live_port",
+      "area": "ambiguous",
+      "file": "core/microstake_live_port.py",
+      "original": "        if status != \"SUCCESS\":\n            # TIMEOUT, report assente",
+      "mutated": "        if False:\n            # TIMEOUT, report assente",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "PF-561 §3A: riduzione con report TIMEOUT/assente trattata come confermata."
+    },
+    {
+      "id": "ms_live_row_missing_remaining",
+      "module": "core.microstake_live_port",
+      "area": "reconciliation",
+      "file": "core/microstake_live_port.py",
+      "original": "        if row.get(\"sizeRemaining\") is None or row.get(\"sizeMatched\") is None:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Audit PF-561 §6: riga senza sizeRemaining letta come residuo zero."
+    },
+    {
+      "id": "ms_saga_rollback_with_residual",
+      "module": "core.microstake_safe",
+      "area": "recovery",
+      "file": "core/microstake_safe.py",
+      "original": "        if phase is Phase.ROLLED_BACK and order.remaining > 0:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "P1 PF-561 §3C: il coordinatore chiude ROLLED_BACK con un residuo eseguibile sull'exchange."
+    },
+    {
+      "id": "ms_saga_active_size_unverified",
+      "module": "core.microstake_safe",
+      "area": "exposure",
+      "file": "core/microstake_safe.py",
+      "original": "        if phase is Phase.ACTIVE and order.matched + order.remaining != req.economic_stake:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "PF-561 §3C: ACTIVE dichiarato su un importo diverso da quello richiesto."
+    },
+    {
+      "id": "ms_saga_live_recovery_completes_entry",
+      "module": "core.microstake_safe",
+      "area": "recovery",
+      "file": "core/microstake_safe.py",
+      "original": "        if self.policy.live_adapter:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Decisione owner PF-561 §4: in LIVE il recovery completa un vecchio ingresso dalla sola saga persistita."
+    },
+    {
+      "id": "ms_saga_entry_gate_ignored",
+      "module": "core.microstake_safe",
+      "area": "live_safety",
+      "file": "core/microstake_safe.py",
+      "original": "        if not entry_allowed and not rollback_intent:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Rilievo Codex P1 su #561: recovery che riprezza lo stub a ingressi bloccati."
+    },
+    {
+      "id": "ms_saga_replacement_size_unverified",
+      "module": "core.microstake_safe",
+      "area": "exposure",
+      "file": "core/microstake_safe.py",
+      "original": "        if order.matched + order.remaining != req.economic_stake:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Rilievo Codex P1 su #561: replacement piu' piccolo dello stake (stub abbinato durante il replace) dichiarato ACTIVE."
+    },
+    {
+      "id": "ms_saga_replacement_id_unused",
+      "module": "core.microstake_safe",
+      "area": "recovery",
+      "file": "core/microstake_safe.py",
+      "original": "        if order is None and not rollback_intent and saved.get(\"replacement_bet_id\"):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Rilievo Codex P2 su #561: identita' del replacement persistita ma non usata dal recovery."
     }
   ]
 }

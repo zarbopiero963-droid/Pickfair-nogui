@@ -2655,7 +2655,8 @@ class TradingEngine:
             store = DbSagaStore(self.db, LIVE_SAGA_SETTINGS_KEY if live else SAGA_SETTINGS_KEY)
         except TypeError:
             return {"ok": True, "status": "NO_STORE", "pending": [], "results": {}}
-        out = self._recover_microstake_store(store, SagaStoreError)
+        out = self._recover_microstake_store(store, SagaStoreError,
+                                             entry_allowed=self._microstake_recovery_entry_allowed(live))
         if not out.get("ok"):
             return out                       # gia' fail-closed: nessun nuovo ingresso
         try:
@@ -2667,7 +2668,26 @@ class TradingEngine:
             return dict(out, ok=False, status=f"{'SIM' if live else 'LIVE'}_SAGAS_PENDING", pending=sorted(other))
         return out
 
-    def _recover_microstake_store(self, store: Any, store_error: type) -> Dict[str, Any]:
+    def _microstake_recovery_entry_allowed(self, live: bool) -> bool:
+        """Il recovery puo' portare una saga LIVE al prezzo d'ingresso (riduzione + replace) solo se un invio LIVE
+        sarebbe consentito ORA: `is_live_allowed()` e nessuno STOP/emergenza (rilievo Codex P1 su #561: prima il
+        recovery riprezzava anche a LIVE bloccato). Altrimenti solo lettura e cancellazione protettiva. Lettura
+        impossibile => non consentito (fail-closed). SIM invariata."""
+        if not live:
+            return True
+        runtime = self.runtime_controller
+        try:
+            if not bool(getattr(runtime, "is_live_allowed", lambda: False)()):
+                return False
+            entry_blocked = getattr(runtime, "_daily_loss_entry_blocked", None)
+            if callable(entry_blocked):
+                return not bool(entry_blocked())
+            return getattr(runtime, "is_emergency_stopped", False) is not True
+        except Exception:
+            logger.exception("Microstake LIVE: stato degli ingressi non leggibile, recovery solo protettivo")
+            return False
+
+    def _recover_microstake_store(self, store: Any, store_error: type, *, entry_allowed: bool = True) -> Dict[str, Any]:
         """Riconciliazione delle saghe pendenti di UNO store con l'esecutore della modalita' corrente."""
         SagaStoreError = store_error
         try:
@@ -2680,7 +2700,7 @@ class TradingEngine:
         recover = getattr(executor, "recover_pending", None)
         if not callable(recover):
             return {"ok": False, "status": "NO_EXECUTOR", "pending": pending, "results": {}}
-        results = recover()
+        results = recover() if entry_allowed else recover(entry_allowed=False)
         # Rilievo Codex #512 ciclo 9 (r4307328204): ROLLED_BACK e' terminale (rollback completato) e non va
         # trattato come pendente. Doppia condizione: esito riconciliato dall'esecutore E ref non piu' pendente
         # nello store durevole (riletto); ogni altro esito (AMBIGUOUS, FAILED, BLOCKED, ERROR:*) resta pendente.

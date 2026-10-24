@@ -46,6 +46,27 @@ _DEAD_STATUSES = frozenset({"EXECUTION_COMPLETE"})
 _CLEARED_STATUSES = ("CANCELLED", "LAPSED", "VOIDED", "SETTLED")
 
 
+def _report_for(result: Any, bet_id: str) -> Optional[Dict[str, Any]]:
+    """Report dell'istruzione che riguarda `bet_id` (CancelInstructionReport: `instruction.betId`; o `betId`).
+    Un solo report senza identita' e' accettato come quello dell'unica istruzione inviata; un report che nomina un
+    ALTRO betId, o piu' report ambigui, => None (risposta contraddittoria: nessuna prova)."""
+    reports = (result or {}).get("instructionReports") if isinstance(result, dict) else None
+    if not isinstance(reports, list) or not reports:
+        return None
+    named = []
+    for rep in reports:
+        if not isinstance(rep, dict):
+            return None
+        rid = str((rep.get("instruction") or {}).get("betId") or rep.get("betId") or "")
+        named.append((rid, rep))
+    exact = [rep for rid, rep in named if rid == str(bet_id)]
+    if len(exact) == 1:
+        return exact[0]
+    if len(named) == 1 and not named[0][0]:
+        return named[0][1]
+    return None
+
+
 def _first_report(result: Any) -> Dict[str, Any]:
     reports = (result or {}).get("instructionReports") if isinstance(result, dict) else None
     return reports[0] if isinstance(reports, list) and reports and isinstance(reports[0], dict) else {}
@@ -79,8 +100,12 @@ class LiveExchangePort:
         """Riga di listCurrentOrders => ordine della saga. `size` = abbinato + residuo (la parte cancellata non e'
         piu' esposizione); `remaining` = `sizeRemaining` di Betfair, autorevole."""
         ps = row.get("priceSize") or {}
-        matched = _dec(row.get("sizeMatched", 0))
-        remaining = _dec(row.get("sizeRemaining", 0))
+        # Campi OBBLIGATORI: un `sizeRemaining` mancante letto come zero farebbe sparire un residuo vivo (rollback
+        # dichiarato con l'ordine eseguibile). Riga incompleta => ValueError, nessuna prova (audit PF-561 §6).
+        if row.get("sizeRemaining") is None or row.get("sizeMatched") is None:
+            raise ValueError("CURRENT_ORDER_INCOMPLETE: sizeRemaining/sizeMatched mancanti")
+        matched = _dec(row.get("sizeMatched"))
+        remaining = _dec(row.get("sizeRemaining"))
         if matched < 0 or remaining < 0:
             raise ValueError("ordine con importi negativi")
         return SimOrder(
@@ -214,8 +239,14 @@ class LiveExchangePort:
             self.operation_log.append(("CANCEL", bet_id, str(reduction)))
             raise LostResponse(f"cancel outcome unknown: {type(exc).__name__}") from exc
         self.operation_log.append(("CANCEL", bet_id, str(reduction)))
-        if str(_first_report(res).get("status")).upper() != "SUCCESS":
-            raise RuntimeError("INVALID_SIZE_REDUCTION")
+        report = _report_for(res, bet_id)
+        status = str((report or {}).get("status") or "").upper()
+        if status == "FAILURE":
+            raise RuntimeError(f"INVALID_SIZE_REDUCTION:{(report or {}).get('errorCode') or ''}")
+        if status != "SUCCESS":
+            # TIMEOUT, report assente o contraddittorio (PROCESSED_WITH_ERRORS senza esito per questo betId): la
+            # riduzione puo' essere avvenuta o no. Mai ripetuta: esito ignoto, decide la riconciliazione.
+            raise LostResponse(f"reduction outcome unknown: status={status or 'missing'}")
         try:
             return self.order(bet_id)
         except Exception as exc:
@@ -247,17 +278,33 @@ class LiveExchangePort:
         try:
             return self.order(new_id)
         except Exception as exc:
-            raise LostResponse(f"replace accepted but post-replace read failed: {type(exc).__name__}") from exc
+            # Replace ACCETTATO con betId noto: l'identita' viaggia con l'eccezione e la saga la persiste.
+            raise LostResponse(f"replace accepted but post-replace read failed: {type(exc).__name__}",
+                               bet_id=new_id) from exc
 
     def cancel_all_remaining(self, bet_id: str) -> SimOrder:
+        """Cancellazione del residuo per il rollback. La PROVA e' la rilettura dell'ordine, non la risposta:
+        `BetfairClient.cancel_orders` torna ok=True anche con l'istruzione fallita (PROCESSED_WITH_ERRORS, report
+        FAILURE, TIMEOUT), mandato PF-561-LIVE-MICROSTAKE-P1-HARDENING-01. Residuo ancora positivo =>
+        CANCEL_NOT_CONFIRMED; rilettura impossibile => esito ignoto. Mai un secondo invio cieco: se la rilettura
+        mostra residuo zero (anche dopo una risposta persa) non si cancella di nuovo."""
         current = self.order(bet_id)
         if current.remaining == 0:
             return current                      # niente da cancellare (es. replace che ha gia' cancellato lo stub)
-        res = self.client.cancel_orders(market_id=current.market_id, bet_ids=[bet_id])
+        try:
+            res = self.client.cancel_orders(market_id=current.market_id, bet_ids=[bet_id])
+        except Exception as exc:                # esito ignoto: decide la rilettura
+            res = {"ok": False, "error": type(exc).__name__}
         self.operation_log.append(("CANCEL", bet_id, str(current.remaining)))
-        if not isinstance(res, dict) or res.get("ok") is not True:
-            raise RuntimeError("CANCEL_REJECTED")
-        return self.order(bet_id)               # dagli ordini correnti o dal suo esito (listClearedOrders)
+        report = _report_for((res or {}).get("result") if isinstance(res, dict) else None, bet_id)
+        try:
+            after = self.order(bet_id)          # dagli ordini correnti o dal suo esito (listClearedOrders)
+        except Exception as exc:
+            raise LostResponse(f"cancel outcome unknown: post-cancel read failed: {type(exc).__name__}") from exc
+        if after.remaining > 0:
+            status = str((report or {}).get("status") or (res or {}).get("error") or "missing").upper()
+            raise RuntimeError(f"CANCEL_NOT_CONFIRMED:{status}:{after.remaining}")
+        return after
 
 
 class LiveQuoteProvider:

@@ -26,6 +26,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     da `listClearedOrders` per gli ordini spariti; recovery che chiude lo stub sparito senza abbinato, attiva
     l'ordine richiesto già abbinato, riparte da una saga FAILED senza ordine e usa l'importo dello stub persistito
     (saghe da 2 EUR precedenti); il Microstake LIVE alimenta il circuit breaker.
+  - Mandato owner PF-561-LIVE-MICROSTAKE-P1-HARDENING-01: rollback dichiarato solo con la rilettura dell'ordine a
+    residuo zero (P1 riprodotto: `cancel_orders` ok=True con l'istruzione fallita chiudeva ROLLED_BACK con lo stub
+    vivo); invarianti del coordinatore su ROLLED_BACK/ACTIVE; recovery LIVE che non completa mai un vecchio ingresso
+    (casi A-D, SIM invariata); rilievi Codex (recovery senza gate LIVE, replace con stub abbinato, identità del
+    replacement) corretti.
   - Test con la vecchia soglia riallineati a 1,00/0,99. LIVE resta NO-GO: nessun ordine reale, accettazione Betfair
     da verificare nel collaudo (elenco in `docs/microstake_native.md` §6).
 - **PF-STAKE-PRECISION-MICROSTAKE-01 / -FINAL-01 — stake per difetto al centesimo, Microstake preservato (decisione

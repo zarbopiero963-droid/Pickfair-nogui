@@ -65,7 +65,12 @@ class ExecutionKind(str, Enum):
 
 
 class LostResponse(RuntimeError):
-    pass
+    """Esito ignoto dopo un invio. `bet_id`: identita' gia' nota dell'ordine creato (es. replace accettato con la
+    lettura successiva fallita), da persistire perche' il recovery lo ritrovi per id (rilievo Codex P2 su #561)."""
+
+    def __init__(self, message: str = "", *, bet_id: str = "") -> None:
+        super().__init__(message)
+        self.bet_id = str(bet_id or "")
 
 
 @dataclass(frozen=True)
@@ -550,7 +555,8 @@ class MicrostakeCoordinator:
         try:
             order = self.exchange.replace(order.bet_id, req.target_price)
         except LostResponse as exc:
-            self.store.save(req.customer_ref, phase=Phase.AMBIGUOUS, reason=str(exc))
+            self.store.save(req.customer_ref, phase=Phase.AMBIGUOUS, reason=str(exc),
+                            **self._replacement_identity(exc))
             return self._result(Phase.AMBIGUOUS, req=req, reason="replace_outcome_unknown",
                                 order=order, max_exposure=transient, held=True)
         except Exception as exc:
@@ -570,6 +576,25 @@ class MicrostakeCoordinator:
                                     order=order, max_exposure=transient, held=True)
             return self._terminal_or_ambiguous(req.customer_ref, req, Phase.ROLLED_BACK, order, transient,
                                                reason="replace_failed")
+        return self._after_replace(req.customer_ref, req, order, transient)
+
+    @staticmethod
+    def _replacement_identity(exc: BaseException) -> dict[str, Any]:
+        bet_id = str(getattr(exc, "bet_id", "") or "")
+        return {"replacement_bet_id": bet_id} if bet_id else {}
+
+    def _after_replace(self, customer_ref: str, req: MicrostakeRequest, order: SimOrder,
+                       transient: Decimal) -> MicrostakeResult:
+        """Replace accettato: identita' del nuovo ordine persistita PRIMA di qualunque altra decisione, poi verifica
+        dell'importo. Betfair rimette solo il RESIDUO: se lo stub si e' abbinato in parte durante il replace, il nuovo
+        ordine e' piu' piccolo dello stake richiesto e l'abbinato resta sul vecchio betId (rilievo Codex P1 su #561).
+        Mai ACTIVE in quel caso: AMBIGUOUS con riserva tenuta, riconciliazione."""
+        self.store.save(customer_ref, bet_id=order.bet_id, replacement_bet_id=order.bet_id)
+        if order.matched + order.remaining != req.economic_stake:
+            self.store.save(customer_ref, phase=Phase.AMBIGUOUS, reservation_held=True,
+                            reason="replacement_size_mismatch")
+            return self._result(Phase.AMBIGUOUS, req=req, reason="replacement_size_mismatch",
+                                order=order, max_exposure=transient, held=True)
         return self._activate(req, order, transient)
 
     @staticmethod
@@ -607,6 +632,20 @@ class MicrostakeCoordinator:
         riconciliata al riavvio: una fase terminale persistita PRIMA della retrocessione lascerebbe,
         in caso di crash, una saga conclusa fuori da `pending_refs` sopra uno stato ricaricato senza
         l'ordine (riesame indipendente del ciclo 8 #512 sul rilievo r4306954173)."""
+        if phase is Phase.ROLLED_BACK and order.remaining > 0:
+            # Invariante del coordinatore (mandato PF-561-LIVE-MICROSTAKE-P1-HARDENING-01), indipendente dalla
+            # porta: un residuo eseguibile ancora sull'exchange non e' mai un rollback. Riserva tenuta, rollback
+            # durevole: il recover successivo rilegge e ritenta SOLO la cancellazione.
+            self.store.save(customer_ref, phase=Phase.ROLLBACK_PENDING, rollback_intent=True, bet_id=order.bet_id,
+                            reservation_held=True, reason="rollback_residual_open")
+            return self._result(Phase.AMBIGUOUS, req=req, reason="rollback_residual_open",
+                                order=order, max_exposure=transient, held=True)
+        if phase is Phase.ACTIVE and order.matched + order.remaining != req.economic_stake:
+            # ACTIVE solo sull'importo richiesto esatto (abbinato + residuo): altrimenti esposizione da riconciliare.
+            self.store.save(customer_ref, phase=Phase.AMBIGUOUS, bet_id=order.bet_id, reservation_held=True,
+                            reason="active_size_mismatch")
+            return self._result(Phase.AMBIGUOUS, req=req, reason="active_size_mismatch",
+                                order=order, max_exposure=transient, held=True)
         if phase is Phase.ROLLED_BACK and order.matched > 0:
             # Lo stub si e' abbinato (anche in parte) prima della cancellazione di rollback: esiste uno stake
             # reale. ROLLED_BACK verrebbe registrato FAILED dall'engine, che libera tavolo e chiave: mai.
@@ -630,7 +669,20 @@ class MicrostakeCoordinator:
         microstake riuscito consumerebbe per sempre l'importo dello stub di cap (rilievo Codex PR #512)."""
         return self._terminal_or_ambiguous(req.customer_ref, req, Phase.ACTIVE, order, transient)
 
-    def recover(self, customer_ref: str) -> MicrostakeResult:
+    def recover(self, customer_ref: str, *, entry_allowed: bool = True) -> MicrostakeResult:
+        """Riprende una saga non conclusa dalla sua identita' persistita.
+
+        `entry_allowed=False` (LIVE non consentito o STOP attivo, rilievo Codex P1 su #561): nessuna riduzione ne'
+        replace, cioe' nessun ordine portato al prezzo d'ingresso; restano la lettura e la cancellazione protettiva
+        dello stub (rollback durevole).
+
+        LIVE (decisione owner PF-561-LIVE-MICROSTAKE-P1-HARDENING-01 §4): il recovery NON completa mai un vecchio
+        ingresso dalla sola saga persistita, a prescindere da `entry_allowed`. Ordine richiesto gia' presente
+        (prezzo target, importo esatto) => riconciliato ACTIVE; stub (anche ridotto) => cancellazione verificata e
+        ROLLED_BACK solo a residuo zero; quota abbinata => conservata (AMBIGUOUS `rollback_matched`); stato non
+        dimostrabile => AMBIGUOUS. SIM invariata (#512): completa la saga."""
+        if self.policy.live_adapter:
+            entry_allowed = False
         saved = self.store.load(customer_ref)
         if not saved:
             raise KeyError(customer_ref)
@@ -665,6 +717,17 @@ class MicrostakeCoordinator:
                 by_id = None
             if by_id is not None and by_id.remaining == 0:
                 order = by_id
+        replacement_gone = False
+        if order is None and not rollback_intent and saved.get("replacement_bet_id"):
+            # Replace accettato con identita' nota (persistita): il nuovo ordine si cerca per id, anche fra gli esiti
+            # di listClearedOrders, invece di dipendere dal riferimento conservato o meno dal replace.
+            try:
+                by_id = self.exchange.order(str(saved["replacement_bet_id"]))
+            except Exception:
+                by_id = None
+            if by_id is not None:
+                order = by_id
+                replacement_gone = by_id.remaining == 0 and by_id.matched == 0
         stub_gone = False
         if order is None and not rollback_intent and saved.get("bet_id") and saved.get("replace_sent") is not True:
             # Stub piazzato (betId noto) e MAI sostituito: se non e' piu' fra gli ordini correnti si legge il suo
@@ -690,15 +753,20 @@ class MicrostakeCoordinator:
             self.exchange.release_reservation(customer_ref)
             return self._result(phase, req=req, order=order,
                                 max_exposure=transient, held=False)
-        if stub_gone and order.matched == 0:
+        if (stub_gone or replacement_gone) and order.matched == 0:
             return self._terminal_or_ambiguous(customer_ref, req, Phase.ROLLED_BACK, order, transient,
-                                               reason="stub_gone_unmatched")
+                                               reason="stub_gone_unmatched" if stub_gone else "replacement_gone_unmatched")
         if (not rollback_intent and order.price == req.target_price
                 and order.matched + order.remaining == req.economic_stake):
             # E' l'ordine richiesto: prezzo target e importo esatto (dopo riduzione e, se serviva, replace), anche se
             # gia' abbinato. Mai "stub abbinato" pendente per sempre su un ordine che e' il risultato voluto
             # (review indipendente, P2: in LIVE il replace c'e' sempre e l'ordine finale si abbina subito).
             return self._activate(req, order, transient)
+        if not entry_allowed and not rollback_intent:
+            # Ingressi bloccati: la saga non viene completata ma annullata (durevole: anche a ingressi riaperti il
+            # recover successivo completa solo la cancellazione).
+            rollback_intent = True
+            self.store.save(customer_ref, phase=Phase.ROLLBACK_PENDING, rollback_intent=True, reason="entry_blocked")
         # Resume only through execute's idempotent reconciliation path.  An
         # accepted stub is never placed again.
         # Con rollback deciso il residuo si cancella PRIMA di classificare l'abbinato: un abbinamento parziale
@@ -739,11 +807,11 @@ class MicrostakeCoordinator:
         self.store.save(customer_ref, replace_sent=True)
         try:
             order = self.exchange.replace(order.bet_id, req.target_price)
-        except Exception:
-            self.store.save(customer_ref, phase=Phase.AMBIGUOUS)
+        except Exception as exc:
+            self.store.save(customer_ref, phase=Phase.AMBIGUOUS, **self._replacement_identity(exc))
             return self._result(Phase.AMBIGUOUS, req=req, reason="recovery_replace_unknown",
                                 order=order, max_exposure=transient, held=True)
-        return self._activate(req, order, transient)
+        return self._after_replace(customer_ref, req, order, transient)
 
     @staticmethod
     def _request_json(req: MicrostakeRequest) -> dict[str, Any]:

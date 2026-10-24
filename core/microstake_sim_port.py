@@ -423,7 +423,7 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
             pass
         return Decimal("Infinity")
 
-    def recover_pending(self) -> Dict[str, str]:
+    def recover_pending(self, *, entry_allowed: bool = True) -> Dict[str, str]:
         """Riconciliazione all'avvio: ogni saga non conclusa viene ripresa dalla sua identita' persistita.
         Prima si persiste lo snapshot del broker: se la fonte di reload non si riesce ad allineare allo stato in
         memoria, nessuna saga viene promossa (restano AMBIGUOUS/pendenti; un crash successivo ricaricherebbe uno
@@ -452,7 +452,7 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
             return {ref: Phase.AMBIGUOUS.value for ref in pending}
         for ref in pending:
             try:
-                out[ref] = self.coordinator.recover(ref).phase.value
+                out[ref] = self.coordinator.recover(ref, entry_allowed=entry_allowed).phase.value
             except Exception as exc:  # noqa: BLE001 - riportato, mai nascosto
                 out[ref] = f"ERROR:{type(exc).__name__}"
         return out

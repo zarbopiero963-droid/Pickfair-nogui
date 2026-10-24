@@ -553,6 +553,145 @@ def test_stub_partly_matched_then_cancelled_is_never_read_as_unmatched_after_set
     assert DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("part")["phase"] == "AMBIGUOUS"
 
 
+class _CancelSilentlyFails(_FakeBetfair):
+    """cancelOrders dell'intero ordine (senza sizeReduction) che non cancella nulla: risposta configurabile."""
+
+    def __init__(self, response, **kw):
+        super().__init__(**kw)
+        self.cancel_response = response
+
+    def _cancelOrders(self, params):
+        if any("sizeReduction" in ins for ins in params["instructions"]):
+            return super()._cancelOrders(params)
+        return self.cancel_response
+
+
+@pytest.mark.parametrize("response", [
+    {"status": "SUCCESS", "instructionReports": [{"status": "FAILURE", "errorCode": "ERROR_IN_ORDER"}]},
+    {"status": "PROCESSED_WITH_ERRORS", "instructionReports": [{"status": "FAILURE", "errorCode": "ERROR_IN_ORDER"}]},
+    {"status": "TIMEOUT", "instructionReports": [{"status": "TIMEOUT"}]},
+    {"status": "SUCCESS", "instructionReports": []},
+    {"status": "SUCCESS", "instructionReports": [{"status": "SUCCESS", "sizeCancelled": 0.1,
+                                                  "instruction": {"betId": "999"}}]},          # report contraddittorio
+], ids=["success-instruction-failure", "processed-with-errors", "timeout", "no-report", "other-bet"])
+def test_rollback_is_never_declared_while_a_residual_stays_on_the_exchange(response):
+    """P1 del mandato PF-561-LIVE-MICROSTAKE-P1-HARDENING-01: `cancel_orders` puo' tornare ok=True con l'istruzione
+    fallita. ROLLED_BACK (riserva rilasciata) solo con la prova che non resta residuo eseguibile."""
+    fake = _CancelSilentlyFails(response)
+    fake.reject_replace = True                                   # replace rifiutato => rollback dello stub
+    engine, fake, db = _live_engine(fake)
+    res = engine.submit_quick_bet(_bet("p1", size=0.10))
+    assert res["ok"] is False and res["status"] == "AMBIGUOUS", res
+    saga = DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("p1")
+    assert saga["phase"] in ("ROLLBACK_PENDING", "AMBIGUOUS") and saga["phase"] != "ROLLED_BACK", saga
+    assert engine._live_microstake_executor.port.has_reservation("p1"), "riserva rilasciata con lo stub vivo"
+    assert [o["remaining"] for o in fake.live()] == [D("0.10")], "lo stub e' davvero ancora sull'exchange"
+    assert DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).pending_refs() == ["p1"]
+
+
+def test_rollback_after_a_lost_cancel_response_is_verified_never_resent_blindly():
+    fake = _FakeBetfair()
+    fake.reject_replace = True
+    engine, fake, db = _live_engine(fake)
+    real = fake._cancelOrders
+
+    def lost(params):                                           # cancellazione APPLICATA, risposta persa
+        if not any("sizeReduction" in ins for ins in params["instructions"]):
+            real(params)
+            raise RuntimeError("REQUEST_FAILED: TIMEOUT")
+        return real(params)
+    fake._cancelOrders = lost
+    res = engine.submit_quick_bet(_bet("lostc", size=0.10))
+    assert fake.live() == [] and fake.exposure() == 0
+    assert res["ok"] is False
+    full_cancels = [c for c in fake.calls if c[0] == "cancelOrders"
+                    and not any("sizeReduction" in i for i in c[1]["instructions"])]
+    saga = DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("lostc")
+    assert saga["phase"] == "ROLLED_BACK", saga                  # prova: lo stub riletto non ha residuo
+    restarted, _, _ = _live_engine(fake, db=db)
+    assert restarted.recover_native_microstake_sagas()["status"] == "NOTHING_PENDING"
+    assert len([c for c in fake.calls if c[0] == "cancelOrders"
+                and not any("sizeReduction" in i for i in c[1]["instructions"])]) == len(full_cancels)
+
+
+def test_recovery_with_live_blocked_only_cancels_the_stub_never_reprices_it():
+    """Rilievo Codex P1 su #561: a LIVE bloccato (o STOP) il recovery non porta lo stub al prezzo d'ingresso."""
+    fake = _FakeBetfair()
+    engine, fake, db = _live_engine(fake)
+    fake.crash.add("placeOrders")
+    with pytest.raises(_Crash):
+        engine.submit_quick_bet(_bet("blocked", size=0.10))
+    before = len(_names(fake))
+    restarted, _, _ = _live_engine(fake, db=db, live_allowed=False)
+    out = restarted.recover_native_microstake_sagas()
+    assert _names(fake)[before:] == ["cancelOrders"], "solo la cancellazione protettiva: nessuna riduzione ne' replace"
+    cancel = [c for c in fake.calls if c[0] == "cancelOrders"][-1]
+    assert "sizeReduction" not in cancel[1]["instructions"][0], "cancellazione dell'intero stub, mai la riduzione"
+    assert out["ok"] is True and out["results"] == {"blocked": "ROLLED_BACK"}, out
+    assert fake.live() == [] and fake.exposure() == 0
+    reopened, _, _ = _live_engine(fake, db=db)                  # LIVE di nuovo consentito: nulla da riprendere
+    assert reopened.recover_native_microstake_sagas()["status"] == "NOTHING_PENDING"
+
+
+def test_recovery_with_an_active_stop_is_protective_only():
+    fake = _FakeBetfair()
+    engine, fake, db = _live_engine(fake)
+    fake.crash.add("placeOrders")
+    with pytest.raises(_Crash):
+        engine.submit_quick_bet(_bet("stopped", size=0.10))
+    restarted, _, _ = _live_engine(fake, db=db)
+    restarted.runtime_controller._daily_loss_entry_blocked = lambda: True
+    out = restarted.recover_native_microstake_sagas()
+    assert out["results"] == {"stopped": "ROLLED_BACK"} and "replaceOrders" not in _names(fake)
+
+
+class _StubMatchesDuringReplace(_FakeBetfair):
+    """Lo stub si abbina per 0.04 fra la lettura e il replace: Betfair rimette solo il residuo (0.06)."""
+
+    def _replaceOrders(self, params):
+        old = self.orders[params["instructions"][0]["betId"]]
+        old["matched"] += D("0.04")
+        old["remaining"] -= D("0.04")
+        return super()._replaceOrders(params)
+
+
+def test_stub_partly_matched_during_the_replace_is_never_declared_success():
+    """Rilievo Codex P1 su #561: prima SUCCESS con 0.06, mentre 0.04 restavano abbinati sullo stub a 1000."""
+    engine, fake, db = _live_engine(_StubMatchesDuringReplace())
+    res = engine.submit_quick_bet(_bet("race", size=0.10))
+    assert res["ok"] is False and res["status"] == "AMBIGUOUS", res
+    saga = DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("race")
+    assert saga["phase"] == "AMBIGUOUS" and saga["reason"] == "replacement_size_mismatch"
+    assert engine._live_microstake_executor.port.has_reservation("race")
+
+
+def test_replacement_identity_is_persisted_before_the_read_and_used_by_recovery():
+    """Rilievo Codex P2 su #561: replace accettato, lettura successiva fallita, ref non conservato dal replace."""
+    fake = _FakeBetfair(carry_ref=False)
+    engine, fake, db = _live_engine(fake)
+    real = fake._listCurrentOrders
+    state = {"replaced": False}
+    real_replace = fake._replaceOrders
+
+    def replace(params):
+        state["replaced"] = True
+        return real_replace(params)
+
+    def flaky(params):
+        if state["replaced"] and not state.get("failed"):
+            state["failed"] = True
+            raise RuntimeError("REQUEST_FAILED: TIMEOUT")
+        return real(params)
+    fake._replaceOrders, fake._listCurrentOrders = replace, flaky
+    assert engine.submit_quick_bet(_bet("rid", size=0.10))["status"] == "AMBIGUOUS"
+    saga = DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("rid")
+    assert saga.get("replacement_bet_id"), saga
+    restarted, _, _ = _live_engine(fake, db=db)
+    out = restarted.recover_native_microstake_sagas()
+    assert out["ok"] is True and out["results"] == {"rid": "ACTIVE"}, out     # prima: pendente per sempre
+    assert _names(fake).count("replaceOrders") == 1 and _the_position(fake)["remaining"] == D("0.10")
+
+
 def test_lost_replace_response_with_the_economic_order_already_matched_concludes_active():
     fake = _FakeBetfair()
     engine, fake, db = _live_engine(fake)
@@ -614,31 +753,76 @@ def test_live_microstake_outcomes_feed_the_submission_circuit_breaker():
 
 
 # ------------------------------------------------------------------------------------------- crash e riavvio
-@pytest.mark.parametrize("crash_at,calls_after", [
-    ("placeOrders", ["cancelOrders", "replaceOrders"]),          # stub intero sull'exchange
-    ("cancelOrders", ["replaceOrders"]),                         # stub gia' ridotto
-    ("replaceOrders", []),                                       # ordine finale gia' piazzato
+@pytest.mark.parametrize("side", ["BACK", "LAY"])
+@pytest.mark.parametrize("crash_at,outcome,calls_after,exposure", [
+    # Caso A (decisione owner PF-561 §4): stub intero o ridotto, ingresso NON completato => cancellazione verificata,
+    # mai un replace al prezzo d'ingresso dopo il riavvio
+    ("placeOrders", "ROLLED_BACK", ["cancelOrders"], "0"),
+    ("cancelOrders", "ROLLED_BACK", ["cancelOrders"], "0"),
+    # Caso B: l'ordine richiesto e' gia' sull'exchange (nuovo betId) => riconciliato, nessun secondo ordine
+    ("replaceOrders", "ACTIVE", [], None),
 ])
-def test_process_crash_mid_saga_is_completed_on_restart_without_duplicates(tmp_path, crash_at, calls_after):
-    from database import Database
+def test_process_crash_mid_saga_never_completes_an_old_entry_on_restart(tmp_path, side, crash_at, outcome,
+                                                                       calls_after, exposure):
     db = Database(str(tmp_path / "live.db"))
     fake = _FakeBetfair()
     engine, fake, db = _live_engine(fake, db=db)
     fake.crash.add(crash_at)
     with pytest.raises(_Crash):
-        engine.submit_quick_bet(_bet("crash-1", size=0.10))
+        engine.submit_quick_bet(_bet("crash-1", size=0.10, side=side))
     before = len(_names(fake))
 
     restarted, _, _ = _live_engine(fake, db=Database(str(tmp_path / "live.db")))   # nuovo processo, stesso DB
     out = restarted.recover_native_microstake_sagas()
-    assert out["ok"] is True and out["results"] == {"crash-1": "ACTIVE"}, out
-    assert _names(fake)[before:] == calls_after, "il recovery riprende dal passo persistito, mai un nuovo PLACE"
-    pos = _the_position(fake)
-    assert pos["remaining"] == D("0.10") and pos["price"] == D("3.0")
-    assert fake.exposure() == D("0.10"), "nessuna esposizione dimenticata"
+    assert out["ok"] is True and out["results"] == {"crash-1": outcome}, out
+    assert _names(fake)[before:] == calls_after, "mai un nuovo PLACE ne' un replace dopo il riavvio"
+    if outcome == "ROLLED_BACK":
+        cancel = [c for c in fake.calls if c[0] == "cancelOrders"][-1]
+        assert "sizeReduction" not in cancel[1]["instructions"][0]
+        assert fake.live() == [] and fake.exposure() == D(exposure), "nessuna esposizione residua"
+    else:
+        pos = _the_position(fake)
+        assert pos["remaining"] == D("0.10") and pos["price"] == D("3.0")
+        assert fake.exposure() == (D("0.10") if side == "BACK" else D("0.20")), "esposizione/liability esatta"
+    assert restarted._live_microstake_executor.port._reservations == {}
     again = restarted.recover_native_microstake_sagas()
     assert again["ok"] is True and again["status"] == "NOTHING_PENDING", "idempotente su riavvii ripetuti"
-    assert len(fake.live()) == 1
+    assert _names(fake).count("placeOrders") == 1
+
+
+def test_restart_with_a_partly_matched_stub_keeps_the_matched_part_and_cancels_the_rest():
+    """Caso D: quota dello stub gia' abbinata al riavvio => residuo cancellato, abbinato conservato e contabilizzato
+    (AMBIGUOUS `rollback_matched` con riserva tenuta), mai un rollback totale ne' il completamento dell'ingresso."""
+    fake = _FakeBetfair()
+    engine, fake, db = _live_engine(fake)
+    fake.crash.add("placeOrders")
+    with pytest.raises(_Crash):
+        engine.submit_quick_bet(_bet("partial", size=0.10))
+    (stub,) = fake.orders.values()
+    stub["matched"], stub["remaining"] = D("0.25"), D("0.75")
+    restarted, _, _ = _live_engine(fake, db=db)
+    out = restarted.recover_native_microstake_sagas()
+    assert out["ok"] is False and out["pending"] == ["partial"], out
+    assert stub["remaining"] == 0 and stub["matched"] == D("0.25"), "residuo cancellato, abbinato intatto"
+    assert "replaceOrders" not in _names(fake)
+    saga = DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("partial")
+    assert saga["phase"] == "AMBIGUOUS" and saga["reason"] == "rollback_matched" and D(saga["matched"]) == D("0.25")
+    assert restarted._live_microstake_executor.port.has_reservation("partial")
+
+
+def test_simulation_recovery_still_completes_the_saga_as_approved_in_512():
+    """La differenza SIM/LIVE e' intenzionale: in SIM il recovery completa la saga (comportamento #512)."""
+    from core.microstake_safe import JsonSagaStore, StatefulExchangeSimulator
+    import tempfile as _tf
+    ex = StatefulExchangeSimulator()
+    store = JsonSagaStore(os.path.join(_tf.mkdtemp(), "s.json"))
+    req = MicrostakeRequest("1.1", 7, Side.BACK, D("0.10"), D("3.0"), "sim")
+    store.save("sim", phase=Phase.PREPARED, reservation_held=True, transient_exposure=D("1.00"),
+               request=MicrostakeCoordinator._request_json(req), stub_price=D("1000"), stub_size=D("1.00"))
+    stub = ex.place(market_id="1.1", selection_id=7, side=Side.BACK, size=D("1.00"), price=D("1000"),
+                    customer_ref="sim")
+    store.save("sim", phase=Phase.STUB_ACCEPTED, bet_id=stub.bet_id)
+    assert MicrostakeCoordinator(ex.restart(), store, MicrostakePolicy()).recover("sim").phase is Phase.ACTIVE
 
 
 def test_pending_live_saga_blocks_a_simulation_session_until_reconciled():
@@ -649,6 +833,149 @@ def test_pending_live_saga_blocks_a_simulation_session_until_reconciled():
     sim.runtime_controller = SimpleNamespace(get_effective_execution_mode=lambda: "SIMULATION")
     out = sim.recover_native_microstake_sagas()
     assert out["ok"] is False and out["status"] == "LIVE_SAGAS_PENDING" and out["pending"] == ["blk"]
+
+
+def test_current_order_row_without_remaining_is_never_read_as_cancelled():
+    """Audit PF-561 §6: una riga senza `sizeRemaining` non e' un residuo zero."""
+    fake = _FakeBetfair()
+    fake.reject_replace = True
+    engine, fake, db = _live_engine(fake)
+    real = fake._row
+
+    def incomplete(o):
+        row = real(o)
+        if o["remaining"] > 0 and o["price"] == D("1000") and o["remaining"] < MIN:
+            row.pop("sizeRemaining")                          # stub ridotto: riga incompleta al rollback
+        return row
+    fake._row = incomplete
+    res = engine.submit_quick_bet(_bet("inc", size=0.10))
+    assert res["status"] == "AMBIGUOUS", res
+    assert DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("inc")["phase"] != "ROLLED_BACK"
+    assert engine._live_microstake_executor.port.has_reservation("inc")
+
+
+def test_corrupt_live_saga_store_is_fail_closed_for_entries_and_recovery():
+    engine, fake, db = _live_engine()
+    db.save_settings({LIVE_SAGA_SETTINGS_KEY: "{rotto"})
+    res = engine.submit_quick_bet(_bet("corrupt", size=0.10))
+    assert res["ok"] is False and _names(fake) == [], res          # nessun ordine su store illeggibile
+    out = engine.recover_native_microstake_sagas()
+    assert out["ok"] is False and out["status"] == "STORE_UNREADABLE"
+    sim = TradingEngine(bus=_Bus(), db=db, client_getter=lambda: None, executor=_Inline())
+    sim.runtime_controller = SimpleNamespace(get_effective_execution_mode=lambda: "SIMULATION")
+    assert sim.recover_native_microstake_sagas()["ok"] is False      # anche una sessione SIM resta bloccata
+
+
+def test_two_processes_on_the_same_database_never_execute_the_same_intent_twice(tmp_path):
+    """Due engine (due processi) sullo stesso DB e sullo stesso exchange: la deduplica durevole degli intenti
+    lascia passare un solo invio per ref; nessuna seconda saga, nessuna riserva impropria."""
+    path = str(tmp_path / "shared.db")
+    fake = _FakeBetfair()
+    a, fake, _ = _live_engine(fake, db=Database(path))
+    b, _, _ = _live_engine(fake, db=Database(path))
+    first = a.submit_quick_bet(_bet("same", size=0.10))
+    second = b.submit_quick_bet(_bet("same", size=0.10))
+    assert first["ok"] is True and second["status"] == "DUPLICATE_BLOCKED", (first, second)
+    assert _names(fake).count("placeOrders") == 1 and len(fake.live()) == 1
+    assert b._live_microstake_executor is None or b._live_microstake_executor.port._reservations == {}
+
+
+@pytest.mark.parametrize("side", ["BACK", "LAY"])
+def test_multi_table_microstakes_and_direct_orders_keep_exposure_and_reservations_coherent(side):
+    """Piu' tavoli (Roserpina) su mercati diversi, microstake e diretti misti: ogni ordine all'importo esatto,
+    esposizione/liability totale corretta, nessuna riserva temporanea residua."""
+    engine, fake, _ = _live_engine()
+    tables = [("t1", "1.301", 0.10), ("t2", "1.302", 0.30), ("t3", "1.303", 1.50), ("t4", "1.304", 0.90),
+              ("t5", "1.305", 2.00)]
+    for i, (ref, market, size) in enumerate(tables, start=1):
+        bet = dict(_bet(ref, size=size, side=side, market=market), table_id=i, event_key=f"EV-{i}")
+        assert engine.submit_quick_bet(bet)["ok"] is True, ref
+    sizes = sorted(o["matched"] + o["remaining"] for o in fake.live())
+    assert sizes == sorted(D(str(t[2])) for t in tables)
+    total = sum(D(str(t[2])) for t in tables)
+    assert fake.exposure() == (total if side == "BACK" else total * 2)
+    assert engine._live_microstake_executor.port._reservations == {}
+    assert _names(fake).count("replaceOrders") == 3 and _names(fake).count("placeOrders") == 5
+
+
+# ------------------------------------------------------------------------------------------- difese indipendenti
+# Ogni difesa del P1 e' provata DA SOLA: la porta senza il coordinatore e il coordinatore senza la porta.
+def test_port_never_confirms_a_cancel_that_left_a_residual():
+    from core.microstake_live_port import LiveExchangePort
+    fake = _CancelSilentlyFails({"status": "SUCCESS", "instructionReports": [{"status": "SUCCESS"}]})
+    client = _client(fake)
+    client.place_bet(market_id="1.200", selection_id=7, side="BACK", price=1000.0, size=1.0, customer_order_ref="u")
+    (bet,) = fake.orders
+    with pytest.raises(RuntimeError, match="CANCEL_NOT_CONFIRMED"):
+        LiveExchangePort(client).cancel_all_remaining(bet)        # report SUCCESS, ma il residuo e' ancora li'
+
+
+@pytest.mark.parametrize("report", [{"status": "TIMEOUT"}, None, {"status": "SUCCESS", "instruction": {"betId": "x"}}])
+def test_port_never_confirms_a_reduction_without_its_own_success_report(report):
+    from core.microstake_live_port import LiveExchangePort
+    from core.microstake_safe import LostResponse
+    fake = _FakeBetfair()
+    client = _client(fake)
+    client.place_bet(market_id="1.200", selection_id=7, side="BACK", price=1000.0, size=1.0, customer_order_ref="r")
+    (bet,) = fake.orders
+    real = fake._cancelOrders
+    fake._cancelOrders = lambda params: (real(params), {"status": "SUCCESS",
+                                                        "instructionReports": [report] if report else []})[1]
+    with pytest.raises(LostResponse):
+        LiveExchangePort(client).cancel_reduction(bet, D("0.90"))
+
+
+def test_port_rejects_a_current_order_row_without_remaining():
+    from core.microstake_live_port import LiveExchangePort
+    row = {"betId": "1", "marketId": "1.2", "selectionId": 7, "side": "BACK", "priceSize": {"price": 3.0, "size": 1},
+           "sizeMatched": 0.0}
+    with pytest.raises(ValueError, match="CURRENT_ORDER_INCOMPLETE"):
+        LiveExchangePort._to_order(row)
+
+
+def test_simulation_stub_lapsed_after_a_crash_closes_the_saga_without_exposure():
+    """Stesso caso dello stub sparito senza abbinato, sul SimulationBroker reale (SIM completa le saghe vive, ma uno
+    stub lapsato non ha nulla da completare: ROLLED_BACK, nessuna saga pendente per sempre)."""
+    from core.microstake_sim_port import build_native_microstake_executor
+    from tests.test_microstake_engine_native import _engine, _orders, _payload
+    engine, broker, db = _engine()
+    engine._default_native_microstake_executor("SIMULATION")
+    port = engine.microstake_executor.port
+    port.inject_fault("LOST_CANCEL_RESPONSE")                  # betId dello stub persistito, esito ignoto
+    assert engine.submit_quick_bet(_payload("simlap", size=0.10, price=3.0))["status"] == "AMBIGUOUS"
+    (stub,) = [o for o in _orders(broker) if o["status"] == "EXECUTABLE"]
+    broker.cancel_orders(market_id=stub["marketId"], instructions=[{"betId": stub["betId"]}])   # lapsato
+    restarted = build_native_microstake_executor(broker, db, lambda _p: D("10"))
+    assert restarted.recover_pending() == {"simlap": "ROLLED_BACK"}
+
+
+def test_coordinator_never_closes_rolled_back_with_a_residual_whatever_the_port_says(tmp_path):
+    from core.microstake_safe import Fault, JsonSagaStore, StatefulExchangeSimulator
+
+    class _PortThatLies(StatefulExchangeSimulator):
+        def cancel_all_remaining(self, bet_id):
+            return self.order(bet_id)                             # "cancellato" ma il residuo resta
+
+    ex = _PortThatLies()
+    ex.queue_fault(Fault.FAIL_REPLACE)
+    store = JsonSagaStore(tmp_path / "s.json")
+    req = MicrostakeRequest("1.1", 7, Side.BACK, D("0.10"), D("3.0"), "liar")
+    res = MicrostakeCoordinator(ex, store, MicrostakePolicy()).execute(req, stub_price=D("1000"),
+                                                                     transient_cap=D("10"))
+    assert res.phase is Phase.AMBIGUOUS and res.reason == "rollback_residual_open", res
+    assert store.load("liar")["phase"] == "ROLLBACK_PENDING" and ex.has_reservation("liar")
+
+
+def test_coordinator_never_declares_active_on_an_amount_different_from_the_request(tmp_path):
+    from core.microstake_safe import JsonSagaStore, SimOrder, StatefulExchangeSimulator
+    ex = StatefulExchangeSimulator()
+    store = JsonSagaStore(tmp_path / "s.json")
+    req = MicrostakeRequest("1.1", 7, Side.BACK, D("0.10"), D("3.0"), "size")
+    store.save("size", phase=Phase.REDUCED, request=MicrostakeCoordinator._request_json(req))
+    ex.reserve("size", D("1.00"), D("10"))
+    wrong = SimOrder("B1", "1.1", 7, Side.BACK, D("3.0"), D("0.06"), D("0"), D("0.06"), "size")
+    res = MicrostakeCoordinator(ex, store, MicrostakePolicy())._activate(req, wrong, D("1.00"))
+    assert res.phase is Phase.AMBIGUOUS and res.reason == "active_size_mismatch" and ex.has_reservation("size")
 
 
 # ------------------------------------------------------------------------------------------- concorrenza
