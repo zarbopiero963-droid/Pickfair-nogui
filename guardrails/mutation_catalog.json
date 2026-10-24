@@ -3101,8 +3101,8 @@
       "module": "simulation_broker",
       "area": "funds",
       "file": "simulation_broker.py",
-      "original": "                tuple((o.bet_id, o.market_id, o.selection_id, o.side, o.matched_size, o.avg_price_matched)",
-      "mutated": "                tuple((o.bet_id, o.market_id, o.selection_id, o.side, o.avg_price_matched)",
+      "original": "            voce = (bid, mid, side, type(o.selection_id), o.selection_id, type(o.matched_size), o.matched_size,",
+      "mutated": "            voce = (bid, mid, side, type(o.selection_id), o.selection_id,",
       "tests": [
         "tests/unit/test_543_sim_funds_recompute.py"
       ],
@@ -3113,12 +3113,24 @@
       "module": "simulation_broker",
       "area": "exposure",
       "file": "simulation_broker.py",
-      "original": "            chiave = (self._vincitori_attesi(self.state.market_books.get(market_id) or {}), tuple(",
-      "mutated": "            chiave = (None, tuple(",
+      "original": "            chiave = (self._vincitori_attesi(self.state.market_books.get(market_id) or {}),",
+      "mutated": "            chiave = (None,",
       "tests": [
         "tests/unit/test_543_sim_funds_recompute.py"
       ],
       "rationale": "#543: il cambio del numero di vincitori del mercato non ricalcola l'esposizione per scenario."
+    },
+    {
+      "id": "i543_fill_key_accepts_non_str_ids",
+      "module": "simulation_broker",
+      "area": "funds",
+      "file": "simulation_broker.py",
+      "original": "            if not (type(fid) is str and type(bid) is str and type(mid) is str and type(side) is str):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/unit/test_543_sim_funds_recompute.py"
+      ],
+      "rationale": "#543 (review indipendente su 5392139): id non stringa confusi da == (1 e 1.0) riusano il memo e nascondono un registro incoerente (fail-open)."
     }
   ]
 }

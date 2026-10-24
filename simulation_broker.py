@@ -477,6 +477,41 @@ class SimulationBroker:
                 per_mercato.get(m, []))
             for m in mercati))
 
+    _CAMPI_FILL = ("fill_id", "bet_id", "market_id", "selection_id", "side", "price", "size")
+
+    @classmethod
+    def _chiave_fill_memo(cls, fills: List[Dict[str, Any]]) -> tuple:
+        """#543: chiave dei fill di un mercato. Solo nel caso normale (tutte le chiavi lette presenti; id,
+        mercato e lato ``str``, che il calcolo legge con ``str()``); i numeri con il loro tipo, cosi' 1, 1.0 e
+        True restano distinti. Altrimenti ``TypeError`` => calcolo senza memo."""
+        chiave = []
+        for f in fills:
+            if not all(campo in f for campo in cls._CAMPI_FILL):
+                raise TypeError("fill senza tutte le chiavi lette: nessun memo")
+            fid, bid, mid, sel, side, prezzo, size = (f[c] for c in cls._CAMPI_FILL)
+            if not (type(fid) is str and type(bid) is str and type(mid) is str and type(side) is str):
+                raise TypeError("fill fuori dal caso normale: nessun memo")
+            chiave.append((fid, bid, mid, side, type(sel), sel, type(prezzo), prezzo, type(size), size))
+        return tuple(chiave)
+
+    @staticmethod
+    def _chiave_ordini_memo(ordini: List[SimOrder], *, completa: bool) -> tuple:
+        """#543: chiave degli ordini di un mercato (stesse regole dei fill). ``completa`` aggiunge quota,
+        importo e stato, letti dall'esposizione ma non dalla ricostruzione dei fill."""
+        chiave = []
+        for o in ordini:
+            bid, mid, side = o.bet_id, o.market_id, o.side
+            if not (type(bid) is str and type(mid) is str and type(side) is str):
+                raise TypeError("ordine fuori dal caso normale: nessun memo")
+            voce = (bid, mid, side, type(o.selection_id), o.selection_id, type(o.matched_size), o.matched_size,
+                    type(o.avg_price_matched), o.avg_price_matched)
+            if completa:
+                if type(o.status) is not str:
+                    raise TypeError("ordine fuori dal caso normale: nessun memo")
+                voce += (o.status, type(o.price), o.price, type(o.size), o.size)
+            chiave.append(voce)
+        return tuple(chiave)
+
     def _esposizione_mercato_memo_locked(self, market_id: str, candidati: List[SimOrder], escludi: set,
                                          solo_abbinato: bool, ordini_mercato: List[SimOrder]) -> float:
         """#543: come ``_esposizione_mercato_locked``; senza candidati ne' esclusi il risultato si riusa finche'
@@ -485,13 +520,12 @@ class SimulationBroker:
             return self._esposizione_mercato_locked(market_id, candidati, escludi, solo_abbinato,
                                                     ordini_mercato=ordini_mercato)
         try:
-            chiave = (self._vincitori_attesi(self.state.market_books.get(market_id) or {}), tuple(
-                (o.bet_id, o.selection_id, o.side, o.price, o.size, o.matched_size, o.avg_price_matched, o.status)
-                for o in ordini_mercato))
+            chiave = (self._vincitori_attesi(self.state.market_books.get(market_id) or {}),
+                      self._chiave_ordini_memo(ordini_mercato, completa=True))
             memo = self._memo_esposizione_mercato.get((market_id, solo_abbinato))
             if memo is not None and memo[0] == chiave:
                 return memo[1]
-        except TypeError:          # campo non hashabile: nessun memo, si ricalcola
+        except (TypeError, AttributeError):   # valore fuori dal caso normale o book malformato: nessun memo
             return self._esposizione_mercato_locked(market_id, candidati, escludi, solo_abbinato,
                                                     ordini_mercato=ordini_mercato)
         valore = self._esposizione_mercato_locked(market_id, candidati, escludi, solo_abbinato,
@@ -525,15 +559,11 @@ class SimulationBroker:
             return self._ricostruisci_fill_mercato_locked(
                 market_id, fills_mercato=fills_mercato, ordini_mercato=ordini_mercato)
         try:
-            chiave = (
-                tuple((f.get("fill_id"), f.get("bet_id"), f.get("market_id"), f.get("selection_id"), f.get("side"),
-                       f.get("price"), f.get("size")) for f in fills_mercato),
-                tuple((o.bet_id, o.market_id, o.selection_id, o.side, o.matched_size, o.avg_price_matched)
-                      for o in ordini_mercato))
+            chiave = (self._chiave_fill_memo(fills_mercato), self._chiave_ordini_memo(ordini_mercato, completa=False))
             memo = self._memo_fill_mercato.get(market_id)
             if memo is not None and memo[0] == chiave:
                 return memo[1][0], dict(memo[1][1])
-        except (TypeError, AttributeError):   # voce non hashabile o malformata: si ricalcola (e si solleva li')
+        except (TypeError, AttributeError):   # fuori dal caso normale o non hashabile: si ricalcola (e si solleva li')
             return self._ricostruisci_fill_mercato_locked(
                 market_id, fills_mercato=fills_mercato, ordini_mercato=ordini_mercato)
         cassa, esposizioni = self._ricostruisci_fill_mercato_locked(

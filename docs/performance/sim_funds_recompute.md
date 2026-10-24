@@ -31,10 +31,21 @@ Tre interventi. Nessun limite al numero di ordini o mercati, e nessun mercato es
      bet_id, mercato, selezione, lato, abbinato e quota media.
 
    Non esiste un'invalidazione esplicita da poter dimenticare: un input cambiato, anche fuori dalle API,
-   cambia la chiave e il mercato si ricalcola. Regole del memo:
+   cambia la chiave e il mercato si ricalcola.
+
+   Il memo si usa solo nel **caso normale**:
+   - nei fill sono presenti tutte le chiavi lette;
+   - id, mercato, lato e stato sono `str`, cioè proprio i valori che il calcolo legge con `str()` o confronta;
+   - i numeri entrano nella chiave con il loro tipo, così 1, 1.0 e True restano distinti.
+
+   Qualunque altro valore (id numerico, chiave assente, book malformato) fa calcolare senza memo, come prima.
+   Questa regola viene dalla review indipendente su `5392139`, che aveva trovato due casi:
+   - `1.0 == 1` e `None` contro una chiave assente davano un falso riuso;
+   - un book non dizionario sollevava `AttributeError`.
+
+   Altre regole del memo:
    - non si usa mai con candidati o esclusioni (controllo del singolo ordine);
    - non si usa con registro dei fill corrotto;
-   - non si usa su un campo non hashabile;
    - non memorizza mai un'eccezione;
    - una chiave con NaN non coincide mai, quindi si ricalcola.
 
@@ -55,8 +66,8 @@ il codice di questa modifica.
 
 | Carico (ordini / mercati) | Totale piazzamenti prima | dopo | Ultimo `place_bet` prima | dopo | `get_account_funds` prima | dopo |
 |---|---|---|---|---|---|---|
-| 1000 / 50 | 2,83–2,98 s | 0,40–0,43 s | 3,9–5,6 ms | 0,58–0,65 ms | 5,6–7,1 ms | 1,3–1,5 ms |
-| 2000 / 100 | 16,1–17,2 s | 1,64–1,78 s | 13,5–14,2 ms | 1,3–1,9 ms | 20,1–22,3 ms | 3,2–4,5 ms |
+| 1000 / 50 | 2,93–3,42 s | 0,50–0,81 s | 4,5–6,1 ms | 0,90–1,29 ms | 6,4–8,9 ms | 1,9–2,7 ms |
+| 2000 / 100 | 18,1–19,0 s | 2,24–3,57 s | 10,6–23,7 ms | 2,3–3,2 ms | 16,3–20,5 ms | 6,3–7,2 ms |
 
 L'impronta contabile è identica prima e dopo in tutte le esecuzioni (`270c1f449cf9dfb6`, `4d8db80d319eb4cc`):
 fondi, abbinato, numero di fill e stati degli ordini.
@@ -83,6 +94,14 @@ valgono su questa macchina; non sono un obiettivo né una garanzia per altri car
   - abbinato incoerente con i fill (deve restare non verificabile, mai la cassa di prima);
   - numero di vincitori cambiato sullo stesso mercato;
   - memo senza crescita sui mercati regolati;
-  - piazzamenti e book da più thread, senza stalli e con fondi finali uguali al riferimento.
-- **Mutazioni `i543_*` nel catalogo.** Coprono memo che ignora la chiave e chiavi senza abbinato o senza numero
-  di vincitori. Sono tutte uccise.
+  - piazzamenti e book da più thread, senza stalli e con fondi finali uguali al riferimento;
+  - book non dizionario su un mercato senza esposizione;
+  - valori uguali per `==` ma letti in modo diverso (`fill_id` 1.0→1, `bet_id` 1→1.0, `fill_id` None→assente);
+  - riuso effettivo del memo nel caso normale, perché una chiave che fallisce sempre farebbe sparire
+    l'ottimizzazione in silenzio.
+- **Mutazioni `i543_*` nel catalogo.** Coprono:
+  - memo che ignora la chiave;
+  - chiavi senza abbinato o senza numero di vincitori;
+  - id non stringa accettati nel memo.
+
+  Sono tutte uccise: 21/21 sul modulo.

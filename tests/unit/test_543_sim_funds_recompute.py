@@ -296,3 +296,79 @@ def test_numero_di_vincitori_cambiato_sul_book_ricalcola_l_esposizione():
     c.entrambi(lambda b, ids: b.update_market_book("1.5431", copy.deepcopy(book)))
     c.verifica("vincitore unico")
     assert prima["exposure"] == pytest.approx(20.0) and _fondi(c.opt)["exposure"] == pytest.approx(0.0)
+
+
+# ----------------------------------------------------------------------------- review indipendente su 5392139
+def _fondi_o_errore(b):
+    try:
+        f = b.get_account_funds()
+    except Exception as exc:  # noqa: BLE001 - l'esito (anche l'eccezione) deve coincidere col riferimento
+        return type(exc).__name__
+    return f.get("error") or round(f["available"], 9)
+
+
+def test_book_non_dizionario_su_mercato_senza_esposizione_non_solleva():
+    """Prima di #543 il book si leggeva solo con esposizione: uno snapshot con un book malformato su un mercato
+    con ordini tutti cancellati dava disponibile pieno. La chiave del memo non deve sollevare."""
+    from simulation_broker import SimOrder
+    esiti = []
+    for b in (SimulationBroker(starting_balance=1000.0), _Riferimento(starting_balance=1000.0)):
+        b.state.orders["X"] = SimOrder(bet_id="X", market_id="M", selection_id=1, side="BACK", price=2.0,
+                                       size=5.0, status="CANCELLED")
+        b.state.market_books["M"] = ["malformato"]
+        esiti.append(_fondi_o_errore(b))
+    assert esiti[0] == esiti[1] == 1000.0
+
+
+def _ordine_abbinato(b):
+    from simulation_broker import SimOrder
+    b.state.orders["1"] = SimOrder(bet_id="1", market_id="M", selection_id=1, side="BACK", price=2.0, size=10.0,
+                                   matched_size=10.0, avg_price_matched=2.0, status="EXECUTION_COMPLETE")
+    b.state.balance -= 10.0
+
+
+@pytest.mark.parametrize("prima,modifica", [
+    # fill_id 1.0 -> 1: str() diverso, il ledger vede due "1" (incoerente); 1.0 == 1 non deve riusare il memo
+    ([{"fill_id": 1.0, "size": 5.0}, {"fill_id": "1", "size": 5.0}], lambda f: f[0].__setitem__("fill_id", 1)),
+    # bet_id 1 -> 1.0: "1.0" non corrisponde piu' all'ordine (fill senza ordine)
+    ([{"fill_id": "f", "bet_id": 1, "size": 10.0}], lambda f: f[0].__setitem__("bet_id", 1.0)),
+    # fill_id None -> chiave assente: il calcolo indicizza fill["fill_id"] (KeyError)
+    ([{"fill_id": None, "size": 10.0}], lambda f: f[0].pop("fill_id")),
+])
+def test_valori_uguali_ma_letti_diversamente_non_riusano_il_memo(prima, modifica):
+    """Review indipendente su 5392139: la chiave confrontava i valori grezzi, il calcolo ne legge str()/la
+    presenza. Un falso riuso riportava disponibile un registro che il codice di prima dichiara incoerente."""
+    esiti = []
+    for b in (SimulationBroker(starting_balance=1000.0), _Riferimento(starting_balance=1000.0)):
+        _ordine_abbinato(b)
+        base = {"bet_id": "1", "market_id": "M", "selection_id": 1, "side": "BACK", "price": 2.0}
+        b.state.fills[:] = [dict(base, **voce) for voce in copy.deepcopy(prima)]
+        primo = _fondi_o_errore(b)
+        modifica(b.state.fills)
+        esiti.append((primo, _fondi_o_errore(b)))
+    assert esiti[0] == esiti[1], esiti
+    assert esiti[0][1] != esiti[0][0]          # dopo la modifica i fondi non sono piu' quelli di prima
+
+
+def test_nel_caso_normale_il_memo_viene_davvero_riusato(monkeypatch):
+    """Senza cambi, la seconda lettura dei fondi non rigioca i fill ne' ricalcola gli scenari: altrimenti
+    l'ottimizzazione e' sparita in silenzio (una chiave che fallisce sempre ricade nel calcolo completo)."""
+    c = _sequenza(4, passi=120)
+    b = c.opt
+    b.get_account_funds()
+    atteso = _fondi(c.ref)          # il riferimento eredita i metodi spiati: si calcola prima dei contatori
+    chiamate = {"fill": 0, "esposizione": 0}
+    originale_fill = SimulationBroker._ricostruisci_fill_mercato_locked
+    originale_esp = SimulationBroker._esposizione_mercato_locked
+
+    def conta_fill(self, *a, **k):
+        chiamate["fill"] += 1
+        return originale_fill(self, *a, **k)
+
+    def conta_esp(self, *a, **k):
+        chiamate["esposizione"] += 1
+        return originale_esp(self, *a, **k)
+    monkeypatch.setattr(SimulationBroker, "_ricostruisci_fill_mercato_locked", conta_fill)
+    monkeypatch.setattr(SimulationBroker, "_esposizione_mercato_locked", conta_esp)
+    assert _fondi(b) == atteso
+    assert chiamate == {"fill": 0, "esposizione": 0}, chiamate

@@ -13,8 +13,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - ordini e fill raggruppati per mercato in una passata; memo per mercato indirizzato dal contenuto (chiave =
     tutti i campi letti, nessuna invalidazione esplicita); id del fill cercato solo fra quelli dell'ordine;
     mercati regolati fuori dal memo;
-  - 2000 ordini / 100 mercati: piazzamenti da ~16,5 s a ~1,7 s, `get_account_funds` da ~21 ms a ~4 ms;
-    1000 / 50: da ~2,9 s a ~0,4 s (macchina a 4 CPU, `tests/stress/bench_sim_funds.py`); contabilita' identica;
+  - memo solo nel caso normale (id/mercato/lato/stato `str`, chiavi dei fill presenti, numeri col loro tipo),
+    altrimenti calcolo senza memo (review indipendente su 5392139);
+  - 2000 ordini / 100 mercati: piazzamenti da ~18,6 s a ~2,2-3,6 s, `get_account_funds` da ~18 ms a ~7 ms;
+    1000 / 50: da ~3,2 s a ~0,5-0,8 s (macchina a 4 CPU, `tests/stress/bench_sim_funds.py`); contabilita' identica;
   - prova: test differenziale contro il calcolo di prima (`tests/unit/test_543_sim_funds_recompute.py`),
     mutazioni `i543_*`. Dettaglio in `docs/performance/sim_funds_recompute.md`.
 
