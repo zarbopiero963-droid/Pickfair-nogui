@@ -1232,11 +1232,11 @@ jobs:
           attempt_lines = "".join(rr_attempt_marker(REVIEW_ID, range_base, range_head, n, st)
                                   for n, st in enumerate(attempt_states, start=1))
           decision_line = decision_note = ""
-          if not review_complete and len(attempt_states) >= RR_MAX_ATTEMPTS:
+          if not review_complete and len(rr_counted(attempt_states)) >= RR_MAX_ATTEMPTS:
               decision_line = rr_owner_decision_marker(REVIEW_ID, range_base, range_head)
               decision_note = rr_owner_decision_note(MODEL_LABEL, "sol", PR_NUMBER, range_head,
                                                      attempt_states, run_url)
-          esito = (f"**Esito tentativo:** `{len(attempt_states)}/{RR_MAX_ATTEMPTS}` — `{attempt_state}`"
+          esito = (f"**Esito tentativo:** `{len(rr_counted(attempt_states))}/{RR_MAX_ATTEMPTS}` — `{attempt_state}`"
                    + (f" ({attempt_reason})" if attempt_reason else ""))
 
           body = f"""{marker}{done_line}{attempt_lines}{decision_line}

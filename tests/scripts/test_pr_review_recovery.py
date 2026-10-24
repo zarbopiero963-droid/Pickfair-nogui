@@ -624,3 +624,24 @@ def test_a_valid_attempt_in_a_rewritten_history_is_never_waivable():
                                    "Too Many Requests"])
 def test_rate_limit_is_a_credit_stop(error):
     assert policy.rr_classify_error(error) == policy.RR_CREDITS_EXHAUSTED
+
+
+def test_a_credit_rejection_does_not_bring_forward_the_owner_decision(world, reviewer, monkeypatch):
+    world.model_queue = [("http", (402, "Payment Required"))] * 3
+    run_review(world, reviewer, monkeypatch)
+    world.model_queue = [("text", CASE_547)]                 # ricarica, poi review incompleta
+    run_review(world, reviewer, monkeypatch)
+    body = bot_body(world, reviewer)
+    assert policy.RR_OWNER_DECISION not in body               # prima: decisione owner dopo 1 sola review
+    _clean_other(world, reviewer, monkeypatch)
+    world.add_comment(OWNER, _waiver(reviewer))
+    assert gate(world)["gate"]["status"] == "RERUN_REVIEW_ONCE"   # la ripetizione resta dovuta, nessuna deroga
+
+
+def test_a_decision_marker_without_two_counted_attempts_is_not_trusted():
+    body = (f"<!-- grok46-pr-review:pickfair-nogui:{BASE[:12]}...{HEAD[:12]} -->"
+            + policy.rr_attempt_marker("grok46", BASE, HEAD, 1, "CREDITS_EXHAUSTED")
+            + policy.rr_attempt_marker("grok46", BASE, HEAD, 2, "INCOMPLETE")
+            + policy.rr_owner_decision_marker("grok46", BASE, HEAD) + "\n# Grok\n")
+    res = policy.validate_review({"reviewer": "grok", "author": policy.REVIEW_BOT_LOGIN, "body": body}, HEAD)
+    assert res["status"] == "INCOMPLETE" and res["attempts"] == 1

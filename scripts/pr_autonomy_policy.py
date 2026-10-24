@@ -704,13 +704,17 @@ def _validate_review_body(body: str, head_sha: str, markers: Mapping[str, Any]) 
                 return {"status": "UNKNOWN", "classification": RR_UNKNOWN,
                         "reason": "tentativo valido senza marker di completamento"}
             counted = rr_counted(attempts)
-            if markers["decision"] or len(counted) >= RR_MAX_ATTEMPTS:
+            # Il marker di decisione conta solo con il tetto davvero raggiunto (rilievo
+            # Codex P1 su #552): i rifiuti per crediti non consumano la ripetizione.
+            if len(counted) >= RR_MAX_ATTEMPTS:
                 return {"status": RR_OWNER_DECISION, "classification": last,
                         "reason": f"{len(counted)} tentativi non validi ({', '.join(attempts)}): decide l'owner"}
             return {"status": _ATTEMPT_STATUS.get(last, "INCOMPLETE"), "classification": last,
                     "reason": f"tentativo {len(counted)}/{RR_MAX_ATTEMPTS} non valido: {last}"}
         if markers["decision"]:
-            return {"status": RR_OWNER_DECISION, "classification": RR_UNKNOWN, "reason": "decisione owner registrata"}
+            # Decisione owner senza tentativi registrati: storia incoerente, mai derogabile.
+            return {"status": "UNKNOWN", "classification": RR_UNKNOWN,
+                    "reason": "decisione owner senza tentativi registrati"}
         if any(h in lowered for h in _QUOTA_HINTS):
             return {"status": "QUOTA", "classification": RR_CREDITS_EXHAUSTED, "reason": "crediti/quota esauriti"}
         if any(h in lowered for h in _TIMEOUT_HINTS):
