@@ -68,6 +68,12 @@ class _RuntimeAttivo:
     def withdraw_controller_entries(self, orders):
         return None
 
+    def controller_event_exposure(self, entry, *, event_key=""):
+        # #554: misura evento del runtime (qui: il tavolo con la chiave, come la vecchia misura del controller)
+        table_manager = getattr(self, "table_manager", None)
+        table = table_manager.find_by_event_key(event_key) if table_manager is not None else None
+        return float(getattr(table, "current_exposure", 0.0) or 0.0) if table else 0.0
+
 
 def _catena(runtime=None):
     """Monta la corsia completa su bus sincrono e ritorna (bus, middleware,
@@ -279,6 +285,7 @@ def test_adattatore_niente_passthrough_su_selections_dal_wire() -> None:
         "CMD_PLACE_DUTCHING",
         {
             "market_id": "1.234",
+            "event_name": "Evento Test",  # #554: il cap evento richiede l'identita' dell'evento
             "total_stake": 100.0,
             "bet_type": "BACK",
             "selections": [

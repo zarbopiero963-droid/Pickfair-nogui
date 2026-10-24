@@ -3065,8 +3065,8 @@
       "module": "core.runtime_controller",
       "area": "exposure",
       "file": "core/runtime_controller.py",
-      "original": "            if same_event or same_market:",
-      "mutated": "            if same_event:",
+      "original": "            if same_event or same_market or same_key:",
+      "mutated": "            if same_event or same_key:",
       "tests": [
         "tests/unit/test_546_d2_549_controller_entry_funds.py"
       ],
@@ -3131,6 +3131,114 @@
         "tests/unit/test_543_sim_funds_recompute.py"
       ],
       "rationale": "#543 (review indipendente su 5392139): id non stringa confusi da == (1 e 1.0) riusano il memo e nascondono un registro incoerente (fail-open)."
+    },
+    {
+      "id": "i554_entry_measure_exception_is_zero",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "                                   \"event_id\": payload.get(\"event_id\")}, event_key=event_key))\n        except Exception:\n            return float(\"inf\")",
+      "mutated": "                                   \"event_id\": payload.get(\"event_id\")}, event_key=event_key))\n        except Exception:\n            return 0.0",
+      "tests": [
+        "tests/unit/test_554_dutching_event_cap_unified.py"
+      ],
+      "rationale": "#554: un'eccezione nella misura dell'evento torna a valere 0 (fail-open del vecchio precheck del lotto)."
+    },
+    {
+      "id": "i554_entry_measure_missing_is_zero",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "        if not callable(measure):\n            return float(\"inf\")\n        try:\n            value = float(measure(",
+      "mutated": "        if not callable(measure):\n            return 0.0\n        try:\n            value = float(measure(",
+      "tests": [
+        "tests/unit/test_554_dutching_event_cap_unified.py"
+      ],
+      "rationale": "#554: runtime senza misura dell'evento => 0 (prima la bet manuale ripiegava sul solo tavolo con la chiave)."
+    },
+    {
+      "id": "i554_entry_measure_non_finite_accepted",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "                                   \"event_id\": payload.get(\"event_id\")}, event_key=event_key))\n        except Exception:\n            return float(\"inf\")\n        return value if math.isfinite(value) and value >= 0.0 else float(\"inf\")",
+      "mutated": "                                   \"event_id\": payload.get(\"event_id\")}, event_key=event_key))\n        except Exception:\n            return float(\"inf\")\n        return value",
+      "tests": [
+        "tests/unit/test_554_dutching_event_cap_unified.py"
+      ],
+      "rationale": "#554: una misura NaN o negativa passa: NaN rende falso il confronto col cap (fail-open)."
+    },
+    {
+      "id": "i554_batch_identity_not_required",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "        if self._event_identity_missing(payload):\n            return self._fail(\"Esposizione evento non verificabile\", batch_exposure=round(batch_exposure, 2))",
+      "mutated": "        if False:\n            return self._fail(\"Esposizione evento non verificabile\", batch_exposure=round(batch_exposure, 2))",
+      "tests": [
+        "tests/unit/test_554_dutching_event_cap_unified.py"
+      ],
+      "rationale": "#554: lotto senza nome/id evento: i tavoli da segnale dello stesso evento su altri mercati non sono riconoscibili."
+    },
+    {
+      "id": "i554_batch_uses_key_table_only",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "        event_current_exposure = self._entry_event_exposure(\n            event_key, payload, str(payload.get(\"market_id\") or \"\"))",
+      "mutated": "        _tavolo = getattr(self._table_manager(), \"find_by_event_key\", lambda _k: None)(event_key)\n        event_current_exposure = float(getattr(_tavolo, \"current_exposure\", 0.0) or 0.0)",
+      "tests": [
+        "tests/unit/test_554_dutching_event_cap_unified.py"
+      ],
+      "rationale": "#554: il precheck del lotto torna a misurare solo il tavolo con la propria chiave (tavoli da segnale/manuali dello stesso evento esclusi)."
+    },
+    {
+      "id": "i554_batch_meta_without_event_id",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "                    \"event_id\": payload.get(\"event_id\"),\n                    \"market_name\": payload.get(\"market_name\", \"\"),\n                    \"type\": \"dutching_batch\",",
+      "mutated": "                    \"market_name\": payload.get(\"market_name\", \"\"),\n                    \"type\": \"dutching_batch\",",
+      "tests": [
+        "tests/unit/test_554_dutching_event_cap_unified.py"
+      ],
+      "rationale": "#554 (review indipendente, P1): senza event_id nel meta del tavolo del lotto, i lotti/manuali successivi dello stesso evento identificati dall'id su altri mercati non lo vedono."
+    },
+    {
+      "id": "i554_identity_gate_accepts_blank_id",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "        has_id = bool(event_id) and not isinstance(event_id, bool) and bool(str(event_id).strip())",
+      "mutated": "        has_id = event_id not in (None, \"\") and not isinstance(event_id, bool)",
+      "tests": [
+        "tests/unit/test_554_dutching_event_cap_unified.py"
+      ],
+      "rationale": "#554 (review indipendente, P2): un event_id di soli spazi o 0 vale come identita' per il gate ma la misura lo scarta: ingresso misurato solo per mercato."
+    },
+    {
+      "id": "i554_same_key_tables_ignored",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "            if same_event or same_market or same_key:",
+      "mutated": "            if same_event or same_market:",
+      "tests": [
+        "tests/unit/test_554_dutching_event_cap_unified.py"
+      ],
+      "rationale": "#554: un tavolo con la stessa chiave dell'ingresso ma senza identita' ne' mercato (ripristinato) esce dalla misura."
+    },
+    {
+      "id": "i554_bus_drops_event_id",
+      "module": "core.risk_middleware",
+      "area": "exposure",
+      "file": "core/risk_middleware.py",
+      "original": "                \"event_id\": payload.get(\"event_id\"),\n                \"market_name\": str(payload.get(\"market_name\", \"\")),\n                \"results\": normalized_results,",
+      "mutated": "                \"market_name\": str(payload.get(\"market_name\", \"\")),\n                \"results\": normalized_results,",
+      "tests": [
+        "tests/unit/test_554_dutching_event_cap_unified.py"
+      ],
+      "rationale": "#554: la corsia bus del Dutching perde l'id evento: un lotto identificato solo dall'id non e' verificabile."
     }
   ]
 }

@@ -72,6 +72,12 @@ class FakeRuntime:
     def withdraw_controller_entries(self, orders):
         return None
 
+    def controller_event_exposure(self, entry, *, event_key=""):
+        # #554: misura evento del runtime (qui: il tavolo con la chiave, come la vecchia misura del controller)
+        table_manager = getattr(self, "table_manager", None)
+        table = table_manager.find_by_event_key(event_key) if table_manager is not None else None
+        return float(getattr(table, "current_exposure", 0.0) or 0.0) if table else 0.0
+
 
 @pytest.fixture
 def controller(monkeypatch):

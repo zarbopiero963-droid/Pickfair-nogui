@@ -3148,13 +3148,15 @@ class RuntimeController:
         event_id, event_name = cls._event_identity_parts(signal)
         return f"id:{event_id}" if event_id else (f"name:{event_name}" if event_name else "")
 
-    def _event_current_exposure(self, signal: dict, *, market_id: str = "") -> float:
+    def _event_current_exposure(self, signal: dict, *, market_id: str = "", table_event_key: str = "") -> float:
         """Esposizione dei tavoli attivi dello stesso evento reale. Con ``market_id`` (#549) conta anche i
-        tavoli di quel mercato: un mercato appartiene a un solo evento. Ogni tavolo si somma una volta sola
-        (unione, non il maggiore dei due aggregati)."""
+        tavoli di quel mercato: un mercato appartiene a un solo evento. Con ``table_event_key`` (#554) anche i
+        tavoli con quella chiave (lotto Dutching o bet manuale gia' riservati con la stessa chiave). Ogni
+        tavolo si somma una volta sola (unione, non il maggiore degli aggregati)."""
         event_id, event_name = self._event_identity_parts(signal)
         market_id = str(market_id or "").strip()
-        if not event_id and not event_name and not market_id:
+        table_event_key = str(table_event_key or "")
+        if not event_id and not event_name and not market_id and not table_event_key:
             return 0.0
         signal_names = {event_name} if event_name else set()
         signal_legacy = str(signal.get("event_identity") or "")
@@ -3184,7 +3186,8 @@ class RuntimeController:
             )
             same_market = bool(market_id) and market_id in {
                 str(getattr(table, "market_id", "") or "").strip(), str(meta.get("market_id") or "").strip()}
-            if same_event or same_market:
+            same_key = bool(table_event_key) and str(getattr(table, "current_event_key", "") or "") == table_event_key
+            if same_event or same_market or same_key:
                 value = validators.finite_number(table.current_exposure)
                 if value is None or value < 0:
                     return float("inf")
@@ -3991,16 +3994,19 @@ class RuntimeController:
             return "fondi_non_verificabili"
         return self._entry_funds_reason(funds_read.get("funds"), pending, read_at=read_at)
 
-    def controller_event_exposure(self, entry: dict) -> float:
+    def controller_event_exposure(self, entry: dict, *, event_key: str = "") -> float:
         """#549: esposizione corrente dell'evento reale dell'ingresso (event_id, poi nome), su tutti i tavoli:
         stessa misura dei segnali. Un mercato appartiene a un solo evento: i tavoli con lo stesso `market_id`
         contano anche se il nome evento e' scritto diversamente; ogni tavolo una volta sola (unione).
-        Illeggibile => inf (il cap rifiuta)."""
+        ``event_key`` (#554): anche i tavoli con la chiave dell'ingresso (lotto Dutching, bet manuale), nella
+        stessa unione. Illeggibile, non finita o negativa => inf (il cap rifiuta)."""
         try:
             entry = entry or {}
-            return float(self._event_current_exposure(entry, market_id=str(entry.get("market_id") or "")))
+            value = float(self._event_current_exposure(entry, market_id=str(entry.get("market_id") or ""),
+                                                       table_event_key=str(event_key or "")))
         except Exception:
             return float("inf")
+        return value if math.isfinite(value) and value >= 0.0 else float("inf")
 
     def admit_controller_entries(self, orders: list, *, batch_id: str = "") -> str:
         """Ammissione di ingressi costruiti fuori dal percorso dei segnali (DutchingController).

@@ -2753,6 +2753,37 @@
         "tests/unit/test_543_sim_funds_recompute.py"
       ],
       "max_files": 7
+    },
+    "dutching-event-cap-unified-554": {
+      "description": "#554 (P3 preesistente, PF-POST-556 Phase 1): il precheck del lotto Dutching misura l'esposizione evento con la stessa misura della bet manuale e dei segnali (RuntimeController.controller_event_exposure, unione evento/mercato/chiave, una volta per tavolo); identita' evento assente, misura assente, eccezione o valore non finito/negativo => rifiuto (prima il lotto vedeva solo il tavolo della propria chiave e un'eccezione valeva 0). Test doppi dei runtime finti allineati alla nuova misura (nessuna asserzione indebolita); mutazioni i554_*; i549 riallineata. Review indipendente: event_id salvato sul tavolo del lotto, gate d'identita' allineato alla misura, event_id conservato dal RiskMiddleware (core/risk_middleware.py).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "controllers/dutching_controller.py",
+        "core/risk_middleware.py",
+        "core/runtime_controller.py",
+        "docs/roserpina41_parameter_dossier.md",
+        "docs/roserpina_bankroll_equity.md",
+        "guardrails/mutation_catalog.json",
+        "tests/core/test_dutching_bus_wiring.py",
+        "tests/e2e/test_dutching_controller_e2e.py",
+        "tests/failure/test_dutching_controller_failures.py",
+        "tests/integration/test_dutching_book_guard.py",
+        "tests/integration/test_dutching_controller_integration.py",
+        "tests/integration/test_dutching_integration.py",
+        "tests/integration/test_dutching_liquidity_guard.py",
+        "tests/integration/test_dutching_max_stake_pct_guard.py",
+        "tests/integration/test_dutching_max_win_guard.py",
+        "tests/integration/test_dutching_profit_epsilon_guard.py",
+        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
+        "tests/invariant/test_dutching_controller_invariants.py",
+        "tests/unit/test_554_dutching_event_cap_unified.py",
+        "tests/unit/test_dutching_controller.py",
+        "tests/unit/test_pfc008_exposure_beyond_tables.py",
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "max_files": 24
     }
   }
 }

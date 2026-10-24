@@ -97,6 +97,11 @@ class _Runtime:
         self.dutching_batch_manager = None
         self.market_tracker = _MarketTracker(book)
 
+    def controller_event_exposure(self, entry, *, event_key=""):
+        # #554: misura evento del runtime (qui: il tavolo con la chiave, come la vecchia misura del controller)
+        table = self.table_manager.find_by_event_key(event_key)
+        return float(getattr(table, "current_exposure", 0.0) or 0.0) if table else 0.0
+
 
 def _cfg(warning_only=False, guard_enabled=True):
     c = _Config()
@@ -162,6 +167,7 @@ def _lay_book(lay_size, selection_ids=(1, 2)):
 def _payload():
     return {
         "market_id": "1.300",
+        "event_name": "Casa v Ospite",  # #554: il cap evento richiede l'identita' dell'evento
         "total_stake": 100.0,
         "selections": [
             {"selectionId": 1, "price": 2.0, "side": "BACK"},
@@ -173,6 +179,7 @@ def _payload():
 def _payload_lay():
     return {
         "market_id": "1.300",
+        "event_name": "Casa v Ospite",  # #554: il cap evento richiede l'identita' dell'evento
         "total_stake": 100.0,
         "selections": [
             {"selectionId": 1, "price": 2.0, "side": "LAY"},

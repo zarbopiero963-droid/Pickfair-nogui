@@ -9,6 +9,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#554 — cap evento del lotto Dutching con la stessa misura della bet manuale e dei segnali (P3,
+  preesistente):** il `precheck` del lotto misurava solo il tavolo con la propria chiave. Restavano fuori i tavoli
+  da segnale e manuali dello stesso evento, e quelli dello stesso mercato; un'eccezione valeva 0 (fail-open). Ora
+  lotto e bet manuale passano da `RuntimeController.controller_event_exposure(entry, event_key=…)`, che conta i
+  tavoli dello stesso evento, mercato o chiave, ciascuno una volta, con riserve pendenti ed esiti incerti
+  compresi e la liability per i LAY. Rifiuti:
+  - identità evento assente ⇒ `Esposizione evento non verificabile`;
+  - misura assente, eccezione, valore non finito o negativo ⇒ `Esposizione evento oltre limite`, anche per la bet
+    manuale, che prima ripiegava sul tavolo della chiave.
+
+  Review indipendente sul diff, correzioni con test RED→GREEN:
+  - il tavolo del lotto ora salva `event_id` (prima, lotti identificati dal solo id su mercati diversi non si
+    vedevano);
+  - il gate d'identità usa le regole della misura (un id di soli spazi o 0 non vale);
+  - il `RiskMiddleware` conserva `event_id`.
+
+  Rimosso il vecchio `DutchingController._event_current_exposure`. Test:
+  `tests/unit/test_554_dutching_event_cap_unified.py`; test doppi dei runtime finti allineati alla nuova misura;
+  mutazioni `i554_*`. LIVE resta NO-GO.
 - **#543 — ricalcolo dei fondi del SimulationBroker non piu' quadratico (follow-up PFC-005, P2 prestazioni):**
   - ordini e fill raggruppati per mercato in una passata; memo per mercato indirizzato dal contenuto (chiave =
     tutti i campi letti, nessuna invalidazione esplicita); id del fill cercato solo fra quelli dell'ordine;
