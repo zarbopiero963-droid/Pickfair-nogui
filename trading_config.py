@@ -10,7 +10,7 @@ BOOK_WARNING = 105.0  # Warning (arancione) - tipico per calcio
 BOOK_BLOCK = 110.0  # Blocco submit (rosso)
 
 # Stake limits (Betfair Italia)
-MIN_STAKE = 0.10  # Floor software 0.10 (Betfair Italia rifiuterà < €2 in live)
+MIN_STAKE = 0.10  # Floor software 0.10; sotto il minimo exchange (core.stake_precision, 1 EUR) esegue il Microstake
 # Vincita massima: OPZIONALE e NON attiva di default (rettifica owner 18/10/2026, chiarimento definitivo
 # 19/10 sui parametri preesistenti). None = nessun tetto; l'utente lo configura dalla tab Roserpina.
 MAX_WIN = None

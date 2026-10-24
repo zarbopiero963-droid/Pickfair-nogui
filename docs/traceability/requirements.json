@@ -24,7 +24,7 @@
     "core/trading_engine.py::_route_native_microstake",
     "core/order_router.py::OrderRouter._place_native_microstake"
    ],
-   "oracle": "con stake in (0, 2): nessuna chiamata diretta place_bet; esecutore nativo o errore MICROSTAKE_EXECUTOR_UNAVAILABLE; con stake >= 2: percorso diretto invariato",
+   "oracle": "con stake in (0, minimo exchange) (fonte unica core.stake_precision.EXCHANGE_MIN_ORDER, riferimento owner 1 EUR, RECTIFICATION-01): nessuna chiamata diretta place_bet; esecutore nativo o errore MICROSTAKE_EXECUTOR_UNAVAILABLE; con stake >= minimo: percorso diretto invariato",
    "tests": [
     "tests/test_microstake_engine_native.py::test_small_amount_is_executed_natively_on_the_real_sim_broker_without_any_flag",
     "tests/test_microstake_engine_native.py::test_amount_at_exchange_minimum_stays_on_the_direct_path",
@@ -65,7 +65,7 @@
    "reviewer": null,
    "gate": "A #506 (A10 finding RED->GREEN); B non certificato",
    "limitations": [
-    "LIVE senza adapter: fail-closed",
+    "LIVE: adapter implementato e certificato offline (RECTIFICATION-01), non verificato su Betfair reale; LIVE NO-GO",
     "Control API/MCP assenti"
    ]
   },
@@ -242,7 +242,7 @@
     "tests/core/test_money_management_rectification_20261017.py::test_calculated_stake_is_requested_exactly_without_rounding_to_any_minimum",
     "tests/core/test_money_management_rectification_20261017.py::test_configured_minimum_is_an_explicit_rejection_not_a_silent_round_up",
     "tests/test_microstake_engine_native.py::test_requested_stake_is_executed_exactly_for_every_owner_example",
-    "tests/test_microstake_engine_native.py::test_per_order_cap_of_one_euro_no_longer_blocks_the_temporary_two_euro_stub"
+    "tests/test_microstake_engine_native.py::test_per_order_cap_below_the_stub_does_not_block_the_temporary_stub"
    ],
    "evidence": [
     {
@@ -359,7 +359,7 @@
     "tests/test_microstake_engine_native.py::test_restart_recovers_pending_saga_from_persisted_identity_without_new_place",
     "tests/test_microstake_cashout_and_recovery.py::test_engine_recovery_completes_pending_saga_without_new_place",
     "tests/test_microstake_cashout_and_recovery.py::test_engine_recovery_store_unreadable_is_not_ok",
-    "tests/test_microstake_cashout_and_recovery.py::test_engine_recovery_live_mode_without_adapter_keeps_pending_not_ok",
+    "tests/test_microstake_cashout_and_recovery.py::test_engine_recovery_in_live_mode_keeps_a_pending_sim_saga_not_ok",
     "tests/test_microstake_cashout_and_recovery.py::test_runtime_start_sequence_pauses_when_microstake_saga_stays_pending",
     "tests/test_pr512_codex_findings.py"
    ],
@@ -505,7 +505,7 @@
    "code": [
     "core/trading_engine.py::_default_native_microstake_executor"
    ],
-   "oracle": "mode LIVE, stake 0.10 => FAILED MICROSTAKE_EXECUTOR_UNAVAILABLE, nessun ordine",
+   "oracle": "mode LIVE senza BetfairClient reale (doppio o client assente), stake 0.10 => FAILED MICROSTAKE_EXECUTOR_UNAVAILABLE, nessun ordine; con il client reale l'adapter LIVE (core/microstake_live_port.py) esegue la saga",
    "tests": [
     "tests/test_microstake_engine_native.py::test_live_mode_without_adapter_fails_closed_and_sends_nothing"
    ],

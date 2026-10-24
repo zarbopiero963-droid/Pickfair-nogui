@@ -111,7 +111,7 @@ def test_router_native_ambiguous_is_order_unknown_never_placed():
 
 
 def test_router_native_cap_block_is_a_plain_failure_with_reason():
-    engine, broker, _ = _engine(available=1.0, bankroll=0.0)                 # fondi insufficienti per lo stub BACK da 2
+    engine, broker, _ = _engine(available=0.99, bankroll=0.0)                # fondi insufficienti per lo stub BACK da 1
     router = OrderRouter(_Service(broker), microstake_executor_provider=engine.native_microstake_executor)
     res = router.place(_router_payload(0.50, side="BACK"))
     assert res["placed"] is False and res["order_unknown"] is False and res["error"] == "transient_exposure_cap"
@@ -156,7 +156,7 @@ def _pending_after_crash(engine, broker):
     port.inject_fault("LOST_PLACE_RESPONSE")
     port.hide_reconciliation = True
     assert engine.submit_quick_bet(_payload("crash", size=0.10, price=3.0))["status"] == "AMBIGUOUS"
-    assert _orders(broker)[0]["sizeRemaining"] == pytest.approx(2.0)
+    assert _orders(broker)[0]["sizeRemaining"] == pytest.approx(1.0)                 # stub intero (minimo exchange)
 
 
 def test_engine_recovery_completes_pending_saga_without_new_place():
@@ -185,12 +185,14 @@ def test_engine_recovery_store_unreadable_is_not_ok():
     assert out["ok"] is False and out["status"] == "STORE_UNREADABLE"
 
 
-def test_engine_recovery_live_mode_without_adapter_keeps_pending_not_ok():
+def test_engine_recovery_in_live_mode_keeps_a_pending_sim_saga_not_ok():
+    # RECTIFICATION-01: store separati per modalita'. In LIVE una saga SIM pendente non si riprende (porta diversa)
+    # ma blocca comunque: nessuna saga resta dimenticata, ok False finche' una sessione SIM non la riconcilia.
     engine, broker, db = _engine()
     _pending_after_crash(engine, broker)
     live, _, _ = _engine(db=db, mode="LIVE")
     out = live.recover_native_microstake_sagas()
-    assert out["ok"] is False and out["status"] == "NO_EXECUTOR" and out["pending"] == ["crash"]
+    assert out["ok"] is False and out["status"] == "SIM_SAGAS_PENDING" and out["pending"] == ["crash"]
 
 
 def _rc(engine):

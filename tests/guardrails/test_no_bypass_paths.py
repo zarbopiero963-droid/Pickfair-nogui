@@ -54,6 +54,9 @@ def test_no_direct_client_order_submission_outside_allowed_layers():
         # la saga chiama il SimulationBroker solo tramite le sue operazioni pubbliche
         # ed e' raggiunta esclusivamente da TradingEngine/OrderRouter.
         "core/microstake_sim_port.py",
+        # Adapter LIVE dello stesso Microstake (PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01): BetfairClient reale,
+        # raggiunto solo dal ramo LIVE dell'engine dopo `is_live_allowed()` e dall'OrderRouter.
+        "core/microstake_live_port.py",
     }
 
     for path in ROOT.rglob("*.py"):

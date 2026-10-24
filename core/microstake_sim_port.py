@@ -9,8 +9,8 @@ Contiene inoltre:
 - `SimulationQuoteProvider`: prova del book dal broker SIM (stub passivo che non incrocia la controparte);
 - `build_native_microstake_executor`: costruzione dell'esecutore nativo per l'engine.
 
-La disponibilita' LIVE e' obiettivo di prodotto (decisione owner PF-MICROSTAKE-NATIVE-AUTO-01) ma qui NON esiste un
-adapter LIVE: in LIVE l'engine resta fail-closed (`MICROSTAKE_EXECUTOR_UNAVAILABLE`).
+L'adapter LIVE (stessa saga, stesso esecutore, store separato) e' `core/microstake_live_port.py`
+(PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01): questo modulo resta il solo collegamento al broker SIM.
 """
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ class DbSagaStore:
     """Stessa interfaccia di `JsonSagaStore`, ma nel database dell'app (chiave settings `microstake.sagas`).
 
     Scrittura atomica per chiave (transazione del DB). JSON corrotto => `SagaStoreError`, mai un dizionario vuoto
-    silenzioso: un saga dimenticato potrebbe lasciare uno stub da 2 EUR sull'exchange.
+    silenzioso: un saga dimenticato potrebbe lasciare uno stub (minimo exchange) sull'exchange.
     """
 
     def __init__(self, db: Any, key: str = SAGA_SETTINGS_KEY) -> None:
@@ -342,10 +342,10 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
     riconcilierebbe. La saga viene retrocessa ad AMBIGUOUS con riserva tenuta (rilievo Codex #512 su 034af59)."""
 
     def __init__(self, port: SimulationExchangePort, store: DbSagaStore, *, quote_provider: Callable,
-                 transient_exposure_cap: Any) -> None:
+                 transient_exposure_cap: Any, policy: Optional[MicrostakePolicy] = None) -> None:
         self.port = port
         self.store = store
-        coordinator = MicrostakeCoordinator(port, store, MicrostakePolicy())
+        coordinator = MicrostakeCoordinator(port, store, policy or MicrostakePolicy())
         super().__init__(coordinator, quote_provider=quote_provider, transient_exposure_cap=transient_exposure_cap)
 
     def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -413,7 +413,7 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
         try:
             side = Side(str(((saved.get("request") or {}).get("side")) or "").upper())
             price = Decimal(str(saved.get("stub_price")))
-            stub = Decimal(str(getattr(self.coordinator.policy, "exchange_stub_size", "2.00")))
+            stub = Decimal(str(self.coordinator.policy.exchange_stub_size))
             if not price.is_finite() or price <= 1:
                 raise ValueError
             value = order_exposure(side, stub, price)

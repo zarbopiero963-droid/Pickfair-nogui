@@ -1176,10 +1176,10 @@ def test_c10_rollback_with_a_partial_match_is_ambiguous_never_rolled_back(tmp_pa
 
 
 @pytest.mark.parametrize("bad", [None, "", "nan", "-1", "0", "abc"])
-@pytest.mark.parametrize("stub_price,expected", [("6.00", "10.00"), (None, "Infinity"), ("abc", "Infinity")])
+@pytest.mark.parametrize("stub_price,expected", [("6.00", "5.00"), (None, "Infinity"), ("abc", "Infinity")])
 def test_c10_unknown_transient_exposure_never_holds_less_than_the_stub_liability(monkeypatch, bad, stub_price, expected):
-    """Grok su 9ab753a: importo transitorio della saga ignoto => mai il solo stub da 2 EUR. Si ricalcola la
-    liability dello stub (LAY 2 EUR a 6.00 = 10 EUR); senza prezzo, riserva illimitata (fail-closed)."""
+    """Grok su 9ab753a: importo transitorio della saga ignoto => mai il solo stub. Si ricalcola la liability dello
+    stub (minimo exchange, 1 EUR da RECTIFICATION-01: LAY 1 EUR a 6.00 = 5 EUR); senza prezzo, riserva illimitata."""
     from decimal import Decimal
     from core.microstake_sim_port import DbSagaStore, build_native_microstake_executor
     from simulation_broker import SimulationBroker
@@ -1200,7 +1200,7 @@ def test_c10_unknown_transient_exposure_never_holds_less_than_the_stub_liability
     monkeypatch.setattr(ex.port, "_snapshot", lambda: False)
     ex.recover_pending()
     assert ex.port._reservations["lay"] == Decimal(expected), ex.port._reservations
-    assert ex.port.reserve("altro", Decimal("0.50"), Decimal("10")) is False, "cap superato oltre lo stub ignoto"
+    assert ex.port.reserve("altro", Decimal("5.01"), Decimal("10")) is False, "cap superato oltre lo stub ignoto"
 
 
 

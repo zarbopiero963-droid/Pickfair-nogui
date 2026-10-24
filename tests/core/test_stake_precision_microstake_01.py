@@ -218,25 +218,30 @@ def test_engine_floors_a_direct_stake_and_records_both_amounts():
                                       "motivo_normalizzazione": "troncato_al_centesimo", "modalita_ordine": "DIRETTO"}
 
 
-def test_engine_authentic_amount_just_below_two_euro_is_1_99_on_the_microstake_path():
-    # FINAL-01: 1,9999999999 autentico => 1,99, poi la scelta del percorso sull'importo finale (Microstake).
+def test_engine_authentic_amount_just_below_the_minimum_is_floored_then_routed_on_the_final_amount():
+    # FINAL-01: un importo autentico appena sotto la soglia si tronca e NON viene mai alzato; la scelta del percorso
+    # e' sull'importo finale. Soglia = minimo exchange della fonte unica (riferimento owner 1 EUR, RECTIFICATION-01).
     micro = _MicroExecutor()
     engine, direct = _engine(micro)
     res = engine.submit_quick_bet({"market_id": "1.100", "selection_id": 7, "side": "BACK", "price": 2.0,
-                                   "size": 1.9999999999, "customer_ref": "prec-1999"})
-    assert res["ok"] is True and direct.calls == [] and micro.calls[0]["size"] == 1.99
+                                   "size": 0.9999999999, "customer_ref": "prec-0999"})
+    assert res["ok"] is True and direct.calls == [] and micro.calls[0]["size"] == 0.99
     engine2, direct2 = _engine(_MicroExecutor())
     engine2.submit_quick_bet({"market_id": "1.100", "selection_id": 7, "side": "BACK", "price": 2.0,
-                              "size": 2.0, "customer_ref": "prec-200"})
-    assert direct2.calls[0]["size"] == 2.0                                  # 2,00 esatto resta diretto
+                              "size": 1.0, "customer_ref": "prec-100"})
+    assert direct2.calls[0]["size"] == 1.0                                  # 1,00 esatto e' diretto
+    engine3, direct3 = _engine(_MicroExecutor())
+    engine3.submit_quick_bet({"market_id": "1.100", "selection_id": 7, "side": "BACK", "price": 2.0,
+                              "size": 1.9999999999, "customer_ref": "prec-1999"})
+    assert direct3.calls[0]["size"] == 1.99                                 # 1,99 e non 2,00
 
 
 def test_engine_routes_a_floored_sub_minimum_stake_to_microstake():
     micro = _MicroExecutor()
     engine, direct = _engine(micro)
     engine.submit_quick_bet({"market_id": "1.100", "selection_id": 7, "side": "BACK", "price": 2.0,
-                             "size": 1.96476, "customer_ref": "prec-micro"})
-    assert direct.calls == [] and micro.calls[0]["size"] == pytest.approx(1.96, abs=1e-12)
+                             "size": 0.96476, "customer_ref": "prec-micro"})
+    assert direct.calls == [] and micro.calls[0]["size"] == pytest.approx(0.96, abs=1e-12)
 
 
 def test_engine_below_one_cent_is_an_explicit_invalid_request():
@@ -257,7 +262,7 @@ def test_native_microstake_saga_executes_the_floored_amount_exactly(tmp_path):
 
 
 def test_native_microstake_with_insufficient_funds_is_still_refused_for_funds(tmp_path):
-    native, exchange = _native(tmp_path, cap="1.00")                     # stub 2 EUR oltre il disponibile
+    native, exchange = _native(tmp_path, cap="0.99")                     # stub da 1 EUR oltre il disponibile
     engine, _direct = _engine(native)
     res = engine.submit_quick_bet({"market_id": "1.100", "selection_id": 7, "side": "BACK", "price": 2.0,
                                    "size": 0.10599, "customer_ref": "prec-funds"})

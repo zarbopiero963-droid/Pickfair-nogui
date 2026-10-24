@@ -267,7 +267,7 @@ def test_native_executor_runs_recovered_saga_and_returns_engine_contract(tmp_pat
 
 
 def test_native_executor_blocks_owner_cap_conflict_before_place(tmp_path):
-    native, exchange = _native(tmp_path, cap="1.00")
+    native, exchange = _native(tmp_path, cap="0.99")                     # stub da 1 EUR oltre il cap
 
     result = native.execute({
         "market_id": "1.100", "selection_id": 7, "side": "BACK",

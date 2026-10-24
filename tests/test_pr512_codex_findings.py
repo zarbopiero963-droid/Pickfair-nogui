@@ -37,7 +37,7 @@ def _engine_real_db(**rt):
 
 # ---------------------------------------------------------------- 4303297576: intento rilasciato su blocco pre-invio
 def test_pre_send_microstake_block_releases_the_durable_intent_so_a_later_retry_is_not_a_duplicate():
-    engine, broker, _ = _engine_real_db(available=1.0, bankroll=0.0)
+    engine, broker, _ = _engine_real_db(available=0.99, bankroll=0.0)      # stub da 1 EUR oltre il disponibile
     first = engine.submit_quick_bet(_payload("pf", size=0.10, price=2.0))
     assert first["status"] == "FAILED" and "transient_exposure_cap" in str(first["error"]) and _orders(broker) == []
     engine.runtime_controller.betfair_service.get_account_funds = lambda: {"available": 100.0, "ok": True}
@@ -70,7 +70,7 @@ def test_post_exchange_failure_is_never_marked_pre_send():
 
 # ---------------------------------------------------------------- 4303297571: riserva transitoria rilasciata ad ACTIVE
 def test_transient_reservation_is_released_after_activation_so_the_next_microstake_fits_the_same_funds():
-    engine, broker, _ = _engine(available=2.0, bankroll=0.0)
+    engine, broker, _ = _engine(available=1.0, bankroll=0.0)               # fondi = un solo stub (1 EUR)
     assert engine.submit_quick_bet(_payload("a", size=0.10, price=3.0))["ok"] is True
     assert engine.microstake_executor.port._reservations == {}, "la riserva dello stub resta dopo ACTIVE"
     assert engine.submit_quick_bet(_payload("b", size=0.10, price=3.0))["ok"] is True
@@ -78,12 +78,12 @@ def test_transient_reservation_is_released_after_activation_so_the_next_microsta
 
 
 def test_reservation_is_kept_only_while_the_outcome_is_ambiguous():
-    engine, broker, _ = _engine(available=2.0, bankroll=0.0)
+    engine, broker, _ = _engine(available=1.0, bankroll=0.0)
     engine._default_native_microstake_executor("SIMULATION")
     engine.microstake_executor.port.inject_fault("LOST_CANCEL_RESPONSE")
     assert engine.submit_quick_bet(_payload("amb", size=0.10, price=3.0))["status"] == "AMBIGUOUS"
     assert list(engine.microstake_executor.port._reservations) == ["amb"]
-    assert engine.submit_quick_bet(_payload("next", size=0.10, price=3.0))["ok"] is False   # 2.00 riservati: cap pieno
+    assert engine.submit_quick_bet(_payload("next", size=0.10, price=3.0))["ok"] is False   # 1.00 riservato: cap pieno
 
 
 # ---------------------------------------------------------------- 4303297596: snapshot del broker dopo ogni operazione

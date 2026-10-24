@@ -2670,9 +2670,9 @@ class RuntimeController:
         # di accettare nuovi ingressi. Riconciliazione incompleta => runtime in PAUSED, mai ACTIVE
         # (ATOMIC-RESERVE-01 regola 7: nessun nuovo ingresso prima della riconciliazione completa).
         self._restore_recovery_tables()                                # RSR-12, prima di F018
-        # Microstake nativo (M5): uno stub da 2 EUR lasciato intero da un crash fra
+        # Microstake nativo (M5): uno stub (minimo exchange) lasciato intero da un crash fra
         # PLACE e riduzione va completato dalla sua identita' persistita PRIMA di
-        # ricostruire le posizioni, altrimenti F018 vedrebbe un'esposizione da 2 EUR.
+        # ricostruire le posizioni, altrimenti F018 vedrebbe l'esposizione dell'intero stub.
         microstake = self._recover_native_microstake()
         rebuild = self._rebuild_open_positions()
         if not microstake.get("ok", False):
@@ -3036,8 +3036,8 @@ class RuntimeController:
         if getattr(self, "_reconciliation_required", False):
             # PF-ALL-F018: il resume non scavalca una riconciliazione post-riavvio incompleta: la ritenta.
             # Microstake (rilievo Codex #512, PF-PR-RECOVERY-DECISIONS-02): anche le saghe pendenti vanno
-            # ritentate qui, altrimenti una ricostruzione F018 riuscita azzererebbe il flag con uno stub da
-            # 2 EUR ancora irrisolto sull'exchange. Entrambe devono riuscire prima di ACTIVE.
+            # ritentate qui, altrimenti una ricostruzione F018 riuscita azzererebbe il flag con uno stub
+            # ancora irrisolto sull'exchange. Entrambe devono riuscire prima di ACTIVE.
             microstake = self._recover_native_microstake()
             if not microstake.get("ok", False):
                 return {"resumed": False,

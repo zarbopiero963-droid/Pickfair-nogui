@@ -85,7 +85,7 @@ def test_stake_with_more_than_two_decimals_is_floored_never_sent_raw(size, floor
         "un importo non rappresentabile in centesimi e' stato inviato"
 
 
-@pytest.mark.parametrize("size", [0.105, 0.111, 1.999])
+@pytest.mark.parametrize("size", [0.105, 0.111, 0.999])                 # sotto il minimo exchange (1 EUR)
 def test_coordinator_still_rejects_more_than_two_decimals_before_any_exchange_operation(size):
     engine, broker, _ = _engine()
     engine._default_native_microstake_executor("SIMULATION")

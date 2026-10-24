@@ -1,13 +1,11 @@
-"""Microstake saga: policy, coordinator and native executor (simulation-only).
+"""Microstake saga: policy, coordinator and native executor (SIM e LIVE, stesso motore).
 
 Ruolo reale (rilievo Codex #512 su 034af59, la vecchia docstring lo negava): questo modulo
-E' nel percorso di esecuzione SIM. `core/microstake_sim_port.py` importa `MicrostakeCoordinator`,
-`MicrostakePolicy`, `NativeMicrostakeExecutor`, `Phase`, `Side`, `SimOrder`, `LostResponse`
-e li collega al `SimulationBroker` di produzione; `TradingEngine` (`core/trading_engine.py`,
-`_default_native_microstake_executor` / `build_native_microstake_executor`) lo raggiunge per
-ogni invio runtime sotto il minimo exchange in SIMULATION. In LIVE non esiste adapter: l'engine
-resta fail-closed (`MICROSTAKE_EXECUTOR_UNAVAILABLE`) e `MicrostakePolicy.simulation_only`
-blocca ogni altro uso.
+E' nel percorso di esecuzione. `core/microstake_sim_port.py` collega la saga al `SimulationBroker` di
+produzione e `core/microstake_live_port.py` (PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01) al `BetfairClient`
+reale; `TradingEngine` la raggiunge per ogni invio sotto il minimo exchange (`core.stake_precision.
+EXCHANGE_MIN_ORDER`, riferimento owner 1 EUR). Una policy LIVE (`live_adapter=True`) e' accettata solo sopra una
+porta che si dichiara LIVE (`is_live_port is True`): ogni altra combinazione e' BLOCKED.
 
 Ricostruisce la saga PLACE -> riduzione di size -> REPLACE dietro una policy esplicita;
 `StatefulExchangeSimulator` e `JsonSagaStore` restano l'exchange e lo store dei test offline.
@@ -23,6 +21,8 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
+
+from core.stake_precision import EXCHANGE_MIN_ORDER
 
 
 D = Decimal
@@ -70,11 +70,16 @@ class LostResponse(RuntimeError):
 
 @dataclass(frozen=True)
 class MicrostakePolicy:
+    """`exchange_stub_size` = importo TEMPORANEO dello stub: il minimo exchange (fonte unica, 1 EUR), cioe' il
+    piu' piccolo piazzamento che l'exchange accetta. Non e' un minimo di Pickfair: e' riservato come esposizione
+    reale (`order_exposure`) entro i fondi disponibili e rilasciato quando la saga si chiude.
+    `live_adapter` abilita la saga sull'exchange reale, ma solo sopra una porta LIVE (`is_live_port`)."""
     simulation_only: bool = True
     minimum_economic_stake: Decimal = D("0.10")
-    exchange_stub_size: Decimal = D("2.00")
+    exchange_stub_size: Decimal = EXCHANGE_MIN_ORDER
     max_transient_exposure: Decimal = D("0")
     commission_rate: Decimal = D("0.045")
+    live_adapter: bool = False
 
 
 @dataclass(frozen=True)
@@ -132,7 +137,7 @@ class SmartExecutionEngine:
     exposure checks; otherwise the only valid result is BLOCKED.
     """
 
-    def __init__(self, *, exchange_minimum: Decimal = D("2.00")) -> None:
+    def __init__(self, *, exchange_minimum: Decimal = EXCHANGE_MIN_ORDER) -> None:
         minimum = self._decimal(exchange_minimum)
         if minimum <= 0:
             raise ValueError("exchange_minimum must be positive")
@@ -428,7 +433,7 @@ class MicrostakeCoordinator:
                 transient_cap: Optional[Decimal] = None) -> MicrostakeResult:
         p = self.policy
         cap = p.max_transient_exposure if transient_cap is None else transient_cap
-        if not p.simulation_only:
+        if not self._mode_allowed():
             return self._result(Phase.BLOCKED, req=req, reason="adapter_mode_not_allowed")
         try:
             values = (req.economic_stake, req.target_price, stub_price,
@@ -556,6 +561,15 @@ class MicrostakeCoordinator:
                                                reason="replace_failed")
         return self._activate(req, order, transient)
 
+    def _mode_allowed(self) -> bool:
+        """SIM: policy `simulation_only` sopra una porta che NON si dichiara LIVE. LIVE: policy `live_adapter`
+        sopra una porta che si dichiara LIVE. Mai una policy SIM sull'exchange reale ne' il contrario."""
+        p = self.policy
+        live_port = getattr(self.exchange, "is_live_port", False) is True
+        if p.simulation_only:
+            return not live_port and not p.live_adapter
+        return p.live_adapter is True and live_port
+
     def _reload_source_stale(self) -> bool:
         """True se l'ULTIMO snapshot della fonte di reload dell'exchange (broker SIM) non e' stato
         persistito: un adapter senza il concetto (LIVE, simulatore di unita') non e' mai stantio."""
@@ -587,8 +601,8 @@ class MicrostakeCoordinator:
 
     def _activate(self, req: MicrostakeRequest, order: SimOrder, transient: Decimal) -> MicrostakeResult:
         """Saga conclusa: l'ordine economico e' sull'exchange e i suoi fondi li contabilizza
-        l'exchange stesso. La riserva TRANSITORIA (stub da 2 EUR) va rilasciata, altrimenti ogni
-        microstake riuscito consumerebbe per sempre 2 EUR di cap (rilievo Codex PR #512)."""
+        l'exchange stesso. La riserva TRANSITORIA (stub al minimo exchange) va rilasciata, altrimenti ogni
+        microstake riuscito consumerebbe per sempre l'importo dello stub di cap (rilievo Codex PR #512)."""
         return self._terminal_or_ambiguous(req.customer_ref, req, Phase.ACTIVE, order, transient)
 
     def recover(self, customer_ref: str) -> MicrostakeResult:
@@ -597,6 +611,10 @@ class MicrostakeCoordinator:
             raise KeyError(customer_ref)
         req = self._request_from_json(saved["request"])
         transient = D(saved.get("transient_exposure", "0"))
+        if not self._mode_allowed():
+            # Porta e policy di modalita' diverse: nessuna operazione exchange, la saga resta pendente.
+            return self._result(Phase.AMBIGUOUS, req=req, reason="adapter_mode_not_allowed",
+                                max_exposure=transient, held=True)
         if saved.get("foreign_ref") is True:
             # Ordine preesistente con lo stesso customer_ref, non piazzato da questa saga (riesame indipendente
             # ciclo 14 #512): la saga non lo adotta MAI come proprio stub (niente riduzione/replace/cancel).
@@ -705,7 +723,7 @@ class NativeMicrostakeExecutor:
         *,
         quote_provider: Any,
         transient_exposure_cap: Decimal,
-        exchange_minimum: Decimal = D("2.00"),
+        exchange_minimum: Decimal = EXCHANGE_MIN_ORDER,
     ) -> None:
         if not callable(quote_provider):
             raise TypeError("quote_provider must be callable")

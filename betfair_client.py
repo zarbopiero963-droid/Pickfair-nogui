@@ -1619,10 +1619,20 @@ class BetfairClient:
         price: Any,
         size: Any,
         customer_ref: Any = "",
+        customer_order_ref: Any = "",
     ) -> Dict[str, Any]:
         market_id_s = str(market_id or "").strip()
         if not market_id_s:
             raise RuntimeError("INVALID_MARKET_ID")
+
+        # `customer_order_ref` (Microstake LIVE): riferimento DELL'ORDINE, restituito da listCurrentOrders come
+        # `customerOrderRef`; e' l'identita' con cui la saga ritrova il proprio stub dopo una risposta persa o un
+        # crash. Diversamente da `customer_ref` non degrada: chiesto e non conforme => rifiuto pre-invio.
+        order_ref = ""
+        if customer_order_ref not in (None, ""):
+            order_ref = self._normalize_customer_ref(customer_order_ref)
+            if not order_ref:
+                raise RuntimeError("INVALID_CUSTOMER_ORDER_REF")
 
         try:
             selection_id_i = int(selection_id)
@@ -1671,6 +1681,8 @@ class BetfairClient:
                 },
             }],
         }
+        if order_ref:
+            params["instructions"][0]["customerOrderRef"] = order_ref
         # customerRef (#PR-C): chiave di de-dup lato Betfair (finestra 60s). Se il
         # ref e' conforme lo inviamo => una ri-sottomissione con lo stesso ref
         # NON piazza una seconda bet reale. Se non conforme/assente, la chiave e'
@@ -1801,6 +1813,38 @@ class BetfairClient:
                 "error": error_text,
                 "classification": self._classify_error(error_text),
             }
+
+    def reduce_order(
+        self,
+        *,
+        market_id: Any,
+        bet_id: Any,
+        size_reduction: Any,
+    ) -> Dict[str, Any]:
+        """Cancellazione PARZIALE di un ordine (cancelOrders con `sizeReduction`), passo della saga Microstake.
+
+        Non idempotente: ripetuta ridurrebbe due volte, quindi `single_shot` (mai re-inviata) e ogni errore di
+        trasporto PROPAGA come esito ignoto, da riconciliare leggendo l'ordine. Argomenti invalidi => rifiuto
+        pre-invio. Ritorna la risposta Betfair grezza (`instructionReports[0]` con `status` e `sizeCancelled`).
+        """
+        market_id_s = str(market_id or "").strip()
+        if not market_id_s:
+            raise RuntimeError("INVALID_MARKET_ID")
+        bet_id_s = str(bet_id or "").strip()
+        if not bet_id_s:
+            raise RuntimeError("INVALID_BET_ID")
+        try:
+            reduction_f = float(size_reduction)
+        except Exception as exc:
+            raise RuntimeError("INVALID_SIZE_REDUCTION") from exc
+        if not math.isfinite(reduction_f) or reduction_f <= 0.0:
+            raise RuntimeError("INVALID_SIZE_REDUCTION")
+        return self._post_jsonrpc(
+            self.BETTING_URL,
+            "SportsAPING/v1.0/cancelOrders",
+            {"marketId": market_id_s, "instructions": [{"betId": bet_id_s, "sizeReduction": reduction_f}]},
+            single_shot=True,
+        )
 
     # =========================================================
     # ORDERS – REPLACE (change price of an unmatched order)

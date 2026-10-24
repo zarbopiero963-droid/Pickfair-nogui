@@ -3443,6 +3443,128 @@
         "tests/core/test_stake_precision_microstake_01.py"
       ],
       "rationale": "PF-STAKE-PRECISION-MICROSTAKE-01: posizione Microstake senza partita nell'identita' del bot, il CASHOUT non la chiude."
+    },
+    {
+      "id": "ms_threshold_back_to_two",
+      "module": "core.stake_precision",
+      "area": "money_management",
+      "file": "core/stake_precision.py",
+      "original": "EXCHANGE_MIN_ORDER = Decimal(\"1.00\")",
+      "mutated": "EXCHANGE_MIN_ORDER = Decimal(\"2.00\")",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py",
+        "tests/test_microstake_engine_native.py"
+      ],
+      "rationale": "RECTIFICATION-01: la soglia torna a 2 EUR (1,00-1,99 di nuovo nel Microstake, stub da 2)."
+    },
+    {
+      "id": "ms_saga_sim_policy_on_live_port",
+      "module": "core.microstake_safe",
+      "area": "live_safety",
+      "file": "core/microstake_safe.py",
+      "original": "            return not live_port and not p.live_adapter",
+      "mutated": "            return True",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "RECTIFICATION-01: una policy SIM viene eseguita sopra la porta dell'exchange reale."
+    },
+    {
+      "id": "ms_saga_live_policy_on_sim_port",
+      "module": "core.microstake_safe",
+      "area": "live_safety",
+      "file": "core/microstake_safe.py",
+      "original": "        return p.live_adapter is True and live_port",
+      "mutated": "        return True",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "RECTIFICATION-01: una policy LIVE viene eseguita sopra una porta che non e' LIVE."
+    },
+    {
+      "id": "ms_live_reduce_whole_order",
+      "module": "betfair_client",
+      "area": "exposure",
+      "file": "betfair_client.py",
+      "original": "            {\"marketId\": market_id_s, \"instructions\": [{\"betId\": bet_id_s, \"sizeReduction\": reduction_f}]},",
+      "mutated": "            {\"marketId\": market_id_s, \"instructions\": [{\"betId\": bet_id_s}]},",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "RECTIFICATION-01: la riduzione dello stub cancella l'intero ordine invece di lasciare lo stake richiesto."
+    },
+    {
+      "id": "ms_live_order_ref_dropped",
+      "module": "core.microstake_live_port",
+      "area": "recovery",
+      "file": "core/microstake_live_port.py",
+      "original": "                                        customer_order_ref=customer_ref)",
+      "mutated": "                                        customer_order_ref=\"\")",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "RECTIFICATION-01: lo stub parte senza customerOrderRef, la saga non lo ritrova dopo una risposta persa."
+    },
+    {
+      "id": "ms_live_quote_error_escapes",
+      "module": "core.microstake_live_port",
+      "area": "live_safety",
+      "file": "core/microstake_live_port.py",
+      "original": "            logger.warning(\"Microstake LIVE: prova del book non disponibile (%s)\", type(exc).__name__)",
+      "mutated": "            raise",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "RECTIFICATION-01: un errore di lettura del book esce come eccezione invece di bloccare prima dell'invio."
+    },
+    {
+      "id": "ms_live_dead_stub_kept",
+      "module": "core.microstake_live_port",
+      "area": "reconciliation",
+      "file": "core/microstake_live_port.py",
+      "original": "            if not self._dead(order, row):",
+      "mutated": "            if True:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "RECTIFICATION-01: lo stub sostituito (cancellato, zero abbinato) viene contato come posizione viva."
+    },
+    {
+      "id": "ms_engine_other_mode_sagas_ignored",
+      "module": "core.trading_engine",
+      "area": "recovery",
+      "file": "core/trading_engine.py",
+      "original": "        if other:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py",
+        "tests/test_microstake_cashout_and_recovery.py"
+      ],
+      "rationale": "RECTIFICATION-01: saghe pendenti dell'altra modalita' (LIVE in SIM) ignorate: nuovi ingressi con stub dimenticati."
+    },
+    {
+      "id": "ms_engine_live_double_client",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "        if client is None or not self._e_il_client_betfair_reale(client):",
+      "mutated": "        if client is None:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "RECTIFICATION-01: un client che non e' il BetfairClient reale diventa l'exchange LIVE della saga."
+    },
+    {
+      "id": "ms_engine_live_breaker_ignored",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "        if str(mode or \"\").upper() == \"LIVE\" and self._order_submission_breaker.is_open():",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "RECTIFICATION-01: il circuit breaker degli invii non ferma il Microstake LIVE."
     }
   ]
 }
