@@ -112,8 +112,10 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
     stesso contratto (`_recover_funds_at_entry`). Vale dopo uno zero, una lettura non valida o in errore (anche
     un'eccezione in `get_status` o al settlement) e dopo una cassa invalidata fuori da una lettura (P&L applicato,
     snapshot, ripristino). Il segnale rilegge il conto prima dell'ammissione, solo a runtime ACTIVE; Dutching e bet
-    manuale lo fanno nella lettura dei fondi d'ingresso. Se l'avvio a zero non ha aperto la baseline del ciclo (F032),
-    si apre alla prima lettura verificata della ripresa. Così anche headless,
+    manuale lo fanno nella lettura dei fondi d'ingresso. La lettura del segnale avviene fuori dal lock, con il fence
+    d'ammissione catturato prima e rivalidato dopo: un cashout completato nel frattempo invalida il segnale. Se
+    l'avvio a zero non ha aperto la baseline del ciclo (F032), si apre alla prima lettura verificata, da qualunque
+    percorso (stato, settlement, ingresso). Così anche headless,
     senza `get_status`, le entrate riprendono, senza doppi conteggi: il bankroll è il disponibile letto.
   - Il settlement con zero mantiene motivo `BALANCE_ZERO_VERIFIED` e stato `SYNC_FAILED_BALANCE_UNAVAILABLE`
     (auto-next saltato) e riporta `account_state`. `get_status` espone `account_state` e `account_state_source`.

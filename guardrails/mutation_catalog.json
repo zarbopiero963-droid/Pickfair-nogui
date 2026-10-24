@@ -3323,6 +3323,30 @@
         "tests/unit/test_p2_zero_balance_unified.py"
       ],
       "rationale": "Phase 2 (review indipendente, P2): un'eccezione nella lettura di get_status lascia lo stato FUNDS_VERIFIED e la ripresa non scatta."
+    },
+    {
+      "id": "p2_recovery_read_without_fence_revalidation",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "        self._read_funds_for_entry()\n        with lock:\n            if not self._admission_fence_valid(fence):\n                self._reject_signal(dict(signal or {}), \"cashout_invalidation_active\")\n                return\n            self._on_signal_received_serial(signal, admission_fence=fence)",
+      "mutated": "        self._read_funds_for_entry()\n        with lock:\n            fence = self._capture_admission_fence(signal)\n            self._on_signal_received_serial(signal, admission_fence=fence)",
+      "tests": [
+        "tests/unit/test_p2_zero_balance_unified.py"
+      ],
+      "rationale": "Phase 2 (Codex P1 su 053af35): il fence si ricattura dopo la lettura di ripresa: un cashout completato durante la lettura non invalida il segnale, che riapre esposizione dopo l'uscita protettiva."
+    },
+    {
+      "id": "p2_deferred_baseline_never_opened",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "            self._expansion_baseline_deferred = not self._load_expansion_baseline()",
+      "mutated": "            self._load_expansion_baseline()",
+      "tests": [
+        "tests/unit/test_p2_zero_balance_unified.py"
+      ],
+      "rationale": "Phase 2 (Codex P2 su 053af35): la baseline F032 rinviata dall'avvio a zero non si apre piu' alla prima lettura verificata (espansione disattivata per la sessione)."
     }
   ]
 }

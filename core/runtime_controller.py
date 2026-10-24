@@ -3679,13 +3679,23 @@ class RuntimeController:
                 with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
                     self._end_cashout_barrier(barrier_id)
             return
-        if self._needs_funds_recovery() and getattr(self.mode, "value", self.mode) == RuntimeMode.ACTIVE.value:
-            # Phase 2, caso D: con la cassa non verificata il money management rifiuterebbe prima della lettura fresca
-            # d'ingresso. Una lettura del conto PRIMA dell'ammissione (fuori dal lock, rete), solo a runtime attivo,
-            # riallinea bankroll e cassa se i fondi sono tornati; altrimenti il segnale si ferma sui gate come prima.
-            self._read_funds_for_entry()
-        with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
+        lock = getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock)
+        with lock:
             fence = self._capture_admission_fence(signal)
+            if not self._admission_fence_valid(fence):
+                self._reject_signal(dict(signal or {}), "cashout_invalidation_active")
+                return
+            recovery = self._needs_funds_recovery() and \
+                getattr(self.mode, "value", self.mode) == RuntimeMode.ACTIVE.value
+            if not recovery:
+                self._on_signal_received_serial(signal, admission_fence=fence)
+                return
+        # Phase 2, caso D: con la cassa non verificata il money management rifiuterebbe prima della lettura fresca
+        # d'ingresso. Una lettura del conto fuori dal lock (rete), solo a runtime attivo, riallinea bankroll e cassa
+        # se i fondi sono tornati. Il fence e' catturato PRIMA della lettura e rivalidato dopo (Codex P1 su 053af35):
+        # un cashout iniziato e finito durante la lettura invalida il segnale, come nella finestra di rete d'ingresso.
+        self._read_funds_for_entry()
+        with lock:
             if not self._admission_fence_valid(fence):
                 self._reject_signal(dict(signal or {}), "cashout_invalidation_active")
                 return
@@ -6201,6 +6211,12 @@ class RuntimeController:
                 self._account_state = state
                 self._account_state_source = str(source)
             current = str(getattr(self, "_account_state", "") or "")
+        if applied and state == self.ACCOUNT_FUNDS_VERIFIED and getattr(self, "_expansion_baseline_deferred", False):
+            # F032: l'avvio a zero o non verificabile ha rinviato la baseline del primo ciclo; la prima lettura
+            # verificata, da qualunque percorso (stato, settlement, ingresso), la apre come al primo avvio (Codex P2).
+            self._expansion_baseline_deferred = False
+            if not self._load_expansion_baseline():
+                self._start_expansion_cycle("first_start", funds=funds)
         return {"state": state if applied else current, "applied": bool(applied), "account": account}
 
     def _needs_funds_recovery(self) -> bool:
@@ -6214,18 +6230,14 @@ class RuntimeController:
 
     def _recover_funds_at_entry(self, funds: Any, read_at: Optional[float]) -> None:
         """Phase 2, caso D: la prima lettura d'ingresso valida con disponibile > 0 riallinea bankroll e cassa con lo
-        stesso contratto, senza aspettare `get_status` o un settlement (headless). Se nella sessione non c'e' ancora
-        una baseline del ciclo (avvio a zero, F032), si apre adesso come al primo avvio. Niente da riprendere =>
-        nessun effetto."""
+        stesso contratto, senza aspettare `get_status` o un settlement (headless). Niente da riprendere => nessun
+        effetto."""
         if not self._needs_funds_recovery():
             return
         account = self._account_from_funds(funds)
         if not (account["ok"] and float(account["available"]) > 0.0):
             return
-        esito = self._apply_funds_reading(funds, source="entry", read_at=read_at, account=account)
-        if esito["applied"] and esito["state"] == self.ACCOUNT_FUNDS_VERIFIED \
-                and getattr(self, "_expansion_baseline", None) is None and not self._load_expansion_baseline():
-            self._start_expansion_cycle("first_start", funds=funds)
+        self._apply_funds_reading(funds, source="entry", read_at=read_at, account=account)
 
     def _applica_fondi_avvio(self, funds: Any, *, read_at: Optional[float] = None) -> dict:
         """Fondi letti all'avvio: snapshot (F026), bankroll e baseline del primo ciclo (F032).
@@ -6243,7 +6255,8 @@ class RuntimeController:
         else:
             logger.warning("Avvio con conto %s (%s): bankroll e baseline invariati, nuove entrate bloccate",
                            esito["state"], account.get("reason") or "disponibile 0")
-            self._load_expansion_baseline()
+            # Nessuna baseline registrata: si apre alla prima lettura verificata (`_apply_funds_reading`).
+            self._expansion_baseline_deferred = not self._load_expansion_baseline()
         return account
 
     def _record_account_snapshot(self, funds: Any, *, source: str, read_at: Optional[float] = None) -> dict:

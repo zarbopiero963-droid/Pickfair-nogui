@@ -332,3 +332,38 @@ def test_nessuna_lettura_pre_ammissione_a_runtime_non_attivo(tmp_path):
     c.rc.mode = RuntimeMode.STOPPED
     c.rc._on_signal_received(_signal())
     assert letture == []
+
+
+# ----------------------------------------------------------------------------- Codex su 053af35
+def test_cashout_durante_la_lettura_di_ripresa_invalida_il_segnale(tmp_path):
+    """Codex P1: la lettura del conto prima dell'ammissione avveniva PRIMA di catturare il fence: un CASHOUT
+    iniziato e finito durante la lettura non invalidava il segnale, che riapriva esposizione subito dopo l'uscita
+    protettiva. Ora il fence si cattura prima e si rivalida dopo la lettura."""
+    c = _catena(tmp_path)
+    _applica(c, "avvio", A)                                  # stato non verificato: serve la lettura di ripresa
+    rc = c.rc
+
+    letture = []
+
+    def lettura_con_cashout():
+        letture.append(1)
+        if len(letture) == 1:                                # il cashout avviene durante la lettura di ripresa
+            with rc._risk_admission_lock:
+                barriera, _ = rc._begin_cashout_barrier(_signal())
+            with rc._risk_admission_lock:
+                rc._end_cashout_barrier(barriera)
+        return dict(VALIDO)
+    rc.betfair_service.get_account_funds = lettura_con_cashout
+    rc._on_signal_received(_signal())
+    assert c.bus.payloads("CMD_QUICK_BET") == []
+
+
+def test_baseline_differita_si_apre_anche_se_i_fondi_tornano_da_get_status(tmp_path):
+    """Codex P2: la baseline del ciclo rinviata dall'avvio a zero si apriva solo nella ripresa all'ingresso; con i
+    fondi tornati da get_status restava None per tutta la sessione (espansione disattivata)."""
+    c = _catena(tmp_path)
+    c.rc._applica_fondi_avvio(dict(A), read_at=time.monotonic())
+    assert c.rc._expansion_baseline is None
+    _conto(c, VALIDO)
+    c.rc.get_status()
+    assert c.rc._expansion_baseline is not None
