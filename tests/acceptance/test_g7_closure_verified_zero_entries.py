@@ -70,16 +70,28 @@ def test_bet_manuale_con_zero_verificato_non_produce_ordini(tmp_path):
     _nessun_ordine(c)
 
 
-def test_auto_next_dopo_settlement_con_zero_verificato_non_produce_ordini(tmp_path):
-    c = _catena(tmp_path)
-    _conto_a_zero(c)
-    payload = {"event_key": "evt-g7", "batch_id": "b-g7", "correlation_id": "corr-g7", "gross_pnl": -1.0,
-               "auto_trade_enabled": True, "cycle_executor_enabled": True}
-    sync = c.rc._sync_bankroll_post_settlement(payload)
-    assert sync["reason"] == "BALANCE_ZERO_VERIFIED"
-    result = c.rc._evaluate_and_maybe_submit_auto_next_trade(payload=payload, sync_result=sync)
-    assert result["submitted"] is False, result
-    _nessun_ordine(c)
+@pytest.mark.parametrize("fondi,atteso_invio", [
+    ({"available": 0.0, "exposure": 40.0, "total": 40.0}, False),                       # zero verificato
+    ({"available": 150.0, "exposure": 0.0}, True),                                       # controllo positivo
+])
+def test_auto_next_dopo_settlement_si_ferma_solo_sullo_zero_verificato(fondi, atteso_invio):
+    """Rilievo Codex su beb1845: il test precedente si fermava su `resume_submit_disabled`, prima del gate della
+    sync. Qui il ciclo e' idoneo all'invio (stesso payload del percorso felice di `test_cycle_executor`): con
+    fondi validi l'auto-next parte, con lo zero verificato si ferma proprio sulla sync fallita."""
+    from core.system_state import RuntimeMode
+    from tests.core.test_cycle_executor import _close_payload, _make_controller
+
+    rc, bus = _make_controller(responses=[dict(fondi), dict(fondi)])
+    rc.mode = RuntimeMode.ACTIVE
+    rc._on_close_position(_close_payload())
+    result = rc._last_cycle_executor_result
+    ordini = [e for e in bus.events if e[0] == "CMD_QUICK_BET"]
+    if atteso_invio:
+        assert result["submitted"] is True and len(ordini) == 1, result
+    else:
+        assert result["submitted"] is False and ordini == [], result
+        assert result["cycle_executor_status"] == "CYCLE_SKIPPED_SYNC_FAILED", result
+        assert result["reason"] == "bankroll_sync_not_success", result
 
 
 def test_bet_manuale_senza_get_status_si_ferma_sui_fondi_freschi(tmp_path):
