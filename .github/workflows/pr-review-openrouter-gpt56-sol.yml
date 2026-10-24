@@ -858,6 +858,7 @@ jobs:
                   r"|\bcannot\s+(?:conclude|confirm|certify)",
                   re.IGNORECASE)),
           )
+          _RR_CUT_LINE = re.compile(r"^\.\.\.\[PATCH FILE TRONCATO PER BUDGET TOKEN\]\.\.\.$", re.MULTILINE)
           _RR_TRUNC_NEGATED = re.compile(r"\b(?:non|nessun\w*|senza|niente|not|no)\s+(?:\w+\s+){0,2}$", re.IGNORECASE)
           _RR_ATTEMPT_RE = re.compile(
               r"<!-- ([a-z0-9]+)-pr-review-attempt:pickfair-nogui:([0-9a-f]{7,40})\.\.\.([0-9a-f]{7,40}):([0-9]+):([A-Z_]+) -->")
@@ -882,13 +883,14 @@ jobs:
               """Parti del range che il modello NON ha visto, misurate sul payload inviato (lista vuota = nessuna).
 
               Un file con patch ma senza blocco `### FILE:` e' stato escluso per budget; il segnaposto di taglio
-              indica una patch inviata solo in parte. I file senza patch (binari) non sono testo da rivedere. Un
-              blocco si riconosce solo a inizio riga dopo una riga vuota: le righe di una patch iniziano sempre
-              con `+`, `-`, spazio, `@@` o `\\`, quindi il diff non puo' fingere un blocco in piu'."""
+              indica una patch inviata solo in parte. I file senza patch (binari) non sono testo da rivedere. Blocco
+              e segnaposto contano solo come righe proprie, scritte dal builder: le righe di una patch iniziano
+              sempre con `+`, `-`, spazio, `@@` o `\\`, quindi il testo del diff non puo' fingere un blocco in piu'
+              ne' un taglio (rilievo Codex P2 su #559: una riga `+` con il testo del segnaposto non e' un taglio)."""
               sent_text = str(diff_text or "")
               with_patch = sum(1 for f in (files or ()) if isinstance(f, dict) and f.get("patch"))
               sent = sent_text.count("\n\n### FILE: ")
-              cut = sent_text.count("[PATCH FILE TRONCATO PER BUDGET TOKEN]")
+              cut = len(_RR_CUT_LINE.findall(sent_text))
               gaps = []
               if compare_truncated:
                   gaps.append("compare_api_troncata")

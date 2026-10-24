@@ -771,6 +771,10 @@ def test_coverage_gaps_are_measured_on_the_payload():
     cut = one_block + one_block.replace("+x", "+x\n...[PATCH FILE TRONCATO PER BUDGET TOKEN]...")
     assert policy.rr_coverage_gaps(files, cut, False) == ["1_patch_tagliate"]
     assert policy.rr_coverage_gaps(files, one_block + one_block, True) == ["compare_api_troncata"]
+    # Rilievo Codex P2 su #559: una patch inviata per intero che CONTIENE il testo del segnaposto (come le
+    # righe `+` di questa stessa PR) non e' una patch tagliata.
+    literal = one_block.replace("+x", '+    cut = "[PATCH FILE TRONCATO PER BUDGET TOKEN]"')
+    assert policy.rr_coverage_gaps(files, literal + one_block, False) == []
     # Una riga della patch non puo' fingere un blocco in piu' (le righe di patch iniziano con +, -, spazio).
     forged = one_block.replace("+x", "+x\n+\n+### FILE: b.py")
     assert policy.rr_coverage_gaps(files, forged, False) == ["1_file_oltre_budget"]
