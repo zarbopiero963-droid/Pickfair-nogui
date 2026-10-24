@@ -3138,10 +3138,9 @@ class RuntimeController:
         except ValueError:
             event_name = ""
         name = " ".join(event_name.casefold().split()) if isinstance(event_name, str) else ""
-        event_id = signal.get("event_id") or signal.get("eventId")
-        if event_id not in (None, "") and not isinstance(event_id, bool):
-            return str(event_id).strip(), name
-        return "", name
+        # #554 (Codex P1 su e0dacbb): id in forma canonica per l'ingresso E per i tavoli salvati (123.0 == "123").
+        event_id = validators.canonical_event_id(signal.get("event_id") or signal.get("eventId"))
+        return (event_id or ""), name
 
     @classmethod
     def _event_identity(cls, signal: dict) -> str:

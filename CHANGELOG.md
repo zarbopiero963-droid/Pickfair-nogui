@@ -26,6 +26,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - il `RiskMiddleware` conserva `event_id`;
   - seconda review sul diff finale: l'id evento ha una forma canonica (123.0 e «123» sono lo stesso evento) e il
     bus non trasforma più un nome evento assente in «None».
+  - Codex P1 su `e0dacbb`: la forma canonica dell'id è condivisa (`validators.canonical_event_id`) anche dal
+    matcher del runtime, così un tavolo da segnale salvato con id `123.0` resta nel cap di un ingresso con `"123"`.
 
   Rimosso il vecchio `DutchingController._event_current_exposure`. Test:
   `tests/unit/test_554_dutching_event_cap_unified.py`; test doppi dei runtime finti allineati alla nuova misura;

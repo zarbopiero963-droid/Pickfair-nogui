@@ -3206,11 +3206,11 @@
     },
     {
       "id": "i554_identity_gate_accepts_blank_id",
-      "module": "controllers.dutching_controller",
+      "module": "core.validators",
       "area": "exposure",
-      "file": "controllers/dutching_controller.py",
-      "original": "            return value.strip() or None",
-      "mutated": "            return value or None",
+      "file": "core/validators.py",
+      "original": "        return value.strip() or None",
+      "mutated": "        return value or None",
       "tests": [
         "tests/unit/test_554_dutching_event_cap_unified.py"
       ],
@@ -3241,18 +3241,6 @@
       "rationale": "#554: la corsia bus del Dutching perde l'id evento: un lotto identificato solo dall'id non e' verificabile."
     },
     {
-      "id": "i554_event_id_not_canonical",
-      "module": "controllers.dutching_controller",
-      "area": "exposure",
-      "file": "controllers/dutching_controller.py",
-      "original": "        out[\"event_id\"] = self._canonical_event_id(payload.get(\"event_id\"))",
-      "mutated": "        out[\"event_id\"] = payload.get(\"event_id\")",
-      "tests": [
-        "tests/unit/test_554_dutching_event_cap_unified.py"
-      ],
-      "rationale": "#554 (review su b800cd4): id evento non canonico: 123.0 sul tavolo e \"123\" nell'ingresso sono eventi diversi e i nomi non si confrontano piu' (cap evento sotto-stimato)."
-    },
-    {
       "id": "i554_bus_none_name_becomes_identity",
       "module": "core.risk_middleware",
       "area": "exposure",
@@ -3263,6 +3251,18 @@
         "tests/unit/test_554_dutching_event_cap_unified.py"
       ],
       "rationale": "#554: il bus trasforma un nome evento assente in \"None\", che il gate d'identita' accetta."
+    },
+    {
+      "id": "i554_runtime_event_id_not_canonical",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        event_id = validators.canonical_event_id(signal.get(\"event_id\") or signal.get(\"eventId\"))",
+      "mutated": "        event_id = str(signal.get(\"event_id\") or signal.get(\"eventId\") or \"\").strip() or None",
+      "tests": [
+        "tests/unit/test_554_dutching_event_cap_unified.py"
+      ],
+      "rationale": "#554 (Codex P1 su e0dacbb): il runtime confronta l'id grezzo del tavolo salvato (123.0 -> \"123.0\") con quello canonico dell'ingresso (\"123\"): il tavolo da segnale esce dal cap evento."
     }
   ]
 }

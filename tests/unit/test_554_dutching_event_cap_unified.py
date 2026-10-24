@@ -333,3 +333,30 @@ def test_il_bus_non_trasforma_un_nome_assente_in_none():
          "results": [{"selectionId": 1, "price": 2.0, "side": "BACK"}]})
     comando = [p for t, p in bus.pubblicati if t == "CMD_PLACE_DUTCHING"][0]
     assert comando["event_name"] == ""
+
+
+# ----------------------------------------------------------------------------- Codex P1 su e0dacbb
+@pytest.mark.parametrize("id_tavolo,id_ingresso", [(123.0, "123"), ("123", 123.0), (123, " 123 ")])
+def test_tavolo_da_segnale_con_id_in_altra_forma_resta_nel_cap(tmp_path, id_tavolo, id_ingresso):
+    """Codex P1 su e0dacbb: l'ingresso del controller aveva l'id canonico ("123") ma il runtime confrontava l'id
+    grezzo del tavolo (123.0 -> "123.0"); con l'id su entrambi i nomi non si confrontano e il tavolo da segnale
+    usciva dal cap. Ora la forma canonica e' unica (`validators.canonical_event_id`) per i due lati."""
+    c = _catena(tmp_path)
+    c.rc._on_signal_received(_signal(event_id=id_tavolo))
+    esposizione = c.rc._event_current_exposure(_signal(event_id=id_tavolo))
+    assert esposizione > 0
+    c.rc.config.max_event_exposure_pct = (esposizione + 2.0) / 10.0        # da sola la bet manuale (4) sta sotto
+    res = _dutching(c).manual_bet(_manual(selection_id=99, stake=4.0, market_id="1.900", event_id=id_ingresso))
+    _rifiuto_evento(res)
+    assert res["event_current_exposure"] == pytest.approx(esposizione)
+
+
+@pytest.mark.parametrize("valore,atteso", [
+    ("123", "123"), (" 123 ", "123"), (123, "123"), (123.0, "123"), ("E9", "E9"),
+    (None, None), ("", None), ("   ", None), (0, None), (0.0, None), (True, None), (False, None),
+    (123.5, None), (float("nan"), None), (float("inf"), None), ([], None), ({}, None),
+])
+def test_forma_canonica_dell_id_evento(valore, atteso):
+    from core import validators
+
+    assert validators.canonical_event_id(valore) == atteso

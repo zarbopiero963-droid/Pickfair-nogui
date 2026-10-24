@@ -1734,18 +1734,9 @@ class DutchingController:
 
     @staticmethod
     def _canonical_event_id(value: Any) -> Optional[str]:
-        """#554 (review indipendente su b800cd4): un'unica forma dell'id evento, cosi' 123.0, 123 e "123" sono lo
-        stesso evento sul tavolo e nella misura. Stringa non vuota (spazi tolti), intero o float intero finito ->
-        stringa; tutto il resto (None, bool, 0, float non interi, NaN/inf, altri tipi) -> None, cioe' nessun id."""
-        if value is None or isinstance(value, bool):
-            return None
-        if isinstance(value, str):
-            return value.strip() or None
-        if isinstance(value, int):
-            return str(value) if value else None
-        if isinstance(value, float) and math.isfinite(value) and value.is_integer():
-            return str(int(value)) if value else None
-        return None
+        """#554: la stessa forma canonica del runtime (`validators.canonical_event_id`), per gate, misura, meta del
+        tavolo e ordini."""
+        return validators.canonical_event_id(value)
 
     def _with_canonical_event_identity(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """#554: copia del payload con `event_id` canonico e `event_name` mai None. La stessa forma va al gate
