@@ -52,7 +52,7 @@ class _Betfair:
 
     def get_account_funds(self):
         if not self._responses:
-            return {"available": 0.0}
+            return {"available": 0.0, "exposure": 0.0}
         item = self._responses.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -98,7 +98,7 @@ def _make_controller(*, responses):
 
 @pytest.mark.integration
 def test_runtime_controller_bankroll_sync_prefers_exchange_over_local_pnl():
-    rc, bus = _make_controller(responses=[{"available": 120.0}])
+    rc, bus = _make_controller(responses=[{"available": 120.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
@@ -125,7 +125,7 @@ def test_runtime_controller_bankroll_sync_prefers_exchange_over_local_pnl():
 
 @pytest.mark.integration
 def test_runtime_controller_close_payload_preserves_settlement_provenance_fields():
-    rc, bus = _make_controller(responses=[{"available": 140.0}])
+    rc, bus = _make_controller(responses=[{"available": 140.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
@@ -165,7 +165,7 @@ def test_runtime_controller_close_payload_preserves_settlement_provenance_fields
 
 @pytest.mark.integration
 def test_runtime_controller_close_payload_rejects_legacy_non_canonical_settlement_payload():
-    rc, bus = _make_controller(responses=[{"available": 140.0}])
+    rc, bus = _make_controller(responses=[{"available": 140.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
@@ -193,7 +193,7 @@ def test_runtime_controller_close_payload_rejects_legacy_non_canonical_settlemen
 
 @pytest.mark.integration
 def test_runtime_controller_non_settlement_paths_do_not_trigger_bankroll_sync():
-    rc, _ = _make_controller(responses=[{"available": 777.0}])
+    rc, _ = _make_controller(responses=[{"available": 777.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_quick_bet_filled({"event_key": "evt-filled", "table_id": 1})
@@ -205,7 +205,7 @@ def test_runtime_controller_non_settlement_paths_do_not_trigger_bankroll_sync():
 
 @pytest.mark.integration
 def test_runtime_controller_status_exposes_last_bankroll_sync_result():
-    rc, _ = _make_controller(responses=[{"available": 130.0}, {"available": 130.0}])
+    rc, _ = _make_controller(responses=[{"available": 130.0, "exposure": 0.0}, {"available": 130.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
@@ -251,7 +251,7 @@ def test_runtime_controller_daily_loss_breach_triggers_synchronous_emergency_sto
     scatena un emergency stop SINCRONO dentro _on_close_position (fail-closed) —
     mode=LOCKDOWN, _emergency_stopped, evento EMERGENCY_STOP_TRIGGERED — non piu'
     solo alert. Lo stato del monitor resta coerente."""
-    rc, bus = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc, bus = _make_controller(responses=[{"available": 85.0, "exposure": 0.0}] * 4)
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -273,7 +273,7 @@ def test_daily_loss_breach_stops_before_auto_trade_evaluation():
     momento in cui l'auto-trade viene valutato, l'emergenza e' GIA' attiva (con
     l'ordine vecchio — monitor dopo l'auto-trade — sarebbe stata False e un
     ordine sarebbe potuto partire). Nessun ordine risulta submesso."""
-    rc, bus = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc, bus = _make_controller(responses=[{"available": 85.0, "exposure": 0.0}] * 4)
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -304,7 +304,7 @@ def test_daily_loss_status_poll_does_not_stop_when_not_active():
     (il monitor gira anche li') NON forza l'emergenza — l'enforcement avviene
     solo da _on_close_position e solo se ACTIVE. Evita uno start() bloccato
     dietro un'emergenza innescata da una status-poll all'avvio."""
-    rc, bus = _make_controller(responses=[{"available": 50.0}] * 4)
+    rc, bus = _make_controller(responses=[{"available": 50.0, "exposure": 0.0}] * 4)
     rc.mode = RuntimeMode.STOPPED
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.apply_closed_pnl(-50.0)  # perdita realized oltre soglia
@@ -322,7 +322,7 @@ def test_enforce_daily_loss_hard_stop_gated_on_active_and_breached():
     """L'enforcement ferma solo se breached AND runtime ACTIVE."""
     breach = {"breached": True, "daily_loss_amount": 15.0}
 
-    rc, _ = _make_controller(responses=[{"available": 50.0}] * 4)
+    rc, _ = _make_controller(responses=[{"available": 50.0, "exposure": 0.0}] * 4)
     rc.mode = RuntimeMode.STOPPED
     assert rc._enforce_daily_loss_hard_stop(breach) is False
     assert rc._emergency_stopped is False
@@ -341,7 +341,7 @@ def test_enforce_daily_loss_hard_stop_atomic_under_concurrent_dispatch():
     """Greptile P1 (no doppio stop): sotto dispatch concorrente (piu' worker
     EventBus che chiamano _on_close_position) il check-and-stop atomico fa si'
     che UN SOLO chiamante esegua davvero lo stop."""
-    rc, bus = _make_controller(responses=[{"available": 50.0}] * 8)
+    rc, bus = _make_controller(responses=[{"available": 50.0, "exposure": 0.0}] * 8)
     rc.mode = RuntimeMode.ACTIVE
     breach = {"breached": True, "daily_loss_amount": 15.0}
 
@@ -364,7 +364,7 @@ def test_enforce_daily_loss_hard_stop_atomic_under_concurrent_dispatch():
 @pytest.mark.integration
 def test_enforce_daily_loss_hard_stop_idempotent():
     """Gia' in emergenza: l'enforcement non ri-esegue lo stop (guard)."""
-    rc, bus = _make_controller(responses=[{"available": 50.0}] * 4)
+    rc, bus = _make_controller(responses=[{"available": 50.0, "exposure": 0.0}] * 4)
     rc.mode = RuntimeMode.ACTIVE
     breach = {"breached": True, "daily_loss_amount": 15.0}
 
@@ -403,7 +403,7 @@ def test_pending_stop_blocks_concurrent_signal_during_sync_window():
     (a) _emergency_stopped non e' ancora attivo (sync prima del flip a SIMULATION),
     (b) il pending-stop E' armato, (c) un SIGNAL_RECEIVED concorrente viene
     RIFIUTATO. A fine ciclo l'emergency stop definitivo e' scattato."""
-    rc, bus = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc, bus = _make_controller(responses=[{"available": 85.0, "exposure": 0.0}] * 4)
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -441,7 +441,7 @@ def test_projected_daily_loss_breach_honors_day_rollover():
     (chiuso a -50, baseline 0) e realized che porta -50, il primo settlement di
     OGGI di -1 NON deve proiettare un breach (la perdita di oggi e' 1, non 51);
     un settlement che oggi sfonda davvero (-15) deve invece proiettare breach."""
-    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc, _ = _make_controller(responses=[{"available": 85.0, "exposure": 0.0}] * 4)
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.apply_closed_pnl(-50.0)  # realized_pnl = -50 (carry da ieri)
     yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
@@ -471,7 +471,7 @@ def test_recovery_failclosed_breach_while_stopped_persists_and_refuses_start():
     db, ricaricato fail-closed al riavvio): senza la persistenza durevole, un
     riavvio prima di start()/resume() perderebbe il breach e LIVE potrebbe
     ripartire dopo aver sfondato max_daily_loss."""
-    rc, bus = _make_controller(responses=[{"available": 85.0}] * 6)
+    rc, bus = _make_controller(responses=[{"available": 85.0, "exposure": 0.0}] * 6)
     cfg = legacy_test_config()
     cfg.anti_duplication_enabled = False
     cfg.max_daily_loss = 10.0
@@ -505,7 +505,7 @@ def test_durable_breach_marker_persisted_before_bankroll_sync():
     un get_account_funds lento perderebbe l'hard-stop al riavvio. Lo spy verifica
     che il marker durevole (active=True) sia scritto PRIMA del sync, e che alla fine
     l'emergency_stop completo sia comunque scattato."""
-    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc, _ = _make_controller(responses=[{"available": 85.0, "exposure": 0.0}] * 4)
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -542,7 +542,7 @@ def test_pending_daily_loss_stop_blocks_live_choke_point():
     _on_signal_received: altrimenti un ordine accodato appena prima del breach
     parte nella finestra di sync. `_daily_loss_entry_blocked()` aggrega
     emergency+pending per il recheck pre-submit."""
-    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc, _ = _make_controller(responses=[{"available": 85.0, "exposure": 0.0}] * 4)
     # baseline: is_live_allowed() True (live abilitato, deploy gate ready)
     rc._emergency_stopped = False
     rc._daily_loss_pending_stop = False
@@ -575,7 +575,7 @@ def test_monitor_state_write_serialized_breach_survives_contention():
     monitor finale lo vede sempre breached=True (ramo persistente). Senza il lock
     l'interleaving del RMW potrebbe perdere breached=True e riaprire il restart
     LIVE in giornata."""
-    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc, _ = _make_controller(responses=[{"available": 85.0, "exposure": 0.0}] * 4)
     rc.config.max_daily_loss = 10.0
     projected = {"breached": True, "daily_loss_amount": 50.0}  # realized resta 0
 
@@ -612,7 +612,7 @@ def test_monitor_state_write_serialized_breach_survives_contention():
 def test_daily_loss_breach_while_paused_hard_stops():
     """Codex P1: un settlement che sfonda il limite mentre il runtime e' PAUSED
     fa scattare l'emergency stop (non solo da ACTIVE) — niente bypass."""
-    rc, bus = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc, bus = _make_controller(responses=[{"available": 85.0, "exposure": 0.0}] * 4)
     rc.mode = RuntimeMode.PAUSED
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.sync_bankroll(100.0)
@@ -628,7 +628,7 @@ def test_daily_loss_breach_while_paused_hard_stops():
 def test_resume_refused_after_daily_loss_breach():
     """Codex P1: resume() non riattiva il trading se la perdita giornaliera e'
     gia' sfondata (stesso giorno): fail-closed, niente bypass dell'emergenza."""
-    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc, _ = _make_controller(responses=[{"available": 85.0, "exposure": 0.0}] * 4)
     rc.mode = RuntimeMode.PAUSED
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.apply_closed_pnl(-50.0)  # breach registrato
@@ -647,7 +647,7 @@ def test_daily_loss_precheck_enforced_on_rejected_settlement_branch():
     dal precheck a inizio _on_close_position. Il payload usa il campo legacy
     `pnl` (niente contratto canonico) cosi' _extract_settlement_contract lo
     classifica DAVVERO come rejected_non_canonical_settlement."""
-    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc, _ = _make_controller(responses=[{"available": 85.0, "exposure": 0.0}] * 4)
     rc.mode = RuntimeMode.ACTIVE
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.apply_closed_pnl(-50.0)
@@ -677,7 +677,7 @@ def test_daily_loss_enforced_on_recovery_ambiguous_self_crossing_settlement():
     applicato), viene comunque hard-stoppato grazie alla PROIEZIONE del PnL nel
     check del ramo recovery (fail-closed: meglio un falso stop da duplicato che
     un kill-switch mancato)."""
-    rc, _ = _make_controller(responses=[{"available": 85.0}] * 4)
+    rc, _ = _make_controller(responses=[{"available": 85.0, "exposure": 0.0}] * 4)
     rc.mode = RuntimeMode.ACTIVE
     rc.config.max_daily_loss = 10.0
     # nessuna perdita pregressa: e' QUESTO settlement (-50) che sfonda
@@ -695,7 +695,7 @@ def test_start_refuses_live_when_daily_loss_breached_same_day():
     non chiude le posizioni) registra il breach giornaliero; un start() in LIVE
     deve RIFIUTARE (fail-closed, reason=daily_loss_breached) invece di riprendere
     il trading nello stesso giorno con _emergency_stopped=False."""
-    rc, bus = _make_controller(responses=[{"available": 50.0}] * 4)
+    rc, bus = _make_controller(responses=[{"available": 50.0, "exposure": 0.0}] * 4)
     # le settings devono fornire la soglia: start() ricarica la config.
     cfg = legacy_test_config()
     cfg.anti_duplication_enabled = False
@@ -755,7 +755,7 @@ def test_runtime_controller_daily_loss_breach_state_is_persistent_until_day_roll
     # Isola la logica di PERSISTENZA dello stato del monitor dal kill-switch
     # (testato a parte): in mode non-ACTIVE l'enforcement non scatta, quindi
     # nessun emergency_stop interferisce con alert_count/last_alert_event.
-    rc, bus = _make_controller(responses=[{"available": 85.0}, {"available": 120.0}, {"available": 120.0}])
+    rc, bus = _make_controller(responses=[{"available": 85.0, "exposure": 0.0}, {"available": 120.0, "exposure": 0.0}, {"available": 120.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.STOPPED
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.sync_bankroll(100.0)
@@ -800,7 +800,7 @@ def test_runtime_controller_daily_loss_breach_state_is_persistent_until_day_roll
 
 @pytest.mark.integration
 def test_runtime_controller_daily_loss_monitor_rollover_uses_day_baseline_not_lifetime_realized():
-    rc, _ = _make_controller(responses=[{"available": 100.0}])
+    rc, _ = _make_controller(responses=[{"available": 100.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.sync_bankroll(100.0)
@@ -857,7 +857,7 @@ def test_runtime_controller_rejects_ambiguous_zero_fallback_balance_payload():
 
 @pytest.mark.integration
 def test_runtime_controller_close_updates_realized_pnl_even_with_exchange_first_bankroll_sync():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
@@ -884,7 +884,7 @@ def test_runtime_controller_close_updates_realized_pnl_even_with_exchange_first_
 
 @pytest.mark.integration
 def test_runtime_controller_rejects_ambiguous_contract_without_explicit_or_legacy_net():
-    rc, _ = _make_controller(responses=[{"available": 140.0}])
+    rc, _ = _make_controller(responses=[{"available": 140.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
@@ -910,7 +910,7 @@ def test_runtime_controller_rejects_ambiguous_contract_without_explicit_or_legac
 
 @pytest.mark.integration
 def test_runtime_controller_rejects_mark_to_market_settlement_kind_for_close_processing():
-    rc, _ = _make_controller(responses=[{"available": 140.0}])
+    rc, _ = _make_controller(responses=[{"available": 140.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(
@@ -937,7 +937,7 @@ def test_runtime_controller_rejects_mark_to_market_settlement_kind_for_close_pro
 
 @pytest.mark.integration
 def test_runtime_controller_rejected_settlement_does_not_release_table_or_mutate_recovery_loss():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
     rc.table_manager.activate(
         table_id=1,
@@ -989,7 +989,7 @@ def test_runtime_controller_rejected_settlement_does_not_release_table_or_mutate
 
 @pytest.mark.integration
 def test_runtime_controller_legacy_non_canonical_settlement_does_not_release_table_or_duplication_key():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
     rc.table_manager.activate(
         table_id=1,
@@ -1039,7 +1039,7 @@ def test_runtime_controller_legacy_non_canonical_settlement_does_not_release_tab
 
 @pytest.mark.integration
 def test_runtime_controller_accepted_settlement_still_releases_table_and_updates_recovery():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
     rc.table_manager.activate(
         table_id=1,
@@ -1088,7 +1088,7 @@ def test_runtime_controller_accepted_settlement_still_releases_table_and_updates
 
 @pytest.mark.integration
 def test_runtime_controller_helper_like_close_payload_does_not_become_authoritative_realized_settlement():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.risk_desk.sync_bankroll(100.0)
 
     rc._on_close_position(

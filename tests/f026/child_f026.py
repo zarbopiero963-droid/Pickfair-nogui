@@ -70,9 +70,9 @@ try:
 
     def caller_name():
         # PFC-008: bankroll e cassa si applicano insieme (RiskDesk.sync_funds_reading): il chiamante e' il primo
-        # frame fuori da quei due passaggi interni.
+        # frame fuori dai passaggi interni (Phase 2: anche il contratto unico `_apply_funds_reading`).
         frame = sys._getframe(2)
-        while frame.f_code.co_name in ("sync_funds_reading", "_sync_cash_equity_from_funds"):
+        while frame.f_code.co_name in ("sync_funds_reading", "_sync_cash_equity_from_funds", "_apply_funds_reading"):
             frame = frame.f_back
         return frame.f_code.co_name
 

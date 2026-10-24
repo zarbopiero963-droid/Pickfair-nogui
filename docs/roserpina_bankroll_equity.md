@@ -90,13 +90,39 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
 
   Prima del #554 il lotto misurava solo il tavolo con la propria chiave, e un'eccezione valeva 0 (fail-open). La
   bet manuale, con un runtime senza misura, ripiegava sullo stesso tavolo.
-- **Zero verificato dopo il settlement (#546 D1):** un disponibile pari a 0 senza `error` è un saldo letto, non un
-  ripiego (dal PFC-007 ogni ripiego del servizio porta `error`): motivo `BALANCE_ZERO_VERIFIED` (prima
-  `BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK`), snapshot di conto `source=settlement` registrato (la cassa del RiskDesk non si risincronizza: con bankroll
-  invariato andrebbe in `CASH_READING_MISMATCH` e bloccherebbe le entrate anche al ritorno dei fondi; il freno sul
-  conto vuoto è il gate fondi freschi d'ingresso), stato
-  `SYNC_FAILED_BALANCE_UNAVAILABLE` (auto-next resta saltato). Il bankroll **non** viene allineato a 0 fuori
-  dall'avvio, per non portare in LOCKDOWN un conto vuoto solo per riserve impegnate.
+- **Lettura del conto: un solo contratto per avvio, `get_status`, settlement e ripresa (PF-POST-556 Phase 2,
+  decisione owner).** `RuntimeController._apply_funds_reading` classifica ogni lettura e la applica allo stesso
+  modo ovunque. Distingue disponibile, impegnato, cassa (disponibile + impegnato), bankroll registrato e stato
+  incerto:
+
+  | Stato (`account_state`) | Lettura | Bankroll | Cassa (PFC-008) | Nuove entrate |
+  |---|---|---|---|---|
+  | `FUNDS_VERIFIED` | disponibile > 0 | = disponibile | della stessa lettura | ammesse ai gate |
+  | `BALANCE_ZERO_COMMITTED` (A) | disponibile 0, impegnato > 0 | **invariato** | non verificata, motivo = stato | bloccate |
+  | `ACCOUNT_EMPTY_VERIFIED` (B) | disponibile 0, impegnato 0 | **invariato** | non verificata, motivo = stato | bloccate |
+  | `FUNDS_UNVERIFIABLE` (C) | `error`, campo mancante, valore non valido | invariato | non verificata | bloccate |
+
+  - €0 disponibili con €100 impegnati **non** sono capitale perso. Prima l'avvio allineava il bankroll a 0
+    (falso drawdown, possibile LOCKDOWN) e il settlement lo azzerava se lo zero era marcato
+    `ok`/`authoritative`/`balance_confirmed`. Ora nessuna lettura azzera il bankroll: tavoli, posizioni ed
+    esposizione restano intatti. Lo zero non apre la baseline del ciclo (F032).
+  - Il settlement usa le stesse regole anche per un campo mancante (`exposure`): `BALANCE_FIELD_MISSING`,
+    nessuna sincronizzazione (prima allineava il bankroll al solo disponibile).
+  - Caso D, fondi tornati: la prima lettura d'ingresso valida con disponibile > 0 riallinea bankroll e cassa con lo
+    stesso contratto (`_recover_funds_at_entry`). Vale dopo uno zero, una lettura non valida o in errore (anche
+    un'eccezione in `get_status` o al settlement) e dopo una cassa invalidata fuori da una lettura (P&L applicato,
+    snapshot, ripristino). Il segnale rilegge il conto prima dell'ammissione, solo a runtime ACTIVE; Dutching e bet
+    manuale lo fanno nella lettura dei fondi d'ingresso. La lettura del segnale avviene fuori dal lock, con il fence
+    d'ammissione catturato prima e rivalidato dopo: un cashout completato nel frattempo invalida il segnale. Se
+    l'avvio a zero non ha aperto la baseline del ciclo (F032), si apre alla prima lettura verificata, da qualunque
+    percorso (stato, settlement, ingresso). L'apertura avviene sotto il lock con cui un reset di ciclo scrive
+    baseline e marker: non sovrascrive mai un reset concorrente e si rinvia se un reset è in sospeso. Un'apertura
+    fallita si ritenta alla lettura successiva. Così anche headless,
+    senza `get_status`, le entrate riprendono, senza doppi conteggi: il bankroll è il disponibile letto.
+  - Il settlement con zero mantiene motivo `BALANCE_ZERO_VERIFIED` e stato `SYNC_FAILED_BALANCE_UNAVAILABLE`
+    (auto-next saltato) e riporta `account_state`. `get_status` espone `account_state` e `account_state_source`.
+  - Ordine delle letture: una lettura iniziata prima dell'ultima applicata non cambia stato, bankroll né cassa
+    (controllo di `read_at` del RiskDesk su ogni ramo, sotto `_account_state_lock`).
 - **Letture fuori ordine:** bankroll e cassa della stessa lettura si applicano insieme
   (`RiskDesk.sync_funds_reading`), con il controllo di `read_at` prima di toccare il bankroll: una lettura iniziata
   prima dell'ultima applicata non riscrive il disponibile né invalida la cassa più recente.

@@ -239,18 +239,17 @@ def test_manual_bet_event_cap_sums_the_union_of_event_and_market_tables(tmp_path
     assert res["event_current_exposure"] == 80.0
 
 
-def test_verified_zero_after_settlement_does_not_invalidate_the_registered_cash(tmp_path):
-    """Rilievo Codex su 743bf8f: la cassa sincronizzata con bankroll invariato finiva in CASH_READING_MISMATCH
-    (disponibile 0 != bankroll) e bloccava le entrate fino a un'altra sincronizzazione, anche con fondi tornati.
-    Lo zero verificato registra solo snapshot e motivo; i fondi freschi d'ingresso restano il freno (D2)."""
+def test_verified_zero_after_settlement_recovers_when_funds_return(tmp_path):
+    """Rilievo Codex su 743bf8f: la cassa invalidata dallo zero bloccava le entrate fino a un'altra sincronizzazione,
+    anche con fondi tornati. Phase 2: lo zero rende la cassa non verificata con un motivo esplicito
+    (BALANCE_ZERO_COMMITTED, mai CASH_READING_MISMATCH) e la prima lettura d'ingresso valida la riallinea."""
     c = _catena(tmp_path)
-    before = (c.rc.risk_desk.cash_basis(), c.rc.risk_desk.cash_equity_reason)
     _funds(c, available=0.0, exposure=1000.0, total=1000.0)
     c.rc._sync_bankroll_post_settlement({"event_key": "evt-m", "batch_id": "b-m",
                                          "correlation_id": "corr-m", "gross_pnl": -1.0})
-    assert (c.rc.risk_desk.cash_basis(), c.rc.risk_desk.cash_equity_reason) == before
-    assert c.rc.risk_desk.cash_equity_reason != "CASH_READING_MISMATCH"
-    _funds(c, available=0.0, exposure=1000.0, total=1000.0)
-    assert str(_dutching(c).manual_bet(_manual())["reason"]).startswith("fondi_insufficienti")   # conto vuoto
+    assert c.rc.risk_desk.cash_equity_reason == "BALANCE_ZERO_COMMITTED"
+    assert float(c.rc.risk_desk.bankroll_current) == 1000.0
+    vuoto = _dutching(c).manual_bet(_manual())                                 # conto ancora vuoto
+    assert vuoto["ok"] is False and vuoto["reason"] == "cassa_non_verificata", vuoto
     _funds(c)                                                  # i fondi tornano: 1000 disponibili
     assert _dutching(c).manual_bet(_manual())["ok"] is True
