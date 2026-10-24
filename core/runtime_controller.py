@@ -6211,12 +6211,19 @@ class RuntimeController:
                 self._account_state = state
                 self._account_state_source = str(source)
             current = str(getattr(self, "_account_state", "") or "")
-        if applied and state == self.ACCOUNT_FUNDS_VERIFIED and getattr(self, "_expansion_baseline_deferred", False):
             # F032: l'avvio a zero o non verificabile ha rinviato la baseline del primo ciclo; la prima lettura
             # verificata, da qualunque percorso (stato, settlement, ingresso), la apre come al primo avvio (Codex P2).
-            self._expansion_baseline_deferred = False
-            if not self._load_expansion_baseline():
-                self._start_expansion_cycle("first_start", funds=funds)
+            # Il flag si legge e si azzera sotto il lock (una sola apertura anche con letture concorrenti); con un
+            # reset di ciclo non persistito o lo stato di recovery illeggibile si rinvia ancora (non si scrive un
+            # `first_start` sopra un reset in sospeso). Le scritture sul DB avvengono fuori dal lock.
+            open_baseline = bool(applied and state == self.ACCOUNT_FUNDS_VERIFIED
+                                 and getattr(self, "_expansion_baseline_deferred", False)
+                                 and getattr(self, "_pending_cycle_reset", None) is None
+                                 and not getattr(self, "_recovery_state_unreadable", False))
+            if open_baseline:
+                self._expansion_baseline_deferred = False
+        if open_baseline and not self._load_expansion_baseline():
+            self._start_expansion_cycle("first_start", funds=funds)
         return {"state": state if applied else current, "applied": bool(applied), "account": account}
 
     def _needs_funds_recovery(self) -> bool:

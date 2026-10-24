@@ -3347,6 +3347,18 @@
         "tests/unit/test_p2_zero_balance_unified.py"
       ],
       "rationale": "Phase 2 (Codex P2 su 053af35): la baseline F032 rinviata dall'avvio a zero non si apre piu' alla prima lettura verificata (espansione disattivata per la sessione)."
+    },
+    {
+      "id": "p2_deferred_baseline_over_pending_reset",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "                                 and getattr(self, \"_pending_cycle_reset\", None) is None\n",
+      "mutated": "",
+      "tests": [
+        "tests/unit/test_p2_zero_balance_unified.py"
+      ],
+      "rationale": "Phase 2 (review indipendente su ea285d8): la baseline F032 rinviata si apre (first_start) sopra un reset di ciclo non persistito."
     }
   ]
 }

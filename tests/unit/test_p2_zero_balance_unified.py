@@ -354,8 +354,12 @@ def test_cashout_durante_la_lettura_di_ripresa_invalida_il_segnale(tmp_path):
                 rc._end_cashout_barrier(barriera)
         return dict(VALIDO)
     rc.betfair_service.get_account_funds = lettura_con_cashout
+    rifiuti = []
+    originale = rc._reject_signal
+    rc._reject_signal = lambda segnale, motivo: (rifiuti.append(motivo), originale(segnale, motivo))
     rc._on_signal_received(_signal())
     assert c.bus.payloads("CMD_QUICK_BET") == []
+    assert rifiuti == ["cashout_invalidation_active"], rifiuti
 
 
 def test_baseline_differita_si_apre_anche_se_i_fondi_tornano_da_get_status(tmp_path):
@@ -367,3 +371,15 @@ def test_baseline_differita_si_apre_anche_se_i_fondi_tornano_da_get_status(tmp_p
     _conto(c, VALIDO)
     c.rc.get_status()
     assert c.rc._expansion_baseline is not None
+
+
+def test_baseline_differita_non_si_apre_con_un_reset_di_ciclo_in_sospeso(tmp_path):
+    """Review indipendente su ea285d8 (P3): con un reset di ciclo non ancora persistito la prima lettura verificata non
+    scrive un `first_start` sopra il reset; la baseline resta rinviata."""
+    c = _catena(tmp_path)
+    c.rc._applica_fondi_avvio(dict(A), read_at=time.monotonic())
+    c.rc._pending_cycle_reset = {"reason": "reset_in_sospeso"}
+    _conto(c, VALIDO)
+    c.rc.get_status()
+    assert c.rc._expansion_baseline is None
+    assert c.rc._expansion_baseline_deferred is True
