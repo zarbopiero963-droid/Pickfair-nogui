@@ -9,6 +9,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#543 — ricalcolo dei fondi del SimulationBroker non piu' quadratico (follow-up PFC-005, P2 prestazioni):**
+  - ordini e fill raggruppati per mercato in una passata; memo per mercato indirizzato dal contenuto (chiave =
+    tutti i campi letti, nessuna invalidazione esplicita); id del fill cercato solo fra quelli dell'ordine;
+    mercati regolati fuori dal memo;
+  - memo solo nel caso normale (id/mercato/lato/stato `str`, chiavi dei fill presenti, numeri col loro tipo),
+    altrimenti calcolo senza memo (review indipendente su 5392139);
+  - 2000 ordini / 100 mercati: piazzamenti da ~18,6 s a ~2,2-3,6 s, `get_account_funds` da ~18 ms a ~7 ms;
+    1000 / 50: da ~3,2 s a ~0,5-0,8 s (macchina a 4 CPU, `tests/stress/bench_sim_funds.py`); contabilita' identica;
+  - prova: test differenziale contro il calcolo di prima (`tests/unit/test_543_sim_funds_recompute.py`),
+    mutazioni `i543_*`. Dettaglio in `docs/performance/sim_funds_recompute.md`.
+
 - **#532 G7 — chiusura del perimetro SIM (criterio owner, 23/10/2026):**
   - prove G7-a/b/c, #545 e #546 rieseguite su `fd5e3c4` (prima di questa PR): 214 test PASS;
   - nuovo `tests/acceptance/test_g7_closure_verified_zero_entries.py`: con zero verificato nessun percorso d'ingresso

@@ -2739,6 +2739,20 @@
         "tests/acceptance/test_g7_closure_verified_zero_entries.py"
       ],
       "max_files": 5
+    },
+    "sim-funds-recompute-543": {
+      "description": "#543 (P2 prestazioni, follow-up PFC-005 #542; criteri owner del 23/10/2026): ricalcolo dei fondi del SimulationBroker non piu' quadratico. Ordini e fill raggruppati per mercato in una passata; memo per mercato indirizzato dal contenuto (chiave = tutti i campi letti dal calcolo, mai con candidati/esclusi, registro corrotto, eccezioni o NaN); id del fill cercato solo fra quelli dell'ordine; mercati regolati fuori dal memo. Nessun limite a ordini o mercati. Benchmark riproducibile prima/dopo (1000/50, 2000/100), test differenziale contro il codice di prima, mutazioni i543_*. Merge MANUALE owner (decisione owner su #543).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/performance/sim_funds_recompute.md",
+        "guardrails/mutation_catalog.json",
+        "simulation_broker.py",
+        "tests/stress/bench_sim_funds.py",
+        "tests/unit/test_543_sim_funds_recompute.py"
+      ],
+      "max_files": 7
     }
   }
 }
