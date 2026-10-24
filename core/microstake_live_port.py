@@ -228,8 +228,9 @@ class LiveExchangePort:
         try:
             return self.order(bet_id)
         except Exception as exc:
-            # Ordine ACCETTATO (betId noto) ma non rileggibile: esito da riconciliare, mai un fallimento.
-            raise LostResponse(f"accepted but post-accept read failed: {type(exc).__name__}") from exc
+            # Ordine ACCETTATO (betId noto) ma non rileggibile: esito da riconciliare, mai un fallimento. L'identita'
+            # viaggia con l'eccezione e la saga la persiste (rilievo Codex P2 su f1594fb, come per il replacement).
+            raise LostResponse(f"accepted but post-accept read failed: {type(exc).__name__}", bet_id=bet_id) from exc
 
     def cancel_reduction(self, bet_id: str, reduction: Decimal) -> SimOrder:
         current = self.order(bet_id)

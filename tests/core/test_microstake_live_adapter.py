@@ -633,6 +633,20 @@ def test_recovery_with_live_blocked_only_cancels_the_stub_never_reprices_it():
     assert reopened.recover_native_microstake_sagas()["status"] == "NOTHING_PENDING"
 
 
+@pytest.mark.parametrize("live_allowed,daily_blocked,emergency,expected", [
+    (True, False, False, True), (False, False, False, False), (True, True, False, False),
+    (True, False, True, False), (True, None, True, False),             # None: runtime senza blocco giornaliero
+])
+def test_recovery_entry_gate_reads_every_stop_source(live_allowed, daily_blocked, emergency, expected):
+    """Rilievo Grok su f1594fb: il gate legge sia il blocco giornaliero/pending-stop sia l'emergenza."""
+    engine, _, _ = _live_engine(live_allowed=live_allowed)
+    if daily_blocked is not None:
+        engine.runtime_controller._daily_loss_entry_blocked = lambda: daily_blocked
+    engine.runtime_controller.is_emergency_stopped = emergency
+    assert engine._microstake_recovery_entry_allowed(True) is expected
+    assert engine._microstake_recovery_entry_allowed(False) is True                # SIM invariata
+
+
 def test_recovery_with_an_active_stop_is_protective_only():
     fake = _FakeBetfair()
     engine, fake, db = _live_engine(fake)
@@ -663,6 +677,40 @@ def test_stub_partly_matched_during_the_replace_is_never_declared_success():
     saga = DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("race")
     assert saga["phase"] == "AMBIGUOUS" and saga["reason"] == "replacement_size_mismatch"
     assert engine._live_microstake_executor.port.has_reservation("race")
+
+
+def test_accepted_stub_identity_is_persisted_when_the_post_place_read_fails():
+    """Rilievo Codex P2 su f1594fb: PLACE accettato, lettura successiva fallita, stub poi cancellato/lapsato. Senza il
+    betId persistito il recovery non poteva leggerne l'esito e restava pendente per sempre."""
+    fake = _FakeBetfair()
+    engine, fake, db = _live_engine(fake)
+    real = fake._listCurrentOrders
+    state = {"placed": False, "failed": False}
+    real_place = fake._placeOrders
+
+    def place(params):
+        state["placed"] = True
+        return real_place(params)
+
+    def flaky(params):
+        if state["placed"] and not state["failed"]:
+            state["failed"] = True                                  # la rilettura dopo l'accettazione fallisce...
+            raise RuntimeError("REQUEST_FAILED: TIMEOUT")
+        if state["failed"] and state.get("hide"):
+            return {"currentOrders": [], "moreAvailable": False}   # ...e la riconciliazione per ref non lo vede
+        return real(params)
+    fake._placeOrders, fake._listCurrentOrders = place, flaky
+    state["hide"] = True
+    assert engine.submit_quick_bet(_bet("sid", size=0.10))["status"] == "AMBIGUOUS"
+    saga = DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("sid")
+    assert saga.get("bet_id"), saga                                 # identita' dello stub accettato persistita
+    for o in fake.orders.values():                                  # lo stub viene poi cancellato dall'exchange
+        o["cancelled"], o["remaining"], o["status"] = o["remaining"], D("0"), "EXECUTION_COMPLETE"
+    state["hide"] = False
+    restarted, _, _ = _live_engine(fake, db=db)
+    out = restarted.recover_native_microstake_sagas()
+    assert out["ok"] is True and out["results"] == {"sid": "ROLLED_BACK"}, out
+    assert _names(fake).count("placeOrders") == 1
 
 
 def test_replacement_identity_is_persisted_before_the_read_and_used_by_recovery():

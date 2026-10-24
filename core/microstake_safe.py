@@ -499,7 +499,11 @@ class MicrostakeCoordinator:
                 size=p.exchange_stub_size, price=stub_price,
                 customer_ref=req.customer_ref,
             )
-        except LostResponse:
+        except LostResponse as exc:
+            if getattr(exc, "bet_id", ""):
+                # Stub ACCETTATO con betId noto: identita' persistita prima di ogni altra lettura, cosi' il recovery
+                # puo' leggerne l'esito anche se sparisce dagli ordini correnti (rilievo Codex P2 su f1594fb).
+                self.store.save(req.customer_ref, bet_id=exc.bet_id)
             order = self.exchange.find_by_ref(req.customer_ref)
             if order is None:
                 self.store.save(req.customer_ref, phase=Phase.AMBIGUOUS)

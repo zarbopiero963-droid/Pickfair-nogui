@@ -2679,9 +2679,10 @@ class TradingEngine:
         try:
             if not bool(getattr(runtime, "is_live_allowed", lambda: False)()):
                 return False
+            # Entrambe le fonti dello STOP (rilievo Grok su f1594fb): blocco giornaliero/pending-stop E emergenza.
             entry_blocked = getattr(runtime, "_daily_loss_entry_blocked", None)
-            if callable(entry_blocked):
-                return not bool(entry_blocked())
+            if callable(entry_blocked) and bool(entry_blocked()):
+                return False
             return getattr(runtime, "is_emergency_stopped", False) is not True
         except Exception:
             logger.exception("Microstake LIVE: stato degli ingressi non leggibile, recovery solo protettivo")

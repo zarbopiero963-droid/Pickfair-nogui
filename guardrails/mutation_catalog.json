@@ -3769,6 +3769,30 @@
         "tests/core/test_microstake_live_adapter.py"
       ],
       "rationale": "Rilievo Codex P2 su #561: identita' del replacement persistita ma non usata dal recovery."
+    },
+    {
+      "id": "ms_saga_accepted_stub_id_dropped",
+      "module": "core.microstake_safe",
+      "area": "recovery",
+      "file": "core/microstake_safe.py",
+      "original": "                self.store.save(req.customer_ref, bet_id=exc.bet_id)",
+      "mutated": "                pass",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Rilievo Codex P2 su f1594fb: betId dello stub accettato non persistito, saga pendente per sempre."
+    },
+    {
+      "id": "ms_engine_recovery_emergency_ignored",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "            return getattr(runtime, \"is_emergency_stopped\", False) is not True",
+      "mutated": "            return True",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Rilievo Grok su f1594fb: il gate di recovery ignora l'emergenza quando c'e' il blocco giornaliero."
     }
   ]
 }
