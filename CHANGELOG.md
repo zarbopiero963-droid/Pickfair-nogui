@@ -19,7 +19,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     (`controller_event_exposure`, anche per `market_id`); prima il cap evento non era valutato sulla bet manuale.
     Una bet manuale senza nome né id evento e' rifiutata (`Esposizione evento non verificabile`).
   - D1: dopo un settlement uno zero senza `error` ha motivo `BALANCE_ZERO_VERIFIED` (non piu'
-    `BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK`) e registra snapshot e cassa; bankroll invariato, auto-next saltato.
+    `BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK`) e registra lo snapshot (cassa del RiskDesk invariata); bankroll invariato, auto-next saltato.
   - Test: `tests/unit/test_546_d2_549_controller_entry_funds.py` (catena reale fino al SimulationBroker).
   - Mutazioni `i549_*` / `i546d2_*` in `guardrails/mutation_catalog.json`; `manual_bet_admission_not_atomic` riallineata
     alla nuova chiamata con la lettura dei fondi.

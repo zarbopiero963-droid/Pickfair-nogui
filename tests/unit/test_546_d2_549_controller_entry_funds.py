@@ -225,3 +225,32 @@ def test_manual_bet_event_cap_counts_the_tables_of_the_same_market(tmp_path):
     assert dc.manual_bet(_manual(selection_id=11, stake=150.0))["ok"] is True
     res = dc.manual_bet(_manual(selection_id=12, stake=50.0, event_name="Alpha - Beta"))   # 200 > 180
     assert res["ok"] is False and res["error"] == "Esposizione evento oltre limite", res
+
+
+def test_manual_bet_event_cap_sums_the_union_of_event_and_market_tables(tmp_path):
+    """Rilievo Sol su 743bf8f: con `max(evento, mercato)` due tavoli diversi (stesso evento su un altro
+    mercato; stesso mercato con nome scritto diversamente) contavano 40 invece di 80. Ora si somma l'unione."""
+    c = _catena(tmp_path, max_event_exposure_pct=10.0)       # cap evento 100
+    dc = _dutching(c)
+    assert dc.manual_bet(_manual(market_id="1.500", selection_id=1, stake=40.0))["ok"] is True
+    assert dc.manual_bet(_manual(selection_id=2, stake=40.0, event_name="Alpha - Beta"))["ok"] is True
+    res = dc.manual_bet(_manual(selection_id=3, stake=30.0))  # 40 + 40 + 30 = 110 > 100
+    assert res["ok"] is False and res["error"] == "Esposizione evento oltre limite", res
+    assert res["event_current_exposure"] == 80.0
+
+
+def test_verified_zero_after_settlement_does_not_invalidate_the_registered_cash(tmp_path):
+    """Rilievo Codex su 743bf8f: la cassa sincronizzata con bankroll invariato finiva in CASH_READING_MISMATCH
+    (disponibile 0 != bankroll) e bloccava le entrate fino a un'altra sincronizzazione, anche con fondi tornati.
+    Lo zero verificato registra solo snapshot e motivo; i fondi freschi d'ingresso restano il freno (D2)."""
+    c = _catena(tmp_path)
+    before = (c.rc.risk_desk.cash_basis(), c.rc.risk_desk.cash_equity_reason)
+    _funds(c, available=0.0, exposure=1000.0, total=1000.0)
+    c.rc._sync_bankroll_post_settlement({"event_key": "evt-m", "batch_id": "b-m",
+                                         "correlation_id": "corr-m", "gross_pnl": -1.0})
+    assert (c.rc.risk_desk.cash_basis(), c.rc.risk_desk.cash_equity_reason) == before
+    assert c.rc.risk_desk.cash_equity_reason != "CASH_READING_MISMATCH"
+    _funds(c, available=0.0, exposure=1000.0, total=1000.0)
+    assert str(_dutching(c).manual_bet(_manual())["reason"]).startswith("fondi_insufficienti")   # conto vuoto
+    _funds(c)                                                  # i fondi tornano: 1000 disponibili
+    assert _dutching(c).manual_bet(_manual())["ok"] is True

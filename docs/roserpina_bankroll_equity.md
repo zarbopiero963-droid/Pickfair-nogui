@@ -68,12 +68,15 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
 - **Cap evento sulla bet manuale (#549):** `manual_bet` applica anche `max_event_exposure_pct` (cassa
   verificata·%). L'esposizione dell'evento è la maggiore fra i tavoli Dutching/manuali dello stesso evento e quella
   del runtime (`controller_event_exposure`, tavoli da segnale compresi, e tavoli con lo stesso `market_id`
-  anche se il nome evento è scritto diversamente); esposizione illeggibile ⇒ rifiuto
+  anche se il nome evento è scritto diversamente, ogni tavolo contato una volta: unione, non il maggiore dei due
+  aggregati); esposizione illeggibile ⇒ rifiuto
   `Esposizione evento oltre limite`. Senza nome né id evento il cap non è verificabile ⇒ rifiuto
   `Esposizione evento non verificabile` (il controller non inventa l'evento). LAY: conta la liability.
 - **Zero verificato dopo il settlement (#546 D1):** un disponibile pari a 0 senza `error` è un saldo letto, non un
   ripiego (dal PFC-007 ogni ripiego del servizio porta `error`): motivo `BALANCE_ZERO_VERIFIED` (prima
-  `BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK`), snapshot di conto `source=settlement` e cassa registrati, stato
+  `BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK`), snapshot di conto `source=settlement` registrato (la cassa del RiskDesk non si risincronizza: con bankroll
+  invariato andrebbe in `CASH_READING_MISMATCH` e bloccherebbe le entrate anche al ritorno dei fondi; il freno sul
+  conto vuoto è il gate fondi freschi d'ingresso), stato
   `SYNC_FAILED_BALANCE_UNAVAILABLE` (auto-next resta saltato). Il bankroll **non** viene allineato a 0 fuori
   dall'avvio, per non portare in LOCKDOWN un conto vuoto solo per riserve impegnate.
 - **Letture fuori ordine:** bankroll e cassa della stessa lettura si applicano insieme

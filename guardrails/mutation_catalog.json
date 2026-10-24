@@ -3065,12 +3065,12 @@
       "module": "core.runtime_controller",
       "area": "exposure",
       "file": "core/runtime_controller.py",
-      "original": "                exposure = max(exposure, same_market)",
-      "mutated": "                exposure = exposure",
+      "original": "            if same_event or same_market:",
+      "mutated": "            if same_event:",
       "tests": [
         "tests/unit/test_546_d2_549_controller_entry_funds.py"
       ],
-      "rationale": "#549: i tavoli dello stesso mercato con un nome evento scritto diversamente escono dal cap evento della bet manuale."
+      "rationale": "#549: i tavoli dello stesso mercato con un nome evento scritto diversamente escono dal cap evento della bet manuale (unione evento + mercato, rilievo Sol su 743bf8f)."
     }
   ]
 }
