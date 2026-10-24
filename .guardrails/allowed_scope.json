@@ -2703,6 +2703,30 @@
         "tests/scripts/test_pr_review_recovery.py"
       ],
       "max_files": 14
+    },
+    "pfc007b-controller-entry-funds-event-cap": {
+      "description": "#546 D2 + #549 + #546 D1 (follow-up PFC-007, mandato owner PF-AUTONOMOUS-CONTINUATION-REVIEW-RECOVERY-01 punto 3): gate fondi su lettura fresca per lotto Dutching e bet manuale (lettura fuori dal lock, confronto sotto il lock con impegnato e riserve pendenti, fail-closed su lettura non verificabile o runtime senza metodo); cap max_event_exposure_pct sulla bet manuale contando anche i tavoli da segnale; zero verificato dopo il settlement con motivo BALANCE_ZERO_VERIFIED, snapshot registrato, bankroll invariato. Test doppi del runtime aggiornati con i due nuovi metodi. PR safety-critical (controllers/dutching_controller.py, core/runtime_controller.py); nessun file a merge owner.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "controllers/dutching_controller.py",
+        "core/runtime_controller.py",
+        "docs/roserpina41_parameter_dossier.md",
+        "docs/roserpina_bankroll_equity.md",
+        "guardrails/mutation_catalog.json",
+        "tests/core/test_bankroll_sync.py",
+        "tests/core/test_dutching_bus_wiring.py",
+        "tests/e2e/test_dutching_controller_e2e.py",
+        "tests/failure/test_dutching_controller_failures.py",
+        "tests/integration/test_dutching_controller_integration.py",
+        "tests/integration/test_dutching_max_win_guard.py",
+        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
+        "tests/invariant/test_dutching_controller_invariants.py",
+        "tests/unit/test_546_d2_549_controller_entry_funds.py",
+        "tests/unit/test_dutching_controller.py"
+      ],
+      "max_files": 17
     }
   }
 }

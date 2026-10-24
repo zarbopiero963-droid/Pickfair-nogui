@@ -109,6 +109,13 @@ class _Runtime:
         self.table_manager = _TableManager()
         self.dutching_batch_manager = None
 
+    def read_funds_for_controller_entry(self):
+        # #546 D2: la controfigura non modella il conto: lettura fresca verificata e capiente.
+        return {"funds": {"available": 1e9, "exposure": 0.0}, "read_at": None}
+
+    def controller_entry_funds_reason(self, funds_read, *, extra_exposure=0.0):
+        return ""
+
     def admit_controller_entries(self, orders, *, batch_id=""):
         # #523: il controller ammette gli ingressi tramite il runtime; "" = ammesso
         return ""
@@ -360,6 +367,7 @@ def _manual_payload(price, stake, bet_type="BACK"):
         "price": price,
         "stake": stake,
         "bet_type": bet_type,
+        "event_name": "Evento manuale",   # #549: il cap evento richiede l'identita' dell'evento
     }
 
 

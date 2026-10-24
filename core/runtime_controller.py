@@ -3148,9 +3148,13 @@ class RuntimeController:
         event_id, event_name = cls._event_identity_parts(signal)
         return f"id:{event_id}" if event_id else (f"name:{event_name}" if event_name else "")
 
-    def _event_current_exposure(self, signal: dict) -> float:
+    def _event_current_exposure(self, signal: dict, *, market_id: str = "") -> float:
+        """Esposizione dei tavoli attivi dello stesso evento reale. Con ``market_id`` (#549) conta anche i
+        tavoli di quel mercato: un mercato appartiene a un solo evento. Ogni tavolo si somma una volta sola
+        (unione, non il maggiore dei due aggregati)."""
         event_id, event_name = self._event_identity_parts(signal)
-        if not event_id and not event_name:
+        market_id = str(market_id or "").strip()
+        if not event_id and not event_name and not market_id:
             return 0.0
         signal_names = {event_name} if event_name else set()
         signal_legacy = str(signal.get("event_identity") or "")
@@ -3178,7 +3182,9 @@ class RuntimeController:
                 not stored_id and not stored_names
                 and str(getattr(table, "current_event_key", "") or "") == signal_event_key
             )
-            if same_event:
+            same_market = bool(market_id) and market_id in {
+                str(getattr(table, "market_id", "") or "").strip(), str(meta.get("market_id") or "").strip()}
+            if same_event or same_market:
                 value = validators.finite_number(table.current_exposure)
                 if value is None or value < 0:
                     return float("inf")
@@ -3962,6 +3968,39 @@ class RuntimeController:
                 logger.critical("customer_ref %s con piu' ingressi in coda: tutti negati (fail-closed)", ref)
 
     # ---- #523: ingressi delle corsie del DutchingController (gambe Dutching, ordine manuale) ----
+
+    def read_funds_for_controller_entry(self) -> dict:
+        """#546 D2: lettura fresca del conto per un ingresso del DutchingController (lotto o bet manuale), da
+        eseguire FUORI dal lock d'ammissione, come per i segnali (PR28-e). ``{"funds", "read_at"}``."""
+        return self._read_funds_for_entry()
+
+    def controller_entry_funds_reason(self, funds_read: Any, *, extra_exposure: float = 0.0) -> str:
+        """#546 D2: gate fondi PR28-e per un ingresso del DutchingController, da chiamare SOTTO il lock
+        d'ammissione dopo la riserva del tavolo (la riserva appena attivata e' tra le pendenti).
+        ``extra_exposure``: esposizione dell'ingresso non ancora su un tavolo. Solo nuove entrate, mai hedge.
+        '' se le riserve non ancora a mercato stanno nel disponibile letto, altrimenti il motivo del rifiuto;
+        lettura assente o illeggibile => fondi non verificabili (fail-closed)."""
+        if not isinstance(funds_read, dict):
+            return "fondi_non_verificabili"
+        read_at = funds_read.get("read_at")
+        try:
+            pending = float(self.table_manager.pending_exposure(since=read_at)) + float(extra_exposure)
+        except Exception:
+            return "fondi_non_verificabili"
+        if not math.isfinite(pending):
+            return "fondi_non_verificabili"
+        return self._entry_funds_reason(funds_read.get("funds"), pending, read_at=read_at)
+
+    def controller_event_exposure(self, entry: dict) -> float:
+        """#549: esposizione corrente dell'evento reale dell'ingresso (event_id, poi nome), su tutti i tavoli:
+        stessa misura dei segnali. Un mercato appartiene a un solo evento: i tavoli con lo stesso `market_id`
+        contano anche se il nome evento e' scritto diversamente; ogni tavolo una volta sola (unione).
+        Illeggibile => inf (il cap rifiuta)."""
+        try:
+            entry = entry or {}
+            return float(self._event_current_exposure(entry, market_id=str(entry.get("market_id") or "")))
+        except Exception:
+            return float("inf")
 
     def admit_controller_entries(self, orders: list, *, batch_id: str = "") -> str:
         """Ammissione di ingressi costruiti fuori dal percorso dei segnali (DutchingController).
@@ -7374,8 +7413,18 @@ class RuntimeController:
             or funds.get("balance_confirmed")
         )
         if available_f == 0.0 and not trusted_zero:
+            # #546 D1: dal PFC-007 ogni zero di ripiego del servizio porta `error` (gestito sopra): uno zero senza
+            # errore e' un saldo LETTO. Bankroll invariato (nessun allineamento a 0 qui) e auto-next saltato come
+            # prima, ma con motivo distinto e snapshot del conto registrato: la diagnostica non resta su una
+            # lettura precedente. La cassa del RiskDesk NON si risincronizza qui: con bankroll invariato
+            # `sync_cash_equity` la invaliderebbe (CASH_READING_MISMATCH) e bloccherebbe le entrate anche dopo il
+            # ritorno dei fondi; il freno sul conto vuoto resta il gate fondi freschi d'ingresso (#546 D2).
             result["bankroll_sync_status"] = "SYNC_FAILED_BALANCE_UNAVAILABLE"
-            result["reason"] = "BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK"
+            result["reason"] = "BALANCE_ZERO_VERIFIED"
+            account = self._record_account_snapshot(funds, source="settlement", read_at=started_at)
+            result["available_balance"] = account["available"]
+            result["committed_funds"] = account["committed"]
+            result["cash_equity"] = account["cash_equity"] if account["ok"] else None
             return result
 
         # PFC-008: bankroll e cassa della stessa lettura in un'unica operazione (una lettura tardiva non li tocca).
