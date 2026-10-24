@@ -1685,9 +1685,8 @@ class TradingEngine:
 
         I produttori normalizzano gia' alla fonte (money management, bet manuale), cosi' la riserva coincide con
         l'ordine; qui la stessa funzione e' idempotente e copre chiunque arrivi all'engine con un importo non al
-        centesimo: sempre per difetto, mai piu' alto. Un artefatto binario sotto 2,00 (es. 1.9999999999) torna
-        2,00 e va diretto invece di essere rifiutato dal Microstake. Sotto un centesimo => ValueError
-        (INVALID_REQUEST, nessun ordine)."""
+        centesimo: sempre per difetto, mai piu' alto, nessuna tolleranza (1.9999999999 => 1,99, percorso Microstake
+        scelto sull'importo finale). Sotto un centesimo => ValueError (INVALID_REQUEST, nessun ordine)."""
         for chiave in ("stake", "size"):
             calcolato = normalized.get(chiave)
             if calcolato is None:

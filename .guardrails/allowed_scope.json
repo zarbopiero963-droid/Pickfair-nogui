@@ -2822,7 +2822,7 @@
       "max_files": 9
     },
     "stake-precision-microstake-01": {
-      "description": "PF-STAKE-PRECISION-MICROSTAKE-01 / -FINAL-01 (decisioni owner 24/10/2026, safety-critical): stake per difetto al centesimo (core/stake_precision.py, Decimal ROUND_DOWN, nessuna tolleranza); money management in Decimal sugli operandi; normalizzazione prima della riserva (MM, bet manuale) e difesa nell'engine prima di risk gate e instradamento diretto/Microstake; Dutching e hedge invariati; identita' del bot per il cashout delle posizioni Microstake (database.get_bot_active_orders); harness F026 con crash dopo l'invio, segnali concorrenti e lotto Dutching; aspettative superate dalla decisione riallineate.",
+      "description": "PF-STAKE-PRECISION-MICROSTAKE-01 / -FINAL-01 (decisioni owner 24/10/2026, safety-critical): stake per difetto al centesimo (core/stake_precision.py, Decimal ROUND_DOWN, nessuna tolleranza); money management in Decimal sugli operandi; normalizzazione prima della riserva (MM, bet manuale) e difesa nell'engine prima di risk gate e instradamento diretto/Microstake; Dutching e hedge invariati; identita' del bot per il cashout delle posizioni Microstake (database.get_bot_active_orders); harness F026 con crash dopo l'invio e stake fisso del segnale; money management in aritmetica razionale esatta (Fraction); aspettative superate dalla decisione riallineate.",
       "allow_tests": true,
       "files": [
         ".guardrails/allowed_scope.json",

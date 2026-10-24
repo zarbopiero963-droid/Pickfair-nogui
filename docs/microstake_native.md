@@ -27,7 +27,7 @@ importo alzato per superare il minimo, mai un bypass di RiskGate, cap, idempoten
 ## 1-bis. Precisione dello stake (PF-STAKE-PRECISION-MICROSTAKE-01 e -FINAL-01, owner 24/10/2026)
 
 Lo stake inviato è lo stake economico **per difetto al centesimo** (`core/stake_precision.normalize_stake`,
-`Decimal` + `ROUND_DOWN`), mai più alto, nessun minimo nuovo, **nessuna tolleranza**: 1,9999999999 è 1,99.
+`ROUND_DOWN`), mai più alto, nessun minimo nuovo, **nessuna tolleranza**: 1,9999999999 è 1,99.
 
 | Stake economico | Inviato |
 | --- | --- |
@@ -49,9 +49,11 @@ Dove si applica:
 
 - **Money management, alla fonte** (`RoserpinaMoneyManagement.calculate`). Lo stesso punto copre segnali Roserpina,
   stake fisso del segnale (Telegram) e passo successivo / recovery (`evaluate_next_trade_after_settlement`).
-  - La formula è la stessa di prima, calcolata in `Decimal` sugli operandi originali (`_base_stake_decimal`). Così
-    l'errore binario del float si corregge alla fonte. Esempio: con bankroll 3,333…, in float il 3% dà
-    0,0999…; in Decimal dà 0,100000000000000005, quindi 0,10.
+  - La formula è la stessa di prima, calcolata in aritmetica razionale esatta (`Fraction`) sugli operandi originali
+    letti dalla loro forma decimale (`_base_stake_decimal`): un solo troncamento finale, nessun arrotondamento
+    intermedio (una divisione periodica come 1,25 / 11 non perde il centesimo, rilievo Codex P2 su #560). Così
+    l'errore binario del float si corregge alla fonte. Esempio: con bankroll 3,333…, in float il 3% dà 0,0999…;
+    sugli operandi esatti dà 0,100000000000000005, quindi 0,10.
   - Il float poteva anche arrotondare in su di nascosto: con bankroll 23,333333333333332 dava 0,7, mentre il valore
     esatto è 0,6999…, quindi 0,69.
   - Minimo, cap e liability LAY si valutano sull'importo troncato.

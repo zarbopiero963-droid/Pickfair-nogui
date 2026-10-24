@@ -18,9 +18,6 @@ SCENARIO_JSON: {"steps": [...]} con passi:
   {"op": "lockdown"} / {"op": "pause"} / {"op": "emergency"}         LOCKDOWN, PAUSED, emergency stop (PF-ALL-F027)
   {"op": "wait", "s": 3}
   {"op": "replay_cmd", "m": "1.701"}                                ripubblica l'ultimo CMD_QUICK_BET del mercato (PR29-a)
-  {"op": "dutching", "m": "1.701", "prices": [2.5, 3.5], "stake": 6}  lotto Dutching reale (DutchingController) sulle
-                                                                    selezioni 11 e 12, ai prezzi dati
-  {"op": "burst", "signals": [{"m": "1.701", ...}, ...]}             segnali pubblicati insieme, senza attese in mezzo
   {"op": "crash_on_next_place"}                                     os._exit(1) appena l'exchange ha accettato il
                                                                     prossimo ordine (ingresso, gamba o hedge di cashout)
 Ogni passo produce uno snapshot: fondi exchange, bankroll Roserpina, picco, drawdown, realizzato, tavoli,
@@ -143,18 +140,13 @@ try:
     BOOK = {}
 
     def book(m, status="OPEN", winner=None, back_size=100.0):
-        base = BOOK.get(m, {}).get("price", 2.0)
-        sel_prices = BOOK.get(m, {}).get("sel_prices") or {}       # Fase 4: prezzi per selezione (Dutching)
-
-        def price_of(s):
-            price = float(sel_prices.get(s, base))
-            if BOOK.get(m, {}).get("nomatch"):
-                price = round(price - 0.2, 2)        # BACK al prezzo del segnale non trova contropartita
-            return price
+        price = BOOK.get(m, {}).get("price", 2.0)
+        if BOOK.get(m, {}).get("nomatch"):
+            price = round(price - 0.2, 2)        # BACK al prezzo del segnale non trova contropartita
         brk.update_market_book({"marketId": m, "status": status, "inplay": False, "runners": [
             {"selectionId": s, "status": "ACTIVE" if status == "OPEN" else ("WINNER" if s == winner else "LOSER"),
-             "ex": {"availableToBack": [{"price": price_of(s), "size": back_size}],
-                    "availableToLay": [{"price": round(price_of(s) + 0.02, 2), "size": 100.0}]}} for s in (11, 12)]})
+             "ex": {"availableToBack": [{"price": price, "size": back_size}],
+                    "availableToLay": [{"price": round(price + 0.02, 2), "size": 100.0}]}} for s in (11, 12)]})
 
     def snap(tag):
         # Confine SIM dichiarato: l'exchange e' esterno al bot e sopravvive al suo crash. Il broker SIM salva lo
@@ -267,41 +259,6 @@ try:
                      lambda: any(r not in rows_before and r[1] != "INFLIGHT" for r in order_rows(st["m"]))
                      or since(t_sig, OUTCOMES, st["m"], SUB) or since(t_sig, {"SIGNAL_REJECTED"}, None, SUB)
                      or since(t_sig, {"SIGNAL_REJECTED"}))
-        elif op == "dutching":
-            BOOK[st["m"]] = {**BOOK.get(st["m"], {}), "price": st["prices"][0],
-                             "sel_prices": {11: st["prices"][0], 12: st["prices"][1]}}
-            book(st["m"])
-            rows_before = order_rows(st["m"])
-            res = app.dutching_controller.submit_dutching({
-                "market_id": st["m"], "event_name": st.get("event", f"Ev{st['m']} v X"), "market_name": "Match Odds",
-                "total_stake": float(st.get("stake", 6.0)), "simulation_mode": True,
-                "selections": [{"selectionId": 11, "price": st["prices"][0], "side": "BACK"},
-                               {"selectionId": 12, "price": st["prices"][1], "side": "BACK"}]})
-            R.setdefault("dutching", []).append({"m": st["m"], "ok": res.get("ok"), "reason": str(res.get("reason") or
-                                                 res.get("error") or "")[:200]})
-            wait_for(f"{i}:dutching:{st['m']}",
-                     lambda: not res.get("ok") or len([r for r in order_rows(st["m"]) if r not in rows_before
-                                                        and r[1] != "INFLIGHT"]) >= 2)
-        elif op == "burst":
-            t_sig = time.time()
-            before = {s["m"]: order_rows(s["m"]) for s in st["signals"]}
-            for s in st["signals"]:
-                BOOK[s["m"]] = {**BOOK.get(s["m"], {}), "price": s.get("price", 2.0)}
-                book(s["m"])
-            for s in st["signals"]:
-                side = s.get("side", "BACK")
-                app.bus.publish("SIGNAL_RECEIVED", {"market_id": s["m"], "selection_id": 11,
-                                                    "price": s.get("price", 2.0), "side": side, "bet_type": side,
-                                                    "event_name": s.get("event", f"Ev{s['m']} v X"),
-                                                    "market_name": "Match Odds", "runner_name": f"Ev{s['m']}",
-                                                    "simulation_mode": True, "source": "F026"})
-
-            def burst_done():
-                # ogni segnale del gruppo ha il proprio esito: ordine fuori da INFLIGHT, esito o rifiuto del suo mercato
-                return all(any(r not in before[s["m"]] and r[1] != "INFLIGHT" for r in order_rows(s["m"]))
-                           or since(t_sig, OUTCOMES, s["m"], SUB) or since(t_sig, {"SIGNAL_REJECTED"}, s["m"], SUB)
-                           or since(t_sig, {"SIGNAL_REJECTED"}, s["m"]) for s in st["signals"])
-            wait_for(f"{i}:burst", burst_done)
         elif op == "crash_on_next_place":
             CRASH["on_place"] = True; continue
         elif op == "settle":

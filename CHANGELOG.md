@@ -13,8 +13,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   owner 24/10/2026):** emerso dalla prima sessione integrata della Fase 4. Dopo un settlement il money management
   chiedeva `1.9647599999999998`: il Microstake lo bloccava (`invalid_size_precision`) e sopra il minimo l'exchange
   riceveva `3.08595`. Ora lo stake inviato è lo stake economico troncato al centesimo (`core/stake_precision.py`,
-  Decimal, ROUND_DOWN, nessuna tolleranza: 1,9999999999 è 1,99).
-  - Il money management calcola la stessa formula in Decimal sugli operandi: l'errore binario si corregge alla fonte.
+  ROUND_DOWN, nessuna tolleranza: 1,9999999999 è 1,99).
+  - Il money management calcola la stessa formula in aritmetica razionale esatta sugli operandi: l'errore binario
+    si corregge alla fonte e nessuna divisione periodica si arrotonda prima del troncamento (rilievo Codex P2).
   - Normalizzazione prima della riserva: money management e bet manuale.
   - Difesa del contratto nell'engine, prima di risk gate e della scelta diretto/Microstake.
   - Dutching e hedge invariati.

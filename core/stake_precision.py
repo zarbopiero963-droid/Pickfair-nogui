@@ -6,8 +6,9 @@ economico: mai un importo maggiore, mai un minimo nuovo, nessuna scelta del perc
 decide l'engine sull'importo finale, come prima).
 
 **Nessuna tolleranza.** 1,9999999999 e' 1,99: un importo sotto la soglia non viene mai alzato. Gli errori binari del
-float si correggono **alla fonte**: il money management calcola lo stake in `Decimal` sugli operandi della formula
-(`RoserpinaMoneyManagement._base_stake_decimal`), cosi' 3,333...% non diventa 0,0999... e poi 0,09.
+float si correggono **alla fonte**: il money management calcola lo stake in aritmetica razionale esatta (`Fraction`)
+sugli operandi della formula (`RoserpinaMoneyManagement._base_stake_decimal`), cosi' 3,333...% non diventa 0,0999...
+e poi 0,09, e una divisione periodica non si arrotonda prima del troncamento.
 
 Un float che arriva da fuori si legge dalla sua forma decimale piu' corta (`repr`), mai dal valore binario:
 0.1 e' 0,10 (non 0,1000000000000000055...).
@@ -43,7 +44,10 @@ def to_decimal(value: Any) -> Decimal:
     elif isinstance(value, float):
         if not math.isfinite(value):
             raise ValueError("STAKE_NOT_FINITE")
-        out = Decimal(repr(value))          # forma decimale piu' corta del float, non il valore binario
+        try:
+            out = Decimal(repr(value))      # forma decimale piu' corta del float, non il valore binario
+        except InvalidOperation as exc:     # sottoclasse con repr non numerico (es. np.float64(0.1))
+            raise ValueError("STAKE_NOT_NUMERIC") from exc
     else:
         try:
             out = Decimal(str(value).strip())

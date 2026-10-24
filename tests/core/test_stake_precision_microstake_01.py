@@ -372,3 +372,15 @@ def test_mm_exact_arithmetic_has_no_intermediate_rounding():
     mm = _mm(target_profit_cycle_pct=1.0)
     exact = mm._base_stake_decimal(price=12.0, bankroll_current=125.0, table_loss=0.0, risk_mult=0.8, desk_mult=1.1)
     assert stake_precision.normalize_stake(exact) == D("0.10")
+
+
+def test_float_subclass_with_a_non_numeric_repr_is_a_clean_rejection():
+    """Review indipendente su #560 (P3): `Decimal(repr(x))` di una sottoclasse di float con repr non numerico (es.
+    np.float64 -> 'np.float64(0.1)') sollevava InvalidOperation invece di ValueError: l'engine non chiudeva con
+    INVALID_REQUEST. Ora e' un rifiuto pulito, mai uno stake inventato."""
+    class Odd(float):
+        def __repr__(self):
+            return f"Odd({float(self)})"
+
+    with pytest.raises(ValueError):
+        stake_precision.normalize_stake(Odd(0.1))
