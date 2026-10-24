@@ -9,6 +9,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#546 D2 + #549 + #546 D1 — ingressi del DutchingController e zero verificato (follow-up PFC-007, P2/P3):**
+  - D2: lotto Dutching e bet manuale rileggono il conto fuori dal lock e, sotto il lock, confrontano il disponibile
+    fresco con impegnato + riserve non ancora a mercato (compresa la propria) prima di qualsiasi ordine
+    (`RuntimeController.read_funds_for_controller_entry` / `controller_entry_funds_reason`). Fondi insufficienti ⇒
+    `fondi_insufficienti:…`, lettura non verificabile ⇒ `fondi_non_verificabili`; tavolo e chiave rilasciati.
+    Prima con una cassa vecchia l'ordine partiva e lo fermava solo l'exchange.
+  - #549: `manual_bet` applica `max_event_exposure_pct`, contando anche i tavoli da segnale dello stesso evento
+    (`controller_event_exposure`); prima il cap evento non era valutato sulla bet manuale.
+  - D1: dopo un settlement uno zero senza `error` ha motivo `BALANCE_ZERO_VERIFIED` (non piu'
+    `BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK`) e registra snapshot e cassa; bankroll invariato, auto-next saltato.
+  - Test: `tests/unit/test_546_d2_549_controller_entry_funds.py` (catena reale fino al SimulationBroker).
+  - Mutazioni `i549_*` / `i546d2_*` in `guardrails/mutation_catalog.json`; `manual_bet_admission_not_atomic` riallineata
+    alla nuova chiamata con la lettura dei fondi.
+
 - **PF-REVIEW-RECOVERY-01 (#550) — review AI incomplete, retry controllato, deroga owner verificabile:**
   - Sol e Grok classificano ogni tentativo prima di scrivere marker (`VALID_PASS`, `VALID_BLOCKERS`,
     `INCOMPLETE`, `TIMEOUT`, `PROVIDER_ERROR`, `CREDITS_EXHAUSTED`, `UNKNOWN`): il marker di completamento

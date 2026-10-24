@@ -56,6 +56,24 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   cap temporaneo Microstake), nessun ripiego neppure sul disponibile. Le uscite protettive (hedge del cashout,
   `protective` dall'`OrderRouter`, che l'engine toglie dagli ingressi) non vengono bloccate né dall'headroom del
   cap totale: il loro cap temporaneo resta limitato ai fondi disponibili (#548, mandato owner PFC-008 punto 5).
+- **Gate fondi sugli ingressi del DutchingController (#546 D2):** lotto Dutching e bet manuale rileggono il conto
+  fuori dal lock d'ammissione (`RuntimeController.read_funds_for_controller_entry`) e, sotto il lock, dopo aver
+  preso il tavolo e prima di costruire gli ordini, confrontano il disponibile fresco con impegnato + tutte le
+  riserve non ancora riflesse nella lettura, compresa quella dell'ingresso
+  (`controller_entry_funds_reason`, stesse regole del gate PR28-e del segnale). Fondi insufficienti ⇒
+  `fondi_insufficienti:…`; lettura con `error`, campi mancanti, eccezione o runtime senza il metodo ⇒
+  `fondi_non_verificabili`. Rifiuto ⇒ nessun `CMD_QUICK_BET`, tavolo e chiave rilasciati. Prima l'unico freno con
+  una cassa vecchia era il rifiuto a valle dell'exchange. I tre cap percentuali restano calcolati sulla cassa
+  registrata (a differenza del segnale, che li ricontrolla anche sulla lettura fresca).
+- **Cap evento sulla bet manuale (#549):** `manual_bet` applica anche `max_event_exposure_pct` (cassa
+  verificata·%). L'esposizione dell'evento è la maggiore fra i tavoli Dutching/manuali dello stesso evento e quella
+  del runtime (`controller_event_exposure`, tavoli da segnale compresi); esposizione illeggibile ⇒ rifiuto
+  `Esposizione evento oltre limite`. LAY: conta la liability.
+- **Zero verificato dopo il settlement (#546 D1):** un disponibile pari a 0 senza `error` è un saldo letto, non un
+  ripiego (dal PFC-007 ogni ripiego del servizio porta `error`): motivo `BALANCE_ZERO_VERIFIED` (prima
+  `BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK`), snapshot di conto `source=settlement` e cassa registrati, stato
+  `SYNC_FAILED_BALANCE_UNAVAILABLE` (auto-next resta saltato). Il bankroll **non** viene allineato a 0 fuori
+  dall'avvio, per non portare in LOCKDOWN un conto vuoto solo per riserve impegnate.
 - **Letture fuori ordine:** bankroll e cassa della stessa lettura si applicano insieme
   (`RiskDesk.sync_funds_reading`), con il controllo di `read_at` prima di toccare il bankroll: una lettura iniziata
   prima dell'ultima applicata non riscrive il disponibile né invalida la cassa più recente.

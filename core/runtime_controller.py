@@ -3963,6 +3963,36 @@ class RuntimeController:
 
     # ---- #523: ingressi delle corsie del DutchingController (gambe Dutching, ordine manuale) ----
 
+    def read_funds_for_controller_entry(self) -> dict:
+        """#546 D2: lettura fresca del conto per un ingresso del DutchingController (lotto o bet manuale), da
+        eseguire FUORI dal lock d'ammissione, come per i segnali (PR28-e). ``{"funds", "read_at"}``."""
+        return self._read_funds_for_entry()
+
+    def controller_entry_funds_reason(self, funds_read: Any, *, extra_exposure: float = 0.0) -> str:
+        """#546 D2: gate fondi PR28-e per un ingresso del DutchingController, da chiamare SOTTO il lock
+        d'ammissione dopo la riserva del tavolo (la riserva appena attivata e' tra le pendenti).
+        ``extra_exposure``: esposizione dell'ingresso non ancora su un tavolo. Solo nuove entrate, mai hedge.
+        '' se le riserve non ancora a mercato stanno nel disponibile letto, altrimenti il motivo del rifiuto;
+        lettura assente o illeggibile => fondi non verificabili (fail-closed)."""
+        if not isinstance(funds_read, dict):
+            return "fondi_non_verificabili"
+        read_at = funds_read.get("read_at")
+        try:
+            pending = float(self.table_manager.pending_exposure(since=read_at)) + float(extra_exposure)
+        except Exception:
+            return "fondi_non_verificabili"
+        if not math.isfinite(pending):
+            return "fondi_non_verificabili"
+        return self._entry_funds_reason(funds_read.get("funds"), pending, read_at=read_at)
+
+    def controller_event_exposure(self, entry: dict) -> float:
+        """#549: esposizione corrente dell'evento reale dell'ingresso (event_id, poi nome), su tutti i tavoli:
+        stessa misura dei segnali. Illeggibile => inf (il cap rifiuta)."""
+        try:
+            return float(self._event_current_exposure(entry or {}))
+        except Exception:
+            return float("inf")
+
     def admit_controller_entries(self, orders: list, *, batch_id: str = "") -> str:
         """Ammissione di ingressi costruiti fuori dal percorso dei segnali (DutchingController).
 
@@ -7374,8 +7404,17 @@ class RuntimeController:
             or funds.get("balance_confirmed")
         )
         if available_f == 0.0 and not trusted_zero:
+            # #546 D1: dal PFC-007 ogni zero di ripiego del servizio porta `error` (gestito sopra): uno zero senza
+            # errore e' un saldo LETTO. Bankroll invariato (nessun allineamento a 0 qui) e auto-next saltato come
+            # prima, ma con motivo distinto, snapshot del conto registrato e cassa della stessa lettura: la
+            # diagnostica non resta su una lettura precedente.
             result["bankroll_sync_status"] = "SYNC_FAILED_BALANCE_UNAVAILABLE"
-            result["reason"] = "BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK"
+            result["reason"] = "BALANCE_ZERO_VERIFIED"
+            self._sync_cash_equity_from_funds(funds, available_f, read_at=started_at, bankroll=None)
+            account = self._record_account_snapshot(funds, source="settlement", read_at=started_at)
+            result["available_balance"] = account["available"]
+            result["committed_funds"] = account["committed"]
+            result["cash_equity"] = account["cash_equity"] if account["ok"] else None
             return result
 
         # PFC-008: bankroll e cassa della stessa lettura in un'unica operazione (una lettura tardiva non li tocca).

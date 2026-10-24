@@ -173,7 +173,10 @@ def test_bankroll_sync_rejects_ambiguous_zero_fallback_balance():
 
     result = rc._last_bankroll_sync_result
     assert result["bankroll_sync_status"] == "SYNC_FAILED_BALANCE_UNAVAILABLE"
-    assert result["reason"] == "BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK"
+    # #546 D1: senza `error` lo zero e' un saldo letto (dal PFC-007 ogni ripiego porta `error`): motivo distinto,
+    # bankroll invariato e auto-next saltato come prima.
+    assert result["reason"] == "BALANCE_ZERO_VERIFIED"
+    assert float(rc.risk_desk.bankroll_current) == 100.0
     assert float(rc.risk_desk.bankroll_current) == 100.0
 
 

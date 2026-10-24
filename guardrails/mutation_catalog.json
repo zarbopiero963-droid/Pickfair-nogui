@@ -551,8 +551,8 @@
       "module": "controllers.dutching_controller",
       "area": "exposure",
       "file": "controllers/dutching_controller.py",
-      "original": "        return self._locked_entry(self._manual_bet_reserved, payload)",
-      "mutated": "        return self._manual_bet_reserved(payload, lambda: None)",
+      "original": "        return self._locked_entry(\n            lambda body, unlock: self._manual_bet_reserved(body, unlock, funds_read=funds_read), payload)",
+      "mutated": "        return self._manual_bet_reserved(payload, lambda: None, funds_read=funds_read)",
       "tests": [
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
@@ -2999,6 +2999,54 @@
         "tests/unit/test_545_sim_snapshot_not_persisted.py"
       ],
       "rationale": "#545: un hedge SIM con snapshot non scritto risulta piazzato con certezza; un riavvio lo perderebbe lasciando la posizione scoperta."
+    },
+    {
+      "id": "i549_manual_bet_event_cap_skipped",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "                    event_current_exposure + exposure > max_event_exposure + 1e-9:",
+      "mutated": "                    False and event_current_exposure + exposure > max_event_exposure + 1e-9:",
+      "tests": [
+        "tests/unit/test_546_d2_549_controller_entry_funds.py"
+      ],
+      "rationale": "#549: la bet manuale non valuta max_event_exposure_pct e supera il cap evento."
+    },
+    {
+      "id": "i546d2_batch_funds_gate_skipped",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "        if funds_reason:\n            self._publish_audit(\"DUTCHING_BATCH_REJECTED\", {\"payload\": payload, \"reason\": funds_reason})",
+      "mutated": "        if False:\n            self._publish_audit(\"DUTCHING_BATCH_REJECTED\", {\"payload\": payload, \"reason\": funds_reason})",
+      "tests": [
+        "tests/unit/test_546_d2_549_controller_entry_funds.py"
+      ],
+      "rationale": "#546 D2: il lotto Dutching parte con una cassa vecchia anche se il conto fresco non copre le riserve."
+    },
+    {
+      "id": "i546d2_manual_funds_gate_skipped",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "            funds_reason = self._entry_funds_reason(funds_read, extra_exposure=0.0 if allocated_here else exposure)\n            if funds_reason:",
+      "mutated": "            funds_reason = self._entry_funds_reason(funds_read, extra_exposure=0.0 if allocated_here else exposure)\n            if False:",
+      "tests": [
+        "tests/unit/test_546_d2_549_controller_entry_funds.py"
+      ],
+      "rationale": "#546 D2: la bet manuale parte con una cassa vecchia anche se il conto fresco non copre le riserve."
+    },
+    {
+      "id": "i546d2_controller_pending_ignored",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "            pending = float(self.table_manager.pending_exposure(since=read_at)) + float(extra_exposure)",
+      "mutated": "            pending = float(extra_exposure)",
+      "tests": [
+        "tests/unit/test_546_d2_549_controller_entry_funds.py"
+      ],
+      "rationale": "#546 D2: il gate fondi degli ingressi del controller ignora le riserve non ancora a mercato."
     }
   ]
 }

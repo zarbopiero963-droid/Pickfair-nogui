@@ -867,6 +867,32 @@ class DutchingController:
             return "ammissione_non_verificabile"
         return reason
 
+    def _read_entry_funds(self) -> Optional[Dict[str, Any]]:
+        """#546 D2: lettura fresca del conto FUORI dal lock d'ammissione (rete), come per i segnali (PR28-e).
+        Runtime senza la lettura, errore o risposta non valida => None: fondi non verificabili."""
+        read = getattr(self.runtime, "read_funds_for_controller_entry", None)
+        if not callable(read):
+            return None
+        try:
+            out = read()
+        except Exception:
+            logger.exception("Errore lettura fondi per l'ingresso del controller")
+            return None
+        return out if isinstance(out, dict) else None
+
+    def _entry_funds_reason(self, funds_read: Optional[Dict[str, Any]], *, extra_exposure: float = 0.0) -> str:
+        """#546 D2: gate fondi delle nuove entrate (Dutching, bet manuale) sulla lettura fresca, SOTTO il lock
+        e dopo la riserva del tavolo. '' se ammesso; fondi insufficienti o non verificabili => motivo."""
+        check = getattr(self.runtime, "controller_entry_funds_reason", None)
+        if funds_read is None or not callable(check):
+            return "fondi_non_verificabili"
+        try:
+            reason = check(funds_read, extra_exposure=float(extra_exposure))
+        except Exception:
+            logger.exception("Errore gate fondi dell'ingresso del controller")
+            return "fondi_non_verificabili"
+        return reason if isinstance(reason, str) else "fondi_non_verificabili"
+
     def _withdraw_entries(self, orders: List[Dict[str, Any]]) -> None:
         """Pubblicazione fallita dopo l'ammissione: registrazioni di fence e lotto scartate."""
         withdraw = getattr(self.runtime, "withdraw_controller_entries", None)
@@ -1438,10 +1464,15 @@ class DutchingController:
     # EXECUTE
     # =========================================================
     def _execute_impl(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._locked_entry(self._execute_reserved, payload)
+        funds_read = self._read_entry_funds()       # #546 D2: rete fuori dal lock d'ammissione
+        return self._locked_entry(
+            lambda body, unlock: self._execute_reserved(body, unlock, funds_read=funds_read), payload)
 
-    def _execute_reserved(self, payload: Dict[str, Any], unlock) -> Dict[str, Any]:
-        """Controlli, tavolo e ammissione sotto il lock d'ammissione; `unlock()` prima di pubblicare."""
+    def _execute_reserved(self, payload: Dict[str, Any], unlock,
+                          funds_read: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Controlli, tavolo e ammissione sotto il lock d'ammissione; `unlock()` prima di pubblicare.
+        ``funds_read``: lettura fresca del conto fatta prima del lock (#546 D2); assente => fondi non
+        verificabili, nessun ordine."""
         pre = self.precheck(payload)
         if not pre["ok"]:
             self._publish_audit(
@@ -1525,6 +1556,17 @@ class DutchingController:
                 batch_id=batch_id,
                 event_key=event_key,
             )
+
+        # #546 D2: fondi su lettura fresca contro tutte le riserve non ancora a mercato, compreso questo lotto
+        # (il suo tavolo e' appena stato attivato con l'esposizione del lotto). Senza tavolo l'esposizione del
+        # lotto si aggiunge a parte. Insufficienti o non verificabili => nessun ordine, risorse rilasciate.
+        funds_reason = self._entry_funds_reason(funds_read,
+                                                extra_exposure=0.0 if allocated_here else batch_exposure)
+        if funds_reason:
+            self._publish_audit("DUTCHING_BATCH_REJECTED", {"payload": payload, "reason": funds_reason})
+            self._release_table_and_key(table_id if allocated_here else None, owned_key)
+            return self._fail(f"Lotto non ammesso: {funds_reason}", dry_run=False, preflight=False,
+                              batch_id=batch_id, event_key=event_key, reason=funds_reason)
 
         orders = []
         published_orders = []
@@ -1686,10 +1728,29 @@ class DutchingController:
     # MANUAL BET
     # =========================================================
     def manual_bet(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._locked_entry(self._manual_bet_reserved, payload)
+        funds_read = self._read_entry_funds()       # #546 D2: rete fuori dal lock d'ammissione
+        return self._locked_entry(
+            lambda body, unlock: self._manual_bet_reserved(body, unlock, funds_read=funds_read), payload)
 
-    def _manual_bet_reserved(self, payload: Dict[str, Any], unlock) -> Dict[str, Any]:
-        """Cap, dedupe, tavolo e ammissione sotto il lock d'ammissione; `unlock()` prima di pubblicare."""
+    def _manual_event_exposure(self, event_key: str, payload: Dict[str, Any], market_id: str) -> float:
+        """#549: esposizione corrente dell'evento della bet manuale: la maggiore fra il tavolo con la stessa
+        chiave e tutti i tavoli dello stesso evento reale (event_id / nome, misura dei segnali)."""
+        exposure = self._event_current_exposure(event_key)
+        measure = getattr(self.runtime, "controller_event_exposure", None)
+        if callable(measure):
+            try:
+                exposure = max(exposure, float(measure({"market_id": market_id,
+                                                        "event_name": payload.get("event_name", ""),
+                                                        "event_id": payload.get("event_id")})))
+            except Exception:
+                return float("inf")
+        return exposure
+
+    def _manual_bet_reserved(self, payload: Dict[str, Any], unlock,
+                             funds_read: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Cap, dedupe, tavolo e ammissione sotto il lock d'ammissione; `unlock()` prima di pubblicare.
+        ``funds_read``: lettura fresca del conto fatta prima del lock (#546 D2); assente => fondi non
+        verificabili, nessun ordine."""
         try:
             required = ["market_id", "selection_id", "price", "stake"]
             for key in required:
@@ -1776,12 +1837,25 @@ class DutchingController:
             current_total_exposure = current_total_exposure + external
             max_total_exposure = cap_base * (float(config.max_total_exposure_pct) / 100.0)
             max_single_bet = cap_base * (float(config.max_single_bet_pct) / 100.0)
+            max_event_exposure = cap_base * (float(config.max_event_exposure_pct) / 100.0)
 
             if exposure > max_single_bet + 1e-9:
                 return self._fail("Stake oltre max_single_bet")
 
             if current_total_exposure + exposure > max_total_exposure + 1e-9:
                 return self._fail("Esposizione globale oltre limite")
+
+            # #549: cap evento come nel precheck del Dutching e nel MM dei segnali (prima non era valutato).
+            event_current_exposure = self._manual_event_exposure(event_key, payload, market_id)
+            if not math.isfinite(event_current_exposure) or \
+                    event_current_exposure + exposure > max_event_exposure + 1e-9:
+                return self._fail(
+                    "Esposizione evento oltre limite",
+                    order_exposure=round(exposure, 2),
+                    event_current_exposure=(round(event_current_exposure, 2)
+                                            if math.isfinite(event_current_exposure) else None),
+                    max_event_exposure=round(max_event_exposure, 2),
+                )
 
             guarded = bool(duplication_guard) and bool(getattr(config, "anti_duplication_enabled", True))
             if guarded:
@@ -1826,6 +1900,16 @@ class DutchingController:
                 if guarded:
                     duplication_guard.release(event_key)
                 return self._fail("Nessun tavolo disponibile per il bet manuale")
+
+            # #546 D2: fondi su lettura fresca contro tutte le riserve non ancora a mercato, compreso questo
+            # ordine (sul tavolo appena attivato, o a parte se senza tavolo). Rifiuto => risorse rilasciate.
+            funds_reason = self._entry_funds_reason(funds_read, extra_exposure=0.0 if allocated_here else exposure)
+            if funds_reason:
+                if allocated_here:
+                    self._release_table_and_key(table_id, event_key if guarded else "")
+                elif guarded:
+                    duplication_guard.release(event_key)
+                return self._fail(f"Ingresso non ammesso: {funds_reason}", reason=funds_reason)
 
             order = {
                 "market_id": market_id,
