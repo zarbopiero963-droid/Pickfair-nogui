@@ -71,7 +71,7 @@ def test_bet_manuale_con_zero_verificato_non_produce_ordini(tmp_path):
 
 
 @pytest.mark.parametrize("fondi,atteso_invio", [
-    ({"available": 0.0, "exposure": 40.0, "total": 40.0}, False),                       # zero verificato
+    ({"available": 0.0, "exposure": 40.0, "total": 40.0}, False),   # zero verificato: disponibile 0, solo impegnato
     ({"available": 150.0, "exposure": 0.0}, True),                                       # controllo positivo
 ])
 def test_auto_next_dopo_settlement_si_ferma_solo_sullo_zero_verificato(fondi, atteso_invio):
@@ -92,6 +92,9 @@ def test_auto_next_dopo_settlement_si_ferma_solo_sullo_zero_verificato(fondi, at
         assert result["submitted"] is False and ordini == [], result
         assert result["cycle_executor_status"] == "CYCLE_SKIPPED_SYNC_FAILED", result
         assert result["reason"] == "bankroll_sync_not_success", result
+        # La sync e' fallita proprio per lo zero verificato (disponibile 0 senza `error`, solo impegnato), non per
+        # un altro motivo qualsiasi.
+        assert rc._last_bankroll_sync_result.get("reason") == "BALANCE_ZERO_VERIFIED", rc._last_bankroll_sync_result
 
 
 def test_bet_manuale_senza_get_status_si_ferma_sui_fondi_freschi(tmp_path):
