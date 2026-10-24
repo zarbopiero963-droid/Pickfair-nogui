@@ -3209,12 +3209,12 @@
       "module": "controllers.dutching_controller",
       "area": "exposure",
       "file": "controllers/dutching_controller.py",
-      "original": "        has_id = bool(event_id) and not isinstance(event_id, bool) and bool(str(event_id).strip())",
-      "mutated": "        has_id = event_id not in (None, \"\") and not isinstance(event_id, bool)",
+      "original": "            return value.strip() or None",
+      "mutated": "            return value or None",
       "tests": [
         "tests/unit/test_554_dutching_event_cap_unified.py"
       ],
-      "rationale": "#554 (review indipendente, P2): un event_id di soli spazi o 0 vale come identita' per il gate ma la misura lo scarta: ingresso misurato solo per mercato."
+      "rationale": "#554 (review indipendente, P2): un event_id di soli spazi vale come identita' (forma canonica non ripulita): l'ingresso risulta verificabile ma la misura lo scarta e lo misura solo per mercato."
     },
     {
       "id": "i554_same_key_tables_ignored",
@@ -3239,6 +3239,30 @@
         "tests/unit/test_554_dutching_event_cap_unified.py"
       ],
       "rationale": "#554: la corsia bus del Dutching perde l'id evento: un lotto identificato solo dall'id non e' verificabile."
+    },
+    {
+      "id": "i554_event_id_not_canonical",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "        out[\"event_id\"] = self._canonical_event_id(payload.get(\"event_id\"))",
+      "mutated": "        out[\"event_id\"] = payload.get(\"event_id\")",
+      "tests": [
+        "tests/unit/test_554_dutching_event_cap_unified.py"
+      ],
+      "rationale": "#554 (review su b800cd4): id evento non canonico: 123.0 sul tavolo e \"123\" nell'ingresso sono eventi diversi e i nomi non si confrontano piu' (cap evento sotto-stimato)."
+    },
+    {
+      "id": "i554_bus_none_name_becomes_identity",
+      "module": "core.risk_middleware",
+      "area": "exposure",
+      "file": "core/risk_middleware.py",
+      "original": "                \"event_name\": str(payload.get(\"event_name\") or \"\"),",
+      "mutated": "                \"event_name\": str(payload.get(\"event_name\", \"\")),",
+      "tests": [
+        "tests/unit/test_554_dutching_event_cap_unified.py"
+      ],
+      "rationale": "#554: il bus trasforma un nome evento assente in \"None\", che il gate d'identita' accetta."
     }
   ]
 }

@@ -23,7 +23,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - il tavolo del lotto ora salva `event_id` (prima, lotti identificati dal solo id su mercati diversi non si
     vedevano);
   - il gate d'identità usa le regole della misura (un id di soli spazi o 0 non vale);
-  - il `RiskMiddleware` conserva `event_id`.
+  - il `RiskMiddleware` conserva `event_id`;
+  - seconda review sul diff finale: l'id evento ha una forma canonica (123.0 e «123» sono lo stesso evento) e il
+    bus non trasforma più un nome evento assente in «None».
 
   Rimosso il vecchio `DutchingController._event_current_exposure`. Test:
   `tests/unit/test_554_dutching_event_cap_unified.py`; test doppi dei runtime finti allineati alla nuova misura;

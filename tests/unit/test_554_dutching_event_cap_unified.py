@@ -292,3 +292,44 @@ def test_il_bus_dutching_conserva_event_id():
         RiskMiddleware(bus, topics=("REQ_PLACE_DUTCHING",))._handle_dutching(dict(richiesta, event_id=evento))
         comandi = [p for t, p in bus.pubblicati if t == "CMD_PLACE_DUTCHING"]
         assert len(comandi) == 1 and comandi[0].get("event_id") == atteso, bus.pubblicati
+
+
+# ----------------------------------------------------------------------------- review indipendente su b800cd4
+def test_event_id_di_tipo_diverso_resta_lo_stesso_evento(tmp_path):
+    """P3: l'id salvato grezzo sul tavolo (123.0) e quello di un ingresso successivo ("123") non coincidevano e,
+    con l'id presente su entrambi, i nomi non si confrontavano piu': 10 + 10 passava con cap 15."""
+    c = _catena(tmp_path, max_event_exposure_pct=1.5)        # cap 15
+    dc = _dutching(c)
+    assert dc.submit_dutching(_batch(event_id=123.0, market_id="1.700", total_stake=10.0))["ok"]
+    _rifiuto_evento(dc.submit_dutching(_batch(event_id="123", market_id="1.800", total_stake=10.0)))
+    _rifiuto_evento(dc.manual_bet(_manual(event_name="Gamma v Delta", event_id=123, market_id="1.900",
+                                          stake=10.0)))
+
+
+@pytest.mark.parametrize("event_id", [123.5, float("nan"), float("inf"), [], {}])
+def test_event_id_non_canonico_non_vale_come_identita(tmp_path, event_id):
+    c = _catena(tmp_path)
+    _rifiuto_evento(_dutching(c).submit_dutching(_batch(event_name="", event_id=event_id)),
+                    "Esposizione evento non verificabile")
+
+
+def test_il_bus_non_trasforma_un_nome_assente_in_none():
+    """P3 (preesistente sul main): `str(None)` dava il nome evento "None", che il gate prendeva per un'identita'."""
+    from core.risk_middleware import RiskMiddleware
+
+    class _Bus:
+        def __init__(self):
+            self.pubblicati = []
+
+        def subscribe(self, *_a, **_k):
+            pass
+
+        def publish(self, topic, payload=None):
+            self.pubblicati.append((topic, payload))
+
+    bus = _Bus()
+    RiskMiddleware(bus, topics=("REQ_PLACE_DUTCHING",))._handle_dutching(
+        {"market_id": "1.2", "event_name": None, "total_stake": 10.0, "bet_type": "BACK",
+         "results": [{"selectionId": 1, "price": 2.0, "side": "BACK"}]})
+    comando = [p for t, p in bus.pubblicati if t == "CMD_PLACE_DUTCHING"][0]
+    assert comando["event_name"] == ""

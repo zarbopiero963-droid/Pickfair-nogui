@@ -1180,6 +1180,7 @@ class DutchingController:
     # PRECHECK RISCHIO / DUPLICATI
     # =========================================================
     def precheck(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        payload = self._with_canonical_event_identity(payload)   # #554: id evento in forma unica
         validation = self.validate(payload)
         if not validation["ok"]:
             return validation
@@ -1469,6 +1470,7 @@ class DutchingController:
         """Controlli, tavolo e ammissione sotto il lock d'ammissione; `unlock()` prima di pubblicare.
         ``funds_read``: lettura fresca del conto fatta prima del lock (#546 D2); assente => fondi non
         verificabili, nessun ordine."""
+        payload = self._with_canonical_event_identity(payload)   # #554: stessa forma per precheck e meta del tavolo
         pre = self.precheck(payload)
         if not pre["ok"]:
             self._publish_audit(
@@ -1731,6 +1733,32 @@ class DutchingController:
             lambda body, unlock: self._manual_bet_reserved(body, unlock, funds_read=funds_read), payload)
 
     @staticmethod
+    def _canonical_event_id(value: Any) -> Optional[str]:
+        """#554 (review indipendente su b800cd4): un'unica forma dell'id evento, cosi' 123.0, 123 e "123" sono lo
+        stesso evento sul tavolo e nella misura. Stringa non vuota (spazi tolti), intero o float intero finito ->
+        stringa; tutto il resto (None, bool, 0, float non interi, NaN/inf, altri tipi) -> None, cioe' nessun id."""
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, str):
+            return value.strip() or None
+        if isinstance(value, int):
+            return str(value) if value else None
+        if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+            return str(int(value)) if value else None
+        return None
+
+    def _with_canonical_event_identity(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """#554: copia del payload con `event_id` canonico e `event_name` mai None. La stessa forma va al gate
+        d'identita', alla misura dell'evento, al meta del tavolo e agli ordini."""
+        if not isinstance(payload, dict):
+            return payload
+        out = dict(payload)
+        out["event_id"] = self._canonical_event_id(payload.get("event_id"))
+        if out.get("event_name") is None:
+            out["event_name"] = ""
+        return out
+
+    @staticmethod
     def _event_identity_missing(payload: Dict[str, Any]) -> bool:
         """#549/#554: senza nome o id evento i tavoli da segnale dello stesso evento non sono riconoscibili: il
         cap evento non e' verificabile (il controller non inventa l'evento). Stesse regole della misura del
@@ -1738,7 +1766,7 @@ class DutchingController:
         event_name = payload.get("event_name")
         event_id = payload.get("event_id")
         has_name = isinstance(event_name, str) and bool(event_name.strip())
-        has_id = bool(event_id) and not isinstance(event_id, bool) and bool(str(event_id).strip())
+        has_id = DutchingController._canonical_event_id(event_id) is not None
         return not (has_name or has_id)
 
     def _entry_event_exposure(self, event_key: str, payload: Dict[str, Any], market_id: str) -> float:
@@ -1762,6 +1790,7 @@ class DutchingController:
         """Cap, dedupe, tavolo e ammissione sotto il lock d'ammissione; `unlock()` prima di pubblicare.
         ``funds_read``: lettura fresca del conto fatta prima del lock (#546 D2); assente => fondi non
         verificabili, nessun ordine."""
+        payload = self._with_canonical_event_identity(payload)   # #554: id evento in forma unica
         try:
             required = ["market_id", "selection_id", "price", "stake"]
             for key in required:

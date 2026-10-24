@@ -76,8 +76,10 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   manuali, abbinato e non abbinato, riserve non ancora a mercato ed esiti incerti trattenuti: sono tutti tavoli
   attivi. Per i LAY conta la liability. L'impegnato esterno non attribuibile a un evento resta nel cap globale.
 
-  Il tavolo del lotto conserva `event_id`, come quello della bet manuale. Anche la corsia bus (`RiskMiddleware`)
-  lo conserva. Così un ingresso successivo dello stesso evento, identificato dal solo id, lo riconosce anche su
+  L'id evento ha un'unica forma canonica (`DutchingController._canonical_event_id`): 123.0, 123 e «123» sono lo
+  stesso evento; float non interi, NaN/inf e altri tipi non valgono come id. Il tavolo del lotto conserva
+  `event_id`, come quello della bet manuale. Anche la corsia bus (`RiskMiddleware`) lo conserva, e
+  non trasforma più un nome assente nel nome «None». Così un ingresso successivo dello stesso evento, identificato dal solo id, lo riconosce anche su
   un altro mercato.
 
   Rifiuti:
