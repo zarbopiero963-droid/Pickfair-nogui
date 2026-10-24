@@ -783,6 +783,11 @@ def test_coverage_gaps_are_measured_on_the_payload():
 def test_measured_gap_is_never_pass_even_if_the_model_says_complete():
     assert policy.rr_classify_output(VALID, coverage_gaps=["1_patch_tagliate"])[0] == policy.RR_VALID_INCONCLUSIVE
     assert policy.rr_classify_output(VALID, coverage_gaps=[]) == (policy.RR_VALID_PASS, "")
+    # Rilievo Codex P2 su #559: senza riga di copertura MA con un buco misurato, ripetere non recupera il
+    # codice escluso: esito terminale, non un secondo tentativo a pagamento.
+    no_line = _model_text(SOL_556_R3, coverage=None)
+    assert policy.rr_classify_output(no_line, coverage_gaps=["1_patch_tagliate"])[0] == policy.RR_VALID_INCONCLUSIVE
+    assert policy.rr_classify_output(no_line)[0] == policy.RR_INCOMPLETE
 
 
 def test_inconclusive_review_is_not_waivable_and_does_not_hide_blockers_or_credits():

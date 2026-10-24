@@ -961,10 +961,11 @@ jobs:
                   return RR_INCOMPLETE, "Verdetto finale vuoto"
               if not _RR_NO_BLOCKERS.fullmatch(blockers):
                   return RR_VALID_BLOCKERS, "bloccanti da triagiare"
-              concerns = rr_verdict_concerns(verdict)
+              # I buchi misurati entrano PRIMA della decisione sulla ripetizione (rilievo Codex P2 su #559): con un buco
+              # ripetere non recupera il codice escluso, quindi la riga di copertura assente non basta per un retry.
+              concerns = rr_verdict_concerns(verdict) + [f"diff_non_visto:{gap}" for gap in (coverage_gaps or ())]
               if concerns == ["copertura_non_dichiarata"]:
                   return RR_INCOMPLETE, "riga «Copertura:» assente nel Verdetto finale"
-              concerns += [f"diff_non_visto:{gap}" for gap in (coverage_gaps or ())]
               if concerns:
                   return RR_VALID_INCONCLUSIVE, "verdetto non conclusivo: " + ", ".join(concerns)
               return RR_VALID_PASS, ""
