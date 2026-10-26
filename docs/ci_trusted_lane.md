@@ -190,12 +190,19 @@ logica: il job `overlap-check` (stesso nome del check di prima) esegue lo script
   - la diagnostica manuale è un workflow a parte, solo `workflow_dispatch`, con job e check `overlap-diagnostic`:
     non può soddisfare il required check `overlap-check`;
   - la diagnostica accetta solo `refs/heads/main`: da un altro ref il primo step fallisce, prima del checkout e del
-    token. Gira quindi solo codice di `main`, e il check run si attacca al commit di `main`, non all'head della PR;
+    token. Gira quindi solo codice di `main`; il run da `main` si attacca al commit di `main`, non all'head della PR.
+    Un dispatch rifiutato da un branch lascia invece un `overlap-diagnostic` **rosso** sull'head di quel branch:
+    merge readiness lo conta come bloccante fino al push successivo (fail-closed, mai un verde);
+  - nessuno step dei due workflow ha `if:` o `shell:` (salvo `if: always()` sull'upload): uno step saltato o
+    eseguito da un'altra shell darebbe un verde senza guard;
   - stesso isolamento del token del check obbligatorio.
   Merge readiness (`scripts/pr_flow_automation.split_checks`) legge ogni check run dell'head: un FAIL resta un
   bloccante anche se accanto c'è un PASS, diagnostico o con lo stesso nome; un test lo lega al codice.
   Limite: GitHub esegue `workflow_dispatch` col file del workflow del ref scelto, quindi il blocco sul ref vale per
   il file di `main`. Una PR che modifica i workflow può cambiarli, ed è per questo che ogni workflow è a merge owner.
+  Il required check si riconosce solo dal nome: un altro workflow aggiunto da una PR, uno status di commit o un'altra
+  app con nome `overlap-check` lo soddisferebbero. Il repository non può impedirlo; lo chiuderebbe solo legare il
+  required check all'app sorgente nel ruleset (decisione owner, fuori da questa PR).
 - **Bootstrap:** su `pull_request` lo script viene dal commit base, quindi una PR che corregge lo script viene
   valutata con la versione di `main`. Su #564 l'`overlap-check` resta rosso finché la correzione del token non è
   su `main`. La correzione è stata collaudata una volta dal branch (run 40418758994, prima della separazione), e

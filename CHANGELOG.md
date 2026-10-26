@@ -23,6 +23,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - collaudo manuale separato dal check obbligatorio (review indipendente su #564): `pr-overlap-guard.yml` gira solo
     su `pull_request` ed è l'unico workflow che pubblica `overlap-check`; la diagnostica manuale è
     `pr-overlap-guard-diagnostic.yml` (check `overlap-diagnostic`, solo da `main`, token isolato);
+    nessuno step dei due workflow può essere saltato (`if:`) o eseguito da un'altra shell (`shell:`);
   - il collaudo reale del workflow ha trovato il `GITHUB_TOKEN` di Actions rifiutato dal guard
     (`[A-Za-z0-9_]{20,255}`). Ora il token è validato come valore sicuro per l'header: ASCII stampabile senza spazi,
     da 20 a 8192 caratteri.

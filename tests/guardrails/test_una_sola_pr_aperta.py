@@ -202,6 +202,18 @@ def test_workflow_cannot_turn_a_failure_green(path, job) -> None:
     assert set(j) <= {"name", "runs-on", "timeout-minutes", "steps"}, "niente permessi, `if` o `needs` sul job"
 
 
+@pytest.mark.parametrize("path,job", [(WORKFLOW, "overlap-check"), (DIAGNOSTIC, "overlap-diagnostic")])
+def test_no_step_can_be_skipped_or_run_by_another_shell(path, job) -> None:
+    """Un `if:` falso o una `shell:` diversa (es. `true {0}`) su uno step farebbero saltare il guard o il gate sul
+    ref senza alcun FAIL (review indipendente su #564). Solo l'upload del risultato ha `if: always()`."""
+    for step in _load(path)["jobs"][job]["steps"]:
+        assert "shell" not in step, step.get("name")
+        if str(step.get("uses", "")).startswith("actions/upload-artifact"):
+            assert step.get("if") == "always()"
+        else:
+            assert "if" not in step, step.get("name")
+
+
 def test_required_workflow_has_one_checkout_and_one_guard_step_only() -> None:
     """Un secondo checkout (es. dell'head) o uno step in piu' che usa il token aprirebbero il codice non fidato."""
     steps = _job()["steps"]
@@ -221,6 +233,11 @@ def test_only_the_pull_request_workflow_can_publish_overlap_check() -> None:
     owners = [p.name for p in sorted((ROOT / ".github" / "workflows").glob("*.y*ml"))
               if "overlap-check" in _check_names(p)]
     assert owners == ["pr-overlap-guard.yml"]
+    # Anche un nome calcolato (`${{ 'overlap-check' }}`) o una variante: ogni job che nomina "overlap" sta nei due
+    # workflow noti, con il nome letterale atteso.
+    named = sorted((p.name, n) for p in (ROOT / ".github" / "workflows").glob("*.y*ml")
+                   for n in _check_names(p) if "overlap" in n.lower())
+    assert named == [("pr-overlap-guard-diagnostic.yml", "overlap-diagnostic"), ("pr-overlap-guard.yml", "overlap-check")]
 
 
 def test_diagnostic_has_a_distinct_check_identity() -> None:
