@@ -42,8 +42,9 @@ class FakeGitHub:
 
     @staticmethod
     def pr(number, *, head=HEAD, base=BASE, state="open", head_repo=REPO, base_repo=REPO, ref="main",
-           changed=None):
+           changed=None, labels=()):
         return {"number": number, "state": state, "draft": False, "url": f"{g.API_ROOT}/repos/{REPO}/pulls/{number}",
+                "labels": [{"name": n} for n in labels],
                 "head": {"sha": head, "repo": {"full_name": head_repo} if head_repo else None},
                 "base": {"sha": base, "ref": ref, "repo": {"full_name": base_repo}},
                 "changed_files": changed}
@@ -194,7 +195,7 @@ def test_command_line_arguments_are_refused(tmp_path):
     assert fake.calls == [] and "nessun argomento" in result(tmp_path, "readiness")["reasons"][0]
 
 
-@pytest.mark.parametrize("wait", ["-1", "abc", "6601", "99999", "1.5"])
+@pytest.mark.parametrize("wait", ["-1", "abc", "6601", "99999", "1.5", "0", "30"])
 def test_invalid_readiness_wait_is_refused(tmp_path, wait):
     assert run("readiness", tmp_path, FakeGitHub(), env=env_for(tmp_path, PF_READINESS_WAIT_SECONDS=wait)) == 1
 
@@ -427,6 +428,8 @@ def test_readiness_wait_is_passed_through(tmp_path):
     assert run("readiness", tmp_path, FakeGitHub(), env=env_for(tmp_path, PF_READINESS_WAIT_SECONDS="6600"),
                seen=seen) == 0
     assert seen["wait"] == 6600
+    assert run("readiness", tmp_path, FakeGitHub(), env=env_for(tmp_path, PF_READINESS_WAIT_SECONDS="31"),
+               seen=seen) == 0 and seen["wait"] == 31
 
 
 def test_default_runner_calls_the_existing_readiness_with_a_minimal_environment(tmp_path, monkeypatch):
@@ -439,14 +442,15 @@ def test_default_runner_calls_the_existing_readiness_with_a_minimal_environment(
     monkeypatch.setattr(g.subprocess, "run", fake_run)
     monkeypatch.setenv("GITHUB_TOKEN", "leaky-parent-token")
     out = tmp_path / "d.json"
-    assert g.default_run_readiness(ROOT, 561, 420, TOKEN, out) == 0
+    assert g.default_run_readiness(ROOT, 561, 300, TOKEN, out) == 0
     cmd = captured["cmd"]
     assert cmd[2] == str(ROOT / "scripts" / "pr_merge_readiness.py")
-    assert cmd[3:] == ["--repo", REPO, "--pr", "561", "--ignore-safe-autofix", "--wait-pending-seconds", "420",
+    assert cmd[3:] == ["--repo", REPO, "--pr", "561", "--ignore-safe-autofix", "--wait-pending-seconds", "300",
                        "--poll-seconds", "15", "--output", str(out)]
     assert captured["env"]["GH_TOKEN"] == TOKEN and "GITHUB_TOKEN" not in captured["env"]
-    assert captured["timeout"] == 420 + g.READINESS_MARGIN_SECONDS
-    assert 420 + g.READINESS_MARGIN_SECONDS + 60 <= 600, "il default deve stare nel timeout di 10 minuti della pipeline"
+    assert captured["timeout"] == 300 + g.READINESS_MARGIN_SECONDS
+    budget = g.READINESS_WAIT_DEFAULT + g.READINESS_MARGIN_SECONDS + g.API_CALLS_BUDGET + 60
+    assert budget <= 600, "il default deve stare nel timeout di 10 minuti della pipeline, chiamate API e checkout compresi"
 
 
 # --------------------------------------------------------------------------------------------- wrapper shell
@@ -504,3 +508,71 @@ def test_guards_only_issue_get_requests():
     for verb in ("POST", "PATCH", "PUT", "DELETE"):
         assert f'"{verb}"' not in src and f"'{verb}'" not in src
     assert "/statuses" not in src and "/check-runs" not in src
+
+
+# --------------------------------------------------------------------------------------------- rilievi su #563
+def test_readiness_is_fail_with_the_manual_review_label(tmp_path):
+    """Review indipendente P1 su #563: una PR riservata all'owner non e' mai PASS."""
+    fake = FakeGitHub()
+    fake.prs[561] = FakeGitHub.pr(561, labels=["manual-review-required"])
+    assert run("readiness", tmp_path, fake) == 1
+    assert any("manual-review-required" in r for r in result(tmp_path, "readiness")["reasons"])
+
+
+@pytest.mark.parametrize("owner_file", ["CLAUDE.md", ".github/workflows/pr-guard.yml", "scripts/pr_autonomy_policy.py",
+                                        "scripts/ci/trusted_pr_guard.py", "requirements.txt"])
+def test_readiness_is_fail_with_an_owner_manual_file_in_the_diff(tmp_path, owner_file):
+    fake = FakeGitHub()
+    fake.files[561].append(owner_file)
+    assert run("readiness", tmp_path, fake) == 1
+    assert any(owner_file in r for r in result(tmp_path, "readiness")["reasons"])
+
+
+def test_readiness_owner_check_reads_every_page_of_files(tmp_path):
+    fake = FakeGitHub()
+    fake.page_size = 2
+    fake.files[561] = [f"docs/f{i}.md" for i in range(5)] + ["AGENTS.md"]
+    assert run("readiness", tmp_path, fake) == 1
+
+
+@pytest.mark.parametrize("labels", [None, [{"name": 5}], [{"title": "manual-review-required"}], ["manual-review-required"]])
+def test_unreadable_labels_are_fail(tmp_path, labels):
+    fake = FakeGitHub()
+    fake.prs[561] = dict(FakeGitHub.pr(561), labels=labels)
+    assert run("overlap", tmp_path, fake) == 1
+    assert result(tmp_path, "overlap")["reasons"] == ["label della PR illeggibili"]
+
+
+@pytest.mark.parametrize("guard", ["overlap", "readiness"])
+@pytest.mark.parametrize("change", [{"ref": "release"}, {"base_repo": "attacker/Pickfair-nogui"}])
+def test_pr_retargeted_during_the_evaluation_is_fail(tmp_path, guard, change):
+    """Rilievo Codex P2 su #563: base cambiata durante l'attesa con lo stesso head."""
+    fake = FakeGitHub()
+
+    def retarget(f):
+        f.prs[561] = FakeGitHub.pr(561, **change)
+    fake.after_first_read = retarget
+    assert run(guard, tmp_path, fake) == 1
+    assert "branch base" in result(tmp_path, guard)["reasons"][0]
+
+
+def test_unwritable_result_is_never_a_pass_exit(tmp_path):
+    """Rilievo Codex P2 su #563: senza il file di risultato chi pubblica non ha l'head valutato."""
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x")
+    assert run("overlap", tmp_path, FakeGitHub(), env=env_for(tmp_path, PF_RESULT_DIR=str(blocker))) == 1
+
+
+def test_previous_result_is_removed_before_the_evaluation(tmp_path):
+    """Review indipendente P3 su #563: un PASS di un giro precedente non sopravvive a un giro fallito."""
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "overlap.json").write_text(json.dumps({"verdict": "PASS"}))
+    seen = []
+
+    def transport(url, headers):
+        seen.append((out / "overlap.json").exists())
+        raise TimeoutError("down")
+    assert g.main("overlap", [], env_for(tmp_path), transport=transport) == 1
+    assert seen == [False], "il vecchio risultato era ancora presente durante la valutazione"
+    assert json.loads((out / "overlap.json").read_text())["verdict"] == "FAIL"

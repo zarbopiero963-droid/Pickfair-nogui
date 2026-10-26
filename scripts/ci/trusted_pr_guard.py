@@ -14,12 +14,15 @@ per i due wrapper `scripts/ci/pr_overlap_guard.sh` e `scripts/ci/pr_merge_readin
   token classico con scope `repo`/`public_repo` scrive): serve un token fine-grained in sola lettura;
 - `PF_RESULT_DIR` (facoltativo, default `.trusted-guard`): dove scrivere `<guard>.json` con PR, head, base, verdetto
   e motivi, per chi pubblica lo status sullo SHA della PR;
-- solo per la readiness, `PF_READINESS_WAIT_SECONDS` (facoltativo, default 420, massimo 6600): attesa dei check
-  pendenti; scaduta l'attesa con check non finiti => FAIL.
+- solo per la readiness, `PF_READINESS_WAIT_SECONDS` (facoltativo, default 300, da 31 a 6600): attesa dei check
+  pendenti; scaduta l'attesa con check non finiti => FAIL. Il minimo garantisce almeno due letture stabili (con 0 la
+  readiness giudicherebbe una sola istantanea, prima che i check tardivi si registrino).
 
 Provenienza verificata prima di ogni verdetto: repository fisso (e `BUILDKITE_REPO`, se presente, deve coincidere),
 contesto Buildkite non di PR e su `main`, PR aperta, base = repository e branch attesi, base SHA antenato di `main`,
-head nello stesso repository (niente fork), head = `PF_PR_HEAD_SHA`, head riletto uguale a fine valutazione.
+head nello stesso repository (niente fork), head = `PF_PR_HEAD_SHA`; a fine valutazione head, stato, repository e
+branch base riletti uguali. La readiness e' FAIL anche con la label `manual-review-required` o con un file a merge
+owner nel diff (`scripts/pr_autonomy_policy.is_owner_manual_path`): PASS vuol dire mergiabile senza decisioni owner.
 
 Exit 0 solo con verdetto PASS; ogni altro esito (dato mancante, incoerente, errore di rete o API, check rosso o
 pendente, review non conclusiva) => exit 1. Nessuna dipendenza oltre la libreria standard e `api.github.com`
@@ -27,6 +30,7 @@ pendente, review non conclusiva) => exit 1. Nessuna dipendenza oltre la libreria
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -50,12 +54,16 @@ CRITICAL_FILES = frozenset({
     "core/state_recovery.py",
     "database.py",
 })
-READINESS_WAIT_DEFAULT = 420           # sta dentro il timeout di 10 minuti della pipeline trusted
-READINESS_WAIT_MAX = 6600              # come la readiness GitHub Actions
 READINESS_POLL_SECONDS = 15
+READINESS_WAIT_MIN = 2 * READINESS_POLL_SECONDS + 1  # almeno due letture: con 0 si giudica una sola istantanea
+READINESS_WAIT_DEFAULT = 300           # sta dentro il timeout di 10 minuti della pipeline trusted (vedi sotto)
+READINESS_WAIT_MAX = 6600              # come la readiness GitHub Actions
 # Margine oltre l'attesa per la decisione finale della readiness. Il job deve stare nel timeout della pipeline:
-# timeout pipeline >= attesa + READINESS_MARGIN_SECONDS + 60 (420 + 120 + 60 = 600 s = 10 minuti).
+# timeout pipeline >= attesa + READINESS_MARGIN_SECONDS + API_CALLS_BUDGET + checkout (~60 s):
+# 300 + 120 + 120 + 60 = 600 s = 10 minuti.
 READINESS_MARGIN_SECONDS = 120
+API_CALLS_BUDGET = 4 * 30              # token, PR, compare, rilettura finale: HTTP_TIMEOUT ciascuna
+MANUAL_LABEL = "manual-review-required"
 HTTP_TIMEOUT = 30
 MAX_PAGES = 50                         # 50 x 100 = 5000 elementi: oltre, il dato non e' verificabile
 GITHUB_FILES_CAP = 3000                # l'API dei file di una PR non ne elenca piu' di 3000
@@ -103,8 +111,8 @@ def readiness_wait_seconds(env: Mapping[str, str]) -> int:
     raw = env.get("PF_READINESS_WAIT_SECONDS")
     if raw is None:
         return READINESS_WAIT_DEFAULT
-    if not re.fullmatch(r"[0-9]{1,5}", raw, re.ASCII) or int(raw) > READINESS_WAIT_MAX:
-        raise GuardError(f"PF_READINESS_WAIT_SECONDS non valido (0..{READINESS_WAIT_MAX})")
+    if not re.fullmatch(r"[0-9]{1,5}", raw, re.ASCII) or not READINESS_WAIT_MIN <= int(raw) <= READINESS_WAIT_MAX:
+        raise GuardError(f"PF_READINESS_WAIT_SECONDS non valido ({READINESS_WAIT_MIN}..{READINESS_WAIT_MAX})")
     return int(raw)
 
 
@@ -243,15 +251,29 @@ def verify_pr(gh: GitHub, ctx: Mapping[str, Any]) -> dict[str, Any]:
     cmp = gh.get(f"/repos/{TRUSTED_REPO}/compare/{base_sha}...{ctx['base_ref']}")
     if not isinstance(cmp, dict) or cmp.get("status") not in ("ahead", "identical"):
         raise GuardError("base SHA della PR non e' nella storia del branch base")
+    labels = pr.get("labels")
+    if not isinstance(labels, list) or not all(isinstance(lb, dict) and isinstance(lb.get("name"), str)
+                                               for lb in labels):
+        raise GuardError("label della PR illeggibili")
     return {"pr": ctx["pr"], "head_sha": head_sha, "base_sha": base_sha, "base_ref": ctx["base_ref"],
-            "draft": pr.get("draft") is True, "changed_files": pr.get("changed_files"), "url": pr.get("url")}
+            "draft": pr.get("draft") is True, "changed_files": pr.get("changed_files"), "url": pr.get("url"),
+            "labels": sorted(lb["name"] for lb in labels)}
 
 
 def verify_head_unchanged(gh: GitHub, ctx: Mapping[str, Any]) -> None:
+    """Rilettura finale: head, stato, repository e branch base devono essere quelli verificati all'inizio. Una PR
+    ridiretta su un altro branch durante l'attesa non resta certificata (rilievo Codex P2 su #563)."""
     pr = gh.get(f"/repos/{TRUSTED_REPO}/pulls/{ctx['pr']}")
-    head = (pr.get("head") or {}).get("sha") if isinstance(pr, dict) and isinstance(pr.get("head"), dict) else None
-    if head != ctx["head_sha"] or not isinstance(pr, dict) or pr.get("state") != "open":
+    if not isinstance(pr, dict) or pr.get("state") != "open":
         raise GuardError("head o stato della PR cambiati durante la valutazione")
+    head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
+    base = pr.get("base") if isinstance(pr.get("base"), dict) else {}
+    base_repo = (base.get("repo") or {}).get("full_name") if isinstance(base.get("repo"), dict) else None
+    if head.get("sha") != ctx["head_sha"]:
+        raise GuardError("head o stato della PR cambiati durante la valutazione")
+    if base.get("ref") != ctx["base_ref"] or not isinstance(base_repo, str) \
+            or base_repo.lower() != TRUSTED_REPO.lower():
+        raise GuardError("repository o branch base della PR cambiati durante la valutazione")
 
 
 # --------------------------------------------------------------------------------------------- overlap guard
@@ -350,6 +372,35 @@ def evaluate_readiness(decision: Any, rc: int, ctx: Mapping[str, Any]) -> list[s
     return reasons
 
 
+def load_autonomy_policy(repo_root: Path) -> Any:
+    """`scripts/pr_autonomy_policy.py` del checkout di main (modulo puro, solo libreria standard), caricato per
+    percorso: nessuna directory aggiunta a sys.path, quindi nessun modulo che possa ombreggiare la libreria standard."""
+    path = repo_root / "scripts" / "pr_autonomy_policy.py"
+    spec = importlib.util.spec_from_file_location("pf_trusted_autonomy_policy", path)
+    if spec is None or spec.loader is None:
+        raise GuardError("classificatore dei file a merge owner non caricabile")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not callable(getattr(module, "is_owner_manual_path", None)):
+        raise GuardError("classificatore dei file a merge owner non disponibile")
+    return module
+
+
+def owner_decision_reasons(gh: GitHub, ctx: Mapping[str, Any], verified: Mapping[str, Any],
+                           repo_root: Path) -> list[str]:
+    """Una PR riservata all'owner non e' mai PASS (review indipendente P1 su #563): label `manual-review-required` o
+    file a merge owner nel diff COMPLETO (tutte le pagine, elenco incompleto => FAIL)."""
+    reasons: list[str] = []
+    if MANUAL_LABEL in verified.get("labels", []):
+        reasons.append(f"label {MANUAL_LABEL}: merge riservato all'owner")
+    policy = load_autonomy_policy(repo_root)
+    owner_files = sorted(p for p in pr_files(gh, ctx["pr"], verified.get("changed_files"))
+                         if policy.is_owner_manual_path(p))
+    if owner_files:
+        reasons.append(f"file a merge owner nel diff: {', '.join(owner_files)}")
+    return reasons
+
+
 def run_readiness(ctx: Mapping[str, Any], wait: int, token: str, repo_root: Path,
                   runner: Callable[..., int]) -> list[str]:
     with tempfile.TemporaryDirectory(prefix="pf-readiness-") as tmp:
@@ -367,13 +418,33 @@ def redact(text: str, token: Optional[str]) -> str:
     return text.replace(token, "***") if token else text
 
 
-def write_result(env: Mapping[str, str], guard: str, result: Mapping[str, Any]) -> None:
-    out_dir = Path(env.get("PF_RESULT_DIR") or ".trusted-guard")
+def result_path(env: Mapping[str, str], guard: str) -> Path:
+    return Path(env.get("PF_RESULT_DIR") or ".trusted-guard") / f"{guard}.json"
+
+
+def discard_previous_result(env: Mapping[str, str], guard: str) -> None:
+    """Un risultato di un giro precedente non deve mai essere pubblicato al posto di questo (job ucciso o scrittura
+    fallita): si cancella PRIMA della valutazione. Impossibile cancellarlo => GuardError."""
+    path = result_path(env, guard)
     try:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / f"{guard}.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise GuardError(f"risultato precedente non cancellabile: {type(exc).__name__}") from None
+
+
+def write_result(env: Mapping[str, str], guard: str, result: Mapping[str, Any]) -> bool:
+    """True solo se il risultato e' scritto: senza il file chi pubblica lo status non ha l'head valutato, quindi
+    una scrittura fallita non e' mai un'uscita PASS (rilievo Codex P2 su #563)."""
+    path = result_path(env, guard)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return True
     except OSError as exc:
         print(f"[{guard}] risultato non scritto: {type(exc).__name__}", file=sys.stderr)
+        return False
 
 
 def main(guard: str, argv: list[str], env: Mapping[str, str], *, transport: Transport = urllib_transport,
@@ -386,6 +457,7 @@ def main(guard: str, argv: list[str], env: Mapping[str, str], *, transport: Tran
             raise GuardError("controllo sconosciuto")
         if argv:
             raise GuardError("nessun argomento ammesso: i dati arrivano solo dall'ambiente controllato")
+        discard_previous_result(env, guard)
         ctx = parse_environment(env)
         result.update(pr=ctx["pr"], head_sha=ctx["head_sha"], base_ref=ctx["base_ref"])
         wait = readiness_wait_seconds(env) if guard == "readiness" else 0
@@ -398,7 +470,8 @@ def main(guard: str, argv: list[str], env: Mapping[str, str], *, transport: Tran
             reasons = run_overlap(gh, ctx, verified)
         else:
             root = repo_root or Path(__file__).resolve().parents[2]
-            reasons = run_readiness(ctx, wait, token, root, readiness_runner)
+            reasons = owner_decision_reasons(gh, ctx, verified, root)
+            reasons += run_readiness(ctx, wait, token, root, readiness_runner)
         verify_head_unchanged(gh, ctx)
         result["reasons"] = [redact(r, token) for r in reasons]
         result["verdict"] = "PASS" if not reasons else "FAIL"
@@ -406,7 +479,9 @@ def main(guard: str, argv: list[str], env: Mapping[str, str], *, transport: Tran
         result["reasons"] = [redact(str(exc), token)]
     except Exception as exc:  # qualunque errore inatteso e' FAIL, mai PASS
         result["reasons"] = [f"errore inatteso: {type(exc).__name__}"]
-    write_result(env, guard, result)
+    if not write_result(env, guard, result) and result["verdict"] == "PASS":
+        result["verdict"] = "FAIL"
+        result["reasons"] = ["risultato non scritto: verdetto non pubblicabile"]
     print(f"[{guard}] PR #{result.get('pr', '?')} head {result.get('head_sha', '?')}: {result['verdict']}")
     for r in result["reasons"]:
         print(f"  - {r}")

@@ -4192,6 +4192,102 @@
         "tests/scripts/test_trusted_pr_guard.py"
       ],
       "rationale": "#562 requisito 7: token stampato nei log o nel risultato."
+    },
+    {
+      "id": "tg_manual_label_ignored",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if MANUAL_LABEL in verified.get(\"labels\", []):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "Review indipendente P1 su #563: PR con label manual-review-required certificata PASS."
+    },
+    {
+      "id": "tg_owner_files_ignored",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if owner_files:\n        reasons.append",
+      "mutated": "    if False:\n        reasons.append",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "Review indipendente P1 su #563: file a merge owner nel diff ignorati."
+    },
+    {
+      "id": "tg_owner_check_not_wired",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "            reasons = owner_decision_reasons(gh, ctx, verified, root)\n",
+      "mutated": "            reasons = []\n",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "Controllo delle decisioni owner non cablato nella readiness."
+    },
+    {
+      "id": "tg_wait_zero_accepted",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "not READINESS_WAIT_MIN <= int(raw) <= READINESS_WAIT_MAX",
+      "mutated": "int(raw) > READINESS_WAIT_MAX",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "Review indipendente P2 su #563: attesa 0, una sola istantanea giudicata."
+    },
+    {
+      "id": "tg_base_retarget_ignored",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if base.get(\"ref\") != ctx[\"base_ref\"] or not isinstance(base_repo, str) \\",
+      "mutated": "    if False and not isinstance(base_repo, str) \\",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "Codex P2 su #563: PR ridiretta su un altro branch durante l'attesa."
+    },
+    {
+      "id": "tg_unwritten_result_passes",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if not write_result(env, guard, result) and result[\"verdict\"] == \"PASS\":",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "Codex P2 su #563: risultato non scritto con uscita PASS."
+    },
+    {
+      "id": "tg_stale_result_kept",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "        discard_previous_result(env, guard)\n",
+      "mutated": "",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "Review indipendente P3 su #563: PASS di un giro precedente sopravvive a un giro fallito."
+    },
+    {
+      "id": "tg_labels_unchecked",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "        raise GuardError(\"label della PR illeggibili\")",
+      "mutated": "        pass",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "Label illeggibili trattate come assenti."
     }
   ]
 }

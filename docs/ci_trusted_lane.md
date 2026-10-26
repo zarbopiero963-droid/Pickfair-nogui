@@ -29,7 +29,7 @@ Variabili d'ambiente: **nessun argomento**. Un argomento qualunque produce FAIL.
 | `PF_GITHUB_TOKEN_FILE` | una delle due fonti | percorso di un file regolare | permessi 0600/0400; leggibile da gruppo o altri ⇒ FAIL |
 | `CREDENTIALS_DIRECTORY` | una delle due fonti | directory systemd `LoadCredential` | file `github-token` |
 | `PF_RESULT_DIR` | no | default `.trusted-guard` | qui va `<overlap\|readiness>.json` |
-| `PF_READINESS_WAIT_SECONDS` | no | 0..6600, default 420 | attesa dei check pendenti; vale solo per la readiness |
+| `PF_READINESS_WAIT_SECONDS` | no | 31..6600, default 300 | attesa dei check pendenti; vale solo per la readiness. Il minimo garantisce almeno due letture stabili: con 0 la readiness giudicherebbe una sola istantanea, prima che i check tardivi si registrino |
 
 Il guard verifica anche le variabili Buildkite, quando sono presenti:
 - `BUILDKITE_REPO` deve essere esattamente questo repository (https o ssh);
@@ -49,6 +49,10 @@ token non viene mai stampato: l'output del processo figlio e i motivi passano da
 `***`. I redirect HTTP non vengono seguiti, perché `urllib` ripeterebbe l'header Authorization verso un altro host.
 Le URL di paginazione fuori da `api.github.com` vengono rifiutate.
 
+Limite del controllo sui permessi: il codice riconosce solo i token classici con scope. Un token fine-grained o di
+una GitHub App (`ghs_`) con permessi di scrittura non dichiara scope e non si distingue da uno in sola lettura. Il
+permesso minimo è quindi un **requisito dell'infrastruttura**, non verificabile dagli script, che comunque fanno solo GET.
+
 ## Verifiche di provenienza (entrambi i controlli)
 
 1. Token: deve rispettare i permessi minimi.
@@ -57,7 +61,8 @@ Le URL di paginazione fuori da `api.github.com` vengono rifiutate.
    `compare/<base_sha>...main` deve dare `ahead` o `identical`, cioè la base deve stare nella storia di main.
 4. Head: deve stare nello **stesso repository** (fork o repository cancellato ⇒ FAIL) e coincidere con
    `PF_PR_HEAD_SHA`.
-5. A fine valutazione la PR viene riletta: un head o uno stato cambiati ⇒ FAIL.
+5. A fine valutazione la PR viene riletta: head, stato, repository base o branch base cambiati ⇒ FAIL. Una PR
+   ridiretta su un altro branch durante l'attesa non resta certificata.
 
 ## `pr_overlap_guard.sh`
 
@@ -77,6 +82,8 @@ Differenze volute dallo step inline:
 Esegue `scripts/pr_merge_readiness.py --repo … --pr … --ignore-safe-autofix --wait-pending-seconds <W>
 --poll-seconds 15`. Lo lancia dal checkout di main con un ambiente minimo: `GH_TOKEN`, `GH_CONFIG_DIR` temporanea,
 nessun altro token ereditato. Esito **PASS solo se tutte** queste condizioni valgono:
+- nessuna decisione owner aperta: niente label `manual-review-required` e nessun file a merge owner nel diff
+  completo (tutte le pagine), riconosciuto con `scripts/pr_autonomy_policy.is_owner_manual_path` dal checkout di main;
 - exit 0;
 - `headRefOid` uguale all'head atteso;
 - `can_merge` è il booleano `true`;
@@ -94,10 +101,11 @@ Il gate Sol/Grok è **informativo** nel workflow GitHub Actions, qui invece **bl
 Il verdetto PASS significa «mergiabile senza decisioni owner aperte», non «approvato dall'owner». Una PR che la
 governance lascia alla decisione dell'owner resta FAIL qui, e decide l'owner.
 
-**Tempo.** Ogni check ancora pendente allo scadere dell'attesa dà FAIL, mai PASS. Il job dura al più
-attesa + 120 s di margine: il processo figlio viene fermato lì, e anche un timeout dà FAIL. La regola è
-**timeout della pipeline ≥ `PF_READINESS_WAIT_SECONDS` + 180 s**. Con il timeout attuale di 10 minuti, il default
-420 s la rispetta (420 + 120 + 60 = 600). Le review AI possono durare molto più di 7 minuti (Sol a effort `max`:
+**Tempo.** Ogni check ancora pendente allo scadere dell'attesa dà FAIL, mai PASS. Il processo figlio viene fermato
+ad attesa + 120 s, e anche un timeout dà FAIL. Il guard fa inoltre quattro chiamate API, ciascuna con un timeout di
+30 s (token, PR, compare, rilettura finale), e c'è il checkout. La regola è quindi **timeout della pipeline ≥
+`PF_READINESS_WAIT_SECONDS` + 120 + 120 + 60 s**. Con il timeout attuale di 10 minuti, il default 300 s la rispetta
+(300 + 120 + 120 + 60 = 600). Le review AI possono durare molto più di 5 minuti (Sol a effort `max`:
 fino a 105 minuti). Con questo budget, una readiness lanciata con le review ancora in corso è FAIL e va rilanciata
 quando sono finite. Per non sprecare build, la lane dovrebbe lanciarla **dopo** che i check della PR si sono
 chiusi, oppure con un timeout ≥ 115 minuti e `PF_READINESS_WAIT_SECONDS=6600`, come Actions.
@@ -119,7 +127,9 @@ chiusi, oppure con un timeout ≥ 115 minuti e `PF_READINESS_WAIT_SECONDS=6600`,
   rete o HTTP non 200, JSON non valido, provenienza incoerente, check rosso, pendente o sconosciuto, review non PASS,
   eccezione inattesa.
 - `PF_RESULT_DIR/<guard>.json` contiene: `guard`, `repo`, `pr`, `head_sha`, `base_ref`, `base_sha` (se letto),
-  `verdict` (`PASS`/`FAIL`), `reasons`. Gli script **non pubblicano nulla**: solo richieste GET, e un test lo
+  `verdict` (`PASS`/`FAIL`), `reasons`. Il file di un giro precedente viene cancellato **prima** della valutazione;
+  se il file non si scrive, l'esito è FAIL. Così un PASS vecchio non può essere pubblicato al posto di un giro
+  fallito o interrotto. Gli script **non pubblicano nulla**: solo richieste GET, e un test lo
   verifica. Lo status GitHub lo pubblica l'infrastruttura con una credenziale separata, sullo **`head_sha` della PR**
   preso da questo file, non sul commit di main che Buildkite ha costruito.
 
@@ -135,7 +145,11 @@ chiusi, oppure con un timeout ≥ 115 minuti e `PF_READINESS_WAIT_SECONDS=6600`,
 ## Limiti dichiarati
 
 - **NOT VERIFIED end-to-end.** Il percorso reale con token, `gh` e status GitHub resta da collaudare sulla lane
-  dopo che l'owner fornisce il token. Verificato offline: 124 test e mutazioni. Smoke dell'overlap guard sull'API
+  dopo che l'owner fornisce il token. Verificato offline: 143 test e mutazioni. Smoke dell'overlap guard sull'API
   pubblica reale su #561: PASS sull'head corrente, FAIL su un head stantio.
 - Il workflow Actions `.github/workflows/pr-overlap-guard.yml` conserva la propria copia inline, che è riserva. Farlo
   puntare allo script è una modifica di workflow, quindi a merge owner: è un follow-up separato.
+- I tre file degli script sono **a merge owner**: sono in `OWNER_MANUAL_MERGE_FILES` e nel pattern
+  `^scripts/ci/(pr_[a-z0-9_]+\.sh|trusted_pr_guard\.py)$` di `MANUAL_AUTHORITY_PATTERNS`, copiato nei workflow di Sol
+  e Grok. L'elenco in prosa dei file a merge owner in `CLAUDE.md`/`AGENTS.md` va allineato dall'owner, perché sono
+  file di autorità: è un follow-up separato.

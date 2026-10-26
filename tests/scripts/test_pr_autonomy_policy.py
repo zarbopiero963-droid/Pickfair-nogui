@@ -984,6 +984,15 @@ def test_ogni_file_a_merge_owner_mette_la_label(path):
     assert any(re.search(p, path) for p in policy.MANUAL_AUTHORITY_PATTERNS)
 
 
+@pytest.mark.parametrize("path", ["scripts/ci/pr_overlap_guard.sh", "scripts/ci/pr_merge_readiness.sh",
+                                  "scripts/ci/trusted_pr_guard.py", "scripts/ci/pr_future_gate.sh"])
+def test_i_guard_della_lane_trusted_sono_a_merge_owner(path):
+    """Rilievo Codex P1 su #563: gli script che decidono overlap e merge readiness della lane trusted sono gate."""
+    assert policy.is_owner_manual_path(path)
+    decision = policy.manual_label_decision([path])
+    assert decision["label"] == "REQUIRED" and decision["removal_allowed"] is False
+
+
 @pytest.mark.parametrize("path", ["core/runtime_controller.py", "services/telegram_service.py",
                                   "betfair_client.py", "dutching.py", "tests/core/test_x.py"])
 def test_runtime_core_non_mette_la_label(path):
