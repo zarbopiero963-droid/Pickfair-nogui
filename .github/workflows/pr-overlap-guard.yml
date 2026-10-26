@@ -2,26 +2,10 @@ name: PR Overlap Guard (Smart Critical Mode)
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-# Riserva GitHub Actions della lane Buildkite trusted (#562/#563, PF-GOV-DOC-WORKFLOW-ALIGN-01): la logica non
-# sta piu' qui inline ma nello script canonico `scripts/ci/pr_overlap_guard.sh` (contratto in
-# docs/ci_trusted_lane.md), lo stesso che usa la pipeline Buildkite `pr-overlap-guard`. Regola «una sola PR
-# aperta» e sovrapposizione sui file critici, fail-closed (tutte le pagine, PR illeggibile = FAIL).
-#
-# Codice non fidato: il checkout e' il commit BASE della PR (mai il codice della PR), senza credenziali
-# persistite; i dati della PR arrivano solo dalla GitHub API. Il token del job va in un file 0600 temporaneo,
-# letto dallo script e cancellato a fine job; non e' mai un argomento.
-# Solo `pull_request`: questo workflow pubblica il check obbligatorio `overlap-check` e nient'altro. Un tempo
-# accettava anche `workflow_dispatch`, che da un branch eseguiva lo script di quel branch e attaccava al suo head
-# un secondo `overlap-check` verde accanto a quello rosso (stessa app, stesso SHA: su #564, b4e6604). Il collaudo
-# manuale sta in `pr-overlap-guard-diagnostic.yml`, con un nome di check diverso che non puo' soddisfare il
-# required check.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-
-permissions:
-  contents: read
-  pull-requests: read
+  workflow_dispatch:
 
 jobs:
   overlap-check:
@@ -29,30 +13,210 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Checkout trusted base (never the PR code)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
 
-      - name: Overlap guard (scripts/ci/pr_overlap_guard.sh)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PF_PR_NUMBER: ${{ github.event.pull_request.number }}
-          PF_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PF_RESULT_DIR: ${{ runner.temp }}/trusted-guard
+      - name: Fetch open PRs
+        id: fetch_prs
         run: |
-          set -euo pipefail
-          token_file="$RUNNER_TEMP/github-token"
-          trap 'rm -f "$token_file"' EXIT
-          ( umask 077 && printf '%s' "$GH_TOKEN" > "$token_file" )
-          unset GH_TOKEN
-          PF_GITHUB_TOKEN_FILE="$token_file" ./scripts/ci/pr_overlap_guard.sh
+          REPO="${{ github.repository }}"
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/pulls?state=open&per_page=100" \
+            > open_prs.json
 
-      - name: Upload overlap result
+      - name: Una sola PR aperta alla volta
+        run: |
+          python3 <<'PY'
+          import json
+          import sys
+
+          def pr_di_troppo(prs_aperte, numero_corrente):
+              """Le PR aperte di troppo. Lista vuota = regola rispettata.
+
+              La regola sta fra le NON NEGOZIABILI di CLAUDE.md: una sola PR
+              aperta, un solo task attivo, e una nuova PR solo dopo che la
+              precedente e' merged o closed.
+
+              E' stata violata due volte senza che niente diventasse rosso.
+              `overlap-check`, in questo stesso workflow, esce 1 soltanto se la
+              sovrapposizione tocca cinque file critici scritti a mano: su
+              `.guardrails/` e `.github/workflows/` stampava
+              "Non-critical overlap detected (allowed, but be careful)" e usciva
+              0. Un controllo sul NUMERO di PR aperte non esisteva affatto.
+
+              Di troppo sono quelle aperte dopo la prima: la piu' vecchia e'
+              quella legittima, le successive non andavano aperte. Si ordina per
+              numero, che in GitHub cresce con l'ordine di apertura.
+
+              Le bozze contano: una draft e' comunque una PR aperta e un task in
+              volo. Nel repo non ci sono dependabot ne' renovate configurati,
+              quindi nessun bot puo' far diventare rosso questo check da solo;
+              se un domani ne venisse aggiunto uno, questa scelta va rivista qui
+              e non aggirata a valle.
+
+              `numero_corrente` non filtra niente: serve solo a marcare nel
+              report quale PR sta girando, perche' il check e' rosso su TUTTE le
+              PR aperte finche' la situazione non rientra — che e' il punto.
+
+              LIMITE DICHIARATO (rilievo di GPT-5.6 Sol su #423, accolto): gli
+              esiti non si aggiornano da soli. Il workflow parte su
+              opened/synchronize/reopened della PR, quindi aprire la seconda non
+              rifa girare il check sulla prima, che resta verde; e chiudere il
+              surplus non rifa girare quello rosso sulla seconda. Renderlo
+              coerente vorrebbe dire una macchina a stati fra PR, sproporzionata
+              al problema. Il punto di applicazione regge lo stesso: la PR di
+              troppo diventa rossa quando viene aperta, ed e' li' che ci si deve
+              fermare. Per farla tornare verde dopo aver chiuso il surplus si usa
+              "Re-run jobs" — il payload dell'evento e' lo stesso, ma la lista
+              delle PR aperte viene riletta dall'API in quel momento.
+              """
+              numeri = sorted(p["number"] for p in prs_aperte)
+              return numeri[1:]
+
+          with open("open_prs.json", encoding="utf-8") as fh:
+              aperte = json.load(fh)
+
+          corrente = int("${{ github.event.pull_request.number }}")
+          di_troppo = pr_di_troppo(aperte, corrente)
+
+          print("=" * 80)
+          print("UNA SOLA PR APERTA ALLA VOLTA")
+          print("=" * 80)
+
+          for pr in sorted(aperte, key=lambda p: p["number"]):
+              marcatori = []
+              if pr["number"] == corrente:
+                  marcatori.append("<- questa")
+              if pr["number"] in di_troppo:
+                  marcatori.append("DI TROPPO")
+              if pr.get("draft"):
+                  marcatori.append("draft")
+              print(f'  #{pr["number"]:<5} {pr.get("title", "")[:70]}'
+                    f'{"  [" + ", ".join(marcatori) + "]" if marcatori else ""}')
+
+          if not di_troppo:
+              print()
+              print(f"OK: {len(aperte)} PR aperta.")
+              sys.exit(0)
+
+          print()
+          print("❌ REGOLA NON NEGOZIABILE VIOLATA (CLAUDE.md):")
+          print(f"   {len(aperte)} PR aperte contemporaneamente.")
+          print(f"   Di troppo: {', '.join('#' + str(n) for n in di_troppo)}")
+          print()
+          print("   Lavoro NON correlato a una PR gia' aperta -> fermarsi,")
+          print("   non aprire la seconda. Lavoro di fix sulla PR aperta ->")
+          print("   continuare sullo STESSO branch.")
+          print()
+          print("   Si rientra mergiando o chiudendo il surplus, non ignorando")
+          print("   questo check. Attenzione: NON torna verde da solo — il")
+          print("   workflow parte sugli eventi della PR, non sulla chiusura di")
+          print("   un'altra. Dopo aver chiuso il surplus usa \"Re-run jobs\" qui:")
+          print("   la lista delle PR aperte viene riletta dall'API in quel momento.")
+          sys.exit(1)
+          PY
+
+      - name: Fetch current PR files
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" \
+            > current_pr_files.json
+
+      - name: Run smart overlap check
+        run: |
+          python - <<'PY'
+          import json
+          import sys
+
+          CRITICAL_FILES = {
+              "core/trading_engine.py",
+              "order_manager.py",
+              "core/reconciliation_engine.py",
+              "core/state_recovery.py",
+              "database.py",
+          }
+
+          with open("open_prs.json", "r", encoding="utf-8") as f:
+              open_prs = json.load(f)
+
+          with open("current_pr_files.json", "r", encoding="utf-8") as f:
+              current_files = {x["filename"] for x in json.load(f)}
+
+          current_pr_number = int("${{ github.event.pull_request.number }}")
+
+          overlapping = []
+          critical_overlap = []
+
+          import urllib.request
+
+          for pr in open_prs:
+              pr_number = pr["number"]
+
+              if pr_number == current_pr_number:
+                  continue
+
+              url = pr["url"] + "/files"
+              req = urllib.request.Request(
+                  url,
+                  headers={
+                      "Authorization": "Bearer ${{ secrets.GITHUB_TOKEN }}",
+                      "Accept": "application/vnd.github+json"
+                  }
+              )
+
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      pr_files = {x["filename"] for x in json.load(resp)}
+              except Exception:
+                  continue
+
+              overlap = current_files & pr_files
+              if overlap:
+                  overlapping.append((pr_number, overlap))
+
+                  for f in overlap:
+                      if f in CRITICAL_FILES:
+                          critical_overlap.append((pr_number, f))
+
+          print("=" * 80)
+          print("PR OVERLAP REPORT")
+          print("=" * 80)
+
+          if not overlapping:
+              print("No overlapping files with other PRs")
+              sys.exit(0)
+
+          print("Overlapping files detected:")
+
+          for pr_number, files in overlapping:
+              print(f"\nPR #{pr_number}")
+              for f in files:
+                  print(f" - {f}")
+
+          print()
+
+          if critical_overlap:
+              print("❌ CRITICAL OVERLAP DETECTED:")
+              for pr_number, f in critical_overlap:
+                  print(f" - PR #{pr_number} touches critical file: {f}")
+              sys.exit(1)
+
+          print("⚠️ Non-critical overlap detected (allowed, but be careful)")
+          sys.exit(0)
+          PY
+
+      - name: Upload overlap report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pr-overlap-report
-          path: ${{ runner.temp }}/trusted-guard/overlap.json
-          if-no-files-found: ignore
+          path: |
+            open_prs.json
+            current_pr_files.json

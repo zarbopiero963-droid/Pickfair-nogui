@@ -495,7 +495,7 @@ I workflow che SONO i gate su cui poggia la decisione di auto-merge:
 - `scripts/ci/check_ci_quarantine.py`
 - `scripts/ci/trusted_pr_guard.py`, `scripts/ci/pr_overlap_guard.sh`,
   `scripts/ci/pr_merge_readiness.sh` (lane Buildkite trusted, #563: decidono
-  overlap e merge readiness; il workflow `pr-overlap-guard.yml` esegue i primi due)
+  overlap e merge readiness)
 - (e, per fail-closed, ogni altro `scripts/pr_*.py`: il pattern della label li copre)
 
 `scripts/guardrail_check.py` e' in lista per la stessa ragione dei workflow, e

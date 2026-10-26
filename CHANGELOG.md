@@ -9,24 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
-- **PF-GOV-DOC-WORKFLOW-ALIGN-01 — governance e workflow allineati a #561 e #563:**
+- **PF-GOV-DOC-WORKFLOW-ALIGN-01, Fase 1 — governance allineata a #561 e #563, token Actions accettato:**
   - `CLAUDE.md`, `AGENTS.md` e `docs/auto_pr_flow_spec.md` §0.9 (estensione documentale autorizzata) elencano i
-    tre script della lane trusted fra i file a merge owner, la spec anche i cinque workflow reviewer per nome, e descrivono lo stub
-    Microstake come minimo exchange (`core.stake_precision.EXCHANGE_MIN_ORDER`, riferimento owner 1 EUR; in LIVE
-    BACK 1000 / LAY 1.01, in SIM un prezzo che non incrocia il book) invece di 2 EUR;
-  - `.github/workflows/pr-overlap-guard.yml` esegue lo script canonico `scripts/ci/pr_overlap_guard.sh` da un checkout
-    del commit base, mai del codice della PR, con il token in un file 0600 e permessi in sola lettura. Il nome del
-    check resta `overlap-check`;
-  - nuovi test: allineamento fra classificatore e documenti; regola «una sola PR aperta» sullo script vero, legata al
-    workflow (trigger, nessun `continue-on-error`, un solo checkout, token usato solo per il file);
-  - cambio di comportamento dichiarato: una PR con base diversa da `main` ora dà FAIL in `overlap-check`;
-  - collaudo manuale separato dal check obbligatorio (review indipendente su #564): `pr-overlap-guard.yml` gira solo
-    su `pull_request` ed è l'unico workflow che pubblica `overlap-check`; la diagnostica manuale è
-    `pr-overlap-guard-diagnostic.yml` (check `overlap-diagnostic`, solo da `main`, token isolato);
-    nessuno step dei due workflow può essere saltato (`if:`) o eseguito da un'altra shell (`shell:`);
-  - il collaudo reale del workflow ha trovato il `GITHUB_TOKEN` di Actions rifiutato dal guard
-    (`[A-Za-z0-9_]{20,255}`). Ora il token è validato come valore sicuro per l'header: ASCII stampabile senza spazi,
-    da 20 a 8192 caratteri.
+    tre script della lane trusted fra i file a merge owner, la spec anche i cinque workflow reviewer per nome, e
+    descrivono lo stub Microstake come minimo exchange (`core.stake_precision.EXCHANGE_MIN_ORDER`, riferimento owner
+    1 EUR; in LIVE BACK 1000 / LAY 1.01, in SIM un prezzo che non incrocia il book) invece di 2 EUR;
+  - nuovo test di coerenza fra il classificatore `OWNER_MANUAL_MERGE_FILES` e i tre documenti;
+  - `scripts/ci/trusted_pr_guard.py` rifiutava il `GITHUB_TOKEN` reale di Actions (`[A-Za-z0-9_]{20,255}`, trovato
+    collaudando su #564). Ora il token è validato come valore sicuro per l'header: ASCII stampabile senza spazi, da
+    20 a 8192 caratteri, FAIL prima di qualunque richiesta; nuova mutazione `tg_token_header_injection`;
+  - il passaggio di `.github/workflows/pr-overlap-guard.yml` allo script canonico e la diagnostica manuale separata
+    sono la Fase 2, in una PR successiva: introdotti qui, il loro `overlap-check` girerebbe sullo script vecchio di
+    `main` e sarebbe rosso per costruzione (decisione owner: bootstrap in due fasi).
 
 ### Added
 - **Lane Buildkite trusted (#562) — `scripts/ci/pr_overlap_guard.sh` e `scripts/ci/pr_merge_readiness.sh`:** due
