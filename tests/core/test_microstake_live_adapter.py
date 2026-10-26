@@ -25,6 +25,7 @@ from core.microstake_live_port import (LIVE_SAGA_SETTINGS_KEY, LiveExchangePort,
 from core.microstake_safe import MicrostakeCoordinator, MicrostakePolicy, MicrostakeRequest, Phase, Side
 from core.microstake_sim_port import SAGA_SETTINGS_KEY, DbSagaStore
 from core.money_management import RoserpinaMoneyManagement
+from core.system_state import RuntimeMode
 from core.trading_engine import TradingEngine
 from tests.risk_config_fixtures import legacy_test_config
 from database import Database
@@ -226,6 +227,7 @@ def _runtime(fake, *, live_allowed=True, funds=None):
     cfg = legacy_test_config()
     cfg.max_win = 10000.0
     return SimpleNamespace(
+        mode=RuntimeMode.ACTIVE,
         get_effective_execution_mode=lambda: "LIVE",
         is_live_allowed=lambda: live_allowed,
         betfair_service=SimpleNamespace(_session_invalid=False,
@@ -1335,6 +1337,15 @@ def _arm_stop_after(fake, engine, op, source):
                 rt.is_emergency_stopped = True
             elif source == "live_revoked":
                 rt.is_live_allowed = lambda: False
+            elif source in ("stopped", "paused", "lockdown_mode"):
+                rt.mode = {"stopped": RuntimeMode.STOPPED, "paused": RuntimeMode.PAUSED,
+                           "lockdown_mode": RuntimeMode.LOCKDOWN}[source]
+            elif source == "safe_mode_lockdown":
+                engine.safe_mode = SimpleNamespace(is_lockdown=lambda: True)
+            elif source == "session_invalid":
+                rt.betfair_service._session_invalid = True
+            elif source == "mode_unreadable":
+                del rt.mode
             elif source == "authority_lost":
                 def lost(_ctx):
                     raise RuntimeError("RUNTIME_AUTHORITY_LOST")
@@ -1347,7 +1358,9 @@ def _arm_stop_after(fake, engine, op, source):
     setattr(fake, "_" + op, armed)
 
 
-@pytest.mark.parametrize("source", ["daily", "emergency", "live_revoked", "authority_lost", "unreadable"])
+@pytest.mark.parametrize("source", ["daily", "emergency", "live_revoked", "authority_lost", "unreadable",
+                                    "stopped", "paused", "lockdown_mode", "safe_mode_lockdown", "session_invalid",
+                                    "mode_unreadable"])
 @pytest.mark.parametrize("side", ["BACK", "LAY"])
 def test_stop_armed_during_the_reduction_never_reprices_the_stub(source, side):
     """Rilievo Codex P1 su beff2ef: uno STOP armato mentre la riduzione e' in volo non porta mai lo stub al prezzo
@@ -1364,7 +1377,7 @@ def test_stop_armed_during_the_reduction_never_reprices_the_stub(source, side):
     assert engine._live_microstake_executor.port._reservations == {}
 
 
-@pytest.mark.parametrize("source", ["daily", "emergency", "live_revoked"])
+@pytest.mark.parametrize("source", ["daily", "emergency", "live_revoked", "stopped", "paused"])
 def test_stop_armed_during_the_place_cancels_the_whole_stub_without_reduction(source):
     engine, fake, db = _live_engine()
     _arm_stop_after(fake, engine, "placeOrders", source)

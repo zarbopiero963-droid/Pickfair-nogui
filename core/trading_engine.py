@@ -2722,10 +2722,32 @@ class TradingEngine:
         controlli del chokepoint di submission valgono solo prima del PLACE, e uno STOP armato mentre PLACE o
         riduzione sono in volo lascerebbe portare lo stub al prezzo d'ingresso. Stesse fonti del recovery (LIVE
         consentito, blocco giornaliero/pending-stop, emergenza) piu' l'autorita' esclusiva del runtime (#536).
-        Bloccato => il coordinatore cancella lo stub (rollback verificato). Errore di lettura => bloccato."""
+        Bloccato => il coordinatore cancella lo stub (rollback verificato). Errore di lettura => bloccato.
+
+        Anche STOP/PAUSA dell'utente, lockdown del safe mode e sessione Betfair invalidata (review indipendente del
+        diff completo su ec9533d, P1): `is_live_allowed()` non legge `runtime.mode`, e `_stop_serialized` imposta
+        STOPPED secondi prima di perdere l'autorita'. Runtime ACTIVE obbligatorio; mode illeggibile => bloccato."""
         if not self._microstake_recovery_entry_allowed(True):
             return False
-        assert_authority = getattr(self.runtime_controller, "assert_runtime_authority", None)
+        runtime = self.runtime_controller
+        try:
+            mode = getattr(runtime, "mode")
+            if getattr(mode, "value", mode) != "ACTIVE":
+                logger.warning("Microstake LIVE: runtime non ACTIVE durante la saga (%s), rollback", mode)
+                return False
+            safe_mode = self.safe_mode
+            if safe_mode is not None and callable(getattr(safe_mode, "is_lockdown", None)) \
+                    and safe_mode.is_lockdown() is not False:
+                logger.warning("Microstake LIVE: safe mode in lockdown durante la saga, rollback")
+                return False
+            service = getattr(runtime, "betfair_service", None)
+            if service is not None and getattr(service, "_session_invalid", False) is not False:
+                logger.warning("Microstake LIVE: sessione Betfair non valida durante la saga, rollback")
+                return False
+        except Exception:
+            logger.exception("Microstake LIVE: stato del runtime non leggibile durante la saga, rollback")
+            return False
+        assert_authority = getattr(runtime, "assert_runtime_authority", None)
         if callable(assert_authority):
             try:
                 assert_authority("order_submit")

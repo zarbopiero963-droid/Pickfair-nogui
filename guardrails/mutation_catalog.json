@@ -3962,6 +3962,42 @@
         "tests/core/test_microstake_live_adapter.py"
       ],
       "rationale": "Codex P1 su beff2ef: un fallimento del recovery SIM impedisce la cancellazione protettiva degli stub LIVE."
+    },
+    {
+      "id": "ms_engine_live_gate_ignores_user_stop",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "            if getattr(mode, \"value\", mode) != \"ACTIVE\":",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Review indipendente su ec9533d (P1): STOP/PAUSA dell'utente durante la saga LIVE non fermano il replace."
+    },
+    {
+      "id": "ms_engine_live_gate_ignores_lockdown",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "                    and safe_mode.is_lockdown() is not False:",
+      "mutated": "                    and False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Lockdown del safe mode durante la saga LIVE ignorato."
+    },
+    {
+      "id": "ms_engine_live_gate_ignores_session",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "            if service is not None and getattr(service, \"_session_invalid\", False) is not False:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Sessione Betfair invalidata durante la saga LIVE ignorata."
     }
   ]
 }

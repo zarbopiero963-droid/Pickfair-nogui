@@ -334,7 +334,10 @@ betId). Prima la saga si chiudeva ROLLED_BACK con lo stub vivo e la riserva rila
   (`rollback_intent`, reason `entry_blocked`) e cancellazione verificata: dopo il PLACE si cancella l'intero stub senza
   riduzione, dopo la riduzione il residuo; mai il prezzo d'ingresso. Cancellazione con esito ignoto ⇒ ROLLBACK_PENDING
   con riserva tenuta. Gate assente su una policy LIVE, gate che solleva o risponde in modo non leggibile ⇒ bloccato
-  (fail-closed). SIM senza gate: invariata (#512);
+  (fail-closed). SIM senza gate: invariata (#512). Il gate richiede anche il runtime **ACTIVE** (STOP o PAUSA
+  dell'utente, LOCKDOWN, `mode` illeggibile ⇒ bloccato), il safe mode non in lockdown e la sessione Betfair valida
+  (review indipendente del diff completo su ec9533d, P1: `is_live_allowed()` non legge `runtime.mode` e lo STOP
+  imposta STOPPED secondi prima di perdere l'autorità);
 - con il runtime in SIMULATION la protezione delle saghe LIVE pendenti (F3) parte **anche se** il recovery SIM fallisce
   (store SIM illeggibile, saga SIM irrisolta): uno stato di simulazione non impedisce più la cancellazione protettiva
   degli stub reali. L'esito complessivo resta il fallimento SIM, che blocca i nuovi ingressi.
@@ -368,6 +371,9 @@ snapshot del broker: finché non riesce, nessuna saga pendente viene promossa (r
      successivo, mai chiusa per assenza di dati;
   5. accettazione di un LAY 1 EUR a 1.01 e di un BACK 1 EUR a 1000 sul mercato reale.
 - Riserva transitoria in-process anche in LIVE: non è un'autorità finanziaria multi-processo (come in SIM).
+- Ricostruzione dell'esecutore LIVE con una saga in volo (nuovo oggetto client): il nuovo esecutore ripristina la
+  riserva della saga e la rilascia solo al ricostruire successivo. È una sovra-riserva, mai fail-open: blocca nuovi
+  Microstake oltre il cap fino alla ricostruzione (review indipendente, P3, non corretto qui).
 - Preesistente (coordinatore, non introdotto qui): se lo stub si abbina in parte prima della riduzione
   (`stub_matched` / `match_cancel_race`) la sua parte non abbinata non viene cancellata in automatico; la saga resta
   AMBIGUOUS con riserva tenuta per la riconciliazione. Improbabile in LIVE (stub a 1000 / 1.01).
