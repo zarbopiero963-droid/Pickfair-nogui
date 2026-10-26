@@ -2901,7 +2901,7 @@
       "max_files": 13
     },
     "gov-doc-workflow-align-01": {
-      "description": "PF-GOV-DOC-WORKFLOW-ALIGN-01 (mandato owner approvato, 26/10/2026), tre interventi: (1) CLAUDE.md e AGENTS.md elencano i file protetti introdotti da #563 (scripts/ci/trusted_pr_guard.py, pr_overlap_guard.sh, pr_merge_readiness.sh); (2) stub Microstake descritto col contratto di #561 (minimo exchange core.stake_precision.EXCHANGE_MIN_ORDER, riferimento owner 1 EUR) invece di 2 EUR; (3) .github/workflows/pr-overlap-guard.yml esegue lo script trusted canonico da checkout del commit base, senza codice della PR, token in file 0600, permessi read-only, check overlap-check invariato. Test di allineamento e di legame workflow/script. File di autorita' e workflow: merge owner.",
+      "description": "PF-GOV-DOC-WORKFLOW-ALIGN-01 (mandato owner approvato, 26/10/2026), tre interventi: (1) CLAUDE.md e AGENTS.md elencano i file protetti introdotti da #563 (scripts/ci/trusted_pr_guard.py, pr_overlap_guard.sh, pr_merge_readiness.sh); (2) stub Microstake descritto col contratto di #561 (minimo exchange core.stake_precision.EXCHANGE_MIN_ORDER, riferimento owner 1 EUR) invece di 2 EUR; (3) .github/workflows/pr-overlap-guard.yml esegue lo script trusted canonico da checkout del commit base, senza codice della PR, token in file 0600, permessi read-only, check overlap-check invariato. Test di allineamento e di legame workflow/script. File di autorita' e workflow: merge owner. ESTENSIONE DICHIARATA (necessaria all'intervento 3, collaudo reale su #564): il guard canonico scripts/ci/trusted_pr_guard.py rifiutava il GITHUB_TOKEN di Actions per la regex [A-Za-z0-9_]{20,255}; ora token opaco validato come ASCII stampabile senza spazi 20..8192 (anti iniezione di header). Test in tests/scripts/test_trusted_pr_guard.py, mutazione in guardrails/mutation_catalog.json. ESTENSIONE DOCUMENTALE AUTORIZZATA DALL'OWNER: docs/auto_pr_flow_spec.md §0.9 allineata all'elenco canonico OWNER_MANUAL_MERGE_FILES (tre guard trusted di #563, workflow reviewer per nome) e inclusa nel test di coerenza.",
       "allow_tests": true,
       "files": [
         ".github/workflows/pr-overlap-guard.yml",
@@ -2909,11 +2909,15 @@
         "AGENTS.md",
         "CHANGELOG.md",
         "CLAUDE.md",
+        "docs/auto_pr_flow_spec.md",
         "docs/ci_trusted_lane.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/ci/trusted_pr_guard.py",
         "tests/guardrails/test_governance_docs_aligned.py",
-        "tests/guardrails/test_una_sola_pr_aperta.py"
+        "tests/guardrails/test_una_sola_pr_aperta.py",
+        "tests/scripts/test_trusted_pr_guard.py"
       ],
-      "max_files": 8
+      "max_files": 12
     }
   }
 }

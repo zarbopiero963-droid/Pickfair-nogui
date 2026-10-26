@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import pr_autonomy_policy as policy  # noqa: E402
 
 DOCS = ("CLAUDE.md", "AGENTS.md")
+SPEC = "docs/auto_pr_flow_spec.md"
 
 
 @pytest.mark.parametrize("doc", DOCS)
@@ -25,6 +26,23 @@ DOCS = ("CLAUDE.md", "AGENTS.md")
 def test_every_owner_manual_file_is_declared_in_the_governance_docs(doc, path):
     text = (ROOT / doc).read_text(encoding="utf-8")
     assert f"`{path}`" in text, f"{path} e' a merge owner nel classificatore ma {doc} non lo elenca"
+
+
+def _spec_merge_section() -> str:
+    text = (ROOT / SPEC).read_text(encoding="utf-8")
+    start = text.index("### 0.9 Merge")
+    end = text.index("\n### ", start + 1)
+    return text[start:end]
+
+
+@pytest.mark.parametrize("path", sorted(policy.OWNER_MANUAL_MERGE_FILES))
+def test_every_owner_manual_file_is_declared_in_the_spec_merge_section(path):
+    """La spec §0.9 e' il testo normativo: nomina i workflow per nome file, gli altri per percorso completo."""
+    section = _spec_merge_section()
+    named = f"`{path}`" in section
+    if path.startswith(".github/workflows/"):
+        named = named or f"`{Path(path).name}`" in section
+    assert named, f"{path} e' a merge owner nel classificatore ma {SPEC} §0.9 non lo elenca"
 
 
 @pytest.mark.parametrize("doc", DOCS)

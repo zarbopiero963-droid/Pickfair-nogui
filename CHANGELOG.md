@@ -10,14 +10,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 - **PF-GOV-DOC-WORKFLOW-ALIGN-01 — governance e workflow allineati a #561 e #563:**
-  - `CLAUDE.md` e `AGENTS.md` elencano i tre script della lane trusted fra i file a merge owner e descrivono lo stub
-    Microstake come minimo exchange (`core.stake_precision.EXCHANGE_MIN_ORDER`, riferimento owner 1 EUR, BACK
-    1000 / LAY 1.01) invece di 2 EUR;
+  - `CLAUDE.md`, `AGENTS.md` e `docs/auto_pr_flow_spec.md` §0.9 (estensione documentale autorizzata) elencano i
+    tre script della lane trusted fra i file a merge owner, la spec anche i cinque workflow reviewer per nome, e descrivono lo stub
+    Microstake come minimo exchange (`core.stake_precision.EXCHANGE_MIN_ORDER`, riferimento owner 1 EUR; in LIVE
+    BACK 1000 / LAY 1.01, in SIM prezzo passivo) invece di 2 EUR;
   - `.github/workflows/pr-overlap-guard.yml` esegue lo script canonico `scripts/ci/pr_overlap_guard.sh` da un checkout
     del commit base, mai del codice della PR, con il token in un file 0600 e permessi in sola lettura. Il nome del
     check resta `overlap-check`;
   - nuovi test: allineamento fra classificatore e documenti; regola «una sola PR aperta» sullo script vero, legata al
-    workflow.
+    workflow (trigger, nessun `continue-on-error`, un solo checkout, token usato solo per il file);
+  - cambio di comportamento dichiarato: una PR con base diversa da `main` ora dà FAIL in `overlap-check`;
+  - il collaudo reale del workflow ha trovato il `GITHUB_TOKEN` di Actions rifiutato dal guard
+    (`[A-Za-z0-9_]{20,255}`). Ora il token è validato come valore sicuro per l'header: ASCII stampabile senza spazi,
+    da 20 a 8192 caratteri.
 
 ### Added
 - **Lane Buildkite trusted (#562) — `scripts/ci/pr_overlap_guard.sh` e `scripts/ci/pr_merge_readiness.sh`:** due

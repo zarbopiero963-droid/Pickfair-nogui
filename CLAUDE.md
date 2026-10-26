@@ -94,7 +94,8 @@ PF-BEST-EXECUTION-DYNAMIC-01 (c.6235560755). Dettaglio tecnico in
   errore esplicito, mai un importo diverso; LIVE senza adapter = fail-closed;
 - tenere separati stake richiesto, stake eseguito, importo temporaneo della
   procedura (stub pari al minimo exchange `core.stake_precision.EXCHANGE_MIN_ORDER`,
-  riferimento owner 1 EUR, a prezzo non abbinabile BACK 1000 / LAY 1.01 — #561;
+  riferimento owner 1 EUR, a prezzo non abbinabile: in LIVE BACK 1000 / LAY 1.01
+  (`core/microstake_live_port.py`), in SIM prezzo passivo oltre il miglior prezzo — #561;
   entro fondi disponibili e headroom di esposizione), matched/unmatched,
   liability LAY, fondi, controlli di rischio;
 - esito ignoto dopo l'invio = AMBIGUOUS + riconciliazione, mai retry;

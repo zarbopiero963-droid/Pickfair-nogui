@@ -216,13 +216,19 @@ def test_token_file_readable_by_others_is_refused(tmp_path, mode):
     assert fake.calls == []
 
 
-@pytest.mark.parametrize("content", ["", "   \n", "token with spaces", "x" * 10, "ghp_" + "é" * 30])
+@pytest.mark.parametrize("content", ["", "   \n", "token with spaces", "x" * 10, "ghp_" + "é" * 30,
+                                     "ghs_" + "a" * 30 + "\r\nX-Injected: 1", "ghs_" + "a" * 30 + "\tb",
+                                     "ghs_" + "\x00" * 30, "x" * 8193])
 def test_malformed_token_is_refused(tmp_path, content):
     env = env_for(tmp_path)
     p = Path(env["PF_GITHUB_TOKEN_FILE"])
     p.write_text(content, encoding="utf-8")
     p.chmod(0o600)
-    assert run("overlap", tmp_path, FakeGitHub(), env=env) == 1
+    fake = FakeGitHub()
+    assert run("overlap", tmp_path, fake, env=env) == 1
+    (reason,) = result(tmp_path, "overlap")["reasons"]
+    assert reason.startswith(("token GitHub vuoto o in formato non valido", "file del token non leggibile"))
+    assert fake.calls == [], "nessuna richiesta con un token non valido"
 
 
 def test_token_file_that_is_not_a_regular_file_is_refused(tmp_path):
@@ -639,3 +645,15 @@ def test_overlap_sees_the_source_of_a_renamed_critical_file(tmp_path):
     fake.files[570] = ["core/trading_engine.py"]
     assert run("overlap", tmp_path, fake) == 1
     assert any("core/trading_engine.py" in r for r in result(tmp_path, "overlap")["reasons"])
+
+
+@pytest.mark.parametrize("token", ["ghs_" + "A1b2" * 9, "ghs_" + "x" * 300, "ghs_abc.def-ghi_jkl.mno-pqr_stu.vwx",
+                                   "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln-_+/=", "github_pat_" + "Z9" * 40])
+def test_opaque_github_token_formats_are_accepted(tmp_path, token):
+    """Collaudo reale su #564: il GITHUB_TOKEN di Actions era rifiutato da `[A-Za-z0-9_]{20,255}`. Il token e'
+    opaco: la validazione serve solo a non mandare nell'header Authorization un valore vuoto, con spazi, a capo o
+    caratteri di controllo (iniezione di header). ASCII stampabile senza spazi, da 20 a 8192 caratteri."""
+    p = tmp_path / "tok"
+    p.write_text(token + "\n")
+    p.chmod(0o600)
+    assert g.load_token({"PF_GITHUB_TOKEN_FILE": str(p)}) == token

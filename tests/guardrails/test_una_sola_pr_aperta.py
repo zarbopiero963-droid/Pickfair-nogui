@@ -158,3 +158,40 @@ def test_workflow_passes_the_token_only_as_a_0600_file() -> None:
 def test_workflow_permissions_are_read_only() -> None:
     data = yaml.safe_load((ROOT / WORKFLOW).read_text(encoding="utf-8"))
     assert data["permissions"] == {"contents": "read", "pull-requests": "read"}
+
+
+def _workflow() -> dict:
+    return yaml.safe_load((ROOT / WORKFLOW).read_text(encoding="utf-8"))
+
+
+def test_workflow_still_runs_on_every_pull_request_push() -> None:
+    """Togliere il trigger `pull_request` spegnerebbe il check in silenzio. YAML legge la chiave `on` come True."""
+    data = _workflow()
+    on = data.get("on", data.get(True))
+    assert set(on["pull_request"]["types"]) == {"opened", "synchronize", "reopened"}
+    assert set(on) == {"pull_request", "workflow_dispatch"}
+
+
+def test_workflow_cannot_turn_a_failure_green() -> None:
+    """`continue-on-error` (job o step) renderebbe verde un FAIL dello script."""
+    job = _job()
+    assert "continue-on-error" not in job
+    assert all("continue-on-error" not in s for s in job["steps"])
+    assert set(job) == {"runs-on", "timeout-minutes", "steps"}, "niente permessi, `if` o `needs` a livello di job"
+
+
+def test_workflow_has_one_checkout_and_one_guard_step_only() -> None:
+    """Un secondo checkout (es. dell'head) o uno step in piu' che usa il token aprirebbero il codice non fidato."""
+    steps = _job()["steps"]
+    uses = [str(s.get("uses", "")).split("@")[0] for s in steps]
+    assert uses == ["actions/checkout", "", "actions/upload-artifact"]
+    assert sum(1 for s in steps if "run" in s) == 1
+
+
+def test_workflow_uses_the_token_only_to_write_the_file() -> None:
+    """Il token compare in un solo punto: il `printf` nel file 0600. Niente echo, base64 o altri usi."""
+    text = (ROOT / WORKFLOW).read_text(encoding="utf-8")
+    assert text.count("github.token") == 1
+    run = next(s for s in _job()["steps"] if "run" in s)["run"]
+    uses = [ln.strip() for ln in run.splitlines() if "GH_TOKEN" in ln]
+    assert uses == ["( umask 077 && printf '%s' \"$GH_TOKEN\" > \"$token_file\" )", "unset GH_TOKEN"]

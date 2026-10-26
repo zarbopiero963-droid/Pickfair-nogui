@@ -44,6 +44,11 @@ Il guard verifica anche le variabili Buildkite, quando sono presenti:
 - Actions: read;
 - Issues: read (per i commenti delle review AI).
 
+Il token è opaco: si accetta qualunque valore di ASCII stampabile senza spazi, da 20 a 8192 caratteri (PAT
+fine-grained, `ghs_` di Actions, formati futuri). Vuoto, con spazi, a capo o caratteri di controllo ⇒ FAIL prima di
+qualunque richiesta, così nell'header Authorization non entra nulla di iniettabile. Il primo collaudo reale su #564
+aveva trovato il `GITHUB_TOKEN` di Actions rifiutato dalla vecchia regola `[A-Za-z0-9_]{20,255}`.
+
 Un token classico con scope dichiarati (`X-OAuth-Scopes` non vuoto: `repo`, `public_repo`, … scrivono) ⇒ FAIL. Il
 token non viene mai stampato: l'output del processo figlio e i motivi passano da una redazione che lo sostituisce con
 `***`. I redirect HTTP non vengono seguiti, perché `urllib` ripeterebbe l'header Authorization verso un altro host.
@@ -172,7 +177,12 @@ logica: il job `overlap-check` (stesso nome del check di prima) esegue lo script
   - legge tutte le pagine;
   - una PR illeggibile dà FAIL;
   - verifica la provenienza: una PR da fork o con head diverso dall'evento dà FAIL;
-  - senza PR aperte dà FAIL invece che verde.
+  - senza PR aperte dà FAIL invece che verde;
+  - una PR con base diversa da `main` dà FAIL (il workflow non imposta `PF_PR_BASE_REF`, quindi vale il default
+    `main`): prima il controllo la valutava comunque.
+- **Bootstrap:** su `pull_request` lo script viene dal commit base, quindi una PR che corregge lo script viene
+  valutata con la versione di `main`. La correzione si collauda con `workflow_dispatch` sul branch della PR, che
+  esegue lo script del branch con il token reale di Actions.
 - Il workflow che gira su `pull_request` è quello della PR stessa: una PR che modifica questo workflow lo esegue
   modificato. È per questo che tutti i workflow sono a merge owner.
 - `tests/guardrails/test_una_sola_pr_aperta.py` esegue la regola sullo script vero e lega il workflow allo script:
