@@ -576,3 +576,39 @@ def test_previous_result_is_removed_before_the_evaluation(tmp_path):
     assert g.main("overlap", [], env_for(tmp_path), transport=transport) == 1
     assert seen == [False], "il vecchio risultato era ancora presente durante la valutazione"
     assert json.loads((out / "overlap.json").read_text())["verdict"] == "FAIL"
+
+
+def test_owner_label_added_during_the_readiness_wait_is_fail(tmp_path):
+    """Rilievo Codex P1 su 80e0867: la label manual-review-required aggiunta mentre la readiness attende non viene
+    certificata PASS: la rilettura finale ricontrolla le label."""
+    fake = FakeGitHub()
+
+    def runner(repo_root, pr, wait, token, output):
+        fake.prs[561] = FakeGitHub.pr(561, labels=["manual-review-required"])
+        Path(output).write_text(json.dumps(clean_decision()))
+        return 0
+    assert g.main("readiness", [], env_for(tmp_path), transport=fake, readiness_runner=runner, repo_root=ROOT) == 1
+    assert any("manual-review-required" in r for r in result(tmp_path, "readiness")["reasons"])
+
+
+def test_unreadable_labels_in_the_final_read_are_fail(tmp_path):
+    fake = FakeGitHub()
+
+    def runner(repo_root, pr, wait, token, output):
+        fake.prs[561] = dict(FakeGitHub.pr(561), labels=None)
+        Path(output).write_text(json.dumps(clean_decision()))
+        return 0
+    assert g.main("readiness", [], env_for(tmp_path), transport=fake, readiness_runner=runner, repo_root=ROOT) == 1
+
+
+def test_owner_label_present_at_the_start_stays_fail_even_if_removed_during_the_wait(tmp_path):
+    """Prudente: la readiness e' iniziata con una decisione owner aperta, quindi il verdetto non e' PASS anche se la
+    label sparisce durante l'attesa (si rilancia la readiness dopo)."""
+    fake = FakeGitHub()
+    fake.prs[561] = FakeGitHub.pr(561, labels=["manual-review-required"])
+
+    def runner(repo_root, pr, wait, token, output):
+        fake.prs[561] = FakeGitHub.pr(561)
+        Path(output).write_text(json.dumps(clean_decision()))
+        return 0
+    assert g.main("readiness", [], env_for(tmp_path), transport=fake, readiness_runner=runner, repo_root=ROOT) == 1

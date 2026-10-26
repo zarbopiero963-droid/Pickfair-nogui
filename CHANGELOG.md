@@ -16,7 +16,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   classico con scope rifiutato), mai stampato, nessun redirect seguito. Overlap guard fail-closed: tutte le pagine,
   PR illeggibile = FAIL. Readiness: PASS solo con `can_merge` vero e gate Sol/Grok PASS. Contratto in
   `docs/ci_trusted_lane.md`. PASS mai con label `manual-review-required` o file a merge owner nel diff; i tre script
-  sono registrati a merge owner (`scripts/pr_autonomy_policy.py` e pattern dei reviewer Sol/Grok); 143 test, 24 mutazioni uccise.
+  sono registrati a merge owner (`scripts/pr_autonomy_policy.py` e pattern dei reviewer Sol/Grok); label riletta a fine attesa; 146 test, 26 mutazioni uccise.
 
 ### Changed
 - **PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01 — soglia owner 1 EUR e adapter Microstake LIVE (decisione owner

@@ -4042,7 +4042,7 @@
       "module": "scripts.ci.trusted_pr_guard",
       "area": "trusted_gate",
       "file": "scripts/ci/trusted_pr_guard.py",
-      "original": "        verify_head_unchanged(gh, ctx)\n",
+      "original": "        verify_head_unchanged(gh, ctx, owner_labels=(guard == \"readiness\"))\n",
       "mutated": "        pass\n",
       "tests": [
         "tests/scripts/test_trusted_pr_guard.py"
@@ -4288,6 +4288,30 @@
         "tests/scripts/test_trusted_pr_guard.py"
       ],
       "rationale": "Label illeggibili trattate come assenti."
+    },
+    {
+      "id": "tg_final_label_unchecked",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if owner_labels and MANUAL_LABEL in label_names(pr):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "Codex P1 su 80e0867: label manual-review-required aggiunta durante l'attesa della readiness non riletta."
+    },
+    {
+      "id": "tg_final_label_recheck_off",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "        verify_head_unchanged(gh, ctx, owner_labels=(guard == \"readiness\"))",
+      "mutated": "        verify_head_unchanged(gh, ctx, owner_labels=False)",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "Rilettura finale delle label non attivata per la readiness."
     }
   ]
 }

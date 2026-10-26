@@ -62,7 +62,8 @@ permesso minimo è quindi un **requisito dell'infrastruttura**, non verificabile
 4. Head: deve stare nello **stesso repository** (fork o repository cancellato ⇒ FAIL) e coincidere con
    `PF_PR_HEAD_SHA`.
 5. A fine valutazione la PR viene riletta: head, stato, repository base o branch base cambiati ⇒ FAIL. Una PR
-   ridiretta su un altro branch durante l'attesa non resta certificata.
+   ridiretta su un altro branch durante l'attesa non resta certificata. Per la readiness si rilegge anche la label `manual-review-required`:
+   aggiunta durante l'attesa ⇒ FAIL.
 
 ## `pr_overlap_guard.sh`
 
@@ -145,7 +146,7 @@ chiusi, oppure con un timeout ≥ 115 minuti e `PF_READINESS_WAIT_SECONDS=6600`,
 ## Limiti dichiarati
 
 - **NOT VERIFIED end-to-end.** Il percorso reale con token, `gh` e status GitHub resta da collaudare sulla lane
-  dopo che l'owner fornisce il token. Verificato offline: 143 test e mutazioni. Smoke dell'overlap guard sull'API
+  dopo che l'owner fornisce il token. Verificato offline: 146 test e mutazioni. Smoke dell'overlap guard sull'API
   pubblica reale su #561: PASS sull'head corrente, FAIL su un head stantio.
 - Il workflow Actions `.github/workflows/pr-overlap-guard.yml` conserva la propria copia inline, che è riserva. Farlo
   puntare allo script è una modifica di workflow, quindi a merge owner: è un follow-up separato.

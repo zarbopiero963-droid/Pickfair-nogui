@@ -251,18 +251,25 @@ def verify_pr(gh: GitHub, ctx: Mapping[str, Any]) -> dict[str, Any]:
     cmp = gh.get(f"/repos/{TRUSTED_REPO}/compare/{base_sha}...{ctx['base_ref']}")
     if not isinstance(cmp, dict) or cmp.get("status") not in ("ahead", "identical"):
         raise GuardError("base SHA della PR non e' nella storia del branch base")
+    labels = label_names(pr)
+    return {"pr": ctx["pr"], "head_sha": head_sha, "base_sha": base_sha, "base_ref": ctx["base_ref"],
+            "draft": pr.get("draft") is True, "changed_files": pr.get("changed_files"), "url": pr.get("url"),
+            "labels": labels}
+
+
+def label_names(pr: Mapping[str, Any]) -> list[str]:
     labels = pr.get("labels")
     if not isinstance(labels, list) or not all(isinstance(lb, dict) and isinstance(lb.get("name"), str)
                                                for lb in labels):
         raise GuardError("label della PR illeggibili")
-    return {"pr": ctx["pr"], "head_sha": head_sha, "base_sha": base_sha, "base_ref": ctx["base_ref"],
-            "draft": pr.get("draft") is True, "changed_files": pr.get("changed_files"), "url": pr.get("url"),
-            "labels": sorted(lb["name"] for lb in labels)}
+    return sorted(lb["name"] for lb in labels)
 
 
-def verify_head_unchanged(gh: GitHub, ctx: Mapping[str, Any]) -> None:
+def verify_head_unchanged(gh: GitHub, ctx: Mapping[str, Any], *, owner_labels: bool = False) -> None:
     """Rilettura finale: head, stato, repository e branch base devono essere quelli verificati all'inizio. Una PR
-    ridiretta su un altro branch durante l'attesa non resta certificata (rilievo Codex P2 su #563)."""
+    ridiretta su un altro branch durante l'attesa non resta certificata (rilievo Codex P2 su #563). Per la readiness
+    (`owner_labels`) anche la label `manual-review-required` si rilegge qui: aggiunta durante l'attesa => FAIL
+    (rilievo Codex P1 su 80e0867)."""
     pr = gh.get(f"/repos/{TRUSTED_REPO}/pulls/{ctx['pr']}")
     if not isinstance(pr, dict) or pr.get("state") != "open":
         raise GuardError("head o stato della PR cambiati durante la valutazione")
@@ -274,6 +281,8 @@ def verify_head_unchanged(gh: GitHub, ctx: Mapping[str, Any]) -> None:
     if base.get("ref") != ctx["base_ref"] or not isinstance(base_repo, str) \
             or base_repo.lower() != TRUSTED_REPO.lower():
         raise GuardError("repository o branch base della PR cambiati durante la valutazione")
+    if owner_labels and MANUAL_LABEL in label_names(pr):
+        raise GuardError(f"label {MANUAL_LABEL} presente a fine valutazione: merge riservato all'owner")
 
 
 # --------------------------------------------------------------------------------------------- overlap guard
@@ -472,7 +481,7 @@ def main(guard: str, argv: list[str], env: Mapping[str, str], *, transport: Tran
             root = repo_root or Path(__file__).resolve().parents[2]
             reasons = owner_decision_reasons(gh, ctx, verified, root)
             reasons += run_readiness(ctx, wait, token, root, readiness_runner)
-        verify_head_unchanged(gh, ctx)
+        verify_head_unchanged(gh, ctx, owner_labels=(guard == "readiness"))
         result["reasons"] = [redact(r, token) for r in reasons]
         result["verdict"] = "PASS" if not reasons else "FAIL"
     except GuardError as exc:
