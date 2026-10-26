@@ -218,7 +218,8 @@ def test_token_file_readable_by_others_is_refused(tmp_path, mode):
 
 @pytest.mark.parametrize("content", ["", "   \n", "token with spaces", "x" * 10, "ghp_" + "é" * 30,
                                      "ghs_" + "a" * 30 + "\r\nX-Injected: 1", "ghs_" + "a" * 30 + "\tb",
-                                     "ghs_" + "\x00" * 30, "x" * 8193])
+                                     "ghs_" + "\x00" * 30, "x" * 8193, "ghs_" + "a" * 20 + " " + "b" * 20,
+                                     "ghs_" + "a" * 30 + "\x7f"])
 def test_malformed_token_is_refused(tmp_path, content):
     env = env_for(tmp_path)
     p = Path(env["PF_GITHUB_TOKEN_FILE"])

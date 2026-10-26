@@ -21,11 +21,25 @@ DOCS = ("CLAUDE.md", "AGENTS.md")
 SPEC = "docs/auto_pr_flow_spec.md"
 
 
+#: Inizio e fine dell'elenco dei file a merge owner in ciascun documento. Il confronto e' limitato a quell'elenco:
+#: un percorso citato altrove nel file (es. `scripts/pr_fix_loop_policy.py` nella sezione PR-flow) non lo sostituisce.
+LIST_BOUNDS = {
+    "CLAUDE.md": ("I documenti che definiscono cosa l'agente può mergiare:", "- (e, per fail-closed, ogni altro"),
+    "AGENTS.md": ("The documents that define what the agent may merge:", "- (and, fail-closed, every other"),
+}
+
+
+def _owner_manual_list(doc: str) -> str:
+    text = (ROOT / doc).read_text(encoding="utf-8")
+    start_marker, end_marker = LIST_BOUNDS[doc]
+    start = text.index(start_marker)
+    return text[start:text.index(end_marker, start)]
+
+
 @pytest.mark.parametrize("doc", DOCS)
 @pytest.mark.parametrize("path", sorted(policy.OWNER_MANUAL_MERGE_FILES))
 def test_every_owner_manual_file_is_declared_in_the_governance_docs(doc, path):
-    text = (ROOT / doc).read_text(encoding="utf-8")
-    assert f"`{path}`" in text, f"{path} e' a merge owner nel classificatore ma {doc} non lo elenca"
+    assert f"`{path}`" in _owner_manual_list(doc), f"{path} e' a merge owner nel classificatore ma {doc} non lo elenca"
 
 
 def _spec_merge_section() -> str:
