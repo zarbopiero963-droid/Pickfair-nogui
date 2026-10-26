@@ -138,24 +138,25 @@ def test_small_amount_is_executed_natively_on_the_real_sim_broker_without_any_fl
 
 def test_amount_at_exchange_minimum_stays_on_the_direct_path():
     engine, broker, _ = _engine()
-    assert engine.submit_quick_bet(_payload("n2", size=2.0))["ok"] is True
+    # minimo exchange = fonte unica core.stake_precision (riferimento owner 1 EUR, RECTIFICATION-01)
+    assert engine.submit_quick_bet(_payload("n2", size=1.0))["ok"] is True
     assert engine.microstake_executor is None, "nessun esecutore costruito per un ordine normale"
-    assert _orders(broker)[0]["priceSize"]["size"] == 2.0
+    assert _orders(broker)[0]["priceSize"]["size"] == 1.0
 
 
 # ------------------------------------------------------------------ esposizione temporanea: fondi e headroom reali
 # PF-MICROSTAKE-OWNER-RECTIFICATION-20261017 (#426 c.6235508131): nessun cap fisso 1/2 EUR; il cap per ordine vale
 # per lo stake richiesto, non per l'importo temporaneo della procedura. L'importo temporaneo deve stare nei fondi
 # disponibili e nell'headroom di esposizione realmente configurato; uguale al limite consentito, oltre bloccato.
-def test_per_order_cap_of_one_euro_no_longer_blocks_the_temporary_two_euro_stub():
-    engine, broker, _ = _engine(max_win=1.0)                               # cap per ordine 1 EUR: vale per 0.10, non per lo stub
+def test_per_order_cap_below_the_stub_does_not_block_the_temporary_stub():
+    engine, broker, _ = _engine(max_win=0.5)                               # cap per ordine 0.50: vale per 0.10, non per lo stub
     res = engine.submit_quick_bet(_payload("rect", size=0.10, price=2.0))
     assert res["ok"] is True, res
     assert _orders(broker)[0]["sizeRemaining"] == pytest.approx(0.10), "stake richiesto eseguito esattamente"
 
 
-@pytest.mark.parametrize("side,size,price,available", [("BACK", 0.10, 2.0, 1.99), ("BACK", 1.99, 2.0, 1.50),
-                                                        ("LAY", 0.10, 1.6, 1.19)])
+@pytest.mark.parametrize("side,size,price,available", [("BACK", 0.10, 2.0, 0.99), ("BACK", 0.99, 2.0, 0.50),
+                                                        ("LAY", 0.10, 1.6, 0.59)])
 def test_insufficient_available_funds_block_the_temporary_stub_before_any_place(side, size, price, available):
     engine, broker, db = _engine(available=available, bankroll=0.0)
     res = engine.submit_quick_bet(_payload("funds", size=size, price=price, side=side))
@@ -165,26 +166,26 @@ def test_insufficient_available_funds_block_the_temporary_stub_before_any_place(
 
 
 def test_temporary_exposure_equal_to_available_funds_is_allowed_above_is_blocked():
-    engine, broker, _ = _engine(available=2.0, bankroll=0.0)               # BACK stub 2.00 == disponibile
+    engine, broker, _ = _engine(available=1.0, bankroll=0.0)               # BACK stub 1.00 == disponibile
     assert engine.submit_quick_bet(_payload("eq", size=0.10, price=3.0))["ok"] is True
-    engine2, broker2, _ = _engine(available=1.0, bankroll=0.0)             # LAY stub 2 @1.5 = 1.00 == disponibile
+    engine2, broker2, _ = _engine(available=0.5, bankroll=0.0)             # LAY stub 1 @1.5 = 0.50 == disponibile
     assert engine2.submit_quick_bet(_payload("eq2", size=0.10, price=1.5, side="LAY"))["ok"] is True
-    engine3, broker3, _ = _engine(available=1.0, bankroll=0.0)             # LAY stub 2 @1.51 = 1.02 > 1.00
+    engine3, broker3, _ = _engine(available=0.5, bankroll=0.0)             # LAY stub 1 @1.51 = 0.51 > 0.50
     assert engine3.submit_quick_bet(_payload("gt", size=0.10, price=1.51, side="LAY"))["ok"] is False
     assert _orders(broker3) == []
 
 
 def test_total_exposure_headroom_caps_the_temporary_stub():
-    engine, broker, _ = _engine(bankroll=100.0, open_exposure=34.0)        # max_total 35% di 100 = 35: headroom 1.00
+    engine, broker, _ = _engine(bankroll=100.0, open_exposure=34.01)       # max_total 35% di 100 = 35: headroom 0.99
     res = engine.submit_quick_bet(_payload("head", size=0.10, price=2.0))
     assert res["ok"] is False and "transient_exposure_cap" in str(res["error"]) and _orders(broker) == []
-    engine2, broker2, _ = _engine(bankroll=100.0, open_exposure=33.0)      # headroom 2.00 == stub
+    engine2, broker2, _ = _engine(bankroll=100.0, open_exposure=34.0)      # headroom 1.00 == stub
     assert engine2.submit_quick_bet(_payload("head2", size=0.10, price=2.0))["ok"] is True
 
 
 def test_lay_transient_liability_uses_stub_liability_not_economic_stake():
-    # LAY 0.10 @ 3.0: liability economica 0.20, ma lo stub da 2 EUR a 3.0 rischia 4.00 > disponibile 3.99
-    engine, broker, _ = _engine(available=3.99, bankroll=0.0)
+    # LAY 0.10 @ 3.0: liability economica 0.20, ma lo stub da 1 EUR a 3.0 rischia 2.00 > disponibile 1.99
+    engine, broker, _ = _engine(available=1.99, bankroll=0.0)
     res = engine.submit_quick_bet(_payload("lay", size=0.10, price=3.0, side="LAY"))
     assert res["ok"] is False and "transient_exposure_cap" in str(res["error"])
     assert _orders(broker) == []
@@ -199,7 +200,7 @@ def test_unreadable_funds_and_no_headroom_source_block_fail_closed():
 
 
 def test_without_runtime_the_sim_broker_funds_are_the_cap_source():
-    broker = SimulationBroker(starting_balance=1.5)
+    broker = SimulationBroker(starting_balance=0.5)                         # stub 1.00 > 0.50 disponibile
     engine = TradingEngine(bus=_Bus(), db=_DB(), client_getter=lambda: broker, executor=_Inline())
     res = engine.submit_quick_bet(_payload("norc", size=0.10, price=2.0))
     assert res["ok"] is False and "transient_exposure_cap" in str(res["error"]) and _orders(broker) == []
@@ -210,11 +211,12 @@ def test_without_runtime_the_sim_broker_funds_are_the_cap_source():
 
 
 def test_requested_stake_is_executed_exactly_for_every_owner_example():
-    for ref, size in (("e1", 0.10), ("e2", 0.20), ("e3", 0.30), ("e4", 0.50), ("e5", 1.00), ("e6", 1.50)):
+    # PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01: sotto 1 EUR Microstake, da 1 EUR in su diretto.
+    for ref, size in (("e1", 0.10), ("e2", 0.20), ("e3", 0.30), ("e4", 0.50), ("e5", 0.90)):
         engine, broker, _ = _engine()
         assert engine.submit_quick_bet(_payload(ref, size=size, price=3.0))["ok"] is True
         assert _orders(broker)[0]["sizeRemaining"] == pytest.approx(size), size
-    for ref, size in (("e7", 2.00), ("e8", 5.00)):
+    for ref, size in (("e6", 1.00), ("e7", 1.50), ("e8", 2.00), ("e9", 5.00)):
         engine, broker, _ = _engine()
         assert engine.submit_quick_bet(_payload(ref, size=size, price=3.0))["ok"] is True
         assert _orders(broker)[0]["priceSize"]["size"] == pytest.approx(size) and engine.microstake_executor is None
@@ -281,7 +283,7 @@ def test_restart_recovers_pending_saga_from_persisted_identity_without_new_place
     port.hide_reconciliation = True                                            # la risposta e' persa e l'ordine non e' ancora visibile
     res = engine.submit_quick_bet(_payload("crash", size=0.10, price=3.0))
     assert res["status"] == "AMBIGUOUS"
-    assert _orders(broker)[0]["sizeRemaining"] == pytest.approx(2.0), "stub intero ancora sull'exchange"
+    assert _orders(broker)[0]["sizeRemaining"] == pytest.approx(1.0), "stub intero ancora sull'exchange"
 
     # nuovo processo: stesso DB e stesso exchange, esecutore nuovo
     restarted = build_native_microstake_executor(broker, db, lambda _p: D("10"))

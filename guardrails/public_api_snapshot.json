@@ -238,7 +238,8 @@
             "side",
             "price",
             "size",
-            "customer_ref"
+            "customer_ref",
+            "customer_order_ref"
           ],
           "status": []
         }

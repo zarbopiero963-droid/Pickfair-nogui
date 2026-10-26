@@ -5,10 +5,12 @@ import math
 import uuid
 from typing import Any, Callable, Dict, Optional, Tuple
 
-#: Minimo del singolo ordine sull'exchange (Betfair, EUR). Sotto questa soglia
-#: il router non chiama MAI il broker direttamente: passa dal Microstake nativo
-#: (PF-MICROSTAKE-NATIVE-INTEGRATION-02) oppure fallisce chiuso.
-EXCHANGE_MINIMUM_STAKE = 2.0
+from core.stake_precision import EXCHANGE_MIN_ORDER
+
+#: Minimo del singolo ordine sull'exchange (EUR), dalla fonte unica `core.stake_precision` (riferimento owner 1 EUR,
+#: PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01). Sotto questa soglia il router non chiama MAI il broker
+#: direttamente: passa dal Microstake nativo (PF-MICROSTAKE-NATIVE-INTEGRATION-02) oppure fallisce chiuso.
+EXCHANGE_MINIMUM_STAKE = float(EXCHANGE_MIN_ORDER)
 
 
 class OrderRouter:

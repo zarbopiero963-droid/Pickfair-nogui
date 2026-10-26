@@ -9,6 +9,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01 — soglia owner 1 EUR e adapter Microstake LIVE (decisione owner
+  24/10/2026):** il minimo del singolo ordine non è più 2 EUR ma il riferimento owner di 1 EUR, in una fonte unica
+  (`core.stake_precision.EXCHANGE_MIN_ORDER`) letta da engine, `OrderRouter`, saga e safety layer. Da 1 EUR in su
+  l'ordine va diretto; sotto, Microstake nativo con stub temporaneo di 1 EUR (il più piccolo piazzamento accettato),
+  riservato come esposizione reale entro i fondi disponibili. Audit di ogni uso di 2 EUR in
+  `docs/microstake_native.md` §6-bis: le soglie di prezzo della scala Betfair restano invariate.
+  - Nuovo adapter LIVE `core/microstake_live_port.py`: stessa saga e stesso esecutore della SIM sopra il
+    `BetfairClient` reale (stub BACK 1000 / LAY 1.01 con `customerOrderRef`, `sizeReduction` single-shot, replace
+    con nuovo betId, riconciliazione da `listCurrentOrders`, prova del book da `listMarketBook`), store separato
+    `microstake.sagas.live`, saga che rifiuta una policy non coerente con la porta.
+  - `BetfairClient.place_bet(customer_order_ref=...)` (opzionale, default invariato) e `BetfairClient.reduce_order`.
+  - Engine: adapter LIVE solo per il `BetfairClient` reale, mai riusato in SIM, dietro `is_live_allowed()` e il
+    circuit breaker degli invii; recovery per modalità con blocco delle saghe pendenti dell'altra modalità.
+  - Review indipendente del diff completo: replace in `TIMEOUT` = esito ignoto (mai rollback); lettura dell'esito
+    da `listClearedOrders` per gli ordini spariti; recovery che chiude lo stub sparito senza abbinato, attiva
+    l'ordine richiesto già abbinato, riparte da una saga FAILED senza ordine e usa l'importo dello stub persistito
+    (saghe da 2 EUR precedenti); il Microstake LIVE alimenta il circuit breaker.
+  - Mandato owner PF-561-LIVE-MICROSTAKE-P1-HARDENING-01: rollback dichiarato solo con la rilettura dell'ordine a
+    residuo zero (P1 riprodotto: `cancel_orders` ok=True con l'istruzione fallita chiudeva ROLLED_BACK con lo stub
+    vivo); invarianti del coordinatore su ROLLED_BACK/ACTIVE; recovery LIVE che non completa mai un vecchio ingresso
+    (casi A-D, SIM invariata); rilievi Codex (recovery senza gate LIVE, replace con stub abbinato, identità del
+    replacement) corretti; gate d'ingresso riletto dentro la saga LIVE prima di riduzione e replace (STOP armato
+    durante la saga ⇒ cancellazione verificata, mai l'ingresso) e protezione delle saghe LIVE anche quando il
+    recovery SIM fallisce (rilievi Codex P1 su beff2ef); il gate richiede anche il runtime ACTIVE (STOP/PAUSA
+    dell'utente), safe mode non in lockdown e sessione valida (review indipendente del diff completo, P1).
+  - Test con la vecchia soglia riallineati a 1,00/0,99. LIVE resta NO-GO: nessun ordine reale, accettazione Betfair
+    da verificare nel collaudo (elenco in `docs/microstake_native.md` §6).
 - **PF-STAKE-PRECISION-MICROSTAKE-01 / -FINAL-01 — stake per difetto al centesimo, Microstake preservato (decisione
   owner 24/10/2026):** emerso dalla prima sessione integrata della Fase 4. Dopo un settlement il money management
   chiedeva `1.9647599999999998`: il Microstake lo bloccava (`invalid_size_precision`) e sopra il minimo l'exchange

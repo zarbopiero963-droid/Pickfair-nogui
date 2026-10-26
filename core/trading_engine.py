@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from typing import Any, Callable, Deque, Dict, Optional, Set
+from typing import Any, Callable, Deque, Dict, List, Optional, Set
 
 from circuit_breaker import CircuitBreaker
 from core import stake_precision, validators
@@ -225,6 +225,8 @@ class TradingEngine:
         # the Exchange adapter, not a user-facing feature flag: every request
         # below the Exchange minimum is routed here or denied fail-closed.
         self.microstake_executor = microstake_executor
+        # Adapter Microstake LIVE: separato dall'esecutore SIM, mai riusato fuori dal ramo LIVE.
+        self._live_microstake_executor = None
         self.runtime_controller = None
         self.simulation_broker = None
         self.betfair_client = None
@@ -2477,16 +2479,20 @@ class TradingEngine:
         payload: Dict[str, Any],
         mode: str,
     ) -> tuple[bool, Any]:
-        """Route sub-€2 requests through the single native coordinator.
+        """Route requests below the exchange minimum (`stake_precision.EXCHANGE_MIN_ORDER`, owner reference
+        1 EUR) through the single native coordinator, in SIM and LIVE alike.
 
         Missing wiring is a pre-send, fail-closed error.  The ordinary direct
         broker path is never used as a fallback for a small amount.
         """
         amount = self._native_microstake_amount(payload)
-        if amount is None or amount >= 2.0:
+        if amount is None or amount >= float(stake_precision.EXCHANGE_MIN_ORDER):
             return False, None
         if amount <= 0:
             raise _ErrorePrimaDellInvio("INVALID_SIZE")
+        # LIVE: lo stesso circuit breaker del percorso diretto (un microstake e' un invio reale come gli altri).
+        if str(mode or "").upper() == "LIVE" and self._order_submission_breaker.is_open():
+            raise RuntimeError("ORDER_SUBMISSION_CIRCUIT_BREAKER_OPEN")
         # Lato validato PRIMA dell'instradamento, come sul percorso diretto: un
         # alias discordante e' un errore pre-invio (INVALID_SIDE), identico in
         # SIM e LIVE, e non diventa mai un esito del Microstake.
@@ -2511,7 +2517,26 @@ class TradingEngine:
             return res
 
         result = self._invia_marcando_l_intento(ctx, mode, coordinator, _invia)
+        if str(mode or "").upper() == "LIVE":
+            self._registra_esito_microstake_live(result)
         return True, result
+
+    def _registra_esito_microstake_live(self, result: Any) -> None:
+        """Esito di un Microstake LIVE nel circuit breaker degli invii, come il percorso diretto: SUCCESS => successo,
+        ogni altro esito dopo l'invio (rifiuto, AMBIGUOUS) => fallimento; sessione scaduta => gestione della sessione.
+        I blocchi pre-invio non arrivano qui (sono `_ErrorePrimaDellInvio`) e non contano, come sul diretto."""
+        status = str((result or {}).get("status") or "").upper() if isinstance(result, dict) else ""
+        if status == "SUCCESS":
+            self._order_submission_breaker.record_success()
+            return
+        error = str((result or {}).get("error") or status or "MICROSTAKE_FAILED") if isinstance(result, dict) \
+            else "MICROSTAKE_NON_DICT_RESULT"
+        if "SESSION_EXPIRED" in error.upper() or "INVALID_SESSION" in error.upper():
+            svc = getattr(self.runtime_controller, "betfair_service", None)
+            handle = getattr(svc, "handle_session_expiry", None)
+            if callable(handle):
+                handle(reason=error)
+        self._order_submission_breaker.record_failure(RuntimeError(error))
 
     def native_microstake_executor(self) -> Any:
         """Esecutore Microstake nativo per la modalita' corrente (None = non disponibile, fail-closed).
@@ -2533,9 +2558,11 @@ class TradingEngine:
 
         Un esecutore costruito sul broker SIM di una sessione precedente (stop/start crea
         un nuovo `SimulationBroker`) viene ricostruito; in LIVE l'adapter SIM non viene
-        mai riusato (fail-closed: None => MICROSTAKE_EXECUTOR_UNAVAILABLE). Un esecutore
-        iniettato senza broker (test/adapter esterno) resta valido com'e'. Costruzione
-        e rebinding sono serializzati da un lock dedicato: mai due esecutori.
+        mai riusato: si usa l'adapter LIVE sul `BetfairClient` reale della sessione
+        (`_live_native_microstake_executor`, None se il client non c'e' => fail-closed
+        MICROSTAKE_EXECUTOR_UNAVAILABLE). Un esecutore iniettato senza broker (test/adapter
+        esterno) resta valido com'e'. Costruzione e rebinding sono serializzati da un lock
+        dedicato: mai due esecutori.
         """
         with self._microstake_executor_lock:
             cached = self.microstake_executor
@@ -2543,13 +2570,40 @@ class TradingEngine:
             if cached is not None and bound_broker is None:
                 return cached
             if str(mode or "").upper() == "LIVE":
-                return None
+                return self._live_native_microstake_executor()
             if cached is not None:
                 if bound_broker is self._current_simulation_broker():
                     return cached
                 logger.warning("Microstake nativo: broker di simulazione cambiato, esecutore ricostruito")
                 self.microstake_executor = None
             return self._default_native_microstake_executor(mode)
+
+    def _live_native_microstake_executor(self) -> Any:
+        """Adapter Microstake LIVE (PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01) sul client della sessione.
+
+        Solo il `BetfairClient` reale riconosciuto per classe: un broker SIM o un doppio non diventano mai l'exchange
+        LIVE della saga. Uno per client (una nuova sessione ricostruisce l'esecutore; lo stato della saga vive nel
+        DB, store `microstake.sagas.live`). Tenuto fuori da `microstake_executor`, che resta l'esecutore SIM: un
+        esecutore LIVE non puo' essere riusato in SIMULATION. Va chiamato sotto `_microstake_executor_lock`.
+        """
+        try:
+            client = self._resolve_live_client()
+        except Exception:
+            logger.exception("Microstake LIVE: client non risolvibile (fail-closed)")
+            return None
+        if client is None or not self._e_il_client_betfair_reale(client):
+            return None
+        cached = getattr(self, "_live_microstake_executor", None)
+        if cached is not None and getattr(cached, "client", None) is client:
+            return cached
+        try:
+            from core.microstake_live_port import build_live_microstake_executor
+            self._live_microstake_executor = build_live_microstake_executor(
+                client, self.db, self._native_transient_cap, entry_gate=self._live_microstake_entry_gate)
+        except Exception:
+            logger.exception("Microstake LIVE: esecutore non costruibile (fail-closed)")
+            self._live_microstake_executor = None
+        return self._live_microstake_executor
 
     def _current_simulation_broker(self) -> Any:
         """Il broker SIM dimostrabile della sessione corrente, o None."""
@@ -2577,17 +2631,134 @@ class TradingEngine:
         Fail-closed: ``ok`` e' True solo se non resta alcuna saga pendente. Store
         illeggibile, esecutore assente con saghe pendenti, o una saga ancora
         AMBIGUOUS dopo il recovery => ``ok`` False e l'elenco dei ref: il
-        runtime non deve accettare nuovi ingressi finche' uno stub da 2 EUR puo'
+        runtime non deve accettare nuovi ingressi finche' uno stub puo'
         essere ancora sull'exchange.
+
+        Store per modalita': SIM `microstake.sagas`, LIVE `microstake.sagas.live`. Si riconciliano le saghe della
+        modalita' corrente; quelle pendenti dell'ALTRA modalita' non si possono riprendere da qui (la porta e'
+        diversa) e lasciano ``ok`` False finche' una sessione di quella modalita' non le riconcilia: una saga LIVE
+        e' denaro reale sull'exchange, e il blocco e' simmetrico perche' nessuna saga resti dimenticata.
         """
         try:
-            from core.microstake_sim_port import DbSagaStore, SagaStoreError
+            from core.microstake_live_port import LIVE_SAGA_SETTINGS_KEY
+            from core.microstake_sim_port import SAGA_SETTINGS_KEY, DbSagaStore, SagaStoreError
         except Exception as exc:  # pragma: no cover - import difensivo
             return {"ok": False, "status": "MODULE_UNAVAILABLE", "error": str(exc), "pending": []}
+        mode = ""
+        runtime = self.runtime_controller
+        if runtime is not None and callable(getattr(runtime, "get_effective_execution_mode", None)):
+            try:
+                mode = str(runtime.get_effective_execution_mode() or "SIMULATION").upper()
+            except Exception as exc:
+                return {"ok": False, "status": f"MODE_UNREADABLE:{type(exc).__name__}", "pending": []}
+        live = mode == "LIVE"
         try:
-            store = DbSagaStore(self.db)
+            store = DbSagaStore(self.db, LIVE_SAGA_SETTINGS_KEY if live else SAGA_SETTINGS_KEY)
         except TypeError:
             return {"ok": True, "status": "NO_STORE", "pending": [], "results": {}}
+        out = self._recover_microstake_store(store, SagaStoreError,
+                                             entry_allowed=self._microstake_recovery_entry_allowed(live))
+        try:
+            other = DbSagaStore(self.db, SAGA_SETTINGS_KEY if live else LIVE_SAGA_SETTINGS_KEY).pending_refs()
+        except SagaStoreError as exc:
+            if not out.get("ok"):
+                return out                   # gia' fail-closed: nessun nuovo ingresso
+            return {"ok": False, "status": "STORE_UNREADABLE", "error": str(exc), "pending": [],
+                    "results": out.get("results", {})}
+        if other and not live:
+            # Protezione delle saghe LIVE (denaro reale) INDIPENDENTE dall'esito SIM (rilievo Codex P1 su beff2ef):
+            # uno store SIM illeggibile o una saga SIM irrisolta non impediscono la cancellazione protettiva degli
+            # stub reali. L'esito complessivo resta il fallimento SIM, che blocca i nuovi ingressi.
+            other = self._protect_pending_live_sagas(DbSagaStore(self.db, LIVE_SAGA_SETTINGS_KEY), SagaStoreError,
+                                                     other)
+        if not out.get("ok"):
+            return out                       # gia' fail-closed: nessun nuovo ingresso
+        if other:
+            return dict(out, ok=False, status=f"{'SIM' if live else 'LIVE'}_SAGAS_PENDING", pending=sorted(other))
+        return out
+
+    def _protect_pending_live_sagas(self, store: Any, store_error: type, pending: List[str]) -> List[str]:
+        """Saghe LIVE pendenti con LIVE non consentito (il runtime dichiara allora SIMULATION, review F3 su #561):
+        se il `BetfairClient` reale della sessione c'e', si riprendono in SOLA protezione (`entry_allowed=False`, e
+        comunque la policy LIVE non completa mai un ingresso): rilettura e cancellazione verificata degli stub,
+        mai riduzione ne' replace. Senza client restano pendenti e bloccano (fail-closed). Ritorna i ref ancora
+        pendenti."""
+        with self._microstake_executor_lock:
+            executor = self._live_native_microstake_executor()
+        recover = getattr(executor, "recover_pending", None)
+        if not callable(recover):
+            return pending
+        try:
+            recover(entry_allowed=False)
+            return sorted(store.pending_refs())
+        except store_error:
+            return pending
+        except Exception:
+            logger.exception("Microstake LIVE: recovery protettivo fallito")
+            return pending
+
+    def _microstake_recovery_entry_allowed(self, live: bool) -> bool:
+        """Il recovery puo' portare una saga LIVE al prezzo d'ingresso (riduzione + replace) solo se un invio LIVE
+        sarebbe consentito ORA: `is_live_allowed()` e nessuno STOP/emergenza (rilievo Codex P1 su #561: prima il
+        recovery riprezzava anche a LIVE bloccato). Altrimenti solo lettura e cancellazione protettiva. Lettura
+        impossibile => non consentito (fail-closed). SIM invariata."""
+        if not live:
+            return True
+        runtime = self.runtime_controller
+        try:
+            if not bool(getattr(runtime, "is_live_allowed", lambda: False)()):
+                return False
+            # Entrambe le fonti dello STOP (rilievo Grok su f1594fb): blocco giornaliero/pending-stop E emergenza.
+            entry_blocked = getattr(runtime, "_daily_loss_entry_blocked", None)
+            if callable(entry_blocked) and bool(entry_blocked()):
+                return False
+            return getattr(runtime, "is_emergency_stopped", False) is not True
+        except Exception:
+            logger.exception("Microstake LIVE: stato degli ingressi non leggibile, recovery solo protettivo")
+            return False
+
+    def _live_microstake_entry_gate(self) -> bool:
+        """Gate riletto DENTRO la saga LIVE prima di riduzione e replace (rilievo Codex P1 su beff2ef, #561): i
+        controlli del chokepoint di submission valgono solo prima del PLACE, e uno STOP armato mentre PLACE o
+        riduzione sono in volo lascerebbe portare lo stub al prezzo d'ingresso. Stesse fonti del recovery (LIVE
+        consentito, blocco giornaliero/pending-stop, emergenza) piu' l'autorita' esclusiva del runtime (#536).
+        Bloccato => il coordinatore cancella lo stub (rollback verificato). Errore di lettura => bloccato.
+
+        Anche STOP/PAUSA dell'utente, lockdown del safe mode e sessione Betfair invalidata (review indipendente del
+        diff completo su ec9533d, P1): `is_live_allowed()` non legge `runtime.mode`, e `_stop_serialized` imposta
+        STOPPED secondi prima di perdere l'autorita'. Runtime ACTIVE obbligatorio; mode illeggibile => bloccato."""
+        if not self._microstake_recovery_entry_allowed(True):
+            return False
+        runtime = self.runtime_controller
+        try:
+            mode = getattr(runtime, "mode")
+            if getattr(mode, "value", mode) != "ACTIVE":
+                logger.warning("Microstake LIVE: runtime non ACTIVE durante la saga (%s), rollback", mode)
+                return False
+            safe_mode = self.safe_mode
+            if safe_mode is not None and callable(getattr(safe_mode, "is_lockdown", None)) \
+                    and safe_mode.is_lockdown() is not False:
+                logger.warning("Microstake LIVE: safe mode in lockdown durante la saga, rollback")
+                return False
+            service = getattr(runtime, "betfair_service", None)
+            if service is not None and getattr(service, "_session_invalid", False) is not False:
+                logger.warning("Microstake LIVE: sessione Betfair non valida durante la saga, rollback")
+                return False
+        except Exception:
+            logger.exception("Microstake LIVE: stato del runtime non leggibile durante la saga, rollback")
+            return False
+        assert_authority = getattr(runtime, "assert_runtime_authority", None)
+        if callable(assert_authority):
+            try:
+                assert_authority("order_submit")
+            except Exception:
+                logger.warning("Microstake LIVE: autorita' del runtime persa durante la saga, rollback")
+                return False
+        return True
+
+    def _recover_microstake_store(self, store: Any, store_error: type, *, entry_allowed: bool = True) -> Dict[str, Any]:
+        """Riconciliazione delle saghe pendenti di UNO store con l'esecutore della modalita' corrente."""
+        SagaStoreError = store_error
         try:
             pending = store.pending_refs()
         except SagaStoreError as exc:
@@ -2598,7 +2769,7 @@ class TradingEngine:
         recover = getattr(executor, "recover_pending", None)
         if not callable(recover):
             return {"ok": False, "status": "NO_EXECUTOR", "pending": pending, "results": {}}
-        results = recover()
+        results = recover() if entry_allowed else recover(entry_allowed=False)
         # Rilievo Codex #512 ciclo 9 (r4307328204): ROLLED_BACK e' terminale (rollback completato) e non va
         # trattato come pendente. Doppia condizione: esito riconciliato dall'esecutore E ref non piu' pendente
         # nello store durevole (riletto); ogni altro esito (AMBIGUOUS, FAILED, BLOCKED, ERROR:*) resta pendente.
@@ -2617,9 +2788,8 @@ class TradingEngine:
         """Esecutore nativo costruito dal broker di simulazione, senza flag.
 
         Solo per il broker SIM riconosciuto per identita'/classe e solo fuori dal
-        ramo LIVE: in LIVE non esiste ancora un adapter (fail-closed,
-        MICROSTAKE_EXECUTOR_UNAVAILABLE). Costruito una volta e riusato: lo
-        stato della saga vive nel DB dell'app, non nell'oggetto.
+        ramo LIVE: in LIVE l'esecutore e' l'adapter LIVE (`_live_native_microstake_executor`).
+        Costruito una volta e riusato: lo stato della saga vive nel DB dell'app, non nell'oggetto.
         """
         if str(mode or "").upper() == "LIVE":
             return None

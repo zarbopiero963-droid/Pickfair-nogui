@@ -24,9 +24,12 @@ from fractions import Fraction
 from typing import Any, Dict
 
 CENT = Decimal("0.01")
-# Minimo del singolo ordine dell'exchange (Betfair: 2 EUR): sotto, l'engine usa il Microstake nativo. Solo per il
-# registro dell'ordine; la soglia di instradamento resta quella dell'engine e della policy Microstake.
-EXCHANGE_MIN_ORDER = Decimal("2.00")
+# Minimo del singolo ordine sull'exchange: FONTE UNICA (PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01, soglia di
+# riferimento owner 1 EUR, non 2). Da qui in su l'ordine va diretto; sotto passa dal Microstake nativo, il cui stub
+# temporaneo e' esattamente questo importo (il piu' piccolo che l'exchange accetta in un piazzamento). La leggono
+# engine, OrderRouter, policy Microstake e safety layer. Da confermare nel collaudo reale: se Betfair rifiutasse
+# 1 EUR il rifiuto e' esplicito e pre-accettazione (nessuna esposizione), mai un importo diverso.
+EXCHANGE_MIN_ORDER = Decimal("1.00")
 
 REASON_UNCHANGED = "gia_al_centesimo"
 REASON_FLOORED = "troncato_al_centesimo"

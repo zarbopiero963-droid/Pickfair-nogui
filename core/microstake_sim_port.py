@@ -9,8 +9,8 @@ Contiene inoltre:
 - `SimulationQuoteProvider`: prova del book dal broker SIM (stub passivo che non incrocia la controparte);
 - `build_native_microstake_executor`: costruzione dell'esecutore nativo per l'engine.
 
-La disponibilita' LIVE e' obiettivo di prodotto (decisione owner PF-MICROSTAKE-NATIVE-AUTO-01) ma qui NON esiste un
-adapter LIVE: in LIVE l'engine resta fail-closed (`MICROSTAKE_EXECUTOR_UNAVAILABLE`).
+L'adapter LIVE (stessa saga, stesso esecutore, store separato) e' `core/microstake_live_port.py`
+(PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01): questo modulo resta il solo collegamento al broker SIM.
 """
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ class DbSagaStore:
     """Stessa interfaccia di `JsonSagaStore`, ma nel database dell'app (chiave settings `microstake.sagas`).
 
     Scrittura atomica per chiave (transazione del DB). JSON corrotto => `SagaStoreError`, mai un dizionario vuoto
-    silenzioso: un saga dimenticato potrebbe lasciare uno stub da 2 EUR sull'exchange.
+    silenzioso: un saga dimenticato potrebbe lasciare uno stub (minimo exchange) sull'exchange.
     """
 
     def __init__(self, db: Any, key: str = SAGA_SETTINGS_KEY) -> None:
@@ -342,10 +342,11 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
     riconcilierebbe. La saga viene retrocessa ad AMBIGUOUS con riserva tenuta (rilievo Codex #512 su 034af59)."""
 
     def __init__(self, port: SimulationExchangePort, store: DbSagaStore, *, quote_provider: Callable,
-                 transient_exposure_cap: Any) -> None:
+                 transient_exposure_cap: Any, policy: Optional[MicrostakePolicy] = None,
+                 entry_gate: Optional[Callable[[], bool]] = None) -> None:
         self.port = port
         self.store = store
-        coordinator = MicrostakeCoordinator(port, store, MicrostakePolicy())
+        coordinator = MicrostakeCoordinator(port, store, policy or MicrostakePolicy(), entry_gate=entry_gate)
         super().__init__(coordinator, quote_provider=quote_provider, transient_exposure_cap=transient_exposure_cap)
 
     def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -413,7 +414,7 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
         try:
             side = Side(str(((saved.get("request") or {}).get("side")) or "").upper())
             price = Decimal(str(saved.get("stub_price")))
-            stub = Decimal(str(getattr(self.coordinator.policy, "exchange_stub_size", "2.00")))
+            stub = self.coordinator._saved_stub_size(saved)        # lo stub che QUESTA saga ha piazzato
             if not price.is_finite() or price <= 1:
                 raise ValueError
             value = order_exposure(side, stub, price)
@@ -423,13 +424,26 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
             pass
         return Decimal("Infinity")
 
-    def recover_pending(self) -> Dict[str, str]:
+    def recover_pending(self, *, entry_allowed: bool = True) -> Dict[str, str]:
         """Riconciliazione all'avvio: ogni saga non conclusa viene ripresa dalla sua identita' persistita.
         Prima si persiste lo snapshot del broker: se la fonte di reload non si riesce ad allineare allo stato in
         memoria, nessuna saga viene promossa (restano AMBIGUOUS/pendenti; un crash successivo ricaricherebbe uno
         stato vecchio sotto una saga ACTIVE)."""
         out: Dict[str, str] = {}
         pending = self.store.pending_refs()
+        self.restore_reservations(pending)
+        if pending and not self.port._snapshot():
+            return {ref: Phase.AMBIGUOUS.value for ref in pending}
+        for ref in pending:
+            try:
+                out[ref] = self.coordinator.recover(ref, entry_allowed=entry_allowed).phase.value
+            except Exception as exc:  # noqa: BLE001 - riportato, mai nascosto
+                out[ref] = f"ERROR:{type(exc).__name__}"
+        return out
+
+    def restore_reservations(self, pending: List[str]) -> None:
+        """Riserve transitorie delle saghe pendenti ripristinate sulla porta (anche alla costruzione di un nuovo
+        esecutore LIVE dopo una nuova sessione Betfair, review F2 su #561)."""
         # Riserve transitorie ripristinate PRIMA di snapshot e recovery (rilievo Codex r4308704071): dopo un
         # riavvio la porta parte senza riserve, ma ogni saga pendente che le tiene (`reservation_held`, assente
         # = tenuta) copre uno stub che puo' essere sull'exchange; senza di esse un altro microstake supererebbe
@@ -448,14 +462,6 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
                 # quelli mancano, riserva illimitata: nessun altro microstake finche' la saga non e' riconciliata.
                 exposure = self._recomputed_stub_exposure(saved)
             self.port.hold_reservation(ref, exposure)
-        if pending and not self.port._snapshot():
-            return {ref: Phase.AMBIGUOUS.value for ref in pending}
-        for ref in pending:
-            try:
-                out[ref] = self.coordinator.recover(ref).phase.value
-            except Exception as exc:  # noqa: BLE001 - riportato, mai nascosto
-                out[ref] = f"ERROR:{type(exc).__name__}"
-        return out
 
 
 def build_native_microstake_executor(broker: Any, db: Any, transient_cap_provider: Callable[[Dict[str, Any]], Any]

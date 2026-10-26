@@ -1178,8 +1178,9 @@ def test_c10_rollback_with_a_partial_match_is_ambiguous_never_rolled_back(tmp_pa
 @pytest.mark.parametrize("bad", [None, "", "nan", "-1", "0", "abc"])
 @pytest.mark.parametrize("stub_price,expected", [("6.00", "10.00"), (None, "Infinity"), ("abc", "Infinity")])
 def test_c10_unknown_transient_exposure_never_holds_less_than_the_stub_liability(monkeypatch, bad, stub_price, expected):
-    """Grok su 9ab753a: importo transitorio della saga ignoto => mai il solo stub da 2 EUR. Si ricalcola la
-    liability dello stub (LAY 2 EUR a 6.00 = 10 EUR); senza prezzo, riserva illimitata (fail-closed)."""
+    """Grok su 9ab753a: importo transitorio della saga ignoto => mai il solo stub. Si ricalcola la liability dello
+    stub che la saga ha piazzato: questa saga non ha `stub_size` (creata prima della RECTIFICATION-01), quindi stub
+    da 2 EUR, LAY a 6.00 = 10 EUR; senza prezzo, riserva illimitata (fail-closed)."""
     from decimal import Decimal
     from core.microstake_sim_port import DbSagaStore, build_native_microstake_executor
     from simulation_broker import SimulationBroker

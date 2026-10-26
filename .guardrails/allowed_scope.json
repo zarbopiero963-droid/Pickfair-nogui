@@ -2843,6 +2843,42 @@
         "tests/test_pr512_recovery_fixes.py"
       ],
       "max_files": 16
+    },
+    "microstake-live-adapter-01": {
+      "description": "PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01 (decisione owner 24/10/2026, safety-critical): minimo exchange = riferimento owner 1 EUR in una fonte unica (core/stake_precision.EXCHANGE_MIN_ORDER) per engine, OrderRouter, saga e safety layer, stub temporaneo al minimo; audit degli usi di 2 EUR; adapter Microstake LIVE (core/microstake_live_port.py) sul BetfairClient reale con customerOrderRef e sizeReduction single-shot (betfair_client.place_bet/reduce_order), store separato per modalita' e recovery con blocco delle saghe dell'altra modalita'; guardrail (snapshot API, layer di invio, lettori dello snapshot) e test con la vecchia soglia riallineati; LIVE NO-GO; correzioni della review indipendente sul diff completo (replace in TIMEOUT = esito ignoto, esito degli ordini spariti da listClearedOrders, chiusure del recovery, importo dello stub persistito, circuit breaker).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "betfair_client.py",
+        "core/microstake_live_port.py",
+        "core/microstake_safe.py",
+        "core/microstake_sim_port.py",
+        "core/order_router.py",
+        "core/runtime_controller.py",
+        "core/safety_layer.py",
+        "core/stake_precision.py",
+        "core/trading_engine.py",
+        "docs/microstake_native.md",
+        "docs/traceability/requirements.json",
+        "guardrails/mutation_catalog.json",
+        "guardrails/public_api_snapshot.json",
+        "scripts/ci_changed_modules.py",
+        "tests/acceptance/test_issue437_pr02.py",
+        "tests/core/test_microstake_live_adapter.py",
+        "tests/core/test_stake_precision_microstake_01.py",
+        "tests/f026/test_stake_precision_e2e.py",
+        "tests/guardrails/test_no_bypass_paths.py",
+        "tests/test_microstake_cashout_and_recovery.py",
+        "tests/test_microstake_engine_native.py",
+        "tests/test_microstake_native_integration.py",
+        "tests/test_pr512_codex_034af59.py",
+        "tests/test_pr512_codex_findings.py",
+        "tests/test_pr512_recovery_fixes.py",
+        "tests/unit/test_545_sim_snapshot_not_persisted.py",
+        "trading_config.py"
+      ],
+      "max_files": 29
     }
   }
 }

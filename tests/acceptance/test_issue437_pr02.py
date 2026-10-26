@@ -5,7 +5,7 @@ FALSO SUCCESSO RIPRODOTTO in Phase 0 sul main `3dfa8b3`. I doppi usati dai test
 dell'engine dichiarano ``place_bet(self, **payload)``: ingoiano QUALSIASI
 keyword. Il ``BetfairClient`` vero ha firma keyword-only fissa::
 
-    place_bet(*, market_id, selection_id, side, price, size, customer_ref="")
+    place_bet(*, market_id, selection_id, side, price, size, customer_ref="", customer_order_ref="")
 
 Con il doppio la submission LIVE "riesce" e i kwargs che arrivano sono
 ``bet_type`` / ``stake`` / ``correlation_id``; con la firma vera la stessa
@@ -63,7 +63,7 @@ class ClientLiveStretto:
         self.invii = 0
         self.ricevuti: List[Dict[str, Any]] = []
 
-    def place_bet(self, *, market_id, selection_id, side, price, size, customer_ref=""):
+    def place_bet(self, *, market_id, selection_id, side, price, size, customer_ref="", customer_order_ref=""):
         if self.errore is not None:          # errore PRIMA del contatto col trasporto
             raise self.errore
         self.invii += 1                      # <- il trasporto ha inviato
@@ -539,7 +539,7 @@ def TradingEngine_kwargs(payload):
     """Scorciatoia leggibile sull'adattatore reale dell'engine."""
     from core.trading_engine import TradingEngine
 
-    def place_bet(*, market_id, selection_id, side, price, size, customer_ref=""):
+    def place_bet(*, market_id, selection_id, side, price, size, customer_ref="", customer_order_ref=""):
         ...
 
     return TradingEngine._kwargs_per_place_bet(place_bet, payload)

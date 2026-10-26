@@ -353,7 +353,9 @@ def test_production_readers_of_snapshot_persisted():
             continue
         if "snapshot_persisted" in text:
             readers.append(rel)
-    assert sorted(readers) == ["cashout_cancel_adapter.py", "core/microstake_safe.py", "core/microstake_sim_port.py",
+    # core/microstake_live_port.py: dichiara solo che l'exchange LIVE non ha uno snapshot locale (sempre True).
+    assert sorted(readers) == ["cashout_cancel_adapter.py", "core/microstake_live_port.py", "core/microstake_safe.py",
+                               "core/microstake_sim_port.py",
                                "core/order_router.py", "core/trading_engine.py", "simulation_broker.py"]
 
 

@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from core.stake_precision import EXCHANGE_MIN_ORDER
 from core.type_helpers import safe_float, safe_int, safe_str
 
 logger = logging.getLogger(__name__)
@@ -410,8 +411,9 @@ class SafetyLayer:
         if not math.isfinite(stake):
             raise RiskInvariantError("stake non finite")
 
-        if not allow_micro and stake < 2.0:
-            raise RiskInvariantError("stake < 2.0 non consentito")
+        # Minimo exchange dalla fonte unica (riferimento owner 1 EUR); `allow_micro` lo ammette sotto (Microstake).
+        if not allow_micro and stake < float(EXCHANGE_MIN_ORDER):
+            raise RiskInvariantError(f"stake < {EXCHANGE_MIN_ORDER} non consentito")
 
         market_id = self._safe_str(payload.get("market_id")).strip()
         if not market_id:

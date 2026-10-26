@@ -3,8 +3,8 @@
 Il difetto e' emerso dalla prima sessione integrata della Fase 4: dopo un settlement il money management chiedeva
 1.9647599999999998 e l'ordine finiva FAILED/SUBMIT_FAILED (MICROSTAKE_PRE_SEND_BLOCK:invalid_size_precision). Qui la
 catena intera: segnale -> Roserpina -> engine -> Microstake nativo SIM -> exchange SIM -> riconciliazione.
-Limite dichiarato: in LIVE il Microstake non ha adapter (fail-closed, MICROSTAKE_EXECUTOR_UNAVAILABLE): NON VERIFICATO
-IN LIVE.
+Il LIVE ha il suo adapter (core/microstake_live_port.py, RECTIFICATION-01), certificato offline in
+tests/core/test_microstake_live_adapter.py; NON VERIFICATO su Betfair reale.
 """
 import tempfile
 from decimal import Decimal as D
@@ -46,7 +46,7 @@ def test_roserpina_generates_and_executes_a_ten_cent_microstake():
     assert row["status"] == "SUBMITTED" and row["stake"] == 0.1
     (live,) = _live(s, "1.531")
     assert live["size"] == 0.1 and live["matched"] == 0.1
-    assert s["funds"]["exposure"] == 0.1 and s["funds"]["available"] == 99.9    # stub da 2 EUR rilasciato
+    assert s["funds"]["exposure"] == 0.1 and s["funds"]["available"] == 99.9    # stub temporaneo rilasciato
     assert [t["exposure"] for t in s["tables"]] == [0.1]
 
 
