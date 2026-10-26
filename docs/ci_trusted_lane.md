@@ -76,6 +76,8 @@ Porta in uno script la logica oggi inline in `.github/workflows/pr-overlap-guard
 Differenze volute dallo step inline:
 - i file di una PR si leggono su **tutte le pagine**;
 - un elenco più corto di `changed_files`, o un elenco che raggiunge il tetto di 3000 file dell'API, ⇒ FAIL;
+- per un file rinominato contano sia il nuovo percorso sia quello di origine (`previous_filename`); un rename
+  senza percorso di origine leggibile ⇒ FAIL. Vale anche per il controllo dei file a merge owner della readiness;
 - una PR i cui file non si leggono ⇒ FAIL. Lo step inline la saltava (`except Exception: continue`).
 
 ## `pr_merge_readiness.sh`
@@ -146,7 +148,7 @@ chiusi, oppure con un timeout ≥ 115 minuti e `PF_READINESS_WAIT_SECONDS=6600`,
 ## Limiti dichiarati
 
 - **NOT VERIFIED end-to-end.** Il percorso reale con token, `gh` e status GitHub resta da collaudare sulla lane
-  dopo che l'owner fornisce il token. Verificato offline: 146 test e mutazioni. Smoke dell'overlap guard sull'API
+  dopo che l'owner fornisce il token. Verificato offline: 151 test e mutazioni. Smoke dell'overlap guard sull'API
   pubblica reale su #561: PASS sull'head corrente, FAIL su un head stantio.
 - Il workflow Actions `.github/workflows/pr-overlap-guard.yml` conserva la propria copia inline, che è riserva. Farlo
   puntare allo script è una modifica di workflow, quindi a merge owner: è un follow-up separato.

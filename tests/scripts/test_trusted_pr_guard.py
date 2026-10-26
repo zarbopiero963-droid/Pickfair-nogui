@@ -87,7 +87,7 @@ class FakeGitHub:
                 chunk = names[(page - 1) * self.page_size: page * self.page_size]
                 if page * self.page_size < len(names):
                     hdr["Link"] = f'<{g.API_ROOT}{bare}?per_page=100&page={page + 1}>; rel="next"'
-                return 200, hdr, json.dumps([{"filename": f} for f in chunk]).encode()
+                return 200, hdr, json.dumps([f if isinstance(f, dict) else {"filename": f} for f in chunk]).encode()
         return 404, {}, b""
 
 
@@ -612,3 +612,30 @@ def test_owner_label_present_at_the_start_stays_fail_even_if_removed_during_the_
         Path(output).write_text(json.dumps(clean_decision()))
         return 0
     assert g.main("readiness", [], env_for(tmp_path), transport=fake, readiness_runner=runner, repo_root=ROOT) == 1
+
+
+def test_owner_file_renamed_to_an_unprotected_path_is_fail(tmp_path):
+    """Rilievo Codex P1 su faa61d1: il rename sposta il nome protetto in `previous_filename`."""
+    fake = FakeGitHub()
+    fake.files[561].append({"filename": "docs/archived_policy.md", "previous_filename": "AGENTS.md", "status": "renamed"})
+    assert run("readiness", tmp_path, fake) == 1
+    assert any("AGENTS.md" in r for r in result(tmp_path, "readiness")["reasons"])
+
+
+@pytest.mark.parametrize("entry", [{"filename": "docs/x.md", "status": "renamed"},
+                                   {"filename": "docs/x.md", "status": "renamed", "previous_filename": ""},
+                                   {"filename": "docs/x.md", "previous_filename": 5}])
+def test_rename_without_a_readable_source_path_is_fail(tmp_path, entry):
+    fake = FakeGitHub()
+    fake.files[561].append(entry)
+    assert run("overlap", tmp_path, fake) == 1
+
+
+def test_overlap_sees_the_source_of_a_renamed_critical_file(tmp_path):
+    fake = FakeGitHub()
+    fake.prs[570] = FakeGitHub.pr(570, head="e" * 40)
+    fake.files[561].append({"filename": "core/engine_v2.py", "previous_filename": "core/trading_engine.py",
+                            "status": "renamed"})
+    fake.files[570] = ["core/trading_engine.py"]
+    assert run("overlap", tmp_path, fake) == 1
+    assert any("core/trading_engine.py" in r for r in result(tmp_path, "overlap")["reasons"])

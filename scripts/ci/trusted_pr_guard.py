@@ -294,6 +294,13 @@ def pr_files(gh: GitHub, number: int, expected: Any) -> set:
         if not isinstance(name, str) or not name:
             raise GuardError(f"elenco file della PR #{number} illeggibile")
         names.add(name)
+        # Rename: GitHub mette il percorso di origine in `previous_filename`. Contano entrambi, cosi' un file
+        # protetto rinominato verso un percorso libero resta visibile (rilievo Codex P1 su faa61d1).
+        if f.get("status") == "renamed" or "previous_filename" in f:
+            source = f.get("previous_filename")
+            if not isinstance(source, str) or not source:
+                raise GuardError(f"rename senza percorso di origine leggibile nella PR #{number}")
+            names.add(source)
     if not isinstance(expected, int) or isinstance(expected, bool) or expected < 0:
         raise GuardError(f"numero di file della PR #{number} illeggibile")
     if expected >= GITHUB_FILES_CAP or len(files) != expected:
