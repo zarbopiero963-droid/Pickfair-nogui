@@ -326,6 +326,19 @@ betId). Prima la saga si chiudeva ROLLED_BACK con lo stub vivo e la riserva rila
 - identità dello stub accettato e del replacement in TIMEOUT persistite anche quando la lettura successiva fallisce;
   due ordini vivi con lo stesso ref prima dell'invio ⇒ AMBIGUOUS `existing_customer_ref`, mai FAILED senza ordine.
 
+**STOP durante una saga in corso (rilievi Codex P1 su beff2ef), corretti:**
+- i controlli del chokepoint di submission valgono solo prima del PLACE. Ora il coordinatore rilegge il **gate
+  d'ingresso** (`MicrostakeCoordinator.entry_gate`, cablato dall'engine su `_live_microstake_entry_gate`: LIVE
+  consentito, blocco giornaliero/pending-stop, emergenza, autorità esclusiva del runtime #536) dopo l'accettazione
+  dello stub e di nuovo dopo la riduzione, subito prima del replace o dell'attivazione. Bloccato ⇒ rollback durevole
+  (`rollback_intent`, reason `entry_blocked`) e cancellazione verificata: dopo il PLACE si cancella l'intero stub senza
+  riduzione, dopo la riduzione il residuo; mai il prezzo d'ingresso. Cancellazione con esito ignoto ⇒ ROLLBACK_PENDING
+  con riserva tenuta. Gate assente su una policy LIVE, gate che solleva o risponde in modo non leggibile ⇒ bloccato
+  (fail-closed). SIM senza gate: invariata (#512);
+- con il runtime in SIMULATION la protezione delle saghe LIVE pendenti (F3) parte **anche se** il recovery SIM fallisce
+  (store SIM illeggibile, saga SIM irrisolta): uno stato di simulazione non impedisce più la cancellazione protettiva
+  degli stub reali. L'esito complessivo resta il fallimento SIM, che blocca i nuovi ingressi.
+
 `resume()` ritenta **entrambe** le riconciliazioni (saghe Microstake e F018) e diventa ACTIVE solo se entrambe
 riescono (rilievo Codex #512: prima ritentava solo F018).
 
@@ -358,8 +371,7 @@ snapshot del broker: finché non riesce, nessuna saga pendente viene promossa (r
 - Preesistente (coordinatore, non introdotto qui): se lo stub si abbina in parte prima della riduzione
   (`stub_matched` / `match_cancel_race`) la sua parte non abbinata non viene cancellata in automatico; la saga resta
   AMBIGUOUS con riserva tenuta per la riconciliazione. Improbabile in LIVE (stub a 1000 / 1.01).
-- Aperti, non bloccanti (fail-closed): uno STOP attivato DURANTE una saga in corso non interrompe la riduzione e il
-  replace di quell'ordine (già autorizzato, pochi istanti); dopo un recovery ACTIVE/ROLLED_BACK la riga ordine nel DB
+- Aperti, non bloccanti (fail-closed): dopo un recovery ACTIVE/ROLLED_BACK la riga ordine nel DB
   resta AMBIGUOUS e la ricostruzione F018 la tratta come incerta (lato prudente); il ghost detector della
   riconciliazione non è stato verificato sugli stub durante la saga.
 - Riserva temporanea in-process: due processi sullo stesso DB non condividono il cap temporaneo (la deduplica durevole

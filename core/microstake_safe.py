@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from core.stake_precision import EXCHANGE_MIN_ORDER
 
@@ -416,10 +416,46 @@ class MicrostakeCoordinator:
     """Fail-closed isolated saga; never callable in live mode."""
 
     def __init__(self, exchange: StatefulExchangeSimulator, store: JsonSagaStore,
-                 policy: MicrostakePolicy = MicrostakePolicy()):
+                 policy: MicrostakePolicy = MicrostakePolicy(), *,
+                 entry_gate: Optional[Callable[[], bool]] = None):
         self.exchange = exchange
         self.store = store
         self.policy = policy
+        # Gate d'ingresso riletto DURANTE la saga (rilievo Codex P1 su beff2ef, #561): uno STOP o un LIVE revocato
+        # mentre PLACE o riduzione sono in volo non deve portare lo stub al prezzo d'ingresso.
+        self.entry_gate = entry_gate
+
+    def _entry_still_allowed(self) -> bool:
+        """True se la saga puo' ancora produrre esposizione d'ingresso (riduzione, replace, attivazione).
+        LIVE senza gate, gate che risponde no o che solleva => False (fail-closed). SIM senza gate: invariata (#512)."""
+        gate = self.entry_gate
+        if gate is None:
+            return not self.policy.live_adapter
+        try:
+            return gate() is True
+        except Exception:
+            return False
+
+    def _rollback_now(self, customer_ref: str, req: MicrostakeRequest, order: SimOrder, transient: Decimal, *,
+                      reason: str, terminal_reason: str) -> MicrostakeResult:
+        """Rollback durevole della saga in corso: intento persistito PRIMA della cancellazione, poi cancellazione
+        verificata del residuo per betId persistito. Esito ignoto => ROLLBACK_PENDING, il recover ritenta solo
+        la cancellazione."""
+        # `rollback_intent` e' DUREVOLE (riesame indipendente ciclo 9 #512): nessun salvataggio
+        # intermedio successivo (AMBIGUOUS per ordine non trovato, snapshot non persistito) puo'
+        # cancellarlo, quindi nessun recover futuro riprende il percorso riduzione/replace.
+        self.store.save(customer_ref, phase=Phase.ROLLBACK_PENDING, rollback_intent=True, reason=reason)
+        # Identity comes only from the persisted bet id; never scan by price.
+        try:
+            order = self.exchange.cancel_all_remaining(order.bet_id)
+        except Exception:
+            # L'intento di rollback resta persistito (ROLLBACK_PENDING, rilievo Sol ciclo 8): il
+            # prossimo recover ritenta SOLO la cancellazione, mai il percorso riduzione/replace.
+            self.store.save(customer_ref, phase=Phase.ROLLBACK_PENDING, reason="rollback_unknown")
+            return self._result(Phase.AMBIGUOUS, req=req, reason="rollback_unknown",
+                                order=order, max_exposure=transient, held=True)
+        return self._terminal_or_ambiguous(customer_ref, req, Phase.ROLLED_BACK, order, transient,
+                                           reason=terminal_reason)
 
     def _result(self, phase: Phase, *, req: MicrostakeRequest,
                 reason: str = "", order: Optional[SimOrder] = None,
@@ -532,6 +568,10 @@ class MicrostakeCoordinator:
             return self._result(Phase.AMBIGUOUS, req=req, reason="stub_matched",
                                 order=order, max_exposure=transient, held=True)
 
+        if not self._entry_still_allowed():
+            # STOP / LIVE revocato mentre il PLACE era in volo: lo stub intero si cancella, nessuna riduzione.
+            return self._rollback_now(req.customer_ref, req, order, transient, reason="entry_blocked",
+                                      terminal_reason="entry_blocked")
         reduction = p.exchange_stub_size - req.economic_stake
         try:
             order = self.exchange.cancel_reduction(order.bet_id, reduction)
@@ -550,6 +590,11 @@ class MicrostakeCoordinator:
             return self._result(Phase.AMBIGUOUS, req=req, reason="unexpected_residual_size",
                                 order=order, max_exposure=transient, held=True)
         self.store.save(req.customer_ref, phase=Phase.REDUCED)
+        if not self._entry_still_allowed():
+            # Gate riletto subito prima dell'operazione che produce l'ingresso (replace o attivazione): STOP armato
+            # durante la riduzione => rollback del residuo, mai il prezzo d'ingresso (rilievo Codex P1 su beff2ef).
+            return self._rollback_now(req.customer_ref, req, order, transient, reason="entry_blocked",
+                                      terminal_reason="entry_blocked")
         if order.price == req.target_price:
             # Stub passivo gia' al prezzo target (nessuna controparte da evitare):
             # il replace sarebbe un no-op che Betfair rifiuta. Identita' invariata.
@@ -565,22 +610,8 @@ class MicrostakeCoordinator:
             return self._result(Phase.AMBIGUOUS, req=req, reason="replace_outcome_unknown",
                                 order=order, max_exposure=transient, held=True)
         except Exception as exc:
-            # `rollback_intent` e' DUREVOLE (riesame indipendente ciclo 9 #512): nessun salvataggio
-            # intermedio successivo (AMBIGUOUS per ordine non trovato, snapshot non persistito) puo'
-            # cancellarlo, quindi nessun recover futuro riprende il percorso riduzione/replace.
-            self.store.save(req.customer_ref, phase=Phase.ROLLBACK_PENDING, rollback_intent=True,
-                            reason=str(exc))
-            # Identity comes only from the persisted bet id; never scan by price.
-            try:
-                order = self.exchange.cancel_all_remaining(order.bet_id)
-            except Exception:
-                # L'intento di rollback resta persistito (ROLLBACK_PENDING, rilievo Sol ciclo 8): il
-                # prossimo recover ritenta SOLO la cancellazione, mai il percorso riduzione/replace.
-                self.store.save(req.customer_ref, phase=Phase.ROLLBACK_PENDING, reason="rollback_unknown")
-                return self._result(Phase.AMBIGUOUS, req=req, reason="rollback_unknown",
-                                    order=order, max_exposure=transient, held=True)
-            return self._terminal_or_ambiguous(req.customer_ref, req, Phase.ROLLED_BACK, order, transient,
-                                               reason="replace_failed")
+            return self._rollback_now(req.customer_ref, req, order, transient, reason=str(exc),
+                                      terminal_reason="replace_failed")
         return self._after_replace(req.customer_ref, req, order, transient)
 
     @staticmethod

@@ -355,11 +355,13 @@ class NativeLiveMicrostakeExecutor(NativeSimMicrostakeExecutor):
     all'avvio, saghe pendenti sulla stessa posizione), policy `live_adapter` sopra la porta LIVE."""
 
     def __init__(self, port: LiveExchangePort, store: DbSagaStore, *, quote_provider: Callable,
-                 transient_exposure_cap: Any) -> None:
+                 transient_exposure_cap: Any, entry_gate: Optional[Callable[[], bool]] = None) -> None:
         if getattr(port, "is_live_port", False) is not True:
             raise TypeError("porta non LIVE")
+        # `entry_gate`: autorizzazione LIVE e STOP riletti dal coordinatore prima di riduzione e replace (rilievo
+        # Codex P1 su beff2ef). Assente => la saga LIVE non produce mai l'ingresso (fail-closed, solo rollback).
         super().__init__(port, store, quote_provider=quote_provider, transient_exposure_cap=transient_exposure_cap,
-                         policy=MicrostakePolicy(simulation_only=False, live_adapter=True))
+                         policy=MicrostakePolicy(simulation_only=False, live_adapter=True), entry_gate=entry_gate)
         # Nuova sessione Betfair => nuovo client => nuovo esecutore: le riserve delle saghe pendenti (stub che
         # possono essere vivi) si ripristinano SUBITO, non solo al recovery d'avvio (review F2 su #561). Store
         # illeggibile => eccezione: l'engine non costruisce l'esecutore (fail-closed).
@@ -370,8 +372,8 @@ class NativeLiveMicrostakeExecutor(NativeSimMicrostakeExecutor):
         return self.port.client
 
 
-def build_live_microstake_executor(client: Any, db: Any, transient_cap_provider: Callable[[Dict[str, Any]], Any]
-                                   ) -> NativeLiveMicrostakeExecutor:
+def build_live_microstake_executor(client: Any, db: Any, transient_cap_provider: Callable[[Dict[str, Any]], Any],
+                                   entry_gate: Optional[Callable[[], bool]] = None) -> NativeLiveMicrostakeExecutor:
     return NativeLiveMicrostakeExecutor(LiveExchangePort(client), DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY),
                                         quote_provider=LiveQuoteProvider(client),
-                                        transient_exposure_cap=transient_cap_provider)
+                                        transient_exposure_cap=transient_cap_provider, entry_gate=entry_gate)

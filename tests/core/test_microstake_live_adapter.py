@@ -1318,3 +1318,121 @@ def test_quote_provider_reads_the_best_counterparty_price():
 def test_build_requires_a_client_with_the_needed_operations():
     with pytest.raises(TypeError):
         build_live_microstake_executor(SimpleNamespace(place_bet=lambda **k: None), _DB(), lambda p: D("10"))
+
+
+# ------------------------------------------------------------------------------------------- STOP durante la saga
+def _arm_stop_after(fake, engine, op, source):
+    """Arma la fonte di STOP `source` subito dopo l'operazione exchange `op` (PLACE o riduzione in volo)."""
+    rt = engine.runtime_controller
+    real = getattr(fake, "_" + op)
+
+    def armed(params):
+        out = real(params)
+        if op != "cancelOrders" or any("sizeReduction" in i for i in params["instructions"]):
+            if source == "daily":
+                rt._daily_loss_entry_blocked = lambda: True
+            elif source == "emergency":
+                rt.is_emergency_stopped = True
+            elif source == "live_revoked":
+                rt.is_live_allowed = lambda: False
+            elif source == "authority_lost":
+                def lost(_ctx):
+                    raise RuntimeError("RUNTIME_AUTHORITY_LOST")
+                rt.assert_runtime_authority = lost
+            else:
+                def unreadable():
+                    raise RuntimeError("stato STOP non leggibile")
+                rt._daily_loss_entry_blocked = unreadable
+        return out
+    setattr(fake, "_" + op, armed)
+
+
+@pytest.mark.parametrize("source", ["daily", "emergency", "live_revoked", "authority_lost", "unreadable"])
+@pytest.mark.parametrize("side", ["BACK", "LAY"])
+def test_stop_armed_during_the_reduction_never_reprices_the_stub(source, side):
+    """Rilievo Codex P1 su beff2ef: uno STOP armato mentre la riduzione e' in volo non porta mai lo stub al prezzo
+    d'ingresso. Nessun replace, residuo cancellato e verificato, ROLLED_BACK senza esposizione."""
+    engine, fake, db = _live_engine()
+    _arm_stop_after(fake, engine, "cancelOrders", source)
+    res = engine.submit_quick_bet(_bet(f"stop-red-{source}-{side}", size=0.10, side=side))
+    assert res["ok"] is False, res
+    assert "replaceOrders" not in _names(fake), "nessun replace dopo lo STOP"
+    assert _names(fake) == ["placeOrders", "cancelOrders", "cancelOrders"], _names(fake)
+    assert fake.live() == [] and fake.exposure() == 0, "nessun ordine eseguibile, nessuna esposizione"
+    saga = DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load(f"stop-red-{source}-{side}")
+    assert saga["phase"] == "ROLLED_BACK" and saga["rollback_intent"] is True, saga
+    assert engine._live_microstake_executor.port._reservations == {}
+
+
+@pytest.mark.parametrize("source", ["daily", "emergency", "live_revoked"])
+def test_stop_armed_during_the_place_cancels_the_whole_stub_without_reduction(source):
+    engine, fake, db = _live_engine()
+    _arm_stop_after(fake, engine, "placeOrders", source)
+    res = engine.submit_quick_bet(_bet(f"stop-place-{source}", size=0.10))
+    assert res["ok"] is False, res
+    assert _names(fake) == ["placeOrders", "cancelOrders"], _names(fake)
+    (cancel,) = [c for c in fake.calls if c[0] == "cancelOrders"]
+    assert "sizeReduction" not in cancel[1]["instructions"][0], "cancellazione dell'intero stub, mai la riduzione"
+    assert fake.live() == [] and fake.exposure() == 0
+    assert DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load(f"stop-place-{source}")["phase"] == "ROLLED_BACK"
+
+
+def test_stop_during_the_saga_with_a_failed_protective_cancel_stays_pending_with_the_reservation():
+    engine, fake, db = _live_engine()
+    _arm_stop_after(fake, engine, "cancelOrders", "daily")
+    real = fake._cancelOrders
+
+    def lose_full_cancel(params):
+        if not any("sizeReduction" in i for i in params["instructions"]):
+            raise RuntimeError("REQUEST_FAILED: TIMEOUT")            # cancellazione protettiva NON applicata
+        return real(params)
+    fake._cancelOrders = lose_full_cancel
+    res = engine.submit_quick_bet(_bet("stop-lost", size=0.10))
+    assert res["status"] == "AMBIGUOUS" and "replaceOrders" not in _names(fake), res
+    saga = DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).load("stop-lost")
+    assert saga["phase"] == "ROLLBACK_PENDING" and saga["rollback_intent"] is True, saga
+    assert engine._live_microstake_executor.port.has_reservation("stop-lost")
+
+
+def test_live_coordinator_without_an_entry_gate_never_produces_the_entry():
+    """Fail-closed nel coordinatore: policy LIVE senza gate => solo rollback, mai riduzione ne' replace."""
+    fake = _FakeBetfair()
+    port = LiveExchangePort(_client(fake))
+    store = DbSagaStore(_db(), LIVE_SAGA_SETTINGS_KEY)
+    req = MicrostakeRequest("1.200", 7, Side.BACK, D("0.10"), D("3.0"), "nogate")
+    res = MicrostakeCoordinator(port, store, MicrostakePolicy(simulation_only=False, live_adapter=True)).execute(
+        req, stub_price=D("1000"), transient_cap=D("10"))
+    assert res.phase is Phase.ROLLED_BACK, res
+    assert _names(fake) == ["placeOrders", "cancelOrders"] and fake.live() == []
+
+
+def test_live_entry_gate_open_still_completes_the_saga():
+    engine, fake, _ = _live_engine()
+    engine.runtime_controller.assert_runtime_authority = lambda ctx: None
+    assert engine._live_microstake_entry_gate() is True
+    assert engine.submit_quick_bet(_bet("gate-open", size=0.10))["ok"] is True
+    assert _names(fake) == ["placeOrders", "cancelOrders", "replaceOrders"]
+
+
+# ------------------------------------------------------------------------------------------- protezione LIVE con SIM KO
+@pytest.mark.parametrize("sim_state", ["corrupt", "unresolved"])
+def test_protective_live_recovery_runs_even_when_simulation_recovery_fails(sim_state):
+    """Rilievo Codex P1 su beff2ef: uno store SIM illeggibile o una saga SIM irrisolta non impediscono la
+    cancellazione protettiva degli stub LIVE reali; l'esito complessivo resta il fallimento (ingressi bloccati)."""
+    fake = _FakeBetfair()
+    engine, fake, db = _live_engine(fake)
+    fake.crash.add("placeOrders")
+    with pytest.raises(_Crash):
+        engine.submit_quick_bet(_bet("prot", size=0.10))
+    if sim_state == "corrupt":
+        db.save_settings({SAGA_SETTINGS_KEY: "{rotto"})
+    else:
+        DbSagaStore(db, SAGA_SETTINGS_KEY).save("simref", phase=Phase.AMBIGUOUS, reservation_held=True)
+    before = len(_names(fake))
+    restarted, _, _ = _live_engine(fake, db=db, live_allowed=False)
+    restarted.runtime_controller.get_effective_execution_mode = lambda: "SIMULATION"
+    out = restarted.recover_native_microstake_sagas()
+    assert _names(fake)[before:] == ["cancelOrders"], "cancellazione protettiva dello stub LIVE comunque tentata"
+    assert fake.live() == [] and fake.exposure() == 0
+    assert DbSagaStore(db, LIVE_SAGA_SETTINGS_KEY).pending_refs() == []
+    assert out["ok"] is False, out                                 # il fallimento SIM resta e blocca gli ingressi

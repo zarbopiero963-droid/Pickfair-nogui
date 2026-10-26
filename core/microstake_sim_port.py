@@ -342,10 +342,11 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
     riconcilierebbe. La saga viene retrocessa ad AMBIGUOUS con riserva tenuta (rilievo Codex #512 su 034af59)."""
 
     def __init__(self, port: SimulationExchangePort, store: DbSagaStore, *, quote_provider: Callable,
-                 transient_exposure_cap: Any, policy: Optional[MicrostakePolicy] = None) -> None:
+                 transient_exposure_cap: Any, policy: Optional[MicrostakePolicy] = None,
+                 entry_gate: Optional[Callable[[], bool]] = None) -> None:
         self.port = port
         self.store = store
-        coordinator = MicrostakeCoordinator(port, store, policy or MicrostakePolicy())
+        coordinator = MicrostakeCoordinator(port, store, policy or MicrostakePolicy(), entry_gate=entry_gate)
         super().__init__(coordinator, quote_provider=quote_provider, transient_exposure_cap=transient_exposure_cap)
 
     def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:

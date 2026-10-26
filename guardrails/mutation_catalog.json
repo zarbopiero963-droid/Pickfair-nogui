@@ -3878,6 +3878,90 @@
         "tests/core/test_microstake_live_adapter.py"
       ],
       "rationale": "Rilievi GPT-6.1 Sol su 844ae41 e Grok su d62267b: identita' dello stub ignota trattata come esposizione zero dopo un replace."
+    },
+    {
+      "id": "ms_saga_entry_gate_skipped_before_replace",
+      "module": "core.microstake_safe",
+      "area": "live_safety",
+      "file": "core/microstake_safe.py",
+      "original": "        if not self._entry_still_allowed():\n            # Gate riletto subito prima",
+      "mutated": "        if False:\n            # Gate riletto subito prima",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Codex P1 su beff2ef: STOP armato durante la riduzione, lo stub viene comunque portato al prezzo d'ingresso."
+    },
+    {
+      "id": "ms_saga_entry_gate_skipped_after_place",
+      "module": "core.microstake_safe",
+      "area": "live_safety",
+      "file": "core/microstake_safe.py",
+      "original": "        if not self._entry_still_allowed():\n            # STOP / LIVE revocato mentre il PLACE",
+      "mutated": "        if False:\n            # STOP / LIVE revocato mentre il PLACE",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Codex P1 su beff2ef: STOP armato durante il PLACE, la saga riduce lo stub invece di cancellarlo intero."
+    },
+    {
+      "id": "ms_saga_live_without_gate_allowed",
+      "module": "core.microstake_safe",
+      "area": "live_safety",
+      "file": "core/microstake_safe.py",
+      "original": "            return not self.policy.live_adapter",
+      "mutated": "            return True",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Fail-closed: una saga LIVE senza gate d'ingresso produrrebbe l'ingresso senza alcun controllo STOP."
+    },
+    {
+      "id": "ms_saga_entry_gate_answer_ignored",
+      "module": "core.microstake_safe",
+      "area": "live_safety",
+      "file": "core/microstake_safe.py",
+      "original": "            return gate() is True",
+      "mutated": "            return True",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Il gate d'ingresso viene interrogato ma la risposta (o l'errore di lettura) non blocca."
+    },
+    {
+      "id": "ms_engine_live_entry_gate_not_wired",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "                client, self.db, self._native_transient_cap, entry_gate=self._live_microstake_entry_gate)",
+      "mutated": "                client, self.db, self._native_transient_cap, entry_gate=lambda: True)",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "L'engine costruisce la saga LIVE con un gate sempre aperto: STOP durante la saga ignorato."
+    },
+    {
+      "id": "ms_engine_live_entry_gate_ignores_authority",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "                logger.warning(\"Microstake LIVE: autorita' del runtime persa durante la saga, rollback\")\n                return False",
+      "mutated": "                logger.warning(\"Microstake LIVE: autorita' del runtime persa durante la saga, rollback\")",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Autorita' esclusiva del runtime (#536) persa durante la saga: il replace parte comunque."
+    },
+    {
+      "id": "ms_engine_protection_skipped_on_sim_failure",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "        try:\n            other = DbSagaStore(self.db, SAGA_SETTINGS_KEY if live else LIVE_SAGA_SETTINGS_KEY).pending_refs()",
+      "mutated": "        if not out.get(\"ok\"):\n            return out\n        try:\n            other = DbSagaStore(self.db, SAGA_SETTINGS_KEY if live else LIVE_SAGA_SETTINGS_KEY).pending_refs()",
+      "tests": [
+        "tests/core/test_microstake_live_adapter.py"
+      ],
+      "rationale": "Codex P1 su beff2ef: un fallimento del recovery SIM impedisce la cancellazione protettiva degli stub LIVE."
     }
   ]
 }

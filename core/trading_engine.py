@@ -2598,7 +2598,8 @@ class TradingEngine:
             return cached
         try:
             from core.microstake_live_port import build_live_microstake_executor
-            self._live_microstake_executor = build_live_microstake_executor(client, self.db, self._native_transient_cap)
+            self._live_microstake_executor = build_live_microstake_executor(
+                client, self.db, self._native_transient_cap, entry_gate=self._live_microstake_entry_gate)
         except Exception:
             logger.exception("Microstake LIVE: esecutore non costruibile (fail-closed)")
             self._live_microstake_executor = None
@@ -2657,16 +2658,21 @@ class TradingEngine:
             return {"ok": True, "status": "NO_STORE", "pending": [], "results": {}}
         out = self._recover_microstake_store(store, SagaStoreError,
                                              entry_allowed=self._microstake_recovery_entry_allowed(live))
-        if not out.get("ok"):
-            return out                       # gia' fail-closed: nessun nuovo ingresso
         try:
             other = DbSagaStore(self.db, SAGA_SETTINGS_KEY if live else LIVE_SAGA_SETTINGS_KEY).pending_refs()
         except SagaStoreError as exc:
+            if not out.get("ok"):
+                return out                   # gia' fail-closed: nessun nuovo ingresso
             return {"ok": False, "status": "STORE_UNREADABLE", "error": str(exc), "pending": [],
                     "results": out.get("results", {})}
         if other and not live:
+            # Protezione delle saghe LIVE (denaro reale) INDIPENDENTE dall'esito SIM (rilievo Codex P1 su beff2ef):
+            # uno store SIM illeggibile o una saga SIM irrisolta non impediscono la cancellazione protettiva degli
+            # stub reali. L'esito complessivo resta il fallimento SIM, che blocca i nuovi ingressi.
             other = self._protect_pending_live_sagas(DbSagaStore(self.db, LIVE_SAGA_SETTINGS_KEY), SagaStoreError,
                                                      other)
+        if not out.get("ok"):
+            return out                       # gia' fail-closed: nessun nuovo ingresso
         if other:
             return dict(out, ok=False, status=f"{'SIM' if live else 'LIVE'}_SAGAS_PENDING", pending=sorted(other))
         return out
@@ -2710,6 +2716,23 @@ class TradingEngine:
         except Exception:
             logger.exception("Microstake LIVE: stato degli ingressi non leggibile, recovery solo protettivo")
             return False
+
+    def _live_microstake_entry_gate(self) -> bool:
+        """Gate riletto DENTRO la saga LIVE prima di riduzione e replace (rilievo Codex P1 su beff2ef, #561): i
+        controlli del chokepoint di submission valgono solo prima del PLACE, e uno STOP armato mentre PLACE o
+        riduzione sono in volo lascerebbe portare lo stub al prezzo d'ingresso. Stesse fonti del recovery (LIVE
+        consentito, blocco giornaliero/pending-stop, emergenza) piu' l'autorita' esclusiva del runtime (#536).
+        Bloccato => il coordinatore cancella lo stub (rollback verificato). Errore di lettura => bloccato."""
+        if not self._microstake_recovery_entry_allowed(True):
+            return False
+        assert_authority = getattr(self.runtime_controller, "assert_runtime_authority", None)
+        if callable(assert_authority):
+            try:
+                assert_authority("order_submit")
+            except Exception:
+                logger.warning("Microstake LIVE: autorita' del runtime persa durante la saga, rollback")
+                return False
+        return True
 
     def _recover_microstake_store(self, store: Any, store_error: type, *, entry_allowed: bool = True) -> Dict[str, Any]:
         """Riconciliazione delle saghe pendenti di UNO store con l'esecutore della modalita' corrente."""
