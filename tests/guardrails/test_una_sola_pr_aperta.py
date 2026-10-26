@@ -214,6 +214,21 @@ def test_no_step_can_be_skipped_or_run_by_another_shell(path, job) -> None:
             assert "if" not in step, step.get("name")
 
 
+@pytest.mark.parametrize("path", [WORKFLOW, DIAGNOSTIC])
+def test_runner_variables_are_never_redefined(path) -> None:
+    """Il gate legge `$GITHUB_REF`: un `env:` (workflow, job o step) che ridefinisse `GITHUB_*`/`RUNNER_*`
+    potrebbe falsarlo (review indipendente su #564). Lo step del gate non ha alcun `env`."""
+    data = _load(path)
+    blocks = [data.get("env") or {}]
+    for job in data["jobs"].values():
+        blocks.append(job.get("env") or {})
+        blocks.extend(s.get("env") or {} for s in job["steps"])
+    for env in blocks:
+        assert not [k for k in env if str(k).upper().startswith(("GITHUB_", "RUNNER_"))], env
+    if path == DIAGNOSTIC:
+        assert "env" not in _diag_job()["steps"][0]
+
+
 def test_required_workflow_has_one_checkout_and_one_guard_step_only() -> None:
     """Un secondo checkout (es. dell'head) o uno step in piu' che usa il token aprirebbero il codice non fidato."""
     steps = _job()["steps"]

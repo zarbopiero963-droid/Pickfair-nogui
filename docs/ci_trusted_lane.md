@@ -194,7 +194,9 @@ logica: il job `overlap-check` (stesso nome del check di prima) esegue lo script
     Un dispatch rifiutato da un branch lascia invece un `overlap-diagnostic` **rosso** sull'head di quel branch:
     merge readiness lo conta come bloccante fino al push successivo (fail-closed, mai un verde);
   - nessuno step dei due workflow ha `if:` o `shell:` (salvo `if: always()` sull'upload): uno step saltato o
-    eseguito da un'altra shell darebbe un verde senza guard;
+    eseguito da un'altra shell darebbe un verde senza guard. Nessun `env:` ridefinisce `GITHUB_*`/`RUNNER_*`, e lo
+    step del gate non ha `env`: il gate legge `$GITHUB_REF` del runner (non `${{ github.ref }}` nel testo dello
+    script, che con un nome di branch contenente `$(` diventerebbe un'iniezione di comandi);
   - stesso isolamento del token del check obbligatorio.
   Merge readiness (`scripts/pr_flow_automation.split_checks`) legge ogni check run dell'head: un FAIL resta un
   bloccante anche se accanto c'è un PASS, diagnostico o con lo stesso nome; un test lo lega al codice.
