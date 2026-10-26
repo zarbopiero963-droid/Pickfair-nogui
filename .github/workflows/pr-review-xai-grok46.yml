@@ -211,6 +211,7 @@ jobs:
               r"^(CLAUDE|AGENTS)\.md$",
               r"^docs/(auto_pr_flow_spec|hard_verify_spec)\.md$",
               r"^scripts/(guardrail_check|pr_[a-z0-9_]+|ci/check_ci_quarantine)\.py$",
+              r"^scripts/ci/(pr_[a-z0-9_]+\.sh|trusted_pr_guard\.py)$",
               r"(^|/)requirements[^/]*\.(txt|in|lock)$",
               r"(^|/)pyproject\.toml$",
               r"(^|/)poetry\.lock$",

@@ -2879,6 +2879,26 @@
         "trading_config.py"
       ],
       "max_files": 29
+    },
+    "trusted-lane-guards-562": {
+      "description": "Issue #562 (mandato owner PICKFAIR TRUSTED GUARDS IMPLEMENTATION): script della lane Buildkite trusted scripts/ci/pr_overlap_guard.sh e scripts/ci/pr_merge_readiness.sh senza argomenti, PR da ambiente controllato e dati solo da GitHub API, provenienza verificata, token in sola lettura da file, fail-closed; readiness che riusa scripts/pr_merge_readiness.py e richiede il gate Sol/Grok PASS; test, mutazioni e contratto in docs/ci_trusted_lane.md. Script di gate: merge owner. ESTENSIONE DICHIARATA (rilievo Codex P1 su #563): registrazione dei tre script fra i file a merge owner in scripts/pr_autonomy_policy.py (OWNER_MANUAL_MERGE_FILES + MANUAL_AUTHORITY_PATTERNS), copia del pattern nei workflow dei reviewer attivi Sol e Grok, test in tests/scripts/test_pr_autonomy_policy.py.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ci_trusted_lane.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/ci/pr_merge_readiness.sh",
+        "scripts/ci/pr_overlap_guard.sh",
+        "scripts/ci/trusted_pr_guard.py",
+        "scripts/ci_changed_modules.py",
+        "scripts/pr_autonomy_policy.py",
+        "tests/scripts/test_pr_autonomy_policy.py",
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "max_files": 13
     }
   }
 }

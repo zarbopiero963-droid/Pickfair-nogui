@@ -137,6 +137,11 @@ OWNER_MANUAL_MERGE_FILES = frozenset({
     "scripts/pr_clean_scope_rebuild.py",
     "scripts/pr_refresh_self_checks.py",
     "scripts/ci/check_ci_quarantine.py",
+    # Lane Buildkite trusted (#563): gli script che decidono overlap e merge readiness sono gate come
+    # pr_merge_readiness.py (rilievo Codex P1 su #563).
+    "scripts/ci/pr_overlap_guard.sh",
+    "scripts/ci/pr_merge_readiness.sh",
+    "scripts/ci/trusted_pr_guard.py",
 })
 
 # Gli stessi criteri come regex: Sol e Grok ne tengono una copia identica
@@ -147,6 +152,7 @@ MANUAL_AUTHORITY_PATTERNS = (
     r"^(CLAUDE|AGENTS)\.md$",
     r"^docs/(auto_pr_flow_spec|hard_verify_spec)\.md$",
     r"^scripts/(guardrail_check|pr_[a-z0-9_]+|ci/check_ci_quarantine)\.py$",
+    r"^scripts/ci/(pr_[a-z0-9_]+\.sh|trusted_pr_guard\.py)$",
     r"(^|/)requirements[^/]*\.(txt|in|lock)$",
     r"(^|/)pyproject\.toml$",
     r"(^|/)poetry\.lock$",
