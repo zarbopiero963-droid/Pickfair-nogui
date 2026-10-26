@@ -94,9 +94,24 @@ Il gate Sol/Grok è **informativo** nel workflow GitHub Actions, qui invece **bl
 Il verdetto PASS significa «mergiabile senza decisioni owner aperte», non «approvato dall'owner». Una PR che la
 governance lascia alla decisione dell'owner resta FAIL qui, e decide l'owner.
 
-**Tempo.** La pipeline trusted ha un timeout di 10 minuti, quindi il default `PF_READINESS_WAIT_SECONDS=420` sta
-dentro con margine. Se i check sono ancora pendenti allo scadere, il risultato è FAIL, mai PASS. Per la parità con
-Actions (6600 s) bisogna alzare il timeout della pipeline sopra i 115 minuti.
+**Tempo.** Ogni check ancora pendente allo scadere dell'attesa dà FAIL, mai PASS. Il job dura al più
+attesa + 120 s di margine: il processo figlio viene fermato lì, e anche un timeout dà FAIL. La regola è
+**timeout della pipeline ≥ `PF_READINESS_WAIT_SECONDS` + 180 s**. Con il timeout attuale di 10 minuti, il default
+420 s la rispetta (420 + 120 + 60 = 600). Le review AI possono durare molto più di 7 minuti (Sol a effort `max`:
+fino a 105 minuti). Con questo budget, una readiness lanciata con le review ancora in corso è FAIL e va rilanciata
+quando sono finite. Per non sprecare build, la lane dovrebbe lanciarla **dopo** che i check della PR si sono
+chiusi, oppure con un timeout ≥ 115 minuti e `PF_READINESS_WAIT_SECONDS=6600`, come Actions.
+
+**Nessuna dipendenza circolare.**
+- Le review Sol/Grok/Codex partono a ogni push e non leggono la readiness.
+- L'overlap guard non legge la readiness.
+- La readiness richiede verdi tutti i check reali, overlap guard compreso, e il gate review.
+- Il solo rischio è che la readiness attenda o blocchi **sé stessa**. Lo status che la lane pubblica sulla PR deve
+  quindi essere riconosciuto come self-check da `scripts/pr_flow_automation.py` (`is_self_check`): **`target_url`
+  = URL della build della pipeline `pr-merge-readiness`** (contiene `pr-merge-readiness`), oppure contesto
+  «merge readiness».
+- Lo status dell'overlap guard invece **non** deve essere un self-check: la readiness lo attende e lo richiede verde.
+- I test `test_trusted_readiness_status_published_on_the_pr_is_its_own_self_check` legano le due regole al codice.
 
 ## Uscita
 
@@ -104,9 +119,9 @@ Actions (6600 s) bisogna alzare il timeout della pipeline sopra i 115 minuti.
   rete o HTTP non 200, JSON non valido, provenienza incoerente, check rosso, pendente o sconosciuto, review non PASS,
   eccezione inattesa.
 - `PF_RESULT_DIR/<guard>.json` contiene: `guard`, `repo`, `pr`, `head_sha`, `base_ref`, `base_sha` (se letto),
-  `verdict` (`PASS`/`FAIL`), `reasons`. Lo status GitHub va pubblicato sullo **`head_sha` della PR** preso da questo
-  file, non sul commit di main che Buildkite ha costruito. Il token in sola lettura non può pubblicare status: lo fa
-  l'infrastruttura, con una credenziale separata.
+  `verdict` (`PASS`/`FAIL`), `reasons`. Gli script **non pubblicano nulla**: solo richieste GET, e un test lo
+  verifica. Lo status GitHub lo pubblica l'infrastruttura con una credenziale separata, sullo **`head_sha` della PR**
+  preso da questo file, non sul commit di main che Buildkite ha costruito.
 
 ## Requisiti infrastrutturali (Grok)
 
@@ -120,7 +135,7 @@ Actions (6600 s) bisogna alzare il timeout della pipeline sopra i 115 minuti.
 ## Limiti dichiarati
 
 - **NOT VERIFIED end-to-end.** Il percorso reale con token, `gh` e status GitHub resta da collaudare sulla lane
-  dopo che l'owner fornisce il token. Verificato offline: 122 test e mutazioni. Smoke dell'overlap guard sull'API
+  dopo che l'owner fornisce il token. Verificato offline: 124 test e mutazioni. Smoke dell'overlap guard sull'API
   pubblica reale su #561: PASS sull'head corrente, FAIL su un head stantio.
 - Il workflow Actions `.github/workflows/pr-overlap-guard.yml` conserva la propria copia inline, che è riserva. Farlo
   puntare allo script è una modifica di workflow, quindi a merge owner: è un follow-up separato.

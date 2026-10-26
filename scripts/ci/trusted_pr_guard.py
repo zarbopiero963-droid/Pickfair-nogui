@@ -53,6 +53,9 @@ CRITICAL_FILES = frozenset({
 READINESS_WAIT_DEFAULT = 420           # sta dentro il timeout di 10 minuti della pipeline trusted
 READINESS_WAIT_MAX = 6600              # come la readiness GitHub Actions
 READINESS_POLL_SECONDS = 15
+# Margine oltre l'attesa per la decisione finale della readiness. Il job deve stare nel timeout della pipeline:
+# timeout pipeline >= attesa + READINESS_MARGIN_SECONDS + 60 (420 + 120 + 60 = 600 s = 10 minuti).
+READINESS_MARGIN_SECONDS = 120
 HTTP_TIMEOUT = 30
 MAX_PAGES = 50                         # 50 x 100 = 5000 elementi: oltre, il dato non e' verificabile
 GITHUB_FILES_CAP = 3000                # l'API dei file di una PR non ne elenca piu' di 3000
@@ -315,7 +318,7 @@ def default_run_readiness(repo_root: Path, pr: int, wait: int, token: str, outpu
                "--wait-pending-seconds", str(wait), "--poll-seconds", str(READINESS_POLL_SECONDS),
                "--output", str(output)]
         proc = subprocess.run(cmd, cwd=str(repo_root), env=child_env, stdout=subprocess.PIPE,  # nosec B603
-                              stderr=subprocess.STDOUT, timeout=wait + 600, check=False)
+                              stderr=subprocess.STDOUT, timeout=wait + READINESS_MARGIN_SECONDS, check=False)
         sys.stdout.write(redact(proc.stdout.decode("utf-8", "replace"), token)[-20000:])
         return proc.returncode
 

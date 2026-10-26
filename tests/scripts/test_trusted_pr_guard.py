@@ -445,7 +445,8 @@ def test_default_runner_calls_the_existing_readiness_with_a_minimal_environment(
     assert cmd[3:] == ["--repo", REPO, "--pr", "561", "--ignore-safe-autofix", "--wait-pending-seconds", "420",
                        "--poll-seconds", "15", "--output", str(out)]
     assert captured["env"]["GH_TOKEN"] == TOKEN and "GITHUB_TOKEN" not in captured["env"]
-    assert captured["timeout"] == 420 + 600
+    assert captured["timeout"] == 420 + g.READINESS_MARGIN_SECONDS
+    assert 420 + g.READINESS_MARGIN_SECONDS + 60 <= 600, "il default deve stare nel timeout di 10 minuti della pipeline"
 
 
 # --------------------------------------------------------------------------------------------- wrapper shell
@@ -477,3 +478,29 @@ def test_wrappers_ignore_python_environment_injection(tmp_path):
 
 def test_unknown_guard_is_fail(tmp_path):
     assert g.main("deploy", [], env_for(tmp_path), transport=FakeGitHub()) == 1
+
+
+# --------------------------------------------------------------------------------------------- contratto con la lane
+def test_trusted_readiness_status_published_on_the_pr_is_its_own_self_check():
+    """Owner (sequenza #562, punto 5): nessuna dipendenza circolare. La readiness esistente ignora come self-check
+    lo status che la lane pubblica sulla PR SOLO se la sua URL e' la build della pipeline `pr-merge-readiness` (o il
+    nome e' «merge readiness»). Uno status con un'altra identita' verrebbe atteso o bloccherebbe se stesso."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import pr_flow_automation as fa
+
+    build = {"context": "buildkite/pr-merge-readiness",
+             "targetUrl": "https://buildkite.com/zarbopiero963-droid/pr-merge-readiness/builds/12"}
+    assert fa.is_self_check(build)
+    assert not fa.is_self_check({"context": "buildkite/pr-overlap-guard",
+                                 "targetUrl": "https://buildkite.com/zarbopiero963-droid/pr-overlap-guard/builds/3"}), \
+        "l'overlap guard e' un check reale: la readiness lo deve attendere e richiedere verde"
+    assert not fa.is_self_check({"context": "trusted/readiness", "targetUrl": "https://example.invalid/x"})
+
+
+def test_guards_only_issue_get_requests():
+    """Owner (sequenza #562, punto 6): read-only, nessuna pubblicazione diretta di status."""
+    src = (ROOT / "scripts" / "ci" / "trusted_pr_guard.py").read_text(encoding="utf-8")
+    assert 'method="GET"' in src
+    for verb in ("POST", "PATCH", "PUT", "DELETE"):
+        assert f'"{verb}"' not in src and f"'{verb}'" not in src
+    assert "/statuses" not in src and "/check-runs" not in src
