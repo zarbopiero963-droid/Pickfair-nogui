@@ -171,8 +171,8 @@ logica: il job `overlap-check` (stesso nome del check di prima) esegue lo script
 - **Token:** `github.token` del job, permessi `contents: read` e `pull-requests: read`. Il workflow lo scrive in un
   file 0600 temporaneo (`umask 077`), toglie la variabile dall'ambiente prima di lanciare lo script e cancella il
   file all'uscita (`trap`).
-- **Ingresso:** `PF_PR_NUMBER` e `PF_PR_HEAD_SHA` dall'evento `pull_request`, oppure dagli input obbligatori di
-  `workflow_dispatch`. Il risultato `overlap.json` è caricato come artifact `pr-overlap-report`.
+- **Ingresso:** `PF_PR_NUMBER` e `PF_PR_HEAD_SHA` solo dall'evento `pull_request` (nessun `workflow_dispatch`).
+  Il risultato `overlap.json` è caricato come artifact `pr-overlap-report`.
 - **Differenze dal vecchio step inline:**
   - legge tutte le pagine;
   - una PR illeggibile dà FAIL;
@@ -180,10 +180,29 @@ logica: il job `overlap-check` (stesso nome del check di prima) esegue lo script
   - senza PR aperte dà FAIL invece che verde;
   - una PR con base diversa da `main` dà FAIL (il workflow non imposta `PF_PR_BASE_REF`, quindi vale il default
     `main`): prima il controllo la valutava comunque.
+- **Collaudo manuale separato (`pr-overlap-guard-diagnostic.yml`).** Il check run prende il nome dal job, non dal
+  workflow. Su #564 un `workflow_dispatch` dal branch di `pr-overlap-guard.yml` ha pubblicato sull'head `b4e6604` un
+  secondo `overlap-check` (success, check suite 109551036228) accanto a quello del `pull_request` (failure, suite
+  109551022632): stessa app `github-actions`, stesso SHA, stesso nome. Un PASS così può soddisfare il required check.
+  Per questo:
+  - `pr-overlap-guard.yml` gira **solo** su `pull_request` ed è l'unico workflow che pubblica `overlap-check` (un
+    test scorre tutti i workflow);
+  - la diagnostica manuale è un workflow a parte, solo `workflow_dispatch`, con job e check `overlap-diagnostic`:
+    non può soddisfare il required check `overlap-check`;
+  - la diagnostica accetta solo `refs/heads/main`: da un altro ref il primo step fallisce, prima del checkout e del
+    token. Gira quindi solo codice di `main`, e il check run si attacca al commit di `main`, non all'head della PR;
+  - stesso isolamento del token del check obbligatorio.
+  Merge readiness (`scripts/pr_flow_automation.split_checks`) legge ogni check run dell'head: un FAIL resta un
+  bloccante anche se accanto c'è un PASS, diagnostico o con lo stesso nome; un test lo lega al codice.
+  Limite: GitHub esegue `workflow_dispatch` col file del workflow del ref scelto, quindi il blocco sul ref vale per
+  il file di `main`. Una PR che modifica i workflow può cambiarli, ed è per questo che ogni workflow è a merge owner.
 - **Bootstrap:** su `pull_request` lo script viene dal commit base, quindi una PR che corregge lo script viene
-  valutata con la versione di `main`. La correzione si collauda con `workflow_dispatch` sul branch della PR, che
-  esegue lo script del branch con il token reale di Actions.
+  valutata con la versione di `main`. Su #564 l'`overlap-check` resta rosso finché la correzione del token non è
+  su `main`. La correzione è stata collaudata una volta dal branch (run 40418758994, prima della separazione), e
+  quel run ha prodotto proprio il PASS duplicato descritto sopra.
 - Il workflow che gira su `pull_request` è quello della PR stessa: una PR che modifica questo workflow lo esegue
   modificato. È per questo che tutti i workflow sono a merge owner.
 - `tests/guardrails/test_una_sola_pr_aperta.py` esegue la regola sullo script vero e lega il workflow allo script:
-  checkout del base, nessuna copia inline, token solo come file, permessi in sola lettura.
+  checkout del base, nessuna copia inline, token solo come file, permessi in sola lettura, solo `pull_request`,
+  unico workflow col check `overlap-check`, diagnostica con nome distinto e solo da `main`, FAIL mai mascherato da
+  un PASS in merge readiness.

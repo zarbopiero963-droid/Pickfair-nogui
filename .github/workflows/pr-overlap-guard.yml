@@ -10,17 +10,14 @@ env:
 # Codice non fidato: il checkout e' il commit BASE della PR (mai il codice della PR), senza credenziali
 # persistite; i dati della PR arrivano solo dalla GitHub API. Il token del job va in un file 0600 temporaneo,
 # letto dallo script e cancellato a fine job; non e' mai un argomento.
+# Solo `pull_request`: questo workflow pubblica il check obbligatorio `overlap-check` e nient'altro. Un tempo
+# accettava anche `workflow_dispatch`, che da un branch eseguiva lo script di quel branch e attaccava al suo head
+# un secondo `overlap-check` verde accanto a quello rosso (stessa app, stesso SHA: su #564, b4e6604). Il collaudo
+# manuale sta in `pr-overlap-guard-diagnostic.yml`, con un nome di check diverso che non puo' soddisfare il
+# required check.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: "PR number"
-        required: true
-      head_sha:
-        description: "Head SHA della PR da valutare (40 esadecimali)"
-        required: true
 
 permissions:
   contents: read
@@ -35,14 +32,14 @@ jobs:
       - name: Checkout trusted base (never the PR code)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
       - name: Overlap guard (scripts/ci/pr_overlap_guard.sh)
         env:
           GH_TOKEN: ${{ github.token }}
-          PF_PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
-          PF_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.inputs.head_sha }}
+          PF_PR_NUMBER: ${{ github.event.pull_request.number }}
+          PF_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PF_RESULT_DIR: ${{ runner.temp }}/trusted-guard
         run: |
           set -euo pipefail

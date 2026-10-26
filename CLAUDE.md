@@ -95,7 +95,7 @@ PF-BEST-EXECUTION-DYNAMIC-01 (c.6235560755). Dettaglio tecnico in
 - tenere separati stake richiesto, stake eseguito, importo temporaneo della
   procedura (stub pari al minimo exchange `core.stake_precision.EXCHANGE_MIN_ORDER`,
   riferimento owner 1 EUR, a prezzo non abbinabile: in LIVE BACK 1000 / LAY 1.01
-  (`core/microstake_live_port.py`), in SIM prezzo passivo oltre il miglior prezzo — #561;
+  (`core/microstake_live_port.py`), in SIM a un prezzo che non incrocia il book — #561;
   entro fondi disponibili e headroom di esposizione), matched/unmatched,
   liability LAY, fondi, controlli di rischio;
 - esito ignoto dopo l'invio = AMBIGUOUS + riconciliazione, mai retry;
@@ -495,7 +495,7 @@ I workflow che SONO i gate su cui poggia la decisione di auto-merge:
 - `scripts/ci/check_ci_quarantine.py`
 - `scripts/ci/trusted_pr_guard.py`, `scripts/ci/pr_overlap_guard.sh`,
   `scripts/ci/pr_merge_readiness.sh` (lane Buildkite trusted, #563: decidono
-  overlap e merge readiness; anche il workflow `pr-overlap-guard.yml` li esegue)
+  overlap e merge readiness; il workflow `pr-overlap-guard.yml` esegue i primi due)
 - (e, per fail-closed, ogni altro `scripts/pr_*.py`: il pattern della label li copre)
 
 `scripts/guardrail_check.py` e' in lista per la stessa ragione dei workflow, e

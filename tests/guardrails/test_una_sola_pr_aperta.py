@@ -124,74 +124,154 @@ def test_block_una_draft_conta_come_pr_aperta(tmp_path) -> None:
 
 
 # --------------------------------------------------------------------------------------------- workflow ↔ script
+DIAGNOSTIC = ".github/workflows/pr-overlap-guard-diagnostic.yml"
+
+
+def _load(path: str) -> dict:
+    return yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))
+
+
+def _on(data: dict) -> dict:
+    """YAML 1.1 legge la chiave `on` come True."""
+    on = data.get("on", data.get(True))
+    return on if isinstance(on, dict) else {k: None for k in ([on] if isinstance(on, str) else on)}
+
+
 def _job() -> dict:
-    data = yaml.safe_load((ROOT / WORKFLOW).read_text(encoding="utf-8"))
-    return data["jobs"]["overlap-check"]
+    return _load(WORKFLOW)["jobs"]["overlap-check"]
+
+
+def _diag_job() -> dict:
+    return _load(DIAGNOSTIC)["jobs"]["overlap-diagnostic"]
+
+
+def _run_step(job: dict) -> dict:
+    return next(s for s in job["steps"] if "pr_overlap_guard.sh" in s.get("run", ""))
 
 
 def test_workflow_calls_the_canonical_trusted_script_and_keeps_the_check_name() -> None:
     """Il nome del job e' il nome del check (required checks invariati): resta `overlap-check`."""
+    assert "name" not in _job(), "il check run prende il nome dal job id `overlap-check`"
     runs = "\n".join(s.get("run", "") for s in _job()["steps"])
     assert "./scripts/ci/pr_overlap_guard.sh" in runs
     assert "python" not in runs, "nessuna copia inline della logica nel workflow"
 
 
+def test_required_check_runs_only_on_pull_request() -> None:
+    """Il check obbligatorio nasce solo da `pull_request`: nessun dispatch manuale puo' pubblicare un secondo
+    `overlap-check` sull'head della PR (su #564 un dispatch dal branch aveva messo un PASS accanto al FAIL)."""
+    on = _on(_load(WORKFLOW))
+    assert set(on) == {"pull_request"}
+    assert set(on["pull_request"]["types"]) == {"opened", "synchronize", "reopened"}
+
+
 def test_workflow_never_checks_out_or_runs_the_pr_code() -> None:
     checkout = next(s for s in _job()["steps"] if str(s.get("uses", "")).startswith("actions/checkout"))
-    ref = checkout["with"]["ref"]
-    assert "base.sha" in ref and "head" not in ref, "il checkout deve essere il commit base, mai l'head della PR"
+    assert checkout["with"]["ref"] == "${{ github.event.pull_request.base.sha }}"
     assert checkout["with"]["persist-credentials"] is False
     text = (ROOT / WORKFLOW).read_text(encoding="utf-8")
     assert "pull_request_target" not in text and "refs/pull/" not in text and "/merge" not in text
+    env = _run_step(_job())["env"]
+    assert env["PF_PR_NUMBER"] == "${{ github.event.pull_request.number }}"
+    assert env["PF_PR_HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
 
 
-def test_workflow_passes_the_token_only_as_a_0600_file() -> None:
-    step = next(s for s in _job()["steps"] if "pr_overlap_guard.sh" in s.get("run", ""))
+@pytest.mark.parametrize("path,job", [(WORKFLOW, "overlap-check"), (DIAGNOSTIC, "overlap-diagnostic")])
+def test_workflow_passes_the_token_only_as_a_0600_file(path, job) -> None:
+    step = _run_step(_load(path)["jobs"][job])
     run = step["run"]
     assert "umask 077" in run and 'rm -f "$token_file"' in run and "unset GH_TOKEN" in run
     assert "PF_GITHUB_TOKEN_FILE=" in run
     assert not re.search(r"pr_overlap_guard\.sh\s+\S", run), "lo script non riceve argomenti"
-    env = step["env"]
-    assert set(env) == {"GH_TOKEN", "PF_PR_NUMBER", "PF_PR_HEAD_SHA", "PF_RESULT_DIR"}
+    assert set(step["env"]) == {"GH_TOKEN", "PF_PR_NUMBER", "PF_PR_HEAD_SHA", "PF_RESULT_DIR"}
+    lines = [ln.strip() for ln in run.splitlines() if "GH_TOKEN" in ln]
+    assert lines == ["( umask 077 && printf '%s' \"$GH_TOKEN\" > \"$token_file\" )", "unset GH_TOKEN"]
+    assert (ROOT / path).read_text(encoding="utf-8").count("github.token") == 1
 
 
-def test_workflow_permissions_are_read_only() -> None:
-    data = yaml.safe_load((ROOT / WORKFLOW).read_text(encoding="utf-8"))
-    assert data["permissions"] == {"contents": "read", "pull-requests": "read"}
+@pytest.mark.parametrize("path", [WORKFLOW, DIAGNOSTIC])
+def test_workflow_permissions_are_read_only(path) -> None:
+    assert _load(path)["permissions"] == {"contents": "read", "pull-requests": "read"}
 
 
-def _workflow() -> dict:
-    return yaml.safe_load((ROOT / WORKFLOW).read_text(encoding="utf-8"))
-
-
-def test_workflow_still_runs_on_every_pull_request_push() -> None:
-    """Togliere il trigger `pull_request` spegnerebbe il check in silenzio. YAML legge la chiave `on` come True."""
-    data = _workflow()
-    on = data.get("on", data.get(True))
-    assert set(on["pull_request"]["types"]) == {"opened", "synchronize", "reopened"}
-    assert set(on) == {"pull_request", "workflow_dispatch"}
-
-
-def test_workflow_cannot_turn_a_failure_green() -> None:
+@pytest.mark.parametrize("path,job", [(WORKFLOW, "overlap-check"), (DIAGNOSTIC, "overlap-diagnostic")])
+def test_workflow_cannot_turn_a_failure_green(path, job) -> None:
     """`continue-on-error` (job o step) renderebbe verde un FAIL dello script."""
-    job = _job()
-    assert "continue-on-error" not in job
-    assert all("continue-on-error" not in s for s in job["steps"])
-    assert set(job) == {"runs-on", "timeout-minutes", "steps"}, "niente permessi, `if` o `needs` a livello di job"
+    j = _load(path)["jobs"][job]
+    assert "continue-on-error" not in j and all("continue-on-error" not in s for s in j["steps"])
+    assert set(j) <= {"name", "runs-on", "timeout-minutes", "steps"}, "niente permessi, `if` o `needs` sul job"
 
 
-def test_workflow_has_one_checkout_and_one_guard_step_only() -> None:
+def test_required_workflow_has_one_checkout_and_one_guard_step_only() -> None:
     """Un secondo checkout (es. dell'head) o uno step in piu' che usa il token aprirebbero il codice non fidato."""
     steps = _job()["steps"]
-    uses = [str(s.get("uses", "")).split("@")[0] for s in steps]
-    assert uses == ["actions/checkout", "", "actions/upload-artifact"]
+    assert [str(s.get("uses", "")).split("@")[0] for s in steps] == ["actions/checkout", "", "actions/upload-artifact"]
     assert sum(1 for s in steps if "run" in s) == 1
 
 
-def test_workflow_uses_the_token_only_to_write_the_file() -> None:
-    """Il token compare in un solo punto: il `printf` nel file 0600. Niente echo, base64 o altri usi."""
-    text = (ROOT / WORKFLOW).read_text(encoding="utf-8")
-    assert text.count("github.token") == 1
-    run = next(s for s in _job()["steps"] if "run" in s)["run"]
-    uses = [ln.strip() for ln in run.splitlines() if "GH_TOKEN" in ln]
-    assert uses == ["( umask 077 && printf '%s' \"$GH_TOKEN\" > \"$token_file\" )", "unset GH_TOKEN"]
+# ------------------------------------------------------------------- diagnostica manuale ≠ controllo obbligatorio
+def _check_names(path: Path) -> List[str]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return [str(j.get("name", jid)) for jid, j in (data.get("jobs") or {}).items()]
+
+
+def test_only_the_pull_request_workflow_can_publish_overlap_check() -> None:
+    """Nessun altro workflow del repository puo' pubblicare un check di nome `overlap-check`: un PASS di un'altra
+    fonte sullo stesso SHA soddisferebbe il required check e coprirebbe il FAIL della PR."""
+    owners = [p.name for p in sorted((ROOT / ".github" / "workflows").glob("*.y*ml"))
+              if "overlap-check" in _check_names(p)]
+    assert owners == ["pr-overlap-guard.yml"]
+
+
+def test_diagnostic_has_a_distinct_check_identity() -> None:
+    data = _load(DIAGNOSTIC)
+    assert set(_on(data)) == {"workflow_dispatch"}
+    assert _check_names(ROOT / DIAGNOSTIC) == ["overlap-diagnostic"]
+    assert "overlap-check" not in (ROOT / DIAGNOSTIC).read_text(encoding="utf-8").split("jobs:")[1]
+    assert data["name"] != _load(WORKFLOW)["name"]
+
+
+def test_diagnostic_refuses_the_ref_before_any_checkout() -> None:
+    steps = _diag_job()["steps"]
+    assert "refs/heads/main" in steps[0].get("run", "") and "uses" not in steps[0]
+    assert [str(s.get("uses", "")).split("@")[0] for s in steps] == ["", "actions/checkout", "", "actions/upload-artifact"]
+    assert steps[1]["with"] == {"ref": "${{ github.sha }}", "persist-credentials": False}
+
+
+def _ref_gate_rc(ref: str) -> int:
+    import subprocess
+    gate = _diag_job()["steps"][0]["run"]
+    env = {"PATH": "/usr/bin:/bin", "GITHUB_REF": ref}
+    return subprocess.run(["bash", "-e", "-c", gate], env=env, capture_output=True).returncode
+
+
+@pytest.mark.parametrize("ref,rc", [
+    ("refs/heads/main", 0),
+    ("refs/heads/ccr-764b0316-9r1a1d", 1),
+    ("refs/heads/mainx", 1),
+    ("refs/tags/main", 1),
+    ("refs/pull/564/merge", 1),
+    ("", 1),
+])
+def test_diagnostic_runs_only_from_main(ref, rc) -> None:
+    """Da un branch girerebbe lo script del branch: il job deve fallire prima del checkout e del token."""
+    assert _ref_gate_rc(ref) == rc
+
+
+def _rollup_item(name: str, conclusion: str) -> Dict[str, Any]:
+    return {"__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": conclusion,
+            "detailsUrl": f"https://github.com/{REPO}/actions/runs/1/job/1"}
+
+
+@pytest.mark.parametrize("extra", [
+    _rollup_item("overlap-diagnostic", "SUCCESS"),
+    _rollup_item("overlap-check", "SUCCESS"),
+])
+def test_block_a_manual_pass_never_masks_the_pull_request_failure(extra) -> None:
+    """Merge readiness legge ogni check run dell'head: un PASS diagnostico, o perfino un secondo `overlap-check`
+    verde (il caso reale di #564 su b4e6604, due check suite della stessa app), non cancella il FAIL."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import pr_flow_automation as fa
+    for rollup in ([_rollup_item("overlap-check", "FAILURE"), extra], [extra, _rollup_item("overlap-check", "FAILURE")]):
+        res = fa.split_checks({"statusCheckRollup": rollup})
+        assert [b["name"] for b in res["blockers"]] == ["overlap-check"]
