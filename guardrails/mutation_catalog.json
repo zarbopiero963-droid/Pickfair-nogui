@@ -13,7 +13,9 @@
     "money_management",
     "live_safety"
   ],
-  "optional_areas": [],
+  "optional_areas": [
+    "trusted_gate"
+  ],
   "mutations": [
     {
       "id": "side_match_back_lay_inverted",
@@ -3998,6 +4000,198 @@
         "tests/core/test_microstake_live_adapter.py"
       ],
       "rationale": "Sessione Betfair invalidata durante la saga LIVE ignorata."
+    },
+    {
+      "id": "tg_head_mismatch_accepted",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if head_sha != ctx[\"head_sha\"]:\n        raise GuardError(f\"head della PR cambiato",
+      "mutated": "    if False:\n        raise GuardError(f\"head della PR cambiato",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562: verdetto attaccato a uno SHA diverso da quello valutato."
+    },
+    {
+      "id": "tg_fork_head_accepted",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if not isinstance(head_repo, str) or head_repo.lower() != TRUSTED_REPO.lower():",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562: head da un fork o da un repository cancellato accettato senza provenienza."
+    },
+    {
+      "id": "tg_base_history_unchecked",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "cmp.get(\"status\") not in (\"ahead\", \"identical\")",
+      "mutated": "False",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562: base SHA fuori dalla storia di main accettata."
+    },
+    {
+      "id": "tg_head_recheck_skipped",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "        verify_head_unchanged(gh, ctx)\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562: push durante la valutazione non rilevato."
+    },
+    {
+      "id": "tg_review_gate_ignored",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if gate != \"PASS\":",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562 requisito 10: review Sol/Grok assente, non conclusiva o UNKNOWN trattata come PASS."
+    },
+    {
+      "id": "tg_can_merge_truthy",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if decision.get(\"can_merge\") is not True:",
+      "mutated": "    if not decision.get(\"can_merge\"):",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562: can_merge come stringa \"true\" accettato al posto del booleano."
+    },
+    {
+      "id": "tg_readiness_rc_ignored",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if rc != 0:\n        reasons.append",
+      "mutated": "    if False:\n        reasons.append",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562: uscita non zero della readiness ignorata."
+    },
+    {
+      "id": "tg_token_mode_unchecked",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if st.st_mode & 0o077:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562: token leggibile da gruppo/altri accettato."
+    },
+    {
+      "id": "tg_token_scopes_unchecked",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if scopes is not None and scopes.strip():",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562 requisito 8: token classico con scope di scrittura accettato."
+    },
+    {
+      "id": "tg_files_incomplete_accepted",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if expected >= GITHUB_FILES_CAP or len(files) != expected:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562: elenco file troncato accettato come completo."
+    },
+    {
+      "id": "tg_one_open_pr_rule_dropped",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if extra:\n        reasons.append",
+      "mutated": "    if False:\n        reasons.append",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562: seconda PR aperta non segnalata (regola CLAUDE.md)."
+    },
+    {
+      "id": "tg_argv_accepted",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "        if argv:\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562 requisito 1: argomenti da riga di comando accettati."
+    },
+    {
+      "id": "tg_pr_context_accepted",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if bk_pr is not None and bk_pr not in (\"\", \"false\"):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562: esecuzione in contesto Buildkite di PR accettata."
+    },
+    {
+      "id": "tg_foreign_repo_accepted",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "        if not m or m.group(1).lower() != TRUSTED_REPO.lower():",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562: BUILDKITE_REPO di un altro repository accettato."
+    },
+    {
+      "id": "tg_redirect_followed",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "        return None\n\n\ndef urllib_transport",
+      "mutated": "        return super().redirect_request(req, fp, code, msg, headers, newurl)\n\n\ndef urllib_transport",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562 requisito 7: redirect seguito con l'header Authorization verso un altro host."
+    },
+    {
+      "id": "tg_token_not_redacted",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    return text.replace(token, \"***\") if token else text",
+      "mutated": "    return text",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562 requisito 7: token stampato nei log o nel risultato."
     }
   ]
 }

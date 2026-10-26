@@ -198,6 +198,7 @@ MODULE_RULES = [
             "cashout_executor.py",
             "cashout_residual_handler.py",
             "scripts/live_gate.py",
+            "scripts/ci/trusted_pr_guard.py",  # #562: mutazioni dei controlli della lane trusted
             "tests/",
             "core/",
             "order_manager.py",

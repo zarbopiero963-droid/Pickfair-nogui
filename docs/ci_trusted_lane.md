@@ -1,0 +1,126 @@
+# Lane Buildkite `trusted`: overlap guard e merge readiness
+
+Issue #562. Grok cura infrastruttura e routing Buildkite; Claude cura questi script e i loro test. Le pipeline
+`pr-overlap-guard` e `pr-merge-readiness` del cluster `pickfair-trusted` girano su un checkout di **`main`** (il gate
+pre-command impone HEAD == origin/main == BUILDKITE_COMMIT). Il codice della PR non viene mai scaricato né eseguito.
+La PR si legge solo dalla GitHub REST API.
+
+## Percorsi
+
+| Pipeline Buildkite | Comando (nessun argomento) |
+|---|---|
+| `pr-overlap-guard` | `scripts/ci/pr_overlap_guard.sh` |
+| `pr-merge-readiness` | `scripts/ci/pr_merge_readiness.sh` |
+
+Entrambi sono wrapper di `scripts/ci/trusted_pr_guard.py`, avviato con `python3 -I`: niente `PYTHONPATH`, niente
+site utente, niente directory corrente in `sys.path`. Un job non può quindi iniettare moduli. Il guard usa solo la
+libreria standard. La readiness delega a `scripts/pr_merge_readiness.py`, la stessa del workflow GitHub Actions, che
+usa la CLI `gh`.
+
+## Contratto d'ingresso
+
+Variabili d'ambiente: **nessun argomento**. Un argomento qualunque produce FAIL.
+
+| Variabile | Obbligatoria | Formato | Note |
+|---|---|---|---|
+| `PF_PR_NUMBER` | sì | `[1-9][0-9]{0,6}` ASCII | niente zeri iniziali, spazi, cifre Unicode |
+| `PF_PR_HEAD_SHA` | sì | 40 esadecimali minuscoli | l'head per cui si chiede il verdetto; se la PR ha un head diverso, FAIL |
+| `PF_PR_BASE_REF` | no | default `main` | branch base atteso |
+| `PF_GITHUB_TOKEN_FILE` | una delle due fonti | percorso di un file regolare | permessi 0600/0400; leggibile da gruppo o altri ⇒ FAIL |
+| `CREDENTIALS_DIRECTORY` | una delle due fonti | directory systemd `LoadCredential` | file `github-token` |
+| `PF_RESULT_DIR` | no | default `.trusted-guard` | qui va `<overlap\|readiness>.json` |
+| `PF_READINESS_WAIT_SECONDS` | no | 0..6600, default 420 | attesa dei check pendenti; vale solo per la readiness |
+
+Il guard verifica anche le variabili Buildkite, quando sono presenti:
+- `BUILDKITE_REPO` deve essere esattamente questo repository (https o ssh);
+- `BUILDKITE_PULL_REQUEST` deve essere `false`;
+- `BUILDKITE_BRANCH` deve essere `main`.
+
+**Token.** Il token GitHub deve essere **fine-grained, in sola lettura**, limitato a questo repository:
+- Contents: read;
+- Pull requests: read;
+- Commit statuses: read;
+- Checks: read;
+- Actions: read;
+- Issues: read (per i commenti delle review AI).
+
+Un token classico con scope dichiarati (`X-OAuth-Scopes` non vuoto: `repo`, `public_repo`, … scrivono) ⇒ FAIL. Il
+token non viene mai stampato: l'output del processo figlio e i motivi passano da una redazione che lo sostituisce con
+`***`. I redirect HTTP non vengono seguiti, perché `urllib` ripeterebbe l'header Authorization verso un altro host.
+Le URL di paginazione fuori da `api.github.com` vengono rifiutate.
+
+## Verifiche di provenienza (entrambi i controlli)
+
+1. Token: deve rispettare i permessi minimi.
+2. PR: il numero restituito dall'API deve essere quello richiesto, con `state=open`.
+3. Base: repository di base uguale a questo, branch base uguale a `PF_PR_BASE_REF`, base SHA di 40 esadecimali.
+   `compare/<base_sha>...main` deve dare `ahead` o `identical`, cioè la base deve stare nella storia di main.
+4. Head: deve stare nello **stesso repository** (fork o repository cancellato ⇒ FAIL) e coincidere con
+   `PF_PR_HEAD_SHA`.
+5. A fine valutazione la PR viene riletta: un head o uno stato cambiati ⇒ FAIL.
+
+## `pr_overlap_guard.sh`
+
+Porta in uno script la logica oggi inline in `.github/workflows/pr-overlap-guard.yml`, resa fail-closed:
+- **una sola PR aperta alla volta** (CLAUDE.md): con più PR aperte il controllo è FAIL;
+- **sovrapposizione critica**: con un'altra PR aperta che tocca uno dei cinque file critici del workflow
+  (`core/trading_engine.py`, `order_manager.py`, `core/reconciliation_engine.py`, `core/state_recovery.py`,
+  `database.py`), il controllo è FAIL.
+
+Differenze volute dallo step inline:
+- i file di una PR si leggono su **tutte le pagine**;
+- un elenco più corto di `changed_files`, o un elenco che raggiunge il tetto di 3000 file dell'API, ⇒ FAIL;
+- una PR i cui file non si leggono ⇒ FAIL. Lo step inline la saltava (`except Exception: continue`).
+
+## `pr_merge_readiness.sh`
+
+Esegue `scripts/pr_merge_readiness.py --repo … --pr … --ignore-safe-autofix --wait-pending-seconds <W>
+--poll-seconds 15`. Lo lancia dal checkout di main con un ambiente minimo: `GH_TOKEN`, `GH_CONFIG_DIR` temporanea,
+nessun altro token ereditato. Esito **PASS solo se tutte** queste condizioni valgono:
+- exit 0;
+- `headRefOid` uguale all'head atteso;
+- `can_merge` è il booleano `true`;
+- la PR è aperta e non in bozza;
+- `blockers` e `pending` sono liste vuote;
+- nessun `reasons`;
+- **`ai_review_gate_status == "PASS"`**.
+
+Il gate Sol/Grok è **informativo** nel workflow GitHub Actions, qui invece **blocca**. Sono FAIL:
+- review assente;
+- `UNKNOWN`;
+- `RERUN_REVIEW_ONCE`;
+- `STOP_OWNER` (anche `VALID_INCONCLUSIVE` o crediti esauriti).
+
+Il verdetto PASS significa «mergiabile senza decisioni owner aperte», non «approvato dall'owner». Una PR che la
+governance lascia alla decisione dell'owner resta FAIL qui, e decide l'owner.
+
+**Tempo.** La pipeline trusted ha un timeout di 10 minuti, quindi il default `PF_READINESS_WAIT_SECONDS=420` sta
+dentro con margine. Se i check sono ancora pendenti allo scadere, il risultato è FAIL, mai PASS. Per la parità con
+Actions (6600 s) bisogna alzare il timeout della pipeline sopra i 115 minuti.
+
+## Uscita
+
+- Exit **0 solo con PASS**, **1** in ogni altro caso: dato mancante, formato errato, token non conforme, errore di
+  rete o HTTP non 200, JSON non valido, provenienza incoerente, check rosso, pendente o sconosciuto, review non PASS,
+  eccezione inattesa.
+- `PF_RESULT_DIR/<guard>.json` contiene: `guard`, `repo`, `pr`, `head_sha`, `base_ref`, `base_sha` (se letto),
+  `verdict` (`PASS`/`FAIL`), `reasons`. Lo status GitHub va pubblicato sullo **`head_sha` della PR** preso da questo
+  file, non sul commit di main che Buildkite ha costruito. Il token in sola lettura non può pubblicare status: lo fa
+  l'infrastruttura, con una credenziale separata.
+
+## Requisiti infrastrutturali (Grok)
+
+- `python3` ≥ 3.10 e `gh` ≥ 2.40 nel `PATH` dell'agent trusted. Uscita di rete verso `api.github.com` (REST e
+  GraphQL).
+- Mappatura dal trigger nel gate pre-command: `PF_PR_NUMBER` e `PF_PR_HEAD_SHA` dello stesso evento.
+  Il token arriva via `LoadCredential=github-token:/etc/buildkite-agent-trusted/secrets/github-token`, quindi
+  dentro `CREDENTIALS_DIRECTORY`.
+- Il job trusted non deve esportare il token in variabili d'ambiente: lo legge il guard dal file.
+
+## Limiti dichiarati
+
+- **NOT VERIFIED end-to-end.** Il percorso reale con token, `gh` e status GitHub resta da collaudare sulla lane
+  dopo che l'owner fornisce il token. Verificato offline: 122 test e mutazioni. Smoke dell'overlap guard sull'API
+  pubblica reale su #561: PASS sull'head corrente, FAIL su un head stantio.
+- Il workflow Actions `.github/workflows/pr-overlap-guard.yml` conserva la propria copia inline, che è riserva. Farlo
+  puntare allo script è una modifica di workflow, quindi a merge owner: è un follow-up separato.

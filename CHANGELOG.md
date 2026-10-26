@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Lane Buildkite trusted (#562) — `scripts/ci/pr_overlap_guard.sh` e `scripts/ci/pr_merge_readiness.sh`:** due
+  controlli senza argomenti per le pipeline trusted su `main`. PR da `PF_PR_NUMBER`/`PF_PR_HEAD_SHA`, dati solo dalla
+  GitHub API, nessun codice della PR eseguito. Verificano repository, PR aperta, base nella storia di main, head nello
+  stesso repository e uguale a quello atteso (riletto a fine valutazione). Token da file 0600 in sola lettura (token
+  classico con scope rifiutato), mai stampato, nessun redirect seguito. Overlap guard fail-closed: tutte le pagine,
+  PR illeggibile = FAIL. Readiness: PASS solo con `can_merge` vero e gate Sol/Grok PASS. Contratto in
+  `docs/ci_trusted_lane.md`; 122 test, 16 mutazioni uccise.
+
 ### Changed
 - **PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01 — soglia owner 1 EUR e adapter Microstake LIVE (decisione owner
   24/10/2026):** il minimo del singolo ordine non è più 2 EUR ma il riferimento owner di 1 EUR, in una fonte unica
