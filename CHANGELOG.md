@@ -8,6 +8,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- **PF-GOV-DOC-WORKFLOW-ALIGN-01 — governance e workflow allineati a #561 e #563:**
+  - `CLAUDE.md` e `AGENTS.md` elencano i tre script della lane trusted fra i file a merge owner e descrivono lo stub
+    Microstake come minimo exchange (`core.stake_precision.EXCHANGE_MIN_ORDER`, riferimento owner 1 EUR, BACK
+    1000 / LAY 1.01) invece di 2 EUR;
+  - `.github/workflows/pr-overlap-guard.yml` esegue lo script canonico `scripts/ci/pr_overlap_guard.sh` da un checkout
+    del commit base, mai del codice della PR, con il token in un file 0600 e permessi in sola lettura. Il nome del
+    check resta `overlap-check`;
+  - nuovi test: allineamento fra classificatore e documenti; regola «una sola PR aperta» sullo script vero, legata al
+    workflow.
+
 ### Added
 - **Lane Buildkite trusted (#562) — `scripts/ci/pr_overlap_guard.sh` e `scripts/ci/pr_merge_readiness.sh`:** due
   controlli senza argomenti per le pipeline trusted su `main`. PR da `PF_PR_NUMBER`/`PF_PR_HEAD_SHA`, dati solo dalla

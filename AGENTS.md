@@ -733,9 +733,11 @@ PF-BEST-EXECUTION-DYNAMIC-01 (c.6235560755); technical contract in
   Microstake saga (Quick Bet, Dutching, Roserpina, cashout hedge), with no
   toggle; executes it exactly or fails explicitly; LIVE without an adapter
   stays fail-closed;
-- keeps requested stake, execution stake, temporary order size (2 EUR stub,
-  within available funds and exposure headroom), matched/unmatched exposure,
-  LAY liability, funds and risk controls separate;
+- keeps requested stake, execution stake, temporary order size (the stub equals
+  the exchange minimum `core.stake_precision.EXCHANGE_MIN_ORDER`, owner reference
+  1 EUR, at a non-matchable price BACK 1000 / LAY 1.01 — #561; within available
+  funds and exposure headroom), matched/unmatched exposure, LAY liability, funds
+  and risk controls separate;
 - treats any unknown outcome after a send as AMBIGUOUS plus reconciliation,
   never a retry; never alters the matched part of an order;
 - treats dynamic best price (BACK higher, LAY lower, unmatched part only,
@@ -1412,6 +1414,9 @@ The workflows that ARE the gates the auto-merge decision rests on:
 - `scripts/pr_clean_scope_rebuild.py`
 - `scripts/pr_refresh_self_checks.py`
 - `scripts/ci/check_ci_quarantine.py`
+- `scripts/ci/trusted_pr_guard.py`, `scripts/ci/pr_overlap_guard.sh`,
+  `scripts/ci/pr_merge_readiness.sh` (Buildkite trusted lane, #563: they decide
+  overlap and merge readiness; the `pr-overlap-guard.yml` workflow runs them too)
 - (and, fail-closed, every other `scripts/pr_*.py`: the label pattern covers them)
 
 `scripts/guardrail_check.py` is on the list for the same reason as the

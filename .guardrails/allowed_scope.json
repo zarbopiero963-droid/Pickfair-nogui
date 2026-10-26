@@ -2899,6 +2899,21 @@
         "tests/scripts/test_trusted_pr_guard.py"
       ],
       "max_files": 13
+    },
+    "gov-doc-workflow-align-01": {
+      "description": "PF-GOV-DOC-WORKFLOW-ALIGN-01 (mandato owner approvato, 26/10/2026), tre interventi: (1) CLAUDE.md e AGENTS.md elencano i file protetti introdotti da #563 (scripts/ci/trusted_pr_guard.py, pr_overlap_guard.sh, pr_merge_readiness.sh); (2) stub Microstake descritto col contratto di #561 (minimo exchange core.stake_precision.EXCHANGE_MIN_ORDER, riferimento owner 1 EUR) invece di 2 EUR; (3) .github/workflows/pr-overlap-guard.yml esegue lo script trusted canonico da checkout del commit base, senza codice della PR, token in file 0600, permessi read-only, check overlap-check invariato. Test di allineamento e di legame workflow/script. File di autorita' e workflow: merge owner.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-overlap-guard.yml",
+        ".guardrails/allowed_scope.json",
+        "AGENTS.md",
+        "CHANGELOG.md",
+        "CLAUDE.md",
+        "docs/ci_trusted_lane.md",
+        "tests/guardrails/test_governance_docs_aligned.py",
+        "tests/guardrails/test_una_sola_pr_aperta.py"
+      ],
+      "max_files": 8
     }
   }
 }

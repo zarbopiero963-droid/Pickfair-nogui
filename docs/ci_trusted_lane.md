@@ -67,7 +67,7 @@ permesso minimo è quindi un **requisito dell'infrastruttura**, non verificabile
 
 ## `pr_overlap_guard.sh`
 
-Porta in uno script la logica oggi inline in `.github/workflows/pr-overlap-guard.yml`, resa fail-closed:
+Porta in uno script la logica che stava inline in `.github/workflows/pr-overlap-guard.yml`, resa fail-closed:
 - **una sola PR aperta alla volta** (CLAUDE.md): con più PR aperte il controllo è FAIL;
 - **sovrapposizione critica**: con un'altra PR aperta che tocca uno dei cinque file critici del workflow
   (`core/trading_engine.py`, `order_manager.py`, `core/reconciliation_engine.py`, `core/state_recovery.py`,
@@ -150,9 +150,30 @@ chiusi, oppure con un timeout ≥ 115 minuti e `PF_READINESS_WAIT_SECONDS=6600`,
 - **NOT VERIFIED end-to-end.** Il percorso reale con token, `gh` e status GitHub resta da collaudare sulla lane
   dopo che l'owner fornisce il token. Verificato offline: 151 test e mutazioni. Smoke dell'overlap guard sull'API
   pubblica reale su #561: PASS sull'head corrente, FAIL su un head stantio.
-- Il workflow Actions `.github/workflows/pr-overlap-guard.yml` conserva la propria copia inline, che è riserva. Farlo
-  puntare allo script è una modifica di workflow, quindi a merge owner: è un follow-up separato.
 - I tre file degli script sono **a merge owner**: sono in `OWNER_MANUAL_MERGE_FILES` e nel pattern
   `^scripts/ci/(pr_[a-z0-9_]+\.sh|trusted_pr_guard\.py)$` di `MANUAL_AUTHORITY_PATTERNS`, copiato nei workflow di Sol
-  e Grok. L'elenco in prosa dei file a merge owner in `CLAUDE.md`/`AGENTS.md` va allineato dall'owner, perché sono
-  file di autorità: è un follow-up separato.
+  e Grok, e sono elencati anche in `CLAUDE.md` e `AGENTS.md` (PF-GOV-DOC-WORKFLOW-ALIGN-01).
+  `tests/guardrails/test_governance_docs_aligned.py` rende rossa ogni divergenza fra classificatore e prosa.
+
+## Riserva GitHub Actions (`pr-overlap-guard.yml`)
+
+Dal mandato PF-GOV-DOC-WORKFLOW-ALIGN-01 il workflow Actions `pr-overlap-guard.yml` non ha più una copia inline della
+logica: il job `overlap-check` (stesso nome del check di prima) esegue lo script canonico
+`scripts/ci/pr_overlap_guard.sh`.
+- **Codice non fidato:** il checkout è il commit **base** della PR (`github.event.pull_request.base.sha`), con
+  `persist-credentials: false`; il codice della PR non viene scaricato né eseguito. I dati arrivano solo dalla
+  GitHub API.
+- **Token:** `github.token` del job, permessi `contents: read` e `pull-requests: read`. Il workflow lo scrive in un
+  file 0600 temporaneo (`umask 077`), toglie la variabile dall'ambiente prima di lanciare lo script e cancella il
+  file all'uscita (`trap`).
+- **Ingresso:** `PF_PR_NUMBER` e `PF_PR_HEAD_SHA` dall'evento `pull_request`, oppure dagli input obbligatori di
+  `workflow_dispatch`. Il risultato `overlap.json` è caricato come artifact `pr-overlap-report`.
+- **Differenze dal vecchio step inline:**
+  - legge tutte le pagine;
+  - una PR illeggibile dà FAIL;
+  - verifica la provenienza: una PR da fork o con head diverso dall'evento dà FAIL;
+  - senza PR aperte dà FAIL invece che verde.
+- Il workflow che gira su `pull_request` è quello della PR stessa: una PR che modifica questo workflow lo esegue
+  modificato. È per questo che tutti i workflow sono a merge owner.
+- `tests/guardrails/test_una_sola_pr_aperta.py` esegue la regola sullo script vero e lega il workflow allo script:
+  checkout del base, nessuna copia inline, token solo come file, permessi in sola lettura.
