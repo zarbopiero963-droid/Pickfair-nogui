@@ -199,7 +199,20 @@ Comandi:
   ramo DRY-RUN precede ogni altro, annullamenti pendenti compresi, che si azzerano senza tentativi) e nel
   log compaiono pipeline, cinque variabili e status che sarebbero stati usati. Archivio separato `<state_db>.dry-run`:
   l'archivio reale non viene mai creato né modificato, quindi il servizio vero riparte da zero. `--dry-run` vale solo
-  con `serve`;
+  con `serve`. Limiti voluti (review owner su #571):
+  - **copre** la parte del ciclo prima di ogni scrittura: polling GitHub, transizioni (bozza, chiusura, riapertura,
+    nuovo head e sostituzione), dedupe fra giri e fra riavvii dello stesso archivio, autorizzazione e audit dei rerun,
+    build e status calcolati;
+  - **non copre** `creating → dispatched → publishing`: senza build reali non ci sono numero di build, esito da
+    leggere, artifact o status da consegnare. Annullamento, polling degli esiti, riavvio con build in corso e
+    riconsegna dei `publish_failed` restano provati offline (finto Buildkite e finto GitHub) e si certificano solo nel
+    collaudo reale (checklist, passi 2–12), con la pubblicazione degli status che richiede un GO owner separato.
+    Anche fallback e riconsegna, se raggiunti, in DRY-RUN non scrivono
+    (`test_dry_run_fallback_and_redelivery_never_write`);
+  - «nessuna scrittura» vale per Buildkite e per gli status: il comando del token GitHub (`github_token_command`)
+    gira come nel servizio vero, quindi l'helper conia comunque il token di lettura;
+  - l'archivio `<state_db>.dry-run` resta fra una sessione e l'altra: un secondo DRY-RUN sugli stessi head non
+    ricrea i job (dedupe). Per ripetere la prova da zero, rimuoverlo prima dell'avvio;
 - `jobs --config F` e `reruns --config F`: consultazione in sola lettura degli ultimi job e dei comandi di rerun.
 
 ## Punti aperti: NOT CONFIGURED e da decidere
@@ -240,8 +253,11 @@ Da eseguire sulla PR del dispatcher. Va distinto il **test tecnico positivo** (l
 reale** (la PR è davvero mergiabile).
 
 1. `check-config --check-secrets` ⇒ `CONFIGURED` con i percorsi reali (anche la credenziale 0440 di `LoadCredential`);
-   segreto 0644 o helper del token fallito ⇒ `NOT CONFIGURED`. Poi `serve --dry-run`: transizioni e build attese
-   nel log, nessuna richiesta di scrittura verso Buildkite o GitHub.
+   segreto 0644 o helper del token fallito ⇒ `NOT CONFIGURED`. La credenziale 0440 è ammessa solo con
+   `CREDENTIALS_DIRECTORY` impostata: il controllo va lanciato nel contesto dell'unit (per esempio `systemd-run` con
+   le stesse `LoadCredential`, `User` e `Group`, oppure un `ExecStartPre`); da una shell qualunque esce
+   `NOT CONFIGURED` ed è un falso FAIL. Poi `serve --dry-run`, con l'archivio `.dry-run` rimosso prima: transizioni
+   e build attese nel log, nessuna richiesta di scrittura verso Buildkite o GitHub.
 2. Avvio del servizio: entro un intervallo, due build (`pr-overlap-guard`, `pr-merge-readiness`) su `main` per l'head
    corrente, con le cinque variabili e `PF_DELIVERY_ID=p<PR>-t<n>-<sha12>`; status `pending` con l'URL della build.
 3. Un secondo giro senza cambiamenti ⇒ nessuna build nuova.
@@ -266,6 +282,10 @@ reale** (la PR è davvero mergiabile).
 - **NOT VERIFIED end-to-end**: verificato solo offline (finto GitHub e finto Buildkite fedeli alle API REST).
 - Un elenco che si interrompe senza `Link: rel="next"` non è riconoscibile come incompleto: la difesa è che una PR
   sparita da un solo elenco non è chiusa (servono due assenze consecutive).
+- Eccezione 0440 di `LoadCredential`: il file si verifica sul descrittore aperto (`O_NOFOLLOW`, `fstat`), la
+  directory sul percorso (`realpath`). Fra i due resta una finestra teorica, chiusa in pratica dai requisiti della
+  directory (di root o dell'utente del servizio, non scrivibile da gruppo o altri): può sfruttarla solo chi può già
+  leggere il token.
 - Il ricontrollo dello stato della PR al momento della pubblicazione è dell'helper root; il dispatcher riduce la
   finestra con il proprio ricontrollo dei job sostituiti. Fra i due resta una finestra senza lock: un `success` su uno
   SHA appena sostituito non tocca la PR, perché i check si valutano sull'head corrente.

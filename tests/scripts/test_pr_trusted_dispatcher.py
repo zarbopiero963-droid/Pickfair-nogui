@@ -2317,6 +2317,26 @@ def test_dry_run_job_with_pending_cancels_never_takes_the_real_path(dry, state):
     assert fresh["state"] == "done" and fresh["outcome"] == "dry_run" and fresh["pending_cancels"] == "[]"
 
 
+def test_dry_run_fallback_and_redelivery_never_write(dry, monkeypatch):
+    """Review owner su #571: anche il fallback degli errori interni (annullamento + esito `error`) e la riconsegna
+    di un `publish_failed` passano dal trasporto solo-GET e dal publisher che rifiuta: in DRY-RUN nessuna scrittura."""
+    disp, bk, pub, clock, cfg = dry
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    stuck, failed = disp.store.recent_jobs()[:2]
+    disp.store.update_job(stuck["id"], clock.now, state="dispatched", build_number=7, dispatched_at=clock.now)
+    disp.store.update_job(failed["id"], clock.now, state="publish_failed", outcome="success", publishing_since=clock.now)
+    monkeypatch.setattr(disp, "_dry_run", lambda job: (_ for _ in ()).throw(RuntimeError("guasto")))
+    clock.now += max(cfg.build_timeout_seconds.values()) + td.REDELIVERY_SECONDS + 1
+    attempts = []
+    real_publish = disp.publish
+    disp.publish = lambda *a: attempts.append(a) or real_publish(*a)
+    disp.tick()
+    assert len(attempts) == 2                                     # fallback e riconsegna ci hanno provato davvero
+    assert _writes(bk) == [] and pub.calls == []
+    assert disp.store.get_job(failed["id"])["state"] == "publish_failed"
+
+
 def test_dry_run_never_touches_the_real_state_archive(dry):
     _, _, _, _, cfg = dry
     assert not os.path.exists(cfg.state_db)                       # archivio reale mai creato ne' modificato

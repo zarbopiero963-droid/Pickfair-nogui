@@ -16,7 +16,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     processo, permessi esattamente 0440); fuori resta 0400/0600;
   - `serve --dry-run`: collaudo senza scritture esterne (trasporto solo GET, publisher che rifiuta, nessuna build né
     status, archivio separato `<state_db>.dry-run`), con le build e gli status attesi nel log; il ramo DRY-RUN
-    precede anche gli annullamenti pendenti (review indipendente);
+    precede anche gli annullamenti pendenti (review indipendente); limiti documentati (seconda review owner): il
+    ciclo `creating → dispatched → publishing` non si percorre senza build reali e si certifica nel collaudo reale,
+    il token GitHub di lettura viene comunque coniato, l'archivio `.dry-run` va rimosso per ripetere la prova;
+    fallback e riconsegna provati senza scritture;
   - test RED->GREEN e mutazioni nell'area `trusted_dispatcher`.
 - **#562 — dispatcher trusted della lane Buildkite (`scripts/pr_trusted_dispatcher.py`), NOT CERTIFIED:**
   - **polling autenticato dell'API GitHub al posto del webhook HTTPS** (decisione owner PF-562 opzione B): nessun web
