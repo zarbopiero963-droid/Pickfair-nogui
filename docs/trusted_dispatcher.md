@@ -59,7 +59,11 @@ transizione corrispondente. I job in corso riprendono come prima:
 - **Comando:** un commento sulla PR il cui testo è esattamente `/pf-trusted-rerun <sha40>`.
 - **Autenticazione:** l'autore è quello che GitHub restituisce per il commento, letto con il token autenticato.
 - **Autorizzazione:** sono richiesti tutti questi requisiti:
-  - il login è in `rerun.allowed_logins` (un elenco vuoto disabilita i rerun);
+  - il login è in `rerun.allowed_logins` (un elenco vuoto disabilita i rerun). Allowlist iniziale decisa dall'owner
+    (OWNER GO PF-570): solo `zarbopiero963-droid`; Claude può chiedere un rerun solo commentando con quell'account;
+  - l'autore è un account utente (`user.type = User`, mai bot o app) e GitHub gli riconosce permessi di scrittura
+    (`author_association` `OWNER`, `MEMBER` o `COLLABORATOR`). Login e permessi vengono dalla risposta autenticata
+    dell'API, mai dal testo del commento: un login riassegnato a un altro account senza permessi è rifiutato;
   - il commento non è stato modificato dopo la pubblicazione;
   - la PR è aperta e valutabile;
   - lo SHA indicato è l'**head corrente**.
@@ -104,7 +108,7 @@ Codex, Sol, Grok e nelle revisioni indipendenti su #569):
 | Codice di un fork | head repo ≠ repository ⇒ non valutabile | `td_fork_accepted` |
 | Codice della PR con privilegi trusted | build sempre su `main`/`HEAD` con le sole cinque variabili; il client GitHub non può leggere contenuti o archivi; nessun web server | `test_builds_always_run_main_never_the_pr_head`, `test_dispatcher_has_no_web_server_and_no_code_fetching_paths`, `td_github_endpoint_unrestricted` |
 | Doppie build | identificatore per transizione, indice unico sui job attivi, una sola istanza | `test_unchanged_state_polled_again_starts_no_new_builds`, `test_rerun_command_is_executed_once`, `td_rerun_replayed` |
-| Rerun abusivo | allowlist di login, commento non modificato, SHA = head corrente; audit di ogni comando | `test_unauthorized_or_stale_rerun_is_rejected_and_audited`, `td_rerun_login_unchecked`, `td_rerun_stale_sha_accepted` |
+| Rerun abusivo | allowlist di login, account utente con permessi di scrittura (`author_association`), commento non modificato, SHA = head corrente; permessi assenti nella risposta ⇒ lettura annullata; audit di ogni comando | `test_unauthorized_or_stale_rerun_is_rejected_and_audited`, `test_rerun_command_without_verified_permissions_keeps_the_cursor`, `td_rerun_login_unchecked`, `td_rerun_association_unchecked`, `td_rerun_bot_accepted`, `td_rerun_permissions_optional`, `td_rerun_stale_sha_accepted` |
 | Esito su uno SHA vecchio | sostituzione per head; ricontrollo prima della pubblicazione; identità del risultato; ricontrollo dell'helper | `test_new_commit_is_synchronize_and_cancels_the_old_builds`, `td_publish_recheck_skipped`, `td_stale_sha_accepted` |
 | Pipeline non autorizzate | solo le due di `GUARDS` | `test_only_the_two_contract_pipelines_can_be_started` |
 | Status diagnostico scambiato per richiesto | contesti fissi; lo status della readiness è self-check, quello dell'overlap no | `test_readiness_status_is_a_self_check_and_overlap_status_is_not` |
@@ -119,7 +123,7 @@ Le chiamate HTTP non seguono i redirect (`_NoRedirect`), usano solo `https://` e
 ```json
 {
   "github": {"token_command": ["/<eseguibile assoluto>", "..."], "token_command_timeout_seconds": 20},
-  "rerun": {"allowed_logins": ["<login GitHub>"]},
+  "rerun": {"allowed_logins": ["zarbopiero963-droid"]},
   "buildkite": {
     "organization": "<slug>",
     "token_file": "/<percorso assoluto>",
@@ -164,7 +168,7 @@ Comandi:
 | 3 | Upload dell'artifact | NOT CONFIGURED (`result_artifacts`, `artifact_download_hosts`) | Le pipeline caricano `PF_RESULT_DIR/<guard>.json`; Grok indica percorso e host di download reale |
 | 4 | Publisher | NOT CONFIGURED (`publisher.command`) | Come l'utente del dispatcher invoca l'helper root `pf-publish-status` (per esempio una regola sudo dedicata) |
 | 5 | Tempi della readiness | da decidere (Grok) | Avviata sul push, prima che finiscano le review Sol/Grok, la readiness è quasi sempre FAIL; la si può rilanciare con il rerun quando i check sono chiusi |
-| 6 | Allowlist dei rerun | NOT CONFIGURED (`rerun.allowed_logins`) | I login autorizzati: oggi Claude commenta come l'account owner, quindi l'allowlist reale è decisione dell'owner |
+| 6 | Allowlist dei rerun | decisa (OWNER GO PF-570), da configurare sul VPS | `rerun.allowed_logins: ["zarbopiero963-droid"]`; servono anche permessi di scrittura verificati da GitHub |
 | 7 | Coda trusted in pausa | operativo | Build `scheduled` fino al timeout, poi `error`: nessun PASS |
 | 8 | Valori di `PF_EVENT` | da verificare (Grok) | Il gate pre-command deve ammettere `ready_for_review` e `manual`; se li rifiuta la build fallisce e lo status è `failure`/`error`, mai PASS |
 
@@ -196,7 +200,7 @@ reale** (la PR è davvero mergiabile).
 5. Push mentre le build girano ⇒ build del vecchio head annullate, nessun `success` sul vecchio SHA, nuove build.
 6. PR in bozza, chiusa e riaperta, ritorno a uno SHA precedente ⇒ comportamento della tabella «Transizioni».
 7. **Rerun autonomo di Claude:** commento `/pf-trusted-rerun <sha>` sulla PR ⇒ nuove build con
-   `PF_EVENT=manual`, riga in `reruns`; commento di un login non autorizzato o su uno SHA vecchio ⇒ rifiutato e
+   `PF_EVENT=manual`, riga in `reruns`; commento di un login non autorizzato, di un account senza permessi di scrittura o su uno SHA vecchio ⇒ rifiutato e
    registrato. Dimostra che Claude avvia e rilancia i test senza assistenza manuale.
 8. Helper del token fermo o token scaduto ⇒ nessun giro, nessuno status; ripristinato ⇒ il giro successivo
    recupera lo stato.

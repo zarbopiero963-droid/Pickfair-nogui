@@ -87,8 +87,10 @@ class FakeGitHub:
                           "base": {"ref": base, "repo": {"full_name": REPO}},
                           "head": {"sha": head, "repo": None if head_repo is None else {"full_name": head_repo}}}
 
-    def comment(self, cid, pr, body, *, login=RERUNNER, created="2030-01-01T00:00:00Z", updated=None) -> None:
-        self.comments.append({"id": cid, "body": body, "user": {"login": login},
+    def comment(self, cid, pr, body, *, login=RERUNNER, created="2030-01-01T00:00:00Z", updated=None,
+                association="OWNER", user_type="User") -> None:
+        self.comments.append({"id": cid, "body": body, "user": {"login": login, "type": user_type},
+                              "author_association": association,
                               "issue_url": f"https://api.github.com/repos/{REPO}/issues/{pr}",
                               "created_at": created, "updated_at": updated or created})
 
@@ -1734,12 +1736,15 @@ def test_rerun_command_is_executed_once(env):
 @pytest.mark.parametrize("case,reason", [
     ("login", "non autorizzato"), ("sha", "non e' l'head corrente"), ("edited", "modificato"),
     ("closed", "PR non aperta"), ("draft", "non valutabile"),
+    ("association", "senza permessi di scrittura"), ("contributor", "senza permessi di scrittura"),
+    ("bot", "non e' un utente"),
 ])
 def test_unauthorized_or_stale_rerun_is_rejected_and_audited(env, case, reason):
     disp, bk, _, clock = env
     _rerun_ready(disp, bk)
     created = td.iso(clock.now + 10)
-    kwargs = {"login": "intruder"} if case == "login" else {}
+    kwargs = {"login": {"login": "intruder"}, "association": {"association": "NONE"},
+              "contributor": {"association": "CONTRIBUTOR"}, "bot": {"user_type": "Bot"}}.get(case, {})
     sha = HEAD2 if case == "sha" else HEAD
     updated = td.iso(clock.now + 15) if case == "edited" else None
     if case == "closed":
@@ -1784,6 +1789,19 @@ def test_malformed_rerun_command_keeps_the_cursor(env):
     bk.gh.comments[-1]["issue_url"] = "https://evil.example/issues/42"
     clock.now += 20
     disp.poll()
+    assert disp.store.get_meta("comments_since") == cursor and disp.store.recent_reruns() == []
+
+
+@pytest.mark.parametrize("field", ["author_association", "type"])
+def test_rerun_command_without_verified_permissions_keeps_the_cursor(env, field):
+    """Permessi e tipo di account li dichiara GitHub: un comando senza questi dati non si valuta (fail closed)."""
+    disp, bk, _, clock = env
+    _rerun_ready(disp, bk)
+    cursor = disp.store.get_meta("comments_since")
+    bk.gh.comment(9006, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    (bk.gh.comments[-1] if field == "author_association" else bk.gh.comments[-1]["user"]).pop(field)
+    clock.now += 20
+    assert disp.poll() == []
     assert disp.store.get_meta("comments_since") == cursor and disp.store.recent_reruns() == []
 
 

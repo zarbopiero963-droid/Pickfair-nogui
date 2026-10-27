@@ -23,7 +23,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     consecutivi senza la PR, che annulla le build;
   - rerun manuale `/pf-trusted-rerun <sha40>` in un commento della PR: autore in `rerun.allowed_logins`, commento
     non modificato, PR aperta e idonea, SHA uguale all'head corrente; id `p<PR>-r<commento>-<sha12>`, registrato in
-    `reruns` (mai rieseguito due volte), comandi precedenti al primo avvio ignorati; rifiutato = solo registro, il
+    `reruns` (mai rieseguito due volte), comandi precedenti al primo avvio ignorati; autore account utente con
+    permessi di scrittura dichiarati da GitHub (`author_association` OWNER/MEMBER/COLLABORATOR), allowlist iniziale
+    `zarbopiero963-droid` (OWNER GO PF-570); rifiutato = solo registro, il
     rerun non tocca i required check e il verdetto resta del guard;
   - un head nuovo annulla le build del vecchio, creazione ambigua riconciliata senza seconda creazione, ripresa dopo
     il riavvio; avvia solo `pr-overlap-guard` e `pr-merge-readiness` su `main` con le cinque variabili del contratto

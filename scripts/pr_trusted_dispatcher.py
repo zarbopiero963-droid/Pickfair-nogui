@@ -481,12 +481,18 @@ class GitHub:
                             {"since": since, "per_page": "100", "sort": "created", "direction": "asc"})
 
 
+# permessi di scrittura sul repository dichiarati da GitHub per l'autore del commento (author_association)
+RERUN_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+
 @dataclass(frozen=True)
 class RerunRequest:
     comment_id: int
     pr: int
     head_sha: str
     login: str
+    association: str = ""
+    user_type: str = ""
 
 
 def parse_rerun_comment(item: Any) -> Optional[RerunRequest]:
@@ -496,16 +502,17 @@ def parse_rerun_comment(item: Any) -> Optional[RerunRequest]:
     m = _RERUN_RE.fullmatch(item["body"].strip())
     if m is None:
         return None
-    cid, login = item.get("id"), _get(item, "user", "login")
-    url = item.get("issue_url")
+    cid, login, user_type = item.get("id"), _get(item, "user", "login"), _get(item, "user", "type")
+    association, url = item.get("author_association"), item.get("issue_url")
     prefix = f"{GITHUB_API}/repos/{TRUSTED_REPO}/issues/"
     if not _is_int(cid) or cid <= 0 or not isinstance(login, str) or not isinstance(url, str) \
+            or not isinstance(association, str) or not isinstance(user_type, str) \
             or not url.startswith(prefix) or not _PR_RE.fullmatch(url[len(prefix):]):
         raise ApiError("comando di rerun con dati fuori formato")
-    if item.get("created_at") != item.get("updated_at") or not _TIMESTAMP_RE.fullmatch(str(item.get("created_at"))):
-        # modificato dopo la pubblicazione: il testo eseguito non sarebbe quello registrato
-        return RerunRequest(comment_id=cid, pr=int(url[len(prefix):]), head_sha="", login=login)
-    return RerunRequest(comment_id=cid, pr=int(url[len(prefix):]), head_sha=m.group(1), login=login)
+    edited = item.get("created_at") != item.get("updated_at") or not _TIMESTAMP_RE.fullmatch(str(item.get("created_at")))
+    # modificato dopo la pubblicazione: il testo eseguito non sarebbe quello registrato
+    return RerunRequest(comment_id=cid, pr=int(url[len(prefix):]), head_sha="" if edited else m.group(1),
+                        login=login, association=association, user_type=user_type)
 
 
 # --------------------------------------------------------------------------------------------- archivio
@@ -715,6 +722,10 @@ class Store:
             row = db.execute("SELECT * FROM pr_state WHERE pr = ?", (req.pr,)).fetchone()
             if req.login not in allowed:
                 reason = f"login {req.login} non autorizzato"
+            elif req.user_type != "User":
+                reason = f"l'autore non e' un utente ({req.user_type})"
+            elif req.association not in RERUN_ASSOCIATIONS:
+                reason = f"author_association {req.association} senza permessi di scrittura"
             elif not req.head_sha:
                 reason = "commento modificato dopo la pubblicazione"
             elif row is None or not row["open"]:

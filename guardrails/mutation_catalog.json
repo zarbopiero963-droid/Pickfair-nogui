@@ -5000,6 +5000,42 @@
       "rationale": "PF-562 rerun: comando di un login non autorizzato eseguito."
     },
     {
+      "id": "td_rerun_association_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "            elif req.association not in RERUN_ASSOCIATIONS:",
+      "mutated": "            elif False:",
+      "rationale": "PF-570 rerun: comando di un autore senza permessi di scrittura (author_association) eseguito."
+    },
+    {
+      "id": "td_rerun_bot_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "            elif req.user_type != \"User\":",
+      "mutated": "            elif False:",
+      "rationale": "PF-570 rerun: comando di un account non utente (bot, app) eseguito."
+    },
+    {
+      "id": "td_rerun_permissions_optional",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "            or not isinstance(association, str) or not isinstance(user_type, str) \\",
+      "mutated": "            or False \\",
+      "rationale": "PF-570 rerun: comando senza permessi dichiarati da GitHub valutato invece di annullare la lettura."
+    },
+    {
       "id": "td_closed_pr_builds_kept",
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
