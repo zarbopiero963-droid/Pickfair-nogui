@@ -3045,7 +3045,7 @@ def test_current_head_failed_check_is_blocker():
     ASSERTIONS.assertEqual(summary["next_action"], "fix_current_head_checks")
 
 
-def test_newer_current_head_success_suppresses_older_duplicate_failure():
+def test_newer_current_head_success_does_not_suppress_older_failure_with_full_history():
     """Il PASS piu' recente non nasconde un FAIL dello stesso nome sull'head corrente (#566): con la storia completa
     restano entrambi; con `filter=latest` (default di GitHub) arriva solo l'ultimo tentativo ed e' `ready`."""
     old = _gh_run("Unit tests", "FAILURE", "head-new", run_id=1, started="2026-05-25T00:00:00Z",
@@ -3481,6 +3481,40 @@ def test_pass_copy_of_a_concurrent_run_is_coalesced_and_the_failure_stays():
     ASSERTIONS.assertEqual(sorted(c["id"] for c in deduped["selected_runs"]), [121907535096, 121907558748])
     ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, runs)["category"],
                            "workflow_failure")
+
+
+@pytest.mark.parametrize("variant", ["str_id", "databaseId", "no_start"])
+def test_block_same_id_with_a_different_outcome_is_not_a_copy(variant):
+    """Review indipendente su #568: stesso id ma esito diverso (snapshot diversi) non e' una copia: il FAIL resta."""
+    fail, ok = _rerun_pair("SUCCESS")
+    ok["id"] = fail["id"]
+    if variant == "str_id":
+        ok["id"] = str(fail["id"])
+    elif variant == "databaseId":
+        ok["databaseId"] = ok.pop("id")
+    else:
+        fail["started_at"] = ""
+    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [fail, ok])["category"],
+                           "workflow_failure")
+
+
+def test_block_same_id_and_times_with_only_the_conclusion_changed_is_not_a_copy():
+    """Stesso id e stessi tempi, cambia solo l'esito (app che aggiorna il check sul posto): restano entrambi."""
+    fail, _ok = _rerun_pair("SUCCESS")
+    updated = dict(fail, conclusion="SUCCESS", status="completed")
+    for runs in ([fail, updated], [updated, fail]):
+        ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, runs)["category"],
+                               "workflow_failure")
+
+
+def test_cancelled_beside_a_later_success_asks_for_a_rerun_never_ready():
+    """Con la storia completa un tentativo cancellato accanto a un PASS resta: si chiede il rerun, mai `ready`."""
+    cancelled, ok = _rerun_pair("SUCCESS")
+    cancelled["conclusion"] = cancelled["status"] = "CANCELLED"
+    summary = controller.summarize_current_head_check_state(HEAD_566, [cancelled, ok])
+    ASSERTIONS.assertEqual(summary["category"], "workflow_cancelled")
+    ASSERTIONS.assertEqual(summary["next_action"], "rerun_stale_checks")
+    ASSERTIONS.assertEqual(summary["rerun_run_ids"], ["40406913995"])
 
 
 def test_block_copies_without_any_check_run_id_are_not_coalesced():

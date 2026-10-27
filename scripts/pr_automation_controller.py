@@ -1667,15 +1667,26 @@ def classify_github_check_run_staleness(pr_head_sha: str, check: dict[str, Any])
     }
 
 
-def _check_run_identity(check: dict[str, Any]) -> str:
-    """Id del singolo check run (REST `id`, GraphQL `databaseId`); vuoto se assente."""
-    return str(first_nonempty(check.get("id"), check.get("databaseId")) or "").strip()
+def _check_run_identity(check: dict[str, Any]) -> tuple[str, ...]:
+    """Impronta di una copia esatta: id del check run (REST `id`, GraphQL `databaseId`) piu' stato e tempi. Due voci
+    con lo stesso id ma esito o tempi diversi (snapshot di pagine in momenti diversi, app che aggiorna il check sul
+    posto) non sono copie: restano entrambe. Id assente => tupla vuota, mai una copia."""
+    run_id = str(first_nonempty(check.get("id"), check.get("databaseId")) or "").strip()
+    if not run_id:
+        return ()
+    return (
+        run_id,
+        check_state(check),
+        str(first_nonempty(check.get("started_at"), check.get("startedAt")) or ""),
+        str(first_nonempty(check.get("completed_at"), check.get("completedAt")) or ""),
+    )
 
 
 def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]]) -> dict[str, Any]:
     """Deduplica fail-closed (#566): sull'head corrente nessun check run omonimo viene scartato, salvo la copia
     esatta dello stesso check run (stesso id, per esempio da pagine sovrapposte). Restano scartati solo i run di uno
-    SHA vecchio o senza SHA (come prima). Un FAIL non diventa quindi mai PASS per effetto della deduplica.
+    SHA vecchio o senza SHA (come prima). Un FAIL non diventa quindi mai PASS per effetto della deduplica. Copia esatta
+    = stesso id, stesso stato e stessi tempi.
 
     Perche' nessun criterio di "tentativo superato" qui: dai dati dei check run non si dimostra che due run omonimi
     siano lo stesso job. Run diversi, anche dello stesso workflow, stanno in suite diverse (#564, b4e6604); dentro la
@@ -1696,7 +1707,7 @@ def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]])
         ranked = sorted(runs, key=lambda run: _check_run_dedupe_key(pr_head_sha, run), reverse=True)
         kept = ranked[0]
         selected.append(kept)
-        kept_ids = {_check_run_identity(kept)} - {""}
+        kept_ids = {_check_run_identity(kept)} - {()}
         for old in ranked[1:]:
             run_id = stale_evidence_id_from_check(old)
             info = classify_github_check_run_staleness(pr_head_sha, old)

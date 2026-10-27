@@ -4397,6 +4397,18 @@
         "tests/scripts/test_pr_automation_controller.py"
       ],
       "rationale": "#566: la copia di un run concorrente tenuto non viene riconosciuta come duplicato."
+    },
+    {
+      "id": "cd_copy_by_id_only",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "        run_id,\n        check_state(check),\n",
+      "mutated": "        run_id,\n",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "review indipendente su #568: stesso id con esito diverso trattato come copia: il PASS nasconde il FAIL."
     }
   ]
 }
