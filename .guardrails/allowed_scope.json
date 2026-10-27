@@ -3000,6 +3000,15 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "max_files": 6
+    },
+    "trusted-dispatcher-562-test-pr": {
+      "description": "PF-562 PR di collaudo (blocco B1, rapporto Grok #562 c.6450558425; mandato owner PF-562-SYSTEMD-CREDENTIAL-D1-FIX-01 §6): nessuna modifica funzionale, solo la matrice delle prove A/B/C in docs/verification. Serve al dispatcher in DRY-RUN come PR reale da osservare (bozza, pronta, nuovo head, chiusura/riapertura, rerun). Nessuna build reale ne' status senza GO owner.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "docs/verification/pf562_dispatcher_collaudo.md"
+      ],
+      "max_files": 2
     }
   }
 }
