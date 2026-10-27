@@ -477,6 +477,21 @@ def test_wrappers_fail_closed_without_the_controlled_environment(tmp_path, scrip
     assert json.loads((tmp_path / f"{guard}.json").read_text())["verdict"] == "FAIL"
 
 
+def test_smoke_without_pr_context_fails_closed_with_explicit_message(tmp_path):
+    """#562 c.6440620221: lo smoke trusted lanciava `pr_merge_readiness.py` senza argomenti (argparse, exit 2).
+    Il punto d'ingresso e' il wrapper: senza contesto PR del dispatcher => exit 1 con motivo esplicito, nessuna
+    chiamata alla readiness, nessun numero di PR di ripiego."""
+    called = []
+    rc = g.main("readiness", [], {"PF_RESULT_DIR": str(tmp_path)}, transport=FakeGitHub(),
+                readiness_runner=lambda *a: called.append(a) or 0)
+    out = json.loads((tmp_path / "readiness.json").read_text())
+    assert rc == 1 and out["verdict"] == "FAIL" and not called and "pr" not in out
+    assert "contesto PR verificato assente" in out["reasons"][0]
+    proc = subprocess.run([str(ROOT / "scripts" / "ci" / "pr_merge_readiness.sh")], capture_output=True, text=True,
+                          env={"PATH": os.environ["PATH"], "PF_RESULT_DIR": str(tmp_path)})
+    assert proc.returncode == 1 and "contesto PR verificato assente" in proc.stdout and "usage:" not in proc.stderr
+
+
 def test_wrappers_ignore_python_environment_injection(tmp_path):
     """`python3 -I`: PYTHONPATH/PYTHONSTARTUP del job non caricano codice nel controllo trusted."""
     evil = tmp_path / "evil"

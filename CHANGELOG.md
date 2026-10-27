@@ -9,6 +9,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 — dispatcher trusted della lane Buildkite (`scripts/pr_trusted_dispatcher.py`), NOT CERTIFIED:**
+  - riceve i webhook GitHub `pull_request` firmati (HMAC SHA-256 verificata prima del parsing), valida repository, PR,
+    base `main`, head nello stesso repository, PR aperta e non in bozza, e avvia solo `pr-overlap-guard` e
+    `pr-merge-readiness` su `main` con le cinque variabili del contratto di Grok (#562 c.6438092317 §5);
+  - replay bloccato dalla delivery id persistente in SQLite, eventi fuori ordine scartati, un head nuovo annulla le
+    build del vecchio, creazione ambigua riconciliata senza seconda creazione, ripresa dopo il riavvio;
+  - `success` solo con build `passed` e risultato `PASS` del guard sullo stesso head; tutto il resto `failure` o
+    `error`; pubblicazione solo tramite il comando configurato (helper root di Grok);
+  - configurazione tutta obbligatoria: chiave mancante o sconosciuta ⇒ `NOT CONFIGURED`, il servizio non parte; punti
+    infrastrutturali non decisi `BLOCKED_CONTRACT` in `docs/trusted_dispatcher.md`, con la checklist dei collaudi
+    reali per Grok;
+  - smoke trusted: senza contesto PR del dispatcher il guard esce con motivo esplicito («contesto PR verificato
+    assente»), mai con l'errore di argparse né con un numero di PR di ripiego; lo step va portato sul wrapper
+    `scripts/ci/pr_merge_readiness.sh` (configurazione Buildkite, a cura di Grok);
+  - test offline con un finto Buildkite e un server HTTP reale su loopback; 16 mutazioni nell'area
+    `trusted_dispatcher` e una nell'area `trusted_gate`.
 - **#566 — deduplica dei check run fail-closed (`scripts/pr_automation_controller.dedupe_github_check_runs`):**
   - sull'head corrente nessun check run omonimo viene più scartato, salvo la copia esatta della stessa check run
     (stesso id, stato e tempi). Prima vinceva il più recente fra i check omonimi della stessa sorgente, quindi un PASS di un altro

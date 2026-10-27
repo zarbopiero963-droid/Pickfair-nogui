@@ -15,7 +15,8 @@
   ],
   "optional_areas": [
     "check_dedupe",
-    "trusted_gate"
+    "trusted_gate",
+    "trusted_dispatcher"
   ],
   "mutations": [
     {
@@ -4351,6 +4352,18 @@
       "rationale": "Token con a capo, spazi o caratteri di controllo mandato nell'header Authorization (iniezione di header)."
     },
     {
+      "id": "tg_smoke_no_context_message",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if raw_pr is None and env.get(\"PF_PR_HEAD_SHA\") is None:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562 c.6440620221: smoke senza contesto PR senza motivo esplicito (dispatcher unica fonte del contesto)."
+    },
+    {
       "id": "cd_inconclusive_ready",
       "module": "scripts.pr_automation_controller",
       "area": "check_dedupe",
@@ -4409,6 +4422,198 @@
         "tests/scripts/test_pr_automation_controller.py"
       ],
       "rationale": "review indipendente su #568: stesso id con esito diverso trattato come copia: il PASS nasconde il FAIL."
+    },
+    {
+      "id": "td_signature_bypass",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    return hmac.compare_digest(expected, m.group(1))",
+      "mutated": "    return True",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "firma HMAC ignorata: un evento falsificato avvierebbe build e status."
+    },
+    {
+      "id": "td_fork_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    if _get(pr, \"head\", \"repo\", \"full_name\") != TRUSTED_REPO:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "head da fork accettato: codice non fidato descritto come PR del repository."
+    },
+    {
+      "id": "td_draft_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    if draft:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PR in bozza avviata contro il contratto §5.1."
+    },
+    {
+      "id": "td_replay_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                return \"duplicate\", []",
+      "mutated": "                pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "delivery rigiocata registrata come nuova: replay non bloccato."
+    },
+    {
+      "id": "td_out_of_order_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if row is not None and intake.updated_at < row[\"updated_at\"]:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "evento vecchio fuori ordine sostituisce l'head piu' recente."
+    },
+    {
+      "id": "td_superseded_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if job[\"superseded\"]:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "build di un head sostituito non annullate."
+    },
+    {
+      "id": "td_publish_recheck_skipped",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if fresh.get(\"superseded\"):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "success pubblicato su uno SHA sostituito fra verdetto e pubblicazione."
+    },
+    {
+      "id": "td_success_without_passed",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    if state == \"passed\" and verdict == \"PASS\":",
+      "mutated": "    if verdict == \"PASS\":",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "verdetto PASS accettato anche con build non passed."
+    },
+    {
+      "id": "td_stale_sha_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    if result.get(\"head_sha\") != job[\"head_sha\"]:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "risultato su un head diverso pubblicato come esito dello SHA richiesto."
+    },
+    {
+      "id": "td_result_pr_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            or not _is_int(pr) or pr != job[\"pr\"]):",
+      "mutated": "            or False):",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "risultato di un'altra PR accettato."
+    },
+    {
+      "id": "td_build_env_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            and build.get(\"env\") == build_env(job)",
+      "mutated": "            and True",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "build con env diverso da quello inviato adottata."
+    },
+    {
+      "id": "td_timeout_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if timed_out:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "build che non finisce mai: nessun esito, nessun annullamento."
+    },
+    {
+      "id": "td_two_builds_adopted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if len(found) == 1:",
+      "mutated": "        if len(found) >= 1:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "creazione ambigua con piu' build: ne adotta una invece di annullarle."
+    },
+    {
+      "id": "td_secret_perms_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if st.st_mode & 0o077:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "segreto leggibile da gruppo/altri accettato."
+    },
+    {
+      "id": "td_redirect_host_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if parsed.scheme != \"https\" or parsed.hostname not in self._cfg.artifact_download_hosts:",
+      "mutated": "        if parsed.scheme != \"https\":",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "artifact scaricato da un host non ammesso."
+    },
+    {
+      "id": "td_missing_key_default",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            problems.append(f\"{key}: MISSING\")",
+      "mutated": "            pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "chiave obbligatoria mancante non segnalata come NOT CONFIGURED."
     }
   ]
 }

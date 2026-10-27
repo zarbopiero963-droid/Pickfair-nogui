@@ -85,6 +85,10 @@ class GuardError(Exception):
 def parse_environment(env: Mapping[str, str]) -> dict[str, Any]:
     """Valida l'ambiente controllato. Ogni valore assente o fuori formato => GuardError."""
     raw_pr = env.get("PF_PR_NUMBER")
+    if raw_pr is None and env.get("PF_PR_HEAD_SHA") is None:
+        # smoke senza contesto (#562 c.6440620221): mai un numero di PR inventato o una PR chiusa di ripiego
+        raise GuardError("contesto PR verificato assente: PF_PR_NUMBER e PF_PR_HEAD_SHA li imposta solo il "
+                         "dispatcher trusted (scripts/pr_trusted_dispatcher.py) per una PR aperta")
     if raw_pr is None or not _PR_NUMBER_RE.fullmatch(raw_pr):
         raise GuardError("PF_PR_NUMBER assente o non valido (intero ASCII senza zeri iniziali)")
     head = env.get("PF_PR_HEAD_SHA")
