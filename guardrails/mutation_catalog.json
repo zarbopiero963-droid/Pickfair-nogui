@@ -4355,7 +4355,7 @@
       "module": "scripts.pr_automation_controller",
       "area": "check_dedupe",
       "file": "scripts/pr_automation_controller.py",
-      "original": "            elif attempt[1] and attempt in kept_attempts:",
+      "original": "            elif attempt[1] and _finished_before_any(old, kept_attempts.get(attempt, [])):",
       "mutated": "            elif True:",
       "tests": [
         "tests/scripts/test_pr_automation_controller.py"
@@ -4367,8 +4367,8 @@
       "module": "scripts.pr_automation_controller",
       "area": "check_dedupe",
       "file": "scripts/pr_automation_controller.py",
-      "original": "            elif attempt[1] and attempt in kept_attempts:",
-      "mutated": "            elif attempt in kept_attempts:",
+      "original": "            elif attempt[1] and _finished_before_any(old, kept_attempts.get(attempt, [])):",
+      "mutated": "            elif _finished_before_any(old, kept_attempts.get(attempt, [])):",
       "tests": [
         "tests/scripts/test_pr_automation_controller.py"
       ],
@@ -4409,6 +4409,30 @@
         "tests/scripts/test_pr_automation_controller.py"
       ],
       "rationale": "#566: conclusione inconcludente (STARTUP_FAILURE, valori nuovi) trattata come ready."
+    },
+    {
+      "id": "cd_sibling_jobs_coalesced",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "        if started is not None and done <= started:",
+      "mutated": "        if started is not None:",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "review indipendente su #568: due job omonimi sovrapposti dello stesso run trattati come tentativi: il PASS del fratello nasconde il FAIL."
+    },
+    {
+      "id": "cd_kept_attempt_not_remembered",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "                _remember_attempt(kept_attempts, old)",
+      "mutated": "                pass",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "review indipendente su #568: le suite concorrenti rilanciate entrambe restano bloccate (falso blocco permanente)."
     }
   ]
 }

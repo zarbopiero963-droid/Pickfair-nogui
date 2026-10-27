@@ -3049,7 +3049,8 @@ def test_newer_current_head_success_suppresses_older_duplicate_failure():
     """Rerun dello stesso workflow run (stesso run id, job diverso): il tentativo nuovo sostituisce il vecchio. Con
     run id diversi i due check sono concorrenti e il FAIL resta (#566,
     test_dedupe_does_not_coalesce_distinct_workflow_runs_with_same_name)."""
-    old = _gh_run("Unit tests", "FAILURE", "head-new", run_id=1, started="2026-05-25T00:00:00Z")
+    old = _gh_run("Unit tests", "FAILURE", "head-new", run_id=1, started="2026-05-25T00:00:00Z",
+                  completed="2026-05-25T00:00:30Z")
     new = _gh_run("  Unit   tests ", "SUCCESS", "head-new", run_id=1, started="2026-05-25T00:01:00Z")
     new["id"] = 2
     new["details_url"] = "https://github.com/org/repo/actions/runs/1/job/2"
@@ -3344,7 +3345,7 @@ def test_dedupe_does_not_coalesce_distinct_workflow_runs_with_same_name():
 #   di GitHub restituisce solo il secondo;
 # - check concorrente: «overlap-check» su b4e6604 (#564), failure nella suite 109551022632 (run 40418753669,
 #   `pull_request`) e success nella suite 109551036228 (run 40418758994, `workflow_dispatch`).
-def _actions_check(name, state, head, *, run_id, job_id, suite, started, app="github-actions"):
+def _actions_check(name, state, head, *, run_id, job_id, suite, started, completed="", app="github-actions"):
     check = {
         "name": name,
         "status": "completed" if state not in {"QUEUED", "IN_PROGRESS"} else state.lower(),
@@ -3355,6 +3356,8 @@ def _actions_check(name, state, head, *, run_id, job_id, suite, started, app="gi
         "started_at": started,
         "app": {"slug": app, "name": app},
     }
+    if completed:
+        check["completed_at"] = completed
     if suite is not None:
         check["check_suite"] = {"id": suite}
     return check
@@ -3365,17 +3368,17 @@ HEAD_566 = "b" * 40
 
 def _rerun_pair(second_state):
     first = _actions_check("Merge readiness", "FAILURE", HEAD_566, run_id=40406913995, job_id=121867474194,
-                           suite=109519846723, started="2026-10-26T21:46:27Z")
+                           suite=109519846723, started="2026-10-26T21:46:27Z", completed="2026-10-26T21:54:03Z")
     second = _actions_check("Merge readiness", second_state, HEAD_566, run_id=40406913995, job_id=121892751177,
-                            suite=109519846723, started="2026-10-26T22:41:23Z")
+                            suite=109519846723, started="2026-10-26T22:41:23Z", completed="2026-10-26T22:42:09Z")
     return first, second
 
 
 def _concurrent_pair(second_state, first_state="FAILURE"):
     first = _actions_check("overlap-check", first_state, HEAD_566, run_id=40418753669, job_id=121907535096,
-                           suite=109551022632, started="2026-10-26T23:17:46Z")
+                           suite=109551022632, started="2026-10-26T23:17:46Z", completed="2026-10-26T23:17:54Z")
     second = _actions_check("overlap-check", second_state, HEAD_566, run_id=40418758994, job_id=121907558748,
-                            suite=109551036228, started="2026-10-26T23:18:32Z")
+                            suite=109551036228, started="2026-10-26T23:18:32Z", completed="2026-10-26T23:18:41Z")
     return first, second
 
 
@@ -3403,7 +3406,7 @@ def test_pass_rerun_attempt_in_the_same_check_suite_supersedes_the_failure(order
         runs.reverse()
     deduped = controller.dedupe_github_check_runs(HEAD_566, runs)
     ASSERTIONS.assertEqual([c["id"] for c in deduped["selected_runs"]], [121892751177])
-    ASSERTIONS.assertEqual(deduped["ignored_duplicate_run_ids"], ["121867474194"])
+    ASSERTIONS.assertEqual(deduped["ignored_duplicate_run_ids"], ["40406913995"])
     summary = controller.summarize_current_head_check_state(HEAD_566, runs)
     ASSERTIONS.assertEqual(summary["category"], "ready")
 
@@ -3463,6 +3466,49 @@ def test_newer_attempt_of_the_same_run_decides_even_when_not_a_pass(state, categ
     summary = controller.summarize_current_head_check_state(HEAD_566, runs)
     ASSERTIONS.assertEqual(summary["category"], category)
     ASSERTIONS.assertNotEqual(summary["next_action"], "ready")
+
+
+def test_block_sibling_jobs_with_the_same_name_in_one_run_are_not_attempts():
+    """Due job omonimi dello stesso workflow run (stessa suite) che si sovrappongono nel tempo sono fratelli, non
+    tentativi: il FAIL del primo resta (review indipendente su #568)."""
+    fail = _actions_check("build", "FAILURE", HEAD_566, run_id=7, job_id=71, suite=70,
+                          started="2026-10-26T10:00:00Z", completed="2026-10-26T10:05:00Z")
+    ok = _actions_check("build", "SUCCESS", HEAD_566, run_id=7, job_id=72, suite=70,
+                        started="2026-10-26T10:01:00Z", completed="2026-10-26T10:03:00Z")
+    for runs in ([fail, ok], [ok, fail]):
+        ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, runs)["category"],
+                               "workflow_failure")
+
+
+def test_block_missing_completion_time_is_not_proof_of_a_rerun():
+    """Senza `completed_at` del tentativo vecchio non si dimostra che il nuovo sia venuto dopo: restano entrambi."""
+    first, second = _rerun_pair("SUCCESS")
+    del first["completed_at"]
+    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [first, second])["category"],
+                           "workflow_failure")
+
+
+def test_pass_two_concurrent_suites_both_rerun_are_ready():
+    """Entrambe le suite rilanciate dopo un FAIL: ognuna e' superata dal proprio tentativo, nessun blocco falso."""
+    a1, b1 = _concurrent_pair("FAILURE")
+    a2 = dict(a1, id=1, conclusion="SUCCESS", status="completed", started_at="2026-10-26T23:30:00Z",
+              completed_at="2026-10-26T23:30:10Z", details_url="https://github.com/o/r/actions/runs/40418753669/job/1")
+    b2 = dict(b1, id=2, conclusion="SUCCESS", status="completed", started_at="2026-10-26T23:31:00Z",
+              completed_at="2026-10-26T23:31:10Z", details_url="https://github.com/o/r/actions/runs/40418758994/job/2")
+    for runs in ([a1, b1, a2, b2], [b2, a1, a2, b1]):
+        deduped = controller.dedupe_github_check_runs(HEAD_566, runs)
+        ASSERTIONS.assertEqual({c["id"] for c in deduped["selected_runs"]}, {1, 2})
+        ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, runs)["category"], "ready")
+
+
+def test_pass_graphql_shaped_rerun_without_url_uses_check_suite_database_id():
+    """Formato GraphQL (`checkSuite.databaseId`, `startedAt`/`completedAt`) senza URL: il rerun si riconosce."""
+    old = {"name": "build", "conclusion": "FAILURE", "status": "COMPLETED", "databaseId": 1, "headSha": HEAD_566,
+           "checkSuite": {"databaseId": 9}, "startedAt": "2026-10-26T10:00:00Z", "completedAt": "2026-10-26T10:01:00Z",
+           "app": {"slug": "github-actions"}}
+    new = dict(old, conclusion="SUCCESS", databaseId=2, startedAt="2026-10-26T11:00:00Z",
+               completedAt="2026-10-26T11:01:00Z")
+    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [old, new])["category"], "ready")
 
 
 @pytest.mark.parametrize("state", ["STARTUP_FAILURE", "SOMETHING_NEW"])

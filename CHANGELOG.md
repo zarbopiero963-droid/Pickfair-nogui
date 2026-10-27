@@ -14,11 +14,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     check suite (o workflow run): è il rerun. Prima vinceva il più recente fra tutti i check omonimi della stessa
     sorgente, quindi un PASS di un altro workflow run nascondeva un FAIL;
   - check di suite diverse, di app diverse o di identità non dimostrabile restano tutti fra i `selected_runs`;
-  - `ignored_duplicate_run_ids` riporta l'id del check run del tentativo superato (il run id è lo stesso del
-    tentativo tenuto);
+  - dentro la stessa suite un run è superato solo se è finito prima dell'inizio del tentativo tenuto: due job
+    omonimi sovrapposti dello stesso run sono fratelli e restano entrambi; `ignored_duplicate_run_ids` mantiene il
+    significato di prima (run id);
   - `summarize_current_head_check_state`: una conclusione inconcludente dà `current_head_inconclusive` /
     `needs_manual` invece di `ready`;
-  - test RED/GREEN con dati di run reali (rerun su `49518cc`, check concorrenti su `b4e6604`), cinque mutazioni
+  - test RED/GREEN con dati di run reali (rerun su `49518cc`, check concorrenti su `b4e6604`), sette mutazioni
     nell'area `check_dedupe`.
 - **PF-GOV-DOC-WORKFLOW-ALIGN-01, Fase 2 — `overlap-check` sullo script trusted, diagnostica separata:**
   - `.github/workflows/pr-overlap-guard.yml` gira solo su `pull_request` ed esegue lo script canonico

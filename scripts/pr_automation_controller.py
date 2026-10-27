@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -1691,7 +1692,11 @@ def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]])
     """Un check run e' superato SOLO da un tentativo successivo della stessa app, sullo stesso SHA e nella stessa
     check suite (o workflow run): e' il rerun. Check omonimi di suite diverse, di app diverse o di identita' non
     dimostrabile sono concorrenti e restano tutti fra i `selected_runs`, cosi' un FAIL non diventa PASS per effetto
-    della deduplica (#566). Un FAIL concorrente si supera rilanciando il suo stesso workflow run."""
+    della deduplica (#566). Un FAIL concorrente si supera rilanciando il suo stesso workflow run.
+
+    Dentro la stessa suite un tentativo successivo comincia dopo la fine del precedente; due job omonimi dello stesso
+    run (fratelli) invece si sovrappongono. Percio' un run e' superato solo se e' finito non dopo l'inizio di un run
+    tenuto con la stessa identita'; sovrapposizione o tempi mancanti => restano tutti e due."""
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for check in check_runs:
         groups.setdefault(github_check_dedupe_key(check) + (github_check_app_identity(check),), []).append(check)
@@ -1703,7 +1708,8 @@ def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]])
         ranked = sorted(runs, key=lambda run: _check_run_dedupe_key(pr_head_sha, run), reverse=True)
         kept = ranked[0]
         selected.append(kept)
-        kept_attempts = {(github_check_run_head(kept), github_check_attempt_identity(kept))}
+        kept_attempts: dict[tuple[str, str], list[str]] = {}
+        _remember_attempt(kept_attempts, kept)
         for old in ranked[1:]:
             run_id = stale_evidence_id_from_check(old)
             info = classify_github_check_run_staleness(pr_head_sha, old)
@@ -1713,19 +1719,46 @@ def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]])
                 ignored_stale.append(run_id)
             elif info["stale"]:
                 ignored_stale.append(run_id)
-            elif attempt[1] and attempt in kept_attempts:
-                # tentativo precedente dello stesso run: si riporta l'id del check run, perche' il run id e' lo
-                # stesso del tentativo tenuto
-                ignored_dupes.append(str(first_nonempty(old.get("id"), old.get("databaseId")) or run_id))
+            elif attempt[1] and _finished_before_any(old, kept_attempts.get(attempt, [])):
+                ignored_dupes.append(run_id)
             else:
                 selected.append(old)
-                kept_attempts.add(attempt)
+                _remember_attempt(kept_attempts, old)
     return {
         "selected_runs": selected,
         "ignored_stale_run_ids": sorted_unique_ids(ignored_stale),
         "ignored_unknown_run_ids": sorted_unique_ids(ignored_unknown),
         "ignored_duplicate_run_ids": sorted_unique_ids(ignored_dupes),
     }
+
+
+def _parse_check_time(value: object) -> datetime.datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else None
+
+
+def _remember_attempt(kept_attempts: dict[tuple[str, str], list[str]], check: dict[str, Any]) -> None:
+    attempt = (github_check_run_head(check), github_check_attempt_identity(check))
+    kept_attempts.setdefault(attempt, []).append(str(first_nonempty(check.get("started_at"), check.get("startedAt")) or ""))
+
+
+def _finished_before_any(old: dict[str, Any], kept_starts: list[str]) -> bool:
+    """Vero solo se `old` e' finito prima (o nell'istante) in cui e' cominciato un run tenuto della stessa identita':
+    e' il suo rerun. Tempi mancanti o illeggibili => falso (fail-closed: i due restano)."""
+    done = _parse_check_time(first_nonempty(old.get("completed_at"), old.get("completedAt")))
+    if done is None:
+        return False
+    for start in kept_starts:
+        started = _parse_check_time(start)
+        if started is not None and done <= started:
+            return True
+    return False
 
 
 def _check_run_priority(pr_head_sha: str, check: dict[str, Any]) -> int:
