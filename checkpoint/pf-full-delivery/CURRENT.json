@@ -2,12 +2,12 @@
  "certification_verdict": "NO-GO",
  "checkpoint_commit": null,
  "code": {
-  "branch": "main",
-  "sha": "22d1b71adb53d3c9af7ce73ac31322031c58f5e7"
+  "branch": "ccr-764b0316-9r1a1d",
+  "sha": "e1c6e36009a6a3001eeff815599c241094c0b1e4"
  },
- "mandate_id": "OWNER DECISION PR #568 + PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562)",
- "next_atomic_action": "Chiudere #566 (completed, #568/22d1b71); rileggere #562 (contratto definitivo Grok + correzione smoke trusted con --repo/--pr dal contesto PR verificato); aprire UNA PR dispatcher da main 22d1b71 sul branch ccr-764b0316-9r1a1d; punti infrastrutturali aperti = NOT CONFIGURED o BLOCKED_CONTRACT; collaudi end-to-end coordinati con Grok; autonomia Buildkite NON CERTIFIED. Microstake OWNER-RESERVED. LIVE NO-GO.",
- "previous_checkpoint_sha": "2fb184a8c532eb185d947ec01d1b5243e7420638",
+ "mandate_id": "OWNER GO PF-570 CONTROLLED MERGE SEQUENCING (#569/#570) + PF-562 GITHUB POLLING FINAL DECISION",
+ "next_atomic_action": "PF-570 sequencing: chiusura temporanea #569 (branch e commit e1c6e36 preservati, nessun merge), rerun required check #570; merge #570 SOLO con overlap-check PASS, Merge readiness PASS, tutti i required PASS, review valide, zero thread, mergeability clean, altrimenti STOP e rapporto; dopo il merge: CI main, riapertura #569, review Sol/Grok sul diff completo, finding reali; allowlist rerun iniziale = zarbopiero963-droid (identita' e permessi verificati); gate pre-command Grok: ready_for_review e manual. #569 a merge owner. #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
+ "previous_checkpoint_sha": "d4132999039fe06e05f88fe25576f9ccd1537147",
  "schema": "pf-current/1",
- "seq": 75
+ "seq": 76
 }

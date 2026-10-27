@@ -62,8 +62,8 @@
   "Governance/lane trusted: #564 16543be, #567 b7fb4e2, #568 22d1b71 (deduplica check run fail-closed, chiude #566); #565 tracciata"
  ],
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
- "mandate_id": "OWNER DECISION PR #568 + PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562)",
- "next_atomic_action": "Chiudere #566 (completed, #568/22d1b71); rileggere #562 (contratto definitivo Grok + correzione smoke trusted con --repo/--pr dal contesto PR verificato); aprire UNA PR dispatcher da main 22d1b71 sul branch ccr-764b0316-9r1a1d; punti infrastrutturali aperti = NOT CONFIGURED o BLOCKED_CONTRACT; collaudi end-to-end coordinati con Grok; autonomia Buildkite NON CERTIFIED. Microstake OWNER-RESERVED. LIVE NO-GO.",
+ "mandate_id": "OWNER GO PF-570 CONTROLLED MERGE SEQUENCING (#569/#570) + PF-562 GITHUB POLLING FINAL DECISION",
+ "next_atomic_action": "PF-570 sequencing: chiusura temporanea #569 (branch e commit e1c6e36 preservati, nessun merge), rerun required check #570; merge #570 SOLO con overlap-check PASS, Merge readiness PASS, tutti i required PASS, review valide, zero thread, mergeability clean, altrimenti STOP e rapporto; dopo il merge: CI main, riapertura #569, review Sol/Grok sul diff completo, finding reali; allowlist rerun iniziale = zarbopiero963-droid (identita' e permessi verificati); gate pre-command Grok: ready_for_review e manual. #569 a merge owner. #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [

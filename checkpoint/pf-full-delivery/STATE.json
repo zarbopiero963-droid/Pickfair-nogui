@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 75,
- "updated_at": "2026-10-27T00:00:00Z",
+ "seq": 76,
+ "updated_at": "2026-10-27T14:30:00Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Chiudere #566 (completed, #568/22d1b71); rileggere #562 (contratto definitivo Grok + correzione smoke trusted con --repo/--pr dal contesto PR verificato); aprire UNA PR dispatcher da main 22d1b71 sul branch ccr-764b0316-9r1a1d; punti infrastrutturali aperti = NOT CONFIGURED o BLOCKED_CONTRACT; collaudi end-to-end coordinati con Grok; autonomia Buildkite NON CERTIFIED. Microstake OWNER-RESERVED. LIVE NO-GO.",
+ "next_atomic_action": "PF-570 sequencing: chiusura temporanea #569 (branch e commit e1c6e36 preservati, nessun merge), rerun required check #570; merge #570 SOLO con overlap-check PASS, Merge readiness PASS, tutti i required PASS, review valide, zero thread, mergeability clean, altrimenti STOP e rapporto; dopo il merge: CI main, riapertura #569, review Sol/Grok sul diff completo, finding reali; allowlist rerun iniziale = zarbopiero963-droid (identita' e permessi verificati); gate pre-command Grok: ready_for_review e manual. #569 a merge owner. #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "2fb184a8c532eb185d947ec01d1b5243e7420638",
+ "previous_checkpoint_sha": "d4132999039fe06e05f88fe25576f9ccd1537147",
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -603,10 +603,11 @@
  },
  "session_end": "seq 23 Claude Code: lotti locali verificati; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "OWNER DECISION PR #568 + PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562)",
+ "mandate_id": "OWNER GO PF-570 CONTROLLED MERGE SEQUENCING (#569/#570) + PF-562 GITHUB POLLING FINAL DECISION",
  "code": {
-  "branch": "main",
-  "sha": "22d1b71adb53d3c9af7ce73ac31322031c58f5e7"
+  "branch": "ccr-764b0316-9r1a1d",
+  "sha": "e1c6e36009a6a3001eeff815599c241094c0b1e4",
+  "note": "PR #569: polling GitHub API (PF-562 opzione B) committato e pubblicato su origin/ccr-764b0316-9r1a1d e refs/pull/569/head; 10 commit sopra main 22d1b71"
  },
  "blocks": [
   "Gate A #506 NON PASS",
