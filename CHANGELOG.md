@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 — dispatcher trusted: credenziali di systemd e modalità di collaudo (`scripts/pr_trusted_dispatcher.py`):**
+  - `LoadCredential` di systemd 255 espone il token 0440: accettato solo nella directory `$CREDENTIALS_DIRECTORY` del
+    servizio (directory non scrivibile da gruppo o altri, proprietario root o l'utente del servizio, gruppo del
+    processo, permessi esattamente 0440); fuori resta 0400/0600;
+  - `serve --dry-run`: collaudo senza scritture esterne (trasporto solo GET, publisher che rifiuta, nessuna build né
+    status, archivio separato `<state_db>.dry-run`), con le build e gli status attesi nel log;
+  - test RED->GREEN e mutazioni nell'area `trusted_dispatcher`.
 - **#562 — dispatcher trusted della lane Buildkite (`scripts/pr_trusted_dispatcher.py`), NOT CERTIFIED:**
   - **polling autenticato dell'API GitHub al posto del webhook HTTPS** (decisione owner PF-562 opzione B): nessun web
     server; ogni `poll_interval_seconds` (60 s, configurabile 10..600) legge le PR aperte con paginazione completa

@@ -132,7 +132,7 @@ Codex, Sol, Grok e nelle revisioni indipendenti su #569):
 | Status diagnostico scambiato per richiesto | contesti fissi; lo status della readiness è self-check, quello dell'overlap no | `test_readiness_status_is_a_self_check_and_overlap_status_is_not` |
 | Descrizione dello status fuori dal contratto del socket | `clean_description`: ASCII stampabile, al massimo 140 caratteri, mai `` ` `` `$` `\`; accenti alla lettera base, altri caratteri vietati a `?` visibile, troncamento chiuso da `...`, originale nei log; il publisher rifiuta (exit 2, niente invio) una descrizione che non rispetta il formato | `test_status_description_matches_the_socket_contract`, `test_fail_reason_with_forbidden_characters_reaches_the_publisher_cleaned_and_logged`, `test_default_publisher_refuses_a_description_outside_the_contract`, `td_description_forbidden_kept`, `td_description_cut_silently`, `td_description_accents_lost`, `td_publisher_sends_invalid_description` |
 | Comando di rerun anteriore all'attivazione | limite inferiore persistente `comments_floor` (istante del primo avvio): il cursore non torna mai prima, e un comando con `created_at` ≤ limite (stesso secondo compreso) è rifiutato e registrato; id di commento fuori misura ⇒ comando malformato | `test_overlap_never_moves_the_cursor_before_the_first_start`, `test_command_in_the_same_second_as_the_first_start_is_rejected`, `test_cursor_floor_survives_restart_and_old_commands_never_build`, `test_comment_id_out_of_range_is_a_malformed_command`, `td_rerun_cursor_before_start`, `td_rerun_floor_unchecked`, `td_rerun_floor_same_second`, `td_comment_id_unbounded` |
-| Segreti verso build, publisher o log | token Buildkite da file 0600/0400; token GitHub solo in memoria; publisher e comando del token con ambiente minimo | `test_tokens_never_reach_builds_publisher_or_logs`, `test_default_publisher_gets_no_inherited_environment` |
+| Segreti verso build, publisher o log | token Buildkite da file 0600/0400, oppure credenziale di systemd 0440 solo nella directory `$CREDENTIALS_DIRECTORY` del servizio (directory non scrivibile da gruppo o altri, proprietario root o l'utente del servizio, gruppo del processo; `LoadCredential` di systemd 255, #562); token GitHub solo in memoria; publisher e comando del token con ambiente minimo | `test_tokens_never_reach_builds_publisher_or_logs`, `test_default_publisher_gets_no_inherited_environment` |
 | Configurazione incompleta | ogni chiave obbligatoria, nessun default; chiavi del webhook (`listen`, `webhook_secret_file`) rifiutate come sconosciute | `test_every_missing_mandatory_key_is_not_configured`, `test_invalid_config_values_are_not_configured` |
 
 Le chiamate HTTP non seguono i redirect (`_NoRedirect`), usano solo `https://` e hanno il timeout
@@ -193,6 +193,12 @@ Comandi:
   legge il token Buildkite ed esegue una volta il comando del token GitHub;
 - `serve --config F`: ciclo unico, ogni `poll_interval_seconds` un giro di polling GitHub e un avanzamento dei job;
   SIGTERM lo ferma;
+- `serve --config F --dry-run` (collaudo, #562): stesso codice, stesse letture di GitHub (PR, commenti, permessi) e
+  stesse transizioni, ma nessuna build creata o annullata e nessuno status pubblicato. Il trasporto passa solo GET (ogni
+  altra richiesta è bloccata prima di uscire), il publisher rifiuta, i job chiudono `done` con esito `dry_run` e nel
+  log compaiono pipeline, cinque variabili e status che sarebbero stati usati. Archivio separato `<state_db>.dry-run`:
+  l'archivio reale non viene mai creato né modificato, quindi il servizio vero riparte da zero. `--dry-run` vale solo
+  con `serve`;
 - `jobs --config F` e `reruns --config F`: consultazione in sola lettura degli ultimi job e dei comandi di rerun.
 
 ## Punti aperti: NOT CONFIGURED e da decidere
@@ -232,8 +238,9 @@ assente» (`test_smoke_without_pr_context_fails_closed_with_explicit_message`, m
 Da eseguire sulla PR del dispatcher. Va distinto il **test tecnico positivo** (la pipeline funziona) dalla **readiness
 reale** (la PR è davvero mergiabile).
 
-1. `check-config --check-secrets` ⇒ `CONFIGURED` con i percorsi reali; segreto 0644 o helper del token fallito ⇒
-   `NOT CONFIGURED`.
+1. `check-config --check-secrets` ⇒ `CONFIGURED` con i percorsi reali (anche la credenziale 0440 di `LoadCredential`);
+   segreto 0644 o helper del token fallito ⇒ `NOT CONFIGURED`. Poi `serve --dry-run`: transizioni e build attese
+   nel log, nessuna richiesta di scrittura verso Buildkite o GitHub.
 2. Avvio del servizio: entro un intervallo, due build (`pr-overlap-guard`, `pr-merge-readiness`) su `main` per l'head
    corrente, con le cinque variabili e `PF_DELIVERY_ID=p<PR>-t<n>-<sha12>`; status `pending` con l'URL della build.
 3. Un secondo giro senza cambiamenti ⇒ nessuna build nuova.

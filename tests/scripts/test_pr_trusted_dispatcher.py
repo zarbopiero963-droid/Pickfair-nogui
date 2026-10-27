@@ -2242,6 +2242,89 @@ def test_transition_ids_match_the_gate_format_even_for_large_numbers():
         assert gate.fullmatch(tid) and td._TID_RE.fullmatch(tid)
 
 
+# --------------------------------------------------------------------------------------------- DRY-RUN (#562)
+@pytest.fixture()
+def dry(tmp_path):
+    cfg = td.validate_config(raw_config(tmp_path))
+    bk, pub, clock = FakeBuildkite(), Publisher(), Clock()
+    disp = td.build_dispatcher(cfg, transport=bk, publisher=pub, token_runner=token_runner(clock), clock=clock,
+                               dry_run=True)
+    yield disp, bk, pub, clock, cfg
+    disp.store.close()
+
+
+def _writes(bk):
+    return [(m, u) for m, u, *_ in bk.requests if m != "GET"] + [(m, u) for m, u, _ in bk.gh.requests if m != "GET"]
+
+
+def test_dry_run_evaluates_prs_without_any_external_write(dry, capsys):
+    """Collaudo del dispatcher sulla VPS: legge GitHub, calcola transizioni e build, ma non crea build, non annulla
+    niente e non pubblica status. Il percorso e' quello reale fino al punto in cui scriverebbe fuori."""
+    disp, bk, pub, clock, _ = dry
+    bk.gh.put(42, HEAD)
+    assert disp.poll() == ["p42-t1-aaaaaaaaaaaa"]
+    disp.tick()
+    bk.gh.put(42, HEAD2)                                          # nuovo commit: sostituzione, sempre senza scritture
+    clock.now += 60
+    disp.poll()
+    disp.tick()
+    assert _writes(bk) == [] and pub.calls == []
+    assert not any(b for builds in bk.builds.values() for b in builds)
+    jobs = disp.store.recent_jobs()
+    assert {j["state"] for j in jobs} <= {"done"} and {j["outcome"] for j in jobs} == {"dry_run"}
+    err = capsys.readouterr().err
+    assert "DRY-RUN" in err and "pr-overlap-guard" in err and f"PF_PR_HEAD_SHA={HEAD2}" in err
+
+
+def test_dry_run_rerun_is_authorized_and_audited_without_builds(dry):
+    disp, bk, pub, clock, _ = dry
+    _rerun_ready(disp, bk)
+    bk.gh.comment(9030, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    clock.now += 20
+    assert disp.poll() == ["p42-r9030-aaaaaaaaaaaa"]
+    disp.tick()
+    assert disp.store.recent_reruns()[0]["accepted"] == 1
+    assert _writes(bk) == [] and pub.calls == []
+
+
+@pytest.mark.parametrize("call", ["create", "cancel"])
+def test_dry_run_buildkite_client_cannot_write_even_if_called(dry, call):
+    """Difesa in profondita': anche chiamato direttamente, il client Buildkite del DRY-RUN non scrive."""
+    disp, bk, _, _, _ = dry
+    with pytest.raises(td.TransportError):
+        if call == "create":
+            disp.bk.create_build("overlap", {"PF_PR_NUMBER": "42"}, "x")
+        else:
+            disp.bk.cancel_build("overlap", 1)
+    assert _writes(bk) == []
+
+
+def test_dry_run_never_touches_the_real_state_archive(dry):
+    _, _, _, _, cfg = dry
+    assert not os.path.exists(cfg.state_db)                       # archivio reale mai creato ne' modificato
+    assert os.path.exists(cfg.state_db + ".dry-run")
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
+def test_read_only_transport_refuses_every_write(method):
+    calls = []
+    guarded = td.read_only_transport(lambda *a: calls.append(a) or (200, {}, b"{}"))
+    with pytest.raises(td.TransportError):
+        guarded(method, "https://api.buildkite.com/v2/x", {}, b"{}", 5)
+    assert calls == []
+    assert guarded("GET", "https://api.github.com/x", {}, None, 5)[0] == 200
+
+
+def test_dry_run_publisher_refuses_to_publish():
+    with pytest.raises(RuntimeError):
+        td.dry_run_publisher(42, HEAD, "success", "overlap-check", "https://x", "PASS")
+
+
+def test_cli_dry_run_is_only_for_serve(tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        td.main(["jobs", "--dry-run", "--config", str(tmp_path / "c.json")])
+
+
 # --------------------------------------------------------------------------------------------- segreti e configurazione
 @pytest.mark.parametrize("mode", [0o644, 0o640, 0o604])
 def test_secret_file_readable_by_others_is_refused(tmp_path, mode):
@@ -2249,6 +2332,56 @@ def test_secret_file_readable_by_others_is_refused(tmp_path, mode):
     with pytest.raises(td.ConfigError) as exc:
         td.read_secret_file(path, td._TOKEN_RE, "buildkite.token_file")
     assert BK_CRED not in str(exc.value)
+
+
+# ---- credenziali di systemd (LoadCredential): systemd 255 le espone 0440 in $CREDENTIALS_DIRECTORY (Grok, #562)
+def _credential(tmp_path, monkeypatch, mode=0o440, *, set_env=True, dir_mode=0o500, inside=True):
+    creds = tmp_path / "credentials" / "pf-dispatch.service"
+    creds.mkdir(parents=True)
+    other = tmp_path / "other"
+    other.mkdir()
+    path = write_secret((creds if inside else other) / "buildkite", BK_CRED, mode)
+    os.chmod(creds, dir_mode)
+    if set_env:
+        monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(creds))
+    else:
+        monkeypatch.delenv("CREDENTIALS_DIRECTORY", raising=False)
+    return path
+
+
+def test_systemd_credential_0440_in_the_credentials_directory_is_accepted(tmp_path, monkeypatch):
+    path = _credential(tmp_path, monkeypatch)
+    try:
+        assert td.read_secret_file(path, td._TOKEN_RE, "buildkite.token_file") == BK_CRED
+    finally:
+        os.chmod(os.path.dirname(path), 0o700)
+
+
+@pytest.mark.parametrize("case", ["outside_dir", "no_env", "dir_group_writable", "other_read", "group_write",
+                                  "mode_0640"])
+def test_group_readable_secret_outside_the_systemd_rules_is_refused(tmp_path, monkeypatch, case):
+    kwargs = {"outside_dir": {"inside": False}, "no_env": {"set_env": False},
+              "dir_group_writable": {"dir_mode": 0o770}, "other_read": {"mode": 0o444},
+              "group_write": {"mode": 0o460}, "mode_0640": {"mode": 0o640}}[case]
+    path = _credential(tmp_path, monkeypatch, **kwargs)
+    try:
+        with pytest.raises(td.ConfigError) as exc:
+            td.read_secret_file(path, td._TOKEN_RE, "buildkite.token_file")
+        assert BK_CRED not in str(exc.value)
+    finally:
+        os.chmod(tmp_path / "credentials" / "pf-dispatch.service", 0o700)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="cambiare proprietario o gruppo richiede root")
+@pytest.mark.parametrize("field", ["owner", "group"])
+def test_systemd_credential_owned_by_someone_else_is_refused(tmp_path, monkeypatch, field):
+    path = _credential(tmp_path, monkeypatch)
+    try:
+        os.chown(path, 4242 if field == "owner" else -1, 4242 if field == "group" else -1)
+        with pytest.raises(td.ConfigError):
+            td.read_secret_file(path, td._TOKEN_RE, "buildkite.token_file")
+    finally:
+        os.chmod(os.path.dirname(path), 0o700)
 
 
 def test_secret_symlink_is_refused(tmp_path):
