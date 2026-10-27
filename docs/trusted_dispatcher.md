@@ -54,6 +54,10 @@ giro finché non va a buon fine, finché il job non viene sostituito o finché n
 `build_timeout_seconds` del guard. Allo scadere il job diventa `publish_failed`, e il log lo dichiara. Il ritento
 copre anche il caso in cui un `success` vecchio sullo stesso head resterebbe visibile dopo un nuovo FAIL.
 
+**Migrazione dell'archivio.** All'apertura `Store._migrate` aggiunge le colonne introdotte dopo la prima versione
+(`MIGRATION_COLUMNS`) e rimuove il vecchio indice `jobs_active`, in modo idempotente: un archivio creato da una
+versione precedente non fallisce a runtime (rilievo Sol su #569).
+
 **Una sola istanza.** L'archivio è protetto da un `flock` esclusivo su `<state_db>.lock`: una seconda istanza
 (`serve` lanciato due volte, sovrapposizione di systemd) si ferma con `NOT CONFIGURED` prima di toccare un job. Il
 server fa il bind della porta prima di avviare il worker. Le transizioni `queued → creating` sono condizionate allo

@@ -1090,3 +1090,36 @@ def test_failed_pending_publication_is_retried_while_the_build_runs(env):
     assert all(j["pending_published"] == 1 for j in disp.store.active_jobs())
     disp.tick()
     assert len([c for c in pub.calls if c[2] == "pending"]) == 4      # riuscito: non si ripete
+
+
+def test_archive_from_an_earlier_schema_is_migrated(tmp_path):
+    """Sol su #569 (range b179426...e464795): un archivio creato prima di `publishing_since`/`pending_published`
+    (e con il vecchio indice `jobs_active`) va migrato in modo idempotente, non deve fallire a runtime."""
+    cfg = td.validate_config(raw_config(tmp_path))
+    old = td.sqlite3.connect(cfg.state_db)
+    old.executescript("""
+        CREATE TABLE deliveries (delivery_id TEXT PRIMARY KEY, received_at REAL NOT NULL);
+        CREATE TABLE pr_heads (pr INTEGER PRIMARY KEY, head_sha TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, delivery_id TEXT NOT NULL, event TEXT NOT NULL,
+          pr INTEGER NOT NULL, head_sha TEXT NOT NULL, guard TEXT NOT NULL, state TEXT NOT NULL,
+          superseded INTEGER NOT NULL DEFAULT 0, build_number INTEGER, build_url TEXT, outcome TEXT,
+          description TEXT, created_at REAL NOT NULL, dispatched_at REAL, updated_at REAL NOT NULL);
+        CREATE UNIQUE INDEX jobs_active ON jobs(pr, head_sha, guard)
+          WHERE state IN ('queued', 'creating', 'dispatched', 'publishing');
+    """)
+    old.close()
+    bk, pub = FakeBuildkite(), Publisher()
+    for _ in range(2):                                    # idempotente: la seconda apertura non cambia nulla
+        disp = td.build_dispatcher(cfg, transport=bk, publisher=pub)
+        cols = {r[1] for r in disp.store._db.execute("PRAGMA table_info(jobs)")}
+        indexes = {r[1] for r in disp.store._db.execute("PRAGMA index_list(jobs)")}
+        disp.store.close()
+        assert {"publishing_since", "pending_published"} <= cols
+        assert "jobs_active" not in indexes and "jobs_active_current" in indexes
+    disp = td.build_dispatcher(cfg, transport=bk, publisher=pub)
+    try:
+        send(disp, payload())
+        disp.tick()
+        assert all(j["state"] == "dispatched" and j["pending_published"] == 1 for j in disp.store.active_jobs())
+    finally:
+        disp.store.close()

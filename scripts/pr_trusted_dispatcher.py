@@ -394,6 +394,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS jobs_active_current ON jobs(pr, head_sha, guar
   WHERE superseded = 0 AND state IN ('queued', 'creating', 'dispatched', 'publishing');
 """
 
+# Colonne aggiunte dopo la prima versione dello schema: (nome, definizione), applicate da `Store._migrate`.
+MIGRATION_COLUMNS = (
+    ("publishing_since", "REAL"),
+    ("pending_published", "INTEGER NOT NULL DEFAULT 0"),
+)
+
 
 class Store:
     """SQLite con transazioni `BEGIN IMMEDIATE`: delivery, ordine e job di un evento si scrivono insieme o niente."""
@@ -419,6 +425,18 @@ class Store:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=FULL")
         self._db.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Archivio creato da una versione precedente (`CREATE TABLE IF NOT EXISTS` non aggiunge colonne; rilievo
+        Sol su #569): colonne mancanti aggiunte e vecchio indice rimosso, in modo idempotente."""
+        def fn(db: sqlite3.Connection) -> None:
+            cols = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
+            for name, ddl in MIGRATION_COLUMNS:
+                if name not in cols:
+                    db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {ddl}")
+            db.execute("DROP INDEX IF EXISTS jobs_active")   # indice senza `superseded = 0` (P2-1)
+        self._tx(fn)
 
     def close(self) -> None:
         with self._lock:

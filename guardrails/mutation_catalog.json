@@ -4710,6 +4710,18 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "Codex P1 su #569: pending fallito mai ritentato: il vecchio success resta l'esito visibile durante la rivalutazione."
+    },
+    {
+      "id": "td_schema_not_migrated",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                if name not in cols:",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "Sol su #569: archivio di una versione precedente senza le colonne nuove: OperationalError a runtime."
     }
   ]
 }
