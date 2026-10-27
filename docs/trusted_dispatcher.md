@@ -132,7 +132,7 @@ Codex, Sol, Grok e nelle revisioni indipendenti su #569):
 | Status diagnostico scambiato per richiesto | contesti fissi; lo status della readiness è self-check, quello dell'overlap no | `test_readiness_status_is_a_self_check_and_overlap_status_is_not` |
 | Descrizione dello status fuori dal contratto del socket | `clean_description`: ASCII stampabile, al massimo 140 caratteri, mai `` ` `` `$` `\`; accenti alla lettera base, altri caratteri vietati a `?` visibile, troncamento chiuso da `...`, originale nei log; il publisher rifiuta (exit 2, niente invio) una descrizione che non rispetta il formato | `test_status_description_matches_the_socket_contract`, `test_fail_reason_with_forbidden_characters_reaches_the_publisher_cleaned_and_logged`, `test_default_publisher_refuses_a_description_outside_the_contract`, `td_description_forbidden_kept`, `td_description_cut_silently`, `td_description_accents_lost`, `td_publisher_sends_invalid_description` |
 | Comando di rerun anteriore all'attivazione | limite inferiore persistente `comments_floor` (istante del primo avvio): il cursore non torna mai prima, e un comando con `created_at` ≤ limite (stesso secondo compreso) è rifiutato e registrato; id di commento fuori misura ⇒ comando malformato | `test_overlap_never_moves_the_cursor_before_the_first_start`, `test_command_in_the_same_second_as_the_first_start_is_rejected`, `test_cursor_floor_survives_restart_and_old_commands_never_build`, `test_comment_id_out_of_range_is_a_malformed_command`, `td_rerun_cursor_before_start`, `td_rerun_floor_unchecked`, `td_rerun_floor_same_second`, `td_comment_id_unbounded` |
-| Segreti verso build, publisher o log | token Buildkite da file 0600/0400; token GitHub solo in memoria; publisher e comando del token con ambiente minimo | `test_tokens_never_reach_builds_publisher_or_logs`, `test_default_publisher_gets_no_inherited_environment` |
+| Segreti verso build, publisher o log | token Buildkite da file 0600/0400, oppure credenziale di systemd 0440 solo nella directory `$CREDENTIALS_DIRECTORY` del servizio (directory di root o dell'utente del servizio e non scrivibile da gruppo o altri, file di root o dell'utente del servizio, gruppo del processo; `LoadCredential` di systemd 255, #562); token GitHub solo in memoria; publisher e comando del token con ambiente minimo | `test_tokens_never_reach_builds_publisher_or_logs`, `test_default_publisher_gets_no_inherited_environment` |
 | Configurazione incompleta | ogni chiave obbligatoria, nessun default; chiavi del webhook (`listen`, `webhook_secret_file`) rifiutate come sconosciute | `test_every_missing_mandatory_key_is_not_configured`, `test_invalid_config_values_are_not_configured` |
 
 Le chiamate HTTP non seguono i redirect (`_NoRedirect`), usano solo `https://` e hanno il timeout
@@ -193,6 +193,26 @@ Comandi:
   legge il token Buildkite ed esegue una volta il comando del token GitHub;
 - `serve --config F`: ciclo unico, ogni `poll_interval_seconds` un giro di polling GitHub e un avanzamento dei job;
   SIGTERM lo ferma;
+- `serve --config F --dry-run` (collaudo, #562): stesso codice, stesse letture di GitHub (PR, commenti, permessi) e
+  stesse transizioni, ma nessuna build creata o annullata e nessuno status pubblicato. Il trasporto passa solo GET (ogni
+  altra richiesta è bloccata prima di uscire), il publisher rifiuta, i job chiudono `done` con esito `dry_run` (il
+  ramo DRY-RUN precede ogni altro, annullamenti pendenti compresi, che si azzerano senza tentativi) e nel
+  log compaiono pipeline, cinque variabili e status che sarebbero stati usati. Archivio separato `<state_db>.dry-run`:
+  l'archivio reale non viene mai creato né modificato, quindi il servizio vero riparte da zero. `--dry-run` vale solo
+  con `serve`. Limiti voluti (review owner su #571):
+  - **copre** la parte del ciclo prima di ogni scrittura: polling GitHub, transizioni (bozza, chiusura, riapertura,
+    nuovo head e sostituzione), dedupe fra giri e fra riavvii dello stesso archivio, autorizzazione e audit dei rerun,
+    build e status calcolati;
+  - **non copre** `creating → dispatched → publishing`: senza build reali non ci sono numero di build, esito da
+    leggere, artifact o status da consegnare. Annullamento, polling degli esiti, riavvio con build in corso e
+    riconsegna dei `publish_failed` restano provati offline (finto Buildkite e finto GitHub) e si certificano solo nel
+    collaudo reale (checklist, passi 2–12), con la pubblicazione degli status che richiede un GO owner separato.
+    Anche fallback e riconsegna, se raggiunti, in DRY-RUN non scrivono
+    (`test_dry_run_fallback_and_redelivery_never_write`);
+  - «nessuna scrittura» vale per Buildkite e per gli status: il comando del token GitHub (`github_token_command`)
+    gira come nel servizio vero, quindi l'helper conia comunque il token di lettura;
+  - l'archivio `<state_db>.dry-run` resta fra una sessione e l'altra: un secondo DRY-RUN sugli stessi head non
+    ricrea i job (dedupe). Per ripetere la prova da zero, rimuoverlo prima dell'avvio;
 - `jobs --config F` e `reruns --config F`: consultazione in sola lettura degli ultimi job e dei comandi di rerun.
 
 ## Punti aperti: NOT CONFIGURED e da decidere
@@ -232,8 +252,12 @@ assente» (`test_smoke_without_pr_context_fails_closed_with_explicit_message`, m
 Da eseguire sulla PR del dispatcher. Va distinto il **test tecnico positivo** (la pipeline funziona) dalla **readiness
 reale** (la PR è davvero mergiabile).
 
-1. `check-config --check-secrets` ⇒ `CONFIGURED` con i percorsi reali; segreto 0644 o helper del token fallito ⇒
-   `NOT CONFIGURED`.
+1. `check-config --check-secrets` ⇒ `CONFIGURED` con i percorsi reali (anche la credenziale 0440 di `LoadCredential`);
+   segreto 0644 o helper del token fallito ⇒ `NOT CONFIGURED`. La credenziale 0440 è ammessa solo con
+   `CREDENTIALS_DIRECTORY` impostata: il controllo va lanciato nel contesto dell'unit (per esempio `systemd-run` con
+   le stesse `LoadCredential`, `User` e `Group`, oppure un `ExecStartPre`); da una shell qualunque esce
+   `NOT CONFIGURED` ed è un falso FAIL. Poi `serve --dry-run`, con l'archivio `.dry-run` rimosso prima: transizioni
+   e build attese nel log, nessuna richiesta di scrittura verso Buildkite o GitHub.
 2. Avvio del servizio: entro un intervallo, due build (`pr-overlap-guard`, `pr-merge-readiness`) su `main` per l'head
    corrente, con le cinque variabili e `PF_DELIVERY_ID=p<PR>-t<n>-<sha12>`; status `pending` con l'URL della build.
 3. Un secondo giro senza cambiamenti ⇒ nessuna build nuova.
@@ -258,6 +282,10 @@ reale** (la PR è davvero mergiabile).
 - **NOT VERIFIED end-to-end**: verificato solo offline (finto GitHub e finto Buildkite fedeli alle API REST).
 - Un elenco che si interrompe senza `Link: rel="next"` non è riconoscibile come incompleto: la difesa è che una PR
   sparita da un solo elenco non è chiusa (servono due assenze consecutive).
+- Eccezione 0440 di `LoadCredential`: il file si verifica sul descrittore aperto (`O_NOFOLLOW`, `fstat`), la
+  directory sul percorso (`realpath`). Fra i due resta una finestra teorica, chiusa in pratica dai requisiti della
+  directory (di root o dell'utente del servizio, non scrivibile da gruppo o altri): può sfruttarla solo chi può già
+  leggere il token.
 - Il ricontrollo dello stato della PR al momento della pubblicazione è dell'helper root; il dispatcher riduce la
   finestra con il proprio ricontrollo dei job sostituiti. Fra i due resta una finestra senza lock: un `success` su uno
   SHA appena sostituito non tocca la PR, perché i check si valutano sull'head corrente.

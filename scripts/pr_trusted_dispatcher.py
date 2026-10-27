@@ -283,8 +283,29 @@ def load_config(path: Optional[str]) -> Config:
     return validate_config(raw)
 
 
+def _systemd_credential(path: str, st: os.stat_result) -> bool:
+    """Credenziale di `LoadCredential` (systemd >= 255 la espone 0440, #562): ammessa SOLO se il file sta proprio
+    nella directory `$CREDENTIALS_DIRECTORY` del servizio, la directory non e' scrivibile da gruppo o altri, il
+    proprietario del file e della directory e' root o l'utente del processo, il gruppo e' quello del processo e i
+    permessi sono esattamente 0440. Qualsiasi altra combinazione resta rifiutata."""
+    creds = os.environ.get("CREDENTIALS_DIRECTORY", "")
+    if not creds or not os.path.isabs(creds) or stat.S_IMODE(st.st_mode) != 0o440:
+        return False
+    try:
+        cdir = os.path.realpath(creds)
+        dst = os.stat(cdir)
+    except OSError:
+        return False
+    # anche la directory deve essere di root o dell'utente del servizio: il suo proprietario potrebbe sostituirne i file
+    # (review su #571)
+    return (os.path.realpath(os.path.dirname(os.path.abspath(path))) == cdir and stat.S_ISDIR(dst.st_mode)
+            and dst.st_uid in (0, os.geteuid()) and not dst.st_mode & 0o022
+            and st.st_uid in (0, os.geteuid()) and st.st_gid == os.getegid())
+
+
 def read_secret_file(path: str, pattern: re.Pattern, label: str) -> str:
-    """File regolare, non link simbolico, 0600/0400 (nessun permesso a gruppo o altri), contenuto nel formato atteso.
+    """File regolare, non link simbolico, 0600/0400 (nessun permesso a gruppo o altri), oppure credenziale di
+    systemd 0440 nella directory del servizio (`_systemd_credential`); contenuto nel formato atteso.
     Il valore non compare mai nei messaggi d'errore."""
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -294,8 +315,9 @@ def read_secret_file(path: str, pattern: re.Pattern, label: str) -> str:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             raise ConfigError([f"{label}: non e' un file regolare"])
-        if st.st_mode & 0o077:
-            raise ConfigError([f"{label}: file accessibile a gruppo o altri (servono 0600/0400)"])
+        if st.st_mode & 0o077 and not _systemd_credential(path, st):
+            raise ConfigError([f"{label}: file accessibile a gruppo o altri (servono 0600/0400, oppure 0440 nella "
+                               "directory $CREDENTIALS_DIRECTORY di systemd)"])
         if st.st_size > 16 * 1024:
             raise ConfigError([f"{label}: file troppo grande"])
         data = os.read(fd, 16 * 1024 + 1)
@@ -1088,6 +1110,21 @@ def clean_description(text: str) -> str:
     return cleaned
 
 
+def read_only_transport(transport: Transport) -> Transport:
+    """DRY-RUN (#562): solo GET. Qualsiasi scrittura (creazione o annullamento di build, POST/PUT/PATCH/DELETE) e'
+    rifiutata PRIMA di uscire dal processo, anche se un percorso del codice provasse a farla."""
+    def guarded(method: str, url: str, headers: Mapping[str, str], body: Optional[bytes], timeout: int):
+        if method != "GET":
+            raise TransportError(f"DRY-RUN: richiesta {method} bloccata")
+        return transport(method, url, headers, body, timeout)
+    return guarded
+
+
+def dry_run_publisher(*_args: Any) -> int:
+    """DRY-RUN: nessuno status viene pubblicato. Chiamarlo e' un errore del codice, non un esito."""
+    raise RuntimeError("DRY-RUN: pubblicazione di status non ammessa")
+
+
 def default_publisher(command: tuple, timeout: int) -> Callable[..., int]:
     def publish(pr: int, sha: str, state: str, context: str, url: str, description: str) -> int:
         if not _DESCRIPTION_RE.fullmatch(description):
@@ -1116,8 +1153,10 @@ def log(message: str) -> None:
 # --------------------------------------------------------------------------------------------- dispatcher
 class Dispatcher:
     def __init__(self, cfg: Config, store: Store, buildkite: Buildkite, github: GitHub,
-                 publisher: Callable[..., int], clock: Callable[[], float] = time.time) -> None:
+                 publisher: Callable[..., int], clock: Callable[[], float] = time.time,
+                 dry_run: bool = False) -> None:
         self.cfg = cfg
+        self.dry_run = dry_run
         self.store = store
         self.bk = buildkite
         self.gh = github
@@ -1232,6 +1271,9 @@ class Dispatcher:
             log(f"job {job['id']}: fallback non riuscito ({type(exc).__name__}): riprovo al prossimo giro")
 
     def advance(self, job: dict) -> None:
+        if self.dry_run:
+            # prima di ogni altro ramo, annullamenti pendenti compresi: in DRY-RUN nessun percorso reale (review su #571)
+            return self._dry_run(job)
         # Obbligo di annullamento persistente e indipendente dallo stato (rilievi Codex su #569): le build
         # rimaste da annullare si ritentano a ogni giro, qualunque cosa stia facendo il job.
         if job["state"] != "canceling" and json.loads(job.get("pending_cancels") or "[]"):
@@ -1250,6 +1292,18 @@ class Dispatcher:
         if state == "publishing":
             return self._publish_final(job)
         return None
+
+    def _dry_run(self, job: dict) -> None:
+        """DRY-RUN: il job e' valutato fino al punto in cui scriverebbe fuori (build, annullamenti, status) e chiuso
+        `done` con esito `dry_run`; nel log la build che verrebbe creata, con le cinque variabili esatte."""
+        if job["state"] == "queued" and not job["superseded"]:
+            env = " ".join(f"{k}={v}" for k, v in build_env(job).items())
+            log(f"DRY-RUN job {job['id']}: creerei {GUARDS[job['guard']]['pipeline']} su main con {env}; "
+                f"pubblicherei pending su {job['head_sha']} ({GUARDS[job['guard']]['context']})")
+        # nessuna build reale dietro un job di collaudo: gli annullamenti pendenti si azzerano, altrimenti `_set` lo
+        # terrebbe `canceling` e ritenterebbe un annullamento verso Buildkite
+        self._set(job, state="done", outcome="dry_run", pending_cancels="[]",
+                  description="dry-run: nessuna build, nessuno status")
 
     def _set(self, job: dict, **fields: Any) -> None:
         # Invariante in un solo punto: nessun job passa a uno stato finale con build ancora da annullare; resta
@@ -1489,20 +1543,25 @@ class Dispatcher:
 def build_dispatcher(cfg: Config, transport: Transport = urllib_transport,
                      publisher: Optional[Callable[..., int]] = None,
                      token_runner: TokenRunner = default_token_runner,
-                     clock: Callable[[], float] = time.time) -> Dispatcher:
+                     clock: Callable[[], float] = time.time, dry_run: bool = False) -> Dispatcher:
+    """`dry_run` (#562): stesso codice e stesse letture, ma trasporto in sola GET, publisher che rifiuta e archivio
+    separato `<state_db>.dry-run`, cosi' il collaudo non lascia stato nell'archivio reale."""
     bk_bearer = read_secret_file(cfg.buildkite_token_file, _TOKEN_RE, "buildkite.token_file")
+    if dry_run:
+        transport, publisher = read_only_transport(transport), dry_run_publisher
     tokens = TokenProvider(cfg.github_token_command, cfg.github_token_command_timeout_seconds, clock, token_runner)
-    store = Store(cfg.state_db)
+    store = Store(cfg.state_db + ".dry-run" if dry_run else cfg.state_db)
     return Dispatcher(cfg, store, Buildkite(cfg, bk_bearer, transport), GitHub(cfg, tokens, transport, clock),
-                      publisher or default_publisher(cfg.publisher_command, cfg.publisher_timeout_seconds), clock)
+                      publisher or default_publisher(cfg.publisher_command, cfg.publisher_timeout_seconds), clock,
+                      dry_run=dry_run)
 
 
-def serve(cfg: Config) -> int:
+def serve(cfg: Config, dry_run: bool = False) -> int:
     """Nessun web server: un solo ciclo che ogni `poll_interval_seconds` legge GitHub e fa avanzare i job."""
-    dispatcher = build_dispatcher(cfg)
+    dispatcher = build_dispatcher(cfg, dry_run=dry_run)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    log(f"polling ogni {cfg.poll_interval_seconds} s")
+    log(f"polling ogni {cfg.poll_interval_seconds} s" + (" - DRY-RUN: nessuna build, nessuno status" if dry_run else ""))
     try:
         while not stop.is_set():
             for step in (dispatcher.poll, dispatcher.tick):
@@ -1524,7 +1583,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--config", required=False)
     parser.add_argument("--check-secrets", action="store_true",
                         help="check-config: legge il token Buildkite ed esegue una volta il comando del token GitHub")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="serve: collaudo senza build, annullamenti ne' status (solo GET, archivio separato)")
     args = parser.parse_args(argv)
+    if args.dry_run and args.command != "serve":
+        parser.error("--dry-run vale solo con serve")
     try:
         cfg = load_config(args.config)
         if args.command == "check-config":
@@ -1545,7 +1608,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             finally:
                 store.close()
             return EXIT_OK
-        return serve(cfg)
+        return serve(cfg, dry_run=args.dry_run)
     except ConfigError as exc:
         print("NOT CONFIGURED", file=sys.stderr)
         for problem in exc.problems:

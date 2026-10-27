@@ -2974,6 +2974,19 @@
         "tests/scripts/test_trusted_pr_guard.py"
       ],
       "max_files": 10
+    },
+    "trusted-dispatcher-562-collaudo": {
+      "description": "PF-562 risoluzione blocker tecnici del collaudo (OWNER MANDATE, issue #562, dopo il merge della #569 a5f0f72): A) credenziale systemd LoadCredential 0440 accettata solo nella directory $CREDENTIALS_DIRECTORY del servizio con verifiche di directory, proprietario, gruppo e permessi; B) serve --dry-run senza scritture esterne (trasporto solo GET, publisher che rifiuta, nessuna build ne' status, archivio separato). Test RED/GREEN, mutazioni area trusted_dispatcher, docs, CHANGELOG. Nessuna modifica a infrastruttura VPS, ruleset, required checks, trading, Microstake. File a merge owner (scripts/pr_*.py).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/trusted_dispatcher.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/pr_trusted_dispatcher.py",
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "max_files": 6
     }
   }
 }
