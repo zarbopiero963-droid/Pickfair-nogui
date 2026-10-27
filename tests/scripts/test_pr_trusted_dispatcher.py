@@ -114,6 +114,10 @@ class FakeBuildkite:
                     self._new_build(pipeline, payload)
                 if self.fail_create == "transport":
                     raise td.TransportError("timeout")
+                if self.fail_create == "truncated201":
+                    return 201, {}, b'{"number": 1, "web_url'
+                if self.fail_create == "html400":
+                    return 400, {"Content-Type": "text/html"}, b"<html>bad request</html>"
                 if self.fail_create == "html502":
                     return 502, {"Content-Type": "text/html"}, b"<html>502 Bad Gateway</html>"
                 code = 500 if self.fail_create == "http500" else 422
@@ -1179,3 +1183,28 @@ def test_unconfirmed_cancellation_gives_up_after_the_window(env):
     clock.now += disp.cfg.build_timeout_seconds["readiness"] + 1
     disp.tick()
     assert all(j["state"] == "superseded" for j in disp.store.recent_jobs() if j["head_sha"] == HEAD)
+
+
+
+@pytest.mark.parametrize("mode", ["truncated201", "html502", "transport"])
+def test_unreadable_creation_response_is_ambiguous_never_terminal(env, mode):
+    """Codex P2 su #569 (6d3f9e2): un 201 con il corpo troncato (Content-Length) non solleva IncompleteRead ma
+    non e' interpretabile; la build puo' esistere. Ogni risposta di creazione non interpretabile e' ambigua:
+    riconciliazione, mai `error` con la build lasciata in coda."""
+    disp, bk, pub, _ = env
+    bk.fail_create, bk.create_lands = mode, True
+    send(disp, payload())
+    disp.tick()
+    assert {j["state"] for j in disp.store.active_jobs()} == {"creating"} and not pub.final()
+    bk.fail_create = None
+    disp.tick()
+    assert {j["state"] for j in disp.store.active_jobs()} == {"dispatched"}
+    assert len(bk.builds["pr-overlap-guard"]) == 1
+
+
+def test_explicit_4xx_rejection_with_non_json_body_is_a_definite_error(env):
+    disp, bk, pub, _ = env
+    bk.fail_create = "html400"
+    send(disp, payload())
+    disp.tick()
+    assert sorted(c[2] for c in pub.final()) == ["error", "error"] and not disp.store.active_jobs()

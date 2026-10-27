@@ -602,10 +602,21 @@ class Buildkite:
             raise ApiError("risposta Buildkite non JSON", status) from None
 
     def create_build(self, guard: str, env: Mapping[str, str], message: str) -> dict:
-        status, data = self._request("POST", f"{self._pipeline_url(guard)}/builds",
-                                     {"commit": "HEAD", "branch": BASE_REF, "message": message, "env": dict(env)})
-        if status != 201 or not isinstance(data, dict):
+        """Solo un rifiuto 4xx esplicito e' un esito DEFINITO (nessuna build). Ogni altra risposta non
+        interpretabile (5xx, 201 con corpo troncato o non JSON, 2xx inattesi) e' AMBIGUA: la build puo' esistere,
+        quindi TransportError e riconciliazione (rilievi Codex P2 su #569)."""
+        try:
+            status, data = self._request("POST", f"{self._pipeline_url(guard)}/builds",
+                                         {"commit": "HEAD", "branch": BASE_REF, "message": message,
+                                          "env": dict(env)})
+        except ApiError as exc:
+            if exc.status is not None and 400 <= exc.status < 500:
+                raise
+            raise TransportError(f"risposta di creazione non interpretabile ({exc})") from None
+        if 400 <= status < 500:
             raise ApiError(f"creazione build rifiutata (HTTP {status})", status)
+        if status != 201 or not isinstance(data, dict):
+            raise TransportError(f"risposta di creazione non interpretabile (HTTP {status})")
         return data
 
     def get_build(self, guard: str, number: int) -> dict:
