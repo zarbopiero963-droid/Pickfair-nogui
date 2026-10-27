@@ -7,9 +7,11 @@ App, Buildkite) e' NOT VERIFIED: lo collauda Grok (docs/trusted_dispatcher.md).
 """
 from __future__ import annotations
 
+import errno
 import importlib.util
 import json
 import os
+import struct
 import sys
 import urllib.parse
 from pathlib import Path
@@ -2425,6 +2427,120 @@ def test_systemd_credential_owned_by_someone_else_is_refused(tmp_path, monkeypat
             td.read_secret_file(path, td._TOKEN_RE, "buildkite.token_file")
     finally:
         os.chmod(os.path.dirname(path), 0o700)
+
+
+# ---- D1 (Grok, #562 c.6450558425): systemd 255 espone la credenziale 0440 root:root nella directory 0550 root:root;
+# il servizio (pf-dispatch, uid/gid 983) la legge tramite una voce ACL, non tramite il gruppo
+SERVICE_ID = 983
+ACL_XATTR = "system.posix_acl_access"
+
+
+def _acl(user=SERVICE_ID, group=None):
+    """ACL POSIX come la scrive systemd: proprietario r, voce nominativa per l'utente del servizio, mask r, altri 0."""
+    none = 0xFFFFFFFF
+    entries = [(0x01, 4, none)] + ([(0x02, 4, user)] if user is not None else []) + [(0x04, 4, none)]
+    entries += ([(0x08, 4, group)] if group is not None else []) + [(0x10, 4, none), (0x20, 0, none)]
+    return struct.pack("<I", 2) + b"".join(struct.pack("<HHI", *e) for e in entries)
+
+
+def _as_systemd_service(tmp_path, monkeypatch, *, acl=None, file_ids=(0, 0), dir_ids=(0, 0), link=False):
+    """Il caso della VPS visto dal processo del servizio. Il file e' davvero del processo di test (che lo deve poter
+    leggere) e porta una vera ACL; `stat` e `fstat` riportano le identita' di systemd (root:root di default) e il
+    processo ha le identita' di pf-dispatch. Gira anche senza root."""
+    path = _credential(tmp_path, monkeypatch, dir_mode=0o700)
+    if link:
+        target = write_secret(tmp_path / "other" / "real", BK_CRED, 0o440)
+        os.remove(path)
+        os.symlink(target, path)
+    try:
+        os.setxattr(path if not link else target, ACL_XATTR, _acl() if acl is None else acl)
+    except OSError as exc:
+        pytest.skip(f"ACL POSIX non disponibili su questo filesystem ({exc.errno})")
+    os.chmod(os.path.dirname(path), 0o500)
+    real_uid, real_fstat, real_stat = os.geteuid(), os.fstat, os.stat
+    cdir = os.path.realpath(os.path.dirname(path))
+
+    def seen(st, ids):
+        if st.st_uid != real_uid:
+            return st
+        fields = list(st[:10])
+        fields[4], fields[5] = ids
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(os, "geteuid", lambda: SERVICE_ID)
+    monkeypatch.setattr(os, "getegid", lambda: SERVICE_ID)
+    monkeypatch.setattr(os, "fstat", lambda fd: seen(real_fstat(fd), file_ids))
+    monkeypatch.setattr(os, "stat", lambda p, *a, **k: seen(real_stat(p, *a, **k),
+                                                              dir_ids if os.path.realpath(p) == cdir else file_ids))
+    return path
+
+
+def _restore_dir(tmp_path):
+    os.chmod(tmp_path / "credentials" / "pf-dispatch.service", 0o700)
+
+
+def test_d1_systemd_255_root_credential_readable_via_acl_is_accepted(tmp_path, monkeypatch):
+    """RED su c26d928: 0440 root:root con la voce ACL dell'utente del servizio era rifiutato (gruppo != egid)."""
+    path = _as_systemd_service(tmp_path, monkeypatch)
+    try:
+        assert td.read_secret_file(path, td._TOKEN_RE, "buildkite.token_file") == BK_CRED
+    finally:
+        _restore_dir(tmp_path)
+
+
+@pytest.mark.parametrize("case", ["acl_foreign_user", "acl_foreign_group", "file_foreign_group",
+                                  "file_foreign_owner", "dir_foreign_owner", "symlink"])
+def test_d1_systemd_credential_with_foreign_access_is_refused(tmp_path, monkeypatch, case):
+    """Il caso root:root e' ammesso solo se nessun altro puo' leggere: voci ACL di utenti o gruppi estranei, gruppo o
+    proprietario estranei del file, directory di un altro utente o link simbolico => rifiutato, senza il token."""
+    kwargs = {"acl_foreign_user": {"acl": _acl(user=4242)},
+              "acl_foreign_group": {"acl": _acl(group=4242)},
+              "file_foreign_group": {"file_ids": (0, 4242)},
+              "file_foreign_owner": {"file_ids": (4242, 0)},
+              "dir_foreign_owner": {"dir_ids": (4242, 0)},
+              "symlink": {"link": True}}[case]
+    path = _as_systemd_service(tmp_path, monkeypatch, **kwargs)
+    try:
+        with pytest.raises(td.ConfigError) as exc:
+            td.read_secret_file(path, td._TOKEN_RE, "buildkite.token_file")
+        assert BK_CRED not in str(exc.value)
+    finally:
+        _restore_dir(tmp_path)
+
+
+def test_d1_unreadable_acl_is_refused(tmp_path, monkeypatch):
+    """Errore nella lettura della ACL (diverso da «nessuna ACL») => rifiutato: mai un'accettazione per difetto."""
+    path = _as_systemd_service(tmp_path, monkeypatch)
+
+    def broken(*_a, **_k):
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr(os, "getxattr", broken)
+    try:
+        with pytest.raises(td.ConfigError):
+            td.read_secret_file(path, td._TOKEN_RE, "buildkite.token_file")
+    finally:
+        _restore_dir(tmp_path)
+
+
+@pytest.mark.parametrize("acl, ok", [
+    (_acl(), True), (_acl(user=None), True), (_acl(user=0, group=0), True), (_acl(group=SERVICE_ID), True),
+    (_acl(user=4242), False), (_acl(group=4242), False),
+    (struct.pack("<I", 2) + struct.pack("<HHI", 0x20, 4, 0xFFFFFFFF), False),     # altri in lettura
+    (struct.pack("<I", 1) + _acl()[4:], False),                                    # versione sconosciuta
+    (_acl()[:-3], False), (b"", False),                                            # troncata, vuota
+    (struct.pack("<I", 2) + struct.pack("<HHI", 0x40, 4, 0), False),               # voce sconosciuta
+])
+def test_credential_acl_admits_only_root_and_the_service(acl, ok):
+    assert td._credential_acl_ok(acl, SERVICE_ID, SERVICE_ID) is ok
+
+
+@pytest.mark.parametrize("mode", [0o400, 0o600])
+def test_private_secret_still_accepted_without_systemd(tmp_path, monkeypatch, mode):
+    """Regressione: 0400/0600 restano validi ovunque, anche senza $CREDENTIALS_DIRECTORY."""
+    monkeypatch.delenv("CREDENTIALS_DIRECTORY", raising=False)
+    path = write_secret(tmp_path / "s", BK_CRED, mode)
+    assert td.read_secret_file(path, td._TOKEN_RE, "buildkite.token_file") == BK_CRED
 
 
 def test_secret_symlink_is_refused(tmp_path):
