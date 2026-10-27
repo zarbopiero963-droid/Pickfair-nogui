@@ -85,6 +85,7 @@ class FakeBuildkite:
         self.redirect_host = S3
         self.download_url_override: str | None = None
         self.mutate_build = None
+        self.fail_cancel = False
 
     def _new_build(self, pipeline: str, payload: dict) -> dict:
         number = len(self.builds[pipeline]) + 1
@@ -135,6 +136,8 @@ class FakeBuildkite:
                 self.mutate_build(data)
             return 200, {}, json.dumps(data).encode()
         if method == "PUT" and parts[2:] == ["cancel"]:
+            if self.fail_cancel:
+                raise td.TransportError("rete")
             self.canceled.append((pipeline, number))
             build["state"] = "canceled"
             return 200, {}, json.dumps(build).encode()
@@ -1123,3 +1126,56 @@ def test_archive_from_an_earlier_schema_is_migrated(tmp_path):
         assert all(j["state"] == "dispatched" and j["pending_published"] == 1 for j in disp.store.active_jobs())
     finally:
         disp.store.close()
+
+
+
+def test_truncated_http_response_is_a_transport_error(monkeypatch):
+    """Codex P2 su #569 (47ca6fb): `http.client.IncompleteRead` di una risposta chunked troncata non deve sfuggire
+    a `_poll` prima del controllo del timeout: e' un errore di trasporto come gli altri."""
+    import http.client as hc
+
+    class Resp:
+        status = 200
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, n=-1):
+            raise hc.IncompleteRead(b"{", 10)
+
+    monkeypatch.setattr(td._OPENER, "open", lambda req, timeout=None: Resp())
+    with pytest.raises(td.TransportError):
+        td.urllib_transport("GET", "https://api.buildkite.com/v2/x", {}, None, 5)
+
+
+def test_unconfirmed_cancellation_keeps_the_superseded_job_active(env):
+    """Codex P2 su #569 (47ca6fb): un annullamento fallito non ritira il job: si ritenta al giro dopo, cosi' la
+    build del vecchio head non resta in coda senza nessuno che la segua."""
+    disp, bk, _, _ = env
+    send(disp, payload())
+    disp.tick()
+    bk.fail_cancel = True
+    send(disp, payload(head=HEAD2, updated="2026-10-27T10:01:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000f9")
+    disp.tick()
+    old = [j for j in disp.store.recent_jobs() if j["head_sha"] == HEAD]
+    assert all(j["state"] == "dispatched" and j["superseded"] == 1 for j in old)
+    bk.fail_cancel = False
+    disp.tick()
+    assert {("pr-overlap-guard", 1), ("pr-merge-readiness", 1)} <= set(bk.canceled)
+    assert all(j["state"] == "superseded" for j in disp.store.recent_jobs() if j["head_sha"] == HEAD)
+
+
+def test_unconfirmed_cancellation_gives_up_after_the_window(env):
+    disp, bk, _, clock = env
+    send(disp, payload())
+    disp.tick()
+    bk.fail_cancel = True
+    send(disp, payload(head=HEAD2, updated="2026-10-27T10:01:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000fa")
+    disp.tick()
+    clock.now += disp.cfg.build_timeout_seconds["readiness"] + 1
+    disp.tick()
+    assert all(j["state"] == "superseded" for j in disp.store.recent_jobs() if j["head_sha"] == HEAD)

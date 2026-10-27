@@ -45,6 +45,14 @@ GitHub è idempotente per contesto e SHA).
 finché la build gira (rilievo Codex P1 su #569). Rivalutando un head già `success` (per esempio dopo un reopen), il
 vecchio `success` non resta l'esito visibile mentre la nuova build è in corso.
 
+**Annullamento non confermato.** Se l'annullamento della build di un head sostituito fallisce (rete, API), il job
+resta attivo e l'annullamento si ritenta a ogni giro fino alla finestra del timeout della build; solo dopo il job
+viene ritirato, e il log lo dichiara (rilievo Codex P2 su #569).
+
+**Risposte troncate.** Un errore di framing HTTP (`http.client.HTTPException`, per esempio `IncompleteRead` di una
+risposta chunked troncata) è un errore di trasporto: il polling continua e il timeout della build resta efficace
+(rilievo Codex P2 su #569).
+
 **Risposte 5xx.** Ogni HTTP 5xx di Buildkite è un esito **ignoto** e si classifica prima di leggere il JSON (rilievo
 Codex P2 su #569): un 502 HTML del gateway dopo una creazione arrivata a Buildkite porta alla riconciliazione, non a
 un `error` che lascerebbe la build non seguita.

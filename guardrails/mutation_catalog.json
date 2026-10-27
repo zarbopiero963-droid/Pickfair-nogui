@@ -4722,6 +4722,30 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "Sol su #569: archivio di una versione precedente senza le colonne nuove: OperationalError a runtime."
+    },
+    {
+      "id": "td_http_exception_escapes",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:",
+      "mutated": "    except (urllib.error.URLError, OSError, ValueError) as exc:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "Codex P2 su #569: IncompleteRead sfugge al polling prima del timeout: job dispatched e status pending per sempre."
+    },
+    {
+      "id": "td_cancel_not_retried",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if unconfirmed and self.clock() - job[\"created_at\"] <= self.cfg.build_timeout_seconds[job[\"guard\"]]:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "Codex P2 su #569: annullamento fallito e job ritirato: la build del vecchio head resta in coda senza essere seguita."
     }
   ]
 }

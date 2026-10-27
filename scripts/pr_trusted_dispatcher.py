@@ -34,6 +34,7 @@ import argparse
 import fcntl
 import hashlib
 import hmac
+import http.client
 import json
 import os
 import re
@@ -556,12 +557,17 @@ def urllib_transport(method: str, url: str, headers: Mapping[str, str], body: Op
     if not url.startswith("https://"):
         raise TransportError("solo https")
     req = urllib.request.Request(url, data=body, headers=dict(headers), method=method)
+    # `http.client.HTTPException` (es. IncompleteRead di una risposta chunked troncata, rilievo Codex P2 su #569)
+    # e' un errore di trasporto: non deve sfuggire al polling prima del controllo del timeout
     try:
         with _OPENER.open(req, timeout=timeout) as resp:  # nosec B310 - schema https verificato sopra
             return resp.status, dict(resp.headers), resp.read(MAX_API_BYTES + 1)
     except urllib.error.HTTPError as exc:
-        return exc.code, dict(exc.headers or {}), exc.read(MAX_API_BYTES + 1) if exc.fp else b""
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+        try:
+            return exc.code, dict(exc.headers or {}), exc.read(MAX_API_BYTES + 1) if exc.fp else b""
+        except (http.client.HTTPException, OSError, ValueError) as inner:
+            raise TransportError(type(inner).__name__) from None
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
         raise TransportError(type(exc).__name__) from None
 
 
@@ -805,11 +811,19 @@ class Dispatcher:
                 if self.clock() - job["created_at"] <= self.cfg.build_timeout_seconds[job["guard"]]:
                     log(f"job {job['id']}: build sostituita non verificabile ({exc}): riprovo")
                     return None
+        unconfirmed = False
         for number in numbers:
             try:
                 self.bk.cancel_build(job["guard"], number)
             except (ApiError, TransportError) as exc:
+                unconfirmed = True
                 log(f"job {job['id']}: annullamento build {number} non confermato: {exc}")
+        # annullamento non confermato: il job resta attivo e si ritenta al giro dopo (rilievo Codex P2 su #569),
+        # fino alla finestra del timeout della build; poi si ritira, dichiarato nei log
+        if unconfirmed and self.clock() - job["created_at"] <= self.cfg.build_timeout_seconds[job["guard"]]:
+            return None
+        if unconfirmed:
+            log(f"job {job['id']}: annullamento mai confermato entro la finestra: ritirato")
         self._set(job, state="superseded", description="sostituito da un head piu' recente")
         return None
 
