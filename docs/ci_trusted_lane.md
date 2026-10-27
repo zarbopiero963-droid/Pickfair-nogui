@@ -149,6 +149,11 @@ chiusi, oppure con un timeout ≥ 115 minuti e `PF_READINESS_WAIT_SECONDS=6600`,
   Il token arriva via `LoadCredential=github-token:/etc/buildkite-agent-trusted/secrets/github-token`, quindi
   dentro `CREDENTIALS_DIRECTORY`.
 - Il job trusted non deve esportare il token in variabili d'ambiente: lo legge il guard dal file.
+- Il contesto PR (`PF_PR_NUMBER`, `PF_PR_HEAD_SHA`) lo imposta solo il dispatcher trusted
+  (`scripts/pr_trusted_dispatcher.py`, contratto e configurazione in [trusted_dispatcher.md](trusted_dispatcher.md)),
+  che pubblica anche lo status sull'head della PR. Senza contesto il guard esce con exit 1 e il motivo esplicito
+  «contesto PR verificato assente». Uno step Buildkite che lanciasse `scripts/pr_merge_readiness.py` senza
+  argomenti (lo smoke di #562, exit 2 di argparse) va portato sul wrapper `scripts/ci/pr_merge_readiness.sh`.
 
 ## Limiti dichiarati
 

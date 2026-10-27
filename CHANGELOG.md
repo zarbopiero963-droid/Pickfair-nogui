@@ -9,6 +9,59 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 — dispatcher trusted della lane Buildkite (`scripts/pr_trusted_dispatcher.py`), NOT CERTIFIED:**
+  - **polling autenticato dell'API GitHub al posto del webhook HTTPS** (decisione owner PF-562 opzione B): nessun web
+    server; ogni `poll_interval_seconds` (60 s, configurabile 10..600) legge le PR aperte con paginazione completa
+    (`Link rel=next`, al massimo 50 pagine), ogni elemento verificato con tipi stretti; risposta incompleta,
+    malformata, errore API, rate limit o credenziali mancanti/scadute ⇒ nessuna transizione e nessuno status;
+  - credenziali di lettura da `github.token_command` (token breve con scadenza, rinnovato prima della scadenza e
+    scartato su 401; token classico con scope rifiutato), separate dal publisher; solo GET su
+    `/repos/{repo}/pulls`, `/repos/{repo}/issues/comments` e `/repos/{repo}/collaborators/{login}/permission`;
+  - stato per PR in SQLite (`pr_state` con contatore `seq`): nuova PR, nuovo commit, chiusa/riaperta, ritorno a uno
+    SHA già visto e uscita dalla bozza danno ciascuno una transizione con id stabile `p<PR>-t<seq>-<sha12>`; la
+    riconciliazione dopo il riavvio confronta lo stato salvato con quello osservato; chiusura solo dopo due giri
+    consecutivi senza la PR, che annulla le build;
+  - rerun manuale `/pf-trusted-rerun <sha40>` in un commento della PR: autore in `rerun.allowed_logins`, commento
+    non modificato, PR aperta e idonea, SHA uguale all'head corrente; id `p<PR>-r<commento>-<sha12>`, registrato in
+    `reruns` (mai rieseguito due volte), comandi precedenti al primo avvio ignorati; autore account utente con
+    permesso ATTUALE di scrittura sul repository (`admin`/`maintain`/`write` letto da `collaborators/{login}/permission`;
+    `author_association` non basta: Sol su `dab1e94`), permesso non verificabile ⇒ lettura annullata, allowlist iniziale
+    `zarbopiero963-droid` (OWNER GO PF-570); rifiutato = solo registro, il
+    rerun non tocca i required check e il verdetto resta del guard;
+  - un head nuovo annulla le build del vecchio, creazione ambigua riconciliata senza seconda creazione, ripresa dopo
+    il riavvio; avvia solo `pr-overlap-guard` e `pr-merge-readiness` su `main` con le cinque variabili del contratto
+    di Grok (#562 c.6438092317 §5): le pipeline trusted eseguono solo script di `main`;
+  - `success` solo con build `passed` e risultato `PASS` del guard sullo stesso head; tutto il resto `failure` o
+    `error`; pubblicazione solo tramite il comando configurato (helper root di Grok);
+  - configurazione tutta obbligatoria: chiave mancante o sconosciuta ⇒ `NOT CONFIGURED`, il servizio non parte; punti
+    infrastrutturali non decisi `BLOCKED_CONTRACT` in `docs/trusted_dispatcher.md`, con la checklist dei collaudi
+    reali per Grok;
+  - smoke trusted: senza contesto PR del dispatcher il guard esce con motivo esplicito («contesto PR verificato
+    assente»), mai con l'errore di argparse né con un numero di PR di ripiego; lo step va portato sul wrapper
+    `scripts/ci/pr_merge_readiness.sh` (configurazione Buildkite, a cura di Grok);
+  - rilievi della review indipendente corretti prima della PR: head che torna con un force-push, pubblicazione
+    fallita ritentata, una sola istanza sull'archivio (`flock`) con transizioni condizionate, build orfane di una
+    creazione ambigua annullate, stesso `updated_at` senza sostituzione, `Content-Length` non ASCII, COMMIT
+    fallito, timeout del publisher in configurazione;
+  - rilievi Codex su #569: `pending` ritentato mentre la build gira, risposta 5xx non JSON alla creazione trattata
+    come ambigua e riconciliata; migrazione idempotente di un archivio creato da una versione precedente (Sol); annullamento non confermato ritentato e risposta HTTP troncata trattata come errore di trasporto (Codex); audit indipendente di liveness: ogni risposta di creazione non interpretabile ambigua, elenco vuoto o pieno non prova l'assenza, risultato ritentato, annullamenti non confermati ricordati (stato `canceling`), fallback sul timeout per le eccezioni inattese; obbligo di annullamento persistente e indipendente dallo stato, nessuno stato finale con build da annullare (Codex); audit avversariale degli invarianti: finestra di annullamento dall'adozione, fallback anche in pubblicazione, `pending` durante la riconciliazione, redelivery dopo la pulizia ancora replay;
+  - rilievi Sol sul range completo: `pending` fallito ritentato anche quando l'artifact del risultato non è ancora
+    scaricabile; esito `publish_failed` riconsegnato ogni 300 s finché è il più recente per quel guard della PR e dello
+    SHA (mai sopra l'esito di un'altra PR sullo stesso commit); una valutazione nuova di uno SHA sostituisce i job
+    attivi più vecchi dello stesso SHA e guard anche di altre PR (Codex P1),
+    sull'head corrente di una PR aperta (mai un vecchio `success` lasciato valido, mai un esito vecchio sopra uno nuovo);
+    consegna registrata in `final_published` (colonna nuova, migrazione idempotente): un esito mai consegnato non
+    finisce `done` alla conferma di un annullamento (Codex P2 su `59b071e`); test del dispatcher saltati in modo esplicito fuori da POSIX (`fcntl`);
+  - integrazione con l'infrastruttura di Grok (#562 c.6444963640): publisher `pf-status-publish-client` sul socket locale
+    (stessa argv, nessun privilegio al dispatcher), token da `pf-dispatch-github-token`, descrizioni nel contratto del
+    socket (ASCII stampabile ≤ 140, mai `` ` `` `$` `\`, sostituzioni visibili, originale nei log, invio rifiutato fuori
+    formato), artifact `.trusted-guard/<guard>.json`; rischio residuo del token Buildkite admin registrato;
+  - rerun: permesso attuale di scrittura letto dall'API (Sol su `dab1e94`), limite inferiore persistente del cursore
+    dei commenti (Codex P2 su `893390a`: nessun comando anteriore al primo avvio, stesso secondo compreso), id di
+    commento fuori misura trattato come comando malformato;
+  - test offline con un finto GitHub paginato e un finto Buildkite; le prove HMAC del webhook sono sostituite dalle
+    prove sulle credenziali di lettura e sul perimetro degli endpoint; mutazioni nell'area `trusted_dispatcher` e una
+    nell'area `trusted_gate`.
 - **PF-569 AI REVIEW FULL COVERAGE RECOVERY — budget del diff di Sol e Grok (owner GO 27/10/2026):**
   - tetti portati a 150.000 caratteri per file e 400.000 totali per GPT-6.1 Sol e Grok 4.7 (prima 7.000/24.000
     e 5.000/18.000), dimensionati sul diff della #569 con margine per il passaggio al polling (PF-562): il dispatcher trusted

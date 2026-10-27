@@ -15,7 +15,8 @@
   ],
   "optional_areas": [
     "check_dedupe",
-    "trusted_gate"
+    "trusted_gate",
+    "trusted_dispatcher"
   ],
   "mutations": [
     {
@@ -4351,6 +4352,18 @@
       "rationale": "Token con a capo, spazi o caratteri di controllo mandato nell'header Authorization (iniezione di header)."
     },
     {
+      "id": "tg_smoke_no_context_message",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if raw_pr is None and env.get(\"PF_PR_HEAD_SHA\") is None:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "#562 c.6440620221: smoke senza contesto PR senza motivo esplicito (dispatcher unica fonte del contesto)."
+    },
+    {
       "id": "cd_inconclusive_ready",
       "module": "scripts.pr_automation_controller",
       "area": "check_dedupe",
@@ -4409,6 +4422,882 @@
         "tests/scripts/test_pr_automation_controller.py"
       ],
       "rationale": "review indipendente su #568: stesso id con esito diverso trattato come copia: il PASS nasconde il FAIL."
+    },
+    {
+      "id": "td_superseded_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if job[\"superseded\"]:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "build di un head sostituito non annullate."
+    },
+    {
+      "id": "td_publish_recheck_skipped",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if fresh.get(\"superseded\"):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "success pubblicato su uno SHA sostituito fra verdetto e pubblicazione."
+    },
+    {
+      "id": "td_success_without_passed",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    if state == \"passed\" and verdict == \"PASS\":",
+      "mutated": "    if verdict == \"PASS\":",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "verdetto PASS accettato anche con build non passed."
+    },
+    {
+      "id": "td_stale_sha_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    if result.get(\"head_sha\") != job[\"head_sha\"]:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "risultato su un head diverso pubblicato come esito dello SHA richiesto."
+    },
+    {
+      "id": "td_result_pr_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            or not _is_int(pr) or pr != job[\"pr\"]):",
+      "mutated": "            or False):",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "risultato di un'altra PR accettato."
+    },
+    {
+      "id": "td_build_env_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            and build.get(\"env\") == build_env(job)",
+      "mutated": "            and True",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "build con env diverso da quello inviato adottata."
+    },
+    {
+      "id": "td_timeout_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if timed_out:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "build che non finisce mai: nessun esito, nessun annullamento."
+    },
+    {
+      "id": "td_two_builds_adopted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if len(found) == 1:",
+      "mutated": "        if len(found) >= 1:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "creazione ambigua con piu' build: ne adotta una invece di annullarle."
+    },
+    {
+      "id": "td_secret_perms_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if st.st_mode & 0o077:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "segreto leggibile da gruppo/altri accettato."
+    },
+    {
+      "id": "td_redirect_host_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if parsed.scheme != \"https\" or host not in self._cfg.artifact_download_hosts:",
+      "mutated": "        if parsed.scheme != \"https\":",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "artifact scaricato da un host non ammesso."
+    },
+    {
+      "id": "td_missing_key_default",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            problems.append(f\"{key}: MISSING\")",
+      "mutated": "            pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "chiave obbligatoria mancante non segnalata come NOT CONFIGURED."
+    },
+    {
+      "id": "td_superseded_holds_slot",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "  WHERE superseded = 0 AND state IN",
+      "mutated": "  WHERE state IN",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "review indipendente P2-1: i job sostituiti occupano il posto dell'head ritornato con un force-push: nessuna build, pending per sempre."
+    },
+    {
+      "id": "td_publish_not_retried",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if self.clock() - since > self.cfg.build_timeout_seconds[job[\"guard\"]]:\n            log(f\"job {job['id']}: pubblicazione non riuscita",
+      "mutated": "        if True:\n            log(f\"job {job['id']}: pubblicazione non riuscita",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "review P2-2: pubblicazione fallita mai ritentata: status richiesto bloccato o success vecchio non corretto."
+    },
+    {
+      "id": "td_no_instance_lock",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "review P2-3: due istanze sullo stesso archivio creano due build per la stessa richiesta."
+    },
+    {
+      "id": "td_create_unconditional",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if not self.store.update_job(job[\"id\"], self.clock(), expected_state=\"queued\", state=\"creating\"):",
+      "mutated": "        if not self.store.update_job(job[\"id\"], self.clock(), state=\"creating\"):",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "review P2-3: transizione non condizionata: una copia vecchia del job crea una seconda build."
+    },
+    {
+      "id": "td_ambiguous_superseded_orphan",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if job[\"state\"] == \"creating\" and not numbers:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "review P2-4: build di una creazione ambigua sostituita lasciata girare."
+    },
+    {
+      "id": "td_pending_not_retried",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                return self._fail(job, \"error\", \"timeout della build\")\n            if not job[\"pending_published\"]:",
+      "mutated": "                return self._fail(job, \"error\", \"timeout della build\")\n            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "Codex P1 su #569: pending fallito mai ritentato: il vecchio success resta l'esito visibile durante la rivalutazione."
+    },
+    {
+      "id": "td_schema_not_migrated",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                if name not in cols:",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "Sol su #569: archivio di una versione precedente senza le colonne nuove: OperationalError a runtime."
+    },
+    {
+      "id": "td_http_exception_escapes",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:",
+      "mutated": "    except (urllib.error.URLError, OSError, ValueError) as exc:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "Codex P2 su #569: IncompleteRead sfugge al polling prima del timeout: job dispatched e status pending per sempre."
+    },
+    {
+      "id": "td_cancel_not_retried",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if unconfirmed and self.clock() - started <= self.cfg.build_timeout_seconds[job[\"guard\"]]:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "Codex P2 su #569: annullamento fallito e job ritirato: la build del vecchio head resta in coda senza essere seguita."
+    },
+    {
+      "id": "td_late_build_terminal",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if self.clock() - job[\"created_at\"] <= self.cfg.build_timeout_seconds[job[\"guard\"]]:\n                return None\n            return self._fail(job, \"error\", \"creazione build non confermata\")",
+      "mutated": "            return self._fail(job, \"error\", \"creazione build non confermata\")",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit A1 su #569: elenco vuoto subito dopo un timeout trattato come assenza: la build arrivata dopo resta orfana."
+    },
+    {
+      "id": "td_state_type_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "(not isinstance(state, str) or state not in BUILD_RUNNING | BUILD_TERMINAL)",
+      "mutated": "(state not in BUILD_RUNNING | BUILD_TERMINAL)",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit A2 su #569: state non stringa solleva TypeError fuori dal controllo del timeout."
+    },
+    {
+      "id": "td_201_number_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if (status != 201 or not isinstance(data, dict) or not _is_int(data.get(\"number\"))\n                or data[\"number\"] <= 0):",
+      "mutated": "        if status != 201 or not isinstance(data, dict):",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit A4 su #569: 201 senza numero di build chiuso come error: build arrivata mai seguita."
+    },
+    {
+      "id": "td_artifact_no_retry",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                if not timed_out:\n                    # errore temporaneo",
+      "mutated": "                if False:\n                    # errore temporaneo",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit A7 su #569: errore temporaneo sul risultato = error definitivo per una build passata."
+    },
+    {
+      "id": "td_full_page_trusted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if len(data) >= 100:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit A8 su #569: pagina piena trattata come prova di assenza: build orfana."
+    },
+    {
+      "id": "td_fallback_missing",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                self._internal_error_fallback(job)",
+      "mutated": "                pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit su #569: un'eccezione a ogni giro tiene il job attivo per sempre, oltre il timeout."
+    },
+    {
+      "id": "td_artifact_size_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "len(body) != size:",
+      "mutated": "len(body) > MAX_ARTIFACT_BYTES:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit A7 su #569: corpo dell'artifact troncato preso come risultato del guard."
+    },
+    {
+      "id": "td_pending_cancels_not_retried",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if job[\"state\"] != \"canceling\" and json.loads(job.get(\"pending_cancels\") or \"[]\"):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "Codex P2 su #569: annullamenti pendenti fermi finche' la pubblicazione fallisce."
+    },
+    {
+      "id": "td_superseded_empty_listing_retires",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if not numbers and within:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "Codex P2 su #569: creazione ambigua sostituita ritirata su elenco vuoto: build arrivata in ritardo orfana."
+    },
+    {
+      "id": "td_final_with_pending_cancels",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if fields.get(\"state\") in FINAL_STATES and json.loads(pending):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "invariante su #569: job chiuso con build ancora da annullare."
+    },
+    {
+      "id": "td_supersede_window_from_creation",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        started = job.get(\"dispatched_at\") or job[\"created_at\"]          # adottata tardi: finestra dall'adozione",
+      "mutated": "        started = job[\"created_at\"]",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit I1 su #569: build adottata tardi e sostituita: un solo tentativo di annullamento."
+    },
+    {
+      "id": "td_fallback_skips_publishing",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if job[\"state\"] in (\"publishing\", \"canceling\"):\n                since = job.get(\"publishing_since\") or job[\"created_at\"]",
+      "mutated": "            if False:\n                since = job.get(\"publishing_since\") or job[\"created_at\"]",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit I2 su #569: publisher che solleva a ogni giro: job attivo per sempre."
+    },
+    {
+      "id": "td_no_pending_during_reconcile",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if not job.get(\"pending_published\"):\n            # head rivalutato",
+      "mutated": "        if False:\n            # head rivalutato",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit I4 su #569: vecchio success visibile durante la riconciliazione di una creazione ambigua."
+    },
+    {
+      "id": "td_classic_scoped_token_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if h.get(\"x-oauth-scopes\", \"\").strip():",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: token classico con scope (scrittura) accettato al posto del token di sola lettura."
+    },
+    {
+      "id": "td_fork_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                and head_repo is not None and head_repo[\"full_name\"] == TRUSTED_REPO)",
+      "mutated": "                and True)",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: head da fork o repository cancellato valutato come PR del repository."
+    },
+    {
+      "id": "td_draft_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    eligible = (not item[\"draft\"] and item[\"base\"][\"ref\"] == BASE_REF",
+      "mutated": "    eligible = (item[\"base\"][\"ref\"] == BASE_REF",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: PR in bozza avviata contro il contratto."
+    },
+    {
+      "id": "td_rerun_replayed",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if db.execute(\"SELECT 1 FROM reruns WHERE comment_id = ?\", (req.comment_id,)).fetchone():",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 rerun: lo stesso comando rieseguito a ogni rilettura dei commenti."
+    },
+    {
+      "id": "td_rerun_cursor_before_start",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        self.store.set_meta(\"comments_since\", max(iso(now - COMMENTS_OVERLAP_SECONDS), floor))",
+      "mutated": "        self.store.set_meta(\"comments_since\", iso(now - COMMENTS_OVERLAP_SECONDS))",
+      "rationale": "PF-569 (Codex P2 su 893390a): la sovrapposizione riporta il cursore prima del primo avvio e un comando storico viene eseguito."
+    },
+    {
+      "id": "td_rerun_floor_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "            elif floor is None or req.created_at <= floor:",
+      "mutated": "            elif floor is None:",
+      "rationale": "PF-569: comando anteriore al primo avvio eseguito (solo il cursore lo escludeva)."
+    },
+    {
+      "id": "td_rerun_floor_same_second",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "            elif floor is None or req.created_at <= floor:",
+      "mutated": "            elif floor is None or req.created_at < floor:",
+      "rationale": "PF-569: comando nello stesso secondo del primo avvio eseguito (potrebbe essere anteriore)."
+    },
+    {
+      "id": "td_comment_id_unbounded",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "    if not _is_int(cid) or not 0 < cid < MAX_COMMENT_ID or not isinstance(login, str)",
+      "mutated": "    if not _is_int(cid) or cid <= 0 or not isinstance(login, str)",
+      "rationale": "PF-569: id di commento fuori misura: overflow SQLite a ogni giro e PF_DELIVERY_ID oltre il formato del gate."
+    },
+    {
+      "id": "td_description_forbidden_kept",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        elif not (\"\\x20\" <= c <= \"\\x7e\") or c in _DESCRIPTION_FORBIDDEN:",
+      "mutated": "        elif not (\"\\x20\" <= c <= \"\\x7e\"):",
+      "rationale": "PF-562 publisher (Grok t215u): ` $ \\ arrivano al socket e lo status viene rifiutato."
+    },
+    {
+      "id": "td_description_cut_silently",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        cleaned = cleaned[:DESCRIPTION_MAX - 3].rstrip() + \"...\"",
+      "mutated": "        cleaned = cleaned[:DESCRIPTION_MAX]",
+      "rationale": "PF-562 publisher: descrizione troncata senza segnale visibile."
+    },
+    {
+      "id": "td_description_accents_lost",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "    for c in unicodedata.normalize(\"NFKD\", text):",
+      "mutated": "    for c in text:",
+      "rationale": "PF-562 publisher: lettere accentate sostituite da '?' invece della lettera base (senso alterato)."
+    },
+    {
+      "id": "td_publisher_sends_invalid_description",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        if not _DESCRIPTION_RE.fullmatch(description):",
+      "mutated": "        if False:",
+      "rationale": "PF-562 publisher: descrizione fuori contratto inviata al client del socket."
+    },
+    {
+      "id": "td_close_after_one_miss",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                if row[\"missing\"] + 1 >= CLOSE_AFTER_MISSES:",
+      "mutated": "                if True:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: PR chiusa (e build annullate) per una sola assenza da un elenco letto mentre cambia."
+    },
+    {
+      "id": "td_reopen_same_sha_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                elif not row[\"open\"]:",
+      "mutated": "                elif False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: PR riaperta sullo stesso SHA mai rivalutata."
+    },
+    {
+      "id": "td_rerun_stale_sha_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            elif row[\"head_sha\"] != req.head_sha:",
+      "mutated": "            elif False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 rerun: comando su uno SHA che non e' l'head corrente accettato."
+    },
+    {
+      "id": "td_pagination_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            m = _LINK_NEXT_RE.search(h.get(\"link\", \"\"))",
+      "mutated": "            m = None",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: solo la prima pagina letta: PR mancanti trattate come chiuse."
+    },
+    {
+      "id": "td_page_limit_trusted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        raise ApiError(\"paginazione GitHub oltre il limite: elenco non verificabile\")",
+      "mutated": "        return items",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: elenco oltre il limite di pagine preso come completo."
+    },
+    {
+      "id": "td_github_endpoint_unrestricted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                or (parts.path not in _GITHUB_PATHS and not _PERMISSION_PATH_RE.fullmatch(parts.path)):",
+      "mutated": "                or False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: endpoint GitHub qualsiasi (contenuti, archivi) raggiungibile dal client."
+    },
+    {
+      "id": "td_rate_limit_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if now < self.rate_limited_until:\n            return []",
+      "mutated": "        if False:\n            return []",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: richieste ripetute durante il rate limit."
+    },
+    {
+      "id": "td_token_expiry_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if expires <= now + TOKEN_REFRESH_MARGIN:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 credenziali: token scaduto o in scadenza usato."
+    },
+    {
+      "id": "td_token_cached_forever",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if self._bearer is not None and now < self._expires - TOKEN_REFRESH_MARGIN:",
+      "mutated": "        if self._bearer is not None:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 credenziali: token mai rinnovato, usato oltre la scadenza."
+    },
+    {
+      "id": "td_rejected_token_kept",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            self._tokens.invalidate()",
+      "mutated": "            pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 credenziali: token rifiutato (401) riusato invece di chiederne uno nuovo."
+    },
+    {
+      "id": "td_rerun_login_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if req.login not in allowed:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 rerun: comando di un login non autorizzato eseguito."
+    },
+    {
+      "id": "td_rerun_permission_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "            elif req.permission not in RERUN_PERMISSIONS:",
+      "mutated": "            elif False:",
+      "rationale": "PF-570 rerun (Sol su dab1e94): comando di un login in allowlist senza permesso di scrittura ATTUALE sul repository eseguito."
+    },
+    {
+      "id": "td_rerun_bot_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "            elif req.user_type != \"User\":",
+      "mutated": "            elif False:",
+      "rationale": "PF-570 rerun: comando di un account non utente (bot, app) eseguito."
+    },
+    {
+      "id": "td_pending_skipped_on_artifact_error",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                        self._publish_pending(job)\n                    return None",
+      "mutated": "                        pass\n                    return None",
+      "rationale": "PF-569 (Sol su 22d1b71...e1c6e36): con l'artifact non scaricabile il pending fallito non si ritenta e il vecchio success resta visibile."
+    },
+    {
+      "id": "td_publish_failed_never_redelivered",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        for job in self.store.redeliverable_jobs(self.clock()):",
+      "mutated": "        for job in []:",
+      "rationale": "PF-569 (Sol su 90d8261...bac3b3e): esito non consegnato abbandonato; il vecchio success resta valido sullo stesso SHA."
+    },
+    {
+      "id": "td_redelivery_over_newer_job",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                \"AND NOT EXISTS (SELECT 1 FROM jobs k WHERE k.head_sha = j.head_sha \"",
+      "mutated": "                \"AND NOT EXISTS (SELECT 1 FROM jobs k WHERE k.pr = j.pr \"",
+      "rationale": "PF-569 (Sol su 90d8261...1ed6de8): esito vecchio riconsegnato sopra quello di un'altra PR sullo stesso SHA (status per SHA e contesto)."
+    },
+    {
+      "id": "td_same_sha_older_job_publishes",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                           f\"AND id < ? AND state IN ({placeholders})\",",
+      "mutated": "                           f\"AND id < ? AND 0 AND state IN ({placeholders})\",",
+      "rationale": "PF-569 (Codex P1 su 0e129c3): un job attivo piu' vecchio di un'altra PR sullo stesso SHA pubblica il suo PASS dopo il FAIL piu' recente."
+    },
+    {
+      "id": "td_redelivery_stale_head",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                \"AND p.head_sha = j.head_sha AND COALESCE(j.publishing_since, j.updated_at) <= ? \"",
+      "mutated": "                \"AND COALESCE(j.publishing_since, j.updated_at) <= ? \"",
+      "rationale": "PF-569: esito riconsegnato dopo che l'head della PR e' cambiato."
+    },
+    {
+      "id": "td_redelivery_closed_pr",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                \"WHERE j.state = 'publish_failed' AND j.superseded = 0 AND p.open = 1 AND p.eligible = 1 \"",
+      "mutated": "                \"WHERE j.state = 'publish_failed' AND j.superseded = 0 \"",
+      "rationale": "PF-569: esito riconsegnato su una PR chiusa o non piu' valutabile."
+    },
+    {
+      "id": "td_redelivery_no_backoff",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                \"ORDER BY j.id\", (now - REDELIVERY_SECONDS,)).fetchall()",
+      "mutated": "                \"ORDER BY j.id\", (now,)).fetchall()",
+      "rationale": "PF-569: riconsegna a ogni giro senza intervallo."
+    },
+    {
+      "id": "td_canceling_forgets_undelivered",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        if fresh.get(\"outcome\") and not fresh.get(\"final_published\") and not fresh.get(\"superseded\"):",
+      "mutated": "        if False:",
+      "rationale": "PF-569 (Codex P2 su 59b071e): annullamento confermato chiude in done un esito mai consegnato; il required check resta pending."
+    },
+    {
+      "id": "td_final_published_not_recorded",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "            self._set(job, final_published=1)",
+      "mutated": "            pass",
+      "rationale": "PF-569: consegna non registrata; un esito gia' consegnato viene ripubblicato dopo l'annullamento."
+    },
+    {
+      "id": "td_rerun_permissions_optional",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "            or not isinstance(user_type, str) \\",
+      "mutated": "            or False \\",
+      "rationale": "PF-570 rerun: comando senza tipo di account dichiarato da GitHub valutato invece di annullare la lettura."
+    },
+    {
+      "id": "td_rerun_permission_other_user",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        if perm not in REPO_PERMISSIONS or not isinstance(who, str) or who.lower() != login.lower():",
+      "mutated": "        if perm not in REPO_PERMISSIONS:",
+      "rationale": "PF-570 rerun: permesso riferito a un altro utente accettato come quello del richiedente."
+    },
+    {
+      "id": "td_rerun_permission_404_as_write",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                return \"none\"",
+      "mutated": "                return \"write\"",
+      "rationale": "PF-570 rerun: accesso revocato (404) trattato come permesso di scrittura."
+    },
+    {
+      "id": "td_rerun_read_permission_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "RERUN_PERMISSIONS = frozenset({\"admin\", \"maintain\", \"write\"})",
+      "mutated": "RERUN_PERMISSIONS = frozenset({\"admin\", \"maintain\", \"write\", \"triage\", \"read\"})",
+      "rationale": "PF-570 rerun: collaboratore in sola lettura o triage abilitato a rilanciare build trusted."
+    },
+    {
+      "id": "td_permission_queried_before_allowlist",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                        if r.user_type == \"User\" and r.login in self.cfg.rerun_allowed_logins",
+      "mutated": "                        if r.user_type == \"User\"",
+      "rationale": "PF-570 rerun: permesso interrogato per login fuori allowlist (chiamate API pilotate da chiunque commenti)."
+    },
+    {
+      "id": "td_closed_pr_builds_kept",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                    self._supersede_pr(db, row[\"pr\"], now, keep_head=None)",
+      "mutated": "                    pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: build di una PR chiusa lasciate girare e pubblicare."
     }
   ]
 }

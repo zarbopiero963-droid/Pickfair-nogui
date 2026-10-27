@@ -1,0 +1,1557 @@
+#!/usr/bin/env python3
+"""Dispatcher trusted della lane Buildkite (issue #562, PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01).
+
+Contratto di Grok (#562 c.6438092317, §5) con l'intake sostituito dal **polling autenticato** dell'API GitHub
+(decisione owner PF-562 GITHUB POLLING ARCHITECTURE, opzione B): nessun endpoint pubblico, nessun web server.
+
+1. **Intake.** Ogni `poll_interval_seconds` (consigliato 60) il dispatcher legge con un token di SOLA LETTURA a
+   durata limitata (prodotto da `github.token_command`, l'helper della GitHub App) l'elenco COMPLETO delle PR aperte
+   del repository `zarbopiero963-droid/Pickfair-nogui`, con paginazione verificata pagina per pagina. Una risposta
+   incompleta, malformata, un errore API, il rate limit o credenziali assenti/scadute annullano il giro: nessuna
+   transizione, nessuno status. Solo GET su due elenchi (`pulls`, `issues/comments`) e sul permesso attuale dei
+   login in allowlist dei rerun (`collaborators/{login}/permission`): mai il codice delle PR.
+2. **Transizioni.** Per ogni PR valutabile (base `main`, head nello stesso repository, non in bozza) si confronta
+   lo stato osservato con quello salvato: nuova PR (`opened`), nuovo head (`synchronize`, anche il ritorno a uno SHA
+   precedente), riapertura (`reopened`, anche sullo stesso SHA), uscita dalla bozza (`ready_for_review`). Ogni
+   transizione ha un identificatore stabile `p<PR>-t<seq>-<sha12>` (contatore persistente per PR) che diventa
+   `PF_DELIVERY_ID`. Un head nuovo annulla e sostituisce le build del vecchio; una PR sparita da DUE elenchi completi
+   consecutivi e' chiusa e le sue build si annullano.
+3. **Rerun.** Commento esatto `/pf-trusted-rerun <sha40>` su una PR aperta, di un login in `rerun.allowed_logins`,
+   mai modificato, sullo SHA head corrente: nuova transizione `p<PR>-r<comment_id>-<sha12>`, `PF_EVENT=manual`.
+   Ogni comando (accettato o rifiutato, con motivo) resta nell'archivio `reruns`; il commento e' il record pubblico.
+   Un rerun rivaluta soltanto: stesse pipeline, stesso esito di `decide_outcome`, nessun check aggirato.
+4. **Build.** API Buildkite solo sulle pipeline `pr-overlap-guard` e `pr-merge-readiness`, `branch=main`,
+   `commit=HEAD`, env ESATTAMENTE `PF_PR_NUMBER`, `PF_PR_HEAD_SHA`, `PF_PR_BASE_REF=main`, `PF_EVENT`,
+   `PF_DELIVERY_ID`. Le pipeline trusted eseguono solo script di `main`.
+5. **Esito e pubblicazione.** Come prima: `success` solo con build `passed` e risultato PASS del guard sullo stesso
+   head; pubblicazione solo tramite il comando configurato (helper root `pf-publish-status`, credenziale separata).
+6. **Segreti.** Token Buildkite da file 0600/0400; token GitHub solo in memoria, mai passato alle build, mai nei
+   log; la chiave della GitHub App resta all'helper del token, fuori da questo processo.
+7. **Fail closed** su ogni errore di API, rete, validazione, credenziali o configurazione.
+
+Configurazione: un file JSON con TUTTE le chiavi obbligatorie e nessun default per i parametri infrastrutturali.
+Chiave mancante, sconosciuta o fuori formato => `NOT CONFIGURED`. Dettagli in `docs/trusted_dispatcher.md`.
+
+Solo libreria standard. Nessun ordine Betfair, nessun accesso al codice delle PR.
+"""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import http.client
+import json
+import os
+import re
+import signal
+import sqlite3
+import stat
+import subprocess  # nosec B404 - solo i comandi configurati (token, pubblicazione), argv senza shell
+import sys
+import threading
+import time
+import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+from typing import Any, Callable, Mapping, Optional
+
+TRUSTED_REPO = "zarbopiero963-droid/Pickfair-nogui"
+BASE_REF = "main"
+#: Unica fonte delle pipeline avviabili: la configurazione non puo' aggiungerne altre.
+GUARDS: dict[str, dict[str, str]] = {
+    "overlap": {"pipeline": "pr-overlap-guard", "context": "overlap-check"},
+    "readiness": {"pipeline": "pr-merge-readiness", "context": "pr-merge-readiness"},
+}
+GITHUB_API = "https://api.github.com"
+BUILDKITE_API = "https://api.buildkite.com/v2"
+BUILDKITE_WEB = "https://buildkite.com"
+MAX_ARTIFACT_BYTES = 64 * 1024
+MAX_API_BYTES = 4 * 1024 * 1024
+MAX_PAGES = 50                          # 50 x 100 elementi: oltre, l'elenco non e' verificabile
+MIN_RETENTION_HOURS = 24
+DESCRIPTION_MAX = 140
+TOKEN_REFRESH_MARGIN = 300              # un token che scade entro 5 minuti si rinnova prima di usarlo
+CLOSE_AFTER_MISSES = 2                  # una PR e' chiusa solo se manca da due elenchi completi consecutivi
+COMMENTS_OVERLAP_SECONDS = 120          # sovrapposizione fra giri per i commenti: i doppioni li toglie l'archivio
+
+_PR_RE = re.compile(r"[1-9][0-9]{0,6}", re.ASCII)
+_SHA_RE = re.compile(r"[0-9a-f]{40}", re.ASCII)
+MAX_COMMENT_ID = 10 ** 15
+_TID_RE = re.compile(r"[A-Za-z0-9-]{8,64}", re.ASCII)         # stesso formato del gate pre-command (PF_DELIVERY_ID)
+_TIMESTAMP_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", re.ASCII)
+_SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,99}", re.ASCII)
+_LOGIN_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", re.ASCII)
+_HOST_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+", re.ASCII)
+_ARTIFACT_RE = re.compile(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*", re.ASCII)
+_TOKEN_RE = re.compile(r"[!-~]{20,8192}", re.ASCII)
+_RERUN_RE = re.compile(r"/pf-trusted-rerun ([0-9a-f]{40})", re.ASCII)
+_LINK_NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
+_GITHUB_PATHS = (f"/repos/{TRUSTED_REPO}/pulls", f"/repos/{TRUSTED_REPO}/issues/comments")
+# permesso attuale di un login sul repository fidato (solo per i login in allowlist dei rerun)
+_PERMISSION_PATH_RE = re.compile(rf"/repos/{re.escape(TRUSTED_REPO)}/collaborators/({_LOGIN_RE.pattern})/permission",
+                                 re.ASCII)
+
+# Stati Buildkite di una build (API REST v2). Sconosciuto => error, mai attesa infinita.
+BUILD_RUNNING = frozenset({"creating", "scheduled", "running", "failing", "canceling", "waiting", "waiting_failed"})
+BUILD_TERMINAL = frozenset({"passed", "failed", "canceled", "skipped", "not_run", "blocked"})
+
+# Stati del job nell'archivio.
+# `canceling`: esito gia' pubblicato, resta da confermare l'annullamento di una o piu' build (mai orfane).
+ACTIVE_STATES = ("queued", "creating", "dispatched", "publishing", "canceling")
+FINAL_STATES = ("done", "superseded", "publish_failed")
+# un esito non consegnato entro la finestra (`publish_failed`) si riconsegna a questo intervallo finche' resta l'esito
+# piu' recente della PR per quel guard, sull'head corrente di una PR aperta (Sol su #569): mai un vecchio `success`
+# lasciato valido perche' il publisher era fermo
+REDELIVERY_SECONDS = 300
+
+EXIT_OK = 0
+EXIT_FAIL = 1
+EXIT_NOT_CONFIGURED = 3
+
+
+class ConfigError(Exception):
+    """Configurazione assente, incompleta o fuori formato: il servizio resta NOT CONFIGURED."""
+
+    def __init__(self, problems: list[str]) -> None:
+        super().__init__("; ".join(problems))
+        self.problems = problems
+
+
+class ApiError(Exception):
+    """Risposta HTTP definita ma non quella attesa (4xx/5xx, JSON malformato, elenco non verificabile)."""
+
+    def __init__(self, message: str, status: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+class TransportError(Exception):
+    """Esito della richiesta ignoto (rete, timeout): per una creazione di build e' AMBIGUO."""
+
+
+class CredentialError(Exception):
+    """Token GitHub di lettura assente, illeggibile, rifiutato o scaduto: il giro di polling non avviene."""
+
+
+class RateLimited(Exception):
+    """Rate limit GitHub: nessun giro fino a `until` (epoch)."""
+
+    def __init__(self, until: float) -> None:
+        super().__init__(f"rate limit GitHub fino a {int(until)}")
+        self.until = until
+
+
+# --------------------------------------------------------------------------------------------- configurazione
+CONFIG_SCHEMA_KEYS = {
+    "github": {"token_command", "token_command_timeout_seconds"},
+    "rerun": {"allowed_logins"},
+    "buildkite": {"organization", "token_file", "result_artifacts", "artifact_download_hosts"},
+    "publisher": {"command", "timeout_seconds"},
+    "state_db": None,
+    "retention_hours": None,
+    "poll_interval_seconds": None,
+    "build_timeout_seconds": set(GUARDS),
+    "http_timeout_seconds": None,
+}
+
+
+@dataclass(frozen=True)
+class Config:
+    github_token_command: tuple
+    github_token_command_timeout_seconds: int
+    rerun_allowed_logins: frozenset
+    organization: str
+    buildkite_token_file: str
+    result_artifacts: dict
+    artifact_download_hosts: tuple
+    publisher_command: tuple
+    publisher_timeout_seconds: int
+    state_db: str
+    retention_hours: int
+    poll_interval_seconds: int
+    build_timeout_seconds: dict
+    http_timeout_seconds: int
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _abs_path(value: Any) -> bool:
+    return isinstance(value, str) and value.startswith("/") and "\x00" not in value and ".." not in value.split("/")
+
+
+def _argv(value: Any) -> bool:
+    return (isinstance(value, list) and bool(value) and all(isinstance(c, str) and c and "\x00" not in c for c in value)
+            and _abs_path(value[0]))
+
+
+def validate_config(raw: Any) -> Config:
+    """Tutte le chiavi sono obbligatorie e nessuna ha un default: un parametro infrastrutturale mancante non viene
+    mai indovinato. Chiavi sconosciute => errore (un refuso non deve diventare un default silenzioso)."""
+    problems: list[str] = []
+    if not isinstance(raw, dict):
+        raise ConfigError(["la configurazione deve essere un oggetto JSON"])
+    for key, sub in CONFIG_SCHEMA_KEYS.items():
+        if key not in raw:
+            problems.append(f"{key}: MISSING")
+        elif sub is not None:
+            if not isinstance(raw[key], dict):
+                problems.append(f"{key}: deve essere un oggetto")
+                continue
+            for k in sorted(sub - set(raw[key])):
+                problems.append(f"{key}.{k}: MISSING")
+            for k in sorted(set(raw[key]) - sub):
+                problems.append(f"{key}.{k}: chiave sconosciuta")
+    for k in sorted(set(raw) - set(CONFIG_SCHEMA_KEYS)):
+        problems.append(f"{k}: chiave sconosciuta")
+    if problems:
+        raise ConfigError(problems)
+
+    gh, bk = raw["github"], raw["buildkite"]
+    if not _argv(gh["token_command"]):
+        problems.append("github.token_command: argv non vuoto con eseguibile a percorso assoluto")
+    token_timeout = gh["token_command_timeout_seconds"]
+    if not _is_int(token_timeout) or not 5 <= token_timeout <= 120:
+        problems.append("github.token_command_timeout_seconds: intero 5..120")
+    logins = raw["rerun"]["allowed_logins"]
+    # elenco vuoto ammesso e ESPLICITO: rerun disabilitati
+    if not isinstance(logins, list) or not all(isinstance(x, str) and _LOGIN_RE.fullmatch(x) for x in logins):
+        problems.append("rerun.allowed_logins: elenco di login GitHub (vuoto = rerun disabilitati)")
+    if not _abs_path(raw["state_db"]):
+        problems.append("state_db: percorso assoluto senza '..'")
+    if not _abs_path(bk["token_file"]):
+        problems.append("buildkite.token_file: percorso assoluto senza '..'")
+    org = bk["organization"]
+    if not isinstance(org, str) or not _SLUG_RE.fullmatch(org):
+        problems.append("buildkite.organization: slug Buildkite [a-z0-9-]")
+    artifacts = bk["result_artifacts"]
+    if not isinstance(artifacts, dict) or set(artifacts) != set(GUARDS):
+        problems.append(f"buildkite.result_artifacts: oggetto con esattamente {sorted(GUARDS)}")
+    else:
+        for guard, value in artifacts.items():
+            # il guard scrive `<guard>.json` (scripts/ci/trusted_pr_guard.py): un altro nome non e' il suo risultato
+            if (not isinstance(value, str) or not _ARTIFACT_RE.fullmatch(value) or ".." in value.split("/")
+                    or value.rsplit("/", 1)[-1] != f"{guard}.json"):
+                problems.append(f"buildkite.result_artifacts.{guard}: percorso relativo che finisce con {guard}.json")
+    hosts = bk["artifact_download_hosts"]
+    if (not isinstance(hosts, list) or not hosts
+            or not all(isinstance(h, str) and _HOST_RE.fullmatch(h) for h in hosts)):
+        problems.append("buildkite.artifact_download_hosts: elenco non vuoto di host esatti (minuscoli)")
+    if not _argv(raw["publisher"]["command"]):
+        problems.append("publisher.command: argv non vuoto con eseguibile a percorso assoluto")
+    pub_timeout = raw["publisher"]["timeout_seconds"]
+    if not _is_int(pub_timeout) or not 5 <= pub_timeout <= 300:
+        problems.append("publisher.timeout_seconds: intero 5..300")
+    retention = raw["retention_hours"]
+    if not _is_int(retention) or not MIN_RETENTION_HOURS <= retention <= 24 * 90:
+        problems.append(f"retention_hours: intero {MIN_RETENTION_HOURS}..{24 * 90}")
+    poll = raw["poll_interval_seconds"]
+    if not _is_int(poll) or not 10 <= poll <= 600:
+        problems.append("poll_interval_seconds: intero 10..600 (consigliato 60)")
+    timeouts = raw["build_timeout_seconds"]
+    for guard in GUARDS:
+        value = timeouts[guard]
+        if not _is_int(value) or not 60 <= value <= 6 * 3600:
+            problems.append(f"build_timeout_seconds.{guard}: intero 60..21600")
+    http_timeout = raw["http_timeout_seconds"]
+    if not _is_int(http_timeout) or not 5 <= http_timeout <= 120:
+        problems.append("http_timeout_seconds: intero 5..120")
+    if problems:
+        raise ConfigError(problems)
+    return Config(
+        github_token_command=tuple(gh["token_command"]), github_token_command_timeout_seconds=token_timeout,
+        rerun_allowed_logins=frozenset(logins), organization=org, buildkite_token_file=bk["token_file"],
+        result_artifacts=dict(artifacts), artifact_download_hosts=tuple(hosts),
+        publisher_command=tuple(raw["publisher"]["command"]), publisher_timeout_seconds=pub_timeout,
+        state_db=raw["state_db"], retention_hours=retention, poll_interval_seconds=poll,
+        build_timeout_seconds=dict(timeouts), http_timeout_seconds=http_timeout)
+
+
+def load_config(path: Optional[str]) -> Config:
+    if not path:
+        raise ConfigError(["--config: MISSING (nessun file di configurazione predefinito)"])
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except FileNotFoundError:
+        raise ConfigError([f"file di configurazione assente: {path}"]) from None
+    except (OSError, ValueError) as exc:
+        raise ConfigError([f"file di configurazione illeggibile: {type(exc).__name__}"]) from None
+    return validate_config(raw)
+
+
+def read_secret_file(path: str, pattern: re.Pattern, label: str) -> str:
+    """File regolare, non link simbolico, 0600/0400 (nessun permesso a gruppo o altri), contenuto nel formato atteso.
+    Il valore non compare mai nei messaggi d'errore."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise ConfigError([f"{label}: file non apribile ({type(exc).__name__})"]) from None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ConfigError([f"{label}: non e' un file regolare"])
+        if st.st_mode & 0o077:
+            raise ConfigError([f"{label}: file accessibile a gruppo o altri (servono 0600/0400)"])
+        if st.st_size > 16 * 1024:
+            raise ConfigError([f"{label}: file troppo grande"])
+        data = os.read(fd, 16 * 1024 + 1)
+    finally:
+        os.close(fd)
+    try:
+        value = data.decode("ascii")
+    except UnicodeDecodeError:
+        raise ConfigError([f"{label}: contenuto non ASCII"]) from None
+    if value.endswith("\n"):
+        value = value[:-1]
+    if not pattern.fullmatch(value):
+        raise ConfigError([f"{label}: contenuto fuori formato"])
+    return value
+
+
+def iso(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_iso(value: Any) -> float:
+    if not isinstance(value, str) or not _TIMESTAMP_RE.fullmatch(value):
+        raise ValueError("timestamp fuori formato")
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+
+
+# --------------------------------------------------------------------------------------------- credenziali GitHub
+TokenRunner = Callable[[tuple, int], "tuple[int, bytes]"]
+
+
+def default_token_runner(argv: tuple, timeout: int) -> "tuple[int, bytes]":
+    proc = subprocess.run(list(argv), env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},  # nosec B603
+                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                          timeout=timeout, check=False)
+    return proc.returncode, proc.stdout[:64 * 1024]
+
+
+class TokenProvider:
+    """Token di SOLA LETTURA a durata limitata, prodotto dal comando configurato (l'helper della GitHub App, che
+    tiene la chiave fuori da questo processo). Uscita attesa: un oggetto JSON con le chiavi `token`
+    (stringa) ed `expires_at` (ISO UTC `...Z`).
+    Assente, illeggibile, fuori formato o in scadenza => CredentialError, mai un token di ripiego."""
+
+    def __init__(self, command: tuple, timeout: int, clock: Callable[[], float],
+                 runner: TokenRunner = default_token_runner) -> None:
+        self._command, self._timeout, self._clock, self._runner = command, timeout, clock, runner
+        self._bearer: Optional[str] = None
+        self._expires = 0.0
+
+    def get(self) -> str:
+        now = self._clock()
+        if self._bearer is not None and now < self._expires - TOKEN_REFRESH_MARGIN:
+            return self._bearer
+        self._bearer = None
+        try:
+            rc, out = self._runner(self._command, self._timeout)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise CredentialError(f"comando del token non eseguito ({type(exc).__name__})") from None
+        if rc != 0:
+            raise CredentialError(f"comando del token uscito con {rc}")
+        try:
+            data = json.loads(out.decode("utf-8"))
+            token, expires = data["token"], parse_iso(data["expires_at"])
+        except (UnicodeDecodeError, ValueError, RecursionError, KeyError, TypeError):
+            raise CredentialError("uscita del comando del token fuori formato") from None
+        if not isinstance(token, str) or not _TOKEN_RE.fullmatch(token):
+            raise CredentialError("token fuori formato")
+        if expires <= now + TOKEN_REFRESH_MARGIN:
+            raise CredentialError("token scaduto o in scadenza")
+        self._bearer, self._expires = token, expires
+        return token
+
+    def invalidate(self) -> None:
+        self._bearer = None
+
+
+# --------------------------------------------------------------------------------------------- GitHub (polling)
+@dataclass(frozen=True)
+class Observed:
+    pr: int
+    head_sha: str
+    eligible: bool          # base main, head nello stesso repository, non in bozza
+
+
+def _get(obj: Any, *keys: str) -> Any:
+    for key in keys:
+        if not isinstance(obj, dict):
+            return None
+        obj = obj.get(key)
+    return obj
+
+
+def parse_pull(item: Any) -> Observed:
+    """Una voce dell'elenco delle PR aperte, con tipi esatti. Malformata => ApiError (il giro intero si annulla)."""
+    if not isinstance(item, dict):
+        raise ApiError("voce dell'elenco PR non e' un oggetto")
+    number = item.get("number")
+    if not _is_int(number) or not _PR_RE.fullmatch(str(number)):
+        raise ApiError("numero di PR fuori formato")
+    if item.get("state") != "open" or not isinstance(item.get("draft"), bool):
+        raise ApiError(f"PR #{number}: stato o bozza fuori formato")
+    head_sha = _get(item, "head", "sha")
+    if not isinstance(head_sha, str) or not _SHA_RE.fullmatch(head_sha):
+        raise ApiError(f"PR #{number}: head SHA fuori formato")
+    if _get(item, "base", "repo", "full_name") != TRUSTED_REPO or not isinstance(_get(item, "base", "ref"), str):
+        raise ApiError(f"PR #{number}: base fuori formato")
+    head_repo = _get(item, "head", "repo")
+    if head_repo is not None and not isinstance(_get(head_repo, "full_name"), str):
+        raise ApiError(f"PR #{number}: repository head fuori formato")
+    eligible = (not item["draft"] and item["base"]["ref"] == BASE_REF
+                and head_repo is not None and head_repo["full_name"] == TRUSTED_REPO)
+    return Observed(pr=number, head_sha=head_sha, eligible=eligible)
+
+
+def parse_pulls(items: list) -> list:
+    seen: dict[int, Observed] = {}
+    for item in items:
+        obs = parse_pull(item)
+        if obs.pr in seen and seen[obs.pr] != obs:
+            raise ApiError(f"PR #{obs.pr} due volte con dati diversi: elenco incoerente")
+        seen[obs.pr] = obs
+    return sorted(seen.values(), key=lambda o: o.pr)
+
+
+class GitHub:
+    """Solo GET su `pulls`, `issues/comments` e `collaborators/{login}/permission` del repository fidato, paginazione
+    completa e verificata. Nessun endpoint di contenuti o di archivi: il codice delle PR non passa mai da qui."""
+
+    def __init__(self, cfg: Config, tokens: TokenProvider, transport: "Transport", clock: Callable[[], float]) -> None:
+        self._cfg, self._tokens, self._transport, self._clock = cfg, tokens, transport, clock
+
+    @staticmethod
+    def check_url(url: str) -> None:
+        try:
+            parts = urllib.parse.urlsplit(url)
+        except ValueError:
+            raise ApiError("URL GitHub malformata") from None
+        if parts.scheme != "https" or parts.netloc != "api.github.com" \
+                or (parts.path not in _GITHUB_PATHS and not _PERMISSION_PATH_RE.fullmatch(parts.path)):
+            raise ApiError(f"URL GitHub non ammessa: {parts.path}")
+
+    def _rate_limit_until(self, headers: Mapping[str, str]) -> float:
+        now = self._clock()
+        retry = headers.get("retry-after", "")
+        if retry.isdigit():
+            return now + min(int(retry), 3600)
+        reset = headers.get("x-ratelimit-reset", "")
+        if reset.isdigit():
+            return min(float(reset), now + 3600)
+        return now + 60
+
+    def _request(self, url: str) -> tuple[dict, Any]:
+        """Una GET autenticata: (header in minuscolo, JSON). Rate limit, 401, HTTP diverso da 200, token classico,
+        risposta troppo grande o non JSON => eccezione, mai un valore di ripiego."""
+        self.check_url(url)
+        headers = {"Authorization": f"Bearer {self._tokens.get()}", "Accept": "application/vnd.github+json",
+                   "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "pf-trusted-dispatcher"}
+        status, resp_headers, body = self._transport("GET", url, headers, None, self._cfg.http_timeout_seconds)
+        h = {k.lower(): v for k, v in dict(resp_headers).items()}
+        if status in (403, 429) and (h.get("x-ratelimit-remaining") == "0" or "retry-after" in h):
+            raise RateLimited(self._rate_limit_until(h))
+        if status == 401:
+            self._tokens.invalidate()
+            raise CredentialError("token GitHub rifiutato (401)")
+        if status != 200:
+            raise ApiError(f"GitHub HTTP {status}", status)
+        if h.get("x-oauth-scopes", "").strip():
+            raise CredentialError("token classico con scope: serve un token di sola lettura a durata limitata")
+        if len(body) > MAX_API_BYTES:
+            raise ApiError("risposta GitHub troppo grande")
+        try:
+            return h, json.loads(body)
+        except (ValueError, RecursionError):
+            raise ApiError("risposta GitHub non JSON") from None
+
+    def get_all(self, path: str, params: Mapping[str, str]) -> list:
+        url: Optional[str] = f"{GITHUB_API}{path}?{urllib.parse.urlencode(params)}"
+        items: list = []
+        seen: set = set()
+        for _ in range(MAX_PAGES):
+            h, page = self._request(url)
+            if not isinstance(page, list):
+                raise ApiError("pagina GitHub non e' un elenco")
+            items.extend(page)
+            m = _LINK_NEXT_RE.search(h.get("link", ""))
+            if m is None:
+                return items
+            url = m.group(1)
+            if url in seen:
+                raise ApiError("paginazione GitHub ciclica")
+            seen.add(url)
+        raise ApiError("paginazione GitHub oltre il limite: elenco non verificabile")
+
+    def open_pulls(self) -> list:
+        return self.get_all(f"/repos/{TRUSTED_REPO}/pulls",
+                            {"state": "open", "per_page": "100", "sort": "created", "direction": "asc"})
+
+    def comments_since(self, since: str) -> list:
+        return self.get_all(f"/repos/{TRUSTED_REPO}/issues/comments",
+                            {"since": since, "per_page": "100", "sort": "created", "direction": "asc"})
+
+    def repo_permission(self, login: str) -> str:
+        """Permesso ATTUALE di `login` sul repository fidato. 404 = nessun accesso (`none`). Valore sconosciuto o
+        risposta riferita a un altro utente => ApiError: il permesso non e' verificato."""
+        if not _LOGIN_RE.fullmatch(login):
+            raise ApiError("login non valido")
+        try:
+            _, data = self._request(f"{GITHUB_API}/repos/{TRUSTED_REPO}/collaborators/{login}/permission")
+        except ApiError as exc:
+            if exc.status == 404:
+                return "none"
+            raise
+        perm, who = (data.get("permission"), _get(data, "user", "login")) if isinstance(data, dict) else (None, None)
+        if perm not in REPO_PERMISSIONS or not isinstance(who, str) or who.lower() != login.lower():
+            raise ApiError("permesso GitHub fuori formato")
+        return perm
+
+
+# `author_association` non certifica i permessi attuali (MEMBER = membro dell'organizzazione, COLLABORATOR anche in
+# sola lettura): conta solo il permesso effettivo letto da `GET /repos/{repo}/collaborators/{login}/permission`
+REPO_PERMISSIONS = frozenset({"admin", "maintain", "write", "triage", "read", "none"})
+RERUN_PERMISSIONS = frozenset({"admin", "maintain", "write"})
+
+
+@dataclass(frozen=True)
+class RerunRequest:
+    comment_id: int
+    pr: int
+    head_sha: str
+    login: str
+    user_type: str = ""
+    permission: str = ""      # permesso attuale letto dall'API, solo per i login in allowlist
+    created_at: str = ""      # ISO al secondo, come lo restituisce GitHub
+
+
+def parse_rerun_comment(item: Any) -> Optional[RerunRequest]:
+    """None se il commento non e' un comando di rerun; ApiError se e' un comando ma i dati sono fuori formato."""
+    if not isinstance(item, dict) or not isinstance(item.get("body"), str):
+        raise ApiError("commento fuori formato")
+    m = _RERUN_RE.fullmatch(item["body"].strip())
+    if m is None:
+        return None
+    cid, login, user_type = item.get("id"), _get(item, "user", "login"), _get(item, "user", "type")
+    url = item.get("issue_url")
+    prefix = f"{GITHUB_API}/repos/{TRUSTED_REPO}/issues/"
+    # id entro 10^15: entra in SQLite e l'identificatore del rerun resta sotto i 64 caratteri del gate pre-command
+    if not _is_int(cid) or not 0 < cid < MAX_COMMENT_ID or not isinstance(login, str) or not isinstance(url, str) \
+            or not isinstance(user_type, str) \
+            or not url.startswith(prefix) or not _PR_RE.fullmatch(url[len(prefix):]):
+        raise ApiError("comando di rerun con dati fuori formato")
+    edited = item.get("created_at") != item.get("updated_at") or not _TIMESTAMP_RE.fullmatch(str(item.get("created_at")))
+    # modificato dopo la pubblicazione: il testo eseguito non sarebbe quello registrato
+    return RerunRequest(comment_id=cid, pr=int(url[len(prefix):]), head_sha="" if edited else m.group(1),
+                        login=login, user_type=user_type, created_at=str(item.get("created_at")))
+
+
+# --------------------------------------------------------------------------------------------- archivio
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS pr_state (
+  pr INTEGER PRIMARY KEY,
+  head_sha TEXT NOT NULL,
+  eligible INTEGER NOT NULL,
+  open INTEGER NOT NULL,
+  missing INTEGER NOT NULL DEFAULT 0,
+  seq INTEGER NOT NULL DEFAULT 0,
+  updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS transitions (
+  tid TEXT PRIMARY KEY,
+  pr INTEGER NOT NULL,
+  head_sha TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS reruns (
+  comment_id INTEGER PRIMARY KEY,
+  pr INTEGER NOT NULL,
+  head_sha TEXT NOT NULL,
+  login TEXT NOT NULL,
+  accepted INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  tid TEXT,
+  created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  delivery_id TEXT NOT NULL,
+  event TEXT NOT NULL,
+  pr INTEGER NOT NULL,
+  head_sha TEXT NOT NULL,
+  guard TEXT NOT NULL,
+  state TEXT NOT NULL,
+  superseded INTEGER NOT NULL DEFAULT 0,
+  build_number INTEGER,
+  build_url TEXT,
+  outcome TEXT,
+  description TEXT,
+  created_at REAL NOT NULL,
+  dispatched_at REAL,
+  publishing_since REAL,
+  pending_published INTEGER NOT NULL DEFAULT 0,
+  pending_cancels TEXT NOT NULL DEFAULT '[]',
+  final_published INTEGER NOT NULL DEFAULT 0,
+  updated_at REAL NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS jobs_active_current ON jobs(pr, head_sha, guard)
+  WHERE superseded = 0 AND state IN ('queued', 'creating', 'dispatched', 'publishing');
+"""
+
+# Colonne aggiunte dopo la prima versione dello schema: (nome, definizione), applicate da `Store._migrate`.
+MIGRATION_COLUMNS = (
+    ("publishing_since", "REAL"),
+    ("pending_published", "INTEGER NOT NULL DEFAULT 0"),
+    ("pending_cancels", "TEXT NOT NULL DEFAULT '[]'"),
+    ("final_published", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+class Store:
+    """SQLite con transazioni `BEGIN IMMEDIATE`: stato delle PR, transizioni e job si scrivono insieme o niente."""
+
+    def __init__(self, path: str, *, read_only: bool = False) -> None:
+        self._lock = threading.Lock()
+        self._lock_fd: Optional[int] = None
+        if read_only:
+            uri = "file:" + urllib.parse.quote(path) + "?mode=ro"
+            self._db = sqlite3.connect(uri, uri=True, isolation_level=None, check_same_thread=False, timeout=30)
+            self._db.row_factory = sqlite3.Row
+            return
+        # un solo processo scrittore: due istanze sullo stesso archivio creerebbero due build per la stessa richiesta
+        self._lock_fd = os.open(path + ".lock", os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(self._lock_fd)
+            self._lock_fd = None
+            raise ConfigError([f"state_db: archivio gia' in uso da un'altra istanza ({path})"]) from None
+        self._db = sqlite3.connect(path, isolation_level=None, check_same_thread=False, timeout=30)
+        self._db.row_factory = sqlite3.Row
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=FULL")
+        self._db.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Archivio creato da una versione precedente (`CREATE TABLE IF NOT EXISTS` non aggiunge colonne; rilievo
+        Sol su #569): colonne mancanti aggiunte e vecchio indice rimosso, in modo idempotente."""
+        def fn(db: sqlite3.Connection) -> None:
+            cols = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
+            for name, ddl in MIGRATION_COLUMNS:
+                if name not in cols:
+                    db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {ddl}")
+            db.execute("DROP INDEX IF EXISTS jobs_active")   # indice senza `superseded = 0` (P2-1)
+            # finestre ancorate: un job in pubblicazione/annullamento senza `publishing_since` userebbe
+            # `updated_at`, che si aggiorna a ogni giro, e non scadrebbe mai
+            db.execute("UPDATE jobs SET publishing_since = updated_at WHERE publishing_since IS NULL "
+                       "AND state IN ('publishing', 'canceling')")
+        self._tx(fn)
+
+    def close(self) -> None:
+        with self._lock:
+            self._db.close()
+            if self._lock_fd is not None:
+                os.close(self._lock_fd)        # chiudere il descrittore rilascia il flock
+                self._lock_fd = None
+
+    def _tx(self, fn: Callable[[sqlite3.Connection], Any]) -> Any:
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                result = fn(self._db)
+                self._db.execute("COMMIT")
+            except BaseException:
+                # anche un COMMIT fallito (SQLITE_BUSY): mai lasciare la connessione dentro una transazione aperta
+                try:
+                    self._db.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
+            return result
+
+    @staticmethod
+    def _supersede_pr(db: sqlite3.Connection, pr: int, now: float, keep_head: Optional[str]) -> None:
+        """Job attivi della PR non piu' validi: tutti (`keep_head` None) o quelli di un head diverso."""
+        placeholders = ",".join("?" * len(ACTIVE_STATES))
+        db.execute(f"UPDATE jobs SET superseded = 1, updated_at = ? WHERE pr = ? "  # nosec B608
+                   f"AND (? IS NULL OR head_sha != ?) AND state IN ({placeholders})",
+                   (now, pr, keep_head, keep_head, *ACTIVE_STATES))
+
+    @staticmethod
+    def _new_jobs(db: sqlite3.Connection, tid: str, kind: str, pr: int, head_sha: str, now: float) -> list[int]:
+        if not _TID_RE.fullmatch(tid):
+            raise ValueError("identificatore di transizione fuori formato")
+        db.execute("INSERT INTO transitions(tid, pr, head_sha, kind, created_at) VALUES (?, ?, ?, ?, ?)",
+                   (tid, pr, head_sha, kind, now))
+        created: list[int] = []
+        placeholders = ",".join("?" * len(ACTIVE_STATES))
+        for guard in GUARDS:
+            cur = db.execute(
+                "INSERT OR IGNORE INTO jobs(delivery_id, event, pr, head_sha, guard, state, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)", (tid, kind, pr, head_sha, guard, now, now))
+            if cur.rowcount == 1:
+                created.append(int(cur.lastrowid))
+                # gli status GitHub sono per SHA e contesto: una valutazione nuova dello stesso SHA, anche di un'altra
+                # PR, rende vecchie quelle attive precedenti, che annullano la build e non pubblicano piu' nulla
+                # (Codex P1 su #569)
+                db.execute(f"UPDATE jobs SET superseded = 1, updated_at = ? WHERE head_sha = ? AND guard = ? "  # nosec B608
+                           f"AND id < ? AND state IN ({placeholders})",
+                           (now, head_sha, guard, int(cur.lastrowid), *ACTIVE_STATES))
+        return created
+
+    def apply_poll(self, observed: list, now: float) -> list[str]:
+        """Confronta un elenco COMPLETO delle PR aperte con lo stato salvato e registra le transizioni, tutto in una
+        transazione. Ritorna gli identificatori delle transizioni create."""
+
+        def fn(db: sqlite3.Connection) -> list[str]:
+            created: list[str] = []
+            seen = {o.pr for o in observed}
+            for o in observed:
+                row = db.execute("SELECT * FROM pr_state WHERE pr = ?", (o.pr,)).fetchone()
+                if row is None:
+                    kind: Optional[str] = "opened"
+                elif not row["open"]:
+                    kind = "reopened"                   # anche sullo stesso SHA: va rivalutata
+                elif row["head_sha"] != o.head_sha:
+                    kind = "synchronize"                # anche il ritorno a uno SHA gia' elaborato
+                elif not row["eligible"] and o.eligible:
+                    kind = "ready_for_review"
+                else:
+                    kind = None
+                seq = row["seq"] if row is not None else 0
+                if kind is not None or (row is not None and row["eligible"] and not o.eligible):
+                    self._supersede_pr(db, o.pr, now, keep_head=o.head_sha if o.eligible else None)
+                if kind is not None and o.eligible:
+                    seq += 1
+                    tid = f"p{o.pr}-t{seq}-{o.head_sha[:12]}"
+                    self._new_jobs(db, tid, kind, o.pr, o.head_sha, now)
+                    created.append(tid)
+                db.execute("INSERT INTO pr_state(pr, head_sha, eligible, open, missing, seq, updated_at) "
+                           "VALUES (?, ?, ?, 1, 0, ?, ?) ON CONFLICT(pr) DO UPDATE SET head_sha = excluded.head_sha, "
+                           "eligible = excluded.eligible, open = 1, missing = 0, seq = excluded.seq, "
+                           "updated_at = excluded.updated_at", (o.pr, o.head_sha, int(o.eligible), seq, now))
+            for row in db.execute("SELECT pr, missing FROM pr_state WHERE open = 1").fetchall():
+                if row["pr"] in seen:
+                    continue
+                if row["missing"] + 1 >= CLOSE_AFTER_MISSES:
+                    # assente da due elenchi completi consecutivi: chiusa (un singolo elenco puo' perdere una PR
+                    # spostata fra due pagine mentre lo si legge)
+                    db.execute("UPDATE pr_state SET open = 0, missing = 0, updated_at = ? WHERE pr = ?",
+                               (now, row["pr"]))
+                    self._supersede_pr(db, row["pr"], now, keep_head=None)
+                else:
+                    db.execute("UPDATE pr_state SET missing = missing + 1, updated_at = ? WHERE pr = ?",
+                               (now, row["pr"]))
+            return created
+
+        return self._tx(fn)
+
+    def record_rerun(self, req: RerunRequest, allowed: frozenset, now: float,
+                     floor: Optional[str] = None) -> tuple[str, str]:
+        """(esito, motivo). Esiti: `duplicate` (comando gia' registrato), `rejected`, `accepted`. Ogni comando
+        nuovo resta nell'archivio, accettato o no."""
+
+        def fn(db: sqlite3.Connection) -> tuple[str, str]:
+            if db.execute("SELECT 1 FROM reruns WHERE comment_id = ?", (req.comment_id,)).fetchone():
+                return "duplicate", "comando gia' registrato"
+            row = db.execute("SELECT * FROM pr_state WHERE pr = ?", (req.pr,)).fetchone()
+            if req.login not in allowed:
+                reason = f"login {req.login} non autorizzato"
+            elif req.user_type != "User":
+                reason = f"l'autore non e' un utente ({req.user_type})"
+            elif req.permission not in RERUN_PERMISSIONS:
+                reason = f"permesso attuale {req.permission or 'non verificato'} senza scrittura sul repository"
+            elif not req.head_sha:
+                reason = "commento modificato dopo la pubblicazione"
+            elif floor is None or req.created_at <= floor:
+                # stesso secondo del primo avvio compreso: non si sa se e' anteriore, quindi non si esegue
+                reason = "comando non successivo al primo avvio del dispatcher"
+            elif row is None or not row["open"]:
+                reason = "PR non aperta"
+            elif not row["eligible"]:
+                reason = "PR non valutabile (bozza, base diversa da main o fork)"
+            elif row["head_sha"] != req.head_sha:
+                reason = "lo SHA non e' l'head corrente della PR"
+            else:
+                reason = ""
+            tid = f"p{req.pr}-r{req.comment_id}-{req.head_sha[:12]}" if not reason else None
+            db.execute("INSERT INTO reruns(comment_id, pr, head_sha, login, accepted, reason, tid, created_at) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                       (req.comment_id, req.pr, req.head_sha, req.login, int(not reason), reason, tid, now))
+            if reason:
+                return "rejected", reason
+            self._supersede_pr(db, req.pr, now, keep_head=None)   # anche i job dello stesso head: si rivaluta
+            self._new_jobs(db, tid, "manual", req.pr, req.head_sha, now)
+            return "accepted", tid
+
+        return self._tx(fn)
+
+    def get_meta(self, key: str) -> Optional[str]:
+        with self._lock:
+            row = self._db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row is not None else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self._tx(lambda db: db.execute("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET "
+                                       "value = excluded.value", (key, value)))
+
+    def redeliverable_jobs(self, now: float) -> list[dict]:
+        """Job `publish_failed` ancora validi: nessun job piu' nuovo sullo stesso SHA con lo stesso guard, PR aperta e
+        valutabile con lo stesso head, ultimo tentativo almeno `REDELIVERY_SECONDS` fa."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT j.* FROM jobs j JOIN pr_state p ON p.pr = j.pr "
+                "WHERE j.state = 'publish_failed' AND j.superseded = 0 AND p.open = 1 AND p.eligible = 1 "
+                "AND p.head_sha = j.head_sha AND COALESCE(j.publishing_since, j.updated_at) <= ? "
+                # gli status GitHub sono per SHA e contesto: un job piu' nuovo sullo stesso SHA, della stessa PR o di
+                # un'altra, rende vecchio questo esito (Sol su #569); un head diverso e' escluso da `p.head_sha`
+                "AND NOT EXISTS (SELECT 1 FROM jobs k WHERE k.head_sha = j.head_sha "
+                "AND k.guard = j.guard AND k.id > j.id) "
+                "ORDER BY j.id", (now - REDELIVERY_SECONDS,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def active_jobs(self) -> list[dict]:
+        placeholders = ",".join("?" * len(ACTIVE_STATES))
+        with self._lock:
+            rows = self._db.execute(f"SELECT * FROM jobs WHERE state IN ({placeholders}) ORDER BY id",  # nosec B608
+                                    ACTIVE_STATES).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_job(self, job_id: int) -> dict:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return dict(row) if row is not None else {}
+
+    def recent_jobs(self, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def has_rerun(self, comment_id: int) -> bool:
+        with self._lock:
+            return self._db.execute("SELECT 1 FROM reruns WHERE comment_id = ?", (comment_id,)).fetchone() is not None
+
+    def recent_reruns(self, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM reruns ORDER BY comment_id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_job(self, job_id: int, now: float, *, expected_state: Optional[str] = None, **fields: Any) -> bool:
+        """Con `expected_state` la modifica avviene solo se il job e' ancora in quello stato (True se applicata)."""
+        allowed = {"state", "build_number", "build_url", "outcome", "description", "dispatched_at",
+                   "publishing_since", "pending_published", "pending_cancels", "final_published"}
+        if not fields or set(fields) - allowed:
+            raise ValueError("campi non ammessi")
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        where, params = "id = ?", [job_id]
+        if expected_state is not None:
+            where, params = "id = ? AND state = ?", [job_id, expected_state]
+        cur = self._tx(lambda db: db.execute(f"UPDATE jobs SET {cols}, updated_at = ? WHERE {where}",  # nosec B608
+                                             (*fields.values(), now, *params)))
+        return cur.rowcount == 1
+
+    def purge(self, now: float, retention_hours: int) -> None:
+        """Pulizia dei job chiusi e delle transizioni vecchie. I comandi di rerun restano: sono l'audit."""
+        cutoff = now - retention_hours * 3600
+        placeholders = ",".join("?" * len(FINAL_STATES))
+
+        def fn(db: sqlite3.Connection) -> None:
+            db.execute(f"DELETE FROM jobs WHERE updated_at < ? AND state IN ({placeholders})",  # nosec B608
+                       (cutoff, *FINAL_STATES))
+            db.execute("DELETE FROM transitions WHERE created_at < ?", (cutoff,))
+
+        self._tx(fn)
+
+
+# --------------------------------------------------------------------------------------------- HTTP / Buildkite
+Transport = Callable[[str, str, Mapping[str, str], Optional[bytes], int],
+                     "tuple[int, Mapping[str, str], bytes]"]
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401 - firma di urllib
+        return None   # un redirect seguito ripeterebbe l'Authorization verso un altro host
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def urllib_transport(method: str, url: str, headers: Mapping[str, str], body: Optional[bytes],
+                     timeout: int) -> "tuple[int, Mapping[str, str], bytes]":
+    if not url.startswith("https://"):
+        raise TransportError("solo https")
+    req = urllib.request.Request(url, data=body, headers=dict(headers), method=method)
+    # `http.client.HTTPException` (es. IncompleteRead di una risposta chunked troncata, rilievo Codex P2 su #569)
+    # e' un errore di trasporto: non deve sfuggire al polling prima del controllo del timeout
+    try:
+        with _OPENER.open(req, timeout=timeout) as resp:  # nosec B310 - schema https verificato sopra
+            return resp.status, dict(resp.headers), resp.read(MAX_API_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, dict(exc.headers or {}), exc.read(MAX_API_BYTES + 1) if exc.fp else b""
+        except (http.client.HTTPException, OSError, ValueError) as inner:
+            raise TransportError(type(inner).__name__) from None
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
+        raise TransportError(type(exc).__name__) from None
+
+
+class Buildkite:
+    """Client minimo: crea, legge, annulla build delle DUE pipeline ammesse e scarica l'artifact del risultato."""
+
+    def __init__(self, cfg: Config, bearer: str, transport: Transport = urllib_transport) -> None:
+        self._cfg = cfg
+        self._bearer = bearer
+        self._transport = transport
+
+    def _pipeline_url(self, guard: str) -> str:
+        pipeline = GUARDS[guard]["pipeline"]     # KeyError su un guard non ammesso: mai una pipeline libera
+        return f"{BUILDKITE_API}/organizations/{self._cfg.organization}/pipelines/{pipeline}"
+
+    def _request(self, method: str, url: str, payload: Any = None) -> "tuple[int, Any]":
+        headers = {"Authorization": f"Bearer {self._bearer}", "Accept": "application/json"}
+        body = None
+        if payload is not None:
+            body = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        status, _, data = self._transport(method, url, headers, body, self._cfg.http_timeout_seconds)
+        if len(data) > MAX_API_BYTES:
+            raise ApiError("risposta Buildkite troppo grande", status)
+        try:
+            return status, (json.loads(data) if data else None)
+        except (ValueError, RecursionError):        # RecursionError: JSON annidato all'estremo, non ValueError
+            raise ApiError("risposta Buildkite non JSON", status) from None
+
+    def create_build(self, guard: str, env: Mapping[str, str], message: str) -> dict:
+        """Solo un rifiuto 4xx esplicito e' un esito DEFINITO (nessuna build). Ogni altra risposta non
+        interpretabile (5xx, 201 con corpo troncato o non JSON, 2xx inattesi) e' AMBIGUA: la build puo' esistere,
+        quindi TransportError e riconciliazione (rilievi Codex P2 su #569)."""
+        try:
+            status, data = self._request("POST", f"{self._pipeline_url(guard)}/builds",
+                                         {"commit": "HEAD", "branch": BASE_REF, "message": message,
+                                          "env": dict(env)})
+        except ApiError as exc:
+            if exc.status is not None and 400 <= exc.status < 500:
+                raise
+            raise TransportError(f"risposta di creazione non interpretabile ({exc})") from None
+        if 400 <= status < 500:
+            raise ApiError(f"creazione build rifiutata (HTTP {status})", status)
+        if (status != 201 or not isinstance(data, dict) or not _is_int(data.get("number"))
+                or data["number"] <= 0):
+            # anche un 201 senza un numero di build utilizzabile: la build puo' esistere, si riconcilia
+            raise TransportError(f"risposta di creazione non interpretabile (HTTP {status})")
+        return data
+
+    def get_build(self, guard: str, number: int) -> dict:
+        status, data = self._request("GET", f"{self._pipeline_url(guard)}/builds/{int(number)}")
+        if status != 200 or not isinstance(data, dict):
+            raise ApiError(f"lettura build fallita (HTTP {status})", status)
+        return data
+
+    def list_builds(self, guard: str, created_from: str) -> list:
+        query = urllib.parse.urlencode({"branch": BASE_REF, "created_from": created_from, "per_page": "100"})
+        status, data = self._request("GET", f"{self._pipeline_url(guard)}/builds?{query}")
+        if status != 200 or not isinstance(data, list):
+            raise ApiError(f"elenco build fallito (HTTP {status})", status)
+        if len(data) >= 100:
+            # pagina piena: la build cercata puo' stare nella pagina dopo; l'assenza non e' dimostrata
+            raise ApiError("elenco build pieno: assenza non verificabile")
+        return data
+
+    def cancel_build(self, guard: str, number: int) -> None:
+        status, _ = self._request("PUT", f"{self._pipeline_url(guard)}/builds/{int(number)}/cancel")
+        if status not in (200, 422):           # 422: build gia' terminata, niente da annullare
+            raise ApiError(f"annullamento fallito (HTTP {status})", status)
+
+    def fetch_result(self, guard: str, number: int) -> bytes:
+        """L'unico artifact `result_artifacts[guard]` della build, in stato `finished`. Il download segue UN
+        redirect verso un host ammesso, SENZA Authorization."""
+        status, data = self._request("GET", f"{self._pipeline_url(guard)}/builds/{int(number)}/artifacts?per_page=100")
+        if status != 200 or not isinstance(data, list):
+            raise ApiError(f"elenco artifact fallito (HTTP {status})", status)
+        wanted = self._cfg.result_artifacts[guard]
+        matches = [a for a in data if isinstance(a, dict) and a.get("path") == wanted]
+        if len(matches) != 1:
+            raise ApiError(f"artifact {wanted}: {len(matches)} trovati, atteso 1")
+        art = matches[0]
+        size = art.get("file_size")
+        if art.get("state") != "finished" or not _is_int(size) or not 0 < size <= MAX_ARTIFACT_BYTES:
+            raise ApiError("artifact non completo o di dimensione non ammessa")
+        url = art.get("download_url")
+        prefix = f"{BUILDKITE_API}/organizations/{self._cfg.organization}/pipelines/{GUARDS[guard]['pipeline']}/"
+        if not isinstance(url, str) or not url.startswith(prefix):
+            raise ApiError("download_url fuori dall'API Buildkite attesa")
+        headers = {"Authorization": f"Bearer {self._bearer}"}
+        status, resp_headers, _ = self._transport("GET", url, headers, None, self._cfg.http_timeout_seconds)
+        location = {k.lower(): v for k, v in dict(resp_headers).items()}.get("location")
+        if status not in (301, 302, 303, 307) or not isinstance(location, str):
+            raise ApiError(f"download artifact senza redirect (HTTP {status})", status)
+        try:
+            parsed = urllib.parse.urlsplit(location)
+            host = parsed.hostname
+        except ValueError:
+            raise ApiError("redirect dell'artifact malformato") from None
+        if parsed.scheme != "https" or host not in self._cfg.artifact_download_hosts:
+            raise ApiError("redirect dell'artifact verso un host non ammesso")
+        status, _, body = self._transport("GET", location, {}, None, self._cfg.http_timeout_seconds)
+        if status != 200 or len(body) != size:
+            # anche un corpo troncato (Content-Length non rispettata) e' un download fallito
+            raise ApiError(f"download artifact fallito (HTTP {status}, {len(body)}/{size} byte)", status)
+        return body
+
+
+# --------------------------------------------------------------------------------------------- esito
+def build_env(job: Mapping[str, Any]) -> dict[str, str]:
+    """ESATTAMENTE le cinque variabili del contratto §5.3; nessun segreto, nessun'altra variabile."""
+    return {
+        "PF_PR_NUMBER": str(job["pr"]),
+        "PF_PR_HEAD_SHA": job["head_sha"],
+        "PF_PR_BASE_REF": BASE_REF,
+        "PF_EVENT": job["event"],
+        "PF_DELIVERY_ID": job["delivery_id"],
+    }
+
+
+def build_matches_job(build: Any, guard: str, job: Mapping[str, Any], org: str) -> bool:
+    """La build letta e' quella chiesta: branch main, env identico a quello inviato, URL della pipeline giusta."""
+    if not isinstance(build, dict):
+        return False
+    number, url = build.get("number"), build.get("web_url")
+    prefix = f"{BUILDKITE_WEB}/{org}/{GUARDS[guard]['pipeline']}/builds/"
+    return (_is_int(number) and number > 0 and build.get("branch") == BASE_REF
+            and build.get("env") == build_env(job)
+            and isinstance(url, str) and url == f"{prefix}{number}")
+
+
+def decide_outcome(build: Mapping[str, Any], artifact: Optional[bytes], job: Mapping[str, Any]) -> tuple[str, str]:
+    """(stato GitHub, descrizione). `success` SOLO con build `passed` E risultato del guard PASS sullo stesso
+    repository, PR, guard e head SHA. Tutto il resto e' `failure` (verdetto FAIL coerente) o `error`."""
+    state = build.get("state")
+    if state not in ("passed", "failed"):
+        return "error", f"build {state}: nessun verdetto"
+    if artifact is None:
+        return "error", "risultato del guard assente"
+    try:
+        result = json.loads(artifact.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        return "error", "risultato del guard illeggibile"
+    if not isinstance(result, dict):
+        return "error", "risultato del guard illeggibile"
+    pr = result.get("pr")
+    if (result.get("guard") != job["guard"] or result.get("repo") != TRUSTED_REPO
+            or not _is_int(pr) or pr != job["pr"]):
+        return "error", "risultato di un'altra PR o di un altro controllo"
+    if result.get("head_sha") != job["head_sha"]:
+        return "error", "stale SHA: il guard ha valutato un head diverso"
+    verdict = result.get("verdict")
+    if state == "passed" and verdict == "PASS":
+        return "success", "PASS"
+    if state == "failed" and verdict == "FAIL":
+        reasons = result.get("reasons")
+        first = reasons[0] if isinstance(reasons, list) and reasons and isinstance(reasons[0], str) else "FAIL"
+        return "failure", f"FAIL: {first}"
+    return "error", f"build {state} incoerente con verdetto {verdict!r}"
+
+
+# contratto del publisher a socket (Grok t215u): 1..140 caratteri ASCII stampabili, senza ` $ \
+_DESCRIPTION_FORBIDDEN = frozenset("`$\\")
+_DESCRIPTION_RE = re.compile(r"[\x20-\x23\x25-\x5b\x5d-\x5f\x61-\x7e]{1,%d}" % DESCRIPTION_MAX)
+
+
+def clean_description(text: str) -> str:
+    """Descrizione dello status nel formato del socket, senza cambiarne il senso in silenzio: lettere accentate alla
+    lettera base, spazi e controlli a spazio singolo, ogni altro carattere vietato a '?' (visibile), testo troppo
+    lungo chiuso da '...'. Il testo originale resta nei log del dispatcher."""
+    out = []
+    for c in unicodedata.normalize("NFKD", text):
+        if unicodedata.combining(c):
+            continue
+        if c.isspace() or not c.isprintable():
+            c = " "
+        elif not ("\x20" <= c <= "\x7e") or c in _DESCRIPTION_FORBIDDEN:
+            c = "?"
+        out.append(c)
+    cleaned = " ".join("".join(out).split()) or "(nessuna descrizione)"
+    if len(cleaned) > DESCRIPTION_MAX:
+        cleaned = cleaned[:DESCRIPTION_MAX - 3].rstrip() + "..."
+    return cleaned
+
+
+def default_publisher(command: tuple, timeout: int) -> Callable[..., int]:
+    def publish(pr: int, sha: str, state: str, context: str, url: str, description: str) -> int:
+        if not _DESCRIPTION_RE.fullmatch(description):
+            log("descrizione fuori dal contratto del publisher: status non inviato")
+            return 2
+        argv = [*command, str(pr), sha, state, context, url, description]
+        try:
+            proc = subprocess.run(argv, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},  # nosec B603
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  timeout=timeout, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"pubblicazione non eseguita: {type(exc).__name__}")
+            return 1
+        if proc.returncode != 0:
+            # l'uscita dell'helper non si copia nei log: il dettaglio resta nei log dell'helper stesso
+            log(f"pubblicazione rifiutata (exit {proc.returncode})")
+        return proc.returncode
+    return publish
+
+
+def log(message: str) -> None:
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    print(f"{stamp} [pr-trusted-dispatcher] {message}", file=sys.stderr, flush=True)
+
+
+# --------------------------------------------------------------------------------------------- dispatcher
+class Dispatcher:
+    def __init__(self, cfg: Config, store: Store, buildkite: Buildkite, github: GitHub,
+                 publisher: Callable[..., int], clock: Callable[[], float] = time.time) -> None:
+        self.cfg = cfg
+        self.store = store
+        self.bk = buildkite
+        self.gh = github
+        self.publish = publisher
+        self.clock = clock
+        self.rate_limited_until = 0.0
+
+    # ---- intake (polling)
+    def poll(self) -> list[str]:
+        """Un giro di polling. Elenco delle PR incompleto, malformato, rate limit, errore API o credenziali =>
+        nessuna transizione e nessuno status (fail closed). Ritorna gli identificatori delle transizioni create."""
+        now = self.clock()
+        if now < self.rate_limited_until:
+            return []
+        try:
+            observed = parse_pulls(self.gh.open_pulls())
+        except RateLimited as exc:
+            self.rate_limited_until = exc.until
+            log(f"giro di polling rinviato: {exc}")
+            return []
+        except (ApiError, TransportError, CredentialError) as exc:
+            log(f"giro di polling annullato: {exc}")
+            return []
+        created = self.store.apply_poll(observed, now)
+        for tid in created:
+            log(f"transizione {tid}")
+        if self.cfg.rerun_allowed_logins:
+            created += self._poll_reruns(now)
+        return created
+
+    def _poll_reruns(self, now: float) -> list[str]:
+        since = self.store.get_meta("comments_since")
+        if since is None:
+            # primo avvio: nessun comando storico rieseguito, si parte da adesso; l'istante resta come limite
+            # inferiore persistente del cursore
+            self.store.set_meta("comments_floor", iso(now))
+            self.store.set_meta("comments_since", iso(now))
+            return []
+        try:
+            requests = [r for r in (parse_rerun_comment(c) for c in self.gh.comments_since(since)) if r is not None]
+            # permesso attuale letto per ogni comando nuovo di un utente in allowlist, PRIMA di registrare
+            # qualsiasi esito: un permesso non verificabile annulla l'intera lettura e il cursore resta fermo
+            requests = [replace(r, permission=self.gh.repo_permission(r.login))
+                        if r.user_type == "User" and r.login in self.cfg.rerun_allowed_logins
+                        and not self.store.has_rerun(r.comment_id) else r for r in requests]
+        except RateLimited as exc:
+            self.rate_limited_until = exc.until
+            log(f"lettura dei comandi di rerun rinviata: {exc}")
+            return []
+        except (ApiError, TransportError, CredentialError) as exc:
+            log(f"lettura dei comandi di rerun annullata (cursore invariato): {exc}")
+            return []
+        created: list[str] = []
+        for req in requests:
+            outcome, detail = self.store.record_rerun(req, self.cfg.rerun_allowed_logins, now,
+                                                      self.store.get_meta("comments_floor") or since)
+            if outcome != "duplicate":
+                log(f"rerun commento {req.comment_id} di {req.login} su PR #{req.pr}: {outcome} ({detail})")
+            if outcome == "accepted":
+                created.append(detail)
+        # la sovrapposizione non riporta mai il cursore prima del primo avvio (Codex P2 su #569); un archivio senza
+        # limite salvato (versione precedente) usa il cursore attuale, che non e' mai anteriore all'avvio
+        floor = self.store.get_meta("comments_floor") or since
+        self.store.set_meta("comments_since", max(iso(now - COMMENTS_OVERLAP_SECONDS), floor))
+        return created
+
+    # ---- worker
+    def tick(self) -> None:
+        for job in self.store.active_jobs():
+            try:
+                self.advance(job)
+            except Exception as exc:  # un job non deve fermare gli altri; lo stato resta quello salvato
+                log(f"job {job['id']}: errore inatteso {type(exc).__name__}")
+                self._internal_error_fallback(job)
+        for job in self.store.redeliverable_jobs(self.clock()):
+            try:
+                self._redeliver(job)
+            except Exception as exc:  # resta `publish_failed`: si riprova al prossimo intervallo
+                log(f"job {job['id']}: riconsegna fallita {type(exc).__name__}")
+        self.store.purge(self.clock(), self.cfg.retention_hours)
+
+    def _redeliver(self, job: dict) -> None:
+        """Nuovo tentativo di consegna di un esito `publish_failed` (vedi `redeliverable_jobs`). Ogni tentativo
+        aggiorna `updated_at`, quindi un esito ancora da consegnare non viene ripulito."""
+        if self._send_final(job) == 0:
+            log(f"job {job['id']}: esito {job['outcome']} riconsegnato")
+            return self._set(job, state="done")
+        return self._set(job, state="publish_failed", publishing_since=self.clock())
+
+    def _internal_error_fallback(self, job: dict) -> None:
+        """Un job che solleva a ogni giro non resta attivo per sempre: scaduto il timeout della build, la build si
+        annulla (o si ricorda da annullare) e l'esito e' `error` (audit indipendente su #569)."""
+        try:
+            window = self.cfg.build_timeout_seconds[job["guard"]]
+            if job["state"] in ("publishing", "canceling"):
+                since = job.get("publishing_since") or job["created_at"]
+                if self.clock() - since <= window:
+                    return
+                if job["state"] == "publishing":
+                    return self._set(job, state="publish_failed", publishing_since=self.clock())
+                log(f"job {job['id']}: annullamento mai confermato {job.get('pending_cancels')}: da verificare a mano")
+                return self._set(job, state=self._after_cancels(job), pending_cancels="[]")
+            started = job.get("dispatched_at") or job["created_at"]
+            if job["state"] not in ("queued", "creating", "dispatched"):
+                return
+            if self.clock() - started <= self.cfg.build_timeout_seconds[job["guard"]]:
+                return
+            if job.get("build_number") is not None:
+                self._cancel_or_remember(job, [job["build_number"]])
+            self._fail(job, "error", "errore interno del dispatcher")
+        except Exception as exc:
+            log(f"job {job['id']}: fallback non riuscito ({type(exc).__name__}): riprovo al prossimo giro")
+
+    def advance(self, job: dict) -> None:
+        # Obbligo di annullamento persistente e indipendente dallo stato (rilievi Codex su #569): le build
+        # rimaste da annullare si ritentano a ogni giro, qualunque cosa stia facendo il job.
+        if job["state"] != "canceling" and json.loads(job.get("pending_cancels") or "[]"):
+            self._cancel_or_remember(job, json.loads(job["pending_cancels"]))
+        if job["state"] == "canceling":                # esito gia' pubblicato: resta solo l'annullamento
+            return self._retry_cancels(job)
+        if job["superseded"]:
+            return self._supersede(job)
+        state = job["state"]
+        if state == "queued":
+            return self._create(job)
+        if state == "creating":
+            return self._recover_creation(job)
+        if state == "dispatched":
+            return self._poll(job)
+        if state == "publishing":
+            return self._publish_final(job)
+        return None
+
+    def _set(self, job: dict, **fields: Any) -> None:
+        # Invariante in un solo punto: nessun job passa a uno stato finale con build ancora da annullare; resta
+        # `canceling` (finestra dal momento della conversione) finche' l'annullamento non e' confermato.
+        pending = fields.get("pending_cancels", job.get("pending_cancels")) or "[]"
+        if fields.get("state") in FINAL_STATES and json.loads(pending):
+            fields["state"] = "canceling"
+            fields.setdefault("publishing_since", self.clock())
+        self.store.update_job(job["id"], self.clock(), **fields)
+        job.update(fields)
+
+    def _supersede(self, job: dict) -> None:
+        numbers = [job["build_number"]] if job["build_number"] is not None else []
+        if job["state"] == "creating" and not numbers:
+            # creazione ambigua: la build puo' esistere anche senza numero, e comparire in ritardo; si cerca e si
+            # annulla, e un elenco vuoto non basta a ritirare il job prima della finestra (Codex P2 su #569)
+            within = self.clock() - job["created_at"] <= self.cfg.build_timeout_seconds[job["guard"]]
+            try:
+                numbers = [b["number"] for b in self._builds_for(job) if _is_int(b.get("number"))]
+            except (ApiError, TransportError) as exc:
+                if within:
+                    log(f"job {job['id']}: build sostituita non verificabile ({exc}): riprovo")
+                    return None
+            if not numbers and within:
+                return None
+        unconfirmed = False
+        for number in numbers:
+            try:
+                self.bk.cancel_build(job["guard"], number)
+            except (ApiError, TransportError) as exc:
+                unconfirmed = True
+                log(f"job {job['id']}: annullamento build {number} non confermato: {exc}")
+        # annullamento non confermato: il job resta attivo e si ritenta al giro dopo (rilievo Codex P2 su #569),
+        # fino alla finestra del timeout della build; poi si ritira, dichiarato nei log
+        started = job.get("dispatched_at") or job["created_at"]          # adottata tardi: finestra dall'adozione
+        if unconfirmed and self.clock() - started <= self.cfg.build_timeout_seconds[job["guard"]]:
+            return None
+        if unconfirmed:
+            log(f"job {job['id']}: annullamento mai confermato entro la finestra: ritirato")
+        if job["state"] == "creating" and not numbers and job.get("build_number") is None:
+            log(f"job {job['id']}: creazione ambigua sostituita: nessuna build trovata da annullare "
+                "(se arrivata dopo, resta da verificare a mano)")
+        self._set(job, state="superseded", description="sostituito da un head piu' recente")
+        return None
+
+    def _builds_for(self, job: dict) -> list:
+        created_from = datetime.fromtimestamp(job["created_at"] - 300, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        expected = build_env(job)
+        return [b for b in self.bk.list_builds(job["guard"], created_from)
+                if isinstance(b, dict) and b.get("env") == expected]
+
+    def _fail(self, job: dict, state: str, description: str) -> None:
+        self._to_publishing(job, state, description)
+        self._publish_final(job)
+
+    def _to_publishing(self, job: dict, outcome: str, description: str) -> None:
+        cleaned = clean_description(description)
+        if cleaned != description:
+            # lo status porta la forma pulita; il testo completo resta qui (repr: nessun a capo nel log)
+            log(f"job {job['id']}: descrizione adattata al publisher; originale {description!r}")
+        self._set(job, state="publishing", outcome=outcome, description=cleaned, publishing_since=self.clock())
+
+    def _create(self, job: dict) -> None:
+        # da qui in poi un crash lascia l'esito ambiguo, mai un retry cieco; transizione condizionata allo stato
+        # letto, cosi' una copia vecchia del job non crea una seconda build
+        if not self.store.update_job(job["id"], self.clock(), expected_state="queued", state="creating"):
+            return None
+        job["state"] = "creating"
+        message = f"PR #{job['pr']} {job['head_sha'][:12]} ({job['guard']}, delivery {job['delivery_id']})"
+        try:
+            build = self.bk.create_build(job["guard"], build_env(job), message)
+        except TransportError as exc:
+            log(f"job {job['id']}: creazione build con esito ignoto ({exc}): riconciliazione")
+            return
+        except ApiError as exc:
+            return self._fail(job, "error", str(exc))
+        self._adopt(job, build)
+
+    def _adopt(self, job: dict, build: Any) -> None:
+        if not build_matches_job(build, job["guard"], job, self.cfg.organization):
+            if isinstance(build, dict) and _is_int(build.get("number")):
+                self._set(job, build_number=build["number"])
+                self._cancel_quietly(job)
+            return self._fail(job, "error", "build creata non corrisponde alla richiesta")
+        self._set(job, state="dispatched", build_number=build["number"], build_url=build["web_url"],
+                  dispatched_at=self.clock())
+        self._publish_pending(job)
+
+    def _publish_pending(self, job: dict) -> None:
+        """`pending` sull'head finche' la build gira, ritentato a ogni giro se fallisce (rilievo Codex P1 su #569):
+        rivalutando un head gia' `success` (reopen), il vecchio `success` non deve restare l'esito visibile."""
+        if self.publish(job["pr"], job["head_sha"], "pending", GUARDS[job["guard"]]["context"], job["build_url"],
+                        "build in corso") == 0:
+            self._set(job, pending_published=1)
+        else:
+            log(f"job {job['id']}: status pending non pubblicato: ritento al prossimo giro")
+
+    def _cancel_or_remember(self, job: dict, numbers: list) -> None:
+        """Annulla le build indicate; quelle non confermate restano in `pending_cancels` e si ritentano dopo la
+        pubblicazione dell'esito (stato `canceling`), mai dimenticate (audit indipendente su #569)."""
+        pending = set(json.loads(job.get("pending_cancels") or "[]"))
+        for number in numbers:
+            if not _is_int(number):
+                continue
+            try:
+                self.bk.cancel_build(job["guard"], number)
+                pending.discard(number)
+            except (ApiError, TransportError) as exc:
+                pending.add(number)
+                log(f"job {job['id']}: annullamento build {number} non confermato: {exc}")
+        self._set(job, pending_cancels=json.dumps(sorted(pending)))
+
+    def _cancel_quietly(self, job: dict) -> None:
+        self._cancel_or_remember(job, [job["build_number"]])
+
+    def _after_cancels(self, job: dict) -> str:
+        """Stato finale quando non restano build da annullare: un esito mai consegnato torna `publish_failed` e
+        quindi nella riconsegna (Codex P2 su #569); altrimenti `done`."""
+        fresh = self.store.get_job(job["id"]) or job
+        if fresh.get("outcome") and not fresh.get("final_published") and not fresh.get("superseded"):
+            return "publish_failed"
+        return "done"
+
+    def _retry_cancels(self, job: dict) -> None:
+        pending = json.loads(job.get("pending_cancels") or "[]")
+        if pending:
+            self._cancel_or_remember(job, pending)
+        if not json.loads(job["pending_cancels"]):
+            return self._set(job, state=self._after_cancels(job), publishing_since=self.clock())
+        since = job.get("publishing_since") or job["updated_at"]
+        if self.clock() - since > self.cfg.build_timeout_seconds[job["guard"]]:
+            log(f"job {job['id']}: annullamento mai confermato per le build {job['pending_cancels']}: "
+                "da verificare a mano")
+            return self._set(job, state=self._after_cancels(job), pending_cancels="[]", description=clean_description(
+                f"annullamento non confermato {job['pending_cancels']}; {job.get('description') or ''}"))
+        return None
+
+    def _recover_creation(self, job: dict) -> None:
+        """Creazione con esito ignoto (timeout, 5xx, crash): si cerca la build per delivery e head. Una sola =>
+        adottata; nessuna (elenco letto con successo) => error, mai una seconda creazione; piu' di una =>
+        annullate tutte, error. Elenco illeggibile => si riprova fino al timeout della build, poi error."""
+        if not job.get("pending_published"):
+            # head rivalutato con creazione ambigua: `pending` subito, cosi' un vecchio `success` non resta l'esito
+            # visibile per tutta la finestra di riconciliazione (audit su #569)
+            url = f"{BUILDKITE_WEB}/{self.cfg.organization}/{GUARDS[job['guard']]['pipeline']}"
+            if self.publish(job["pr"], job["head_sha"], "pending", GUARDS[job["guard"]]["context"], url,
+                            "creazione build in verifica") == 0:
+                self._set(job, pending_published=1)
+        try:
+            found = self._builds_for(job)
+        except (ApiError, TransportError) as exc:
+            if self.clock() - job["created_at"] > self.cfg.build_timeout_seconds[job["guard"]]:
+                return self._fail(job, "error", f"creazione build non verificabile: {exc}")
+            return None
+        if len(found) == 1:
+            return self._adopt(job, found[0])
+        if not found:
+            # una build puo' comparire in ritardo: l'assenza vale solo scaduta la finestra della build
+            if self.clock() - job["created_at"] <= self.cfg.build_timeout_seconds[job["guard"]]:
+                return None
+            return self._fail(job, "error", "creazione build non confermata")
+        self._cancel_or_remember(job, [b.get("number") for b in found])
+        return self._fail(job, "error", f"{len(found)} build per la stessa richiesta: annullate")
+
+    def _poll(self, job: dict) -> None:
+        guard = job["guard"]
+        try:
+            build = self.bk.get_build(guard, job["build_number"])
+        except (ApiError, TransportError) as exc:
+            build = None
+            log(f"job {job['id']}: lettura build fallita: {exc}")
+        timed_out = self.clock() - (job["dispatched_at"] or job["created_at"]) > self.cfg.build_timeout_seconds[guard]
+        if build is not None and not build_matches_job(build, guard, job, self.cfg.organization):
+            self._cancel_quietly(job)
+            return self._fail(job, "error", "build letta non corrisponde alla richiesta")
+        state = build.get("state") if build is not None else None
+        if build is not None and (not isinstance(state, str) or state not in BUILD_RUNNING | BUILD_TERMINAL):
+            self._cancel_quietly(job)
+            return self._fail(job, "error", f"stato build sconosciuto: {state!r}")
+        if build is None or state in BUILD_RUNNING:
+            if timed_out:
+                self._cancel_quietly(job)
+                return self._fail(job, "error", "timeout della build")
+            if not job["pending_published"]:
+                self._publish_pending(job)
+            return None
+        if state == "blocked":
+            self._cancel_quietly(job)
+        artifact: Optional[bytes] = None
+        if state in ("passed", "failed"):
+            try:
+                artifact = self.bk.fetch_result(guard, job["build_number"])
+            except (ApiError, TransportError) as exc:
+                log(f"job {job['id']}: risultato non scaricato: {exc}")
+                if not timed_out:
+                    # errore temporaneo: si ritenta entro la finestra; intanto il `pending` mancato copre un vecchio
+                    # `success` sullo stesso SHA (rerun, riapertura) come nel ramo della build in corso (Sol su #569)
+                    if not job["pending_published"]:
+                        self._publish_pending(job)
+                    return None
+        outcome, description = decide_outcome(build, artifact, job)
+        self._to_publishing(job, outcome, description)
+        self._publish_final(job)
+
+    def _send_final(self, job: dict) -> int:
+        outcome = job["outcome"]
+        if outcome not in ("success", "failure", "error"):
+            outcome, job["description"] = "error", "esito interno non valido"
+        url = job["build_url"] or f"{BUILDKITE_WEB}/{self.cfg.organization}/{GUARDS[job['guard']]['pipeline']}"
+        rc = self.publish(job["pr"], job["head_sha"], outcome, GUARDS[job["guard"]]["context"], url,
+                          job["description"] or outcome)
+        if rc == 0:
+            # consegna registrata a parte dallo stato: `canceling` non deve far dimenticare un esito non consegnato
+            self._set(job, final_published=1)
+        return rc
+
+    def _publish_final(self, job: dict) -> None:
+        fresh = self.store.get_job(job["id"])
+        if fresh.get("superseded"):
+            return self._supersede(job)
+        rc = self._send_final(job)
+        if rc == 0:
+            # con build ancora da annullare `_set` lo tiene in `canceling` finche' l'annullamento e' confermato
+            return self._set(job, state="done")
+        # pubblicazione fallita: si ritenta a ogni giro (stesso esito, status idempotente) finche' il job non e'
+        # sostituito o finisce la finestra pari al timeout della build; poi `publish_failed`, dichiarato nei log
+        since = job.get("publishing_since") or job["updated_at"]
+        if self.clock() - since > self.cfg.build_timeout_seconds[job["guard"]]:
+            log(f"job {job['id']}: pubblicazione non riuscita entro la finestra: publish_failed")
+            # con build ancora da annullare `_set` lo tiene in `canceling` (Codex P2 su #569)
+            return self._set(job, state="publish_failed", publishing_since=self.clock())
+        return None
+
+
+
+# --------------------------------------------------------------------------------------------- servizio
+def build_dispatcher(cfg: Config, transport: Transport = urllib_transport,
+                     publisher: Optional[Callable[..., int]] = None,
+                     token_runner: TokenRunner = default_token_runner,
+                     clock: Callable[[], float] = time.time) -> Dispatcher:
+    bk_bearer = read_secret_file(cfg.buildkite_token_file, _TOKEN_RE, "buildkite.token_file")
+    tokens = TokenProvider(cfg.github_token_command, cfg.github_token_command_timeout_seconds, clock, token_runner)
+    store = Store(cfg.state_db)
+    return Dispatcher(cfg, store, Buildkite(cfg, bk_bearer, transport), GitHub(cfg, tokens, transport, clock),
+                      publisher or default_publisher(cfg.publisher_command, cfg.publisher_timeout_seconds), clock)
+
+
+def serve(cfg: Config) -> int:
+    """Nessun web server: un solo ciclo che ogni `poll_interval_seconds` legge GitHub e fa avanzare i job."""
+    dispatcher = build_dispatcher(cfg)
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    log(f"polling ogni {cfg.poll_interval_seconds} s")
+    try:
+        while not stop.is_set():
+            for step in (dispatcher.poll, dispatcher.tick):
+                try:
+                    step()
+                except Exception as exc:  # un giro fallito non ferma il servizio; lo stato salvato resta valido
+                    log(f"{step.__name__} fallito: {type(exc).__name__}")
+            stop.wait(cfg.poll_interval_seconds)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        dispatcher.store.close()
+    return EXIT_OK
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = argparse.ArgumentParser(prog="pr_trusted_dispatcher.py", description=__doc__.splitlines()[0])
+    parser.add_argument("command", choices=("check-config", "serve", "jobs", "reruns"))
+    parser.add_argument("--config", required=False)
+    parser.add_argument("--check-secrets", action="store_true",
+                        help="check-config: legge il token Buildkite ed esegue una volta il comando del token GitHub")
+    args = parser.parse_args(argv)
+    try:
+        cfg = load_config(args.config)
+        if args.command == "check-config":
+            if args.check_secrets:
+                read_secret_file(cfg.buildkite_token_file, _TOKEN_RE, "buildkite.token_file")
+                try:
+                    TokenProvider(cfg.github_token_command, cfg.github_token_command_timeout_seconds,
+                                  time.time).get()
+                except CredentialError as exc:
+                    raise ConfigError([f"github.token_command: {exc}"]) from None
+            print("CONFIGURED")
+            return EXIT_OK
+        if args.command in ("jobs", "reruns"):
+            store = Store(cfg.state_db, read_only=True)
+            try:
+                rows = store.recent_jobs() if args.command == "jobs" else store.recent_reruns()
+                print(json.dumps(rows, indent=1))
+            finally:
+                store.close()
+            return EXIT_OK
+        return serve(cfg)
+    except ConfigError as exc:
+        print("NOT CONFIGURED", file=sys.stderr)
+        for problem in exc.problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return EXIT_NOT_CONFIGURED
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
