@@ -2916,6 +2916,19 @@
         "tests/scripts/test_trusted_pr_guard.py"
       ],
       "max_files": 10
+    },
+    "gov-overlap-workflow-phase2": {
+      "description": "PF-GOV-DOC-WORKFLOW-ALIGN-01 FASE 2 (owner 26-27/10/2026, dopo il merge della Fase 1 #564): .github/workflows/pr-overlap-guard.yml solo pull_request, esegue lo script trusted canonico scripts/ci/pr_overlap_guard.sh dal commit base, token in file 0600, permessi read-only, check overlap-check invariato; nuovo .github/workflows/pr-overlap-guard-diagnostic.yml (check overlap-diagnostic, solo workflow_dispatch da main) che non puo' soddisfare il required check; test negativi contro check duplicati, step saltabili e override GITHUB_*/RUNNER_*. Contenuto gia' revisionato su #564 fino a 55f4973. Workflow: merge owner (autorizzazione owner al merge autonomo di questa PR).",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-overlap-guard-diagnostic.yml",
+        ".github/workflows/pr-overlap-guard.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ci_trusted_lane.md",
+        "tests/guardrails/test_una_sola_pr_aperta.py"
+      ],
+      "max_files": 6
     }
   }
 }
