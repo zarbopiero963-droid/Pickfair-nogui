@@ -28,8 +28,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     creazione ambigua annullate, stesso `updated_at` senza sostituzione, `Content-Length` non ASCII, COMMIT
     fallito, timeout del publisher in configurazione;
   - rilievi Codex su #569: `pending` ritentato mentre la build gira, risposta 5xx non JSON alla creazione trattata
-    come ambigua e riconciliata; migrazione idempotente di un archivio creato da una versione precedente (Sol); annullamento non confermato ritentato e risposta HTTP troncata trattata come errore di trasporto (Codex);
-  - test offline con un finto Buildkite e un server HTTP reale su loopback; 27 mutazioni nell'area
+    come ambigua e riconciliata; migrazione idempotente di un archivio creato da una versione precedente (Sol); annullamento non confermato ritentato e risposta HTTP troncata trattata come errore di trasporto (Codex); audit indipendente di liveness: ogni risposta di creazione non interpretabile ambigua, elenco vuoto o pieno non prova l'assenza, risultato ritentato, annullamenti non confermati ricordati (stato `canceling`), fallback sul timeout per le eccezioni inattese;
+  - test offline con un finto Buildkite e un server HTTP reale su loopback; 34 mutazioni nell'area
     `trusted_dispatcher` e una nell'area `trusted_gate`.
 - **#566 — deduplica dei check run fail-closed (`scripts/pr_automation_controller.dedupe_github_check_runs`):**
   - sull'head corrente nessun check run omonimo viene più scartato, salvo la copia esatta della stessa check run

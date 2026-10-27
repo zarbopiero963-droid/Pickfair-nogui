@@ -84,7 +84,8 @@ BUILD_RUNNING = frozenset({"creating", "scheduled", "running", "failing", "cance
 BUILD_TERMINAL = frozenset({"passed", "failed", "canceled", "skipped", "not_run", "blocked"})
 
 # Stati del job nell'archivio.
-ACTIVE_STATES = ("queued", "creating", "dispatched", "publishing")
+# `canceling`: esito gia' pubblicato, resta da confermare l'annullamento di una o piu' build (mai orfane).
+ACTIVE_STATES = ("queued", "creating", "dispatched", "publishing", "canceling")
 FINAL_STATES = ("done", "superseded", "publish_failed")
 
 EXIT_OK = 0
@@ -389,6 +390,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   dispatched_at REAL,
   publishing_since REAL,
   pending_published INTEGER NOT NULL DEFAULT 0,
+  pending_cancels TEXT NOT NULL DEFAULT '[]',
   updated_at REAL NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS jobs_active_current ON jobs(pr, head_sha, guard)
@@ -399,6 +401,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS jobs_active_current ON jobs(pr, head_sha, guar
 MIGRATION_COLUMNS = (
     ("publishing_since", "REAL"),
     ("pending_published", "INTEGER NOT NULL DEFAULT 0"),
+    ("pending_cancels", "TEXT NOT NULL DEFAULT '[]'"),
 )
 
 
@@ -516,7 +519,7 @@ class Store:
     def update_job(self, job_id: int, now: float, *, expected_state: Optional[str] = None, **fields: Any) -> bool:
         """Con `expected_state` la modifica avviene solo se il job e' ancora in quello stato (True se applicata)."""
         allowed = {"state", "build_number", "build_url", "outcome", "description", "dispatched_at",
-                   "publishing_since", "pending_published"}
+                   "publishing_since", "pending_published", "pending_cancels"}
         if not fields or set(fields) - allowed:
             raise ValueError("campi non ammessi")
         cols = ", ".join(f"{k} = ?" for k in fields)
@@ -590,15 +593,11 @@ class Buildkite:
             body = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
         status, _, data = self._transport(method, url, headers, body, self._cfg.http_timeout_seconds)
-        if status >= 500:
-            # prima del JSON (rilievo Codex P2 su #569): un 502 HTML del gateway dopo una creazione arrivata a
-            # Buildkite e' un esito IGNOTO, non un rifiuto; per le letture i chiamanti trattano i due casi uguali
-            raise TransportError(f"HTTP {status}")
         if len(data) > MAX_API_BYTES:
             raise ApiError("risposta Buildkite troppo grande", status)
         try:
             return status, (json.loads(data) if data else None)
-        except ValueError:
+        except (ValueError, RecursionError):        # RecursionError: JSON annidato all'estremo, non ValueError
             raise ApiError("risposta Buildkite non JSON", status) from None
 
     def create_build(self, guard: str, env: Mapping[str, str], message: str) -> dict:
@@ -615,7 +614,9 @@ class Buildkite:
             raise TransportError(f"risposta di creazione non interpretabile ({exc})") from None
         if 400 <= status < 500:
             raise ApiError(f"creazione build rifiutata (HTTP {status})", status)
-        if status != 201 or not isinstance(data, dict):
+        if (status != 201 or not isinstance(data, dict) or not _is_int(data.get("number"))
+                or data["number"] <= 0):
+            # anche un 201 senza un numero di build utilizzabile: la build puo' esistere, si riconcilia
             raise TransportError(f"risposta di creazione non interpretabile (HTTP {status})")
         return data
 
@@ -630,6 +631,9 @@ class Buildkite:
         status, data = self._request("GET", f"{self._pipeline_url(guard)}/builds?{query}")
         if status != 200 or not isinstance(data, list):
             raise ApiError(f"elenco build fallito (HTTP {status})", status)
+        if len(data) >= 100:
+            # pagina piena: la build cercata puo' stare nella pagina dopo; l'assenza non e' dimostrata
+            raise ApiError("elenco build pieno: assenza non verificabile")
         return data
 
     def cancel_build(self, guard: str, number: int) -> None:
@@ -660,12 +664,17 @@ class Buildkite:
         location = {k.lower(): v for k, v in dict(resp_headers).items()}.get("location")
         if status not in (301, 302, 303, 307) or not isinstance(location, str):
             raise ApiError(f"download artifact senza redirect (HTTP {status})", status)
-        parsed = urllib.parse.urlsplit(location)
-        if parsed.scheme != "https" or parsed.hostname not in self._cfg.artifact_download_hosts:
+        try:
+            parsed = urllib.parse.urlsplit(location)
+            host = parsed.hostname
+        except ValueError:
+            raise ApiError("redirect dell'artifact malformato") from None
+        if parsed.scheme != "https" or host not in self._cfg.artifact_download_hosts:
             raise ApiError("redirect dell'artifact verso un host non ammesso")
         status, _, body = self._transport("GET", location, {}, None, self._cfg.http_timeout_seconds)
-        if status != 200 or len(body) > MAX_ARTIFACT_BYTES:
-            raise ApiError(f"download artifact fallito (HTTP {status})", status)
+        if status != 200 or len(body) != size:
+            # anche un corpo troncato (Content-Length non rispettata) e' un download fallito
+            raise ApiError(f"download artifact fallito (HTTP {status}, {len(body)}/{size} byte)", status)
         return body
 
 
@@ -702,7 +711,7 @@ def decide_outcome(build: Mapping[str, Any], artifact: Optional[bytes], job: Map
         return "error", "risultato del guard assente"
     try:
         result = json.loads(artifact.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
         return "error", "risultato del guard illeggibile"
     if not isinstance(result, dict):
         return "error", "risultato del guard illeggibile"
@@ -770,7 +779,7 @@ class Dispatcher:
             return 200, "pong"
         try:
             payload = json.loads(body.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
+        except (UnicodeDecodeError, ValueError, RecursionError):
             return 400, "payload non JSON"
         try:
             intake = parse_event(event, h.get("x-github-delivery"), payload)
@@ -792,9 +801,27 @@ class Dispatcher:
                 self.advance(job)
             except Exception as exc:  # un job non deve fermare gli altri; lo stato resta quello salvato
                 log(f"job {job['id']}: errore inatteso {type(exc).__name__}")
+                self._internal_error_fallback(job)
         self.store.purge(self.clock(), self.cfg.delivery_retention_hours)
 
+    def _internal_error_fallback(self, job: dict) -> None:
+        """Un job che solleva a ogni giro non resta attivo per sempre: scaduto il timeout della build, la build si
+        annulla (o si ricorda da annullare) e l'esito e' `error` (audit indipendente su #569)."""
+        try:
+            started = job.get("dispatched_at") or job["created_at"]
+            if job["state"] not in ("queued", "creating", "dispatched"):
+                return
+            if self.clock() - started <= self.cfg.build_timeout_seconds[job["guard"]]:
+                return
+            if job.get("build_number") is not None:
+                self._cancel_or_remember(job, [job["build_number"]])
+            self._fail(job, "error", "errore interno del dispatcher")
+        except Exception as exc:
+            log(f"job {job['id']}: fallback non riuscito ({type(exc).__name__}): riprovo al prossimo giro")
+
     def advance(self, job: dict) -> None:
+        if job["state"] == "canceling":                # esito gia' pubblicato: resta solo l'annullamento
+            return self._retry_cancels(job)
         if job["superseded"]:
             return self._supersede(job)
         state = job["state"]
@@ -835,6 +862,9 @@ class Dispatcher:
             return None
         if unconfirmed:
             log(f"job {job['id']}: annullamento mai confermato entro la finestra: ritirato")
+        if job["state"] == "creating" and not numbers and job.get("build_number") is None:
+            log(f"job {job['id']}: creazione ambigua sostituita: nessuna build trovata da annullare "
+                "(se arrivata dopo, resta da verificare a mano)")
         self._set(job, state="superseded", description="sostituito da un head piu' recente")
         return None
 
@@ -887,11 +917,36 @@ class Dispatcher:
         else:
             log(f"job {job['id']}: status pending non pubblicato: ritento al prossimo giro")
 
+    def _cancel_or_remember(self, job: dict, numbers: list) -> None:
+        """Annulla le build indicate; quelle non confermate restano in `pending_cancels` e si ritentano dopo la
+        pubblicazione dell'esito (stato `canceling`), mai dimenticate (audit indipendente su #569)."""
+        pending = set(json.loads(job.get("pending_cancels") or "[]"))
+        for number in numbers:
+            if not _is_int(number):
+                continue
+            try:
+                self.bk.cancel_build(job["guard"], number)
+                pending.discard(number)
+            except (ApiError, TransportError) as exc:
+                pending.add(number)
+                log(f"job {job['id']}: annullamento build {number} non confermato: {exc}")
+        self._set(job, pending_cancels=json.dumps(sorted(pending)))
+
     def _cancel_quietly(self, job: dict) -> None:
-        try:
-            self.bk.cancel_build(job["guard"], job["build_number"])
-        except (ApiError, TransportError) as exc:
-            log(f"job {job['id']}: annullamento non confermato: {exc}")
+        self._cancel_or_remember(job, [job["build_number"]])
+
+    def _retry_cancels(self, job: dict) -> None:
+        pending = json.loads(job.get("pending_cancels") or "[]")
+        if pending:
+            self._cancel_or_remember(job, pending)
+        if not json.loads(job["pending_cancels"]):
+            return self._set(job, state="done")
+        since = job.get("publishing_since") or job["updated_at"]
+        if self.clock() - since > self.cfg.build_timeout_seconds[job["guard"]]:
+            log(f"job {job['id']}: annullamento mai confermato per le build {job['pending_cancels']}: "
+                "da verificare a mano")
+            return self._set(job, state="done")
+        return None
 
     def _recover_creation(self, job: dict) -> None:
         """Creazione con esito ignoto (timeout, 5xx, crash): si cerca la build per delivery e head. Una sola =>
@@ -905,14 +960,13 @@ class Dispatcher:
             return None
         if len(found) == 1:
             return self._adopt(job, found[0])
-        for b in found:
-            if _is_int(b.get("number")):
-                try:
-                    self.bk.cancel_build(job["guard"], b["number"])
-                except (ApiError, TransportError):
-                    pass
-        return self._fail(job, "error", "creazione build non confermata" if not found else
-                          f"{len(found)} build per la stessa richiesta: annullate")
+        if not found:
+            # una build puo' comparire in ritardo: l'assenza vale solo scaduta la finestra della build
+            if self.clock() - job["created_at"] <= self.cfg.build_timeout_seconds[job["guard"]]:
+                return None
+            return self._fail(job, "error", "creazione build non confermata")
+        self._cancel_or_remember(job, [b.get("number") for b in found])
+        return self._fail(job, "error", f"{len(found)} build per la stessa richiesta: annullate")
 
     def _poll(self, job: dict) -> None:
         guard = job["guard"]
@@ -926,7 +980,7 @@ class Dispatcher:
             self._cancel_quietly(job)
             return self._fail(job, "error", "build letta non corrisponde alla richiesta")
         state = build.get("state") if build is not None else None
-        if build is not None and state not in BUILD_RUNNING | BUILD_TERMINAL:
+        if build is not None and (not isinstance(state, str) or state not in BUILD_RUNNING | BUILD_TERMINAL):
             self._cancel_quietly(job)
             return self._fail(job, "error", f"stato build sconosciuto: {state!r}")
         if build is None or state in BUILD_RUNNING:
@@ -944,6 +998,8 @@ class Dispatcher:
                 artifact = self.bk.fetch_result(guard, job["build_number"])
             except (ApiError, TransportError) as exc:
                 log(f"job {job['id']}: risultato non scaricato: {exc}")
+                if not timed_out:
+                    return None                         # errore temporaneo: si ritenta entro la finestra
         outcome, description = decide_outcome(build, artifact, job)
         self._to_publishing(job, outcome, description)
         self._publish_final(job)
@@ -959,7 +1015,8 @@ class Dispatcher:
         rc = self.publish(job["pr"], job["head_sha"], outcome, GUARDS[job["guard"]]["context"], url,
                           job["description"] or outcome)
         if rc == 0:
-            return self._set(job, state="done")
+            # build ancora da annullare: si chiude solo quando l'annullamento e' confermato (stato `canceling`)
+            return self._set(job, state="canceling" if json.loads(job.get("pending_cancels") or "[]") else "done")
         # pubblicazione fallita: si ritenta a ogni giro (stesso esito, status idempotente) finche' il job non e'
         # sostituito o finisce la finestra pari al timeout della build; poi `publish_failed`, dichiarato nei log
         since = job.get("publishing_since") or job["updated_at"]

@@ -41,6 +41,21 @@ un riavvio, il dispatcher elenca le build di `main` e cerca quella con lo stesso
 Un job `dispatched` riprende il polling dopo il riavvio; un job `publishing` ripubblica lo stesso esito (lo status
 GitHub è idempotente per contesto e SHA).
 
+**Esiti ambigui e liveness (audit indipendente su #569).** Regole valide per ogni chiamata esterna:
+
+- creazione: solo un rifiuto 4xx esplicito è un esito definito; 5xx, 201 con corpo troncato, non JSON o senza
+  numero di build, 2xx inattesi sono **ambigui** e vanno in riconciliazione;
+- riconciliazione: un elenco vuoto non prova l'assenza finché non scade la finestra della build (la build può
+  comparire in ritardo); una pagina piena (100 build) non prova nulla e si riprova;
+- risultato del guard: un errore di download (rete, 5xx, `Location` malformata, corpo diverso da `file_size`) si
+  ritenta entro la finestra, poi è `error`;
+- `state` della build non stringa o sconosciuto ⇒ `error`; JSON annidato all'estremo (`RecursionError`) è una
+  risposta illeggibile;
+- annullamenti non confermati: le build restano in `pending_cancels` e il job, pubblicato l'esito, resta
+  `canceling` finché l'annullamento non è confermato o scade la finestra (poi log esplicito «da verificare a mano»);
+- fallback strutturale: un job che solleva un'eccezione inattesa a ogni giro, scaduto il timeout della build, viene
+  annullato e chiuso con `error` («errore interno del dispatcher»), mai attivo per sempre.
+
 **Pending ritentato.** Se la pubblicazione del `pending` all'avvio della build fallisce, si ritenta a ogni giro
 finché la build gira (rilievo Codex P1 su #569). Rivalutando un head già `success` (per esempio dopo un reopen), il
 vecchio `success` non resta l'esito visibile mentre la nuova build è in corso.
@@ -53,9 +68,9 @@ viene ritirato, e il log lo dichiara (rilievo Codex P2 su #569).
 risposta chunked troncata) è un errore di trasporto: il polling continua e il timeout della build resta efficace
 (rilievo Codex P2 su #569).
 
-**Risposte 5xx.** Ogni HTTP 5xx di Buildkite è un esito **ignoto** e si classifica prima di leggere il JSON (rilievo
-Codex P2 su #569): un 502 HTML del gateway dopo una creazione arrivata a Buildkite porta alla riconciliazione, non a
-un `error` che lascerebbe la build non seguita.
+**Risposte 5xx.** Alla creazione ogni HTTP 5xx di Buildkite, con o senza JSON, è un esito **ignoto** (rilievo Codex P2
+su #569): un 502 HTML del gateway dopo una creazione arrivata a Buildkite porta alla riconciliazione, non a un
+`error` che lascerebbe la build non seguita. Per le letture un 5xx è un errore temporaneo che si ritenta.
 
 **Pubblicazione fallita.** Se l'helper non pubblica, il job resta `publishing` e lo stesso esito si ritenta a ogni
 giro finché non va a buon fine, finché il job non viene sostituito o finché non scade una finestra pari a
@@ -195,8 +210,8 @@ funziona) dalla **readiness reale** (la PR è davvero mergiabile).
 - Il dispatcher non verifica di persona lo stato della PR al momento della pubblicazione: il contratto assegna il
   ricontrollo all'helper root, che è infrastruttura di Grok. Il dispatcher riduce la finestra con il proprio
   ricontrollo dei job sostituiti.
-- `list_builds` legge solo la prima pagina (100 build): oltre, una creazione ambigua risulta «non confermata» ed è
-  `error` (fail closed). L'elenco degli artifact chiede `per_page=100`.
+- `list_builds` legge solo la prima pagina: con 100 build l'assenza non è dimostrata e si riprova fino alla
+  finestra, poi `error` (fail closed). L'elenco degli artifact chiede `per_page=100`.
 - `ThreadingHTTPServer` non limita il numero dei thread: un limite alle connessioni va messo nel reverse proxy
   (punto 1).
 - Un evento perso da GitHub (nessuna consegna) non produce status: il required check resta quello di Actions, e la

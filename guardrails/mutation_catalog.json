@@ -4596,7 +4596,7 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "        if parsed.scheme != \"https\" or parsed.hostname not in self._cfg.artifact_download_hosts:",
+      "original": "        if parsed.scheme != \"https\" or host not in self._cfg.artifact_download_hosts:",
       "mutated": "        if parsed.scheme != \"https\":",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
@@ -4644,8 +4644,8 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "        if self.clock() - since > self.cfg.build_timeout_seconds[job[\"guard\"]]:",
-      "mutated": "        if True:",
+      "original": "        if self.clock() - since > self.cfg.build_timeout_seconds[job[\"guard\"]]:\n            log(f\"job {job['id']}: pubblicazione non riuscita",
+      "mutated": "        if True:\n            log(f\"job {job['id']}: pubblicazione non riuscita",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
@@ -4686,18 +4686,6 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "review P2-4: build di una creazione ambigua sostituita lasciata girare."
-    },
-    {
-      "id": "td_5xx_not_ambiguous",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "        if status >= 500:",
-      "mutated": "        if False:",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "Codex P2 su #569: 502 HTML alla creazione chiuso come error: build arrivata a Buildkite mai seguita ne' annullata."
     },
     {
       "id": "td_pending_not_retried",
@@ -4746,6 +4734,102 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "Codex P2 su #569: annullamento fallito e job ritirato: la build del vecchio head resta in coda senza essere seguita."
+    },
+    {
+      "id": "td_late_build_terminal",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if self.clock() - job[\"created_at\"] <= self.cfg.build_timeout_seconds[job[\"guard\"]]:\n                return None\n            return self._fail(job, \"error\", \"creazione build non confermata\")",
+      "mutated": "            return self._fail(job, \"error\", \"creazione build non confermata\")",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit A1 su #569: elenco vuoto subito dopo un timeout trattato come assenza: la build arrivata dopo resta orfana."
+    },
+    {
+      "id": "td_state_type_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "(not isinstance(state, str) or state not in BUILD_RUNNING | BUILD_TERMINAL)",
+      "mutated": "(state not in BUILD_RUNNING | BUILD_TERMINAL)",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit A2 su #569: state non stringa solleva TypeError fuori dal controllo del timeout."
+    },
+    {
+      "id": "td_201_number_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if (status != 201 or not isinstance(data, dict) or not _is_int(data.get(\"number\"))\n                or data[\"number\"] <= 0):",
+      "mutated": "        if status != 201 or not isinstance(data, dict):",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit A4 su #569: 201 senza numero di build chiuso come error: build arrivata mai seguita."
+    },
+    {
+      "id": "td_cancel_forgotten",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            return self._set(job, state=\"canceling\" if json.loads(job.get(\"pending_cancels\") or \"[]\") else \"done\")",
+      "mutated": "            return self._set(job, state=\"done\")",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit A5/A9 su #569: annullamento fallito dimenticato dopo la pubblicazione: build orfana."
+    },
+    {
+      "id": "td_artifact_no_retry",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                if not timed_out:\n                    return None                         # errore temporaneo: si ritenta entro la finestra",
+      "mutated": "                pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit A7 su #569: errore temporaneo sul risultato = error definitivo per una build passata."
+    },
+    {
+      "id": "td_full_page_trusted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if len(data) >= 100:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit A8 su #569: pagina piena trattata come prova di assenza: build orfana."
+    },
+    {
+      "id": "td_fallback_missing",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                self._internal_error_fallback(job)",
+      "mutated": "                pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit su #569: un'eccezione a ogni giro tiene il job attivo per sempre, oltre il timeout."
+    },
+    {
+      "id": "td_artifact_size_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "len(body) != size:",
+      "mutated": "len(body) > MAX_ARTIFACT_BYTES:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit A7 su #569: corpo dell'artifact troncato preso come risultato del guard."
     }
   ]
 }

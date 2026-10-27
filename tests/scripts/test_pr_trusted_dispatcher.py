@@ -527,12 +527,16 @@ def test_build_state_contradicting_verdict_is_error(env, state, verdict):
 
 @pytest.mark.parametrize("state", ["passed", "failed"])
 def test_missing_artifact_is_error(env, state):
-    disp, bk, pub, _ = env
+    """Artifact assente: si ritenta entro la finestra (un upload puo' arrivare in ritardo), poi `error`."""
+    disp, bk, pub, clock = env
     send(disp, payload())
     disp.tick()
     bk.finish("pr-overlap-guard", 1, state, None)
     disp.tick()
-    assert [c[2] for c in pub.final()] == ["error"]
+    assert not pub.final()
+    clock.now += disp.cfg.build_timeout_seconds["overlap"] + 1
+    disp.tick()
+    assert [c[2] for c in pub.final() if c[3] == "overlap-check"] == ["error"]
 
 
 def test_build_timeout_cancels_and_publishes_error(env):
@@ -581,11 +585,14 @@ def test_ambiguous_creation_adopts_the_build_that_landed(env):
 
 
 def test_ambiguous_creation_with_no_build_is_error_never_retried(env):
-    disp, bk, pub, _ = env
+    disp, bk, pub, clock = env
     bk.fail_create = "http500"
     send(disp, payload())
     disp.tick()
     bk.fail_create = None
+    disp.tick()
+    assert {j["state"] for j in disp.store.active_jobs()} == {"creating"} and not pub.final()
+    clock.now += disp.cfg.build_timeout_seconds["readiness"] + 1
     disp.tick()
     assert not bk.builds["pr-overlap-guard"]
     assert [r for r in bk.requests if r[0] == "POST"].__len__() == 2
@@ -721,7 +728,9 @@ def test_artifact_redirect_to_other_host_is_error(env):
     disp.tick()
     bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
     disp.tick()
-    assert [c[2] for c in pub.final()] == ["error"]
+    disp.clock.now += disp.cfg.build_timeout_seconds["overlap"] + 1
+    disp.tick()
+    assert [c[2] for c in pub.final() if c[3] == "overlap-check"] == ["error"]
     assert not [r for r in bk.requests if "evil.example" in r[1]]
 
 
@@ -732,7 +741,9 @@ def test_artifact_download_url_outside_buildkite_api_is_error(env):
     disp.tick()
     bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
     disp.tick()
-    assert [c[2] for c in pub.final()] == ["error"]
+    disp.clock.now += disp.cfg.build_timeout_seconds["overlap"] + 1
+    disp.tick()
+    assert [c[2] for c in pub.final() if c[3] == "overlap-check"] == ["error"]
     assert not [r for r in bk.requests if r[1].startswith("https://evil.example")]
 
 
@@ -1208,3 +1219,233 @@ def test_explicit_4xx_rejection_with_non_json_body_is_a_definite_error(env):
     send(disp, payload())
     disp.tick()
     assert sorted(c[2] for c in pub.final()) == ["error", "error"] and not disp.store.active_jobs()
+
+
+
+# --------------------------------------------------------------------------------------------- audit indipendente (liveness)
+def _overlap(disp):
+    return [j for j in disp.store.recent_jobs() if j["guard"] == "overlap"][0]
+
+
+def test_build_landing_after_an_empty_list_is_adopted_within_the_window(env):
+    """Audit A1: creazione in timeout, primo elenco vuoto, build arrivata dopo: va adottata, non orfana."""
+    disp, bk, pub, clock = env
+    bk.fail_create = "transport"
+    send(disp, payload())
+    disp.tick()
+    bk.fail_create = None
+    clock.now += 5
+    disp.tick()
+    assert {j["state"] for j in disp.store.active_jobs()} == {"creating"}
+    for job in disp.store.recent_jobs():
+        bk._new_build(td.GUARDS[job["guard"]]["pipeline"],
+                      {"branch": "main", "commit": "HEAD", "message": "m", "env": td.build_env(job)})
+    disp.tick()
+    assert {j["state"] for j in disp.store.active_jobs()} == {"dispatched"}
+
+
+@pytest.mark.parametrize("bad_state", [["running"], {"s": 1}, 7, None])
+def test_non_string_build_state_is_error_not_a_stuck_job(env, bad_state):
+    """Audit A2: uno `state` non stringa sollevava TypeError fuori dal controllo del timeout."""
+    disp, bk, pub, _ = env
+    send(disp, payload())
+    disp.tick()
+    bk.mutate_build = lambda b: b.__setitem__("state", bad_state)
+    disp.tick()
+    assert sorted(c[2] for c in pub.final()) == ["error", "error"]
+
+
+def test_malformed_artifact_location_is_retried_then_error(env):
+    """Audit A3: `Location` malformata (ValueError di urlsplit) non blocca il job per sempre."""
+    disp, bk, pub, clock = env
+    send(disp, payload())
+    disp.tick()
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    bk.redirect_host = "[bad"
+    disp.tick()
+    clock.now += disp.cfg.build_timeout_seconds["overlap"] + 1
+    disp.tick()
+    assert [c[2] for c in pub.final() if c[3] == "overlap-check"] == ["error"]
+
+
+def test_201_without_a_usable_number_is_ambiguous(env):
+    """Audit A4: un 201 senza numero di build e' ambiguo: si riconcilia e la build arrivata viene adottata."""
+    disp, bk, pub, _ = env
+    orig = bk.__call__
+
+    def tr(method, url, headers, body, timeout):
+        status, h, data = orig(method, url, headers, body, timeout)
+        if method == "POST":
+            return 201, h, b'{"id": "0190-uuid", "state": "scheduled"}'
+        return status, h, data
+    disp.bk._transport = tr
+    send(disp, payload())
+    disp.tick()
+    assert {j["state"] for j in disp.store.active_jobs()} == {"creating"} and not pub.final()
+    disp.bk._transport = bk
+    disp.tick()
+    assert {j["state"] for j in disp.store.active_jobs()} == {"dispatched"}
+
+
+def test_failed_cancel_on_timeout_is_retried_after_the_error_is_published(env):
+    """Audit A5/A9: esito `error` pubblicato, ma il job resta `canceling` finche' l'annullamento non e'
+    confermato: la build non resta orfana."""
+    disp, bk, pub, clock = env
+    send(disp, payload())
+    disp.tick()
+    bk.builds["pr-overlap-guard"][1]["state"] = "running"
+    bk.fail_cancel = True
+    clock.now += 601
+    disp.tick()
+    assert _overlap(disp)["state"] == "canceling"
+    assert [c[2] for c in pub.final() if c[3] == "overlap-check"] == ["error"]
+    bk.fail_cancel = False
+    disp.tick()
+    assert _overlap(disp)["state"] == "done" and ("pr-overlap-guard", 1) in bk.canceled
+
+
+def test_duplicate_builds_with_failed_cancels_stay_canceling(env):
+    disp, bk, pub, _ = env
+    bk.fail_create, bk.create_lands = "transport", True
+    send(disp, payload())
+    disp.tick()
+    first = bk.builds["pr-overlap-guard"][1]
+    bk.builds["pr-overlap-guard"][2] = {**first, "number": 2,
+                                        "web_url": f"https://buildkite.com/{ORG}/pr-overlap-guard/builds/2"}
+    bk.fail_create = None
+    bk.fail_cancel = True
+    disp.tick()
+    assert _overlap(disp)["state"] == "canceling"
+    assert json.loads(_overlap(disp)["pending_cancels"]) == [1, 2]
+    bk.fail_cancel = False
+    disp.tick()
+    assert _overlap(disp)["state"] == "done"
+    assert {("pr-overlap-guard", 1), ("pr-overlap-guard", 2)} <= set(bk.canceled)
+
+
+def test_never_confirmed_cancel_gives_up_after_the_window(env):
+    disp, bk, _, clock = env
+    send(disp, payload())
+    disp.tick()
+    bk.builds["pr-overlap-guard"][1]["state"] = "running"
+    bk.fail_cancel = True
+    clock.now += 601
+    disp.tick()
+    clock.now += disp.cfg.build_timeout_seconds["overlap"] + 1
+    disp.tick()
+    assert _overlap(disp)["state"] == "done"
+
+
+def test_deeply_nested_json_is_not_a_stuck_job(env):
+    """Audit A6: JSON annidato all'estremo (RecursionError) e' una risposta illeggibile, non un'eccezione libera."""
+    disp, bk, pub, clock = env
+    send(disp, payload())
+    disp.tick()
+    orig = bk.__call__
+
+    def tr(method, url, headers, body, timeout):
+        if method == "GET" and "/builds/" in url and "artifacts" not in url:
+            return 200, {}, b"[" * 100_000
+        return orig(method, url, headers, body, timeout)
+    disp.bk._transport = tr
+    clock.now += 10_000
+    disp.tick()
+    assert sorted(c[2] for c in pub.final()) == ["error", "error"]
+
+
+def test_transient_artifact_failure_is_retried(env):
+    """Audit A7: un errore temporaneo sul download del risultato non da' un `error` definitivo a una build
+    passata: si ritenta al giro dopo."""
+    disp, bk, pub, _ = env
+    send(disp, payload())
+    disp.tick()
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    orig = bk.__call__
+    fails = {"n": 1}
+
+    def tr(method, url, headers, body, timeout):
+        if url.startswith(f"https://{S3}/") and fails["n"]:
+            fails["n"] -= 1
+            raise td.TransportError("timeout")
+        return orig(method, url, headers, body, timeout)
+    disp.bk._transport = tr
+    disp.tick()
+    assert not [c for c in pub.final() if c[3] == "overlap-check"]
+    disp.tick()
+    assert [c[2] for c in pub.final() if c[3] == "overlap-check"] == ["success"]
+
+
+def test_truncated_artifact_body_is_not_a_verdict(env):
+    disp, bk, pub, clock = env
+    send(disp, payload())
+    disp.tick()
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    orig = bk.__call__
+
+    def tr(method, url, headers, body, timeout):
+        status, h, data = orig(method, url, headers, body, timeout)
+        if url.startswith(f"https://{S3}/"):
+            return status, h, data[:-3]
+        return status, h, data
+    disp.bk._transport = tr
+    disp.tick()
+    assert not pub.final()
+    clock.now += disp.cfg.build_timeout_seconds["overlap"] + 1
+    disp.tick()
+    assert [c[2] for c in pub.final() if c[3] == "overlap-check"] == ["error"]
+
+
+def test_full_build_page_is_not_proof_of_absence(env):
+    """Audit A8: 100 build nella prima pagina: l'assenza non e' dimostrata, si riprova (mai orfana)."""
+    disp, bk, pub, _ = env
+    bk.fail_create, bk.create_lands = "transport", True
+    send(disp, payload())
+    disp.tick()
+    bk.fail_create = None
+    orig = bk.__call__
+
+    def tr(method, url, headers, body, timeout):
+        if method == "GET" and "builds?" in url:
+            return 200, {}, json.dumps([{"number": 1000 + i, "env": {}} for i in range(100)]).encode()
+        return orig(method, url, headers, body, timeout)
+    disp.bk._transport = tr
+    disp.tick()
+    assert {j["state"] for j in disp.store.active_jobs()} == {"creating"} and not pub.final()
+
+
+def test_exception_escaping_advance_still_times_out(env, monkeypatch):
+    """Fallback strutturale: un job che solleva a ogni giro diventa `error` scaduto il timeout della build."""
+    disp, bk, pub, clock = env
+    send(disp, payload())
+    disp.tick()
+
+    def boom(job):
+        raise RuntimeError("bug")
+    monkeypatch.setattr(disp, "_poll", boom)
+    disp.tick()
+    assert not pub.final()
+    clock.now += 10_000
+    disp.tick()
+    assert sorted(c[2] for c in pub.final()) == ["error", "error"]
+
+
+
+def test_full_build_page_does_not_let_a_superseded_creation_retire_unchecked(env):
+    """Audit A8, percorso di sostituzione: con la pagina piena non si sa se la build ambigua esista; il job
+    sostituito resta attivo e riprova, invece di ritirarsi senza annullare nulla."""
+    disp, bk, _, _ = env
+    bk.fail_create, bk.create_lands = "transport", True
+    send(disp, payload())
+    disp.tick()
+    bk.fail_create = None
+    orig = bk.__call__
+
+    def tr(method, url, headers, body, timeout):
+        if method == "GET" and "builds?" in url:
+            return 200, {}, json.dumps([{"number": 1000 + i, "env": {}} for i in range(100)]).encode()
+        return orig(method, url, headers, body, timeout)
+    disp.bk._transport = tr
+    send(disp, payload(head=HEAD2, updated="2026-10-27T10:01:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000fb")
+    disp.tick()
+    old = [j for j in disp.store.recent_jobs() if j["head_sha"] == HEAD]
+    assert all(j["state"] == "creating" and j["superseded"] == 1 for j in old)
