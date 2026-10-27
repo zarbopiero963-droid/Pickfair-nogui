@@ -260,16 +260,22 @@ grezzi della REST API.
 
 ### 0.9 Merge
 
-**Merge manuale owner** (almeno): `AGENTS.md`, `CLAUDE.md`,
-`docs/auto_pr_flow_spec.md`, `docs/hard_verify_spec.md`, i workflow reviewer,
+**Merge manuale owner** (almeno; elenco canonico in
+`scripts/pr_autonomy_policy.OWNER_MANUAL_MERGE_FILES`): `AGENTS.md`, `CLAUDE.md`,
+`docs/auto_pr_flow_spec.md`, `docs/hard_verify_spec.md`, i workflow reviewer
+(`pr-review-openrouter-gpt56-sol.yml`, `pr-review-xai-grok46.yml`,
+`pr-review-openrouter-fugu-ultra.yml`, `pr-review-claude-fable5.yml`,
+`pr-review-openrouter-gpt-astra.yml`),
 `pr-merge-readiness.yml`, `ci-quarantine-guard.yml`, `pr-guard.yml`,
 `scripts/guardrail_check.py` e gli script che definiscono autorizzazione e
 autorità di merge (`scripts/pr_autonomy_policy.py`,
 `scripts/pr_fix_loop_policy.py`, `scripts/pr_flow_automation.py`,
 `scripts/pr_merge_readiness.py`, `scripts/pr_automation_controller.py`,
 `scripts/pr_clean_scope_rebuild.py`, `scripts/pr_refresh_self_checks.py` e ogni
-altro `scripts/pr_*.py`), `scripts/ci/check_ci_quarantine.py`; inoltre, per
-fail-closed, ogni altro workflow e i manifest di dipendenze. La label
+altro `scripts/pr_*.py`), `scripts/ci/check_ci_quarantine.py`, i guard della lane
+Buildkite trusted (`scripts/ci/trusted_pr_guard.py`,
+`scripts/ci/pr_overlap_guard.sh`, `scripts/ci/pr_merge_readiness.sh`, #563);
+inoltre, per fail-closed, ogni altro workflow e i manifest di dipendenze. La label
 `manual-review-required` non blocca: instrada qui. Il merge live
 dell'automazione (`pr_automation_controller.can_auto_merge`) richiede, oltre ai
 gate generici, `merge_decision(autonomy_merge_state) == READY_FOR_AUTO_MERGE`:

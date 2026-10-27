@@ -137,7 +137,10 @@ def load_token(env: Mapping[str, str]) -> str:
             token = fh.read().strip()
     except (OSError, UnicodeDecodeError) as exc:
         raise GuardError(f"file del token non leggibile: {type(exc).__name__}") from None
-    if not re.fullmatch(r"[A-Za-z0-9_]{20,255}", token, re.ASCII):
+    # Il token e' opaco (PAT fine-grained, `ghs_` di Actions, formati futuri piu' lunghi): si valida solo che sia un
+    # valore sicuro per l'header Authorization, ASCII stampabile senza spazi, a capo o caratteri di controllo. Il
+    # vecchio `[A-Za-z0-9_]{20,255}` rifiutava il GITHUB_TOKEN reale di Actions (collaudo su #564).
+    if not re.fullmatch(r"[!-~]{20,8192}", token, re.ASCII):
         raise GuardError("token GitHub vuoto o in formato non valido")
     return token
 

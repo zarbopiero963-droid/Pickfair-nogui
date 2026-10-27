@@ -4336,6 +4336,18 @@
         "tests/scripts/test_trusted_pr_guard.py"
       ],
       "rationale": "Rename senza percorso di origine accettato come completo."
+    },
+    {
+      "id": "tg_token_header_injection",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_gate",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "    if not re.fullmatch(r\"[!-~]{20,8192}\", token, re.ASCII):",
+      "mutated": "    if not token:",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "Token con a capo, spazi o caratteri di controllo mandato nell'header Authorization (iniezione di header)."
     }
   ]
 }

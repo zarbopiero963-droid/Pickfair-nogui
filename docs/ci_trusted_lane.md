@@ -44,6 +44,11 @@ Il guard verifica anche le variabili Buildkite, quando sono presenti:
 - Actions: read;
 - Issues: read (per i commenti delle review AI).
 
+Il token è opaco: si accetta qualunque valore di ASCII stampabile senza spazi, da 20 a 8192 caratteri (PAT
+fine-grained, `ghs_` di Actions, formati futuri). Vuoto, con spazi, a capo o caratteri di controllo ⇒ FAIL prima di
+qualunque richiesta, così nell'header Authorization non entra nulla di iniettabile. Il primo collaudo reale su #564
+aveva trovato il `GITHUB_TOKEN` di Actions rifiutato dalla vecchia regola `[A-Za-z0-9_]{20,255}`.
+
 Un token classico con scope dichiarati (`X-OAuth-Scopes` non vuoto: `repo`, `public_repo`, … scrivono) ⇒ FAIL. Il
 token non viene mai stampato: l'output del processo figlio e i motivi passano da una redazione che lo sostituisce con
 `***`. I redirect HTTP non vengono seguiti, perché `urllib` ripeterebbe l'header Authorization verso un altro host.
@@ -151,8 +156,13 @@ chiusi, oppure con un timeout ≥ 115 minuti e `PF_READINESS_WAIT_SECONDS=6600`,
   dopo che l'owner fornisce il token. Verificato offline: 151 test e mutazioni. Smoke dell'overlap guard sull'API
   pubblica reale su #561: PASS sull'head corrente, FAIL su un head stantio.
 - Il workflow Actions `.github/workflows/pr-overlap-guard.yml` conserva la propria copia inline, che è riserva. Farlo
-  puntare allo script è una modifica di workflow, quindi a merge owner: è un follow-up separato.
+  puntare allo script è la **Fase 2** di PF-GOV-DOC-WORKFLOW-ALIGN-01, in una PR successiva al merge di #564. Le due
+  fasi servono a evitare una dipendenza circolare: su `pull_request` il workflow nuovo esegue lo script del commit
+  base, e finché `main` ha la vecchia regola sul token l'`overlap-check` della PR che introduce il workflow sarebbe
+  rosso per costruzione. La Fase 1 (#564) corregge lo script senza toccare il workflow, quindi la sua PR viene
+  valutata dalla copia inline di `main`; la Fase 2 introduce il workflow quando `main` ha già lo script corretto.
 - I tre file degli script sono **a merge owner**: sono in `OWNER_MANUAL_MERGE_FILES` e nel pattern
   `^scripts/ci/(pr_[a-z0-9_]+\.sh|trusted_pr_guard\.py)$` di `MANUAL_AUTHORITY_PATTERNS`, copiato nei workflow di Sol
-  e Grok. L'elenco in prosa dei file a merge owner in `CLAUDE.md`/`AGENTS.md` va allineato dall'owner, perché sono
-  file di autorità: è un follow-up separato.
+  e Grok, e sono elencati anche in `CLAUDE.md`, `AGENTS.md` e `docs/auto_pr_flow_spec.md` §0.9
+  (PF-GOV-DOC-WORKFLOW-ALIGN-01). `tests/guardrails/test_governance_docs_aligned.py` rende rossa ogni divergenza fra
+  classificatore e prosa.

@@ -2899,6 +2899,23 @@
         "tests/scripts/test_trusted_pr_guard.py"
       ],
       "max_files": 13
+    },
+    "gov-doc-workflow-align-01": {
+      "description": "PF-GOV-DOC-WORKFLOW-ALIGN-01 FASE 1 (bootstrap in due fasi approvato dall'owner il 26/10/2026 per la dipendenza circolare del required check overlap-check): (1) CLAUDE.md, AGENTS.md e docs/auto_pr_flow_spec.md §0.9 (estensione documentale autorizzata dall'owner) elencano i file protetti introdotti da #563 (scripts/ci/trusted_pr_guard.py, pr_overlap_guard.sh, pr_merge_readiness.sh) e la spec i workflow reviewer per nome; (2) stub Microstake descritto col contratto di #561 (minimo exchange core.stake_precision.EXCHANGE_MIN_ORDER, riferimento owner 1 EUR) invece di 2 EUR; (3) ESTENSIONE DICHIARATA: il guard canonico scripts/ci/trusted_pr_guard.py rifiutava il GITHUB_TOKEN di Actions per la regex [A-Za-z0-9_]{20,255}; ora token opaco validato come ASCII stampabile senza spazi 20..8192 (anti iniezione di header), test in tests/scripts/test_trusted_pr_guard.py, mutazione in guardrails/mutation_catalog.json. Test di coerenza tests/guardrails/test_governance_docs_aligned.py. Docs docs/ci_trusted_lane.md e CHANGELOG. Il workflow pr-overlap-guard.yml, la diagnostica pr-overlap-guard-diagnostic.yml e i relativi test sono la FASE 2 (PR successiva), conservata nei commit fino a 55f4973 di questo branch. File di autorita': merge owner.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "AGENTS.md",
+        "CHANGELOG.md",
+        "CLAUDE.md",
+        "docs/auto_pr_flow_spec.md",
+        "docs/ci_trusted_lane.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/ci/trusted_pr_guard.py",
+        "tests/guardrails/test_governance_docs_aligned.py",
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "max_files": 10
     }
   }
 }
