@@ -58,11 +58,12 @@
   "PFC-002 PR #539 cicli fix 7-9 fino a 36feca0; verdetto READY_FOR_OWNER_MANUAL_MERGE (seq 70)",
   "PFC-002 ciclo 10 aa3bb57 (decisioni owner D1-D4 + opzione 1); stop NEEDS_MANUAL (seq 71)",
   "PFC-002 ciclo 11/11 2636104 (PR storiche collegate); stop NEEDS_MANUAL (seq 72)",
-  "PFC-003 PR #540 pronta per merge owner (seq 74)"
+  "PFC-003 PR #540 pronta per merge owner (seq 74)",
+  "Governance/lane trusted: #564 16543be, #567 b7fb4e2, #568 22d1b71 (deduplica check run fail-closed, chiude #566); #565 tracciata"
  ],
- "lotto_corrente": "PFC-003 PR #540 su 426cf7d: READY_FOR_OWNER_MANUAL_MERGE",
- "mandate_id": "ORDINE OWNER ripresa sviluppo 23/10/2026 (PFC-003 -> PFC-004 -> roadmap #461)",
- "next_atomic_action": "PFC-003 PR #540 READY_FOR_OWNER_MANUAL_MERGE su 426cf7d (c.6365271362): CI 111/111, job-min 205->88, review Sol/Grok/Codex pulite. Attendere merge owner; poi verifica post-merge e PFC-004 (G7-a SimulationBroker riserva BACK/LAY, INSUFFICIENT_FUNDS), preparabile in locale da main. Nessun LIVE.",
+ "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
+ "mandate_id": "OWNER DECISION PR #568 + PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562)",
+ "next_atomic_action": "Chiudere #566 (completed, #568/22d1b71); rileggere #562 (contratto definitivo Grok + correzione smoke trusted con --repo/--pr dal contesto PR verificato); aprire UNA PR dispatcher da main 22d1b71 sul branch ccr-764b0316-9r1a1d; punti infrastrutturali aperti = NOT CONFIGURED o BLOCKED_CONTRACT; collaudi end-to-end coordinati con Grok; autonomia Buildkite NON CERTIFIED. Microstake OWNER-RESERVED. LIVE NO-GO.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [

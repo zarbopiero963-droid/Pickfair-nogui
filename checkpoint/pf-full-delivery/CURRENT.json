@@ -2,12 +2,12 @@
  "certification_verdict": "NO-GO",
  "checkpoint_commit": null,
  "code": {
-  "branch": "ccr-764b0316-9r1a1d",
-  "sha": "426cf7d5bf7271599cdf48ff135975fdc1b5aa65"
+  "branch": "main",
+  "sha": "22d1b71adb53d3c9af7ce73ac31322031c58f5e7"
  },
- "mandate_id": "ORDINE OWNER ripresa sviluppo 23/10/2026 (PFC-003 -> PFC-004 -> roadmap #461)",
- "next_atomic_action": "PFC-003 PR #540 READY_FOR_OWNER_MANUAL_MERGE su 426cf7d (c.6365271362): CI 111/111, job-min 205->88, review Sol/Grok/Codex pulite. Attendere merge owner; poi verifica post-merge e PFC-004 (G7-a SimulationBroker riserva BACK/LAY, INSUFFICIENT_FUNDS), preparabile in locale da main. Nessun LIVE.",
- "previous_checkpoint_sha": "8a5af7da54f46f9f542bd57f90311f9cd4f6cd7d",
+ "mandate_id": "OWNER DECISION PR #568 + PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562)",
+ "next_atomic_action": "Chiudere #566 (completed, #568/22d1b71); rileggere #562 (contratto definitivo Grok + correzione smoke trusted con --repo/--pr dal contesto PR verificato); aprire UNA PR dispatcher da main 22d1b71 sul branch ccr-764b0316-9r1a1d; punti infrastrutturali aperti = NOT CONFIGURED o BLOCKED_CONTRACT; collaudi end-to-end coordinati con Grok; autonomia Buildkite NON CERTIFIED. Microstake OWNER-RESERVED. LIVE NO-GO.",
+ "previous_checkpoint_sha": "2fb184a8c532eb185d947ec01d1b5243e7420638",
  "schema": "pf-current/1",
- "seq": 74
+ "seq": 75
 }

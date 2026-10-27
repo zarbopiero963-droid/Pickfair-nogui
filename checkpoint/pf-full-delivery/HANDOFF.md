@@ -1,3 +1,8 @@
+## Seq 75 — 27/10/2026
+
+- #564 MERGED 16543be, #567 MERGED b7fb4e2, #568 MERGED 22d1b71 (deduplica check run fail-closed: mai scartare run del current head salvo copia esatta; esiti inconcludenti -> needs_manual). CI main 12/12 success.
+- Prossima: chiudere #566; UNA PR dispatcher trusted #562 (contratto Grok, config obbligatoria fail-closed, NOT CONFIGURED/BLOCKED_CONTRACT per i punti infrastrutturali). Nessun merge prima dei gate. Buildkite NON CERTIFIED. LIVE NO-GO.
+
 ## Seq 56 — 21/10/2026
 
 - #534 PR29-b (PF-C29-01.17) MERGED `409bcf9dd9ca` (squash autonomo, safety-critical; fix loop 4/10). main == head approvato be37148 (0 righe di diff).

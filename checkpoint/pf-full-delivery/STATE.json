@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 74,
- "updated_at": "2026-10-23T12:50:21Z",
+ "seq": 75,
+ "updated_at": "2026-10-27T00:00:00Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -16,8 +16,8 @@
  ],
  "repo": {
   "name": "zarbopiero963-droid/Pickfair-nogui",
-  "main_sha": "3bb4477d39fcfdff44abb372eb35061d4a9bde42",
-  "verified_with": "git fetch origin main; PR #537 squash 3bb4477 (albero identico a ae10708), merged 2026-10-22T17:51:17Z con autorizzazione owner; CI post-merge main 14/14 verdi",
+  "main_sha": "22d1b71adb53d3c9af7ce73ac31322031c58f5e7",
+  "verified_with": "git fetch origin main; PR #568 squash 22d1b71 (albero identico all head autorizzato 40fa2c7), merge su autorizzazione owner; CI post-merge main 12/12 success",
   "code_branch": {
    "name": "ccr-bcc81683-ud0hgc",
    "sha": "ae107086ed410de9e59f62a7ce5623457894e73e"
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "PFC-003 PR #540 READY_FOR_OWNER_MANUAL_MERGE su 426cf7d (c.6365271362): CI 111/111, job-min 205->88, review Sol/Grok/Codex pulite. Attendere merge owner; poi verifica post-merge e PFC-004 (G7-a SimulationBroker riserva BACK/LAY, INSUFFICIENT_FUNDS), preparabile in locale da main. Nessun LIVE.",
+ "next_atomic_action": "Chiudere #566 (completed, #568/22d1b71); rileggere #562 (contratto definitivo Grok + correzione smoke trusted con --repo/--pr dal contesto PR verificato); aprire UNA PR dispatcher da main 22d1b71 sul branch ccr-764b0316-9r1a1d; punti infrastrutturali aperti = NOT CONFIGURED o BLOCKED_CONTRACT; collaudi end-to-end coordinati con Grok; autonomia Buildkite NON CERTIFIED. Microstake OWNER-RESERVED. LIVE NO-GO.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,8 +515,8 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "8a5af7da54f46f9f542bd57f90311f9cd4f6cd7d",
- "lotto_corrente": "PFC-003 PR #540 su 426cf7d: READY_FOR_OWNER_MANUAL_MERGE",
+ "previous_checkpoint_sha": "2fb184a8c532eb185d947ec01d1b5243e7420638",
+ "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -556,7 +556,8 @@
   "PFC-002 PR #539 cicli fix 7-9 fino a 36feca0; verdetto READY_FOR_OWNER_MANUAL_MERGE (seq 70)",
   "PFC-002 ciclo 10 aa3bb57 (decisioni owner D1-D4 + opzione 1); stop NEEDS_MANUAL (seq 71)",
   "PFC-002 ciclo 11/11 2636104 (PR storiche collegate); stop NEEDS_MANUAL (seq 72)",
-  "PFC-003 PR #540 pronta per merge owner (seq 74)"
+  "PFC-003 PR #540 pronta per merge owner (seq 74)",
+  "Governance/lane trusted: #564 16543be, #567 b7fb4e2, #568 22d1b71 (deduplica check run fail-closed, chiude #566); #565 tracciata"
  ],
  "lotti_pendenti": [
   "Decisione owner sui range numerici generali per 37 celle VALID",
@@ -602,21 +603,10 @@
  },
  "session_end": "seq 23 Claude Code: lotti locali verificati; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "ORDINE OWNER ripresa sviluppo 23/10/2026 (PFC-003 -> PFC-004 -> roadmap #461)",
+ "mandate_id": "OWNER DECISION PR #568 + PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562)",
  "code": {
-  "branch": "ccr-764b0316-9r1a1d",
-  "sha": "426cf7d5bf7271599cdf48ff135975fdc1b5aa65",
-  "patch": {
-   "head": "426cf7d5bf7271599cdf48ff135975fdc1b5aa65",
-   "tree": "8503c59664ee5bb42cc6cfcc58f71e389ee81efd",
-   "captured_at": "2026-10-23T12:50:21+00:00",
-   "modified": [],
-   "untracked": [],
-   "files": [
-    "code_patch/BASELINE.json"
-   ],
-   "skipped_symlinks": {}
-  }
+  "branch": "main",
+  "sha": "22d1b71adb53d3c9af7ce73ac31322031c58f5e7"
  },
  "blocks": [
   "Gate A #506 NON PASS",
@@ -656,7 +646,9 @@
    "id": "pfc002_full_suite_ci_e4ca0ec",
    "status": "PASS",
    "sha": "e4ca0ecd8168ef2fcc3c918543da28b359640bc6",
-   "result": "9029 passed, 15 skipped, 5 xfailed (CI full-suite)"
+   "result": "9029 passed, 15 skipped, 5 xfailed (CI full-suite)",
+   "unpublished_tree": true,
+   "sha_note": "branch di lavoro eliminato dopo lo squash merge della PR #539: il commit resta pubblicato solo in refs/pull/539/head (verificato seq 75 con git fetch refs/pull); readback clona solo refs/heads"
   },
   {
    "id": "pfc001_postmerge_main",
@@ -668,28 +660,36 @@
    "id": "pfc001_ci_b83fde3",
    "status": "PASS",
    "sha": "b83fde309a106d672b767c624fbb81500325b81b",
-   "result": "CI 70 success, 41 skipped, 0 failure; Merge Readiness success"
+   "result": "CI 70 success, 41 skipped, 0 failure; Merge Readiness success",
+   "unpublished_tree": true,
+   "sha_note": "branch di lavoro eliminato dopo lo squash merge della PR #538: il commit resta pubblicato solo in refs/pull/538/head (verificato seq 75 con git fetch refs/pull); readback clona solo refs/heads"
   },
   {
    "id": "pfc001_regression_serial",
    "status": "PASS",
    "sha": "0fd0ba24d132e0c879b019d33eb2220e565f1aa5",
    "result": "8895 passed, 14 skipped, 5 xfailed; 1 failed ambientale (tkinter assente, identico su main)",
-   "artifact": "results/pfc001/summary.txt"
+   "artifact": "results/pfc001/summary.txt",
+   "unpublished_tree": true,
+   "sha_note": "branch di lavoro eliminato dopo lo squash merge della PR #538: il commit resta pubblicato solo in refs/pull/538/head (verificato seq 75 con git fetch refs/pull); readback clona solo refs/heads"
   },
   {
    "id": "pfc001_regression_parallel",
    "status": "PASS",
    "sha": "0fd0ba24d132e0c879b019d33eb2220e565f1aa5",
    "result": "8894+1 passed; nodeid 8915=8915=8915",
-   "artifact": "results/pfc001/summary.txt"
+   "artifact": "results/pfc001/summary.txt",
+   "unpublished_tree": true,
+   "sha_note": "branch di lavoro eliminato dopo lo squash merge della PR #538: il commit resta pubblicato solo in refs/pull/538/head (verificato seq 75 con git fetch refs/pull); readback clona solo refs/heads"
   },
   {
    "id": "pfc001_mutation",
    "status": "PASS",
    "sha": "0fd0ba24d132e0c879b019d33eb2220e565f1aa5",
    "result": "194 KILLED, 1 EQUIVALENT, gate PASS",
-   "artifact": "results/pfc001/mut.json"
+   "artifact": "results/pfc001/mut.json",
+   "unpublished_tree": true,
+   "sha_note": "branch di lavoro eliminato dopo lo squash merge della PR #538: il commit resta pubblicato solo in refs/pull/538/head (verificato seq 75 con git fetch refs/pull); readback clona solo refs/heads"
   },
   {
    "id": "regression_full_530",
@@ -1449,5 +1449,12 @@
   "local": "partizione 8927+2=8929; mutation j1 11m10s vs j4 3m30s esiti identici 195/195",
   "reviews": "Sol/Grok/Codex nessun bloccante",
   "verdict": "READY_FOR_OWNER_MANUAL_MERGE c.6365271362"
+ },
+ "pr568": {
+  "merge_sha": "22d1b71adb53d3c9af7ce73ac31322031c58f5e7",
+  "authorized_head": "40fa2c7",
+  "fix_loop": "4/10",
+  "review": "Sol/Grok VALID_PASS sul range finale; Codex nessun rilievo; review indipendente nessun P0/P1/P2",
+  "cost_usd": "~0.58"
  }
 }
