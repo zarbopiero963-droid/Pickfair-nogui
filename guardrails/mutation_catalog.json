@@ -5132,6 +5132,66 @@
       "rationale": "PF-569 (Sol su 22d1b71...e1c6e36): con l'artifact non scaricabile il pending fallito non si ritenta e il vecchio success resta visibile."
     },
     {
+      "id": "td_publish_failed_never_redelivered",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        for job in self.store.redeliverable_jobs(self.clock()):",
+      "mutated": "        for job in []:",
+      "rationale": "PF-569 (Sol su 90d8261...bac3b3e): esito non consegnato abbandonato; il vecchio success resta valido sullo stesso SHA."
+    },
+    {
+      "id": "td_redelivery_over_newer_job",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                \"AND NOT EXISTS (SELECT 1 FROM jobs k WHERE k.pr = j.pr AND k.guard = j.guard AND k.id > j.id) \"",
+      "mutated": "                \"\"",
+      "rationale": "PF-569: un esito vecchio riconsegnato sopra quello di un job piu' recente."
+    },
+    {
+      "id": "td_redelivery_stale_head",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                \"AND p.head_sha = j.head_sha AND COALESCE(j.publishing_since, j.updated_at) <= ? \"",
+      "mutated": "                \"AND COALESCE(j.publishing_since, j.updated_at) <= ? \"",
+      "rationale": "PF-569: esito riconsegnato dopo che l'head della PR e' cambiato."
+    },
+    {
+      "id": "td_redelivery_closed_pr",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                \"WHERE j.state = 'publish_failed' AND j.superseded = 0 AND p.open = 1 AND p.eligible = 1 \"",
+      "mutated": "                \"WHERE j.state = 'publish_failed' AND j.superseded = 0 \"",
+      "rationale": "PF-569: esito riconsegnato su una PR chiusa o non piu' valutabile."
+    },
+    {
+      "id": "td_redelivery_no_backoff",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                \"ORDER BY j.id\", (now - REDELIVERY_SECONDS,)).fetchall()",
+      "mutated": "                \"ORDER BY j.id\", (now,)).fetchall()",
+      "rationale": "PF-569: riconsegna a ogni giro senza intervallo."
+    },
+    {
       "id": "td_rerun_permissions_optional",
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",

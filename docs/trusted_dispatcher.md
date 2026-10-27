@@ -94,7 +94,12 @@ Codex, Sol, Grok e nelle revisioni indipendenti su #569):
 - `state` non stringa o sconosciuto ⇒ `error`; JSON annidato all'estremo (`RecursionError`) è illeggibile;
 - **obbligo di annullamento persistente**: le build in `pending_cancels` si ritentano a ogni giro in qualunque stato;
   nessuno stato finale con build ancora da annullare (`Dispatcher._set` lo converte in `canceling`);
-- `pending` ritentato finché la build gira; pubblicazione fallita ritentata entro la finestra, poi `publish_failed`;
+- `pending` ritentato finché la build gira e finché l'artifact non è scaricabile; pubblicazione fallita ritentata
+  entro la finestra, poi `publish_failed`;
+- **consegna persistente dell'esito** (Sol su #569): un job `publish_failed` si riconsegna ogni `REDELIVERY_SECONDS`
+  (300 s) finché è l'esito più recente della PR per quel guard e la PR è aperta, valutabile e con lo stesso head.
+  Così un vecchio `success` sullo stesso SHA non resta valido perché il publisher era fermo; un esito vecchio non
+  copre mai uno più nuovo. Ogni tentativo aggiorna `updated_at`: un esito ancora da consegnare non viene ripulito;
 - fallback strutturale: un job che solleva a ogni giro, scaduta la sua finestra, chiude con `error` o
   `publish_failed`, mai attivo per sempre;
 - una sola istanza (`flock` su `<state_db>.lock`), transizioni condizionate allo stato letto, ROLLBACK dopo un

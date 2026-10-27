@@ -702,6 +702,87 @@ def test_failed_publication_gives_up_after_the_window(env):
     assert job["state"] == "publish_failed"
 
 
+def _publish_failed_after_rerun(disp, bk, pub, clock):
+    """PASS pubblicato, rerun sullo stesso SHA che da' FAIL con il publisher fermo oltre la finestra."""
+    _rerun_ready(disp, bk)
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    bk.finish("pr-merge-readiness", 1, "passed", result("readiness"))
+    disp.tick()
+    assert ("success" in [c[2] for c in pub.final() if c[3] == "overlap-check"])
+    bk.gh.comment(9020, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    clock.now += 20
+    disp.poll()
+    disp.tick()
+    pub.rc = 1
+    bk.finish("pr-overlap-guard", 2, "failed", result("overlap", verdict="FAIL"))
+    disp.tick()
+    clock.now += disp.cfg.build_timeout_seconds["overlap"] + 1
+    disp.tick()
+    job = [j for j in disp.store.recent_jobs() if j["guard"] == "overlap" and j["event"] == "manual"][0]
+    assert job["state"] == "publish_failed"
+    return job
+
+
+def test_publish_failed_outcome_is_redelivered_when_the_publisher_recovers(env):
+    """Sol su #569 (range 90d8261...bac3b3e): scaduta la finestra il job usciva dai retry e il vecchio `success`
+    restava valido sullo stesso SHA anche col publisher ripristinato. L'esito resta da consegnare."""
+    disp, bk, pub, clock = env
+    job = _publish_failed_after_rerun(disp, bk, pub, clock)
+    pub.rc = 0
+    clock.now += td.REDELIVERY_SECONDS + 1
+    disp.poll()
+    disp.tick()
+    assert [c[2] for c in pub.final() if c[3] == "overlap-check"][-1] == "failure"
+    assert disp.store.get_job(job["id"])["state"] == "done"
+
+
+def test_redelivery_waits_for_the_backoff_and_keeps_retrying(env):
+    disp, bk, pub, clock = env
+    job = _publish_failed_after_rerun(disp, bk, pub, clock)
+    overlap = lambda: len([c for c in pub.calls if c[3] == "overlap-check"])     # noqa: E731
+    calls = overlap()
+    disp.tick()
+    assert overlap() == calls                                     # prima del backoff nessun tentativo
+    clock.now += td.REDELIVERY_SECONDS + 1
+    disp.tick()
+    assert overlap() == calls + 1                                 # publisher ancora fermo: un tentativo
+    assert disp.store.get_job(job["id"])["state"] == "publish_failed"
+    clock.now += td.REDELIVERY_SECONDS + 1
+    pub.rc = 0
+    disp.tick()
+    assert disp.store.get_job(job["id"])["state"] == "done"
+
+
+@pytest.mark.parametrize("change", ["newer_rerun", "new_head", "closed", "head_drift"])
+def test_stale_publish_failed_outcome_is_never_redelivered(env, change):
+    """Un esito non consegnato non deve mai coprire uno piu' recente: niente riconsegna se esiste un job piu'
+    nuovo per la stessa PR e lo stesso guard, se l'head e' cambiato o se la PR non e' piu' aperta."""
+    disp, bk, pub, clock = env
+    job = _publish_failed_after_rerun(disp, bk, pub, clock)
+    pub.rc = 0
+    if change == "newer_rerun":
+        bk.gh.comment(9021, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 5))
+        clock.now += 10
+    elif change == "new_head":
+        bk.gh.put(42, HEAD2)
+    elif change == "head_drift":
+        # difesa in profondita': head registrato diverso da quello del job anche senza job piu' recenti
+        disp.store._tx(lambda db: db.execute("UPDATE pr_state SET head_sha = ? WHERE pr = 42", (HEAD2,)))
+        bk.gh.put(42, HEAD2)
+        disp.store._tx(lambda db: db.execute("DELETE FROM jobs WHERE head_sha = ?", (HEAD2,)))
+    else:
+        del bk.gh.pulls[42]
+        disp.poll()
+    if change != "head_drift":
+        disp.poll()
+    before = [c for c in pub.final() if c[3] == "overlap-check" and c[2] == "failure"]
+    clock.now += td.REDELIVERY_SECONDS + 1
+    disp.tick()
+    after = [c for c in pub.final() if c[3] == "overlap-check" and c[2] == "failure"]
+    assert after == before
+    assert disp.store.get_job(job["id"])["state"] == "publish_failed"
+
+
 def test_superseded_ambiguous_creation_cancels_the_build_that_landed(env):
     """P2-4: un job in `creating` sostituito da un push nuovo non lascia girare la build orfana."""
     disp, bk, _, _ = env

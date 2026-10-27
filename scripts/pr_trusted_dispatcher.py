@@ -101,6 +101,10 @@ BUILD_TERMINAL = frozenset({"passed", "failed", "canceled", "skipped", "not_run"
 # `canceling`: esito gia' pubblicato, resta da confermare l'annullamento di una o piu' build (mai orfane).
 ACTIVE_STATES = ("queued", "creating", "dispatched", "publishing", "canceling")
 FINAL_STATES = ("done", "superseded", "publish_failed")
+# un esito non consegnato entro la finestra (`publish_failed`) si riconsegna a questo intervallo finche' resta l'esito
+# piu' recente della PR per quel guard, sull'head corrente di una PR aperta (Sol su #569): mai un vecchio `success`
+# lasciato valido perche' il publisher era fermo
+REDELIVERY_SECONDS = 300
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -793,6 +797,18 @@ class Store:
         self._tx(lambda db: db.execute("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET "
                                        "value = excluded.value", (key, value)))
 
+    def redeliverable_jobs(self, now: float) -> list[dict]:
+        """Job `publish_failed` ancora validi: nessun job piu' nuovo per la stessa PR e lo stesso guard, PR aperta e
+        valutabile con lo stesso head, ultimo tentativo almeno `REDELIVERY_SECONDS` fa."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT j.* FROM jobs j JOIN pr_state p ON p.pr = j.pr "
+                "WHERE j.state = 'publish_failed' AND j.superseded = 0 AND p.open = 1 AND p.eligible = 1 "
+                "AND p.head_sha = j.head_sha AND COALESCE(j.publishing_since, j.updated_at) <= ? "
+                "AND NOT EXISTS (SELECT 1 FROM jobs k WHERE k.pr = j.pr AND k.guard = j.guard AND k.id > j.id) "
+                "ORDER BY j.id", (now - REDELIVERY_SECONDS,)).fetchall()
+        return [dict(r) for r in rows]
+
     def active_jobs(self) -> list[dict]:
         placeholders = ",".join("?" * len(ACTIVE_STATES))
         with self._lock:
@@ -1163,7 +1179,20 @@ class Dispatcher:
             except Exception as exc:  # un job non deve fermare gli altri; lo stato resta quello salvato
                 log(f"job {job['id']}: errore inatteso {type(exc).__name__}")
                 self._internal_error_fallback(job)
+        for job in self.store.redeliverable_jobs(self.clock()):
+            try:
+                self._redeliver(job)
+            except Exception as exc:  # resta `publish_failed`: si riprova al prossimo intervallo
+                log(f"job {job['id']}: riconsegna fallita {type(exc).__name__}")
         self.store.purge(self.clock(), self.cfg.retention_hours)
+
+    def _redeliver(self, job: dict) -> None:
+        """Nuovo tentativo di consegna di un esito `publish_failed` (vedi `redeliverable_jobs`). Ogni tentativo
+        aggiorna `updated_at`, quindi un esito ancora da consegnare non viene ripulito."""
+        if self._send_final(job) == 0:
+            log(f"job {job['id']}: esito {job['outcome']} riconsegnato")
+            return self._set(job, state="done")
+        return self._set(job, state="publish_failed", publishing_since=self.clock())
 
     def _internal_error_fallback(self, job: dict) -> None:
         """Un job che solleva a ogni giro non resta attivo per sempre: scaduto il timeout della build, la build si
@@ -1404,16 +1433,19 @@ class Dispatcher:
         self._to_publishing(job, outcome, description)
         self._publish_final(job)
 
-    def _publish_final(self, job: dict) -> None:
-        fresh = self.store.get_job(job["id"])
-        if fresh.get("superseded"):
-            return self._supersede(job)
+    def _send_final(self, job: dict) -> int:
         outcome = job["outcome"]
         if outcome not in ("success", "failure", "error"):
             outcome, job["description"] = "error", "esito interno non valido"
         url = job["build_url"] or f"{BUILDKITE_WEB}/{self.cfg.organization}/{GUARDS[job['guard']]['pipeline']}"
-        rc = self.publish(job["pr"], job["head_sha"], outcome, GUARDS[job["guard"]]["context"], url,
-                          job["description"] or outcome)
+        return self.publish(job["pr"], job["head_sha"], outcome, GUARDS[job["guard"]]["context"], url,
+                            job["description"] or outcome)
+
+    def _publish_final(self, job: dict) -> None:
+        fresh = self.store.get_job(job["id"])
+        if fresh.get("superseded"):
+            return self._supersede(job)
+        rc = self._send_final(job)
         if rc == 0:
             # con build ancora da annullare `_set` lo tiene in `canceling` finche' l'annullamento e' confermato
             return self._set(job, state="done")
