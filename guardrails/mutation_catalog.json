@@ -5192,6 +5192,30 @@
       "rationale": "PF-569: riconsegna a ogni giro senza intervallo."
     },
     {
+      "id": "td_canceling_forgets_undelivered",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        if fresh.get(\"outcome\") and not fresh.get(\"final_published\") and not fresh.get(\"superseded\"):",
+      "mutated": "        if False:",
+      "rationale": "PF-569 (Codex P2 su 59b071e): annullamento confermato chiude in done un esito mai consegnato; il required check resta pending."
+    },
+    {
+      "id": "td_final_published_not_recorded",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "            self._set(job, final_published=1)",
+      "mutated": "            pass",
+      "rationale": "PF-569: consegna non registrata; un esito gia' consegnato viene ripubblicato dopo l'annullamento."
+    },
+    {
       "id": "td_rerun_permissions_optional",
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",

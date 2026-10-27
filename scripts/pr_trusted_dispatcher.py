@@ -601,6 +601,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   publishing_since REAL,
   pending_published INTEGER NOT NULL DEFAULT 0,
   pending_cancels TEXT NOT NULL DEFAULT '[]',
+  final_published INTEGER NOT NULL DEFAULT 0,
   updated_at REAL NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS jobs_active_current ON jobs(pr, head_sha, guard)
@@ -612,6 +613,7 @@ MIGRATION_COLUMNS = (
     ("publishing_since", "REAL"),
     ("pending_published", "INTEGER NOT NULL DEFAULT 0"),
     ("pending_cancels", "TEXT NOT NULL DEFAULT '[]'"),
+    ("final_published", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -838,7 +840,7 @@ class Store:
     def update_job(self, job_id: int, now: float, *, expected_state: Optional[str] = None, **fields: Any) -> bool:
         """Con `expected_state` la modifica avviene solo se il job e' ancora in quello stato (True se applicata)."""
         allowed = {"state", "build_number", "build_url", "outcome", "description", "dispatched_at",
-                   "publishing_since", "pending_published", "pending_cancels"}
+                   "publishing_since", "pending_published", "pending_cancels", "final_published"}
         if not fields or set(fields) - allowed:
             raise ValueError("campi non ammessi")
         cols = ", ".join(f"{k} = ?" for k in fields)
@@ -1206,7 +1208,7 @@ class Dispatcher:
                 if job["state"] == "publishing":
                     return self._set(job, state="publish_failed", publishing_since=self.clock())
                 log(f"job {job['id']}: annullamento mai confermato {job.get('pending_cancels')}: da verificare a mano")
-                return self._set(job, state="done", pending_cancels="[]")
+                return self._set(job, state=self._after_cancels(job), pending_cancels="[]")
             started = job.get("dispatched_at") or job["created_at"]
             if job["state"] not in ("queued", "creating", "dispatched"):
                 return
@@ -1352,17 +1354,25 @@ class Dispatcher:
     def _cancel_quietly(self, job: dict) -> None:
         self._cancel_or_remember(job, [job["build_number"]])
 
+    def _after_cancels(self, job: dict) -> str:
+        """Stato finale quando non restano build da annullare: un esito mai consegnato torna `publish_failed` e
+        quindi nella riconsegna (Codex P2 su #569); altrimenti `done`."""
+        fresh = self.store.get_job(job["id"]) or job
+        if fresh.get("outcome") and not fresh.get("final_published") and not fresh.get("superseded"):
+            return "publish_failed"
+        return "done"
+
     def _retry_cancels(self, job: dict) -> None:
         pending = json.loads(job.get("pending_cancels") or "[]")
         if pending:
             self._cancel_or_remember(job, pending)
         if not json.loads(job["pending_cancels"]):
-            return self._set(job, state="done")
+            return self._set(job, state=self._after_cancels(job), publishing_since=self.clock())
         since = job.get("publishing_since") or job["updated_at"]
         if self.clock() - since > self.cfg.build_timeout_seconds[job["guard"]]:
             log(f"job {job['id']}: annullamento mai confermato per le build {job['pending_cancels']}: "
                 "da verificare a mano")
-            return self._set(job, state="done", pending_cancels="[]", description=clean_description(
+            return self._set(job, state=self._after_cancels(job), pending_cancels="[]", description=clean_description(
                 f"annullamento non confermato {job['pending_cancels']}; {job.get('description') or ''}"))
         return None
 
@@ -1438,8 +1448,12 @@ class Dispatcher:
         if outcome not in ("success", "failure", "error"):
             outcome, job["description"] = "error", "esito interno non valido"
         url = job["build_url"] or f"{BUILDKITE_WEB}/{self.cfg.organization}/{GUARDS[job['guard']]['pipeline']}"
-        return self.publish(job["pr"], job["head_sha"], outcome, GUARDS[job["guard"]]["context"], url,
-                            job["description"] or outcome)
+        rc = self.publish(job["pr"], job["head_sha"], outcome, GUARDS[job["guard"]]["context"], url,
+                          job["description"] or outcome)
+        if rc == 0:
+            # consegna registrata a parte dallo stato: `canceling` non deve far dimenticare un esito non consegnato
+            self._set(job, final_published=1)
+        return rc
 
     def _publish_final(self, job: dict) -> None:
         fresh = self.store.get_job(job["id"])

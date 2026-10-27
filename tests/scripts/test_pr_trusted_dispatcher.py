@@ -981,7 +981,7 @@ def test_archive_from_an_earlier_schema_is_migrated(tmp_path):
         cols = {r[1] for r in disp.store._db.execute("PRAGMA table_info(jobs)")}
         indexes = {r[1] for r in disp.store._db.execute("PRAGMA index_list(jobs)")}
         disp.store.close()
-        assert {"publishing_since", "pending_published"} <= cols
+        assert {"publishing_since", "pending_published", "final_published"} <= cols
         assert "jobs_active" not in indexes and "jobs_active_current" in indexes
     disp = make_dispatcher(cfg, bk, pub)
     try:
@@ -1348,6 +1348,52 @@ def test_publication_window_expiry_never_drops_pending_cancels(env):
     bk.fail_cancel = False
     disp.tick()
     assert ("pr-overlap-guard", 1) in bk.canceled
+
+
+def test_undelivered_outcome_survives_the_end_of_cancellation_and_is_redelivered(env):
+    """Codex P2 su #569 (59b071e): con annullamento e publisher entrambi in errore, `publish_failed` diventava
+    `canceling` e poi `done` all'annullamento confermato, senza mai consegnare l'esito: il required check restava
+    `pending`. La consegna si registra a parte: annullamento chiuso => di nuovo `publish_failed`, poi riconsegna."""
+    disp, bk, pub, clock = env
+    send(disp, payload())
+    disp.tick()
+    bk.builds["pr-overlap-guard"][1]["state"] = "running"
+    bk.fail_cancel = True
+    pub.rc = 1
+    clock.now += 601
+    disp.tick()
+    clock.now += disp.cfg.build_timeout_seconds["overlap"] + 1
+    disp.tick()
+    assert _overlap(disp)["state"] == "canceling"
+    bk.fail_cancel = False
+    disp.tick()
+    job = _overlap(disp)
+    assert job["state"] == "publish_failed" and not job["final_published"]
+    pub.rc = 0
+    clock.now += td.REDELIVERY_SECONDS + 1
+    disp.tick()
+    job = disp.store.get_job(job["id"])
+    assert job["state"] == "done" and job["final_published"] == 1
+    assert [c[2] for c in pub.final() if c[3] == "overlap-check"][-1] == "error"
+
+
+def test_delivered_outcome_ends_done_when_cancellation_completes(env):
+    """Esito consegnato, annullamento confermato dopo: `done`, nessuna riconsegna."""
+    disp, bk, pub, clock = env
+    send(disp, payload())
+    disp.tick()
+    bk.builds["pr-overlap-guard"][1]["state"] = "running"
+    bk.fail_cancel = True
+    clock.now += 601
+    disp.tick()
+    assert _overlap(disp)["state"] == "canceling" and _overlap(disp)["final_published"] == 1
+    bk.fail_cancel = False
+    disp.tick()
+    overlap_finals = lambda: [c for c in pub.final() if c[3] == "overlap-check"]     # noqa: E731
+    finals = len(overlap_finals())
+    clock.now += td.REDELIVERY_SECONDS + 1
+    disp.tick()
+    assert _overlap(disp)["state"] == "done" and len(overlap_finals()) == finals
 
 
 def test_no_final_state_with_pending_cancels(env):

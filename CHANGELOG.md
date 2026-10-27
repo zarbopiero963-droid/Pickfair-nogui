@@ -47,7 +47,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     come ambigua e riconciliata; migrazione idempotente di un archivio creato da una versione precedente (Sol); annullamento non confermato ritentato e risposta HTTP troncata trattata come errore di trasporto (Codex); audit indipendente di liveness: ogni risposta di creazione non interpretabile ambigua, elenco vuoto o pieno non prova l'assenza, risultato ritentato, annullamenti non confermati ricordati (stato `canceling`), fallback sul timeout per le eccezioni inattese; obbligo di annullamento persistente e indipendente dallo stato, nessuno stato finale con build da annullare (Codex); audit avversariale degli invarianti: finestra di annullamento dall'adozione, fallback anche in pubblicazione, `pending` durante la riconciliazione, redelivery dopo la pulizia ancora replay;
   - rilievi Sol sul range completo: `pending` fallito ritentato anche quando l'artifact del risultato non è ancora
     scaricabile; esito `publish_failed` riconsegnato ogni 300 s finché è il più recente della PR per quel guard,
-    sull'head corrente di una PR aperta (mai un vecchio `success` lasciato valido, mai un esito vecchio sopra uno nuovo); test del dispatcher saltati in modo esplicito fuori da POSIX (`fcntl`);
+    sull'head corrente di una PR aperta (mai un vecchio `success` lasciato valido, mai un esito vecchio sopra uno nuovo);
+    consegna registrata in `final_published` (colonna nuova, migrazione idempotente): un esito mai consegnato non
+    finisce `done` alla conferma di un annullamento (Codex P2 su `59b071e`); test del dispatcher saltati in modo esplicito fuori da POSIX (`fcntl`);
   - integrazione con l'infrastruttura di Grok (#562 c.6444963640): publisher `pf-status-publish-client` sul socket locale
     (stessa argv, nessun privilegio al dispatcher), token da `pf-dispatch-github-token`, descrizioni nel contratto del
     socket (ASCII stampabile ≤ 140, mai `` ` `` `$` `\`, sostituzioni visibili, originale nei log, invio rifiutato fuori

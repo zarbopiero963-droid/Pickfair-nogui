@@ -100,6 +100,9 @@ Codex, Sol, Grok e nelle revisioni indipendenti su #569):
   (300 s) finché è l'esito più recente della PR per quel guard e la PR è aperta, valutabile e con lo stesso head.
   Così un vecchio `success` sullo stesso SHA non resta valido perché il publisher era fermo; un esito vecchio non
   copre mai uno più nuovo. Ogni tentativo aggiorna `updated_at`: un esito ancora da consegnare non viene ripulito;
+- la consegna è registrata a parte (`final_published`), non dedotta dallo stato: un job che passa da `canceling`
+  quando le build sono annullate torna `publish_failed` se l'esito non è mai stato consegnato, `done` solo se lo è
+  (Codex P2 su #569: annullamento e publisher entrambi in errore lasciavano il required check `pending`);
 - fallback strutturale: un job che solleva a ogni giro, scaduta la sua finestra, chiude con `error` o
   `publish_failed`, mai attivo per sempre;
 - una sola istanza (`flock` su `<state_db>.lock`), transizioni condizionate allo stato letto, ROLLBACK dopo un
