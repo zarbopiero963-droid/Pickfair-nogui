@@ -477,6 +477,55 @@ def test_wrappers_fail_closed_without_the_controlled_environment(tmp_path, scrip
     assert json.loads((tmp_path / f"{guard}.json").read_text())["verdict"] == "FAIL"
 
 
+def _fake_agent(tmp_path, rc=0):
+    """`buildkite-agent` finto nel PATH: registra gli argomenti, esce con `rc`."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "agent.log"
+    agent = bindir / "buildkite-agent"
+    agent.write_text(f'#!/bin/sh\necho "$@" >> "{log}"\nexit {rc}\n')
+    agent.chmod(0o755)
+    return f"{bindir}:{os.environ['PATH']}", log
+
+
+@pytest.mark.parametrize("script,guard", [("pr_overlap_guard.sh", "overlap"), ("pr_merge_readiness.sh", "readiness")])
+def test_wrappers_upload_the_result_as_artifact_on_buildkite(tmp_path, script, guard):
+    """D2 (#562, P0-A reale su #573): la pipeline non caricava `.trusted-guard/<guard>.json`, il dispatcher non trovava
+    il risultato e pubblicava `error` «risultato del guard assente». Su Buildkite il wrapper carica il risultato come
+    artifact, anche con verdetto FAIL, e conserva il codice d'uscita del guard."""
+    path, log = _fake_agent(tmp_path)
+    results = tmp_path / "res"
+    proc = subprocess.run([str(ROOT / "scripts" / "ci" / script)], capture_output=True, text=True,
+                          env={"PATH": path, "BUILDKITE": "true", "PF_RESULT_DIR": str(results)})
+    assert proc.returncode == 1                                   # verdetto FAIL (nessun contesto PR): invariato
+    assert json.loads((results / f"{guard}.json").read_text())["verdict"] == "FAIL"
+    assert log.read_text().split() == ["artifact", "upload", f"{results}/{guard}.json"]
+
+
+@pytest.mark.parametrize("script", ["pr_overlap_guard.sh", "pr_merge_readiness.sh"])
+def test_wrappers_upload_nothing_outside_buildkite(tmp_path, script):
+    """Nel workflow Actions (stesso script) `buildkite-agent` non serve: senza `BUILDKITE` nessuna chiamata."""
+    path, log = _fake_agent(tmp_path)
+    proc = subprocess.run([str(ROOT / "scripts" / "ci" / script)], capture_output=True, text=True,
+                          env={"PATH": path, "PF_RESULT_DIR": str(tmp_path / "res")})
+    assert proc.returncode == 1 and not log.exists()
+
+
+@pytest.mark.parametrize("agent_rc, expected", [(0, 0), (3, 1)])
+def test_wrapper_keeps_a_pass_only_if_the_upload_succeeds(tmp_path, agent_rc, expected):
+    """Guard PASS (python3 finto che scrive il risultato ed esce 0): exit 0 solo se anche l'upload riesce; upload non
+    riuscito => exit 1 con motivo esplicito, perche' senza artifact il dispatcher pubblicherebbe `error`."""
+    path, log = _fake_agent(tmp_path, rc=agent_rc)
+    fake_py = tmp_path / "bin" / "python3"
+    fake_py.write_text('#!/bin/sh\nmkdir -p "$PF_RESULT_DIR"\necho \'{"verdict": "PASS"}\' > "$PF_RESULT_DIR/overlap.json"\n'
+                       'exit 0\n')
+    fake_py.chmod(0o755)
+    proc = subprocess.run([str(ROOT / "scripts" / "ci" / "pr_overlap_guard.sh")], capture_output=True, text=True,
+                          env={"PATH": path, "BUILDKITE": "true", "PF_RESULT_DIR": str(tmp_path / "res")})
+    assert proc.returncode == expected and log.read_text().split()[:2] == ["artifact", "upload"]
+    assert ("upload del risultato fallito" in proc.stderr) is bool(expected)
+
+
 def test_smoke_without_pr_context_fails_closed_with_explicit_message(tmp_path):
     """#562 c.6440620221: lo smoke trusted lanciava `pr_merge_readiness.py` senza argomenti (argparse, exit 2).
     Il punto d'ingresso e' il wrapper: senza contesto PR del dispatcher => exit 1 con motivo esplicito, nessuna
