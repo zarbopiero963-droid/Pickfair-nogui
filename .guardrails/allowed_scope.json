@@ -2944,6 +2944,19 @@
         "tests/scripts/test_pr_automation_controller.py"
       ],
       "max_files": 8
+    },
+    "review-budget-569": {
+      "description": "PF-569 AI REVIEW FULL COVERAGE RECOVERY (owner GO 27/10/2026, eccezione temporanea alla regola una PR aperta): solo i due workflow dei revisori attivi (Sol, Grok). Tetti del diff 150000 per file / 400000 totali, dimensionati sul diff della #569 (oggi max 71800, totale 188651) con margine per il passaggio al polling deciso dall'owner (PF-562); commento con SHA completi esaminati e copertura misurata (rr_coverage_summary). Nessun reviewer disabilitato, nessuna deroga, VALID_INCONCLUSIVE mai PASS, fail-closed invariato, timeout invariati. Guard tests/guardrails/test_ai_review_full_coverage_budget.py, docs/ai_audit_workflows.md, CHANGELOG. Workflow-gate: merge owner. Nessuna modifica al dispatcher, a trading, Microstake o infrastruttura.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ai_audit_workflows.md",
+        "tests/guardrails/test_ai_review_full_coverage_budget.py"
+      ],
+      "max_files": 6
     }
   }
 }
