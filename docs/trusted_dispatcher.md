@@ -97,7 +97,9 @@ Codex, Sol, Grok e nelle revisioni indipendenti su #569):
 - `pending` ritentato finché la build gira e finché l'artifact non è scaricabile; pubblicazione fallita ritentata
   entro la finestra, poi `publish_failed`;
 - **consegna persistente dell'esito** (Sol su #569): un job `publish_failed` si riconsegna ogni `REDELIVERY_SECONDS`
-  (300 s) finché è l'esito più recente della PR per quel guard e la PR è aperta, valutabile e con lo stesso head.
+  (300 s) finché è l'esito più recente per quel guard sia della PR sia dello SHA (gli status GitHub sono per SHA e
+  contesto: due PR interne sullo stesso commit li condividono, Sol su #569) e la PR è aperta, valutabile e con lo
+  stesso head.
   Così un vecchio `success` sullo stesso SHA non resta valido perché il publisher era fermo; un esito vecchio non
   copre mai uno più nuovo. Ogni tentativo aggiorna `updated_at`: un esito ancora da consegnare non viene ripulito;
 - la consegna è registrata a parte (`final_published`), non dedotta dallo stato: un job che passa da `canceling`

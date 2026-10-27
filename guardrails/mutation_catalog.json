@@ -5151,9 +5151,9 @@
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
-      "original": "                \"AND NOT EXISTS (SELECT 1 FROM jobs k WHERE k.pr = j.pr AND k.guard = j.guard AND k.id > j.id) \"",
-      "mutated": "                \"\"",
-      "rationale": "PF-569: un esito vecchio riconsegnato sopra quello di un job piu' recente."
+      "original": "                \"AND NOT EXISTS (SELECT 1 FROM jobs k WHERE k.head_sha = j.head_sha \"",
+      "mutated": "                \"AND NOT EXISTS (SELECT 1 FROM jobs k WHERE k.pr = j.pr \"",
+      "rationale": "PF-569 (Sol su 90d8261...1ed6de8): esito vecchio riconsegnato sopra quello di un'altra PR sullo stesso SHA (status per SHA e contesto)."
     },
     {
       "id": "td_redelivery_stale_head",

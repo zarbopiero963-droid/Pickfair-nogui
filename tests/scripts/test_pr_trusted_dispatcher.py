@@ -739,6 +739,36 @@ def test_publish_failed_outcome_is_redelivered_when_the_publisher_recovers(env):
     assert disp.store.get_job(job["id"])["state"] == "done"
 
 
+def test_redelivery_never_overwrites_another_pr_on_the_same_sha(env):
+    """Sol su #569 (90d8261...1ed6de8): gli status GitHub sono per SHA e contesto, non per PR. Il PASS non consegnato
+    della PR 42 non deve essere riconsegnato dopo il FAIL della PR 43 sullo stesso SHA."""
+    disp, bk, pub, clock = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    pub.rc = 1
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    disp.tick()
+    clock.now += disp.cfg.build_timeout_seconds["overlap"] + 1
+    disp.tick()
+    first = [j for j in disp.store.recent_jobs() if j["guard"] == "overlap" and j["pr"] == 42][0]
+    assert first["state"] == "publish_failed"
+    pub.rc = 0
+    restored = len(pub.calls)                                     # da qui ogni chiamata e' una pubblicazione riuscita
+    bk.gh.put(43, HEAD)                                           # seconda PR interna sullo stesso commit
+    disp.poll()
+    disp.tick()
+    second = [j for j in disp.store.recent_jobs() if j["guard"] == "overlap" and j["pr"] == 43][0]
+    bk.finish("pr-overlap-guard", second["build_number"], "failed", result("overlap", verdict="FAIL", pr=43))
+    disp.tick()
+    clock.now += td.REDELIVERY_SECONDS + 1
+    disp.tick()
+    overlap = [c for c in pub.calls[restored:] if c[3] == "overlap-check" and c[2] != "pending"]
+    assert overlap and overlap[-1][2] == "failure"                # l'ultimo esito sullo SHA resta il FAIL della 43
+    assert not [c for c in overlap if c[0] == 42 and c[2] == "success"]
+    assert disp.store.get_job(first["id"])["state"] == "publish_failed"
+
+
 def test_redelivery_waits_for_the_backoff_and_keeps_retrying(env):
     disp, bk, pub, clock = env
     job = _publish_failed_after_rerun(disp, bk, pub, clock)

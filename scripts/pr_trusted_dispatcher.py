@@ -801,14 +801,17 @@ class Store:
                                        "value = excluded.value", (key, value)))
 
     def redeliverable_jobs(self, now: float) -> list[dict]:
-        """Job `publish_failed` ancora validi: nessun job piu' nuovo per la stessa PR e lo stesso guard, PR aperta e
+        """Job `publish_failed` ancora validi: nessun job piu' nuovo sullo stesso SHA con lo stesso guard, PR aperta e
         valutabile con lo stesso head, ultimo tentativo almeno `REDELIVERY_SECONDS` fa."""
         with self._lock:
             rows = self._db.execute(
                 "SELECT j.* FROM jobs j JOIN pr_state p ON p.pr = j.pr "
                 "WHERE j.state = 'publish_failed' AND j.superseded = 0 AND p.open = 1 AND p.eligible = 1 "
                 "AND p.head_sha = j.head_sha AND COALESCE(j.publishing_since, j.updated_at) <= ? "
-                "AND NOT EXISTS (SELECT 1 FROM jobs k WHERE k.pr = j.pr AND k.guard = j.guard AND k.id > j.id) "
+                # gli status GitHub sono per SHA e contesto: un job piu' nuovo sullo stesso SHA, della stessa PR o di
+                # un'altra, rende vecchio questo esito (Sol su #569); un head diverso e' escluso da `p.head_sha`
+                "AND NOT EXISTS (SELECT 1 FROM jobs k WHERE k.head_sha = j.head_sha "
+                "AND k.guard = j.guard AND k.id > j.id) "
                 "ORDER BY j.id", (now - REDELIVERY_SECONDS,)).fetchall()
         return [dict(r) for r in rows]
 
