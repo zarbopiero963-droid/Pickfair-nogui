@@ -16,6 +16,10 @@ from pathlib import Path
 
 import pytest
 
+# il dispatcher e' un servizio POSIX (VPS Linux, lock con `fcntl.flock`): altrove il modulo si salta in modo
+# esplicito invece di interrompere la raccolta dei test (Sol su #569)
+pytest.importorskip("fcntl", reason="dispatcher trusted solo POSIX: usa fcntl.flock")
+
 ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location("pr_trusted_dispatcher", ROOT / "scripts" / "pr_trusted_dispatcher.py")
 td = importlib.util.module_from_spec(_spec)
@@ -81,6 +85,8 @@ class FakeGitHub:
         self.break_page: int | None = None
         self.drop_next_link_on_page: int | None = None
         self.requests: list[tuple[str, str, dict]] = []
+        self.permissions: dict[str, str] = {RERUNNER: "admin"}     # login -> permesso effettivo sul repository
+        self.permission_status = 200
 
     def put(self, pr, head, *, draft=False, base="main", head_repo=REPO) -> None:
         self.pulls[pr] = {"number": pr, "state": "open", "draft": draft,
@@ -88,9 +94,9 @@ class FakeGitHub:
                           "head": {"sha": head, "repo": None if head_repo is None else {"full_name": head_repo}}}
 
     def comment(self, cid, pr, body, *, login=RERUNNER, created="2030-01-01T00:00:00Z", updated=None,
-                association="OWNER", user_type="User") -> None:
+                user_type="User") -> None:
         self.comments.append({"id": cid, "body": body, "user": {"login": login, "type": user_type},
-                              "author_association": association,
+                              "author_association": "OWNER",    # mai usato: non certifica i permessi attuali
                               "issue_url": f"https://api.github.com/repos/{REPO}/issues/{pr}",
                               "created_at": created, "updated_at": updated or created})
 
@@ -110,6 +116,14 @@ class FakeGitHub:
             data = [self.pulls[k] for k in sorted(self.pulls)]
         elif parts.path == f"/repos/{REPO}/issues/comments":
             data = [c for c in self.comments if c["updated_at"] >= query["since"]]
+        elif parts.path.startswith(f"/repos/{REPO}/collaborators/") and parts.path.endswith("/permission"):
+            login = parts.path.split("/")[-2]
+            if self.permission_status != 200:
+                return self.permission_status, {}, b'{"message":"x"}'
+            if login not in self.permissions:
+                return 404, {}, b'{"message":"Not Found"}'
+            body = {"permission": self.permissions[login], "user": {"login": login}}
+            return 200, headers_out, json.dumps(body).encode()
         else:
             return 404, {}, b"{}"
         chunk = data[(page - 1) * self.page_size: page * self.page_size]
@@ -799,6 +813,69 @@ def test_failed_pending_publication_is_retried_while_the_build_runs(env):
     assert all(j["pending_published"] == 1 for j in disp.store.active_jobs())
     disp.tick()
     assert len([c for c in pub.calls if c[2] == "pending"]) == 4      # riuscito: non si ripete
+
+
+def test_failed_pending_is_retried_while_the_result_artifact_is_unavailable(env):
+    """Sol su #569 (range 22d1b71...e1c6e36): build finita ma artifact non ancora scaricabile. Il `pending` fallito
+    va ritentato anche qui, altrimenti in un rerun sullo stesso SHA resta visibile il vecchio `success`."""
+    disp, bk, pub, _ = env
+    pub.rc = 1
+    send(disp, payload())
+    disp.tick()
+    assert all(j["pending_published"] == 0 for j in disp.store.active_jobs())
+    pub.rc = 0
+    bk.finish("pr-overlap-guard", 1, "failed", None)            # risultato non (ancora) disponibile
+    bk.finish("pr-merge-readiness", 1, "failed", None)
+    disp.tick()
+    assert all(j["pending_published"] == 1 for j in disp.store.active_jobs())
+    assert pub.final() == []                                     # nessun esito finale senza risultato
+
+
+# --------------------------------------------------------------------------------------------- descrizioni (socket)
+_SOCKET_DESCRIPTION = __import__("re").compile(r"[\x20-\x23\x25-\x5b\x5d-\x5f\x61-\x7e]{1,140}")
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("PASS", "PASS"),
+    ("FAIL: piu' PR aperte", "FAIL: piu' PR aperte"),
+    ("FAIL: verità già è", "FAIL: verita gia e"),                     # accenti: lettera base, significato intatto
+    ("FAIL: `rm` $HOME C:\\x", "FAIL: ?rm? ?HOME C:?x"),           # vietati dal socket: sostituiti in vista
+    ("riga 1\nriga 2\ttab", "riga 1 riga 2 tab"),
+    ("FAIL: ✗ simbolo", "FAIL: ? simbolo"),
+])
+def test_status_description_matches_the_socket_contract(raw, expected):
+    """Grok t215u: il publisher a socket accetta 1..140 caratteri stampabili, senza ` $ \. La pulizia non toglie
+    niente in silenzio: un carattere vietato diventa '?', un testo troppo lungo finisce con '...'."""
+    out = td.clean_description(raw)
+    assert out == expected and _SOCKET_DESCRIPTION.fullmatch(out)
+
+
+def test_long_or_empty_description_is_marked_not_silently_cut():
+    long = td.clean_description("FAIL: " + "x" * 300)
+    assert len(long) == 140 and long.endswith("...") and _SOCKET_DESCRIPTION.fullmatch(long)
+    assert _SOCKET_DESCRIPTION.fullmatch(td.clean_description(""))
+    assert _SOCKET_DESCRIPTION.fullmatch(td.clean_description(" \n\t "))
+
+
+def test_fail_reason_with_forbidden_characters_reaches_the_publisher_cleaned_and_logged(env, capsys):
+    disp, bk, pub, _ = env
+    send(disp, payload())
+    disp.tick()
+    bk.finish("pr-overlap-guard", 1, "failed", result("overlap", verdict="FAIL", reasons=["PR `#7` costa $5 \\o/"]))
+    disp.tick()
+    final = [c for c in pub.final() if c[3] == "overlap-check"]
+    assert final and final[0][2] == "failure" and final[0][5] == "FAIL: PR ?#7? costa ?5 ?o/"
+    assert _SOCKET_DESCRIPTION.fullmatch(final[0][5])
+    assert "PR `#7` costa $5" in capsys.readouterr().err        # il testo originale resta nei log
+
+
+def test_default_publisher_refuses_a_description_outside_the_contract(monkeypatch):
+    calls = []
+    monkeypatch.setattr(td.subprocess, "run", lambda *a, **k: calls.append(a))
+    publish = td.default_publisher(("/usr/local/bin/pf-status-publish-client",), 120)
+    assert publish(42, HEAD, "failure", "overlap-check", "https://buildkite.com/x", "FAIL: $(id)") != 0
+    assert publish(42, HEAD, "failure", "overlap-check", "https://buildkite.com/x", "x" * 141) != 0
+    assert calls == []                                           # mai inviato: niente argv fuori contratto
 
 
 def test_archive_from_an_earlier_schema_is_migrated(tmp_path):
@@ -1736,15 +1813,18 @@ def test_rerun_command_is_executed_once(env):
 @pytest.mark.parametrize("case,reason", [
     ("login", "non autorizzato"), ("sha", "non e' l'head corrente"), ("edited", "modificato"),
     ("closed", "PR non aperta"), ("draft", "non valutabile"),
-    ("association", "senza permessi di scrittura"), ("contributor", "senza permessi di scrittura"),
+    ("read", "senza scrittura"), ("triage", "senza scrittura"), ("revoked", "senza scrittura"),
     ("bot", "non e' un utente"),
 ])
 def test_unauthorized_or_stale_rerun_is_rejected_and_audited(env, case, reason):
     disp, bk, _, clock = env
     _rerun_ready(disp, bk)
     created = td.iso(clock.now + 10)
-    kwargs = {"login": {"login": "intruder"}, "association": {"association": "NONE"},
-              "contributor": {"association": "CONTRIBUTOR"}, "bot": {"user_type": "Bot"}}.get(case, {})
+    kwargs = {"login": {"login": "intruder"}, "bot": {"user_type": "Bot"}}.get(case, {})
+    if case in ("read", "triage"):
+        bk.gh.permissions[RERUNNER] = case       # allowlist e association OWNER non bastano: conta il permesso attuale
+    if case == "revoked":
+        del bk.gh.permissions[RERUNNER]          # 404: nessun accesso al repository
     sha = HEAD2 if case == "sha" else HEAD
     updated = td.iso(clock.now + 15) if case == "edited" else None
     if case == "closed":
@@ -1781,6 +1861,79 @@ def test_historical_rerun_commands_are_not_executed_at_first_start(env):
     assert disp.store.recent_reruns() == []
 
 
+def test_overlap_never_moves_the_cursor_before_the_first_start(env):
+    """Codex P2 su #569 (893390a): con il polling a 60 s la sovrapposizione di 120 s riportava il cursore prima del
+    primo avvio e un comando di 30 s prima dell'avvio veniva eseguito al terzo giro."""
+    disp, bk, _, clock = env
+    bk.gh.comment(9010, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now - 30))
+    bk.gh.put(42, HEAD)
+    for _ in range(4):
+        disp.poll()
+        disp.tick()
+        clock.now += 60
+    assert disp.store.recent_reruns() == []
+    assert [p for p in _posts(bk) if p["env"]["PF_EVENT"] == "manual"] == []
+
+
+def test_command_in_the_same_second_as_the_first_start_is_rejected(env):
+    """Timestamp al secondo: un comando con lo stesso istante del primo avvio puo' essere anteriore. Fail closed:
+    rifiutato e registrato, nessuna build."""
+    disp, bk, _, clock = env
+    bk.gh.put(42, HEAD)
+    disp.poll()                                                   # primo avvio: limite = iso(clock.now)
+    bk.gh.comment(9011, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now))
+    clock.now += 60
+    assert disp.poll() == []
+    audit = disp.store.recent_reruns()
+    assert audit and audit[0]["accepted"] == 0 and "primo avvio" in audit[0]["reason"]
+
+
+def test_cursor_floor_survives_restart_and_old_commands_never_build(tmp_path):
+    """Riavvio (anche dopo un crash): il limite inferiore e' nell'archivio, non in memoria. Un comando anteriore al
+    primo avvio resta escluso per sempre; uno successivo e autorizzato si esegue una sola volta."""
+    cfg = td.validate_config(raw_config(tmp_path))
+    bk, clock, pub = FakeBuildkite(), Clock(), Publisher()
+    start = clock.now
+    bk.gh.comment(9012, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(start - 10))
+    bk.gh.put(42, HEAD)
+    disp = make_dispatcher(cfg, bk, pub, clock)
+    disp.poll()
+    disp.store.close()                                            # arresto senza pulizia (crash)
+    for _ in range(3):
+        clock.now += 60
+        disp = make_dispatcher(cfg, bk, pub, clock)
+        assert disp.store.get_meta("comments_floor") == td.iso(start)
+        disp.poll()
+        disp.tick()
+        disp.store.close()
+    bk.gh.comment(9013, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 5))
+    for _ in range(3):                                            # piu' giri: la sovrapposizione lo rilegge
+        clock.now += 60
+        disp = make_dispatcher(cfg, bk, pub, clock)
+        disp.poll()
+        disp.store.close()
+    disp = make_dispatcher(cfg, bk, pub, clock)
+    try:
+        rows = disp.store.recent_reruns()
+        assert [r["comment_id"] for r in rows] == [9013] and rows[0]["accepted"] == 1
+    finally:
+        disp.store.close()
+
+
+@pytest.mark.parametrize("cid", [10 ** 15, 10 ** 45])
+def test_comment_id_out_of_range_is_a_malformed_command(env, cid):
+    """Un id fuori misura non entra in SQLite (overflow a ogni giro) e darebbe un PF_DELIVERY_ID oltre i 64 caratteri
+    del gate: e' un comando malformato, quindi lettura annullata, nessuna build, nessuna eccezione."""
+    disp, bk, _, clock = env
+    _rerun_ready(disp, bk)
+    cursor = disp.store.get_meta("comments_since")
+    bk.gh.comment(cid, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    clock.now += 20
+    assert disp.poll() == []
+    assert disp.store.get_meta("comments_since") == cursor and disp.store.recent_reruns() == []
+    assert td._TID_RE.fullmatch(f"p9999999-r{td.MAX_COMMENT_ID - 1}-aaaaaaaaaaaa")
+
+
 def test_malformed_rerun_command_keeps_the_cursor(env):
     disp, bk, _, clock = env
     _rerun_ready(disp, bk)
@@ -1792,17 +1945,48 @@ def test_malformed_rerun_command_keeps_the_cursor(env):
     assert disp.store.get_meta("comments_since") == cursor and disp.store.recent_reruns() == []
 
 
-@pytest.mark.parametrize("field", ["author_association", "type"])
-def test_rerun_command_without_verified_permissions_keeps_the_cursor(env, field):
-    """Permessi e tipo di account li dichiara GitHub: un comando senza questi dati non si valuta (fail closed)."""
+@pytest.mark.parametrize("case", ["no_type", "permission_api_error", "permission_malformed", "permission_other_user"])
+def test_rerun_command_without_verified_permissions_keeps_the_cursor(env, case):
+    """Tipo di account e permesso attuale li dichiara GitHub: se non sono verificabili il comando non si valuta e
+    il cursore resta fermo (fail closed); nessuna riga di audit con un esito inventato."""
     disp, bk, _, clock = env
     _rerun_ready(disp, bk)
     cursor = disp.store.get_meta("comments_since")
     bk.gh.comment(9006, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
-    (bk.gh.comments[-1] if field == "author_association" else bk.gh.comments[-1]["user"]).pop(field)
+    if case == "no_type":
+        bk.gh.comments[-1]["user"].pop("type")
+    elif case == "permission_api_error":
+        bk.gh.permission_status = 502
+    elif case == "permission_malformed":
+        bk.gh.permissions[RERUNNER] = "superuser"
+    else:
+        orig = bk.gh.handle
+        bk.gh.handle = lambda m, u, h: (lambda r: (r[0], r[1], r[2].replace(RERUNNER.encode(), b"someone-else"))
+                                        if "/permission" in u else r)(orig(m, u, h))
     clock.now += 20
     assert disp.poll() == []
     assert disp.store.get_meta("comments_since") == cursor and disp.store.recent_reruns() == []
+
+
+@pytest.mark.parametrize("perm", ["admin", "maintain", "write"])
+def test_rerun_accepted_only_with_current_write_permission(env, perm):
+    disp, bk, _, clock = env
+    _rerun_ready(disp, bk)
+    bk.gh.permissions[RERUNNER] = perm
+    bk.gh.comment(9007, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    clock.now += 20
+    assert disp.poll() == ["p42-r9007-aaaaaaaaaaaa"]
+    assert [r for r in bk.gh.requests if r[1].endswith(f"/collaborators/{RERUNNER}/permission")]
+
+
+def test_permission_is_not_queried_for_logins_outside_the_allowlist(env):
+    disp, bk, _, clock = env
+    _rerun_ready(disp, bk)
+    bk.gh.comment(9008, 42, f"/pf-trusted-rerun {HEAD}", login="intruder", created=td.iso(clock.now + 10))
+    clock.now += 20
+    disp.poll()
+    assert not [r for r in bk.gh.requests if "/permission" in r[1]]
+    assert "non autorizzato" in disp.store.recent_reruns()[0]["reason"]
 
 
 def test_reruns_disabled_with_an_empty_allowlist(tmp_path):

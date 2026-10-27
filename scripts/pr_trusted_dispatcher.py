@@ -8,7 +8,8 @@ Contratto di Grok (#562 c.6438092317, §5) con l'intake sostituito dal **polling
    durata limitata (prodotto da `github.token_command`, l'helper della GitHub App) l'elenco COMPLETO delle PR aperte
    del repository `zarbopiero963-droid/Pickfair-nogui`, con paginazione verificata pagina per pagina. Una risposta
    incompleta, malformata, un errore API, il rate limit o credenziali assenti/scadute annullano il giro: nessuna
-   transizione, nessuno status. Solo GET su due elenchi (`pulls`, `issues/comments`): mai il codice delle PR.
+   transizione, nessuno status. Solo GET su due elenchi (`pulls`, `issues/comments`) e sul permesso attuale dei
+   login in allowlist dei rerun (`collaborators/{login}/permission`): mai il codice delle PR.
 2. **Transizioni.** Per ogni PR valutabile (base `main`, head nello stesso repository, non in bozza) si confronta
    lo stato osservato con quello salvato: nuova PR (`opened`), nuovo head (`synchronize`, anche il ritorno a uno SHA
    precedente), riapertura (`reopened`, anche sullo stesso SHA), uscita dalla bozza (`ready_for_review`). Ogni
@@ -48,10 +49,11 @@ import subprocess  # nosec B404 - solo i comandi configurati (token, pubblicazio
 import sys
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional
 
@@ -76,6 +78,7 @@ COMMENTS_OVERLAP_SECONDS = 120          # sovrapposizione fra giri per i comment
 
 _PR_RE = re.compile(r"[1-9][0-9]{0,6}", re.ASCII)
 _SHA_RE = re.compile(r"[0-9a-f]{40}", re.ASCII)
+MAX_COMMENT_ID = 10 ** 15
 _TID_RE = re.compile(r"[A-Za-z0-9-]{8,64}", re.ASCII)         # stesso formato del gate pre-command (PF_DELIVERY_ID)
 _TIMESTAMP_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", re.ASCII)
 _SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,99}", re.ASCII)
@@ -86,6 +89,9 @@ _TOKEN_RE = re.compile(r"[!-~]{20,8192}", re.ASCII)
 _RERUN_RE = re.compile(r"/pf-trusted-rerun ([0-9a-f]{40})", re.ASCII)
 _LINK_NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
 _GITHUB_PATHS = (f"/repos/{TRUSTED_REPO}/pulls", f"/repos/{TRUSTED_REPO}/issues/comments")
+# permesso attuale di un login sul repository fidato (solo per i login in allowlist dei rerun)
+_PERMISSION_PATH_RE = re.compile(rf"/repos/{re.escape(TRUSTED_REPO)}/collaborators/({_LOGIN_RE.pattern})/permission",
+                                 re.ASCII)
 
 # Stati Buildkite di una build (API REST v2). Sconosciuto => error, mai attesa infinita.
 BUILD_RUNNING = frozenset({"creating", "scheduled", "running", "failing", "canceling", "waiting", "waiting_failed"})
@@ -410,8 +416,8 @@ def parse_pulls(items: list) -> list:
 
 
 class GitHub:
-    """Solo GET su `pulls` e `issues/comments` del repository fidato, paginazione completa e verificata. Nessun
-    endpoint di contenuti o di archivi: il codice delle PR non passa mai da qui."""
+    """Solo GET su `pulls`, `issues/comments` e `collaborators/{login}/permission` del repository fidato, paginazione
+    completa e verificata. Nessun endpoint di contenuti o di archivi: il codice delle PR non passa mai da qui."""
 
     def __init__(self, cfg: Config, tokens: TokenProvider, transport: "Transport", clock: Callable[[], float]) -> None:
         self._cfg, self._tokens, self._transport, self._clock = cfg, tokens, transport, clock
@@ -422,7 +428,8 @@ class GitHub:
             parts = urllib.parse.urlsplit(url)
         except ValueError:
             raise ApiError("URL GitHub malformata") from None
-        if parts.scheme != "https" or parts.netloc != "api.github.com" or parts.path not in _GITHUB_PATHS:
+        if parts.scheme != "https" or parts.netloc != "api.github.com" \
+                or (parts.path not in _GITHUB_PATHS and not _PERMISSION_PATH_RE.fullmatch(parts.path)):
             raise ApiError(f"URL GitHub non ammessa: {parts.path}")
 
     def _rate_limit_until(self, headers: Mapping[str, str]) -> float:
@@ -435,31 +442,36 @@ class GitHub:
             return min(float(reset), now + 3600)
         return now + 60
 
+    def _request(self, url: str) -> tuple[dict, Any]:
+        """Una GET autenticata: (header in minuscolo, JSON). Rate limit, 401, HTTP diverso da 200, token classico,
+        risposta troppo grande o non JSON => eccezione, mai un valore di ripiego."""
+        self.check_url(url)
+        headers = {"Authorization": f"Bearer {self._tokens.get()}", "Accept": "application/vnd.github+json",
+                   "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "pf-trusted-dispatcher"}
+        status, resp_headers, body = self._transport("GET", url, headers, None, self._cfg.http_timeout_seconds)
+        h = {k.lower(): v for k, v in dict(resp_headers).items()}
+        if status in (403, 429) and (h.get("x-ratelimit-remaining") == "0" or "retry-after" in h):
+            raise RateLimited(self._rate_limit_until(h))
+        if status == 401:
+            self._tokens.invalidate()
+            raise CredentialError("token GitHub rifiutato (401)")
+        if status != 200:
+            raise ApiError(f"GitHub HTTP {status}", status)
+        if h.get("x-oauth-scopes", "").strip():
+            raise CredentialError("token classico con scope: serve un token di sola lettura a durata limitata")
+        if len(body) > MAX_API_BYTES:
+            raise ApiError("risposta GitHub troppo grande")
+        try:
+            return h, json.loads(body)
+        except (ValueError, RecursionError):
+            raise ApiError("risposta GitHub non JSON") from None
+
     def get_all(self, path: str, params: Mapping[str, str]) -> list:
         url: Optional[str] = f"{GITHUB_API}{path}?{urllib.parse.urlencode(params)}"
         items: list = []
         seen: set = set()
         for _ in range(MAX_PAGES):
-            self.check_url(url)
-            headers = {"Authorization": f"Bearer {self._tokens.get()}", "Accept": "application/vnd.github+json",
-                       "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "pf-trusted-dispatcher"}
-            status, resp_headers, body = self._transport("GET", url, headers, None, self._cfg.http_timeout_seconds)
-            h = {k.lower(): v for k, v in dict(resp_headers).items()}
-            if status in (403, 429) and (h.get("x-ratelimit-remaining") == "0" or "retry-after" in h):
-                raise RateLimited(self._rate_limit_until(h))
-            if status == 401:
-                self._tokens.invalidate()
-                raise CredentialError("token GitHub rifiutato (401)")
-            if status != 200:
-                raise ApiError(f"GitHub HTTP {status}", status)
-            if h.get("x-oauth-scopes", "").strip():
-                raise CredentialError("token classico con scope: serve un token di sola lettura a durata limitata")
-            if len(body) > MAX_API_BYTES:
-                raise ApiError("risposta GitHub troppo grande")
-            try:
-                page = json.loads(body)
-            except (ValueError, RecursionError):
-                raise ApiError("risposta GitHub non JSON") from None
+            h, page = self._request(url)
             if not isinstance(page, list):
                 raise ApiError("pagina GitHub non e' un elenco")
             items.extend(page)
@@ -480,9 +492,27 @@ class GitHub:
         return self.get_all(f"/repos/{TRUSTED_REPO}/issues/comments",
                             {"since": since, "per_page": "100", "sort": "created", "direction": "asc"})
 
+    def repo_permission(self, login: str) -> str:
+        """Permesso ATTUALE di `login` sul repository fidato. 404 = nessun accesso (`none`). Valore sconosciuto o
+        risposta riferita a un altro utente => ApiError: il permesso non e' verificato."""
+        if not _LOGIN_RE.fullmatch(login):
+            raise ApiError("login non valido")
+        try:
+            _, data = self._request(f"{GITHUB_API}/repos/{TRUSTED_REPO}/collaborators/{login}/permission")
+        except ApiError as exc:
+            if exc.status == 404:
+                return "none"
+            raise
+        perm, who = (data.get("permission"), _get(data, "user", "login")) if isinstance(data, dict) else (None, None)
+        if perm not in REPO_PERMISSIONS or not isinstance(who, str) or who.lower() != login.lower():
+            raise ApiError("permesso GitHub fuori formato")
+        return perm
 
-# permessi di scrittura sul repository dichiarati da GitHub per l'autore del commento (author_association)
-RERUN_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+# `author_association` non certifica i permessi attuali (MEMBER = membro dell'organizzazione, COLLABORATOR anche in
+# sola lettura): conta solo il permesso effettivo letto da `GET /repos/{repo}/collaborators/{login}/permission`
+REPO_PERMISSIONS = frozenset({"admin", "maintain", "write", "triage", "read", "none"})
+RERUN_PERMISSIONS = frozenset({"admin", "maintain", "write"})
 
 
 @dataclass(frozen=True)
@@ -491,8 +521,9 @@ class RerunRequest:
     pr: int
     head_sha: str
     login: str
-    association: str = ""
     user_type: str = ""
+    permission: str = ""      # permesso attuale letto dall'API, solo per i login in allowlist
+    created_at: str = ""      # ISO al secondo, come lo restituisce GitHub
 
 
 def parse_rerun_comment(item: Any) -> Optional[RerunRequest]:
@@ -503,16 +534,17 @@ def parse_rerun_comment(item: Any) -> Optional[RerunRequest]:
     if m is None:
         return None
     cid, login, user_type = item.get("id"), _get(item, "user", "login"), _get(item, "user", "type")
-    association, url = item.get("author_association"), item.get("issue_url")
+    url = item.get("issue_url")
     prefix = f"{GITHUB_API}/repos/{TRUSTED_REPO}/issues/"
-    if not _is_int(cid) or cid <= 0 or not isinstance(login, str) or not isinstance(url, str) \
-            or not isinstance(association, str) or not isinstance(user_type, str) \
+    # id entro 10^15: entra in SQLite e l'identificatore del rerun resta sotto i 64 caratteri del gate pre-command
+    if not _is_int(cid) or not 0 < cid < MAX_COMMENT_ID or not isinstance(login, str) or not isinstance(url, str) \
+            or not isinstance(user_type, str) \
             or not url.startswith(prefix) or not _PR_RE.fullmatch(url[len(prefix):]):
         raise ApiError("comando di rerun con dati fuori formato")
     edited = item.get("created_at") != item.get("updated_at") or not _TIMESTAMP_RE.fullmatch(str(item.get("created_at")))
     # modificato dopo la pubblicazione: il testo eseguito non sarebbe quello registrato
     return RerunRequest(comment_id=cid, pr=int(url[len(prefix):]), head_sha="" if edited else m.group(1),
-                        login=login, association=association, user_type=user_type)
+                        login=login, user_type=user_type, created_at=str(item.get("created_at")))
 
 
 # --------------------------------------------------------------------------------------------- archivio
@@ -712,7 +744,8 @@ class Store:
 
         return self._tx(fn)
 
-    def record_rerun(self, req: RerunRequest, allowed: frozenset, now: float) -> tuple[str, str]:
+    def record_rerun(self, req: RerunRequest, allowed: frozenset, now: float,
+                     floor: Optional[str] = None) -> tuple[str, str]:
         """(esito, motivo). Esiti: `duplicate` (comando gia' registrato), `rejected`, `accepted`. Ogni comando
         nuovo resta nell'archivio, accettato o no."""
 
@@ -724,10 +757,13 @@ class Store:
                 reason = f"login {req.login} non autorizzato"
             elif req.user_type != "User":
                 reason = f"l'autore non e' un utente ({req.user_type})"
-            elif req.association not in RERUN_ASSOCIATIONS:
-                reason = f"author_association {req.association} senza permessi di scrittura"
+            elif req.permission not in RERUN_PERMISSIONS:
+                reason = f"permesso attuale {req.permission or 'non verificato'} senza scrittura sul repository"
             elif not req.head_sha:
                 reason = "commento modificato dopo la pubblicazione"
+            elif floor is None or req.created_at <= floor:
+                # stesso secondo del primo avvio compreso: non si sa se e' anteriore, quindi non si esegue
+                reason = "comando non successivo al primo avvio del dispatcher"
             elif row is None or not row["open"]:
                 reason = "PR non aperta"
             elif not row["eligible"]:
@@ -773,6 +809,10 @@ class Store:
         with self._lock:
             rows = self._db.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+    def has_rerun(self, comment_id: int) -> bool:
+        with self._lock:
+            return self._db.execute("SELECT 1 FROM reruns WHERE comment_id = ?", (comment_id,)).fetchone() is not None
 
     def recent_reruns(self, limit: int = 50) -> list[dict]:
         with self._lock:
@@ -995,13 +1035,35 @@ def decide_outcome(build: Mapping[str, Any], artifact: Optional[bytes], job: Map
     return "error", f"build {state} incoerente con verdetto {verdict!r}"
 
 
+# contratto del publisher a socket (Grok t215u): 1..140 caratteri ASCII stampabili, senza ` $ \
+_DESCRIPTION_FORBIDDEN = frozenset("`$\\")
+_DESCRIPTION_RE = re.compile(r"[\x20-\x23\x25-\x5b\x5d-\x5f\x61-\x7e]{1,%d}" % DESCRIPTION_MAX)
+
+
 def clean_description(text: str) -> str:
-    text = "".join(c if c.isprintable() else " " for c in text)
-    return text[:DESCRIPTION_MAX]
+    """Descrizione dello status nel formato del socket, senza cambiarne il senso in silenzio: lettere accentate alla
+    lettera base, spazi e controlli a spazio singolo, ogni altro carattere vietato a '?' (visibile), testo troppo
+    lungo chiuso da '...'. Il testo originale resta nei log del dispatcher."""
+    out = []
+    for c in unicodedata.normalize("NFKD", text):
+        if unicodedata.combining(c):
+            continue
+        if c.isspace() or not c.isprintable():
+            c = " "
+        elif not ("\x20" <= c <= "\x7e") or c in _DESCRIPTION_FORBIDDEN:
+            c = "?"
+        out.append(c)
+    cleaned = " ".join("".join(out).split()) or "(nessuna descrizione)"
+    if len(cleaned) > DESCRIPTION_MAX:
+        cleaned = cleaned[:DESCRIPTION_MAX - 3].rstrip() + "..."
+    return cleaned
 
 
 def default_publisher(command: tuple, timeout: int) -> Callable[..., int]:
     def publish(pr: int, sha: str, state: str, context: str, url: str, description: str) -> int:
+        if not _DESCRIPTION_RE.fullmatch(description):
+            log("descrizione fuori dal contratto del publisher: status non inviato")
+            return 2
         argv = [*command, str(pr), sha, state, context, url, description]
         try:
             proc = subprocess.run(argv, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},  # nosec B603
@@ -1060,11 +1122,18 @@ class Dispatcher:
     def _poll_reruns(self, now: float) -> list[str]:
         since = self.store.get_meta("comments_since")
         if since is None:
-            # primo avvio: nessun comando storico rieseguito, si parte da adesso
+            # primo avvio: nessun comando storico rieseguito, si parte da adesso; l'istante resta come limite
+            # inferiore persistente del cursore
+            self.store.set_meta("comments_floor", iso(now))
             self.store.set_meta("comments_since", iso(now))
             return []
         try:
             requests = [r for r in (parse_rerun_comment(c) for c in self.gh.comments_since(since)) if r is not None]
+            # permesso attuale letto per ogni comando nuovo di un utente in allowlist, PRIMA di registrare
+            # qualsiasi esito: un permesso non verificabile annulla l'intera lettura e il cursore resta fermo
+            requests = [replace(r, permission=self.gh.repo_permission(r.login))
+                        if r.user_type == "User" and r.login in self.cfg.rerun_allowed_logins
+                        and not self.store.has_rerun(r.comment_id) else r for r in requests]
         except RateLimited as exc:
             self.rate_limited_until = exc.until
             log(f"lettura dei comandi di rerun rinviata: {exc}")
@@ -1074,12 +1143,16 @@ class Dispatcher:
             return []
         created: list[str] = []
         for req in requests:
-            outcome, detail = self.store.record_rerun(req, self.cfg.rerun_allowed_logins, now)
+            outcome, detail = self.store.record_rerun(req, self.cfg.rerun_allowed_logins, now,
+                                                      self.store.get_meta("comments_floor") or since)
             if outcome != "duplicate":
                 log(f"rerun commento {req.comment_id} di {req.login} su PR #{req.pr}: {outcome} ({detail})")
             if outcome == "accepted":
                 created.append(detail)
-        self.store.set_meta("comments_since", iso(now - COMMENTS_OVERLAP_SECONDS))
+        # la sovrapposizione non riporta mai il cursore prima del primo avvio (Codex P2 su #569); un archivio senza
+        # limite salvato (versione precedente) usa il cursore attuale, che non e' mai anteriore all'avvio
+        floor = self.store.get_meta("comments_floor") or since
+        self.store.set_meta("comments_since", max(iso(now - COMMENTS_OVERLAP_SECONDS), floor))
         return created
 
     # ---- worker
@@ -1191,8 +1264,11 @@ class Dispatcher:
         self._publish_final(job)
 
     def _to_publishing(self, job: dict, outcome: str, description: str) -> None:
-        self._set(job, state="publishing", outcome=outcome, description=clean_description(description),
-                  publishing_since=self.clock())
+        cleaned = clean_description(description)
+        if cleaned != description:
+            # lo status porta la forma pulita; il testo completo resta qui (repr: nessun a capo nel log)
+            log(f"job {job['id']}: descrizione adattata al publisher; originale {description!r}")
+        self._set(job, state="publishing", outcome=outcome, description=cleaned, publishing_since=self.clock())
 
     def _create(self, job: dict) -> None:
         # da qui in poi un crash lascia l'esito ambiguo, mai un retry cieco; transizione condizionata allo stato
@@ -1319,7 +1395,11 @@ class Dispatcher:
             except (ApiError, TransportError) as exc:
                 log(f"job {job['id']}: risultato non scaricato: {exc}")
                 if not timed_out:
-                    return None                         # errore temporaneo: si ritenta entro la finestra
+                    # errore temporaneo: si ritenta entro la finestra; intanto il `pending` mancato copre un vecchio
+                    # `success` sullo stesso SHA (rerun, riapertura) come nel ramo della build in corso (Sol su #569)
+                    if not job["pending_published"]:
+                        self._publish_pending(job)
+                    return None
         outcome, description = decide_outcome(build, artifact, job)
         self._to_publishing(job, outcome, description)
         self._publish_final(job)

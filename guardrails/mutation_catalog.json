@@ -4620,8 +4620,8 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "            if not job[\"pending_published\"]:",
-      "mutated": "            if False:",
+      "original": "                return self._fail(job, \"error\", \"timeout della build\")\n            if not job[\"pending_published\"]:",
+      "mutated": "                return self._fail(job, \"error\", \"timeout della build\")\n            if False:",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
@@ -4704,8 +4704,8 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "                if not timed_out:\n                    return None                         # errore temporaneo: si ritenta entro la finestra",
-      "mutated": "                pass",
+      "original": "                if not timed_out:\n                    # errore temporaneo",
+      "mutated": "                if False:\n                    # errore temporaneo",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
@@ -4824,8 +4824,8 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "            if h.get(\"x-oauth-scopes\", \"\").strip():",
-      "mutated": "            if False:",
+      "original": "        if h.get(\"x-oauth-scopes\", \"\").strip():",
+      "mutated": "        if False:",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
@@ -4866,6 +4866,102 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 rerun: lo stesso comando rieseguito a ogni rilettura dei commenti."
+    },
+    {
+      "id": "td_rerun_cursor_before_start",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        self.store.set_meta(\"comments_since\", max(iso(now - COMMENTS_OVERLAP_SECONDS), floor))",
+      "mutated": "        self.store.set_meta(\"comments_since\", iso(now - COMMENTS_OVERLAP_SECONDS))",
+      "rationale": "PF-569 (Codex P2 su 893390a): la sovrapposizione riporta il cursore prima del primo avvio e un comando storico viene eseguito."
+    },
+    {
+      "id": "td_rerun_floor_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "            elif floor is None or req.created_at <= floor:",
+      "mutated": "            elif floor is None:",
+      "rationale": "PF-569: comando anteriore al primo avvio eseguito (solo il cursore lo escludeva)."
+    },
+    {
+      "id": "td_rerun_floor_same_second",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "            elif floor is None or req.created_at <= floor:",
+      "mutated": "            elif floor is None or req.created_at < floor:",
+      "rationale": "PF-569: comando nello stesso secondo del primo avvio eseguito (potrebbe essere anteriore)."
+    },
+    {
+      "id": "td_comment_id_unbounded",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "    if not _is_int(cid) or not 0 < cid < MAX_COMMENT_ID or not isinstance(login, str)",
+      "mutated": "    if not _is_int(cid) or cid <= 0 or not isinstance(login, str)",
+      "rationale": "PF-569: id di commento fuori misura: overflow SQLite a ogni giro e PF_DELIVERY_ID oltre il formato del gate."
+    },
+    {
+      "id": "td_description_forbidden_kept",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        elif not (\"\\x20\" <= c <= \"\\x7e\") or c in _DESCRIPTION_FORBIDDEN:",
+      "mutated": "        elif not (\"\\x20\" <= c <= \"\\x7e\"):",
+      "rationale": "PF-562 publisher (Grok t215u): ` $ \\ arrivano al socket e lo status viene rifiutato."
+    },
+    {
+      "id": "td_description_cut_silently",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        cleaned = cleaned[:DESCRIPTION_MAX - 3].rstrip() + \"...\"",
+      "mutated": "        cleaned = cleaned[:DESCRIPTION_MAX]",
+      "rationale": "PF-562 publisher: descrizione troncata senza segnale visibile."
+    },
+    {
+      "id": "td_description_accents_lost",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "    for c in unicodedata.normalize(\"NFKD\", text):",
+      "mutated": "    for c in text:",
+      "rationale": "PF-562 publisher: lettere accentate sostituite da '?' invece della lettera base (senso alterato)."
+    },
+    {
+      "id": "td_publisher_sends_invalid_description",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        if not _DESCRIPTION_RE.fullmatch(description):",
+      "mutated": "        if False:",
+      "rationale": "PF-562 publisher: descrizione fuori contratto inviata al client del socket."
     },
     {
       "id": "td_close_after_one_miss",
@@ -4932,8 +5028,8 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "        if parts.scheme != \"https\" or parts.netloc != \"api.github.com\" or parts.path not in _GITHUB_PATHS:",
-      "mutated": "        if parts.scheme != \"https\" or parts.netloc != \"api.github.com\":",
+      "original": "                or (parts.path not in _GITHUB_PATHS and not _PERMISSION_PATH_RE.fullmatch(parts.path)):",
+      "mutated": "                or False:",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
@@ -4980,8 +5076,8 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "                self._tokens.invalidate()",
-      "mutated": "                pass",
+      "original": "            self._tokens.invalidate()",
+      "mutated": "            pass",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
@@ -5000,16 +5096,16 @@
       "rationale": "PF-562 rerun: comando di un login non autorizzato eseguito."
     },
     {
-      "id": "td_rerun_association_unchecked",
+      "id": "td_rerun_permission_unchecked",
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
-      "original": "            elif req.association not in RERUN_ASSOCIATIONS:",
+      "original": "            elif req.permission not in RERUN_PERMISSIONS:",
       "mutated": "            elif False:",
-      "rationale": "PF-570 rerun: comando di un autore senza permessi di scrittura (author_association) eseguito."
+      "rationale": "PF-570 rerun (Sol su dab1e94): comando di un login in allowlist senza permesso di scrittura ATTUALE sul repository eseguito."
     },
     {
       "id": "td_rerun_bot_accepted",
@@ -5024,6 +5120,18 @@
       "rationale": "PF-570 rerun: comando di un account non utente (bot, app) eseguito."
     },
     {
+      "id": "td_pending_skipped_on_artifact_error",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                        self._publish_pending(job)\n                    return None",
+      "mutated": "                        pass\n                    return None",
+      "rationale": "PF-569 (Sol su 22d1b71...e1c6e36): con l'artifact non scaricabile il pending fallito non si ritenta e il vecchio success resta visibile."
+    },
+    {
       "id": "td_rerun_permissions_optional",
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
@@ -5031,9 +5139,57 @@
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
-      "original": "            or not isinstance(association, str) or not isinstance(user_type, str) \\",
+      "original": "            or not isinstance(user_type, str) \\",
       "mutated": "            or False \\",
-      "rationale": "PF-570 rerun: comando senza permessi dichiarati da GitHub valutato invece di annullare la lettura."
+      "rationale": "PF-570 rerun: comando senza tipo di account dichiarato da GitHub valutato invece di annullare la lettura."
+    },
+    {
+      "id": "td_rerun_permission_other_user",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        if perm not in REPO_PERMISSIONS or not isinstance(who, str) or who.lower() != login.lower():",
+      "mutated": "        if perm not in REPO_PERMISSIONS:",
+      "rationale": "PF-570 rerun: permesso riferito a un altro utente accettato come quello del richiedente."
+    },
+    {
+      "id": "td_rerun_permission_404_as_write",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                return \"none\"",
+      "mutated": "                return \"write\"",
+      "rationale": "PF-570 rerun: accesso revocato (404) trattato come permesso di scrittura."
+    },
+    {
+      "id": "td_rerun_read_permission_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "RERUN_PERMISSIONS = frozenset({\"admin\", \"maintain\", \"write\"})",
+      "mutated": "RERUN_PERMISSIONS = frozenset({\"admin\", \"maintain\", \"write\", \"triage\", \"read\"})",
+      "rationale": "PF-570 rerun: collaboratore in sola lettura o triage abilitato a rilanciare build trusted."
+    },
+    {
+      "id": "td_permission_queried_before_allowlist",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                        if r.user_type == \"User\" and r.login in self.cfg.rerun_allowed_logins",
+      "mutated": "                        if r.user_type == \"User\"",
+      "rationale": "PF-570 rerun: permesso interrogato per login fuori allowlist (chiamate API pilotate da chiunque commenti)."
     },
     {
       "id": "td_closed_pr_builds_kept",
