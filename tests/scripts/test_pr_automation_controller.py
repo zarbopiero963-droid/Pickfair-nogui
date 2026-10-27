@@ -3052,6 +3052,7 @@ def test_newer_current_head_success_suppresses_older_duplicate_failure():
     old = _gh_run("Unit tests", "FAILURE", "head-new", run_id=1, started="2026-05-25T00:00:00Z",
                   completed="2026-05-25T00:00:30Z")
     new = _gh_run("  Unit   tests ", "SUCCESS", "head-new", run_id=1, started="2026-05-25T00:01:00Z")
+    old["run_attempt"], new["run_attempt"] = 1, 2
     new["id"] = 2
     new["details_url"] = "https://github.com/org/repo/actions/runs/1/job/2"
     summary = controller.summarize_current_head_check_state("head-new", [old, new])
@@ -3341,11 +3342,11 @@ def test_dedupe_does_not_coalesce_distinct_workflow_runs_with_same_name():
 # --------------------------------------------------------------------------- #566: tentativo superato vs concorrente
 # Dati ricavati da run reali del repository (REST `commits/{sha}/check-runs`):
 # - rerun legittimo: run 40406913995 («Merge readiness» su 49518cc), tentativo 1 failure (check run 121867474194) e
-#   tentativo 2 success (121892751177), STESSA check suite 109519846723 e stesso run id nell'URL; `filter=latest`
-#   di GitHub restituisce solo il secondo;
+#   tentativo 2 success (121892751177), STESSA check suite 109519846723 e stesso run id nell'URL; `run_attempt` 1 e 2
+#   dall'API Jobs; `filter=latest` di GitHub restituisce solo il secondo; `external_id` cambia fra i tentativi;
 # - check concorrente: «overlap-check» su b4e6604 (#564), failure nella suite 109551022632 (run 40418753669,
 #   `pull_request`) e success nella suite 109551036228 (run 40418758994, `workflow_dispatch`).
-def _actions_check(name, state, head, *, run_id, job_id, suite, started, completed="", app="github-actions"):
+def _actions_check(name, state, head, *, run_id, job_id, suite, started, completed="", attempt=0, app="github-actions"):
     check = {
         "name": name,
         "status": "completed" if state not in {"QUEUED", "IN_PROGRESS"} else state.lower(),
@@ -3358,6 +3359,8 @@ def _actions_check(name, state, head, *, run_id, job_id, suite, started, complet
     }
     if completed:
         check["completed_at"] = completed
+    if attempt:
+        check["run_attempt"] = attempt
     if suite is not None:
         check["check_suite"] = {"id": suite}
     return check
@@ -3368,17 +3371,21 @@ HEAD_566 = "b" * 40
 
 def _rerun_pair(second_state):
     first = _actions_check("Merge readiness", "FAILURE", HEAD_566, run_id=40406913995, job_id=121867474194,
-                           suite=109519846723, started="2026-10-26T21:46:27Z", completed="2026-10-26T21:54:03Z")
+                           suite=109519846723, started="2026-10-26T21:46:27Z", completed="2026-10-26T21:54:03Z",
+                           attempt=1)
     second = _actions_check("Merge readiness", second_state, HEAD_566, run_id=40406913995, job_id=121892751177,
-                            suite=109519846723, started="2026-10-26T22:41:23Z", completed="2026-10-26T22:42:09Z")
+                            suite=109519846723, started="2026-10-26T22:41:23Z", completed="2026-10-26T22:42:09Z",
+                            attempt=2)
     return first, second
 
 
 def _concurrent_pair(second_state, first_state="FAILURE"):
     first = _actions_check("overlap-check", first_state, HEAD_566, run_id=40418753669, job_id=121907535096,
-                           suite=109551022632, started="2026-10-26T23:17:46Z", completed="2026-10-26T23:17:54Z")
+                           suite=109551022632, started="2026-10-26T23:17:46Z", completed="2026-10-26T23:17:54Z",
+                           attempt=1)
     second = _actions_check("overlap-check", second_state, HEAD_566, run_id=40418758994, job_id=121907558748,
-                            suite=109551036228, started="2026-10-26T23:18:32Z", completed="2026-10-26T23:18:41Z")
+                            suite=109551036228, started="2026-10-26T23:18:32Z", completed="2026-10-26T23:18:41Z",
+                            attempt=1)
     return first, second
 
 
@@ -3426,6 +3433,7 @@ def test_block_unknown_attempt_identity_keeps_both_runs_fail_closed():
     for check in (first, second):
         del check["check_suite"]
         check["details_url"] = "https://ci.example.invalid/build"
+    second["run_attempt"] = 2  # un numero di tentativo maggiore non basta senza un'identita' comune
     summary = controller.summarize_current_head_check_state(HEAD_566, [first, second])
     ASSERTIONS.assertEqual(summary["category"], "workflow_failure")
 
@@ -3468,6 +3476,12 @@ def test_newer_attempt_of_the_same_run_decides_even_when_not_a_pass(state, categ
     ASSERTIONS.assertNotEqual(summary["next_action"], "ready")
 
 
+def test_pass_filter_latest_input_needs_no_dedupe():
+    """La fonte consigliata: `check-runs?filter=latest` (default di GitHub) restituisce solo il tentativo piu' recente."""
+    _first, second = _rerun_pair("SUCCESS")
+    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [second])["category"], "ready")
+
+
 def test_block_sibling_jobs_with_the_same_name_in_one_run_are_not_attempts():
     """Due job omonimi dello stesso workflow run (stessa suite) che si sovrappongono nel tempo sono fratelli, non
     tentativi: il FAIL del primo resta (review indipendente su #568)."""
@@ -3480,10 +3494,34 @@ def test_block_sibling_jobs_with_the_same_name_in_one_run_are_not_attempts():
                                "workflow_failure")
 
 
-def test_block_missing_completion_time_is_not_proof_of_a_rerun():
-    """Senza `completed_at` del tentativo vecchio non si dimostra che il nuovo sia venuto dopo: restano entrambi."""
+@pytest.mark.parametrize("missing", ["old", "new", "both"])
+def test_block_missing_run_attempt_is_not_proof_of_a_rerun(missing):
+    """Senza numero di tentativo da una delle due parti non si dimostra il rerun: restano entrambi."""
     first, second = _rerun_pair("SUCCESS")
-    del first["completed_at"]
+    if missing in {"old", "both"}:
+        del first["run_attempt"]
+    if missing in {"new", "both"}:
+        del second["run_attempt"]
+    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [first, second])["category"],
+                           "workflow_failure")
+
+
+def test_block_sequential_sibling_jobs_with_the_same_name_are_not_attempts():
+    """Rilievo GPT-6.1 Sol su #568: due job omonimi della stessa suite in sequenza (`needs:`, runner unico), il FAIL
+    finito prima che cominci il PASS. Stesso tentativo (1): nessuno dei due supera l'altro."""
+    fail = _actions_check("build", "FAILURE", HEAD_566, run_id=7, job_id=71, suite=70, attempt=1,
+                          started="2026-10-26T10:00:00Z", completed="2026-10-26T10:01:00Z")
+    ok = _actions_check("build", "SUCCESS", HEAD_566, run_id=7, job_id=72, suite=70, attempt=1,
+                        started="2026-10-26T10:02:00Z", completed="2026-10-26T10:03:00Z")
+    for runs in ([fail, ok], [ok, fail]):
+        ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, runs)["category"],
+                               "workflow_failure")
+
+
+@pytest.mark.parametrize("bad", [True, "x", -1, None])
+def test_block_malformed_run_attempt_is_unknown(bad):
+    first, second = _rerun_pair("SUCCESS")
+    first["run_attempt"] = bad
     ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [first, second])["category"],
                            "workflow_failure")
 
@@ -3491,9 +3529,9 @@ def test_block_missing_completion_time_is_not_proof_of_a_rerun():
 def test_pass_two_concurrent_suites_both_rerun_are_ready():
     """Entrambe le suite rilanciate dopo un FAIL: ognuna e' superata dal proprio tentativo, nessun blocco falso."""
     a1, b1 = _concurrent_pair("FAILURE")
-    a2 = dict(a1, id=1, conclusion="SUCCESS", status="completed", started_at="2026-10-26T23:30:00Z",
+    a2 = dict(a1, id=1, run_attempt=2, conclusion="SUCCESS", status="completed", started_at="2026-10-26T23:30:00Z",
               completed_at="2026-10-26T23:30:10Z", details_url="https://github.com/o/r/actions/runs/40418753669/job/1")
-    b2 = dict(b1, id=2, conclusion="SUCCESS", status="completed", started_at="2026-10-26T23:31:00Z",
+    b2 = dict(b1, id=2, run_attempt=2, conclusion="SUCCESS", status="completed", started_at="2026-10-26T23:31:00Z",
               completed_at="2026-10-26T23:31:10Z", details_url="https://github.com/o/r/actions/runs/40418758994/job/2")
     for runs in ([a1, b1, a2, b2], [b2, a1, a2, b1]):
         deduped = controller.dedupe_github_check_runs(HEAD_566, runs)
@@ -3505,8 +3543,8 @@ def test_pass_graphql_shaped_rerun_without_url_uses_check_suite_database_id():
     """Formato GraphQL (`checkSuite.databaseId`, `startedAt`/`completedAt`) senza URL: il rerun si riconosce."""
     old = {"name": "build", "conclusion": "FAILURE", "status": "COMPLETED", "databaseId": 1, "headSha": HEAD_566,
            "checkSuite": {"databaseId": 9}, "startedAt": "2026-10-26T10:00:00Z", "completedAt": "2026-10-26T10:01:00Z",
-           "app": {"slug": "github-actions"}}
-    new = dict(old, conclusion="SUCCESS", databaseId=2, startedAt="2026-10-26T11:00:00Z",
+           "app": {"slug": "github-actions"}, "runAttempt": 1}
+    new = dict(old, conclusion="SUCCESS", databaseId=2, runAttempt=2, startedAt="2026-10-26T11:00:00Z",
                completedAt="2026-10-26T11:01:00Z")
     ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [old, new])["category"], "ready")
 

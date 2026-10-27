@@ -4355,7 +4355,7 @@
       "module": "scripts.pr_automation_controller",
       "area": "check_dedupe",
       "file": "scripts/pr_automation_controller.py",
-      "original": "            elif attempt[1] and _finished_before_any(old, kept_attempts.get(attempt, [])):",
+      "original": "            elif attempt[1] and _is_earlier_attempt(old, kept_attempts.get(attempt, [])):",
       "mutated": "            elif True:",
       "tests": [
         "tests/scripts/test_pr_automation_controller.py"
@@ -4367,8 +4367,8 @@
       "module": "scripts.pr_automation_controller",
       "area": "check_dedupe",
       "file": "scripts/pr_automation_controller.py",
-      "original": "            elif attempt[1] and _finished_before_any(old, kept_attempts.get(attempt, [])):",
-      "mutated": "            elif _finished_before_any(old, kept_attempts.get(attempt, [])):",
+      "original": "            elif attempt[1] and _is_earlier_attempt(old, kept_attempts.get(attempt, [])):",
+      "mutated": "            elif _is_earlier_attempt(old, kept_attempts.get(attempt, [])):",
       "tests": [
         "tests/scripts/test_pr_automation_controller.py"
       ],
@@ -4411,18 +4411,6 @@
       "rationale": "#566: conclusione inconcludente (STARTUP_FAILURE, valori nuovi) trattata come ready."
     },
     {
-      "id": "cd_sibling_jobs_coalesced",
-      "module": "scripts.pr_automation_controller",
-      "area": "check_dedupe",
-      "file": "scripts/pr_automation_controller.py",
-      "original": "        if started is not None and done <= started:",
-      "mutated": "        if started is not None:",
-      "tests": [
-        "tests/scripts/test_pr_automation_controller.py"
-      ],
-      "rationale": "review indipendente su #568: due job omonimi sovrapposti dello stesso run trattati come tentativi: il PASS del fratello nasconde il FAIL."
-    },
-    {
       "id": "cd_kept_attempt_not_remembered",
       "module": "scripts.pr_automation_controller",
       "area": "check_dedupe",
@@ -4433,6 +4421,30 @@
         "tests/scripts/test_pr_automation_controller.py"
       ],
       "rationale": "review indipendente su #568: le suite concorrenti rilanciate entrambe restano bloccate (falso blocco permanente)."
+    },
+    {
+      "id": "cd_same_attempt_coalesced",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "    return any(kept >= 1 and old_attempt < kept for kept in kept_attempts)",
+      "mutated": "    return any(kept >= 1 and old_attempt <= kept for kept in kept_attempts)",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "rilievo GPT-6.1 Sol su #568: due job omonimi sequenziali dello stesso tentativo trattati come rerun: il PASS del fratello nasconde il FAIL."
+    },
+    {
+      "id": "cd_missing_attempt_coalesced",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "    if old_attempt < 1:\n        return False",
+      "mutated": "    if False:\n        return False",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "#568: un run senza numero di tentativo trattato come superato: FAIL nascosto senza prova."
     }
   ]
 }
