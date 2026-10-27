@@ -93,8 +93,11 @@ jobs:
       REVIEW_ID: gpt56sol
       MODEL_LABEL: GPT-6.1 Sol
 
-      MAX_PATCH_PER_FILE_CHARS: "7000"
-      MAX_TOTAL_PATCH_CHARS: "24000"
+      # PF-569 (owner GO 27/10/2026): tetti sul diff della #569 (oggi file max 71.800, totale 188.651), con
+      # margine per il passaggio al polling deciso dall'owner (PF-562). Tetti, non addebiti; oltre il tetto
+      # resta fail-closed (buco misurato = VALID_INCONCLUSIVE, mai PASS).
+      MAX_PATCH_PER_FILE_CHARS: "150000"
+      MAX_TOTAL_PATCH_CHARS: "400000"
       # openai/gpt-6.1-sol e' un modello reasoning (su OpenRouter il ragionamento
       # e' obbligatorio): i token di reasoning contano nel budget di output.
       # Tetto ALTO anti-troncamento (CEILING, non costo): con reasoning effort
@@ -1029,6 +1032,17 @@ jobs:
               )
           # <<< REVIEW_RECOVERY_CORE <<<
 
+
+          def rr_coverage_summary(files, diff_text, compare_truncated):
+              """Riga del commento (PF-569): payload davvero inviato al modello, con le regole di rr_coverage_gaps."""
+              sent_text = str(diff_text or "")
+              with_patch = sum(1 for f in (files or ()) if isinstance(f, dict) and f.get("patch"))
+              sent = sent_text.count("\n\n### FILE: ")
+              cut = len(_RR_CUT_LINE.findall(sent_text))
+              gaps = rr_coverage_gaps(files, diff_text, compare_truncated)
+              return (f"{sent}/{with_patch} file con patch inviati, {cut} tagliati, {len(sent_text)} caratteri; "
+                      f"buchi misurati: {', '.join(gaps) if gaps else 'nessuno'}")
+
           try:
               range_base, range_head, range_scope, compared = resolve_range()
           except Exception as exc:
@@ -1341,13 +1355,15 @@ jobs:
           **Modalità:** push-range diff via GitHub Compare API
           **Scope:** `{range_scope}`
           **Range:** `{range_base[:12]}...{range_head[:12]}`
+          **SHA esaminati:** `{range_base}...{range_head}`
+          **Diff inviato al modello:** {rr_coverage_summary(files, diff_text, compare_truncated)}
           **Commits nel range:** `{commit_count}`
           **Checkout codice PR:** no
           **Esecuzione codice PR:** no
           {esito}
           **Auto-merge / auto-approve:** no
           **Model:** `{OPENROUTER_MODEL}`
-          **Budget patch:** `{MAX_TOTAL_PATCH_CHARS}` caratteri max
+          **Budget patch:** `{MAX_TOTAL_PATCH_CHARS}` caratteri max (`{MAX_PATCH_PER_FILE_CHARS}` per file)
           **Budget output:** `{MAX_OUTPUT_TOKENS}` token max
 
           {manual_warning}

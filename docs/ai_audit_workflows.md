@@ -176,6 +176,24 @@ dai workflow veri e verifica sia il contenuto del blocco sia che il valore sia
 davvero interpolato in `user_prompt` — una funzione che esiste ma non arriva al
 modello lascerebbe il difetto intatto con un test verde sopra.
 
+### Budget del diff di Sol e Grok (PF-569, owner 27/10/2026)
+
+Con i tetti precedenti (Sol 7.000 caratteri per file / 24.000 totali, Grok 5.000 / 18.000) il dispatcher della
+#569 (patch 62.419) e i suoi test (71.800) non arrivavano mai al modello: ogni range `VALID_INCONCLUSIVE`.
+Tetti ora uguali per i due reviewer attivi, dimensionati sul diff della #569 (oggi file massimo 71.800,
+totale 188.651) con margine per il passaggio al polling deciso dall'owner (PF-562, il diff crescerà):
+**150.000 per file, 400.000 totali**.
+
+- Sono tetti, non addebiti: una PR piccola costa come prima; 400.000 caratteri sono circa 115.000 token,
+  dentro il contesto dei modelli (OpenRouter: Sol 1.050.000, Grok 4.7 500.000).
+- Nessuna suddivisione in blocchi (servirebbero più chiamate e un'aggregazione); l'escalation dei workflow
+  sospesi qui non risparmierebbe nulla.
+- Fail-closed invariato: oltre il tetto un file tagliato o saltato è un buco misurato, `VALID_INCONCLUSIVE`.
+- Il commento registra gli SHA completi esaminati e la copertura misurata del payload (`rr_coverage_summary`).
+- Timeout invariati: un timeout resta `TIMEOUT`, mai PASS.
+
+Guard: `tests/guardrails/test_ai_review_full_coverage_budget.py` (catena estratta dai workflow veri).
+
 ## Costi e anti-doppia-review
 
 - Ogni reviewer stima e riporta i token usati e un costo indicativo nel commento.
