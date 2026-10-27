@@ -286,8 +286,8 @@ def load_config(path: Optional[str]) -> Config:
 def _systemd_credential(path: str, st: os.stat_result) -> bool:
     """Credenziale di `LoadCredential` (systemd >= 255 la espone 0440, #562): ammessa SOLO se il file sta proprio
     nella directory `$CREDENTIALS_DIRECTORY` del servizio, la directory non e' scrivibile da gruppo o altri, il
-    proprietario e' root o l'utente del processo, il gruppo e' quello del processo e i permessi sono esattamente
-    0440. Qualsiasi altra combinazione resta rifiutata."""
+    proprietario del file e della directory e' root o l'utente del processo, il gruppo e' quello del processo e i
+    permessi sono esattamente 0440. Qualsiasi altra combinazione resta rifiutata."""
     creds = os.environ.get("CREDENTIALS_DIRECTORY", "")
     if not creds or not os.path.isabs(creds) or stat.S_IMODE(st.st_mode) != 0o440:
         return False
@@ -296,8 +296,11 @@ def _systemd_credential(path: str, st: os.stat_result) -> bool:
         dst = os.stat(cdir)
     except OSError:
         return False
+    # anche la directory deve essere di root o dell'utente del servizio: il suo proprietario potrebbe sostituirne i file
+    # (review su #571)
     return (os.path.realpath(os.path.dirname(os.path.abspath(path))) == cdir and stat.S_ISDIR(dst.st_mode)
-            and not dst.st_mode & 0o022 and st.st_uid in (0, os.geteuid()) and st.st_gid == os.getegid())
+            and dst.st_uid in (0, os.geteuid()) and not dst.st_mode & 0o022
+            and st.st_uid in (0, os.geteuid()) and st.st_gid == os.getegid())
 
 
 def read_secret_file(path: str, pattern: re.Pattern, label: str) -> str:
@@ -1268,14 +1271,15 @@ class Dispatcher:
             log(f"job {job['id']}: fallback non riuscito ({type(exc).__name__}): riprovo al prossimo giro")
 
     def advance(self, job: dict) -> None:
+        if self.dry_run:
+            # prima di ogni altro ramo, annullamenti pendenti compresi: in DRY-RUN nessun percorso reale (review su #571)
+            return self._dry_run(job)
         # Obbligo di annullamento persistente e indipendente dallo stato (rilievi Codex su #569): le build
         # rimaste da annullare si ritentano a ogni giro, qualunque cosa stia facendo il job.
         if job["state"] != "canceling" and json.loads(job.get("pending_cancels") or "[]"):
             self._cancel_or_remember(job, json.loads(job["pending_cancels"]))
         if job["state"] == "canceling":                # esito gia' pubblicato: resta solo l'annullamento
             return self._retry_cancels(job)
-        if self.dry_run:
-            return self._dry_run(job)
         if job["superseded"]:
             return self._supersede(job)
         state = job["state"]
@@ -1296,7 +1300,10 @@ class Dispatcher:
             env = " ".join(f"{k}={v}" for k, v in build_env(job).items())
             log(f"DRY-RUN job {job['id']}: creerei {GUARDS[job['guard']]['pipeline']} su main con {env}; "
                 f"pubblicherei pending su {job['head_sha']} ({GUARDS[job['guard']]['context']})")
-        self._set(job, state="done", outcome="dry_run", description="dry-run: nessuna build, nessuno status")
+        # nessuna build reale dietro un job di collaudo: gli annullamenti pendenti si azzerano, altrimenti `_set` lo
+        # terrebbe `canceling` e ritenterebbe un annullamento verso Buildkite
+        self._set(job, state="done", outcome="dry_run", pending_cancels="[]",
+                  description="dry-run: nessuna build, nessuno status")
 
     def _set(self, job: dict, **fields: Any) -> None:
         # Invariante in un solo punto: nessun job passa a uno stato finale con build ancora da annullare; resta

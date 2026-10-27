@@ -5187,8 +5187,8 @@
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
-      "original": "        if self.dry_run:\n            return self._dry_run(job)",
-      "mutated": "        if False:\n            return self._dry_run(job)",
+      "original": "        if self.dry_run:\n            # prima di ogni altro ramo",
+      "mutated": "        if False:\n            # prima di ogni altro ramo",
       "rationale": "#562 DRY-RUN: i job seguono il percorso reale (creazione build) durante il collaudo."
     },
     {
@@ -5247,8 +5247,8 @@
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
-      "original": "            and not dst.st_mode & 0o022 and st.st_uid in (0, os.geteuid()) and st.st_gid == os.getegid())",
-      "mutated": "            and st.st_uid in (0, os.geteuid()) and st.st_gid == os.getegid())",
+      "original": "            and dst.st_uid in (0, os.geteuid()) and not dst.st_mode & 0o022\n",
+      "mutated": "            and dst.st_uid in (0, os.geteuid())\n",
       "rationale": "#562: directory delle credenziali scrivibile da gruppo o altri accettata."
     },
     {
@@ -5259,9 +5259,33 @@
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
-      "original": "            and not dst.st_mode & 0o022 and st.st_uid in (0, os.geteuid()) and st.st_gid == os.getegid())",
-      "mutated": "            and not dst.st_mode & 0o022 and st.st_uid in (0, os.geteuid()))",
+      "original": "            and st.st_uid in (0, os.geteuid()) and st.st_gid == os.getegid())",
+      "mutated": "            and st.st_uid in (0, os.geteuid()))",
       "rationale": "#562: credenziale 0440 di un altro gruppo accettata."
+    },
+    {
+      "id": "td_systemd_credential_dir_foreign_owner",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "            and dst.st_uid in (0, os.geteuid()) and not dst.st_mode & 0o022\n",
+      "mutated": "            and not dst.st_mode & 0o022\n",
+      "rationale": "#571 review: directory delle credenziali di un proprietario estraneo accettata (puo' sostituirne i file)."
+    },
+    {
+      "id": "td_dry_run_keeps_pending_cancels",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "        self._set(job, state=\"done\", outcome=\"dry_run\", pending_cancels=\"[]\",",
+      "mutated": "        self._set(job, state=\"done\", outcome=\"dry_run\",",
+      "rationale": "#571 review: in DRY-RUN un job con annullamenti pendenti resta canceling e ritenta l'annullamento verso Buildkite."
     },
     {
       "id": "td_redelivery_stale_head",

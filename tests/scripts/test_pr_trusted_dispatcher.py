@@ -2299,6 +2299,24 @@ def test_dry_run_buildkite_client_cannot_write_even_if_called(dry, call):
     assert _writes(bk) == []
 
 
+@pytest.mark.parametrize("state", ["dispatched", "canceling", "publishing"])
+def test_dry_run_job_with_pending_cancels_never_takes_the_real_path(dry, state):
+    """Review indipendente su #571: in `advance` il ramo `pending_cancels`/`canceling` precedeva `dry_run`. Un job
+    con annullamenti pendenti (archivio di collaudo ereditato o corrotto) deve chiudersi come DRY-RUN, senza nemmeno
+    tentare l'annullamento verso Buildkite."""
+    disp, bk, pub, clock, _ = dry
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    job = disp.store.recent_jobs()[0]
+    disp.store.update_job(job["id"], clock.now, state=state, build_number=7, pending_cancels="[7]")
+    attempts = []
+    disp.bk.cancel_build = lambda guard, number: attempts.append((guard, number))   # nessun tentativo ammesso
+    disp.tick()
+    fresh = disp.store.get_job(job["id"])
+    assert attempts == [] and _writes(bk) == [] and pub.calls == []
+    assert fresh["state"] == "done" and fresh["outcome"] == "dry_run" and fresh["pending_cancels"] == "[]"
+
+
 def test_dry_run_never_touches_the_real_state_archive(dry):
     _, _, _, _, cfg = dry
     assert not os.path.exists(cfg.state_db)                       # archivio reale mai creato ne' modificato
@@ -2372,12 +2390,17 @@ def test_group_readable_secret_outside_the_systemd_rules_is_refused(tmp_path, mo
         os.chmod(tmp_path / "credentials" / "pf-dispatch.service", 0o700)
 
 
-@pytest.mark.skipif(os.geteuid() != 0, reason="cambiare proprietario o gruppo richiede root")
-@pytest.mark.parametrize("field", ["owner", "group"])
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: -1)() != 0, reason="cambiare proprietario o gruppo richiede root")
+@pytest.mark.parametrize("field", ["owner", "group", "dir_owner"])
 def test_systemd_credential_owned_by_someone_else_is_refused(tmp_path, monkeypatch, field):
+    """Review indipendente su #571: anche la directory $CREDENTIALS_DIRECTORY deve essere di root o dell'utente del
+    servizio; il proprietario di una directory puo' sostituirne i file anche senza permessi di scrittura."""
     path = _credential(tmp_path, monkeypatch)
     try:
-        os.chown(path, 4242 if field == "owner" else -1, 4242 if field == "group" else -1)
+        if field == "dir_owner":
+            os.chown(os.path.dirname(path), 4242, -1)
+        else:
+            os.chown(path, 4242 if field == "owner" else -1, 4242 if field == "group" else -1)
         with pytest.raises(td.ConfigError):
             td.read_secret_file(path, td._TOKEN_RE, "buildkite.token_file")
     finally:
