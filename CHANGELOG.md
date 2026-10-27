@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 D1 — credenziale di systemd 255 `0440 root:root` letta via ACL (`scripts/pr_trusted_dispatcher.py`):**
+  il collaudo VPS di Grok (c.6450558425) ha mostrato che `LoadCredential` crea il file `root:root` nella directory
+  `0550 root:root` e lo rende leggibile al servizio con una voce ACL, mentre il controllo esigeva il gruppo del
+  processo: `check-config --check-secrets` e `serve --dry-run` uscivano `NOT CONFIGURED`. Ora il gruppo può essere
+  root o quello del processo e la ACL del file, letta sul descrittore aperto, deve ammettere solo root e il servizio,
+  senza permessi ad «altri»; ACL malformata o illeggibile ⇒ rifiutata. Restano invariati directory, proprietario,
+  permessi esattamente 0440, `O_NOFOLLOW` e 0400/0600 fuori da systemd. Test RED->GREEN e mutazioni nuove.
 - **#562 — dispatcher trusted: credenziali di systemd e modalità di collaudo (`scripts/pr_trusted_dispatcher.py`):**
   - `LoadCredential` di systemd 255 espone il token 0440: accettato solo nella directory `$CREDENTIALS_DIRECTORY` del
     servizio (directory di root o dell'utente del servizio e non scrivibile da gruppo o altri, file di root o

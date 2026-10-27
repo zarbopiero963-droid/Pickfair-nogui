@@ -37,6 +37,7 @@ Solo libreria standard. Nessun ordine Betfair, nessun accesso al codice delle PR
 from __future__ import annotations
 
 import argparse
+import errno
 import fcntl
 import http.client
 import json
@@ -45,6 +46,7 @@ import re
 import signal
 import sqlite3
 import stat
+import struct
 import subprocess  # nosec B404 - solo i comandi configurati (token, pubblicazione), argv senza shell
 import sys
 import threading
@@ -283,24 +285,58 @@ def load_config(path: Optional[str]) -> Config:
     return validate_config(raw)
 
 
-def _systemd_credential(path: str, st: os.stat_result) -> bool:
+_ACL_XATTR = "system.posix_acl_access"
+# voci di una ACL POSIX (formato xattr di Linux, versione 2): proprietario, utente nominativo, gruppo proprietario,
+# gruppo nominativo, mask, altri
+_ACL_USER_OBJ, _ACL_USER, _ACL_GROUP_OBJ, _ACL_GROUP, _ACL_MASK, _ACL_OTHER = 0x01, 0x02, 0x04, 0x08, 0x10, 0x20
+
+
+def _credential_acl_ok(acl: bytes, euid: int, egid: int) -> bool:
+    """ACL di una credenziale: utenti nominativi solo root o il servizio, gruppi nominativi solo root o il gruppo del
+    servizio, nessun permesso ad «altri». ACL malformata, di versione o con voci sconosciute => False."""
+    if len(acl) < 4 or (len(acl) - 4) % 8 or struct.unpack_from("<I", acl)[0] != 2:
+        return False
+    for off in range(4, len(acl), 8):
+        tag, perm, ident = struct.unpack_from("<HHI", acl, off)
+        if tag not in (_ACL_USER_OBJ, _ACL_USER, _ACL_GROUP_OBJ, _ACL_GROUP, _ACL_MASK, _ACL_OTHER):
+            return False
+        if (tag == _ACL_USER and ident not in (0, euid)) or (tag == _ACL_GROUP and ident not in (0, egid)):
+            return False
+        if tag == _ACL_OTHER and perm:
+            return False
+    return True
+
+
+def _systemd_credential(path: str, fd: int, st: os.stat_result) -> bool:
     """Credenziale di `LoadCredential` (systemd >= 255 la espone 0440, #562): ammessa SOLO se il file sta proprio
     nella directory `$CREDENTIALS_DIRECTORY` del servizio, la directory non e' scrivibile da gruppo o altri, il
-    proprietario del file e della directory e' root o l'utente del processo, il gruppo e' quello del processo e i
-    permessi sono esattamente 0440. Qualsiasi altra combinazione resta rifiutata."""
+    proprietario del file e della directory e' root o l'utente del processo, il gruppo e' root o quello del processo,
+    i permessi sono esattamente 0440 e l'eventuale ACL non concede la lettura a nessun altro. Su systemd 255 il file e'
+    root:root e il servizio lo legge tramite una voce ACL (D1, Grok su #562). Qualsiasi altra combinazione resta
+    rifiutata."""
     creds = os.environ.get("CREDENTIALS_DIRECTORY", "")
     if not creds or not os.path.isabs(creds) or stat.S_IMODE(st.st_mode) != 0o440:
         return False
+    euid, egid = os.geteuid(), os.getegid()
     try:
         cdir = os.path.realpath(creds)
         dst = os.stat(cdir)
     except OSError:
         return False
     # anche la directory deve essere di root o dell'utente del servizio: il suo proprietario potrebbe sostituirne i file
-    # (review su #571)
-    return (os.path.realpath(os.path.dirname(os.path.abspath(path))) == cdir and stat.S_ISDIR(dst.st_mode)
-            and dst.st_uid in (0, os.geteuid()) and not dst.st_mode & 0o022
-            and st.st_uid in (0, os.geteuid()) and st.st_gid == os.getegid())
+    # (review su #571). La sua mask ACL e' nei bit di gruppo, quindi `0o022` limita anche le voci nominative.
+    if not (os.path.realpath(os.path.dirname(os.path.abspath(path))) == cdir and stat.S_ISDIR(dst.st_mode)
+            and dst.st_uid in (0, euid) and not dst.st_mode & 0o022
+            and st.st_uid in (0, euid) and st.st_gid in (0, egid)):
+        return False
+    # i bit di gruppo di un file con ACL sono la mask: chi legge davvero lo dice la ACL, letta sul descrittore aperto
+    try:
+        acl = os.getxattr(fd, _ACL_XATTR)
+    except OSError as exc:
+        return exc.errno in (errno.ENODATA, errno.ENOTSUP)      # nessuna ACL: valgono proprietario e gruppo
+    except AttributeError:                                      # piattaforma senza xattr: niente systemd
+        return False
+    return _credential_acl_ok(acl, euid, egid)
 
 
 def read_secret_file(path: str, pattern: re.Pattern, label: str) -> str:
@@ -315,7 +351,7 @@ def read_secret_file(path: str, pattern: re.Pattern, label: str) -> str:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             raise ConfigError([f"{label}: non e' un file regolare"])
-        if st.st_mode & 0o077 and not _systemd_credential(path, st):
+        if st.st_mode & 0o077 and not _systemd_credential(path, fd, st):
             raise ConfigError([f"{label}: file accessibile a gruppo o altri (servono 0600/0400, oppure 0440 nella "
                                "directory $CREDENTIALS_DIRECTORY di systemd)"])
         if st.st_size > 16 * 1024:
