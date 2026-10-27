@@ -118,6 +118,8 @@ Senza mutazioni selezionate esce con 2. Le aree obbligatorie sono: `side`,
 `reconciliation`, `cashout`, `funds`, `money_management`, `live_safety`
 (kill switch, `live_enabled`, readiness, checklist del gate LIVE, quota del
 cashout nel safety layer).
+Le aree facoltative (`optional_areas` del catalogo) sono `trusted_gate` (guard della lane trusted) e
+`check_dedupe` (deduplica dei check run del controller, #566): si eseguono con `--module`.
 
 Il report di `mutation-guardrails.yml` si carica come `mutation-guardrails-report-<check_run_id>`: il master lancia la lane due volte nello stesso run (direttamente e tramite dynamic), e `upload-artifact@v4` rifiuta un secondo artifact con lo stesso nome. Ogni `file` e `tests` del catalogo deve essere un percorso relativo senza `..`, altrimenti il catalogo è rifiutato: la sandbox non si può scavalcare.
 

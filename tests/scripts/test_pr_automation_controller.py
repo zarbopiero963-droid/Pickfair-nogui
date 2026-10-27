@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, cast
 from unittest import TestCase
 
+import pytest
+
 import scripts.pr_automation_controller as controller
 
 ASSERTIONS = TestCase()
@@ -3044,11 +3046,14 @@ def test_current_head_failed_check_is_blocker():
 
 
 def test_newer_current_head_success_suppresses_older_duplicate_failure():
-    runs = [
-        _gh_run("Unit tests", "FAILURE", "head-new", run_id=1, started="2026-05-25T00:00:00Z"),
-        _gh_run("  Unit   tests ", "SUCCESS", "head-new", run_id=2, started="2026-05-25T00:01:00Z"),
-    ]
-    summary = controller.summarize_current_head_check_state("head-new", runs)
+    """Rerun dello stesso workflow run (stesso run id, job diverso): il tentativo nuovo sostituisce il vecchio. Con
+    run id diversi i due check sono concorrenti e il FAIL resta (#566,
+    test_dedupe_does_not_coalesce_distinct_workflow_runs_with_same_name)."""
+    old = _gh_run("Unit tests", "FAILURE", "head-new", run_id=1, started="2026-05-25T00:00:00Z")
+    new = _gh_run("  Unit   tests ", "SUCCESS", "head-new", run_id=1, started="2026-05-25T00:01:00Z")
+    new["id"] = 2
+    new["details_url"] = "https://github.com/org/repo/actions/runs/1/job/2"
+    summary = controller.summarize_current_head_check_state("head-new", [old, new])
     ASSERTIONS.assertEqual(summary["current_blocker_count"], 0)
     ASSERTIONS.assertEqual(summary["next_action"], "ready")
 
@@ -3312,7 +3317,9 @@ def test_dedupe_keeps_same_name_same_app_with_different_source_separate():
     ASSERTIONS.assertEqual(selected_ids, {443, 444})
 
 
-def test_dedupe_coalesces_true_duplicate_same_name_and_source():
+def test_dedupe_does_not_coalesce_distinct_workflow_runs_with_same_name():
+    """#566: stesso nome e stesso workflow, ma due workflow run diversi (435 e 436) sullo stesso SHA non sono un
+    tentativo e il suo rerun: il FAIL del primo resta visibile. Prima vinceva il piu' recente (PASS)."""
     runs = [
         _with_source(
             _gh_run("build", "FAILURE", "head-new", run_id=435, started="2026-05-25T00:00:00Z"),
@@ -3324,9 +3331,153 @@ def test_dedupe_coalesces_true_duplicate_same_name_and_source():
         ),
     ]
     deduped = controller.dedupe_github_check_runs("head-new", runs)
-    ASSERTIONS.assertEqual(len(deduped["selected_runs"]), 1)
-    ASSERTIONS.assertEqual(deduped["selected_runs"][0].get("id"), 436)
-    ASSERTIONS.assertEqual(deduped["ignored_duplicate_run_ids"], ["435"])
+    ASSERTIONS.assertEqual({c.get("id") for c in deduped["selected_runs"]}, {435, 436})
+    ASSERTIONS.assertEqual(deduped["ignored_duplicate_run_ids"], [])
+    summary = controller.summarize_current_head_check_state("head-new", runs)
+    ASSERTIONS.assertEqual(summary["category"], "workflow_failure")
+
+
+# --------------------------------------------------------------------------- #566: tentativo superato vs concorrente
+# Dati ricavati da run reali del repository (REST `commits/{sha}/check-runs`):
+# - rerun legittimo: run 40406913995 («Merge readiness» su 49518cc), tentativo 1 failure (check run 121867474194) e
+#   tentativo 2 success (121892751177), STESSA check suite 109519846723 e stesso run id nell'URL; `filter=latest`
+#   di GitHub restituisce solo il secondo;
+# - check concorrente: «overlap-check» su b4e6604 (#564), failure nella suite 109551022632 (run 40418753669,
+#   `pull_request`) e success nella suite 109551036228 (run 40418758994, `workflow_dispatch`).
+def _actions_check(name, state, head, *, run_id, job_id, suite, started, app="github-actions"):
+    check = {
+        "name": name,
+        "status": "completed" if state not in {"QUEUED", "IN_PROGRESS"} else state.lower(),
+        "conclusion": state,
+        "id": job_id,
+        "head_sha": head,
+        "details_url": f"https://github.com/o/r/actions/runs/{run_id}/job/{job_id}",
+        "started_at": started,
+        "app": {"slug": app, "name": app},
+    }
+    if suite is not None:
+        check["check_suite"] = {"id": suite}
+    return check
+
+
+HEAD_566 = "b" * 40
+
+
+def _rerun_pair(second_state):
+    first = _actions_check("Merge readiness", "FAILURE", HEAD_566, run_id=40406913995, job_id=121867474194,
+                           suite=109519846723, started="2026-10-26T21:46:27Z")
+    second = _actions_check("Merge readiness", second_state, HEAD_566, run_id=40406913995, job_id=121892751177,
+                            suite=109519846723, started="2026-10-26T22:41:23Z")
+    return first, second
+
+
+def _concurrent_pair(second_state, first_state="FAILURE"):
+    first = _actions_check("overlap-check", first_state, HEAD_566, run_id=40418753669, job_id=121907535096,
+                           suite=109551022632, started="2026-10-26T23:17:46Z")
+    second = _actions_check("overlap-check", second_state, HEAD_566, run_id=40418758994, job_id=121907558748,
+                            suite=109551036228, started="2026-10-26T23:18:32Z")
+    return first, second
+
+
+@pytest.mark.parametrize("order", [0, 1])
+def test_block_concurrent_pass_in_another_check_suite_never_masks_a_failure(order):
+    """Il caso reale di #564: un PASS manuale in un'altra check suite non cancella il FAIL del `pull_request`."""
+    runs = list(_concurrent_pair("SUCCESS"))
+    if order:
+        runs.reverse()
+    deduped = controller.dedupe_github_check_runs(HEAD_566, runs)
+    ASSERTIONS.assertEqual({c["id"] for c in deduped["selected_runs"]}, {121907535096, 121907558748})
+    ASSERTIONS.assertEqual(deduped["ignored_duplicate_run_ids"], [])
+    summary = controller.summarize_current_head_check_state(HEAD_566, runs)
+    ASSERTIONS.assertEqual(summary["category"], "workflow_failure")
+    ASSERTIONS.assertEqual(summary["current_blocker_count"], 1)
+    ASSERTIONS.assertNotEqual(summary["next_action"], "ready")
+
+
+@pytest.mark.parametrize("order", [0, 1])
+def test_pass_rerun_attempt_in_the_same_check_suite_supersedes_the_failure(order):
+    """Il caso reale di 49518cc: il tentativo 2 dello stesso workflow run sostituisce il tentativo 1, come fa
+    GitHub con `filter=latest`. Nessun blocco permanente dopo un rerun legittimo."""
+    runs = list(_rerun_pair("SUCCESS"))
+    if order:
+        runs.reverse()
+    deduped = controller.dedupe_github_check_runs(HEAD_566, runs)
+    ASSERTIONS.assertEqual([c["id"] for c in deduped["selected_runs"]], [121892751177])
+    ASSERTIONS.assertEqual(deduped["ignored_duplicate_run_ids"], ["121867474194"])
+    summary = controller.summarize_current_head_check_state(HEAD_566, runs)
+    ASSERTIONS.assertEqual(summary["category"], "ready")
+
+
+def test_pass_rerun_attempt_identified_by_workflow_run_url_when_suite_is_missing():
+    """Senza `check_suite` il tentativo si riconosce dal run id nell'URL di Actions."""
+    first, second = _rerun_pair("SUCCESS")
+    del first["check_suite"], second["check_suite"]
+    deduped = controller.dedupe_github_check_runs(HEAD_566, [first, second])
+    ASSERTIONS.assertEqual([c["id"] for c in deduped["selected_runs"]], [121892751177])
+    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [first, second])["category"], "ready")
+
+
+def test_block_unknown_attempt_identity_keeps_both_runs_fail_closed():
+    """Senza suite e senza URL di un workflow run non si puo' dimostrare che il PASS sia il rerun del FAIL."""
+    first, second = _concurrent_pair("SUCCESS")
+    for check in (first, second):
+        del check["check_suite"]
+        check["details_url"] = "https://ci.example.invalid/build"
+    summary = controller.summarize_current_head_check_state(HEAD_566, [first, second])
+    ASSERTIONS.assertEqual(summary["category"], "workflow_failure")
+
+
+def test_block_same_suite_id_from_another_app_is_not_a_rerun():
+    """L'id di una check suite vale dentro la sua app: stessa suite dichiarata ma app diversa = sorgente diversa."""
+    first, second = _rerun_pair("SUCCESS")
+    for check in (first, second):
+        check["workflow_name"] = "CI"
+        del check["details_url"]
+    second["app"] = {"slug": "other-ci", "name": "other-ci"}
+    summary = controller.summarize_current_head_check_state(HEAD_566, [first, second])
+    ASSERTIONS.assertEqual(summary["category"], "workflow_failure")
+
+
+@pytest.mark.parametrize("state,category", [
+    ("TIMED_OUT", "workflow_failure"),
+    ("ACTION_REQUIRED", "workflow_failure"),
+    ("CANCELLED", "workflow_cancelled"),
+    ("IN_PROGRESS", "workflow_pending"),
+    ("QUEUED", "workflow_pending"),
+])
+def test_block_concurrent_non_success_beside_a_pass_keeps_its_own_state(state, category):
+    """Un check concorrente fallito, scaduto, cancellato o pendente non sparisce accanto a un PASS."""
+    runs = list(_concurrent_pair("SUCCESS", first_state=state))
+    summary = controller.summarize_current_head_check_state(HEAD_566, runs)
+    ASSERTIONS.assertEqual(summary["category"], category)
+
+
+@pytest.mark.parametrize("state,category", [
+    ("IN_PROGRESS", "workflow_pending"),
+    ("CANCELLED", "workflow_cancelled"),
+    ("TIMED_OUT", "workflow_failure"),
+])
+def test_newer_attempt_of_the_same_run_decides_even_when_not_a_pass(state, category):
+    """Il rerun in corso, cancellato o scaduto sostituisce il tentativo precedente: mai un PASS per deduplica."""
+    runs = list(_rerun_pair(state))
+    summary = controller.summarize_current_head_check_state(HEAD_566, runs)
+    ASSERTIONS.assertEqual(summary["category"], category)
+    ASSERTIONS.assertNotEqual(summary["next_action"], "ready")
+
+
+@pytest.mark.parametrize("state", ["STARTUP_FAILURE", "SOMETHING_NEW"])
+def test_block_inconclusive_conclusion_is_never_ready(state):
+    """Una conclusione fuori dagli stati noti non e' un successo: fail-closed, intervento manuale."""
+    run = _actions_check("build", state, HEAD_566, run_id=1, job_id=2, suite=3, started="2026-10-26T00:00:00Z")
+    summary = controller.summarize_current_head_check_state(HEAD_566, [run])
+    ASSERTIONS.assertEqual(summary["category"], "current_head_inconclusive")
+    ASSERTIONS.assertEqual(summary["next_action"], "needs_manual")
+
+
+@pytest.mark.parametrize("state", ["SUCCESS", "NEUTRAL", "SKIPPED"])
+def test_pass_known_success_conclusions_are_ready(state):
+    run = _actions_check("build", state, HEAD_566, run_id=1, job_id=2, suite=3, started="2026-10-26T00:00:00Z")
+    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [run])["category"], "ready")
 
 
 def test_stale_newer_duplicate_same_source_does_not_suppress_current_head():

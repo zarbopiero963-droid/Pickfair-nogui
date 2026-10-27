@@ -34,6 +34,9 @@ FAIL_STATES = {"FAILURE", "ERROR", "ACTION_REQUIRED", "TIMED_OUT"}
 PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"}
 CANCELLED_STATES = {"CANCELLED", "CANCELED"}
 STALE_STATES = {"STALE"}
+#: Conclusioni che contano come esito positivo. Tutto cio' che non e' qui ne' negli insiemi sopra (es.
+#: `STARTUP_FAILURE`, valori nuovi o vuoti dopo il completamento) e' inconcludente: mai "ready" (#566).
+SUCCESS_STATES = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 
 SAFE_AUTOFIX_WORKFLOW = "277606083"
 AUTOFIX_COMMIT_ACTOR_ALLOWLIST = {"github-actions[bot]", "codex[bot]"}
@@ -1664,10 +1667,34 @@ def classify_github_check_run_staleness(pr_head_sha: str, check: dict[str, Any])
     }
 
 
+def github_check_app_identity(check: dict[str, Any]) -> str:
+    app = check.get("app") if isinstance(check.get("app"), dict) else {}
+    return normalize_github_check_source(first_nonempty(app.get("slug"), app.get("name"), check.get("app_name")))
+
+
+def github_check_attempt_identity(check: dict[str, Any]) -> str:
+    """Identita' del tentativo: la check suite (o, in mancanza, il workflow run di Actions) del check run.
+
+    I tentativi di uno stesso workflow run condividono suite e run id (verificato sul run reale 40406913995: tentativi
+    1 e 2 nella suite 109519846723), e GitHub con `filter=latest` mostra solo l'ultimo. Run diversi, anche dello
+    stesso workflow sullo stesso SHA, hanno suite diverse (#564, b4e6604). Vuota = non dimostrabile (#566)."""
+    suite = check.get("check_suite") if isinstance(check.get("check_suite"), dict) else {}
+    alt_suite = check.get("checkSuite") if isinstance(check.get("checkSuite"), dict) else {}
+    suite_id = str(first_nonempty(suite.get("id"), alt_suite.get("databaseId"), alt_suite.get("id")) or "").strip()
+    if suite_id:
+        return f"suite:{suite_id}"
+    run_id = run_id_from_check(check)
+    return f"run:{run_id}" if run_id else ""
+
+
 def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]]) -> dict[str, Any]:
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    """Un check run e' superato SOLO da un tentativo successivo della stessa app, sullo stesso SHA e nella stessa
+    check suite (o workflow run): e' il rerun. Check omonimi di suite diverse, di app diverse o di identita' non
+    dimostrabile sono concorrenti e restano tutti fra i `selected_runs`, cosi' un FAIL non diventa PASS per effetto
+    della deduplica (#566). Un FAIL concorrente si supera rilanciando il suo stesso workflow run."""
+    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for check in check_runs:
-        groups.setdefault(github_check_dedupe_key(check), []).append(check)
+        groups.setdefault(github_check_dedupe_key(check) + (github_check_app_identity(check),), []).append(check)
     selected: list[dict[str, Any]] = []
     ignored_stale: list[str] = []
     ignored_unknown: list[str] = []
@@ -1676,16 +1703,23 @@ def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]])
         ranked = sorted(runs, key=lambda run: _check_run_dedupe_key(pr_head_sha, run), reverse=True)
         kept = ranked[0]
         selected.append(kept)
+        kept_attempts = {(github_check_run_head(kept), github_check_attempt_identity(kept))}
         for old in ranked[1:]:
             run_id = stale_evidence_id_from_check(old)
             info = classify_github_check_run_staleness(pr_head_sha, old)
+            attempt = (github_check_run_head(old), github_check_attempt_identity(old))
             if info["category"] == "unknown_head":
                 ignored_unknown.append(run_id)
                 ignored_stale.append(run_id)
             elif info["stale"]:
                 ignored_stale.append(run_id)
+            elif attempt[1] and attempt in kept_attempts:
+                # tentativo precedente dello stesso run: si riporta l'id del check run, perche' il run id e' lo
+                # stesso del tentativo tenuto
+                ignored_dupes.append(str(first_nonempty(old.get("id"), old.get("databaseId")) or run_id))
             else:
-                ignored_dupes.append(run_id)
+                selected.append(old)
+                kept_attempts.add(attempt)
     return {
         "selected_runs": selected,
         "ignored_stale_run_ids": sorted_unique_ids(ignored_stale),
@@ -1760,6 +1794,7 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
     current_count = 0
     cancelled_without_rerun_count = 0
     stale_without_rerun_count = 0
+    inconclusive_count = 0
     for check in cast(list[dict[str, Any]], deduped["selected_runs"]):
         info = classify_github_check_run_staleness(pr_head_sha, check)
         if info["stale"]:
@@ -1772,6 +1807,10 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
             pending_count += 1
         if info["current_head"] and is_failure(check):
             blocker_count += 1
+        if info["current_head"] and check_state(check) not in (
+            SUCCESS_STATES | FAIL_STATES | PENDING_STATES | CANCELLED_STATES | STALE_STATES
+        ):
+            inconclusive_count += 1
         if info["current_head"] and is_cancelled(check) and not run_id_from_check(check):
             cancelled_without_rerun_count += 1
         if info["current_head"] and is_stale(check) and not run_id_from_check(check):
@@ -1785,6 +1824,12 @@ def summarize_current_head_check_state(pr_head_sha: str, check_runs: list[dict[s
         category, next_action, reason = "workflow_pending", "wait_pending", "current head checks still pending"
     elif blocker_count > 0:
         category, next_action, reason = "workflow_failure", "fix_current_head_checks", "current head failures present"
+    elif inconclusive_count > 0:
+        category, next_action, reason = (
+            "current_head_inconclusive",
+            "needs_manual",
+            "current head checks with an inconclusive conclusion",
+        )
     elif cast(list[str], rerun["rerun_run_ids"]):
         category, next_action, reason = "workflow_cancelled", "rerun_stale_checks", "rerunnable cancelled current head checks"
     elif cancelled_without_rerun_count > 0:

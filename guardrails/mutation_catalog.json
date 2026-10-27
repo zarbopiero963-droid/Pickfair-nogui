@@ -14,6 +14,7 @@
     "live_safety"
   ],
   "optional_areas": [
+    "check_dedupe",
     "trusted_gate"
   ],
   "mutations": [
@@ -4348,6 +4349,66 @@
         "tests/scripts/test_trusted_pr_guard.py"
       ],
       "rationale": "Token con a capo, spazi o caratteri di controllo mandato nell'header Authorization (iniezione di header)."
+    },
+    {
+      "id": "cd_concurrent_suite_coalesced",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "            elif attempt[1] and attempt in kept_attempts:",
+      "mutated": "            elif True:",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "#566: check omonimi di check suite diverse fusi nel piu' recente: un PASS concorrente maschera il FAIL."
+    },
+    {
+      "id": "cd_unknown_identity_coalesced",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "            elif attempt[1] and attempt in kept_attempts:",
+      "mutated": "            elif attempt in kept_attempts:",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "#566: identita' del tentativo non dimostrabile trattata come rerun: FAIL nascosto senza prova."
+    },
+    {
+      "id": "cd_app_not_in_key",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "        groups.setdefault(github_check_dedupe_key(check) + (github_check_app_identity(check),), []).append(check)",
+      "mutated": "        groups.setdefault(github_check_dedupe_key(check) + (\"\",), []).append(check)",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "#566: stessa suite dichiarata da un'altra app confusa con un rerun."
+    },
+    {
+      "id": "cd_run_url_fallback_lost",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "    return f\"run:{run_id}\" if run_id else \"\"",
+      "mutated": "    return \"\"",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "#566: senza check_suite il rerun dello stesso workflow run non viene riconosciuto (blocco permanente)."
+    },
+    {
+      "id": "cd_inconclusive_ready",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "            inconclusive_count += 1",
+      "mutated": "            pass",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "#566: conclusione inconcludente (STARTUP_FAILURE, valori nuovi) trattata come ready."
     }
   ]
 }

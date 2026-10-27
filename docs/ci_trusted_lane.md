@@ -212,6 +212,19 @@ logica: il job `overlap-check` (stesso nome del check di prima) esegue lo script
   - stesso isolamento del token del check obbligatorio.
   Merge readiness (`scripts/pr_flow_automation.split_checks`) legge ogni check run dell'head: un FAIL resta un
   bloccante anche se accanto c'è un PASS, diagnostico o con lo stesso nome; un test lo lega al codice.
+  Il controller (`scripts/pr_automation_controller.dedupe_github_check_runs`, #566) deduplica invece i check
+  omonimi, con questo criterio:
+  - **tentativo superato:** stesso nome, stessa sorgente, stessa app, stesso SHA e stessa check suite (o, senza
+    suite, stesso workflow run nell'URL di Actions). È il rerun: vince il tentativo più recente, qualunque sia il
+    suo esito (pending, cancelled, timed_out restano tali). Verificato sul run reale 40406913995 (`49518cc`): i
+    tentativi 1 e 2 stanno nella stessa suite 109519846723, e GitHub con `filter=latest` mostra solo il secondo;
+  - **check concorrente:** check suite diversa (un altro workflow run, anche dello stesso workflow sullo stesso
+    SHA), app diversa o identità del tentativo non dimostrabile. Restano tutti visibili: un FAIL concorrente non
+    diventa PASS per effetto della deduplica (il caso di `b4e6604` su #564);
+  - **niente blocchi permanenti:** un FAIL concorrente si supera rilanciando il suo stesso workflow run, che
+    produce un tentativo nella stessa suite;
+  - una conclusione fuori dagli stati noti (es. `STARTUP_FAILURE`) dà `current_head_inconclusive` e
+    `needs_manual`, mai `ready`. Contano come esito positivo solo `SUCCESS`, `NEUTRAL` e `SKIPPED`.
   Limite: GitHub esegue `workflow_dispatch` col file del workflow del ref scelto, quindi il blocco sul ref vale per
   il file di `main`. Una PR che modifica i workflow può cambiarli, ed è per questo che ogni workflow è a merge owner.
   Il required check si riconosce solo dal nome: un altro workflow aggiunto da una PR, uno status di commit o un'altra
