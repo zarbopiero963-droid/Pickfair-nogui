@@ -1667,40 +1667,27 @@ def classify_github_check_run_staleness(pr_head_sha: str, check: dict[str, Any])
     }
 
 
-def github_check_app_identity(check: dict[str, Any]) -> str:
-    app = check.get("app") if isinstance(check.get("app"), dict) else {}
-    return normalize_github_check_source(first_nonempty(app.get("slug"), app.get("name"), check.get("app_name")))
-
-
-def github_check_attempt_identity(check: dict[str, Any]) -> str:
-    """Identita' del tentativo: la check suite (o, in mancanza, il workflow run di Actions) del check run.
-
-    I tentativi di uno stesso workflow run condividono suite e run id (verificato sul run reale 40406913995: tentativi
-    1 e 2 nella suite 109519846723), e GitHub con `filter=latest` mostra solo l'ultimo. Run diversi, anche dello
-    stesso workflow sullo stesso SHA, hanno suite diverse (#564, b4e6604). Vuota = non dimostrabile (#566)."""
-    suite = check.get("check_suite") if isinstance(check.get("check_suite"), dict) else {}
-    alt_suite = check.get("checkSuite") if isinstance(check.get("checkSuite"), dict) else {}
-    suite_id = str(first_nonempty(suite.get("id"), alt_suite.get("databaseId"), alt_suite.get("id")) or "").strip()
-    if suite_id:
-        return f"suite:{suite_id}"
-    run_id = run_id_from_check(check)
-    return f"run:{run_id}" if run_id else ""
+def _check_run_identity(check: dict[str, Any]) -> str:
+    """Id del singolo check run (REST `id`, GraphQL `databaseId`); vuoto se assente."""
+    return str(first_nonempty(check.get("id"), check.get("databaseId")) or "").strip()
 
 
 def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]]) -> dict[str, Any]:
-    """Un check run e' superato SOLO da un tentativo successivo della stessa app, sullo stesso SHA e nella stessa
-    check suite (o workflow run): e' il rerun. Check omonimi di suite diverse, di app diverse o di identita' non
-    dimostrabile sono concorrenti e restano tutti fra i `selected_runs`, cosi' un FAIL non diventa PASS per effetto
-    della deduplica (#566). Un FAIL concorrente si supera rilanciando il suo stesso workflow run.
+    """Deduplica fail-closed (#566): sull'head corrente nessun check run omonimo viene scartato, salvo la copia
+    esatta dello stesso check run (stesso id, per esempio da pagine sovrapposte). Restano scartati solo i run di uno
+    SHA vecchio o senza SHA (come prima). Un FAIL non diventa quindi mai PASS per effetto della deduplica.
 
-    Dentro la stessa suite due job omonimi possono essere fratelli (anche sequenziali, con `needs:`), non tentativi:
-    ne' l'ordine ne' i tempi lo dimostrano, ed `external_id` cambia a ogni tentativo. Percio' un run e' superato solo
-    se porta un `run_attempt` esplicito (API Jobs) minore di quello di un run tenuto della stessa identita'; senza
-    numero di tentativo restano tutti. L'API dei check run con `filter=latest` (il default) esclude gia' da se' i
-    tentativi superati: e' la fonte da usare (review GPT-6.1 Sol su #568)."""
-    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    Perche' nessun criterio di "tentativo superato" qui: dai dati dei check run non si dimostra che due run omonimi
+    siano lo stesso job. Run diversi, anche dello stesso workflow, stanno in suite diverse (#564, b4e6604); dentro la
+    stessa suite possono esserci job fratelli omonimi, anche sequenziali; `run_attempt` identifica il tentativo del
+    workflow e non il job (rilanciare un solo job fratello lo farebbe sembrare un rerun dell'altro); `external_id`
+    cambia a ogni tentativo. Lo sa solo GitHub: `GET commits/{sha}/check-runs` con `filter=latest`, il default,
+    restituisce gia' soltanto l'ultimo tentativo di ogni job (verificato sul run reale 40406913995 di 49518cc).
+    Con quei dati un rerun legittimo non blocca; con `filter=all` la storia resta visibile e blocca (review GPT-6.1
+    Sol su #568, tre giri)."""
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for check in check_runs:
-        groups.setdefault(github_check_dedupe_key(check) + (github_check_app_identity(check),), []).append(check)
+        groups.setdefault(github_check_dedupe_key(check), []).append(check)
     selected: list[dict[str, Any]] = []
     ignored_stale: list[str] = []
     ignored_unknown: list[str] = []
@@ -1709,50 +1696,28 @@ def dedupe_github_check_runs(pr_head_sha: str, check_runs: list[dict[str, Any]])
         ranked = sorted(runs, key=lambda run: _check_run_dedupe_key(pr_head_sha, run), reverse=True)
         kept = ranked[0]
         selected.append(kept)
-        kept_attempts: dict[tuple[str, str], list[int]] = {}
-        _remember_attempt(kept_attempts, kept)
+        kept_ids = {_check_run_identity(kept)} - {""}
         for old in ranked[1:]:
             run_id = stale_evidence_id_from_check(old)
             info = classify_github_check_run_staleness(pr_head_sha, old)
-            attempt = (github_check_run_head(old), github_check_attempt_identity(old))
+            identity = _check_run_identity(old)
             if info["category"] == "unknown_head":
                 ignored_unknown.append(run_id)
                 ignored_stale.append(run_id)
             elif info["stale"]:
                 ignored_stale.append(run_id)
-            elif attempt[1] and _is_earlier_attempt(old, kept_attempts.get(attempt, [])):
+            elif identity and identity in kept_ids:
                 ignored_dupes.append(run_id)
             else:
                 selected.append(old)
-                _remember_attempt(kept_attempts, old)
+                if identity:
+                    kept_ids.add(identity)
     return {
         "selected_runs": selected,
         "ignored_stale_run_ids": sorted_unique_ids(ignored_stale),
         "ignored_unknown_run_ids": sorted_unique_ids(ignored_unknown),
         "ignored_duplicate_run_ids": sorted_unique_ids(ignored_dupes),
     }
-
-
-def _check_run_attempt(check: dict[str, Any]) -> int:
-    """Numero del tentativo del workflow run (1, 2, ...), se dichiarato; 0 = sconosciuto."""
-    value = first_nonempty(check.get("run_attempt"), check.get("runAttempt"))
-    if isinstance(value, bool):
-        return 0
-    return safe_nonnegative_int(value, 0)
-
-
-def _remember_attempt(kept_attempts: dict[tuple[str, str], list[int]], check: dict[str, Any]) -> None:
-    attempt = (github_check_run_head(check), github_check_attempt_identity(check))
-    kept_attempts.setdefault(attempt, []).append(_check_run_attempt(check))
-
-
-def _is_earlier_attempt(old: dict[str, Any], kept_attempts: list[int]) -> bool:
-    """Vero solo se `old` dichiara un tentativo minore di quello di un run tenuto della stessa identita'.
-    Numero mancante da una delle due parti => falso (fail-closed: restano tutti e due)."""
-    old_attempt = _check_run_attempt(old)
-    if old_attempt < 1:
-        return False
-    return any(kept >= 1 and old_attempt < kept for kept in kept_attempts)
 
 
 def _check_run_priority(pr_head_sha: str, check: dict[str, Any]) -> int:

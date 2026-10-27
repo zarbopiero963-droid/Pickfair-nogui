@@ -212,28 +212,25 @@ logica: il job `overlap-check` (stesso nome del check di prima) esegue lo script
   - stesso isolamento del token del check obbligatorio.
   Merge readiness (`scripts/pr_flow_automation.split_checks`) legge ogni check run dell'head: un FAIL resta un
   bloccante anche se accanto c'è un PASS, diagnostico o con lo stesso nome; un test lo lega al codice.
-  Il controller (`scripts/pr_automation_controller.dedupe_github_check_runs`, #566) deduplica invece i check
-  omonimi, con questo criterio:
-  - **tentativo superato:** stesso nome, stessa sorgente, stessa app, stesso SHA e stessa check suite (o, senza
-    suite, stesso workflow run nell'URL di Actions), **e un `run_attempt` esplicito minore** di quello del run tenuto
-    (il numero del tentativo viene dall'API Jobs). È il rerun: vince il tentativo più recente, qualunque sia il suo
-    esito (pending, cancelled, timed_out restano tali). Ordine e tempi non bastano: due job omonimi della stessa suite
-    possono essere fratelli, anche in sequenza (`needs:`), ed `external_id` cambia fra i tentativi. Senza numero di
-    tentativo, o con uno illeggibile, restano tutti (rilievo GPT-6.1 Sol su #568);
-  - **fonte consigliata:** `GET commits/{sha}/check-runs` con `filter=latest` (il default di GitHub) esclude già i
-    tentativi superati; con `filter=all` servono i `run_attempt`. Verificato sul run reale 40406913995 (`49518cc`): i
-    tentativi 1 e 2 stanno nella stessa suite 109519846723, e GitHub con `filter=latest` mostra solo il secondo;
-  - **check concorrente:** check suite diversa (un altro workflow run, anche dello stesso workflow sullo stesso
-    SHA), app diversa o identità del tentativo non dimostrabile. Restano tutti visibili: un FAIL concorrente non
-    diventa PASS per effetto della deduplica (il caso di `b4e6604` su #564);
-  - **niente blocchi permanenti:** un FAIL concorrente si supera rilanciando il suo stesso workflow run, che
-    produce un tentativo nella stessa suite e, con `filter=latest`, sostituisce il precedente;
+  Il controller (`scripts/pr_automation_controller.dedupe_github_check_runs`, #566) non scarta più nessun check run
+  dell'head corrente, salvo la copia esatta della stessa check run (stesso `id`/`databaseId`, per esempio da pagine
+  sovrapposte). Continua a ignorare i run di uno SHA vecchio o senza SHA. Così un FAIL non diventa mai PASS per
+  effetto della deduplica. Motivo, verificato su dati reali:
+  - run diversi, anche dello stesso workflow sullo stesso SHA, stanno in check suite diverse (`b4e6604` su #564);
+  - dentro la stessa suite possono esserci job fratelli con lo stesso nome, anche in sequenza (`needs:`);
+  - `run_attempt` identifica il tentativo del workflow, non il job: rilanciando un solo fratello sembrerebbe il rerun
+    dell'altro; `external_id` cambia a ogni tentativo (run 40406913995 su `49518cc`).
+
+  Dai dati dei check run non si può quindi dimostrare che due run omonimi siano lo stesso job. Lo sa solo GitHub:
+  - **fonte prevista:** `GET commits/{sha}/check-runs` con `filter=latest` (il default) restituisce solo l'ultimo
+    tentativo di ogni job. Sul run 40406913995 dà soltanto il tentativo 2. Con questi dati un rerun legittimo non
+    lascia blocchi, e un FAIL concorrente si supera rilanciando il suo workflow run;
+  - **con `filter=all`** la storia resta visibile e il tentativo fallito blocca: è il comportamento voluto;
   - una conclusione fuori dagli stati noti (es. `STARTUP_FAILURE`, `EXPECTED` di GraphQL, un completato senza
     conclusione) dà `current_head_inconclusive` e `needs_manual`, mai `ready`. Contano come esito positivo solo
     `SUCCESS`, `NEUTRAL` e `SKIPPED`;
-  - limiti dichiarati, tutti verso il blocco e mai verso il PASS: con `filter=all` senza `run_attempt` un FAIL
-    superato resta visibile; dati misti (suite presente su un tentativo e assente sull'altro, `app` su uno solo)
-    tengono entrambi i tentativi; un run concorrente cancellato accanto a un PASS chiede un rerun invece di sparire. Le tre funzioni oggi sono usate solo dai test e dal controller stesso.
+  - oggi le tre funzioni sono usate solo dai test e dal controller stesso; un futuro chiamante deve leggere i check
+    run con `filter=latest`.
   Limite: GitHub esegue `workflow_dispatch` col file del workflow del ref scelto, quindi il blocco sul ref vale per
   il file di `main`. Una PR che modifica i workflow può cambiarli, ed è per questo che ogni workflow è a merge owner.
   Il required check si riconosce solo dal nome: un altro workflow aggiunto da una PR, uno status di commit o un'altra

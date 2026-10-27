@@ -4351,54 +4351,6 @@
       "rationale": "Token con a capo, spazi o caratteri di controllo mandato nell'header Authorization (iniezione di header)."
     },
     {
-      "id": "cd_concurrent_suite_coalesced",
-      "module": "scripts.pr_automation_controller",
-      "area": "check_dedupe",
-      "file": "scripts/pr_automation_controller.py",
-      "original": "            elif attempt[1] and _is_earlier_attempt(old, kept_attempts.get(attempt, [])):",
-      "mutated": "            elif True:",
-      "tests": [
-        "tests/scripts/test_pr_automation_controller.py"
-      ],
-      "rationale": "#566: check omonimi di check suite diverse fusi nel piu' recente: un PASS concorrente maschera il FAIL."
-    },
-    {
-      "id": "cd_unknown_identity_coalesced",
-      "module": "scripts.pr_automation_controller",
-      "area": "check_dedupe",
-      "file": "scripts/pr_automation_controller.py",
-      "original": "            elif attempt[1] and _is_earlier_attempt(old, kept_attempts.get(attempt, [])):",
-      "mutated": "            elif _is_earlier_attempt(old, kept_attempts.get(attempt, [])):",
-      "tests": [
-        "tests/scripts/test_pr_automation_controller.py"
-      ],
-      "rationale": "#566: identita' del tentativo non dimostrabile trattata come rerun: FAIL nascosto senza prova."
-    },
-    {
-      "id": "cd_app_not_in_key",
-      "module": "scripts.pr_automation_controller",
-      "area": "check_dedupe",
-      "file": "scripts/pr_automation_controller.py",
-      "original": "        groups.setdefault(github_check_dedupe_key(check) + (github_check_app_identity(check),), []).append(check)",
-      "mutated": "        groups.setdefault(github_check_dedupe_key(check) + (\"\",), []).append(check)",
-      "tests": [
-        "tests/scripts/test_pr_automation_controller.py"
-      ],
-      "rationale": "#566: stessa suite dichiarata da un'altra app confusa con un rerun."
-    },
-    {
-      "id": "cd_run_url_fallback_lost",
-      "module": "scripts.pr_automation_controller",
-      "area": "check_dedupe",
-      "file": "scripts/pr_automation_controller.py",
-      "original": "    return f\"run:{run_id}\" if run_id else \"\"",
-      "mutated": "    return \"\"",
-      "tests": [
-        "tests/scripts/test_pr_automation_controller.py"
-      ],
-      "rationale": "#566: senza check_suite il rerun dello stesso workflow run non viene riconosciuto (blocco permanente)."
-    },
-    {
       "id": "cd_inconclusive_ready",
       "module": "scripts.pr_automation_controller",
       "area": "check_dedupe",
@@ -4411,40 +4363,40 @@
       "rationale": "#566: conclusione inconcludente (STARTUP_FAILURE, valori nuovi) trattata come ready."
     },
     {
-      "id": "cd_kept_attempt_not_remembered",
+      "id": "cd_current_head_dropped",
       "module": "scripts.pr_automation_controller",
       "area": "check_dedupe",
       "file": "scripts/pr_automation_controller.py",
-      "original": "                _remember_attempt(kept_attempts, old)",
-      "mutated": "                pass",
+      "original": "            elif identity and identity in kept_ids:",
+      "mutated": "            elif True:",
       "tests": [
         "tests/scripts/test_pr_automation_controller.py"
       ],
-      "rationale": "review indipendente su #568: le suite concorrenti rilanciate entrambe restano bloccate (falso blocco permanente)."
+      "rationale": "#566: run omonimi dell'head corrente scartati per deduplica: un PASS (concorrente, fratello o rerun parziale) nasconde il FAIL."
     },
     {
-      "id": "cd_same_attempt_coalesced",
+      "id": "cd_exact_copy_kept",
       "module": "scripts.pr_automation_controller",
       "area": "check_dedupe",
       "file": "scripts/pr_automation_controller.py",
-      "original": "    return any(kept >= 1 and old_attempt < kept for kept in kept_attempts)",
-      "mutated": "    return any(kept >= 1 and old_attempt <= kept for kept in kept_attempts)",
+      "original": "                ignored_dupes.append(run_id)",
+      "mutated": "                selected.append(old)",
       "tests": [
         "tests/scripts/test_pr_automation_controller.py"
       ],
-      "rationale": "rilievo GPT-6.1 Sol su #568: due job omonimi sequenziali dello stesso tentativo trattati come rerun: il PASS del fratello nasconde il FAIL."
+      "rationale": "#566: la copia esatta della stessa check run non viene riconosciuta come duplicato."
     },
     {
-      "id": "cd_missing_attempt_coalesced",
+      "id": "cd_kept_id_not_remembered",
       "module": "scripts.pr_automation_controller",
       "area": "check_dedupe",
       "file": "scripts/pr_automation_controller.py",
-      "original": "    if old_attempt < 1:\n        return False",
-      "mutated": "    if False:\n        return False",
+      "original": "                    kept_ids.add(identity)",
+      "mutated": "                    pass",
       "tests": [
         "tests/scripts/test_pr_automation_controller.py"
       ],
-      "rationale": "#568: un run senza numero di tentativo trattato come superato: FAIL nascosto senza prova."
+      "rationale": "#566: la copia di un run concorrente tenuto non viene riconosciuta come duplicato."
     }
   ]
 }

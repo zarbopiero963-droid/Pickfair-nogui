@@ -3046,16 +3046,16 @@ def test_current_head_failed_check_is_blocker():
 
 
 def test_newer_current_head_success_suppresses_older_duplicate_failure():
-    """Rerun dello stesso workflow run (stesso run id, job diverso): il tentativo nuovo sostituisce il vecchio. Con
-    run id diversi i due check sono concorrenti e il FAIL resta (#566,
-    test_dedupe_does_not_coalesce_distinct_workflow_runs_with_same_name)."""
+    """Il PASS piu' recente non nasconde un FAIL dello stesso nome sull'head corrente (#566): con la storia completa
+    restano entrambi; con `filter=latest` (default di GitHub) arriva solo l'ultimo tentativo ed e' `ready`."""
     old = _gh_run("Unit tests", "FAILURE", "head-new", run_id=1, started="2026-05-25T00:00:00Z",
                   completed="2026-05-25T00:00:30Z")
     new = _gh_run("  Unit   tests ", "SUCCESS", "head-new", run_id=1, started="2026-05-25T00:01:00Z")
-    old["run_attempt"], new["run_attempt"] = 1, 2
     new["id"] = 2
     new["details_url"] = "https://github.com/org/repo/actions/runs/1/job/2"
-    summary = controller.summarize_current_head_check_state("head-new", [old, new])
+    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state("head-new", [old, new])["category"],
+                           "workflow_failure")
+    summary = controller.summarize_current_head_check_state("head-new", [new])
     ASSERTIONS.assertEqual(summary["current_blocker_count"], 0)
     ASSERTIONS.assertEqual(summary["next_action"], "ready")
 
@@ -3405,26 +3405,90 @@ def test_block_concurrent_pass_in_another_check_suite_never_masks_a_failure(orde
 
 
 @pytest.mark.parametrize("order", [0, 1])
-def test_pass_rerun_attempt_in_the_same_check_suite_supersedes_the_failure(order):
-    """Il caso reale di 49518cc: il tentativo 2 dello stesso workflow run sostituisce il tentativo 1, come fa
-    GitHub con `filter=latest`. Nessun blocco permanente dopo un rerun legittimo."""
+def test_block_filter_all_history_keeps_the_failed_attempt(order):
+    """Con `filter=all` il tentativo vecchio e' presente: senza prova che sia lo stesso job il FAIL resta (#568,
+    rilievo GPT-6.1 Sol). Nessun run dell'head corrente e' scartato."""
     runs = list(_rerun_pair("SUCCESS"))
     if order:
         runs.reverse()
     deduped = controller.dedupe_github_check_runs(HEAD_566, runs)
-    ASSERTIONS.assertEqual([c["id"] for c in deduped["selected_runs"]], [121892751177])
-    ASSERTIONS.assertEqual(deduped["ignored_duplicate_run_ids"], ["40406913995"])
+    ASSERTIONS.assertEqual({c["id"] for c in deduped["selected_runs"]}, {121867474194, 121892751177})
+    ASSERTIONS.assertEqual(deduped["ignored_duplicate_run_ids"], [])
+    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, runs)["category"],
+                           "workflow_failure")
+
+
+def test_pass_filter_latest_input_after_a_legitimate_rerun_is_ready():
+    """La fonte prevista: `check-runs?filter=latest` (default di GitHub) restituisce solo il tentativo piu' recente di
+    ogni job (run reale 40406913995: solo 121892751177). Un rerun legittimo non lascia blocchi."""
+    _first, second = _rerun_pair("SUCCESS")
+    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [second])["category"], "ready")
+
+
+def test_pass_two_concurrent_suites_both_rerun_with_filter_latest_are_ready():
+    """Entrambe le suite rilanciate: `filter=latest` porta i due tentativi nuovi, nessun blocco falso."""
+    a1, b1 = _concurrent_pair("FAILURE")
+    a2 = dict(a1, id=1, conclusion="SUCCESS", details_url="https://github.com/o/r/actions/runs/40418753669/job/1")
+    b2 = dict(b1, id=2, conclusion="SUCCESS", details_url="https://github.com/o/r/actions/runs/40418758994/job/2")
+    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [a2, b2])["category"], "ready")
+
+
+def test_block_rerunning_only_the_passing_sibling_keeps_the_failing_one():
+    """Rilievo GPT-6.1 Sol su #568: due job omonimi nella stessa suite, FAIL e PASS; si rilancia solo il PASS. Il
+    FAIL, mai rilanciato, non sparisce (`run_attempt` e' del workflow, non del job)."""
+    fail = _actions_check("build", "FAILURE", HEAD_566, run_id=7, job_id=71, suite=70, attempt=1,
+                          started="2026-10-26T10:00:00Z", completed="2026-10-26T10:01:00Z")
+    ok1 = _actions_check("build", "SUCCESS", HEAD_566, run_id=7, job_id=72, suite=70, attempt=1,
+                         started="2026-10-26T10:00:00Z", completed="2026-10-26T10:01:00Z")
+    ok2 = _actions_check("build", "SUCCESS", HEAD_566, run_id=7, job_id=73, suite=70, attempt=2,
+                         started="2026-10-26T11:00:00Z", completed="2026-10-26T11:01:00Z")
+    for runs in ([fail, ok1, ok2], [ok2, ok1, fail]):
+        ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, runs)["category"],
+                               "workflow_failure")
+
+
+@pytest.mark.parametrize("state,category", [
+    ("IN_PROGRESS", "workflow_pending"),
+    ("CANCELLED", "workflow_failure"),
+    ("TIMED_OUT", "workflow_failure"),
+])
+def test_block_failed_attempt_stays_visible_whatever_the_newer_state(state, category):
+    """Con la storia completa il FAIL resta: un tentativo nuovo in corso, cancellato o scaduto non lo nasconde."""
+    runs = list(_rerun_pair(state))
     summary = controller.summarize_current_head_check_state(HEAD_566, runs)
-    ASSERTIONS.assertEqual(summary["category"], "ready")
+    ASSERTIONS.assertEqual(summary["category"], category)
+    ASSERTIONS.assertNotEqual(summary["next_action"], "ready")
 
 
-def test_pass_rerun_attempt_identified_by_workflow_run_url_when_suite_is_missing():
-    """Senza `check_suite` il tentativo si riconosce dal run id nell'URL di Actions."""
+@pytest.mark.parametrize("key", ["id", "databaseId"])
+def test_pass_exact_copy_of_the_same_check_run_is_coalesced(key):
+    """La stessa check run ripetuta (pagine sovrapposte, REST `id` o GraphQL `databaseId`) e' un vero duplicato."""
+    _first, run = _rerun_pair("SUCCESS")
+    if key == "databaseId":
+        run["databaseId"] = run.pop("id")
+    deduped = controller.dedupe_github_check_runs(HEAD_566, [run, dict(run)])
+    ASSERTIONS.assertEqual(len(deduped["selected_runs"]), 1)
+    ASSERTIONS.assertEqual(deduped["ignored_duplicate_run_ids"], ["40406913995"])
+    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [run, dict(run)])["category"],
+                           "ready")
+
+
+def test_pass_copy_of_a_concurrent_run_is_coalesced_and_the_failure_stays():
+    """Copia esatta del run concorrente piu' vecchio (non il primo tenuto): si scarta la copia, restano FAIL e PASS."""
+    first, second = _concurrent_pair("SUCCESS")
+    runs = [first, second, dict(first)]
+    deduped = controller.dedupe_github_check_runs(HEAD_566, runs)
+    ASSERTIONS.assertEqual(sorted(c["id"] for c in deduped["selected_runs"]), [121907535096, 121907558748])
+    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, runs)["category"],
+                           "workflow_failure")
+
+
+def test_block_copies_without_any_check_run_id_are_not_coalesced():
+    """Senza id non si dimostra che due run siano la stessa check run: restano entrambi."""
     first, second = _rerun_pair("SUCCESS")
-    del first["check_suite"], second["check_suite"]
-    deduped = controller.dedupe_github_check_runs(HEAD_566, [first, second])
-    ASSERTIONS.assertEqual([c["id"] for c in deduped["selected_runs"]], [121892751177])
-    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [first, second])["category"], "ready")
+    for check in (first, second):
+        del check["id"]
+    ASSERTIONS.assertEqual(len(controller.dedupe_github_check_runs(HEAD_566, [first, second])["selected_runs"]), 2)
 
 
 def test_block_unknown_attempt_identity_keeps_both_runs_fail_closed():
@@ -3463,25 +3527,6 @@ def test_block_concurrent_non_success_beside_a_pass_keeps_its_own_state(state, c
     ASSERTIONS.assertEqual(summary["category"], category)
 
 
-@pytest.mark.parametrize("state,category", [
-    ("IN_PROGRESS", "workflow_pending"),
-    ("CANCELLED", "workflow_cancelled"),
-    ("TIMED_OUT", "workflow_failure"),
-])
-def test_newer_attempt_of_the_same_run_decides_even_when_not_a_pass(state, category):
-    """Il rerun in corso, cancellato o scaduto sostituisce il tentativo precedente: mai un PASS per deduplica."""
-    runs = list(_rerun_pair(state))
-    summary = controller.summarize_current_head_check_state(HEAD_566, runs)
-    ASSERTIONS.assertEqual(summary["category"], category)
-    ASSERTIONS.assertNotEqual(summary["next_action"], "ready")
-
-
-def test_pass_filter_latest_input_needs_no_dedupe():
-    """La fonte consigliata: `check-runs?filter=latest` (default di GitHub) restituisce solo il tentativo piu' recente."""
-    _first, second = _rerun_pair("SUCCESS")
-    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [second])["category"], "ready")
-
-
 def test_block_sibling_jobs_with_the_same_name_in_one_run_are_not_attempts():
     """Due job omonimi dello stesso workflow run (stessa suite) che si sovrappongono nel tempo sono fratelli, non
     tentativi: il FAIL del primo resta (review indipendente su #568)."""
@@ -3494,18 +3539,6 @@ def test_block_sibling_jobs_with_the_same_name_in_one_run_are_not_attempts():
                                "workflow_failure")
 
 
-@pytest.mark.parametrize("missing", ["old", "new", "both"])
-def test_block_missing_run_attempt_is_not_proof_of_a_rerun(missing):
-    """Senza numero di tentativo da una delle due parti non si dimostra il rerun: restano entrambi."""
-    first, second = _rerun_pair("SUCCESS")
-    if missing in {"old", "both"}:
-        del first["run_attempt"]
-    if missing in {"new", "both"}:
-        del second["run_attempt"]
-    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [first, second])["category"],
-                           "workflow_failure")
-
-
 def test_block_sequential_sibling_jobs_with_the_same_name_are_not_attempts():
     """Rilievo GPT-6.1 Sol su #568: due job omonimi della stessa suite in sequenza (`needs:`, runner unico), il FAIL
     finito prima che cominci il PASS. Stesso tentativo (1): nessuno dei due supera l'altro."""
@@ -3516,37 +3549,6 @@ def test_block_sequential_sibling_jobs_with_the_same_name_are_not_attempts():
     for runs in ([fail, ok], [ok, fail]):
         ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, runs)["category"],
                                "workflow_failure")
-
-
-@pytest.mark.parametrize("bad", [True, "x", -1, None])
-def test_block_malformed_run_attempt_is_unknown(bad):
-    first, second = _rerun_pair("SUCCESS")
-    first["run_attempt"] = bad
-    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [first, second])["category"],
-                           "workflow_failure")
-
-
-def test_pass_two_concurrent_suites_both_rerun_are_ready():
-    """Entrambe le suite rilanciate dopo un FAIL: ognuna e' superata dal proprio tentativo, nessun blocco falso."""
-    a1, b1 = _concurrent_pair("FAILURE")
-    a2 = dict(a1, id=1, run_attempt=2, conclusion="SUCCESS", status="completed", started_at="2026-10-26T23:30:00Z",
-              completed_at="2026-10-26T23:30:10Z", details_url="https://github.com/o/r/actions/runs/40418753669/job/1")
-    b2 = dict(b1, id=2, run_attempt=2, conclusion="SUCCESS", status="completed", started_at="2026-10-26T23:31:00Z",
-              completed_at="2026-10-26T23:31:10Z", details_url="https://github.com/o/r/actions/runs/40418758994/job/2")
-    for runs in ([a1, b1, a2, b2], [b2, a1, a2, b1]):
-        deduped = controller.dedupe_github_check_runs(HEAD_566, runs)
-        ASSERTIONS.assertEqual({c["id"] for c in deduped["selected_runs"]}, {1, 2})
-        ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, runs)["category"], "ready")
-
-
-def test_pass_graphql_shaped_rerun_without_url_uses_check_suite_database_id():
-    """Formato GraphQL (`checkSuite.databaseId`, `startedAt`/`completedAt`) senza URL: il rerun si riconosce."""
-    old = {"name": "build", "conclusion": "FAILURE", "status": "COMPLETED", "databaseId": 1, "headSha": HEAD_566,
-           "checkSuite": {"databaseId": 9}, "startedAt": "2026-10-26T10:00:00Z", "completedAt": "2026-10-26T10:01:00Z",
-           "app": {"slug": "github-actions"}, "runAttempt": 1}
-    new = dict(old, conclusion="SUCCESS", databaseId=2, runAttempt=2, startedAt="2026-10-26T11:00:00Z",
-               completedAt="2026-10-26T11:01:00Z")
-    ASSERTIONS.assertEqual(controller.summarize_current_head_check_state(HEAD_566, [old, new])["category"], "ready")
 
 
 @pytest.mark.parametrize("state", ["STARTUP_FAILURE", "SOMETHING_NEW"])
