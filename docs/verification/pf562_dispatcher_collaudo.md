@@ -44,3 +44,13 @@ In tutte: **zero** build Buildkite e **zero** status GitHub, archivio reale non 
 ## Prove C
 
 Tutte **NOT_RUN** fino a un GO owner separato per build reali e pubblicazione degli status.
+
+## Registro delle transizioni sulla PR di collaudo
+
+Ora UTC di ogni azione eseguita su richiesta di Grok (#562 c.6452766335), per il confronto con il journal del
+dispatcher in DRY-RUN.
+
+| Prova | Azione | Ora UTC | Head |
+|---|---|---|---|
+| DR04 | bozza → pronta | 20:43:5x | `ade82f9` |
+| DR05 | push di questo commit (nuovo head) | vedi l'ora del commit | questo commit |
