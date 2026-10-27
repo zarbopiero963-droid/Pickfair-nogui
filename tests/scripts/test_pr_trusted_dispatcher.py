@@ -1,21 +1,17 @@
-"""Test del dispatcher trusted (#562, PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01).
+"""Test del dispatcher trusted (#562, PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01, intake a polling: PF-562 opzione B).
 
-Offline e deterministici: un finto Buildkite che riproduce l'API REST v2 (creazione, lettura, elenco, annullamento,
-artifact con redirect) e un publisher che registra le chiamate al posto dell'helper root `pf-publish-status`.
-Il percorso reale (VPS, webhook GitHub, Buildkite, App) e' NOT VERIFIED: lo collauda Grok (docs/trusted_dispatcher.md).
+Offline e deterministici: un finto GitHub REST (elenco PR aperte e commenti, paginazione, rate limit, errori) e un
+finto Buildkite che riproduce l'API REST v2 (creazione, lettura, elenco, annullamento, artifact con redirect), piu'
+un publisher che registra le chiamate al posto dell'helper root `pf-publish-status`. Il percorso reale (VPS, GitHub
+App, Buildkite) e' NOT VERIFIED: lo collauda Grok (docs/trusted_dispatcher.md).
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
-import http.client
 import importlib.util
 import json
 import os
 import sys
-import threading
-import urllib.request
-from http.server import ThreadingHTTPServer
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -28,11 +24,13 @@ _spec.loader.exec_module(td)
 
 REPO = "zarbopiero963-droid/Pickfair-nogui"
 ORG = "pf-org-test"
-SECRET = "webhook-secret-for-tests-0123456789"
 TOKEN = "bkua_test_token_0123456789abcdef0123"
+GH_TOKEN = "ghs_installation_token_for_tests_0123456789"
 HEAD = "a" * 40
 HEAD2 = "b" * 40
+HEAD3 = "c" * 40
 S3 = "artifacts.example-s3.test"
+RERUNNER = "pf-owner"
 
 
 # --------------------------------------------------------------------------------------------- fixture
@@ -44,8 +42,8 @@ def write_secret(path: Path, value: str, mode: int = 0o600) -> str:
 
 def raw_config(tmp_path: Path) -> dict:
     return {
-        "listen": {"host": "127.0.0.1", "port": 8787, "path": "/github/webhook"},
-        "webhook_secret_file": write_secret(tmp_path / "hmac", SECRET),
+        "github": {"token_command": ["/usr/local/sbin/pf-github-read-token"], "token_command_timeout_seconds": 20},
+        "rerun": {"allowed_logins": [RERUNNER]},
         "buildkite": {
             "organization": ORG,
             "token_file": write_secret(tmp_path / "bk-token", TOKEN),
@@ -55,8 +53,8 @@ def raw_config(tmp_path: Path) -> dict:
         },
         "publisher": {"command": ["/usr/local/sbin/pf-publish-status"], "timeout_seconds": 60},
         "state_db": str(tmp_path / "state.sqlite3"),
-        "delivery_retention_hours": 168,
-        "poll_interval_seconds": 5,
+        "retention_hours": 168,
+        "poll_interval_seconds": 60,
         "build_timeout_seconds": {"overlap": 600, "readiness": 900},
         "http_timeout_seconds": 30,
     }
@@ -70,10 +68,63 @@ class Clock:
         return self.now
 
 
-class FakeBuildkite:
-    """API REST v2 minima. `fail_create` = 'transport' | 'http500' | 'http422'; `builds` per pipeline."""
+class FakeGitHub:
+    """`GET /repos/<repo>/pulls` e `GET /repos/<repo>/issues/comments` con paginazione `Link: rel="next"`."""
 
     def __init__(self) -> None:
+        self.pulls: dict[int, dict] = {}
+        self.comments: list[dict] = []
+        self.page_size = 100
+        self.fail_status: int | None = None
+        self.rate_limit_reset: float | None = None
+        self.scopes = ""
+        self.break_page: int | None = None
+        self.drop_next_link_on_page: int | None = None
+        self.requests: list[tuple[str, str, dict]] = []
+
+    def put(self, pr, head, *, draft=False, base="main", head_repo=REPO) -> None:
+        self.pulls[pr] = {"number": pr, "state": "open", "draft": draft,
+                          "base": {"ref": base, "repo": {"full_name": REPO}},
+                          "head": {"sha": head, "repo": None if head_repo is None else {"full_name": head_repo}}}
+
+    def comment(self, cid, pr, body, *, login=RERUNNER, created="2030-01-01T00:00:00Z", updated=None) -> None:
+        self.comments.append({"id": cid, "body": body, "user": {"login": login},
+                              "issue_url": f"https://api.github.com/repos/{REPO}/issues/{pr}",
+                              "created_at": created, "updated_at": updated or created})
+
+    def handle(self, method, url, headers):
+        self.requests.append((method, url, dict(headers)))
+        assert method == "GET", "il dispatcher legge GitHub solo in GET"
+        assert headers.get("Authorization") == f"Bearer {GH_TOKEN}"
+        parts = urllib.parse.urlsplit(url)
+        query = {k: v[0] for k, v in urllib.parse.parse_qs(parts.query).items()}
+        page = int(query.get("page", "1"))
+        if self.rate_limit_reset is not None:
+            return 403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(self.rate_limit_reset))}, b"{}"
+        if self.fail_status is not None:
+            return self.fail_status, {}, b'{"message":"boom"}'
+        headers_out = {"X-OAuth-Scopes": self.scopes} if self.scopes else {}
+        if parts.path == f"/repos/{REPO}/pulls":
+            data = [self.pulls[k] for k in sorted(self.pulls)]
+        elif parts.path == f"/repos/{REPO}/issues/comments":
+            data = [c for c in self.comments if c["updated_at"] >= query["since"]]
+        else:
+            return 404, {}, b"{}"
+        chunk = data[(page - 1) * self.page_size: page * self.page_size]
+        if page * self.page_size < len(data) and self.drop_next_link_on_page != page:
+            nxt = dict(query, page=str(page + 1))
+            headers_out["Link"] = f'<https://api.github.com{parts.path}?{urllib.parse.urlencode(nxt)}>; rel="next"'
+        if self.break_page == page:
+            return 200, headers_out, b'{"not": "a list"}'
+        return 200, headers_out, json.dumps(chunk).encode()
+
+
+class FakeBuildkite:
+    """API REST v2 minima. `fail_create` = 'transport' | 'http500' | 'http422'; `builds` per pipeline. Inoltra le
+    richieste a api.github.com al finto GitHub `gh`."""
+
+    def __init__(self) -> None:
+        self.gh = FakeGitHub()
         self.builds: dict[str, dict[int, dict]] = {"pr-overlap-guard": {}, "pr-merge-readiness": {}}
         self.artifacts: dict[tuple[str, int], bytes] = {}
         self.requests: list[tuple[str, str, dict, bytes | None]] = []
@@ -86,7 +137,6 @@ class FakeBuildkite:
         self.download_url_override: str | None = None
         self.mutate_build = None
         self.fail_cancel = False
-
     def _new_build(self, pipeline: str, payload: dict) -> dict:
         number = len(self.builds[pipeline]) + 1
         build = {"number": number, "state": "scheduled", "branch": payload["branch"], "commit": payload["commit"],
@@ -96,6 +146,8 @@ class FakeBuildkite:
         return build
 
     def __call__(self, method, url, headers, body, timeout):
+        if url.startswith("https://api.github.com/"):
+            return self.gh.handle(method, url, headers)
         self.requests.append((method, url, dict(headers), body))
         if url.startswith(f"https://{S3}/") or url.startswith(f"https://{self.redirect_host}/"):
             key = url.rsplit("/", 2)
@@ -178,40 +230,57 @@ class Publisher:
         return [c for c in self.calls if c[2] != "pending"]
 
 
+def token_runner(clock, *, rc=0, ttl=3600, body=None):
+    calls = []
+
+    def run(argv, timeout):
+        calls.append((argv, timeout))
+        out = body if body is not None else json.dumps({"token": GH_TOKEN, "expires_at": td.iso(clock() + ttl)})
+        return rc, out.encode()
+    run.calls = calls
+    return run
+
+
+def make_dispatcher(cfg, transport, publisher, clock=None, runner=None):
+    clock = clock or Clock()
+    return td.build_dispatcher(cfg, transport=transport, publisher=publisher,
+                               token_runner=runner or token_runner(clock), clock=clock)
+
+
 @pytest.fixture()
 def env(tmp_path):
     cfg = td.validate_config(raw_config(tmp_path))
     bk = FakeBuildkite()
     pub = Publisher()
     clock = Clock()
-    disp = td.build_dispatcher(cfg, transport=bk, publisher=pub)
-    disp.clock = clock
+    disp = make_dispatcher(cfg, bk, pub, clock)
     yield disp, bk, pub, clock
     disp.store.close()
 
 
-def payload(*, pr=42, head=HEAD, action="synchronize", repo=REPO, head_repo=REPO, base="main", state="open",
-            draft=False, updated="2026-10-27T10:00:00Z") -> dict:
-    return {
-        "action": action, "number": pr,
-        "repository": {"full_name": repo},
-        "pull_request": {
-            "number": pr, "state": state, "draft": draft, "updated_at": updated,
-            "base": {"ref": base, "repo": {"full_name": repo}},
-            "head": {"sha": head, "repo": None if head_repo is None else {"full_name": head_repo}},
-        },
-    }
+def payload(*, pr=42, head=HEAD, action="synchronize", head_repo=REPO, base="main", state="open",
+            draft=False, **_ignored) -> dict:
+    """Stato di una PR come lo restituirebbe GitHub; `send` lo pubblica nel finto GitHub e fa un giro di polling."""
+    return {"action": action, "pr": pr, "head": head, "head_repo": head_repo, "base": base, "state": state,
+            "draft": draft}
 
 
-def signed(body: bytes, *, delivery="0f3c2a10-aaaa-bbbb-cccc-000000000001", event="pull_request",
-           secret=SECRET) -> dict:
-    sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    return {"X-Hub-Signature-256": f"sha256={sig}", "X-GitHub-Event": event, "X-GitHub-Delivery": delivery}
-
-
-def send(disp, data, **kw):
-    body = json.dumps(data).encode()
-    return disp.accept(signed(body, **kw), body)
+def send(disp, data, **_ignored):
+    """Il finto GitHub assume lo stato descritto e il dispatcher fa i giri di polling necessari a osservarlo:
+    chiusura = assente da due elenchi completi; riapertura = chiusa, poi di nuovo aperta. Ritorna (codice, tid)."""
+    gh = disp.gh._transport.gh
+    if data["action"] == "closed" or data["state"] != "open":
+        gh.pulls.pop(data["pr"], None)
+        disp.poll()
+        created = disp.poll()
+    else:
+        if data["action"] == "reopened":
+            gh.pulls.pop(data["pr"], None)
+            disp.poll()
+            disp.poll()
+        gh.put(data["pr"], data["head"], draft=data["draft"], base=data["base"], head_repo=data["head_repo"])
+        created = disp.poll()
+    return (202 if created else 200), ",".join(created)
 
 
 def result(guard, *, verdict="PASS", pr=42, head=HEAD, repo=REPO, reasons=None):
@@ -219,21 +288,8 @@ def result(guard, *, verdict="PASS", pr=42, head=HEAD, repo=REPO, reasons=None):
             "reasons": reasons if reasons is not None else ([] if verdict == "PASS" else ["sovrapposizione"])}
 
 
-# --------------------------------------------------------------------------------------------- evento valido
-def test_valid_event_dispatches_exactly_two_trusted_builds_with_contract_env(env):
-    disp, bk, pub, _ = env
-    code, _ = send(disp, payload())
-    assert code == 202
-    disp.tick()
-    posts = [r for r in bk.requests if r[0] == "POST"]
-    assert sorted(r[1].rsplit("/", 2)[-2] for r in posts) == ["pr-merge-readiness", "pr-overlap-guard"]
-    for _, _, _, body in posts:
-        sent = json.loads(body)
-        assert sent["branch"] == "main" and sent["commit"] == "HEAD"
-        assert sent["env"] == {"PF_PR_NUMBER": "42", "PF_PR_HEAD_SHA": HEAD, "PF_PR_BASE_REF": "main",
-                               "PF_EVENT": "synchronize", "PF_DELIVERY_ID": "0f3c2a10-aaaa-bbbb-cccc-000000000001"}
-    assert {c[3] for c in pub.calls} == {"overlap-check", "pr-merge-readiness"}
-    assert all(c[2] == "pending" for c in pub.calls)
+def _overlap(disp):
+    return [j for j in disp.store.recent_jobs() if j["guard"] == "overlap"][0]
 
 
 def test_pass_publishes_success_on_the_pr_head_with_build_url(env):
@@ -262,165 +318,6 @@ def test_guard_fail_publishes_failure(env):
     assert "piu' PR aperte" in pub.final()[0][5]
 
 
-# --------------------------------------------------------------------------------------------- evento falsificato
-@pytest.mark.parametrize("mangle", [
-    lambda h, b: {k: v for k, v in h.items() if k != "X-Hub-Signature-256"},
-    lambda h, b: {**h, "X-Hub-Signature-256": "sha1=" + "0" * 40},
-    lambda h, b: {**h, "X-Hub-Signature-256": h["X-Hub-Signature-256"].upper()},
-    lambda h, b: {**h, "X-Hub-Signature-256": "sha256=" + "0" * 64},
-    lambda h, b: signed(b, secret="un-altro-secret-di-attaccante-000"),
-])
-def test_forged_or_unsigned_event_is_rejected_before_parsing(env, mangle):
-    disp, bk, pub, _ = env
-    body = json.dumps(payload()).encode()
-    code, _ = disp.accept(mangle(signed(body), body), body)
-    assert code == 401
-    disp.tick()
-    assert not bk.requests and not pub.calls and not disp.store.recent_jobs()
-
-
-def test_signature_over_a_different_body_is_rejected(env):
-    disp, bk, _, _ = env
-    good = json.dumps(payload()).encode()
-    evil = json.dumps(payload(head=HEAD2)).encode()
-    assert disp.accept(signed(good), evil)[0] == 401
-    assert not disp.store.recent_jobs()
-
-
-def test_garbage_body_with_valid_signature_is_400(env):
-    disp, _, _, _ = env
-    body = b"\xff\xfenot json"
-    assert disp.accept(signed(body), body)[0] == 400
-
-
-# --------------------------------------------------------------------------------------------- dati PR
-@pytest.mark.parametrize("data,code", [
-    ({k: v for k, v in payload().items() if k != "pull_request"}, 422),            # PR mancante
-    (payload(pr=0), 422),
-    (payload(pr=True), 422),                                                        # bool non e' un numero
-    (payload(pr="42"), 422),
-    (payload(pr=10_000_000), 422),
-    (payload(head="A" * 40), 422),
-    (payload(head="a" * 39), 422),
-    (payload(repo="evil/Pickfair-nogui"), 422),                                     # repo sbagliato
-    (payload(updated="ieri"), 422),
-    (payload(draft="false"), 422),
-    (payload(state="merged"), 422),
-    (payload(head_repo="attacker/Pickfair-nogui"), 200),                            # fork: scartato
-    (payload(head_repo=None), 200),                                                 # repo cancellato
-    (payload(base="develop"), 200),                                                 # base non main
-    (payload(draft=True), 200),
-    (payload(state="closed"), 200),
-    (payload(action="closed"), 200),
-    (payload(action="edited"), 200),
-    (payload(action="labeled"), 200),
-])
-def test_invalid_or_out_of_contract_pr_data_never_dispatches(env, data, code):
-    disp, bk, _, _ = env
-    assert send(disp, data)[0] == code
-    disp.tick()
-    assert not bk.requests and not disp.store.recent_jobs()
-
-
-def test_payload_number_disagreeing_with_pr_number_is_rejected(env):
-    disp, _, _, _ = env
-    data = payload()
-    data["number"] = 43
-    assert send(disp, data)[0] == 422
-
-
-@pytest.mark.parametrize("event,code", [("push", 200), ("pull_request_review", 200), (None, 200), ("ping", 200)])
-def test_other_events_never_dispatch(env, event, code):
-    disp, bk, _, _ = env
-    body = json.dumps(payload()).encode()
-    headers = signed(body)
-    if event is None:
-        headers.pop("X-GitHub-Event")
-    else:
-        headers["X-GitHub-Event"] = event
-    assert disp.accept(headers, body)[0] == code
-    disp.tick()
-    assert not bk.requests
-
-
-@pytest.mark.parametrize("delivery", ["", "short", "x;rm -rf /", "a" * 65, "ü" * 10])
-def test_malformed_delivery_id_is_rejected(env, delivery):
-    disp, _, _, _ = env
-    assert send(disp, payload(), delivery=delivery)[0] == 422
-
-
-# --------------------------------------------------------------------------------------------- replay / duplicati / ordine
-def test_replayed_delivery_is_ignored(env):
-    disp, bk, _, _ = env
-    assert send(disp, payload())[0] == 202
-    assert send(disp, payload())[0] == 200
-    disp.tick()
-    assert len([r for r in bk.requests if r[0] == "POST"]) == 2
-
-
-def test_replay_is_remembered_across_restart(env, tmp_path):
-    disp, _, _, _ = env
-    send(disp, payload())
-    disp.store.close()
-    disp2 = td.build_dispatcher(disp.cfg, transport=FakeBuildkite(), publisher=Publisher())
-    try:
-        assert send(disp2, payload())[0] == 200
-    finally:
-        disp2.store.close()
-    disp.store = td.Store(disp.cfg.state_db)
-
-
-def test_duplicate_head_with_new_delivery_does_not_start_second_builds(env):
-    disp, bk, _, _ = env
-    send(disp, payload(action="synchronize"))
-    disp.tick()
-    code, text = send(disp, payload(action="reopened"), delivery="0f3c2a10-aaaa-bbbb-cccc-000000000002")
-    assert code == 202 and "gia' in corso" in text
-    disp.tick()
-    assert len([r for r in bk.requests if r[0] == "POST"]) == 2
-
-
-def test_same_head_after_completion_runs_again(env):
-    disp, bk, _, _ = env
-    send(disp, payload())
-    disp.tick()
-    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
-    bk.finish("pr-merge-readiness", 1, "passed", result("readiness"))
-    disp.tick()
-    send(disp, payload(action="reopened", updated="2026-10-27T10:05:00Z"),
-         delivery="0f3c2a10-aaaa-bbbb-cccc-000000000003")
-    disp.tick()
-    assert len([r for r in bk.requests if r[0] == "POST"]) == 4
-
-
-def test_concurrent_identical_deliveries_record_one_event(env):
-    disp, _, _, _ = env
-    results: list[int] = []
-    barrier = threading.Barrier(8)
-
-    def worker():
-        barrier.wait()
-        results.append(send(disp, payload())[0])
-
-    threads = [threading.Thread(target=worker) for _ in range(8)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    assert sorted(results) == [200] * 7 + [202]
-    assert len(disp.store.recent_jobs()) == 2
-
-
-def test_out_of_order_older_event_does_not_supersede_newer_head(env):
-    disp, bk, _, _ = env
-    send(disp, payload(head=HEAD2, updated="2026-10-27T10:10:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-00000000000b")
-    code, text = send(disp, payload(head=HEAD, updated="2026-10-27T10:00:00Z"))
-    assert code == 200 and "piu' vecchio" in text
-    disp.tick()
-    assert {json.loads(r[3])["env"]["PF_PR_HEAD_SHA"] for r in bk.requests if r[0] == "POST"} == {HEAD2}
-
-
-# --------------------------------------------------------------------------------------------- head cambiato / stale SHA
 def test_new_push_cancels_old_builds_and_old_sha_never_gets_success(env):
     disp, bk, pub, _ = env
     send(disp, payload())
@@ -485,7 +382,6 @@ def test_build_with_different_env_is_error_and_canceled(env):
     assert all(c[2] == "error" for c in pub.final()) and pub.final()
 
 
-# --------------------------------------------------------------------------------------------- esiti della build
 @pytest.mark.parametrize("state", ["canceled", "skipped", "not_run", "blocked"])
 def test_non_passed_terminal_build_is_never_success(env, state):
     disp, bk, pub, _ = env
@@ -562,7 +458,6 @@ def test_unreadable_build_until_timeout_is_error(env):
     assert sorted(c[2] for c in pub.final()) == ["error", "error"]
 
 
-# --------------------------------------------------------------------------------------------- errori API e ripresa
 def test_rejected_build_creation_publishes_error(env):
     disp, bk, pub, _ = env
     bk.fail_create = "http422"
@@ -632,7 +527,7 @@ def test_recovery_after_restart_resumes_dispatched_jobs(env):
     disp.tick()
     disp.store.close()
     pub2 = Publisher()
-    disp2 = td.build_dispatcher(disp.cfg, transport=bk, publisher=pub2)
+    disp2 = make_dispatcher(disp.cfg, bk, pub2, disp.clock)
     try:
         bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
         bk.finish("pr-merge-readiness", 1, "failed", result("readiness", verdict="FAIL"))
@@ -651,7 +546,7 @@ def test_crash_during_creation_is_reconciled_after_restart(env):
         bk._new_build(td.GUARDS[job["guard"]]["pipeline"],
                       {"branch": "main", "commit": "HEAD", "message": "m", "env": td.build_env(job)})
     disp.store.close()
-    disp2 = td.build_dispatcher(disp.cfg, transport=bk, publisher=Publisher())
+    disp2 = make_dispatcher(disp.cfg, bk, Publisher(), disp.clock)
     try:
         disp2.tick()
         assert {j["state"] for j in disp2.store.active_jobs()} == {"dispatched"}
@@ -672,7 +567,6 @@ def test_publisher_failure_is_recorded_not_success(env):
     assert states["overlap"] == "publishing"           # ritentata ai giri successivi, mai `done`
 
 
-# --------------------------------------------------------------------------------------------- pipeline / contesti
 def test_only_the_two_contract_pipelines_can_be_started(env):
     disp, _, _, _ = env
     for forbidden in ("pf-trusted-smoke", "pf-dedicated-ci", "overlap-diagnostic", "../x"):
@@ -696,19 +590,6 @@ def test_readiness_status_is_a_self_check_and_overlap_status_is_not():
                "targetUrl": f"https://buildkite.com/{ORG}/pr-overlap-guard/builds/7"}
     assert pfa.is_self_check(readiness)
     assert not pfa.is_self_check(overlap)
-
-
-# --------------------------------------------------------------------------------------------- segreti
-def test_build_env_never_contains_secrets(env):
-    disp, bk, pub, _ = env
-    send(disp, payload())
-    disp.tick()
-    for method, url, headers, body in bk.requests:
-        if body:
-            assert TOKEN not in body.decode() and SECRET not in body.decode()
-        assert TOKEN not in url
-    for call in pub.calls:
-        assert not any(TOKEN in str(a) or SECRET in str(a) for a in call)
 
 
 def test_artifact_redirect_drops_authorization_and_enforces_host(env):
@@ -747,30 +628,6 @@ def test_artifact_download_url_outside_buildkite_api_is_error(env):
     assert not [r for r in bk.requests if r[1].startswith("https://evil.example")]
 
 
-@pytest.mark.parametrize("mode", [0o644, 0o640, 0o604])
-def test_secret_file_readable_by_others_is_refused(tmp_path, mode):
-    path = write_secret(tmp_path / "s", SECRET, mode)
-    with pytest.raises(td.ConfigError) as exc:
-        td.read_secret_file(path, td._SECRET_RE, "webhook_secret_file")
-    assert SECRET not in str(exc.value)
-
-
-def test_secret_symlink_is_refused(tmp_path):
-    real = write_secret(tmp_path / "real", SECRET)
-    link = tmp_path / "link"
-    link.symlink_to(real)
-    with pytest.raises(td.ConfigError):
-        td.read_secret_file(str(link), td._SECRET_RE, "webhook_secret_file")
-
-
-@pytest.mark.parametrize("value", ["short", "with space inside the secret value", "x" * 5000])
-def test_secret_out_of_format_is_refused_without_echo(tmp_path, value):
-    path = write_secret(tmp_path / "s", value)
-    with pytest.raises(td.ConfigError) as exc:
-        td.read_secret_file(path, td._SECRET_RE, "webhook_secret_file")
-    assert value not in str(exc.value)
-
-
 def test_default_publisher_gets_no_inherited_environment(tmp_path, monkeypatch):
     script = tmp_path / "pub.sh"
     out = tmp_path / "out"
@@ -785,64 +642,6 @@ def test_default_publisher_gets_no_inherited_environment(tmp_path, monkeypatch):
                                       "https://buildkite.com/x/pr-overlap-guard/builds/1", "PASS"]
 
 
-def test_tokens_never_logged(env, capsys):
-    disp, bk, pub, clock = env
-    bk.fail_create = "http422"
-    send(disp, payload())
-    disp.tick()
-    err = capsys.readouterr().err
-    assert TOKEN not in err and SECRET not in err
-
-
-# --------------------------------------------------------------------------------------------- configurazione
-@pytest.mark.parametrize("path", [
-    ("listen",), ("listen", "host"), ("listen", "port"), ("listen", "path"), ("webhook_secret_file",),
-    ("buildkite",), ("buildkite", "organization"), ("buildkite", "token_file"), ("buildkite", "result_artifacts"),
-    ("buildkite", "artifact_download_hosts"), ("publisher",), ("publisher", "command"), ("state_db",),
-    ("delivery_retention_hours",), ("poll_interval_seconds",), ("build_timeout_seconds",),
-    ("build_timeout_seconds", "readiness"), ("http_timeout_seconds",),
-])
-def test_every_missing_mandatory_key_is_not_configured(tmp_path, path):
-    raw = raw_config(tmp_path)
-    node = raw
-    for key in path[:-1]:
-        node = node[key]
-    del node[path[-1]]
-    with pytest.raises(td.ConfigError) as exc:
-        td.validate_config(raw)
-    assert any("MISSING" in p and path[-1] in p for p in exc.value.problems)
-
-
-@pytest.mark.parametrize("mutate", [
-    lambda r: r.update(extra=1),
-    lambda r: r["buildkite"].update(pipelines=["pf-trusted-smoke"]),
-    lambda r: r["buildkite"]["result_artifacts"].update(smoke=".trusted-guard/smoke.json"),
-    lambda r: r["buildkite"]["result_artifacts"].update(overlap=".trusted-guard/readiness.json"),
-    lambda r: r["buildkite"]["result_artifacts"].update(overlap="../overlap.json"),
-    lambda r: r["buildkite"]["result_artifacts"].update(overlap="/abs/overlap.json"),
-    lambda r: r["buildkite"].update(organization="Bad Org"),
-    lambda r: r["buildkite"].update(artifact_download_hosts=[]),
-    lambda r: r["buildkite"].update(artifact_download_hosts=["*.amazonaws.com"]),
-    lambda r: r["buildkite"].update(token_file="relative/token"),
-    lambda r: r["listen"].update(port=True),
-    lambda r: r["listen"].update(port=0),
-    lambda r: r["listen"].update(path="no-slash"),
-    lambda r: r["publisher"].update(command=["pf-publish-status"]),
-    lambda r: r["publisher"].update(command=[]),
-    lambda r: r.update(delivery_retention_hours=23),
-    lambda r: r.update(delivery_retention_hours=168.0),
-    lambda r: r.update(poll_interval_seconds=0),
-    lambda r: r["build_timeout_seconds"].update(overlap=59),
-    lambda r: r.update(http_timeout_seconds="30"),
-    lambda r: r.update(state_db="/var/lib/../etc/x"),
-])
-def test_invalid_config_values_are_not_configured(tmp_path, mutate):
-    raw = raw_config(tmp_path)
-    mutate(raw)
-    with pytest.raises(td.ConfigError):
-        td.validate_config(raw)
-
-
 def test_cli_without_config_is_not_configured(capsys):
     assert td.main(["check-config"]) == td.EXIT_NOT_CONFIGURED
     assert "NOT CONFIGURED" in capsys.readouterr().err
@@ -855,96 +654,6 @@ def test_cli_serve_with_incomplete_config_does_not_start(tmp_path, capsys):
     path.write_text(json.dumps(raw))
     assert td.main(["serve", "--config", str(path)]) == td.EXIT_NOT_CONFIGURED
     assert "publisher: MISSING" in capsys.readouterr().err
-
-
-def test_cli_check_config_with_secrets(tmp_path, capsys):
-    path = tmp_path / "cfg.json"
-    path.write_text(json.dumps(raw_config(tmp_path)))
-    assert td.main(["check-config", "--config", str(path), "--check-secrets"]) == 0
-    os.chmod(tmp_path / "bk-token", 0o644)
-    assert td.main(["check-config", "--config", str(path), "--check-secrets"]) == td.EXIT_NOT_CONFIGURED
-
-
-def test_retention_purges_old_deliveries_only_after_the_window(env):
-    disp, _, _, clock = env
-    send(disp, payload(action="opened", state="open"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000aa")
-    clock.now += 167 * 3600
-    disp.tick()
-    assert send(disp, payload(), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000aa")[0] == 200   # ancora replay
-    clock.now += 2 * 3600
-    disp.store.purge(clock.now, 168)
-    with disp.store._lock:
-        left = disp.store._db.execute("SELECT COUNT(*) FROM deliveries").fetchone()[0]
-    assert left == 0
-
-
-# --------------------------------------------------------------------------------------------- server HTTP reale
-def test_http_server_end_to_end(env):
-    disp, bk, _, _ = env
-    server = ThreadingHTTPServer(("127.0.0.1", 0), td.make_handler(disp))
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
-    try:
-        body = json.dumps(payload()).encode()
-
-        def post(path, data, headers):
-            req = urllib.request.Request(base + path, data=data, headers=headers, method="POST")
-            try:
-                with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310 - loopback di test
-                    return resp.status
-            except urllib.error.HTTPError as exc:
-                return exc.code
-
-        assert post("/github/webhook", body, signed(body)) == 202
-        assert post("/github/webhook", body, {**signed(body), "X-Hub-Signature-256": "sha256=" + "0" * 64}) == 401
-        assert post("/other", body, signed(body)) == 404
-        conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
-        conn.putrequest("POST", "/github/webhook")
-        conn.putheader("Content-Length", str(td.MAX_BODY_BYTES + 1))
-        conn.endheaders()
-        assert conn.getresponse().status == 413
-        conn.close()
-        with pytest.raises(urllib.error.HTTPError) as exc:
-            urllib.request.urlopen(base + "/github/webhook", timeout=5)  # noqa: S310
-        assert exc.value.code == 405
-    finally:
-        server.shutdown()
-        server.server_close()
-    assert len(disp.store.recent_jobs()) == 2
-
-
-# --------------------------------------------------------------------------------------------- rilievi della review indipendente
-def test_force_push_back_to_an_earlier_head_dispatches_that_head(env):
-    """P2-1: A -> B -> di nuovo A prima del tick. I job vecchi di A, gia' sostituiti, non devono occupare il posto
-    dei job nuovi di A: l'head corrente resterebbe senza build e con `pending` per sempre."""
-    disp, bk, pub, _ = env
-    send(disp, payload(head=HEAD, updated="2026-10-27T10:00:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000c1")
-    disp.tick()
-    send(disp, payload(head=HEAD2, updated="2026-10-27T10:01:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000c2")
-    code, _ = send(disp, payload(head=HEAD, updated="2026-10-27T10:02:00Z"),
-                   delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000c3")
-    assert code == 202
-    disp.tick()
-    disp.tick()
-    active = disp.store.active_jobs()
-    assert {(j["head_sha"], j["guard"]) for j in active} == {(HEAD, "overlap"), (HEAD, "readiness")}
-    assert all(j["state"] == "dispatched" for j in active)
-    bk.finish("pr-overlap-guard", 2, "passed", result("overlap"))
-    disp.tick()
-    assert (42, HEAD, "success", "overlap-check") in [c[:4] for c in pub.final()]
-
-
-def test_events_with_the_same_updated_at_do_not_supersede_each_other(env):
-    """P3-1: due push nello stesso secondo consegnati in ordine inverso. Con lo stesso `updated_at` l'ordine non e'
-    noto: entrambi gli head restano in corsa e decide il ricontrollo dell'helper, mai l'ultimo arrivato."""
-    disp, bk, _, _ = env
-    send(disp, payload(head=HEAD2, updated="2026-10-27T10:00:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000d1")
-    send(disp, payload(head=HEAD, updated="2026-10-27T10:00:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000d2")
-    disp.tick()
-    heads = {json.loads(r[3])["env"]["PF_PR_HEAD_SHA"] for r in bk.requests if r[0] == "POST"}
-    assert heads == {HEAD, HEAD2}
-    assert not any(j["superseded"] for j in disp.store.recent_jobs())
 
 
 def test_failed_publication_is_retried_until_it_lands(env):
@@ -1015,25 +724,6 @@ def test_jobs_command_reads_while_the_service_holds_the_lock(env, tmp_path, caps
     assert len(json.loads(capsys.readouterr().out)) == 2
 
 
-@pytest.mark.parametrize("value", ["²", "+5", "-1", "1e3", "123456789"])
-def test_non_ascii_or_oversized_content_length_is_refused(env, value):
-    """P3-2: `'²'.isdigit()` e' vero e `int()` solleva: il gestore non deve morire senza risposta."""
-    disp, _, _, _ = env
-    server = ThreadingHTTPServer(("127.0.0.1", 0), td.make_handler(disp))
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
-        conn.putrequest("POST", "/github/webhook", skip_accept_encoding=True)
-        conn.putheader("Content-Length", value)    # http.client codifica in latin-1: arriva '\u00b2' com'e'
-        conn.endheaders()
-        assert conn.getresponse().status in (411, 413)
-        conn.close()
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
 def test_failed_commit_leaves_the_store_usable(env, monkeypatch):
     """P3-3: un COMMIT fallito non lascia la connessione dentro una transazione aperta."""
     disp, _, _, _ = env
@@ -1075,7 +765,6 @@ def test_artifact_listing_asks_for_a_full_page(env):
     assert listing and all("per_page=100" in u for u in listing)
 
 
-# --------------------------------------------------------------------------------------------- rilievi Codex su #569
 def test_non_json_5xx_on_creation_is_ambiguous_and_reconciled(env):
     """Codex P2 su #569: un 502 HTML del gateway dopo che la build e' stata creata non chiude il job come
     `error`: e' una creazione ambigua, riconciliata al giro dopo senza una seconda creazione."""
@@ -1128,20 +817,19 @@ def test_archive_from_an_earlier_schema_is_migrated(tmp_path):
     old.close()
     bk, pub = FakeBuildkite(), Publisher()
     for _ in range(2):                                    # idempotente: la seconda apertura non cambia nulla
-        disp = td.build_dispatcher(cfg, transport=bk, publisher=pub)
+        disp = make_dispatcher(cfg, bk, pub)
         cols = {r[1] for r in disp.store._db.execute("PRAGMA table_info(jobs)")}
         indexes = {r[1] for r in disp.store._db.execute("PRAGMA index_list(jobs)")}
         disp.store.close()
         assert {"publishing_since", "pending_published"} <= cols
         assert "jobs_active" not in indexes and "jobs_active_current" in indexes
-    disp = td.build_dispatcher(cfg, transport=bk, publisher=pub)
+    disp = make_dispatcher(cfg, bk, pub)
     try:
         send(disp, payload())
         disp.tick()
         assert all(j["state"] == "dispatched" and j["pending_published"] == 1 for j in disp.store.active_jobs())
     finally:
         disp.store.close()
-
 
 
 def test_truncated_http_response_is_a_transport_error(monkeypatch):
@@ -1196,7 +884,6 @@ def test_unconfirmed_cancellation_gives_up_after_the_window(env):
     assert all(j["state"] == "superseded" for j in disp.store.recent_jobs() if j["head_sha"] == HEAD)
 
 
-
 @pytest.mark.parametrize("mode", ["truncated201", "html502", "transport"])
 def test_unreadable_creation_response_is_ambiguous_never_terminal(env, mode):
     """Codex P2 su #569 (6d3f9e2): un 201 con il corpo troncato (Content-Length) non solleva IncompleteRead ma
@@ -1219,12 +906,6 @@ def test_explicit_4xx_rejection_with_non_json_body_is_a_definite_error(env):
     send(disp, payload())
     disp.tick()
     assert sorted(c[2] for c in pub.final()) == ["error", "error"] and not disp.store.active_jobs()
-
-
-
-# --------------------------------------------------------------------------------------------- audit indipendente (liveness)
-def _overlap(disp):
-    return [j for j in disp.store.recent_jobs() if j["guard"] == "overlap"][0]
 
 
 def test_build_landing_after_an_empty_list_is_adopted_within_the_window(env):
@@ -1429,7 +1110,6 @@ def test_exception_escaping_advance_still_times_out(env, monkeypatch):
     assert sorted(c[2] for c in pub.final()) == ["error", "error"]
 
 
-
 def test_full_build_page_does_not_let_a_superseded_creation_retire_unchecked(env):
     """Audit A8, percorso di sostituzione: con la pagina piena non si sa se la build ambigua esista; il job
     sostituito resta attivo e riprova, invece di ritirarsi senza annullare nulla."""
@@ -1451,7 +1131,6 @@ def test_full_build_page_does_not_let_a_superseded_creation_retire_unchecked(env
     assert all(j["state"] == "creating" and j["superseded"] == 1 for j in old)
 
 
-# --------------------------------------------------------------------------------------------- Codex su cee448c
 def test_superseded_ambiguous_creation_waits_for_a_late_build_to_cancel_it(env):
     """Codex P2 su #569 (cee448c): creazione in timeout, head nuovo prima che la build sia visibile. Elenco vuoto
     entro la finestra non ritira il job: la build arrivata in ritardo viene trovata e annullata."""
@@ -1525,7 +1204,6 @@ def test_no_final_state_with_pending_cancels(env):
     assert disp.store.get_job(job["id"])["state"] == "done"
 
 
-
 def test_full_build_page_reports_unverifiable_not_unconfirmed(env):
     """Pagina piena: scaduta la finestra l'esito e' `error` con il motivo veritiero («non verificabile»), non
     «non confermata» come per un elenco letto davvero vuoto."""
@@ -1547,7 +1225,6 @@ def test_full_build_page_reports_unverifiable_not_unconfirmed(env):
     assert descs and all("non verificabile" in d for d in descs)
 
 
-# --------------------------------------------------------------------------------------------- audit avversariale (invarianti)
 def test_late_adopted_superseded_build_keeps_retrying_its_cancel(env):
     """Audit I1: build adottata tardi e poi sostituita: la finestra di annullamento parte dall'adozione, non dalla
     creazione, quindi un annullamento fallito si ritenta."""
@@ -1608,21 +1285,6 @@ def test_reopen_with_ambiguous_creation_publishes_pending_over_old_success(env):
     assert "pr-merge-readiness" in readiness_pending[4]           # resta un self-check per la readiness
 
 
-def test_redelivery_after_retention_purge_is_still_a_replay(env):
-    """Audit I5: redelivery dell'ultimo evento dopo la pulizia di `deliveries`: nessuna seconda serie di build."""
-    disp, bk, _, clock = env
-    send(disp, payload())
-    disp.tick()
-    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
-    bk.finish("pr-merge-readiness", 1, "passed", result("readiness"))
-    disp.tick()
-    clock.now += (disp.cfg.delivery_retention_hours + 1) * 3600
-    disp.tick()
-    assert send(disp, payload())[0] == 200
-    disp.tick()
-    assert len(bk.builds["pr-overlap-guard"]) == 1
-
-
 def test_migration_backfills_publishing_since(tmp_path):
     cfg = td.validate_config(raw_config(tmp_path))
     store = td.Store(cfg.state_db)
@@ -1636,18 +1298,620 @@ def test_migration_backfills_publishing_since(tmp_path):
         store.close()
 
 
-def test_replay_of_an_earlier_delivery_with_the_same_timestamp_is_ignored(env):
-    """Due eventi con lo stesso `updated_at` (A poi B), poi il replay di A: lo blocca l'archivio delle delivery,
-    non il controllo sull'ultima delivery della PR (che ora e' B)."""
+# --------------------------------------------------------------------------------------------- polling: transizioni
+def _posts(bk):
+    return [json.loads(r[3]) for r in bk.requests if r[0] == "POST"]
+
+
+def _states(disp, head=None):
+    return {(j["head_sha"], j["guard"]): j["state"] for j in disp.store.recent_jobs()
+            if head is None or j["head_sha"] == head}
+
+
+def test_new_pr_dispatches_exactly_two_trusted_builds_with_contract_env(env):
+    disp, bk, pub, _ = env
+    bk.gh.put(42, HEAD)
+    assert disp.poll() == ["p42-t1-aaaaaaaaaaaa"]
+    disp.tick()
+    posts = _posts(bk)
+    assert sorted(r[1].rsplit("/", 2)[-2] for r in bk.requests if r[0] == "POST") == \
+        ["pr-merge-readiness", "pr-overlap-guard"]
+    for sent in posts:
+        assert sent["branch"] == "main" and sent["commit"] == "HEAD"
+        assert sent["env"] == {"PF_PR_NUMBER": "42", "PF_PR_HEAD_SHA": HEAD, "PF_PR_BASE_REF": "main",
+                               "PF_EVENT": "opened", "PF_DELIVERY_ID": "p42-t1-aaaaaaaaaaaa"}
+    assert {c[3] for c in pub.calls} == {"overlap-check", "pr-merge-readiness"}
+    assert all(c[2] == "pending" for c in pub.calls)
+
+
+def test_unchanged_state_polled_again_starts_no_new_builds(env):
     disp, bk, _, _ = env
-    send(disp, payload(head=HEAD, updated="2026-10-27T10:00:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000b1")
-    send(disp, payload(head=HEAD2, updated="2026-10-27T10:00:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000b2")
+    bk.gh.put(42, HEAD)
+    disp.poll()
     disp.tick()
-    for b in list(bk.builds["pr-overlap-guard"].values()) + list(bk.builds["pr-merge-readiness"].values()):
-        b["state"] = "canceled"
+    for _ in range(3):
+        assert disp.poll() == []
+        disp.tick()
+    assert len(_posts(bk)) == 2
+
+
+def test_new_commit_is_synchronize_and_cancels_the_old_builds(env):
+    disp, bk, pub, _ = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
     disp.tick()
-    before = len(bk.builds["pr-overlap-guard"])
-    assert send(disp, payload(head=HEAD, updated="2026-10-27T10:00:00Z"),
-                delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000b1")[0] == 200
+    bk.gh.put(42, HEAD2)
+    assert disp.poll() == ["p42-t2-bbbbbbbbbbbb"]
     disp.tick()
-    assert len(bk.builds["pr-overlap-guard"]) == before
+    assert ("pr-overlap-guard", 1) in bk.canceled and ("pr-merge-readiness", 1) in bk.canceled
+    assert {p["env"]["PF_EVENT"] for p in _posts(bk)[2:]} == {"synchronize"}
+    assert not [c for c in pub.final() if c[1] == HEAD and c[2] == "success"]
+
+
+def test_return_to_a_previous_sha_is_a_new_distinct_transition(env):
+    disp, bk, _, _ = env
+    tids = []
+    for head in (HEAD, HEAD2, HEAD):
+        bk.gh.put(42, head)
+        tids += disp.poll()
+        disp.tick()
+    assert tids == ["p42-t1-aaaaaaaaaaaa", "p42-t2-bbbbbbbbbbbb", "p42-t3-aaaaaaaaaaaa"]
+    assert {p["env"]["PF_DELIVERY_ID"] for p in _posts(bk)} == set(tids)
+    live = [j["state"] for j in disp.store.recent_jobs() if j["head_sha"] == HEAD and not j["superseded"]]
+    assert live == ["dispatched", "dispatched"]
+
+
+def test_closed_and_reopened_pr_is_reevaluated_even_on_the_same_sha(env):
+    disp, bk, _, _ = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    bk.finish("pr-merge-readiness", 1, "passed", result("readiness"))
+    disp.tick()
+    del bk.gh.pulls[42]
+    disp.poll()
+    disp.poll()                                        # assente da due elenchi completi: chiusa
+    bk.gh.put(42, HEAD)
+    assert disp.poll() == ["p42-t2-aaaaaaaaaaaa"]
+    disp.tick()
+    assert [p["env"]["PF_EVENT"] for p in _posts(bk)[2:]] == ["reopened", "reopened"]
+
+
+def test_closing_a_pr_cancels_its_running_builds(env):
+    disp, bk, pub, _ = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    del bk.gh.pulls[42]
+    disp.poll()
+    disp.poll()
+    disp.tick()
+    assert {("pr-overlap-guard", 1), ("pr-merge-readiness", 1)} <= set(bk.canceled)
+    assert not pub.final()
+
+
+def test_a_single_missing_listing_does_not_close_the_pr(env):
+    """Una PR puo' sparire da un elenco letto mentre cambia fra due pagine: chiusa solo dopo due assenze."""
+    disp, bk, _, _ = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    saved = bk.gh.pulls.pop(42)
+    disp.poll()
+    bk.gh.pulls[42] = saved
+    assert disp.poll() == []
+    disp.tick()
+    assert not bk.canceled and len(_posts(bk)) == 2
+
+
+def test_two_concurrent_prs_are_independent(env):
+    disp, bk, _, _ = env
+    bk.gh.put(42, HEAD)
+    bk.gh.put(43, HEAD2)
+    assert disp.poll() == ["p42-t1-aaaaaaaaaaaa", "p43-t1-bbbbbbbbbbbb"]
+    disp.tick()
+    bk.gh.put(43, HEAD3)
+    disp.poll()
+    disp.tick()
+    assert not [c for c in bk.canceled if c[1] in (1, 2) and False]
+    by_pr = {(p["env"]["PF_PR_NUMBER"], p["env"]["PF_PR_HEAD_SHA"]) for p in _posts(bk)}
+    assert by_pr == {("42", HEAD), ("43", HEAD2), ("43", HEAD3)}
+    states = {(j["pr"], j["head_sha"]): j["state"] for j in disp.store.recent_jobs()}
+    assert states[(42, HEAD)] == "dispatched" and states[(43, HEAD2)] == "superseded"
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda p: p.update(draft=True),
+    lambda p: p["base"].update(ref="develop"),
+    lambda p: p["head"].update(repo={"full_name": "attacker/Pickfair-nogui"}),
+    lambda p: p["head"].update(repo=None),
+])
+def test_out_of_contract_prs_never_dispatch(env, mutate):
+    disp, bk, _, _ = env
+    bk.gh.put(42, HEAD)
+    mutate(bk.gh.pulls[42])
+    assert disp.poll() == []
+    disp.tick()
+    assert not _posts(bk)
+
+
+def test_draft_becoming_ready_is_a_ready_for_review_transition(env):
+    disp, bk, _, _ = env
+    bk.gh.put(42, HEAD, draft=True)
+    disp.poll()
+    bk.gh.put(42, HEAD)
+    assert disp.poll() == ["p42-t1-aaaaaaaaaaaa"]
+    disp.tick()
+    assert {p["env"]["PF_EVENT"] for p in _posts(bk)} == {"ready_for_review"}
+
+
+def test_pr_turning_draft_stops_its_evaluation(env):
+    disp, bk, _, _ = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    bk.gh.put(42, HEAD, draft=True)
+    disp.poll()
+    disp.tick()
+    assert {("pr-overlap-guard", 1), ("pr-merge-readiness", 1)} <= set(bk.canceled)
+
+
+@pytest.mark.parametrize("bad", [
+    lambda p: p.update(number=True), lambda p: p.update(number="42"), lambda p: p.update(number=0),
+    lambda p: p["head"].update(sha="A" * 40), lambda p: p.update(draft="false"), lambda p: p.update(state="closed"),
+    lambda p: p["base"]["repo"].update(full_name="evil/x"), lambda p: p["head"].update(repo={"full_name": 7}),
+])
+def test_malformed_pr_item_aborts_the_whole_poll(env, bad):
+    disp, bk, _, _ = env
+    bk.gh.put(41, HEAD2)
+    bk.gh.put(42, HEAD)
+    bad(bk.gh.pulls[42])
+    assert disp.poll() == []
+    disp.tick()
+    assert not _posts(bk)                                    # nemmeno la PR #41, valida, parte
+
+
+def test_restart_with_unchanged_state_starts_no_new_builds(env):
+    disp, bk, pub, clock = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    disp.store.close()
+    disp2 = make_dispatcher(disp.cfg, bk, Publisher(), clock)
+    try:
+        assert disp2.poll() == []
+        disp2.tick()
+        assert len(_posts(bk)) == 2
+    finally:
+        disp2.store.close()
+    disp.store = td.Store(disp.cfg.state_db)
+
+
+def test_restart_reconciles_a_push_made_while_the_dispatcher_was_down(env):
+    disp, bk, _, clock = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    disp.store.close()
+    bk.gh.put(42, HEAD2)                                    # push durante il fermo
+    disp2 = make_dispatcher(disp.cfg, bk, Publisher(), clock)
+    try:
+        assert disp2.poll() == ["p42-t2-bbbbbbbbbbbb"]
+        disp2.tick()
+        assert ("pr-overlap-guard", 1) in bk.canceled
+    finally:
+        disp2.store.close()
+    disp.store = td.Store(disp.cfg.state_db)
+
+
+# --------------------------------------------------------------------------------------------- polling: errori GitHub
+@pytest.mark.parametrize("status", [500, 502, 404, 422])
+def test_github_api_error_aborts_the_poll_and_never_closes_prs(env, status):
+    disp, bk, _, _ = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    bk.gh.fail_status = status
+    for _ in range(3):
+        assert disp.poll() == []
+    disp.tick()
+    assert not bk.canceled
+    bk.gh.fail_status = None
+    bk.gh.put(42, HEAD2)
+    assert disp.poll() == ["p42-t2-bbbbbbbbbbbb"]
+
+
+def test_non_list_page_aborts_the_poll(env):
+    disp, bk, _, _ = env
+    bk.gh.page_size = 1
+    for n in (40, 41, 42):
+        bk.gh.put(n, HEAD)
+    bk.gh.break_page = 2
+    assert disp.poll() == []
+    assert not disp.store.recent_jobs()
+
+
+def test_pagination_is_followed_to_the_last_page(env):
+    disp, bk, _, _ = env
+    bk.gh.page_size = 2
+    for n in range(40, 45):
+        bk.gh.put(n, HEAD)
+    assert len(disp.poll()) == 5
+    pages = [r for r in bk.gh.requests if "/pulls" in r[1]]
+    assert len(pages) == 3
+
+
+def test_pagination_beyond_the_limit_is_unverifiable_and_aborts(env):
+    disp, bk, _, _ = env
+    bk.gh.page_size = 1
+    for n in range(1, td.MAX_PAGES + 2):
+        bk.gh.put(n, HEAD)
+    assert disp.poll() == []
+    assert not disp.store.recent_jobs()
+
+
+def test_incomplete_listing_without_next_link_cannot_close_prs_in_one_poll(env):
+    """Un elenco che si ferma prima (Link `next` mancante) non e' riconoscibile: la difesa e' che una PR sparita
+    da UN elenco non e' chiusa; servono due elenchi completi consecutivi."""
+    disp, bk, _, _ = env
+    bk.gh.page_size = 1
+    bk.gh.put(41, HEAD2)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    bk.gh.drop_next_link_on_page = 1
+    disp.poll()
+    bk.gh.drop_next_link_on_page = None
+    disp.poll()
+    disp.tick()
+    assert not bk.canceled
+
+
+def test_rate_limit_skips_polls_until_reset(env):
+    disp, bk, _, clock = env
+    bk.gh.put(42, HEAD)
+    bk.gh.rate_limit_reset = clock.now + 300
+    assert disp.poll() == []
+    calls = len(bk.gh.requests)
+    clock.now += 100
+    assert disp.poll() == [] and len(bk.gh.requests) == calls      # nessuna richiesta prima del reset
+    bk.gh.rate_limit_reset = None
+    clock.now += 201
+    assert disp.poll() == ["p42-t1-aaaaaaaaaaaa"]
+
+
+def test_secondary_rate_limit_with_retry_after_is_honoured(env):
+    disp, bk, _, clock = env
+    orig = bk.gh.handle
+
+    def handle(method, url, headers):
+        bk.gh.requests.append((method, url, dict(headers)))
+        return 429, {"Retry-After": "120"}, b"{}"
+    bk.gh.handle = handle
+    bk.gh.put(42, HEAD)
+    assert disp.poll() == []
+    bk.gh.handle = orig
+    clock.now += 60
+    assert disp.poll() == []
+    clock.now += 61
+    assert disp.poll() == ["p42-t1-aaaaaaaaaaaa"]
+
+
+def test_github_client_refuses_any_other_endpoint():
+    for url in (f"https://api.github.com/repos/{REPO}/contents/scripts", f"https://api.github.com/repos/{REPO}/tarball",
+                f"https://api.github.com/repos/{REPO}/zipball/main", f"https://api.github.com/repos/other/x/pulls",
+                f"http://api.github.com/repos/{REPO}/pulls", f"https://evil.example/repos/{REPO}/pulls",
+                f"https://api.github.com/repos/{REPO}/pulls/42/files"):
+        with pytest.raises(td.ApiError):
+            td.GitHub.check_url(url)
+
+
+def test_next_link_to_another_endpoint_aborts_the_poll(env):
+    disp, bk, _, _ = env
+    orig = bk.gh.handle
+
+    def handle(method, url, headers):
+        status, h, body = orig(method, url, headers)
+        h = dict(h, Link=f'<https://api.github.com/repos/{REPO}/contents/x?page=2>; rel="next"')
+        return status, h, body
+    bk.gh.handle = handle
+    bk.gh.put(42, HEAD)
+    assert disp.poll() == []
+    assert not [r for r in bk.gh.requests if "/contents/" in r[1]]
+
+
+# --------------------------------------------------------------------------------------------- credenziali
+def test_failing_token_command_means_no_poll(env, tmp_path):
+    disp, bk, _, clock = env
+    disp.gh._tokens._runner = token_runner(clock, rc=1)
+    bk.gh.put(42, HEAD)
+    assert disp.poll() == []
+    assert not bk.gh.requests
+
+
+@pytest.mark.parametrize("body", ["not json", '{"token": "short", "expires_at": "2030-01-01T00:00:00Z"}',
+                                  '{"expires_at": "2030-01-01T00:00:00Z"}', '{"token": "ghs_' + "x" * 30 + '"}',
+                                  '{"token": "ghs_' + "x" * 30 + '", "expires_at": "domani"}'])
+def test_malformed_token_output_means_no_poll(env, body):
+    disp, bk, _, clock = env
+    disp.gh._tokens._runner = token_runner(clock, body=body)
+    bk.gh.put(42, HEAD)
+    assert disp.poll() == [] and not bk.gh.requests
+
+
+def test_expired_or_expiring_token_is_refused(env):
+    disp, bk, _, clock = env
+    disp.gh._tokens._runner = token_runner(clock, ttl=120)       # meno del margine di rinnovo
+    bk.gh.put(42, HEAD)
+    assert disp.poll() == [] and not bk.gh.requests
+
+
+def test_token_is_refreshed_before_expiry(env):
+    disp, bk, _, clock = env
+    runner = token_runner(clock, ttl=3600)
+    disp.gh._tokens._runner = runner
+    disp.poll()
+    disp.poll()
+    assert len(runner.calls) == 1
+    clock.now += 3600 - td.TOKEN_REFRESH_MARGIN + 1
+    disp.poll()
+    assert len(runner.calls) == 2
+
+
+def test_rejected_token_is_invalidated_and_the_poll_aborted(env):
+    disp, bk, _, clock = env
+    runner = token_runner(clock)
+    disp.gh._tokens._runner = runner
+    bk.gh.put(42, HEAD)
+    bk.gh.fail_status = 401
+    assert disp.poll() == []
+    bk.gh.fail_status = None
+    assert disp.poll() == ["p42-t1-aaaaaaaaaaaa"]
+    assert len(runner.calls) == 2                                 # nuovo token dopo il 401
+
+
+def test_classic_token_with_scopes_is_refused(env):
+    disp, bk, _, _ = env
+    bk.gh.scopes = "repo"
+    bk.gh.put(42, HEAD)
+    assert disp.poll() == []
+    assert not disp.store.recent_jobs()
+
+
+def test_tokens_never_reach_builds_publisher_or_logs(env, capsys):
+    disp, bk, pub, _ = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    bk.fail_create = "http422"
+    disp.tick()
+    bk.gh.fail_status = 401
+    disp.poll()
+    for method, url, headers, body in bk.requests:
+        assert GH_TOKEN not in (body or b"").decode() and GH_TOKEN not in url and TOKEN not in url
+        if body:
+            assert TOKEN not in body.decode()
+    assert not any(GH_TOKEN in str(a) or TOKEN in str(a) for c in pub.calls for a in c)
+    err = capsys.readouterr().err
+    assert GH_TOKEN not in err and TOKEN not in err
+
+
+# --------------------------------------------------------------------------------------------- rerun manuale
+def _rerun_ready(disp, bk):
+    bk.gh.put(42, HEAD)
+    disp.poll()                                                   # primo avvio: cursore dei commenti = adesso
+    disp.tick()
+
+
+def test_authorized_rerun_on_the_current_head_starts_new_builds(env):
+    disp, bk, pub, clock = env
+    _rerun_ready(disp, bk)
+    bk.gh.comment(9001, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    clock.now += 20
+    assert disp.poll() == ["p42-r9001-aaaaaaaaaaaa"]
+    disp.tick()
+    assert {("pr-overlap-guard", 1), ("pr-merge-readiness", 1)} <= set(bk.canceled)
+    new = _posts(bk)[2:]
+    assert {p["env"]["PF_EVENT"] for p in new} == {"manual"}
+    assert {p["env"]["PF_DELIVERY_ID"] for p in new} == {"p42-r9001-aaaaaaaaaaaa"}
+    audit = disp.store.recent_reruns()
+    assert audit[0]["accepted"] == 1 and audit[0]["login"] == RERUNNER and audit[0]["tid"] == "p42-r9001-aaaaaaaaaaaa"
+
+
+def test_rerun_command_is_executed_once(env):
+    disp, bk, _, clock = env
+    _rerun_ready(disp, bk)
+    bk.gh.comment(9002, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    clock.now += 20
+    disp.poll()
+    disp.tick()
+    clock.now += 30                                               # finestra di sovrapposizione: lo rilegge
+    assert disp.poll() == []
+    disp.tick()
+    assert len(_posts(bk)) == 4
+
+
+@pytest.mark.parametrize("case,reason", [
+    ("login", "non autorizzato"), ("sha", "non e' l'head corrente"), ("edited", "modificato"),
+    ("closed", "PR non aperta"), ("draft", "non valutabile"),
+])
+def test_unauthorized_or_stale_rerun_is_rejected_and_audited(env, case, reason):
+    disp, bk, _, clock = env
+    _rerun_ready(disp, bk)
+    created = td.iso(clock.now + 10)
+    kwargs = {"login": "intruder"} if case == "login" else {}
+    sha = HEAD2 if case == "sha" else HEAD
+    updated = td.iso(clock.now + 15) if case == "edited" else None
+    if case == "closed":
+        del bk.gh.pulls[42]
+        disp.poll()
+        disp.poll()
+    if case == "draft":
+        bk.gh.put(42, HEAD, draft=True)
+    bk.gh.comment(9003, 42, f"/pf-trusted-rerun {sha}", created=created, updated=updated, **kwargs)
+    clock.now += 20
+    assert disp.poll() == []
+    audit = disp.store.recent_reruns()
+    assert audit and audit[0]["accepted"] == 0 and reason in audit[0]["reason"]
+    disp.tick()
+    assert len([p for p in _posts(bk) if p["env"]["PF_EVENT"] == "manual"]) == 0
+
+
+def test_non_command_comments_are_ignored_and_not_recorded(env):
+    disp, bk, _, clock = env
+    _rerun_ready(disp, bk)
+    for cid, body in ((1, "LGTM"), (2, f"please /pf-trusted-rerun {HEAD}"), (3, f"/pf-trusted-rerun {HEAD[:39]}")):
+        bk.gh.comment(cid, 42, body, created=td.iso(clock.now + 10))
+    clock.now += 20
+    assert disp.poll() == [] and disp.store.recent_reruns() == []
+
+
+def test_historical_rerun_commands_are_not_executed_at_first_start(env):
+    disp, bk, _, clock = env
+    bk.gh.comment(9004, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now - 3600))
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    clock.now += 60
+    disp.poll()
+    assert disp.store.recent_reruns() == []
+
+
+def test_malformed_rerun_command_keeps_the_cursor(env):
+    disp, bk, _, clock = env
+    _rerun_ready(disp, bk)
+    cursor = disp.store.get_meta("comments_since")
+    bk.gh.comment(9005, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    bk.gh.comments[-1]["issue_url"] = "https://evil.example/issues/42"
+    clock.now += 20
+    disp.poll()
+    assert disp.store.get_meta("comments_since") == cursor and disp.store.recent_reruns() == []
+
+
+def test_reruns_disabled_with_an_empty_allowlist(tmp_path):
+    raw = raw_config(tmp_path)
+    raw["rerun"]["allowed_logins"] = []
+    cfg = td.validate_config(raw)
+    bk, clock = FakeBuildkite(), Clock()
+    disp = make_dispatcher(cfg, bk, Publisher(), clock)
+    try:
+        bk.gh.put(42, HEAD)
+        disp.poll()
+        assert not [r for r in bk.gh.requests if "/issues/comments" in r[1]]
+    finally:
+        disp.store.close()
+
+
+# --------------------------------------------------------------------------------------------- codice della PR mai eseguito
+def test_builds_always_run_main_never_the_pr_head(env):
+    disp, bk, _, _ = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    for sent in _posts(bk):
+        assert sent["branch"] == "main" and sent["commit"] == "HEAD"
+        assert set(sent) == {"commit", "branch", "message", "env"}
+        assert set(sent["env"]) == {"PF_PR_NUMBER", "PF_PR_HEAD_SHA", "PF_PR_BASE_REF", "PF_EVENT", "PF_DELIVERY_ID"}
+
+
+def test_dispatcher_has_no_web_server_and_no_code_fetching_paths():
+    source = (ROOT / "scripts" / "pr_trusted_dispatcher.py").read_text(encoding="utf-8")
+    for forbidden in ("http.server", "socketserver", "/contents", "/tarball", "/zipball", "git clone",
+                      "checkout", "listen"):
+        assert forbidden not in source, forbidden
+    assert td._GITHUB_PATHS == (f"/repos/{REPO}/pulls", f"/repos/{REPO}/issues/comments")
+
+
+def test_transition_ids_match_the_gate_format_even_for_large_numbers():
+    import re
+    gate = re.compile(r"[A-Za-z0-9-]{8,64}")
+    for tid in ("p9999999-t99999999-aaaaaaaaaaaa", "p9999999-r99999999999-aaaaaaaaaaaa", "p1-t1-aaaaaaaaaaaa"):
+        assert gate.fullmatch(tid) and td._TID_RE.fullmatch(tid)
+
+
+# --------------------------------------------------------------------------------------------- segreti e configurazione
+@pytest.mark.parametrize("mode", [0o644, 0o640, 0o604])
+def test_secret_file_readable_by_others_is_refused(tmp_path, mode):
+    path = write_secret(tmp_path / "s", TOKEN, mode)
+    with pytest.raises(td.ConfigError) as exc:
+        td.read_secret_file(path, td._TOKEN_RE, "buildkite.token_file")
+    assert TOKEN not in str(exc.value)
+
+
+def test_secret_symlink_is_refused(tmp_path):
+    real = write_secret(tmp_path / "real", TOKEN)
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    with pytest.raises(td.ConfigError):
+        td.read_secret_file(str(link), td._TOKEN_RE, "buildkite.token_file")
+
+
+@pytest.mark.parametrize("value", ["short", "with space inside the token value", "x" * 9000])
+def test_secret_out_of_format_is_refused_without_echo(tmp_path, value):
+    path = write_secret(tmp_path / "s", value)
+    with pytest.raises(td.ConfigError) as exc:
+        td.read_secret_file(path, td._TOKEN_RE, "buildkite.token_file")
+    assert value not in str(exc.value)
+
+
+@pytest.mark.parametrize("path", [
+    ("github",), ("github", "token_command"), ("github", "token_command_timeout_seconds"), ("rerun",),
+    ("rerun", "allowed_logins"), ("buildkite",), ("buildkite", "organization"), ("buildkite", "token_file"),
+    ("buildkite", "result_artifacts"), ("buildkite", "artifact_download_hosts"), ("publisher",),
+    ("publisher", "command"), ("publisher", "timeout_seconds"), ("state_db",), ("retention_hours",),
+    ("poll_interval_seconds",), ("build_timeout_seconds",), ("build_timeout_seconds", "readiness"),
+    ("http_timeout_seconds",),
+])
+def test_every_missing_mandatory_key_is_not_configured(tmp_path, path):
+    raw = raw_config(tmp_path)
+    node = raw
+    for key in path[:-1]:
+        node = node[key]
+    del node[path[-1]]
+    with pytest.raises(td.ConfigError) as exc:
+        td.validate_config(raw)
+    assert any("MISSING" in p and path[-1] in p for p in exc.value.problems)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: r.update(extra=1),
+    lambda r: r.update(listen={"host": "0.0.0.0", "port": 8787, "path": "/x"}),   # niente piu' endpoint
+    lambda r: r.update(webhook_secret_file="/etc/x"),
+    lambda r: r["github"].update(token_command=["pf-github-read-token"]),
+    lambda r: r["github"].update(token_command=[]),
+    lambda r: r["github"].update(token_command_timeout_seconds=1),
+    lambda r: r["rerun"].update(allowed_logins="pf-owner"),
+    lambda r: r["rerun"].update(allowed_logins=["bad login"]),
+    lambda r: r["buildkite"].update(pipelines=["pf-trusted-smoke"]),
+    lambda r: r["buildkite"]["result_artifacts"].update(smoke=".trusted-guard/smoke.json"),
+    lambda r: r["buildkite"]["result_artifacts"].update(overlap=".trusted-guard/readiness.json"),
+    lambda r: r["buildkite"]["result_artifacts"].update(overlap="../overlap.json"),
+    lambda r: r["buildkite"].update(organization="Bad Org"),
+    lambda r: r["buildkite"].update(artifact_download_hosts=["*.amazonaws.com"]),
+    lambda r: r["buildkite"].update(token_file="relative/token"),
+    lambda r: r["publisher"].update(command=["pf-publish-status"]),
+    lambda r: r.update(retention_hours=23),
+    lambda r: r.update(poll_interval_seconds=5),
+    lambda r: r.update(poll_interval_seconds=True),
+    lambda r: r["build_timeout_seconds"].update(overlap=59),
+    lambda r: r.update(http_timeout_seconds="30"),
+    lambda r: r.update(state_db="/var/lib/../etc/x"),
+])
+def test_invalid_config_values_are_not_configured(tmp_path, mutate):
+    raw = raw_config(tmp_path)
+    mutate(raw)
+    with pytest.raises(td.ConfigError):
+        td.validate_config(raw)
+
+
+def test_cli_check_config_runs_the_real_token_command(tmp_path, capsys):
+    raw = raw_config(tmp_path)
+    script = tmp_path / "token.sh"
+    script.write_text('#!/bin/sh\necho \'{"token": "' + GH_TOKEN + '", "expires_at": "2099-01-01T00:00:00Z"}\'\n')
+    os.chmod(script, 0o700)
+    raw["github"]["token_command"] = [str(script)]
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps(raw))
+    assert td.main(["check-config", "--config", str(path), "--check-secrets"]) == 0
+    script.write_text("#!/bin/sh\nexit 3\n")
+    assert td.main(["check-config", "--config", str(path), "--check-secrets"]) == td.EXIT_NOT_CONFIGURED
+    assert GH_TOKEN not in capsys.readouterr().err

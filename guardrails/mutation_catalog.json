@@ -4424,66 +4424,6 @@
       "rationale": "review indipendente su #568: stesso id con esito diverso trattato come copia: il PASS nasconde il FAIL."
     },
     {
-      "id": "td_signature_bypass",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "    return hmac.compare_digest(expected, m.group(1))",
-      "mutated": "    return True",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "firma HMAC ignorata: un evento falsificato avvierebbe build e status."
-    },
-    {
-      "id": "td_fork_accepted",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "    if _get(pr, \"head\", \"repo\", \"full_name\") != TRUSTED_REPO:",
-      "mutated": "    if False:",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "head da fork accettato: codice non fidato descritto come PR del repository."
-    },
-    {
-      "id": "td_draft_accepted",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "    if draft:",
-      "mutated": "    if False:",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "PR in bozza avviata contro il contratto §5.1."
-    },
-    {
-      "id": "td_replay_accepted",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "            except sqlite3.IntegrityError:\n                return \"duplicate\", []",
-      "mutated": "            except sqlite3.IntegrityError:\n                pass",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "delivery rigiocata registrata come nuova: replay non bloccato."
-    },
-    {
-      "id": "td_out_of_order_accepted",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "            if row is not None and intake.updated_at < row[\"updated_at\"]:",
-      "mutated": "            if False:",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "evento vecchio fuori ordine sostituisce l'head piu' recente."
-    },
-    {
       "id": "td_superseded_ignored",
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
@@ -4626,18 +4566,6 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "review indipendente P2-1: i job sostituiti occupano il posto dell'head ritornato con un force-push: nessuna build, pending per sempre."
-    },
-    {
-      "id": "td_equal_timestamp_supersedes",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "            if row is None or intake.updated_at > row[\"updated_at\"]:",
-      "mutated": "            if True:",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "review P3-1: con lo stesso updated_at l'ultimo arrivato sostituisce l'head reale."
     },
     {
       "id": "td_publish_not_retried",
@@ -4892,16 +4820,196 @@
       "rationale": "audit I4 su #569: vecchio success visibile durante la riconciliazione di una creazione ambigua."
     },
     {
-      "id": "td_redelivery_after_purge",
+      "id": "td_classic_scoped_token_accepted",
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "            if row is not None and row[\"delivery_id\"] == intake.delivery_id:",
+      "original": "            if h.get(\"x-oauth-scopes\", \"\").strip():",
       "mutated": "            if False:",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
-      "rationale": "audit I5 su #569: redelivery dopo la pulizia crea una seconda serie di build."
+      "rationale": "PF-562 polling: token classico con scope (scrittura) accettato al posto del token di sola lettura."
+    },
+    {
+      "id": "td_fork_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                and head_repo is not None and head_repo[\"full_name\"] == TRUSTED_REPO)",
+      "mutated": "                and True)",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: head da fork o repository cancellato valutato come PR del repository."
+    },
+    {
+      "id": "td_draft_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    eligible = (not item[\"draft\"] and item[\"base\"][\"ref\"] == BASE_REF",
+      "mutated": "    eligible = (item[\"base\"][\"ref\"] == BASE_REF",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: PR in bozza avviata contro il contratto."
+    },
+    {
+      "id": "td_rerun_replayed",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if db.execute(\"SELECT 1 FROM reruns WHERE comment_id = ?\", (req.comment_id,)).fetchone():",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 rerun: lo stesso comando rieseguito a ogni rilettura dei commenti."
+    },
+    {
+      "id": "td_close_after_one_miss",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                if row[\"missing\"] + 1 >= CLOSE_AFTER_MISSES:",
+      "mutated": "                if True:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: PR chiusa (e build annullate) per una sola assenza da un elenco letto mentre cambia."
+    },
+    {
+      "id": "td_reopen_same_sha_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                elif not row[\"open\"]:",
+      "mutated": "                elif False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: PR riaperta sullo stesso SHA mai rivalutata."
+    },
+    {
+      "id": "td_rerun_stale_sha_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            elif row[\"head_sha\"] != req.head_sha:",
+      "mutated": "            elif False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 rerun: comando su uno SHA che non e' l'head corrente accettato."
+    },
+    {
+      "id": "td_pagination_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            m = _LINK_NEXT_RE.search(h.get(\"link\", \"\"))",
+      "mutated": "            m = None",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: solo la prima pagina letta: PR mancanti trattate come chiuse."
+    },
+    {
+      "id": "td_page_limit_trusted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        raise ApiError(\"paginazione GitHub oltre il limite: elenco non verificabile\")",
+      "mutated": "        return items",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: elenco oltre il limite di pagine preso come completo."
+    },
+    {
+      "id": "td_github_endpoint_unrestricted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if parts.scheme != \"https\" or parts.netloc != \"api.github.com\" or parts.path not in _GITHUB_PATHS:",
+      "mutated": "        if parts.scheme != \"https\" or parts.netloc != \"api.github.com\":",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: endpoint GitHub qualsiasi (contenuti, archivi) raggiungibile dal client."
+    },
+    {
+      "id": "td_rate_limit_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if now < self.rate_limited_until:\n            return []",
+      "mutated": "        if False:\n            return []",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: richieste ripetute durante il rate limit."
+    },
+    {
+      "id": "td_token_expiry_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if expires <= now + TOKEN_REFRESH_MARGIN:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 credenziali: token scaduto o in scadenza usato."
+    },
+    {
+      "id": "td_token_cached_forever",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if self._token is not None and now < self._expires - TOKEN_REFRESH_MARGIN:",
+      "mutated": "        if self._token is not None:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 credenziali: token mai rinnovato, usato oltre la scadenza."
+    },
+    {
+      "id": "td_rejected_token_kept",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                self._tokens.invalidate()",
+      "mutated": "                pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 credenziali: token rifiutato (401) riusato invece di chiederne uno nuovo."
+    },
+    {
+      "id": "td_rerun_login_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if req.login not in allowed:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 rerun: comando di un login non autorizzato eseguito."
+    },
+    {
+      "id": "td_closed_pr_builds_kept",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                    self._supersede_pr(db, row[\"pr\"], now, keep_head=None)",
+      "mutated": "                    pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 polling: build di una PR chiusa lasciate girare e pubblicare."
     }
   ]
 }

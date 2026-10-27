@@ -1,30 +1,35 @@
 #!/usr/bin/env python3
 """Dispatcher trusted della lane Buildkite (issue #562, PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01).
 
-Contratto tecnico definitivo di Grok (#562 c.6438092317, §5), applicato senza aggiunte:
+Contratto di Grok (#562 c.6438092317, §5) con l'intake sostituito dal **polling autenticato** dell'API GitHub
+(decisione owner PF-562 GITHUB POLLING ARCHITECTURE, opzione B): nessun endpoint pubblico, nessun web server.
 
-1. **Intake.** Webhook GitHub `pull_request` (opened, synchronize, reopened, ready_for_review) con firma
-   `X-Hub-Signature-256` verificata in tempo costante PRIMA di leggere il JSON. Repository
-   `zarbopiero963-droid/Pickfair-nogui`, base `main`, head nello stesso repository (niente fork), PR aperta e non in
-   bozza. Altrimenti nessuna build.
-2. **Replay e ordine.** `X-GitHub-Delivery` unico in un archivio SQLite persistente (conservazione >= 24 h);
-   deduplica su (PR, head SHA) per le build in corso; un nuovo head della stessa PR annulla e sostituisce le build
-   del vecchio. Un evento con `updated_at` piu' vecchio dell'ultimo visto per la PR e' fuori ordine e si scarta.
-3. **Build.** API Buildkite solo sulle pipeline `pr-overlap-guard` e `pr-merge-readiness`, `branch=main`,
+1. **Intake.** Ogni `poll_interval_seconds` (consigliato 60) il dispatcher legge con un token di SOLA LETTURA a
+   durata limitata (prodotto da `github.token_command`, l'helper della GitHub App) l'elenco COMPLETO delle PR aperte
+   del repository `zarbopiero963-droid/Pickfair-nogui`, con paginazione verificata pagina per pagina. Una risposta
+   incompleta, malformata, un errore API, il rate limit o credenziali assenti/scadute annullano il giro: nessuna
+   transizione, nessuno status. Solo GET su due elenchi (`pulls`, `issues/comments`): mai il codice delle PR.
+2. **Transizioni.** Per ogni PR valutabile (base `main`, head nello stesso repository, non in bozza) si confronta
+   lo stato osservato con quello salvato: nuova PR (`opened`), nuovo head (`synchronize`, anche il ritorno a uno SHA
+   precedente), riapertura (`reopened`, anche sullo stesso SHA), uscita dalla bozza (`ready_for_review`). Ogni
+   transizione ha un identificatore stabile `p<PR>-t<seq>-<sha12>` (contatore persistente per PR) che diventa
+   `PF_DELIVERY_ID`. Un head nuovo annulla e sostituisce le build del vecchio; una PR sparita da DUE elenchi completi
+   consecutivi e' chiusa e le sue build si annullano.
+3. **Rerun.** Commento esatto `/pf-trusted-rerun <sha40>` su una PR aperta, di un login in `rerun.allowed_logins`,
+   mai modificato, sullo SHA head corrente: nuova transizione `p<PR>-r<comment_id>-<sha12>`, `PF_EVENT=manual`.
+   Ogni comando (accettato o rifiutato, con motivo) resta nell'archivio `reruns`; il commento e' il record pubblico.
+   Un rerun rivaluta soltanto: stesse pipeline, stesso esito di `decide_outcome`, nessun check aggirato.
+4. **Build.** API Buildkite solo sulle pipeline `pr-overlap-guard` e `pr-merge-readiness`, `branch=main`,
    `commit=HEAD`, env ESATTAMENTE `PF_PR_NUMBER`, `PF_PR_HEAD_SHA`, `PF_PR_BASE_REF=main`, `PF_EVENT`,
-   `PF_DELIVERY_ID`.
-4. **Esito.** Il guard (`scripts/ci/trusted_pr_guard.py`) scrive `<guard>.json`; lo SHA analizzato deve essere
-   `PF_PR_HEAD_SHA` (e PR, repository e guard quelli della richiesta), altrimenti esito `error`.
-5. **Pubblicazione.** Solo tramite il comando di pubblicazione configurato (sul VPS l'helper root
-   `pf-publish-status`, che ricontrolla la PR e lo SHA prima di scrivere). Build annullata, bloccata, ambigua o in
-   timeout => `failure`/`error`, mai `success`. Contesti `overlap-check` e `pr-merge-readiness`.
-6. **Segreti.** Il dispatcher legge solo il secret del webhook e il token Buildkite, da file 0600/0400; non li
-   passa mai alle build, non li stampa, non li scrive nell'archivio.
-7. **Fail closed** su ogni errore di API, rete, validazione o configurazione.
+   `PF_DELIVERY_ID`. Le pipeline trusted eseguono solo script di `main`.
+5. **Esito e pubblicazione.** Come prima: `success` solo con build `passed` e risultato PASS del guard sullo stesso
+   head; pubblicazione solo tramite il comando configurato (helper root `pf-publish-status`, credenziale separata).
+6. **Segreti.** Token Buildkite da file 0600/0400; token GitHub solo in memoria, mai passato alle build, mai nei
+   log; la chiave della GitHub App resta all'helper del token, fuori da questo processo.
+7. **Fail closed** su ogni errore di API, rete, validazione, credenziali o configurazione.
 
-Configurazione: un file JSON con TUTTE le chiavi obbligatorie e nessun default per i parametri infrastrutturali
-(endpoint, organizzazione, percorsi dei segreti, artifact, comando di pubblicazione, timeout). Chiave mancante,
-sconosciuta o fuori formato => `NOT CONFIGURED`, il servizio non parte. Dettagli in `docs/trusted_dispatcher.md`.
+Configurazione: un file JSON con TUTTE le chiavi obbligatorie e nessun default per i parametri infrastrutturali.
+Chiave mancante, sconosciuta o fuori formato => `NOT CONFIGURED`. Dettagli in `docs/trusted_dispatcher.md`.
 
 Solo libreria standard. Nessun ordine Betfair, nessun accesso al codice delle PR.
 """
@@ -32,15 +37,14 @@ from __future__ import annotations
 
 import argparse
 import fcntl
-import hashlib
-import hmac
 import http.client
 import json
 import os
 import re
+import signal
 import sqlite3
 import stat
-import subprocess  # nosec B404 - solo il comando di pubblicazione configurato, argv senza shell
+import subprocess  # nosec B404 - solo i comandi configurati (token, pubblicazione), argv senza shell
 import sys
 import threading
 import time
@@ -49,35 +53,39 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Mapping, Optional
 
 TRUSTED_REPO = "zarbopiero963-droid/Pickfair-nogui"
 BASE_REF = "main"
-ALLOWED_ACTIONS = frozenset({"opened", "synchronize", "reopened", "ready_for_review"})
 #: Unica fonte delle pipeline avviabili: la configurazione non puo' aggiungerne altre.
 GUARDS: dict[str, dict[str, str]] = {
     "overlap": {"pipeline": "pr-overlap-guard", "context": "overlap-check"},
     "readiness": {"pipeline": "pr-merge-readiness", "context": "pr-merge-readiness"},
 }
+GITHUB_API = "https://api.github.com"
 BUILDKITE_API = "https://api.buildkite.com/v2"
 BUILDKITE_WEB = "https://buildkite.com"
-MAX_BODY_BYTES = 2 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 64 * 1024
 MAX_API_BYTES = 4 * 1024 * 1024
+MAX_PAGES = 50                          # 50 x 100 elementi: oltre, l'elenco non e' verificabile
 MIN_RETENTION_HOURS = 24
 DESCRIPTION_MAX = 140
+TOKEN_REFRESH_MARGIN = 300              # un token che scade entro 5 minuti si rinnova prima di usarlo
+CLOSE_AFTER_MISSES = 2                  # una PR e' chiusa solo se manca da due elenchi completi consecutivi
+COMMENTS_OVERLAP_SECONDS = 120          # sovrapposizione fra giri per i commenti: i doppioni li toglie l'archivio
 
 _PR_RE = re.compile(r"[1-9][0-9]{0,6}", re.ASCII)
 _SHA_RE = re.compile(r"[0-9a-f]{40}", re.ASCII)
-_DELIVERY_RE = re.compile(r"[A-Za-z0-9-]{8,64}", re.ASCII)   # stesso formato del gate pre-command
-_SIGNATURE_RE = re.compile(r"sha256=([0-9a-f]{64})", re.ASCII)
+_TID_RE = re.compile(r"[A-Za-z0-9-]{8,64}", re.ASCII)         # stesso formato del gate pre-command (PF_DELIVERY_ID)
 _TIMESTAMP_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", re.ASCII)
 _SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,99}", re.ASCII)
+_LOGIN_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", re.ASCII)
 _HOST_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+", re.ASCII)
 _ARTIFACT_RE = re.compile(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*", re.ASCII)
 _TOKEN_RE = re.compile(r"[!-~]{20,8192}", re.ASCII)
-_SECRET_RE = re.compile(r"[!-~]{16,4096}", re.ASCII)
+_RERUN_RE = re.compile(r"/pf-trusted-rerun ([0-9a-f]{40})", re.ASCII)
+_LINK_NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
+_GITHUB_PATHS = (f"/repos/{TRUSTED_REPO}/pulls", f"/repos/{TRUSTED_REPO}/issues/comments")
 
 # Stati Buildkite di una build (API REST v2). Sconosciuto => error, mai attesa infinita.
 BUILD_RUNNING = frozenset({"creating", "scheduled", "running", "failing", "canceling", "waiting", "waiting_failed"})
@@ -102,7 +110,7 @@ class ConfigError(Exception):
 
 
 class ApiError(Exception):
-    """Risposta HTTP definita ma non quella attesa (4xx/5xx, JSON malformato)."""
+    """Risposta HTTP definita ma non quella attesa (4xx/5xx, JSON malformato, elenco non verificabile)."""
 
     def __init__(self, message: str, status: Optional[int] = None) -> None:
         super().__init__(message)
@@ -113,14 +121,26 @@ class TransportError(Exception):
     """Esito della richiesta ignoto (rete, timeout): per una creazione di build e' AMBIGUO."""
 
 
+class CredentialError(Exception):
+    """Token GitHub di lettura assente, illeggibile, rifiutato o scaduto: il giro di polling non avviene."""
+
+
+class RateLimited(Exception):
+    """Rate limit GitHub: nessun giro fino a `until` (epoch)."""
+
+    def __init__(self, until: float) -> None:
+        super().__init__(f"rate limit GitHub fino a {int(until)}")
+        self.until = until
+
+
 # --------------------------------------------------------------------------------------------- configurazione
 CONFIG_SCHEMA_KEYS = {
-    "listen": {"host", "port", "path"},
-    "webhook_secret_file": None,
+    "github": {"token_command", "token_command_timeout_seconds"},
+    "rerun": {"allowed_logins"},
     "buildkite": {"organization", "token_file", "result_artifacts", "artifact_download_hosts"},
     "publisher": {"command", "timeout_seconds"},
     "state_db": None,
-    "delivery_retention_hours": None,
+    "retention_hours": None,
     "poll_interval_seconds": None,
     "build_timeout_seconds": set(GUARDS),
     "http_timeout_seconds": None,
@@ -129,10 +149,9 @@ CONFIG_SCHEMA_KEYS = {
 
 @dataclass(frozen=True)
 class Config:
-    listen_host: str
-    listen_port: int
-    listen_path: str
-    webhook_secret_file: str
+    github_token_command: tuple
+    github_token_command_timeout_seconds: int
+    rerun_allowed_logins: frozenset
     organization: str
     buildkite_token_file: str
     result_artifacts: dict
@@ -140,7 +159,7 @@ class Config:
     publisher_command: tuple
     publisher_timeout_seconds: int
     state_db: str
-    delivery_retention_hours: int
+    retention_hours: int
     poll_interval_seconds: int
     build_timeout_seconds: dict
     http_timeout_seconds: int
@@ -152,6 +171,11 @@ def _is_int(value: Any) -> bool:
 
 def _abs_path(value: Any) -> bool:
     return isinstance(value, str) and value.startswith("/") and "\x00" not in value and ".." not in value.split("/")
+
+
+def _argv(value: Any) -> bool:
+    return (isinstance(value, list) and bool(value) and all(isinstance(c, str) and c and "\x00" not in c for c in value)
+            and _abs_path(value[0]))
 
 
 def validate_config(raw: Any) -> Config:
@@ -176,19 +200,18 @@ def validate_config(raw: Any) -> Config:
     if problems:
         raise ConfigError(problems)
 
-    listen, bk = raw["listen"], raw["buildkite"]
-    host = listen["host"]
-    if not isinstance(host, str) or not host or len(host) > 255 or any(c.isspace() for c in host):
-        problems.append("listen.host: stringa non vuota senza spazi")
-    port = listen["port"]
-    if not _is_int(port) or not 1 <= port <= 65535:
-        problems.append("listen.port: intero 1..65535")
-    path = listen["path"]
-    if not isinstance(path, str) or not re.fullmatch(r"/[A-Za-z0-9._/-]{0,200}", path, re.ASCII) or ".." in path:
-        problems.append("listen.path: percorso che inizia con '/' (caratteri [A-Za-z0-9._/-])")
-    for key in ("webhook_secret_file", "state_db"):
-        if not _abs_path(raw[key]):
-            problems.append(f"{key}: percorso assoluto senza '..'")
+    gh, bk = raw["github"], raw["buildkite"]
+    if not _argv(gh["token_command"]):
+        problems.append("github.token_command: argv non vuoto con eseguibile a percorso assoluto")
+    token_timeout = gh["token_command_timeout_seconds"]
+    if not _is_int(token_timeout) or not 5 <= token_timeout <= 120:
+        problems.append("github.token_command_timeout_seconds: intero 5..120")
+    logins = raw["rerun"]["allowed_logins"]
+    # elenco vuoto ammesso e ESPLICITO: rerun disabilitati
+    if not isinstance(logins, list) or not all(isinstance(x, str) and _LOGIN_RE.fullmatch(x) for x in logins):
+        problems.append("rerun.allowed_logins: elenco di login GitHub (vuoto = rerun disabilitati)")
+    if not _abs_path(raw["state_db"]):
+        problems.append("state_db: percorso assoluto senza '..'")
     if not _abs_path(bk["token_file"]):
         problems.append("buildkite.token_file: percorso assoluto senza '..'")
     org = bk["organization"]
@@ -207,20 +230,17 @@ def validate_config(raw: Any) -> Config:
     if (not isinstance(hosts, list) or not hosts
             or not all(isinstance(h, str) and _HOST_RE.fullmatch(h) for h in hosts)):
         problems.append("buildkite.artifact_download_hosts: elenco non vuoto di host esatti (minuscoli)")
-    command = raw["publisher"]["command"]
-    if (not isinstance(command, list) or not command or not all(isinstance(c, str) and c and "\x00" not in c
-                                                                 for c in command)
-            or not _abs_path(command[0])):
+    if not _argv(raw["publisher"]["command"]):
         problems.append("publisher.command: argv non vuoto con eseguibile a percorso assoluto")
     pub_timeout = raw["publisher"]["timeout_seconds"]
     if not _is_int(pub_timeout) or not 5 <= pub_timeout <= 300:
         problems.append("publisher.timeout_seconds: intero 5..300")
-    retention = raw["delivery_retention_hours"]
+    retention = raw["retention_hours"]
     if not _is_int(retention) or not MIN_RETENTION_HOURS <= retention <= 24 * 90:
-        problems.append(f"delivery_retention_hours: intero {MIN_RETENTION_HOURS}..{24 * 90}")
+        problems.append(f"retention_hours: intero {MIN_RETENTION_HOURS}..{24 * 90}")
     poll = raw["poll_interval_seconds"]
-    if not _is_int(poll) or not 1 <= poll <= 300:
-        problems.append("poll_interval_seconds: intero 1..300")
+    if not _is_int(poll) or not 10 <= poll <= 600:
+        problems.append("poll_interval_seconds: intero 10..600 (consigliato 60)")
     timeouts = raw["build_timeout_seconds"]
     for guard in GUARDS:
         value = timeouts[guard]
@@ -232,12 +252,12 @@ def validate_config(raw: Any) -> Config:
     if problems:
         raise ConfigError(problems)
     return Config(
-        listen_host=host, listen_port=port, listen_path=path, webhook_secret_file=raw["webhook_secret_file"],
-        organization=org, buildkite_token_file=bk["token_file"], result_artifacts=dict(artifacts),
-        artifact_download_hosts=tuple(hosts), publisher_command=tuple(command),
-        publisher_timeout_seconds=pub_timeout, state_db=raw["state_db"],
-        delivery_retention_hours=retention, poll_interval_seconds=poll, build_timeout_seconds=dict(timeouts),
-        http_timeout_seconds=http_timeout)
+        github_token_command=tuple(gh["token_command"]), github_token_command_timeout_seconds=token_timeout,
+        rerun_allowed_logins=frozenset(logins), organization=org, buildkite_token_file=bk["token_file"],
+        result_artifacts=dict(artifacts), artifact_download_hosts=tuple(hosts),
+        publisher_command=tuple(raw["publisher"]["command"]), publisher_timeout_seconds=pub_timeout,
+        state_db=raw["state_db"], retention_hours=retention, poll_interval_seconds=poll,
+        build_timeout_seconds=dict(timeouts), http_timeout_seconds=http_timeout)
 
 
 def load_config(path: Optional[str]) -> Config:
@@ -282,34 +302,71 @@ def read_secret_file(path: str, pattern: re.Pattern, label: str) -> str:
     return value
 
 
-# --------------------------------------------------------------------------------------------- intake
-def verify_signature(secret: bytes, body: bytes, header: Optional[str]) -> bool:
-    """HMAC SHA-256 di GitHub sul corpo grezzo, confronto in tempo costante. Header assente o malformato => False."""
-    if not isinstance(header, str):
-        return False
-    m = _SIGNATURE_RE.fullmatch(header)
-    if not m:
-        return False
-    expected = hmac.new(secret, body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, m.group(1))
+def iso(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def parse_iso(value: Any) -> float:
+    if not isinstance(value, str) or not _TIMESTAMP_RE.fullmatch(value):
+        raise ValueError("timestamp fuori formato")
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+
+
+# --------------------------------------------------------------------------------------------- credenziali GitHub
+TokenRunner = Callable[[tuple, int], "tuple[int, bytes]"]
+
+
+def default_token_runner(argv: tuple, timeout: int) -> "tuple[int, bytes]":
+    proc = subprocess.run(list(argv), env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},  # nosec B603
+                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                          timeout=timeout, check=False)
+    return proc.returncode, proc.stdout[:64 * 1024]
+
+
+class TokenProvider:
+    """Token di SOLA LETTURA a durata limitata, prodotto dal comando configurato (l'helper della GitHub App, che
+    tiene la chiave fuori da questo processo). Uscita attesa: JSON `{"token": ..., "expires_at": "...Z"}`.
+    Assente, illeggibile, fuori formato o in scadenza => CredentialError, mai un token di ripiego."""
+
+    def __init__(self, command: tuple, timeout: int, clock: Callable[[], float],
+                 runner: TokenRunner = default_token_runner) -> None:
+        self._command, self._timeout, self._clock, self._runner = command, timeout, clock, runner
+        self._token: Optional[str] = None
+        self._expires = 0.0
+
+    def get(self) -> str:
+        now = self._clock()
+        if self._token is not None and now < self._expires - TOKEN_REFRESH_MARGIN:
+            return self._token
+        self._token = None
+        try:
+            rc, out = self._runner(self._command, self._timeout)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise CredentialError(f"comando del token non eseguito ({type(exc).__name__})") from None
+        if rc != 0:
+            raise CredentialError(f"comando del token uscito con {rc}")
+        try:
+            data = json.loads(out.decode("utf-8"))
+            token, expires = data["token"], parse_iso(data["expires_at"])
+        except (UnicodeDecodeError, ValueError, RecursionError, KeyError, TypeError):
+            raise CredentialError("uscita del comando del token fuori formato") from None
+        if not isinstance(token, str) or not _TOKEN_RE.fullmatch(token):
+            raise CredentialError("token fuori formato")
+        if expires <= now + TOKEN_REFRESH_MARGIN:
+            raise CredentialError("token scaduto o in scadenza")
+        self._token, self._expires = token, expires
+        return token
+
+    def invalidate(self) -> None:
+        self._token = None
+
+
+# --------------------------------------------------------------------------------------------- GitHub (polling)
 @dataclass(frozen=True)
-class Intake:
-    delivery_id: str
-    action: str
+class Observed:
     pr: int
     head_sha: str
-    updated_at: str
-
-
-class Rejected(Exception):
-    """Evento firmato ma non ammesso. `ignored` = escluso per contratto (azione, bozza, fork, PR chiusa): HTTP 200;
-    altrimenti dato incoerente o malformato: HTTP 422. In entrambi i casi nessuna build."""
-
-    def __init__(self, reason: str, *, ignored: bool = False) -> None:
-        super().__init__(reason)
-        self.ignored = ignored
+    eligible: bool          # base main, head nello stesso repository, non in bozza
 
 
 def _get(obj: Any, *keys: str) -> Any:
@@ -320,59 +377,168 @@ def _get(obj: Any, *keys: str) -> Any:
     return obj
 
 
-def parse_event(event: Optional[str], delivery: Optional[str], payload: Any) -> Intake:
-    """Validazione del contratto §5.1 su un evento GIA' autenticato. Ogni campo con tipo esatto: un booleano non e'
-    un numero di PR, una stringa non e' un booleano."""
-    if not isinstance(delivery, str) or not _DELIVERY_RE.fullmatch(delivery):
-        raise Rejected("X-GitHub-Delivery assente o fuori formato")
-    if event != "pull_request":
-        raise Rejected(f"evento non gestito: {event!r}", ignored=True)
-    if not isinstance(payload, dict):
-        raise Rejected("payload non e' un oggetto JSON")
-    action = payload.get("action")
-    if action not in ALLOWED_ACTIONS:
-        raise Rejected(f"azione non gestita: {action!r}", ignored=True)
-    if _get(payload, "repository", "full_name") != TRUSTED_REPO:
-        raise Rejected("repository dell'evento diverso da quello atteso")
-    pr = payload.get("pull_request")
-    if not isinstance(pr, dict):
-        raise Rejected("pull_request assente")
-    number = pr.get("number")
-    if not _is_int(number) or not _PR_RE.fullmatch(str(number)) or payload.get("number") not in (None, number):
-        raise Rejected("numero di PR assente o fuori formato")
-    if _get(pr, "base", "repo", "full_name") != TRUSTED_REPO:
-        raise Rejected("repository base della PR diverso da quello atteso")
-    head_sha = _get(pr, "head", "sha")
+def parse_pull(item: Any) -> Observed:
+    """Una voce dell'elenco delle PR aperte, con tipi esatti. Malformata => ApiError (il giro intero si annulla)."""
+    if not isinstance(item, dict):
+        raise ApiError("voce dell'elenco PR non e' un oggetto")
+    number = item.get("number")
+    if not _is_int(number) or not _PR_RE.fullmatch(str(number)):
+        raise ApiError("numero di PR fuori formato")
+    if item.get("state") != "open" or not isinstance(item.get("draft"), bool):
+        raise ApiError(f"PR #{number}: stato o bozza fuori formato")
+    head_sha = _get(item, "head", "sha")
     if not isinstance(head_sha, str) or not _SHA_RE.fullmatch(head_sha):
-        raise Rejected("head SHA assente o fuori formato")
-    updated_at = pr.get("updated_at")
-    if not isinstance(updated_at, str) or not _TIMESTAMP_RE.fullmatch(updated_at):
-        raise Rejected("updated_at della PR assente o fuori formato")
-    state, draft = pr.get("state"), pr.get("draft")
-    if state not in ("open", "closed") or not isinstance(draft, bool):
-        raise Rejected("stato o bozza della PR fuori formato")
-    if state != "open":
-        raise Rejected("PR non aperta", ignored=True)
-    if draft:
-        raise Rejected("PR in bozza", ignored=True)
-    if _get(pr, "base", "ref") != BASE_REF:
-        raise Rejected(f"base diversa da {BASE_REF}", ignored=True)
-    if _get(pr, "head", "repo", "full_name") != TRUSTED_REPO:
-        raise Rejected("head da fork o da repository cancellato: non supportato", ignored=True)
-    return Intake(delivery_id=delivery, action=action, pr=number, head_sha=head_sha, updated_at=updated_at)
+        raise ApiError(f"PR #{number}: head SHA fuori formato")
+    if _get(item, "base", "repo", "full_name") != TRUSTED_REPO or not isinstance(_get(item, "base", "ref"), str):
+        raise ApiError(f"PR #{number}: base fuori formato")
+    head_repo = _get(item, "head", "repo")
+    if head_repo is not None and not isinstance(_get(head_repo, "full_name"), str):
+        raise ApiError(f"PR #{number}: repository head fuori formato")
+    eligible = (not item["draft"] and item["base"]["ref"] == BASE_REF
+                and head_repo is not None and head_repo["full_name"] == TRUSTED_REPO)
+    return Observed(pr=number, head_sha=head_sha, eligible=eligible)
+
+
+def parse_pulls(items: list) -> list:
+    seen: dict[int, Observed] = {}
+    for item in items:
+        obs = parse_pull(item)
+        if obs.pr in seen and seen[obs.pr] != obs:
+            raise ApiError(f"PR #{obs.pr} due volte con dati diversi: elenco incoerente")
+        seen[obs.pr] = obs
+    return sorted(seen.values(), key=lambda o: o.pr)
+
+
+class GitHub:
+    """Solo GET su `pulls` e `issues/comments` del repository fidato, paginazione completa e verificata. Nessun
+    endpoint di contenuti o di archivi: il codice delle PR non passa mai da qui."""
+
+    def __init__(self, cfg: Config, tokens: TokenProvider, transport: "Transport", clock: Callable[[], float]) -> None:
+        self._cfg, self._tokens, self._transport, self._clock = cfg, tokens, transport, clock
+
+    @staticmethod
+    def check_url(url: str) -> None:
+        try:
+            parts = urllib.parse.urlsplit(url)
+        except ValueError:
+            raise ApiError("URL GitHub malformata") from None
+        if parts.scheme != "https" or parts.netloc != "api.github.com" or parts.path not in _GITHUB_PATHS:
+            raise ApiError(f"URL GitHub non ammessa: {parts.path}")
+
+    def _rate_limit_until(self, headers: Mapping[str, str]) -> float:
+        now = self._clock()
+        retry = headers.get("retry-after", "")
+        if retry.isdigit():
+            return now + min(int(retry), 3600)
+        reset = headers.get("x-ratelimit-reset", "")
+        if reset.isdigit():
+            return min(float(reset), now + 3600)
+        return now + 60
+
+    def get_all(self, path: str, params: Mapping[str, str]) -> list:
+        url: Optional[str] = f"{GITHUB_API}{path}?{urllib.parse.urlencode(params)}"
+        items: list = []
+        seen: set = set()
+        for _ in range(MAX_PAGES):
+            self.check_url(url)
+            headers = {"Authorization": f"Bearer {self._tokens.get()}", "Accept": "application/vnd.github+json",
+                       "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "pf-trusted-dispatcher"}
+            status, resp_headers, body = self._transport("GET", url, headers, None, self._cfg.http_timeout_seconds)
+            h = {k.lower(): v for k, v in dict(resp_headers).items()}
+            if status in (403, 429) and (h.get("x-ratelimit-remaining") == "0" or "retry-after" in h):
+                raise RateLimited(self._rate_limit_until(h))
+            if status == 401:
+                self._tokens.invalidate()
+                raise CredentialError("token GitHub rifiutato (401)")
+            if status != 200:
+                raise ApiError(f"GitHub HTTP {status}", status)
+            if h.get("x-oauth-scopes", "").strip():
+                raise CredentialError("token classico con scope: serve un token di sola lettura a durata limitata")
+            if len(body) > MAX_API_BYTES:
+                raise ApiError("risposta GitHub troppo grande")
+            try:
+                page = json.loads(body)
+            except (ValueError, RecursionError):
+                raise ApiError("risposta GitHub non JSON") from None
+            if not isinstance(page, list):
+                raise ApiError("pagina GitHub non e' un elenco")
+            items.extend(page)
+            m = _LINK_NEXT_RE.search(h.get("link", ""))
+            if m is None:
+                return items
+            url = m.group(1)
+            if url in seen:
+                raise ApiError("paginazione GitHub ciclica")
+            seen.add(url)
+        raise ApiError("paginazione GitHub oltre il limite: elenco non verificabile")
+
+    def open_pulls(self) -> list:
+        return self.get_all(f"/repos/{TRUSTED_REPO}/pulls",
+                            {"state": "open", "per_page": "100", "sort": "created", "direction": "asc"})
+
+    def comments_since(self, since: str) -> list:
+        return self.get_all(f"/repos/{TRUSTED_REPO}/issues/comments",
+                            {"since": since, "per_page": "100", "sort": "created", "direction": "asc"})
+
+
+@dataclass(frozen=True)
+class RerunRequest:
+    comment_id: int
+    pr: int
+    head_sha: str
+    login: str
+
+
+def parse_rerun_comment(item: Any) -> Optional[RerunRequest]:
+    """None se il commento non e' un comando di rerun; ApiError se e' un comando ma i dati sono fuori formato."""
+    if not isinstance(item, dict) or not isinstance(item.get("body"), str):
+        raise ApiError("commento fuori formato")
+    m = _RERUN_RE.fullmatch(item["body"].strip())
+    if m is None:
+        return None
+    cid, login = item.get("id"), _get(item, "user", "login")
+    url = item.get("issue_url")
+    prefix = f"{GITHUB_API}/repos/{TRUSTED_REPO}/issues/"
+    if not _is_int(cid) or cid <= 0 or not isinstance(login, str) or not isinstance(url, str) \
+            or not url.startswith(prefix) or not _PR_RE.fullmatch(url[len(prefix):]):
+        raise ApiError("comando di rerun con dati fuori formato")
+    if item.get("created_at") != item.get("updated_at") or not _TIMESTAMP_RE.fullmatch(str(item.get("created_at"))):
+        # modificato dopo la pubblicazione: il testo eseguito non sarebbe quello registrato
+        return RerunRequest(comment_id=cid, pr=int(url[len(prefix):]), head_sha="", login=login)
+    return RerunRequest(comment_id=cid, pr=int(url[len(prefix):]), head_sha=m.group(1), login=login)
 
 
 # --------------------------------------------------------------------------------------------- archivio
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS deliveries (
-  delivery_id TEXT PRIMARY KEY,
-  received_at REAL NOT NULL
-);
-CREATE TABLE IF NOT EXISTS pr_heads (
+CREATE TABLE IF NOT EXISTS pr_state (
   pr INTEGER PRIMARY KEY,
   head_sha TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  delivery_id TEXT
+  eligible INTEGER NOT NULL,
+  open INTEGER NOT NULL,
+  missing INTEGER NOT NULL DEFAULT 0,
+  seq INTEGER NOT NULL DEFAULT 0,
+  updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS transitions (
+  tid TEXT PRIMARY KEY,
+  pr INTEGER NOT NULL,
+  head_sha TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS reruns (
+  comment_id INTEGER PRIMARY KEY,
+  pr INTEGER NOT NULL,
+  head_sha TEXT NOT NULL,
+  login TEXT NOT NULL,
+  accepted INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  tid TEXT,
+  created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -407,7 +573,7 @@ MIGRATION_COLUMNS = (
 
 
 class Store:
-    """SQLite con transazioni `BEGIN IMMEDIATE`: delivery, ordine e job di un evento si scrivono insieme o niente."""
+    """SQLite con transazioni `BEGIN IMMEDIATE`: stato delle PR, transizioni e job si scrivono insieme o niente."""
 
     def __init__(self, path: str, *, read_only: bool = False) -> None:
         self._lock = threading.Lock()
@@ -441,8 +607,6 @@ class Store:
                 if name not in cols:
                     db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {ddl}")
             db.execute("DROP INDEX IF EXISTS jobs_active")   # indice senza `superseded = 0` (P2-1)
-            if "delivery_id" not in {row[1] for row in db.execute("PRAGMA table_info(pr_heads)")}:
-                db.execute("ALTER TABLE pr_heads ADD COLUMN delivery_id TEXT")
             # finestre ancorate: un job in pubblicazione/annullamento senza `publishing_since` userebbe
             # `updated_at`, che si aggiorna a ogni giro, e non scadrebbe mai
             db.execute("UPDATE jobs SET publishing_since = updated_at WHERE publishing_since IS NULL "
@@ -471,45 +635,116 @@ class Store:
                 raise
             return result
 
-    def record_event(self, intake: Intake, now: float) -> tuple[str, list[int]]:
-        """Esiti: ("duplicate", []) delivery gia' vista; ("out_of_order", []) evento piu' vecchio dell'ultimo noto
-        per la PR; ("accepted", [id dei job nuovi]) altrimenti (lista vuota se i job del head sono gia' in corso)."""
+    @staticmethod
+    def _supersede_pr(db: sqlite3.Connection, pr: int, now: float, keep_head: Optional[str]) -> None:
+        """Job attivi della PR non piu' validi: tutti (`keep_head` None) o quelli di un head diverso."""
+        placeholders = ",".join("?" * len(ACTIVE_STATES))
+        db.execute(f"UPDATE jobs SET superseded = 1, updated_at = ? WHERE pr = ? "  # nosec B608
+                   f"AND (? IS NULL OR head_sha != ?) AND state IN ({placeholders})",
+                   (now, pr, keep_head, keep_head, *ACTIVE_STATES))
 
-        def fn(db: sqlite3.Connection) -> tuple[str, list[int]]:
-            try:
-                db.execute("INSERT INTO deliveries(delivery_id, received_at) VALUES (?, ?)",
-                           (intake.delivery_id, now))
-            except sqlite3.IntegrityError:
-                return "duplicate", []
-            row = db.execute("SELECT head_sha, updated_at, delivery_id FROM pr_heads WHERE pr = ?",
-                             (intake.pr,)).fetchone()
-            if row is not None and row["delivery_id"] == intake.delivery_id:
-                # redelivery dell'ultimo evento dopo la pulizia di `deliveries`: resta un replay (audit su #569)
-                return "duplicate", []
-            if row is not None and intake.updated_at < row["updated_at"]:
-                return "out_of_order", []
-            db.execute("INSERT INTO pr_heads(pr, head_sha, updated_at, delivery_id) VALUES (?, ?, ?, ?) "
-                       "ON CONFLICT(pr) DO UPDATE SET head_sha = excluded.head_sha, updated_at = excluded.updated_at, "
-                       "delivery_id = excluded.delivery_id",
-                       (intake.pr, intake.head_sha, intake.updated_at, intake.delivery_id))
-            # Solo un evento STRETTAMENTE piu' recente sostituisce gli altri head: con lo stesso `updated_at`
-            # l'ordine non e' noto e restano in corsa entrambi (decide il ricontrollo dell'helper sull'head).
-            if row is None or intake.updated_at > row["updated_at"]:
-                placeholders = ",".join("?" * len(ACTIVE_STATES))
-                db.execute(f"UPDATE jobs SET superseded = 1, updated_at = ? WHERE pr = ? "  # nosec B608
-                           f"AND head_sha != ? AND state IN ({placeholders})",
-                           (now, intake.pr, intake.head_sha, *ACTIVE_STATES))
-            created: list[int] = []
-            for guard in GUARDS:
-                cur = db.execute(
-                    "INSERT OR IGNORE INTO jobs(delivery_id, event, pr, head_sha, guard, state, created_at, updated_at)"
-                    " VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)",
-                    (intake.delivery_id, intake.action, intake.pr, intake.head_sha, guard, now, now))
-                if cur.rowcount == 1:
-                    created.append(int(cur.lastrowid))
-            return "accepted", created
+    @staticmethod
+    def _new_jobs(db: sqlite3.Connection, tid: str, kind: str, pr: int, head_sha: str, now: float) -> list[int]:
+        if not _TID_RE.fullmatch(tid):
+            raise ValueError("identificatore di transizione fuori formato")
+        db.execute("INSERT INTO transitions(tid, pr, head_sha, kind, created_at) VALUES (?, ?, ?, ?, ?)",
+                   (tid, pr, head_sha, kind, now))
+        created: list[int] = []
+        for guard in GUARDS:
+            cur = db.execute(
+                "INSERT OR IGNORE INTO jobs(delivery_id, event, pr, head_sha, guard, state, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)", (tid, kind, pr, head_sha, guard, now, now))
+            if cur.rowcount == 1:
+                created.append(int(cur.lastrowid))
+        return created
+
+    def apply_poll(self, observed: list, now: float) -> list[str]:
+        """Confronta un elenco COMPLETO delle PR aperte con lo stato salvato e registra le transizioni, tutto in una
+        transazione. Ritorna gli identificatori delle transizioni create."""
+
+        def fn(db: sqlite3.Connection) -> list[str]:
+            created: list[str] = []
+            seen = {o.pr for o in observed}
+            for o in observed:
+                row = db.execute("SELECT * FROM pr_state WHERE pr = ?", (o.pr,)).fetchone()
+                if row is None:
+                    kind: Optional[str] = "opened"
+                elif not row["open"]:
+                    kind = "reopened"                   # anche sullo stesso SHA: va rivalutata
+                elif row["head_sha"] != o.head_sha:
+                    kind = "synchronize"                # anche il ritorno a uno SHA gia' elaborato
+                elif not row["eligible"] and o.eligible:
+                    kind = "ready_for_review"
+                else:
+                    kind = None
+                seq = row["seq"] if row is not None else 0
+                if kind is not None or (row is not None and row["eligible"] and not o.eligible):
+                    self._supersede_pr(db, o.pr, now, keep_head=o.head_sha if o.eligible else None)
+                if kind is not None and o.eligible:
+                    seq += 1
+                    tid = f"p{o.pr}-t{seq}-{o.head_sha[:12]}"
+                    self._new_jobs(db, tid, kind, o.pr, o.head_sha, now)
+                    created.append(tid)
+                db.execute("INSERT INTO pr_state(pr, head_sha, eligible, open, missing, seq, updated_at) "
+                           "VALUES (?, ?, ?, 1, 0, ?, ?) ON CONFLICT(pr) DO UPDATE SET head_sha = excluded.head_sha, "
+                           "eligible = excluded.eligible, open = 1, missing = 0, seq = excluded.seq, "
+                           "updated_at = excluded.updated_at", (o.pr, o.head_sha, int(o.eligible), seq, now))
+            for row in db.execute("SELECT pr, missing FROM pr_state WHERE open = 1").fetchall():
+                if row["pr"] in seen:
+                    continue
+                if row["missing"] + 1 >= CLOSE_AFTER_MISSES:
+                    # assente da due elenchi completi consecutivi: chiusa (un singolo elenco puo' perdere una PR
+                    # spostata fra due pagine mentre lo si legge)
+                    db.execute("UPDATE pr_state SET open = 0, missing = 0, updated_at = ? WHERE pr = ?",
+                               (now, row["pr"]))
+                    self._supersede_pr(db, row["pr"], now, keep_head=None)
+                else:
+                    db.execute("UPDATE pr_state SET missing = missing + 1, updated_at = ? WHERE pr = ?",
+                               (now, row["pr"]))
+            return created
 
         return self._tx(fn)
+
+    def record_rerun(self, req: RerunRequest, allowed: frozenset, now: float) -> tuple[str, str]:
+        """(esito, motivo). Esiti: `duplicate` (comando gia' registrato), `rejected`, `accepted`. Ogni comando
+        nuovo resta nell'archivio, accettato o no."""
+
+        def fn(db: sqlite3.Connection) -> tuple[str, str]:
+            if db.execute("SELECT 1 FROM reruns WHERE comment_id = ?", (req.comment_id,)).fetchone():
+                return "duplicate", "comando gia' registrato"
+            row = db.execute("SELECT * FROM pr_state WHERE pr = ?", (req.pr,)).fetchone()
+            if req.login not in allowed:
+                reason = f"login {req.login} non autorizzato"
+            elif not req.head_sha:
+                reason = "commento modificato dopo la pubblicazione"
+            elif row is None or not row["open"]:
+                reason = "PR non aperta"
+            elif not row["eligible"]:
+                reason = "PR non valutabile (bozza, base diversa da main o fork)"
+            elif row["head_sha"] != req.head_sha:
+                reason = "lo SHA non e' l'head corrente della PR"
+            else:
+                reason = ""
+            tid = f"p{req.pr}-r{req.comment_id}-{req.head_sha[:12]}" if not reason else None
+            db.execute("INSERT INTO reruns(comment_id, pr, head_sha, login, accepted, reason, tid, created_at) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                       (req.comment_id, req.pr, req.head_sha, req.login, int(not reason), reason, tid, now))
+            if reason:
+                return "rejected", reason
+            self._supersede_pr(db, req.pr, now, keep_head=None)   # anche i job dello stesso head: si rivaluta
+            self._new_jobs(db, tid, "manual", req.pr, req.head_sha, now)
+            return "accepted", tid
+
+        return self._tx(fn)
+
+    def get_meta(self, key: str) -> Optional[str]:
+        with self._lock:
+            row = self._db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row is not None else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self._tx(lambda db: db.execute("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET "
+                                       "value = excluded.value", (key, value)))
 
     def active_jobs(self) -> list[dict]:
         placeholders = ",".join("?" * len(ACTIVE_STATES))
@@ -528,6 +763,11 @@ class Store:
             rows = self._db.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
 
+    def recent_reruns(self, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM reruns ORDER BY comment_id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
     def update_job(self, job_id: int, now: float, *, expected_state: Optional[str] = None, **fields: Any) -> bool:
         """Con `expected_state` la modifica avviene solo se il job e' ancora in quello stato (True se applicata)."""
         allowed = {"state", "build_number", "build_url", "outcome", "description", "dispatched_at",
@@ -543,13 +783,14 @@ class Store:
         return cur.rowcount == 1
 
     def purge(self, now: float, retention_hours: int) -> None:
+        """Pulizia dei job chiusi e delle transizioni vecchie. I comandi di rerun restano: sono l'audit."""
         cutoff = now - retention_hours * 3600
         placeholders = ",".join("?" * len(FINAL_STATES))
 
         def fn(db: sqlite3.Connection) -> None:
-            db.execute("DELETE FROM deliveries WHERE received_at < ?", (cutoff,))
             db.execute(f"DELETE FROM jobs WHERE updated_at < ? AND state IN ({placeholders})",  # nosec B608
                        (cutoff, *FINAL_STATES))
+            db.execute("DELETE FROM transitions WHERE created_at < ?", (cutoff,))
 
         self._tx(fn)
 
@@ -772,39 +1013,63 @@ def log(message: str) -> None:
 
 # --------------------------------------------------------------------------------------------- dispatcher
 class Dispatcher:
-    def __init__(self, cfg: Config, store: Store, buildkite: Buildkite, secret: bytes,
+    def __init__(self, cfg: Config, store: Store, buildkite: Buildkite, github: GitHub,
                  publisher: Callable[..., int], clock: Callable[[], float] = time.time) -> None:
         self.cfg = cfg
         self.store = store
         self.bk = buildkite
-        self.secret = secret
+        self.gh = github
         self.publish = publisher
         self.clock = clock
+        self.rate_limited_until = 0.0
 
-    # ---- intake (thread HTTP)
-    def accept(self, headers: Mapping[str, str], body: bytes) -> tuple[int, str]:
-        h = {k.lower(): v for k, v in headers.items()}
-        if not verify_signature(self.secret, body, h.get("x-hub-signature-256")):
-            return 401, "firma assente o non valida"
-        event = h.get("x-github-event")
-        if event == "ping":
-            return 200, "pong"
+    # ---- intake (polling)
+    def poll(self) -> list[str]:
+        """Un giro di polling. Elenco delle PR incompleto, malformato, rate limit, errore API o credenziali =>
+        nessuna transizione e nessuno status (fail closed). Ritorna gli identificatori delle transizioni create."""
+        now = self.clock()
+        if now < self.rate_limited_until:
+            return []
         try:
-            payload = json.loads(body.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError, RecursionError):
-            return 400, "payload non JSON"
+            observed = parse_pulls(self.gh.open_pulls())
+        except RateLimited as exc:
+            self.rate_limited_until = exc.until
+            log(f"giro di polling rinviato: {exc}")
+            return []
+        except (ApiError, TransportError, CredentialError) as exc:
+            log(f"giro di polling annullato: {exc}")
+            return []
+        created = self.store.apply_poll(observed, now)
+        for tid in created:
+            log(f"transizione {tid}")
+        if self.cfg.rerun_allowed_logins:
+            created += self._poll_reruns(now)
+        return created
+
+    def _poll_reruns(self, now: float) -> list[str]:
+        since = self.store.get_meta("comments_since")
+        if since is None:
+            # primo avvio: nessun comando storico rieseguito, si parte da adesso
+            self.store.set_meta("comments_since", iso(now))
+            return []
         try:
-            intake = parse_event(event, h.get("x-github-delivery"), payload)
-        except Rejected as exc:
-            log(f"evento scartato: {exc}")
-            return (200 if exc.ignored else 422), str(exc)
-        outcome, created = self.store.record_event(intake, self.clock())
-        log(f"delivery {intake.delivery_id} PR #{intake.pr} {intake.head_sha[:12]}: {outcome}, job {created}")
-        if outcome == "duplicate":
-            return 200, "delivery gia' ricevuta: replay ignorato"
-        if outcome == "out_of_order":
-            return 200, "evento piu' vecchio dell'ultimo noto per la PR: ignorato"
-        return 202, f"accettato: job {created}" if created else "build gia' in corso per questo head"
+            requests = [r for r in (parse_rerun_comment(c) for c in self.gh.comments_since(since)) if r is not None]
+        except RateLimited as exc:
+            self.rate_limited_until = exc.until
+            log(f"lettura dei comandi di rerun rinviata: {exc}")
+            return []
+        except (ApiError, TransportError, CredentialError) as exc:
+            log(f"lettura dei comandi di rerun annullata (cursore invariato): {exc}")
+            return []
+        created: list[str] = []
+        for req in requests:
+            outcome, detail = self.store.record_rerun(req, self.cfg.rerun_allowed_logins, now)
+            if outcome != "duplicate":
+                log(f"rerun commento {req.comment_id} di {req.login} su PR #{req.pr}: {outcome} ({detail})")
+            if outcome == "accepted":
+                created.append(detail)
+        self.store.set_meta("comments_since", iso(now - COMMENTS_OVERLAP_SECONDS))
+        return created
 
     # ---- worker
     def tick(self) -> None:
@@ -814,7 +1079,7 @@ class Dispatcher:
             except Exception as exc:  # un job non deve fermare gli altri; lo stato resta quello salvato
                 log(f"job {job['id']}: errore inatteso {type(exc).__name__}")
                 self._internal_error_fallback(job)
-        self.store.purge(self.clock(), self.cfg.delivery_retention_hours)
+        self.store.purge(self.clock(), self.cfg.retention_hours)
 
     def _internal_error_fallback(self, job: dict) -> None:
         """Un job che solleva a ogni giro non resta attivo per sempre: scaduto il timeout della build, la build si
@@ -1071,107 +1336,64 @@ class Dispatcher:
         return None
 
 
-# --------------------------------------------------------------------------------------------- server
-def make_handler(dispatcher: Dispatcher) -> type:
-    class Handler(BaseHTTPRequestHandler):
-        server_version = "pf-trusted-dispatcher"
-        sys_version = ""
-        timeout = 30                    # un client lento non tiene occupato un thread all'infinito
 
-        def log_message(self, fmt: str, *args: Any) -> None:  # niente header nei log
-            log(f"http {self.address_string()} {fmt % args}")
-
-        def _reply(self, code: int, text: str) -> None:
-            data = (text + "\n").encode("utf-8")
-            self.send_response(code)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def do_GET(self) -> None:  # noqa: N802
-            self._reply(405, "solo POST")
-
-        def do_POST(self) -> None:  # noqa: N802
-            if urllib.parse.urlsplit(self.path).path != dispatcher.cfg.listen_path:
-                return self._reply(404, "percorso sconosciuto")
-            raw_len = self.headers.get("Content-Length")
-            if raw_len is None or not re.fullmatch(r"[0-9]{1,8}", raw_len, re.ASCII):
-                return self._reply(411, "Content-Length obbligatorio (cifre ASCII)")
-            length = int(raw_len)
-            if length > MAX_BODY_BYTES:
-                return self._reply(413, "payload troppo grande")
-            body = self.rfile.read(length)
-            try:
-                code, text = dispatcher.accept(dict(self.headers.items()), body)
-            except Exception as exc:  # archivio non scrivibile o simili: 500, GitHub registra il fallimento
-                log(f"intake fallito: {type(exc).__name__}")
-                code, text = 500, "errore interno: evento non registrato"
-            self._reply(code, text)
-
-    return Handler
-
-
+# --------------------------------------------------------------------------------------------- servizio
 def build_dispatcher(cfg: Config, transport: Transport = urllib_transport,
-                     publisher: Optional[Callable[..., int]] = None) -> Dispatcher:
-    secret = read_secret_file(cfg.webhook_secret_file, _SECRET_RE, "webhook_secret_file").encode("ascii")
+                     publisher: Optional[Callable[..., int]] = None,
+                     token_runner: TokenRunner = default_token_runner,
+                     clock: Callable[[], float] = time.time) -> Dispatcher:
     token = read_secret_file(cfg.buildkite_token_file, _TOKEN_RE, "buildkite.token_file")
+    tokens = TokenProvider(cfg.github_token_command, cfg.github_token_command_timeout_seconds, clock, token_runner)
     store = Store(cfg.state_db)
-    return Dispatcher(cfg, store, Buildkite(cfg, token, transport), secret,
-                      publisher or default_publisher(cfg.publisher_command, cfg.publisher_timeout_seconds))
+    return Dispatcher(cfg, store, Buildkite(cfg, token, transport), GitHub(cfg, tokens, transport, clock),
+                      publisher or default_publisher(cfg.publisher_command, cfg.publisher_timeout_seconds), clock)
 
 
 def serve(cfg: Config) -> int:
+    """Nessun web server: un solo ciclo che ogni `poll_interval_seconds` legge GitHub e fa avanzare i job."""
     dispatcher = build_dispatcher(cfg)
     stop = threading.Event()
-
-    def worker() -> None:
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    log(f"polling ogni {cfg.poll_interval_seconds} s")
+    try:
         while not stop.is_set():
-            try:
-                dispatcher.tick()
-            except Exception as exc:
-                log(f"tick fallito: {type(exc).__name__}")
+            for step in (dispatcher.poll, dispatcher.tick):
+                try:
+                    step()
+                except Exception as exc:  # un giro fallito non ferma il servizio; lo stato salvato resta valido
+                    log(f"{step.__name__} fallito: {type(exc).__name__}")
             stop.wait(cfg.poll_interval_seconds)
-
-    try:
-        server = ThreadingHTTPServer((cfg.listen_host, cfg.listen_port), make_handler(dispatcher))
-    except OSError as exc:      # porta occupata: nessun worker parte, l'archivio si rilascia
-        dispatcher.store.close()
-        raise ConfigError([f"listen: bind non riuscito ({type(exc).__name__})"]) from None
-    thread = threading.Thread(target=worker, name="pf-dispatch-worker", daemon=True)
-    thread.start()
-    log(f"in ascolto su {cfg.listen_host}:{cfg.listen_port}{cfg.listen_path}")
-    try:
-        server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        stop.set()
-        server.server_close()
-        thread.join(timeout=10)
         dispatcher.store.close()
     return EXIT_OK
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="pr_trusted_dispatcher.py", description=__doc__.splitlines()[0])
-    parser.add_argument("command", choices=("check-config", "serve", "jobs"))
+    parser.add_argument("command", choices=("check-config", "serve", "jobs", "reruns"))
     parser.add_argument("--config", required=False)
     parser.add_argument("--check-secrets", action="store_true",
-                        help="check-config: legge anche i file dei segreti (permessi e formato)")
+                        help="check-config: legge il token Buildkite ed esegue una volta il comando del token GitHub")
     args = parser.parse_args(argv)
     try:
         cfg = load_config(args.config)
         if args.command == "check-config":
             if args.check_secrets:
-                read_secret_file(cfg.webhook_secret_file, _SECRET_RE, "webhook_secret_file")
                 read_secret_file(cfg.buildkite_token_file, _TOKEN_RE, "buildkite.token_file")
+                try:
+                    TokenProvider(cfg.github_token_command, cfg.github_token_command_timeout_seconds,
+                                  time.time).get()
+                except CredentialError as exc:
+                    raise ConfigError([f"github.token_command: {exc}"]) from None
             print("CONFIGURED")
             return EXIT_OK
-        if args.command == "jobs":
+        if args.command in ("jobs", "reruns"):
             store = Store(cfg.state_db, read_only=True)
             try:
-                print(json.dumps(store.recent_jobs(), indent=1))
+                rows = store.recent_jobs() if args.command == "jobs" else store.recent_reruns()
+                print(json.dumps(rows, indent=1))
             finally:
                 store.close()
             return EXIT_OK

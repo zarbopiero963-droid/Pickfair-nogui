@@ -10,11 +10,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 - **#562 — dispatcher trusted della lane Buildkite (`scripts/pr_trusted_dispatcher.py`), NOT CERTIFIED:**
-  - riceve i webhook GitHub `pull_request` firmati (HMAC SHA-256 verificata prima del parsing), valida repository, PR,
-    base `main`, head nello stesso repository, PR aperta e non in bozza, e avvia solo `pr-overlap-guard` e
-    `pr-merge-readiness` su `main` con le cinque variabili del contratto di Grok (#562 c.6438092317 §5);
-  - replay bloccato dalla delivery id persistente in SQLite, eventi fuori ordine scartati, un head nuovo annulla le
-    build del vecchio, creazione ambigua riconciliata senza seconda creazione, ripresa dopo il riavvio;
+  - **polling autenticato dell'API GitHub al posto del webhook HTTPS** (decisione owner PF-562 opzione B): nessun web
+    server; ogni `poll_interval_seconds` (60 s, configurabile 10..600) legge le PR aperte con paginazione completa
+    (`Link rel=next`, al massimo 50 pagine), ogni elemento verificato con tipi stretti; risposta incompleta,
+    malformata, errore API, rate limit o credenziali mancanti/scadute ⇒ nessuna transizione e nessuno status;
+  - credenziali di lettura da `github.token_command` (token breve con scadenza, rinnovato prima della scadenza e
+    scartato su 401; token classico con scope rifiutato), separate dal publisher; solo GET su
+    `/repos/{repo}/pulls` e `/repos/{repo}/issues/comments`;
+  - stato per PR in SQLite (`pr_state` con contatore `seq`): nuova PR, nuovo commit, chiusa/riaperta, ritorno a uno
+    SHA già visto e uscita dalla bozza danno ciascuno una transizione con id stabile `p<PR>-t<seq>-<sha12>`; la
+    riconciliazione dopo il riavvio confronta lo stato salvato con quello osservato; chiusura solo dopo due giri
+    consecutivi senza la PR, che annulla le build;
+  - rerun manuale `/pf-trusted-rerun <sha40>` in un commento della PR: autore in `rerun.allowed_logins`, commento
+    non modificato, PR aperta e idonea, SHA uguale all'head corrente; id `p<PR>-r<commento>-<sha12>`, registrato in
+    `reruns` (mai rieseguito due volte), comandi precedenti al primo avvio ignorati; rifiutato = solo registro, il
+    rerun non tocca i required check e il verdetto resta del guard;
+  - un head nuovo annulla le build del vecchio, creazione ambigua riconciliata senza seconda creazione, ripresa dopo
+    il riavvio; avvia solo `pr-overlap-guard` e `pr-merge-readiness` su `main` con le cinque variabili del contratto
+    di Grok (#562 c.6438092317 §5): le pipeline trusted eseguono solo script di `main`;
   - `success` solo con build `passed` e risultato `PASS` del guard sullo stesso head; tutto il resto `failure` o
     `error`; pubblicazione solo tramite il comando configurato (helper root di Grok);
   - configurazione tutta obbligatoria: chiave mancante o sconosciuta ⇒ `NOT CONFIGURED`, il servizio non parte; punti
@@ -29,8 +42,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     fallito, timeout del publisher in configurazione;
   - rilievi Codex su #569: `pending` ritentato mentre la build gira, risposta 5xx non JSON alla creazione trattata
     come ambigua e riconciliata; migrazione idempotente di un archivio creato da una versione precedente (Sol); annullamento non confermato ritentato e risposta HTTP troncata trattata come errore di trasporto (Codex); audit indipendente di liveness: ogni risposta di creazione non interpretabile ambigua, elenco vuoto o pieno non prova l'assenza, risultato ritentato, annullamenti non confermati ricordati (stato `canceling`), fallback sul timeout per le eccezioni inattese; obbligo di annullamento persistente e indipendente dallo stato, nessuno stato finale con build da annullare (Codex); audit avversariale degli invarianti: finestra di annullamento dall'adozione, fallback anche in pubblicazione, `pending` durante la riconciliazione, redelivery dopo la pulizia ancora replay;
-  - test offline con un finto Buildkite e un server HTTP reale su loopback; 40 mutazioni nell'area
-    `trusted_dispatcher` e una nell'area `trusted_gate`.
+  - test offline con un finto GitHub paginato e un finto Buildkite; le prove HMAC del webhook sono sostituite dalle
+    prove sulle credenziali di lettura e sul perimetro degli endpoint; mutazioni nell'area `trusted_dispatcher` e una
+    nell'area `trusted_gate`.
 - **#566 — deduplica dei check run fail-closed (`scripts/pr_automation_controller.dedupe_github_check_runs`):**
   - sull'head corrente nessun check run omonimo viene più scartato, salvo la copia esatta della stessa check run
     (stesso id, stato e tempi). Prima vinceva il più recente fra i check omonimi della stessa sorgente, quindi un PASS di un altro
