@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "ccr-764b0316-9r1a1d",
-  "sha": "bac3b3e9c9ef1753164fdbfa67ae997a65f73cf1"
+  "sha": "0dc0a9c269c37315656a70890f0bebebe6ee0f2f"
  },
  "mandate_id": "OWNER MANDATE PF-569 FINAL INTEGRATION & MERGE READINESS + PF-562 PUBLISHER & DISPATCHER FINAL INTEGRATION",
- "next_atomic_action": "#569 head bac3b3e: attendere check settled e review Sol/Grok sull'intero range e Codex; Grok ha dato PROVIDER_ERROR (connessione chiusa, richiesta non streaming ~55k token) sui range completi precedenti: se si ripete = REVIEW_UNKNOWN, decisione owner; triage e correzione dei rilievi reali; risolvere il thread Codex 4389984882 a check chiusi; READY_FOR_OWNER_MERGE solo con tutti i gate. Merge #569 owner. #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
- "previous_checkpoint_sha": "8a0b8a4071181c0d0b86d073e6e13443fba9f1bf",
+ "next_atomic_action": "#569 READY_FOR_OWNER_MERGE (head 0dc0a9c): attendere il merge owner; nessun nuovo push. Dopo il merge: CI su main, coordinamento con Grok per installazione pinned da main, publisher DRY-RUN, collaudi e2e (#562). #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
+ "previous_checkpoint_sha": "d55ed17dabb4e8c9bd363c5bcc960dbdfa201d1d",
  "schema": "pf-current/1",
- "seq": 77
+ "seq": 78
 }

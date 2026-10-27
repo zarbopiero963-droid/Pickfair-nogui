@@ -63,7 +63,7 @@
  ],
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "mandate_id": "OWNER MANDATE PF-569 FINAL INTEGRATION & MERGE READINESS + PF-562 PUBLISHER & DISPATCHER FINAL INTEGRATION",
- "next_atomic_action": "#569 head bac3b3e: attendere check settled e review Sol/Grok sull'intero range e Codex; Grok ha dato PROVIDER_ERROR (connessione chiusa, richiesta non streaming ~55k token) sui range completi precedenti: se si ripete = REVIEW_UNKNOWN, decisione owner; triage e correzione dei rilievi reali; risolvere il thread Codex 4389984882 a check chiusi; READY_FOR_OWNER_MERGE solo con tutti i gate. Merge #569 owner. #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
+ "next_atomic_action": "#569 READY_FOR_OWNER_MERGE (head 0dc0a9c): attendere il merge owner; nessun nuovo push. Dopo il merge: CI su main, coordinamento con Grok per installazione pinned da main, publisher DRY-RUN, collaudi e2e (#562). #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [
