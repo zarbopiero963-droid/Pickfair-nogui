@@ -15,9 +15,12 @@ env:
 # un secondo `overlap-check` verde accanto a quello rosso (stessa app, stesso SHA: su #564, b4e6604). Il collaudo
 # manuale sta in `pr-overlap-guard-diagnostic.yml`, con un nome di check diverso che non puo' soddisfare il
 # required check.
+# `edited` serve al cambio di base: una PR aperta su un branch con uno script compiacente e poi spostata su `main`
+# terrebbe il verde calcolato sul vecchio base; con `edited` il check si ricalcola sul base nuovo (review
+# indipendente su #567).
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read

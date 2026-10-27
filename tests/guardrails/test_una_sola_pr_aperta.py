@@ -162,7 +162,9 @@ def test_required_check_runs_only_on_pull_request() -> None:
     `overlap-check` sull'head della PR (su #564 un dispatch dal branch aveva messo un PASS accanto al FAIL)."""
     on = _on(_load(WORKFLOW))
     assert set(on) == {"pull_request"}
-    assert set(on["pull_request"]["types"]) == {"opened", "synchronize", "reopened"}
+    # `edited` copre il cambio di base: senza, una PR aperta su un branch con uno script compiacente e poi spostata
+    # su `main` terrebbe il verde calcolato sul vecchio base.
+    assert set(on["pull_request"]["types"]) == {"opened", "synchronize", "reopened", "edited"}
 
 
 def test_workflow_never_checks_out_or_runs_the_pr_code() -> None:
@@ -227,6 +229,27 @@ def test_runner_variables_are_never_redefined(path) -> None:
         assert not [k for k in env if str(k).upper().startswith(("GITHUB_", "RUNNER_"))], env
     if path == DIAGNOSTIC:
         assert "env" not in _diag_job()["steps"][0]
+
+
+#: Chiavi ammesse per step: `working-directory`, `timeout-minutes`, `shell`, `continue-on-error` o `if` (salvo
+#: `if: always()` sull'upload, verificato a parte) potrebbero spostare, interrompere o saltare il guard.
+STEP_KEYS = {"name", "uses", "with", "run", "env", "if"}
+
+
+@pytest.mark.parametrize("path", [WORKFLOW, DIAGNOSTIC])
+def test_no_shell_defaults_interpolation_or_shell_startup_files(path) -> None:
+    """Un `defaults: run: shell:` (workflow o job) renderebbe no-op ogni step; un `${{ }}` nel testo di un `run`
+    sarebbe un'iniezione (un nome di branch puo' contenere `$(`); `BASH_ENV`/`ENV` farebbero eseguire un file prima
+    dello script (review indipendente su #567)."""
+    data = _load(path)
+    assert "defaults" not in data
+    for job in data["jobs"].values():
+        assert "defaults" not in job
+        envs = [data.get("env") or {}, job.get("env") or {}] + [s.get("env") or {} for s in job["steps"]]
+        assert not [k for e in envs for k in e if str(k).upper() in {"BASH_ENV", "ENV"}]
+        for step in job["steps"]:
+            assert set(step) <= STEP_KEYS, step.get("name")
+            assert "${{" not in step.get("run", ""), step.get("name")
 
 
 def test_required_workflow_has_one_checkout_and_one_guard_step_only() -> None:

@@ -186,7 +186,10 @@ logica: il job `overlap-check` (stesso nome del check di prima) esegue lo script
   - verifica la provenienza: una PR da fork o con head diverso dall'evento dà FAIL;
   - senza PR aperte dà FAIL invece che verde;
   - una PR con base diversa da `main` dà FAIL (il workflow non imposta `PF_PR_BASE_REF`, quindi vale il default
-    `main`): prima il controllo la valutava comunque.
+    `main`): prima il controllo la valutava comunque. Il check gira anche su `edited`, quindi un cambio di base lo
+    ricalcola: una PR aperta su un branch con uno script compiacente e poi spostata su `main` non tiene il verde
+    calcolato sul vecchio base (review indipendente su #567). Limite: lo script è quello del commit base
+    dell'evento, che può essere un `main` meno recente; resta codice trusted e sbaglia verso il FAIL.
 - **Collaudo manuale separato (`pr-overlap-guard-diagnostic.yml`).** Il check run prende il nome dal job, non dal
   workflow. Su #564 un `workflow_dispatch` dal branch di `pr-overlap-guard.yml` ha pubblicato sull'head `b4e6604` un
   secondo `overlap-check` (success, check suite 109551036228) accanto a quello del `pull_request` (failure, suite
@@ -200,6 +203,8 @@ logica: il job `overlap-check` (stesso nome del check di prima) esegue lo script
     token. Gira quindi solo codice di `main`; il run da `main` si attacca al commit di `main`, non all'head della PR.
     Un dispatch rifiutato da un branch lascia invece un `overlap-diagnostic` **rosso** sull'head di quel branch:
     merge readiness lo conta come bloccante fino al push successivo (fail-closed, mai un verde);
+  - nessun `defaults:`, nessun `${{ }}` nei `run`, nessun `BASH_ENV`/`ENV`, e ogni step usa solo le chiavi `name`,
+    `uses`, `with`, `run`, `env`;
   - nessuno step dei due workflow ha `if:` o `shell:` (salvo `if: always()` sull'upload): uno step saltato o
     eseguito da un'altra shell darebbe un verde senza guard. Nessun `env:` ridefinisce `GITHUB_*`/`RUNNER_*`, e lo
     step del gate non ha `env`: il gate legge `$GITHUB_REF` del runner (non `${{ github.ref }}` nel testo dello

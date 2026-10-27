@@ -19,7 +19,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     `overlap-check`, nessuno step saltabile (`if:`/`shell:`), nessun `env` che ridefinisca `GITHUB_*`/`RUNNER_*`, un
     PASS (diagnostico o duplicato) non maschera il FAIL in merge readiness;
   - cambi di comportamento dichiarati del check: tutte le pagine dei file, PR illeggibile = FAIL, PR da fork o con
-    head diverso = FAIL, nessuna PR aperta = FAIL, base diversa da `main` = FAIL.
+    head diverso = FAIL, nessuna PR aperta = FAIL, base diversa da `main` = FAIL; il check gira anche su `edited`,
+    così un cambio di base lo ricalcola.
 - **PF-GOV-DOC-WORKFLOW-ALIGN-01, Fase 1 — governance allineata a #561 e #563, token Actions accettato:**
   - `CLAUDE.md`, `AGENTS.md` e `docs/auto_pr_flow_spec.md` §0.9 (estensione documentale autorizzata) elencano i
     tre script della lane trusted fra i file a merge owner, la spec anche i cinque workflow reviewer per nome, e
