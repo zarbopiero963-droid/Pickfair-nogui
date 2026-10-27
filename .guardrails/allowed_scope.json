@@ -2945,6 +2945,19 @@
       ],
       "max_files": 8
     },
+    "review-budget-569": {
+      "description": "PF-569 AI REVIEW FULL COVERAGE RECOVERY (owner GO 27/10/2026, eccezione temporanea alla regola una PR aperta): solo i due workflow dei revisori attivi (Sol, Grok). Tetti del diff 150000 per file / 400000 totali, dimensionati sul diff della #569 (oggi max 71800, totale 188651) con margine per il passaggio al polling deciso dall'owner (PF-562); commento con SHA completi esaminati e copertura misurata (rr_coverage_summary). Nessun reviewer disabilitato, nessuna deroga, VALID_INCONCLUSIVE mai PASS, fail-closed invariato, timeout invariati. Guard tests/guardrails/test_ai_review_full_coverage_budget.py, docs/ai_audit_workflows.md, CHANGELOG. Workflow-gate: merge owner. Nessuna modifica al dispatcher, a trading, Microstake o infrastruttura.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ai_audit_workflows.md",
+        "tests/guardrails/test_ai_review_full_coverage_budget.py"
+      ],
+      "max_files": 6
+    },
     "trusted-dispatcher-562": {
       "description": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (issue #562, decisioni owner PF-568 e post-merge #568): dispatcher trusted scripts/pr_trusted_dispatcher.py secondo il contratto definitivo di Grok (#562 c.6438092317 §5): intake per polling autenticato dell'API GitHub (decisione owner PF-562 opzione B, al posto del webhook HMAC: token di lettura breve da token_command, paginazione completa fail-closed, stato per PR con id di transizione stabile, riconciliazione dopo il riavvio, rerun manuale autenticato e registrato), validazione repo/PR/base/head/fork/bozza, dedupe per head, sostituzione e annullamento delle build del vecchio head, build solo pr-overlap-guard/pr-merge-readiness su main con le cinque variabili, esito success solo con build passed e risultato PASS sullo stesso head, pubblicazione solo tramite il comando configurato (helper root). Configurazione obbligatoria fail-closed (NOT CONFIGURED, nessun default infrastrutturale); punti non decisi BLOCKED_CONTRACT in docs/trusted_dispatcher.md. Correzione dello smoke trusted (#562 c.6440620221): scripts/ci/trusted_pr_guard.py da' un motivo esplicito senza contesto PR. Test offline, mutazioni area trusted_dispatcher e tg_smoke_no_context_message, docs, CHANGELOG. Nessuna modifica a ruleset, required checks, Buildkite, VPS, token o trading. File a merge owner (scripts/pr_*.py, scripts/ci/trusted_pr_guard.py). scripts/ci_changed_modules.py registra il dispatcher fra i percorsi della lane mutation-guardrails.",
       "allow_tests": true,

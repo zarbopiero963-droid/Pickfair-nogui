@@ -47,6 +47,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - test offline con un finto GitHub paginato e un finto Buildkite; le prove HMAC del webhook sono sostituite dalle
     prove sulle credenziali di lettura e sul perimetro degli endpoint; mutazioni nell'area `trusted_dispatcher` e una
     nell'area `trusted_gate`.
+- **PF-569 AI REVIEW FULL COVERAGE RECOVERY — budget del diff di Sol e Grok (owner GO 27/10/2026):**
+  - tetti portati a 150.000 caratteri per file e 400.000 totali per GPT-6.1 Sol e Grok 4.7 (prima 7.000/24.000
+    e 5.000/18.000), dimensionati sul diff della #569 con margine per il passaggio al polling (PF-562): il dispatcher trusted
+    e i suoi test arrivano interi al modello;
+  - ogni commento di review registra gli SHA completi esaminati e la copertura misurata del payload inviato
+    (`rr_coverage_summary`); comportamento fail-closed invariato (buco misurato = `VALID_INCONCLUSIVE`);
+  - nuovo guard `tests/guardrails/test_ai_review_full_coverage_budget.py` sulla catena estratta dai workflow.
 - **#566 — deduplica dei check run fail-closed (`scripts/pr_automation_controller.dedupe_github_check_runs`):**
   - sull'head corrente nessun check run omonimo viene più scartato, salvo la copia esatta della stessa check run
     (stesso id, stato e tempi). Prima vinceva il più recente fra i check omonimi della stessa sorgente, quindi un PASS di un altro
