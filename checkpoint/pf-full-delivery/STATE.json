@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 76,
- "updated_at": "2026-10-27T14:30:00Z",
+ "seq": 77,
+ "updated_at": "2026-10-27T15:10:00Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "PF-570 sequencing: chiusura temporanea #569 (branch e commit e1c6e36 preservati, nessun merge), rerun required check #570; merge #570 SOLO con overlap-check PASS, Merge readiness PASS, tutti i required PASS, review valide, zero thread, mergeability clean, altrimenti STOP e rapporto; dopo il merge: CI main, riapertura #569, review Sol/Grok sul diff completo, finding reali; allowlist rerun iniziale = zarbopiero963-droid (identita' e permessi verificati); gate pre-command Grok: ready_for_review e manual. #569 a merge owner. #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
+ "next_atomic_action": "#569 head bac3b3e: attendere check settled e review Sol/Grok sull'intero range e Codex; Grok ha dato PROVIDER_ERROR (connessione chiusa, richiesta non streaming ~55k token) sui range completi precedenti: se si ripete = REVIEW_UNKNOWN, decisione owner; triage e correzione dei rilievi reali; risolvere il thread Codex 4389984882 a check chiusi; READY_FOR_OWNER_MERGE solo con tutti i gate. Merge #569 owner. #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "d4132999039fe06e05f88fe25576f9ccd1537147",
+ "previous_checkpoint_sha": "8a0b8a4071181c0d0b86d073e6e13443fba9f1bf",
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -603,11 +603,11 @@
  },
  "session_end": "seq 23 Claude Code: lotti locali verificati; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "OWNER GO PF-570 CONTROLLED MERGE SEQUENCING (#569/#570) + PF-562 GITHUB POLLING FINAL DECISION",
+ "mandate_id": "OWNER MANDATE PF-569 FINAL INTEGRATION & MERGE READINESS + PF-562 PUBLISHER & DISPATCHER FINAL INTEGRATION",
  "code": {
   "branch": "ccr-764b0316-9r1a1d",
-  "sha": "e1c6e36009a6a3001eeff815599c241094c0b1e4",
-  "note": "PR #569: polling GitHub API (PF-562 opzione B) committato e pubblicato su origin/ccr-764b0316-9r1a1d e refs/pull/569/head; 10 commit sopra main 22d1b71"
+  "sha": "bac3b3e9c9ef1753164fdbfa67ae997a65f73cf1",
+  "note": "#570 mergiata 90d8261 (CI main verde); #569 riaperta, head bac3b3e: rilievi Sol/Codex corretti, integrazione publisher socket Grok; review full-range in corso"
  },
  "blocks": [
   "Gate A #506 NON PASS",

@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "ccr-764b0316-9r1a1d",
-  "sha": "e1c6e36009a6a3001eeff815599c241094c0b1e4"
+  "sha": "bac3b3e9c9ef1753164fdbfa67ae997a65f73cf1"
  },
- "mandate_id": "OWNER GO PF-570 CONTROLLED MERGE SEQUENCING (#569/#570) + PF-562 GITHUB POLLING FINAL DECISION",
- "next_atomic_action": "PF-570 sequencing: chiusura temporanea #569 (branch e commit e1c6e36 preservati, nessun merge), rerun required check #570; merge #570 SOLO con overlap-check PASS, Merge readiness PASS, tutti i required PASS, review valide, zero thread, mergeability clean, altrimenti STOP e rapporto; dopo il merge: CI main, riapertura #569, review Sol/Grok sul diff completo, finding reali; allowlist rerun iniziale = zarbopiero963-droid (identita' e permessi verificati); gate pre-command Grok: ready_for_review e manual. #569 a merge owner. #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
- "previous_checkpoint_sha": "d4132999039fe06e05f88fe25576f9ccd1537147",
+ "mandate_id": "OWNER MANDATE PF-569 FINAL INTEGRATION & MERGE READINESS + PF-562 PUBLISHER & DISPATCHER FINAL INTEGRATION",
+ "next_atomic_action": "#569 head bac3b3e: attendere check settled e review Sol/Grok sull'intero range e Codex; Grok ha dato PROVIDER_ERROR (connessione chiusa, richiesta non streaming ~55k token) sui range completi precedenti: se si ripete = REVIEW_UNKNOWN, decisione owner; triage e correzione dei rilievi reali; risolvere il thread Codex 4389984882 a check chiusi; READY_FOR_OWNER_MERGE solo con tutti i gate. Merge #569 owner. #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
+ "previous_checkpoint_sha": "8a0b8a4071181c0d0b86d073e6e13443fba9f1bf",
  "schema": "pf-current/1",
- "seq": 76
+ "seq": 77
 }
