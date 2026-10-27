@@ -199,6 +199,7 @@ MODULE_RULES = [
             "cashout_residual_handler.py",
             "scripts/live_gate.py",
             "scripts/ci/trusted_pr_guard.py",  # #562: mutazioni dei controlli della lane trusted
+            "scripts/pr_automation_controller.py",  # #566: mutazioni della deduplica dei check run
             "tests/",
             "core/",
             "order_manager.py",

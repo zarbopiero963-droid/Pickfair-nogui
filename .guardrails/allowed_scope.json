@@ -2929,6 +2929,21 @@
         "tests/guardrails/test_una_sola_pr_aperta.py"
       ],
       "max_files": 6
+    },
+    "check-run-dedupe-566": {
+      "description": "PF-566 (mandato owner 27/10/2026, issue #566): dedupe_github_check_runs in scripts/pr_automation_controller.py fail-closed. Criterio finale (dopo tre rilievi di GPT-6.1 Sol su #568): sull'head corrente nessun check run omonimo viene scartato, salvo la copia esatta della stessa check run (stesso id, stato e tempi); i run di SHA vecchio o senza SHA restano ignorati come prima; i tentativi superati li esclude GitHub con check-runs filter=latest (default). summarize_current_head_check_state: conclusione inconcludente = current_head_inconclusive/needs_manual. Test RED/GREEN da run reali, mutazioni area check_dedupe (optional_areas), docs ci_trusted_lane/ci_orchestrators, CHANGELOG. Nessuna modifica a required checks, ruleset, Buildkite, VPS o trading. scripts/pr_*.py: merge owner. ESTENSIONE DICHIARATA: scripts/ci_changed_modules.py registra scripts/pr_automation_controller.py fra i percorsi che attivano la lane mutation-guardrails (richiesto da test_il_catalogo_attiva_la_lane_mutation_nel_dynamic per le nuove mutazioni).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ci_orchestrators.md",
+        "docs/ci_trusted_lane.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/ci_changed_modules.py",
+        "scripts/pr_automation_controller.py",
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "max_files": 8
     }
   }
 }

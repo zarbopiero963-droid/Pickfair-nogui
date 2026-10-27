@@ -14,6 +14,7 @@
     "live_safety"
   ],
   "optional_areas": [
+    "check_dedupe",
     "trusted_gate"
   ],
   "mutations": [
@@ -4348,6 +4349,66 @@
         "tests/scripts/test_trusted_pr_guard.py"
       ],
       "rationale": "Token con a capo, spazi o caratteri di controllo mandato nell'header Authorization (iniezione di header)."
+    },
+    {
+      "id": "cd_inconclusive_ready",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "            inconclusive_count += 1",
+      "mutated": "            pass",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "#566: conclusione inconcludente (STARTUP_FAILURE, valori nuovi) trattata come ready."
+    },
+    {
+      "id": "cd_current_head_dropped",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "            elif identity and identity in kept_ids:",
+      "mutated": "            elif True:",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "#566: run omonimi dell'head corrente scartati per deduplica: un PASS (concorrente, fratello o rerun parziale) nasconde il FAIL."
+    },
+    {
+      "id": "cd_exact_copy_kept",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "                ignored_dupes.append(run_id)",
+      "mutated": "                selected.append(old)",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "#566: la copia esatta della stessa check run non viene riconosciuta come duplicato."
+    },
+    {
+      "id": "cd_kept_id_not_remembered",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "                    kept_ids.add(identity)",
+      "mutated": "                    pass",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "#566: la copia di un run concorrente tenuto non viene riconosciuta come duplicato."
+    },
+    {
+      "id": "cd_copy_by_id_only",
+      "module": "scripts.pr_automation_controller",
+      "area": "check_dedupe",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "        run_id,\n        check_state(check),\n",
+      "mutated": "        run_id,\n",
+      "tests": [
+        "tests/scripts/test_pr_automation_controller.py"
+      ],
+      "rationale": "review indipendente su #568: stesso id con esito diverso trattato come copia: il PASS nasconde il FAIL."
     }
   ]
 }

@@ -9,6 +9,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#566 — deduplica dei check run fail-closed (`scripts/pr_automation_controller.dedupe_github_check_runs`):**
+  - sull'head corrente nessun check run omonimo viene più scartato, salvo la copia esatta della stessa check run
+    (stesso id, stato e tempi). Prima vinceva il più recente fra i check omonimi della stessa sorgente, quindi un PASS di un altro
+    workflow run, di un job fratello o di un rerun parziale nascondeva un FAIL sullo stesso SHA;
+  - i tentativi superati li esclude GitHub: i check run vanno letti con `filter=latest` (il default), che restituisce
+    solo l'ultimo tentativo di ogni job; con `filter=all` il tentativo fallito resta e blocca;
+  - `summarize_current_head_check_state`: una conclusione inconcludente dà `current_head_inconclusive` /
+    `needs_manual` invece di `ready`;
+  - test RED/GREEN con dati di run reali (rerun su `49518cc`, check concorrenti su `b4e6604`), compresi i casi dei
+    job fratelli e del rerun di un solo fratello (rilievi GPT-6.1 Sol su #568); cinque mutazioni nell'area
+    `check_dedupe`.
 - **PF-GOV-DOC-WORKFLOW-ALIGN-01, Fase 2 — `overlap-check` sullo script trusted, diagnostica separata:**
   - `.github/workflows/pr-overlap-guard.yml` gira solo su `pull_request` ed esegue lo script canonico
     `scripts/ci/pr_overlap_guard.sh` (corretto su `main` dalla Fase 1) da un checkout del commit base, mai del codice
