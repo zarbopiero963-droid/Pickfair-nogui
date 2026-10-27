@@ -3001,6 +3001,19 @@
       ],
       "max_files": 6
     },
+    "trusted-guard-562-d2-artifact": {
+      "description": "PF-562 difetto D2 (campagna E2E reale, mandato owner FINAL E2E CERTIFICATION, #573 c.6454648607): le pipeline pr-overlap-guard e pr-merge-readiness non caricavano .trusted-guard/<guard>.json come artifact, il dispatcher pubblicava error 'risultato del guard assente'. Correzione: i wrapper scripts/ci/pr_*.sh, solo con BUILDKITE impostata, caricano il risultato con buildkite-agent artifact upload (anche FAIL), conservando l'exit del guard; upload fallito => exit 1. Workflow Actions invariato. Test RED/GREEN, docs, CHANGELOG. File a merge owner (scripts/ci/pr_*.sh).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ci_trusted_lane.md",
+        "scripts/ci/pr_merge_readiness.sh",
+        "scripts/ci/pr_overlap_guard.sh",
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "max_files": 6
+    },
     "trusted-dispatcher-562-test-pr": {
       "description": "PF-562 PR di collaudo (blocco B1, rapporto Grok #562 c.6450558425; mandato owner PF-562-SYSTEMD-CREDENTIAL-D1-FIX-01 §6): nessuna modifica funzionale, solo la matrice delle prove A/B/C in docs/verification. Serve al dispatcher in DRY-RUN come PR reale da osservare (bozza, pronta, nuovo head, chiusura/riapertura, rerun). Nessuna build reale ne' status senza GO owner.",
       "allow_tests": true,
