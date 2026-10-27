@@ -769,6 +769,58 @@ def test_redelivery_never_overwrites_another_pr_on_the_same_sha(env):
     assert disp.store.get_job(first["id"])["state"] == "publish_failed"
 
 
+def test_older_active_job_never_publishes_over_a_newer_pr_on_the_same_sha(env):
+    """Codex P1 su #569 (0e129c3): PR 42 passa ma il risultato arriva in ritardo; PR 43 sullo stesso SHA fallisce.
+    Il PASS della 42 non deve uscire dopo il FAIL della 43: lo status e' per SHA e contesto, conta il piu' recente."""
+    disp, bk, pub, clock = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    bk.finish("pr-overlap-guard", 1, "passed", None)             # build passata, artifact non ancora caricato
+    disp.tick()
+    bk.gh.put(43, HEAD)
+    disp.poll()
+    disp.tick()
+    second = [j for j in disp.store.recent_jobs() if j["guard"] == "overlap" and j["pr"] == 43][0]
+    bk.finish("pr-overlap-guard", second["build_number"], "failed", result("overlap", verdict="FAIL", pr=43))
+    disp.tick()
+    bk.artifacts[("pr-overlap-guard", 1)] = json.dumps(result("overlap")).encode()   # ora il PASS della 42 c'e'
+    disp.tick()
+    finals = [c for c in pub.final() if c[3] == "overlap-check" and c[1] == HEAD]
+    assert finals and finals[-1][0] == 43 and finals[-1][2] == "failure"
+    assert not [c for c in finals if c[0] == 42 and c[2] == "success"]
+    first = [j for j in disp.store.recent_jobs() if j["guard"] == "overlap" and j["pr"] == 42][0]
+    assert first["superseded"] == 1
+
+
+def test_late_publication_retry_of_an_older_pr_never_overwrites_the_same_sha(env):
+    """Sol su #569 (0e129c3): il job della PR 42 e' gia' `publishing` (PASS) e ritenta perche' il publisher e'
+    fermo; arriva il FAIL della PR 43 sullo stesso SHA; il retry tardivo del PASS della 42 non deve uscire."""
+    disp, bk, pub, clock = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    pub.rc = 1
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    disp.tick()
+    first = [j for j in disp.store.recent_jobs() if j["guard"] == "overlap" and j["pr"] == 42][0]
+    assert first["state"] == "publishing"                       # PASS pronto, pubblicazione in ritentativo
+    pub.rc = 0
+    bk.gh.put(43, HEAD)
+    disp.poll()
+    restored = len(pub.calls)
+    second = [j for j in disp.store.recent_jobs() if j["guard"] == "overlap" and j["pr"] == 43][0]
+    disp.tick()
+    second = disp.store.get_job(second["id"])
+    bk.finish("pr-overlap-guard", second["build_number"], "failed", result("overlap", verdict="FAIL", pr=43))
+    disp.tick()
+    disp.tick()
+    finals = [c for c in pub.calls[restored:] if c[3] == "overlap-check" and c[2] != "pending"]
+    assert finals and finals[-1][0] == 43 and finals[-1][2] == "failure"
+    assert not [c for c in finals if c[0] == 42]
+    assert disp.store.get_job(first["id"])["superseded"] == 1
+
+
 def test_redelivery_waits_for_the_backoff_and_keeps_retrying(env):
     disp, bk, pub, clock = env
     job = _publish_failed_after_rerun(disp, bk, pub, clock)

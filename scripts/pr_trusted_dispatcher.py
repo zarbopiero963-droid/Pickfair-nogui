@@ -696,12 +696,19 @@ class Store:
         db.execute("INSERT INTO transitions(tid, pr, head_sha, kind, created_at) VALUES (?, ?, ?, ?, ?)",
                    (tid, pr, head_sha, kind, now))
         created: list[int] = []
+        placeholders = ",".join("?" * len(ACTIVE_STATES))
         for guard in GUARDS:
             cur = db.execute(
                 "INSERT OR IGNORE INTO jobs(delivery_id, event, pr, head_sha, guard, state, created_at, updated_at)"
                 " VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)", (tid, kind, pr, head_sha, guard, now, now))
             if cur.rowcount == 1:
                 created.append(int(cur.lastrowid))
+                # gli status GitHub sono per SHA e contesto: una valutazione nuova dello stesso SHA, anche di un'altra
+                # PR, rende vecchie quelle attive precedenti, che annullano la build e non pubblicano piu' nulla
+                # (Codex P1 su #569)
+                db.execute(f"UPDATE jobs SET superseded = 1, updated_at = ? WHERE head_sha = ? AND guard = ? "  # nosec B608
+                           f"AND id < ? AND state IN ({placeholders})",
+                           (now, head_sha, guard, int(cur.lastrowid), *ACTIVE_STATES))
         return created
 
     def apply_poll(self, observed: list, now: float) -> list[str]:

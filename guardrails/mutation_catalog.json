@@ -5156,6 +5156,18 @@
       "rationale": "PF-569 (Sol su 90d8261...1ed6de8): esito vecchio riconsegnato sopra quello di un'altra PR sullo stesso SHA (status per SHA e contesto)."
     },
     {
+      "id": "td_same_sha_older_job_publishes",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "original": "                           f\"AND id < ? AND state IN ({placeholders})\",",
+      "mutated": "                           f\"AND id < ? AND 0 AND state IN ({placeholders})\",",
+      "rationale": "PF-569 (Codex P1 su 0e129c3): un job attivo piu' vecchio di un'altra PR sullo stesso SHA pubblica il suo PASS dopo il FAIL piu' recente."
+    },
+    {
       "id": "td_redelivery_stale_head",
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",

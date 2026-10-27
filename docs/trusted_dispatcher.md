@@ -100,6 +100,11 @@ Codex, Sol, Grok e nelle revisioni indipendenti su #569):
   (300 s) finché è l'esito più recente per quel guard sia della PR sia dello SHA (gli status GitHub sono per SHA e
   contesto: due PR interne sullo stesso commit li condividono, Sol su #569) e la PR è aperta, valutabile e con lo
   stesso head.
+- **un solo esito per SHA e contesto** (Codex P1 su #569): quando nasce la valutazione di uno SHA, i job attivi
+  più vecchi con lo stesso SHA e lo stesso guard, anche di un'altra PR, sono sostituiti (build annullata, nessuna
+  pubblicazione). Due PR interne sullo stesso commit condividono lo status: vale l'ultima valutazione. Se la PR più
+  recente viene chiusa, l'altra resta con quell'esito finché un push o `/pf-trusted-rerun` non la rivaluta
+  (fail-closed: un FAIL rimasto blocca, non apre);
   Così un vecchio `success` sullo stesso SHA non resta valido perché il publisher era fermo; un esito vecchio non
   copre mai uno più nuovo. Ogni tentativo aggiorna `updated_at`: un esito ancora da consegnare non viene ripulito;
 - la consegna è registrata a parte (`final_published`), non dedotta dallo stato: un job che passa da `canceling`

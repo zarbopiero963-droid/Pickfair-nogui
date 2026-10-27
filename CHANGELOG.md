@@ -47,7 +47,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     come ambigua e riconciliata; migrazione idempotente di un archivio creato da una versione precedente (Sol); annullamento non confermato ritentato e risposta HTTP troncata trattata come errore di trasporto (Codex); audit indipendente di liveness: ogni risposta di creazione non interpretabile ambigua, elenco vuoto o pieno non prova l'assenza, risultato ritentato, annullamenti non confermati ricordati (stato `canceling`), fallback sul timeout per le eccezioni inattese; obbligo di annullamento persistente e indipendente dallo stato, nessuno stato finale con build da annullare (Codex); audit avversariale degli invarianti: finestra di annullamento dall'adozione, fallback anche in pubblicazione, `pending` durante la riconciliazione, redelivery dopo la pulizia ancora replay;
   - rilievi Sol sul range completo: `pending` fallito ritentato anche quando l'artifact del risultato non è ancora
     scaricabile; esito `publish_failed` riconsegnato ogni 300 s finché è il più recente per quel guard della PR e dello
-    SHA (mai sopra l'esito di un'altra PR sullo stesso commit),
+    SHA (mai sopra l'esito di un'altra PR sullo stesso commit); una valutazione nuova di uno SHA sostituisce i job
+    attivi più vecchi dello stesso SHA e guard anche di altre PR (Codex P1),
     sull'head corrente di una PR aperta (mai un vecchio `success` lasciato valido, mai un esito vecchio sopra uno nuovo);
     consegna registrata in `final_published` (colonna nuova, migrazione idempotente): un esito mai consegnato non
     finisce `done` alla conferma di un annullamento (Codex P2 su `59b071e`); test del dispatcher saltati in modo esplicito fuori da POSIX (`fcntl`);
