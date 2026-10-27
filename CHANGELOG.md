@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 D2: risultato del guard caricato come artifact su Buildkite (`scripts/ci/pr_overlap_guard.sh`,
+  `scripts/ci/pr_merge_readiness.sh`):** nella campagna E2E reale (#573, build `pr-overlap-guard` #17 e
+  `pr-merge-readiness` #10) il dispatcher non trovava `.trusted-guard/<guard>.json` tra gli artifact e pubblicava
+  `error` «risultato del guard assente» (fail-closed). Con `BUILDKITE` impostata il wrapper esegue
+  `buildkite-agent artifact upload` del risultato, anche con verdetto FAIL, e conserva l'exit del guard; upload non
+  riuscito ⇒ exit 1. Fuori da Buildkite (workflow Actions) nulla cambia. Test RED->GREEN e mutazioni manuali.
 - **#562 D1 — credenziale di systemd 255 `0440 root:root` letta via ACL (`scripts/pr_trusted_dispatcher.py`):**
   il collaudo VPS di Grok (c.6450558425) ha mostrato che `LoadCredential` crea il file `root:root` nella directory
   `0550 root:root` e lo rende leggibile al servizio con una voce ACL, mentre il controllo esigeva il gruppo del

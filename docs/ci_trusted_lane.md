@@ -140,10 +140,15 @@ chiusi, oppure con un timeout ≥ 115 minuti e `PF_READINESS_WAIT_SECONDS=6600`,
   fallito o interrotto. Gli script **non pubblicano nulla**: solo richieste GET, e un test lo
   verifica. Lo status GitHub lo pubblica l'infrastruttura con una credenziale separata, sullo **`head_sha` della PR**
   preso da questo file, non sul commit di main che Buildkite ha costruito.
+- **Su Buildkite** (`BUILDKITE` impostata) il wrapper carica `PF_RESULT_DIR/<guard>.json` come artifact con
+  `buildkite-agent artifact upload`, anche con verdetto FAIL, e conserva il codice d'uscita del guard. Il dispatcher
+  scarica proprio quell'artifact (`result_artifacts`, default `.trusted-guard/<guard>.json`). Senza, lo status era
+  `error` «risultato del guard assente»: difetto D2, trovato nella campagna E2E reale della #562 su #573. Upload non
+  riuscito ⇒ exit 1. Nel workflow Actions `BUILDKITE` non c'è e il wrapper non carica nulla.
 
 ## Requisiti infrastrutturali (Grok)
 
-- `python3` ≥ 3.10 e `gh` ≥ 2.40 nel `PATH` dell'agent trusted. Uscita di rete verso `api.github.com` (REST e
+- `python3` ≥ 3.10, `gh` ≥ 2.40 e `buildkite-agent` (upload dell'artifact del risultato) nel `PATH` dell'agent trusted. Uscita di rete verso `api.github.com` (REST e
   GraphQL).
 - Mappatura dal trigger nel gate pre-command: `PF_PR_NUMBER` e `PF_PR_HEAD_SHA` dello stesso evento.
   Il token arriva via `LoadCredential=github-token:/etc/buildkite-agent-trusted/secrets/github-token`, quindi
