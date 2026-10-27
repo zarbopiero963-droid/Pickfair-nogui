@@ -5064,8 +5064,8 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "        if self._token is not None and now < self._expires - TOKEN_REFRESH_MARGIN:",
-      "mutated": "        if self._token is not None:",
+      "original": "        if self._bearer is not None and now < self._expires - TOKEN_REFRESH_MARGIN:",
+      "mutated": "        if self._bearer is not None:",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],

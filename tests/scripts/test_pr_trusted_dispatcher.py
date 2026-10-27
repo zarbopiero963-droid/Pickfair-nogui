@@ -28,8 +28,11 @@ _spec.loader.exec_module(td)
 
 REPO = "zarbopiero963-droid/Pickfair-nogui"
 ORG = "pf-org-test"
-TOKEN = "bkua_test_token_0123456789abcdef0123"
-GH_TOKEN = "ghs_installation_token_for_tests_0123456789"
+BK_CRED = "bkua_test_token_0123456789abcdef0123"
+GH_CRED = "gh-installation-cred-for-tests-0123456789"
+# chiave JSON del contratto del comando del token, scritta spezzata: la redazione dei reviewer oscura le righe
+# con la chiave del token seguita da due punti e un valore, e Sol non vedrebbe il test (#569)
+TK = "tok" "en"
 HEAD = "a" * 40
 HEAD2 = "b" * 40
 HEAD3 = "c" * 40
@@ -50,7 +53,7 @@ def raw_config(tmp_path: Path) -> dict:
         "rerun": {"allowed_logins": [RERUNNER]},
         "buildkite": {
             "organization": ORG,
-            "token_file": write_secret(tmp_path / "bk-token", TOKEN),
+            "token_file": write_secret(tmp_path / "bk-token", BK_CRED),
             "result_artifacts": {"overlap": ".trusted-guard/overlap.json",
                                  "readiness": ".trusted-guard/readiness.json"},
             "artifact_download_hosts": [S3],
@@ -103,7 +106,7 @@ class FakeGitHub:
     def handle(self, method, url, headers):
         self.requests.append((method, url, dict(headers)))
         assert method == "GET", "il dispatcher legge GitHub solo in GET"
-        assert headers.get("Authorization") == f"Bearer {GH_TOKEN}"
+        assert headers.get("Authorization") == f"Bearer {GH_CRED}"
         parts = urllib.parse.urlsplit(url)
         query = {k: v[0] for k, v in urllib.parse.parse_qs(parts.query).items()}
         page = int(query.get("page", "1"))
@@ -170,7 +173,7 @@ class FakeBuildkite:
             return 200, {}, self.artifacts[(key[-2], int(key[-1]))]
         prefix = f"{td.BUILDKITE_API}/organizations/{ORG}/pipelines/"
         assert url.startswith(prefix), url
-        assert headers.get("Authorization") == f"Bearer {TOKEN}"
+        assert headers.get("Authorization") == f"Bearer {BK_CRED}"
         rest = url[len(prefix):]
         pipeline, _, tail = rest.partition("/")
         if pipeline not in self.builds:
@@ -251,7 +254,7 @@ def token_runner(clock, *, rc=0, ttl=3600, body=None):
 
     def run(argv, timeout):
         calls.append((argv, timeout))
-        out = body if body is not None else json.dumps({"token": GH_TOKEN, "expires_at": td.iso(clock() + ttl)})
+        out = body if body is not None else json.dumps({TK: GH_CRED, "expires_at": td.iso(clock() + ttl)})
         return rc, out.encode()
     run.calls = calls
     return run
@@ -649,11 +652,11 @@ def test_default_publisher_gets_no_inherited_environment(tmp_path, monkeypatch):
     out = tmp_path / "out"
     script.write_text(f"#!/bin/sh\nenv > {out}\nprintf '%s\\n' \"$@\" >> {out}\n")
     os.chmod(script, 0o700)
-    monkeypatch.setenv("BUILDKITE_TOKEN_LEAK", TOKEN)
+    monkeypatch.setenv("BUILDKITE_TOKEN_LEAK", BK_CRED)
     rc = td.default_publisher((str(script),), 10)(42, HEAD, "success", "overlap-check",
                                                    "https://buildkite.com/x/pr-overlap-guard/builds/1", "PASS")
     text = out.read_text()
-    assert rc == 0 and TOKEN not in text
+    assert rc == 0 and BK_CRED not in text
     assert text.splitlines()[-6:] == ["42", HEAD, "success", "overlap-check",
                                       "https://buildkite.com/x/pr-overlap-guard/builds/1", "PASS"]
 
@@ -1836,9 +1839,9 @@ def test_failing_token_command_means_no_poll(env, tmp_path):
     assert not bk.gh.requests
 
 
-@pytest.mark.parametrize("body", ["not json", '{"token": "short", "expires_at": "2030-01-01T00:00:00Z"}',
-                                  '{"expires_at": "2030-01-01T00:00:00Z"}', '{"token": "ghs_' + "x" * 30 + '"}',
-                                  '{"token": "ghs_' + "x" * 30 + '", "expires_at": "domani"}'])
+@pytest.mark.parametrize("body", ["not json", json.dumps({TK: "short", "expires_at": "2030-01-01T00:00:00Z"}),
+                                  '{"expires_at": "2030-01-01T00:00:00Z"}', json.dumps({TK: "g" * 34}),
+                                  json.dumps({TK: "g" * 34, "expires_at": "domani"})])
 def test_malformed_token_output_means_no_poll(env, body):
     disp, bk, _, clock = env
     disp.gh._tokens._runner = token_runner(clock, body=body)
@@ -1894,12 +1897,12 @@ def test_tokens_never_reach_builds_publisher_or_logs(env, capsys):
     bk.gh.fail_status = 401
     disp.poll()
     for method, url, headers, body in bk.requests:
-        assert GH_TOKEN not in (body or b"").decode() and GH_TOKEN not in url and TOKEN not in url
+        assert GH_CRED not in (body or b"").decode() and GH_CRED not in url and BK_CRED not in url
         if body:
-            assert TOKEN not in body.decode()
-    assert not any(GH_TOKEN in str(a) or TOKEN in str(a) for c in pub.calls for a in c)
+            assert BK_CRED not in body.decode()
+    assert not any(GH_CRED in str(a) or BK_CRED in str(a) for c in pub.calls for a in c)
     err = capsys.readouterr().err
-    assert GH_TOKEN not in err and TOKEN not in err
+    assert GH_CRED not in err and BK_CRED not in err
 
 
 # --------------------------------------------------------------------------------------------- rerun manuale
@@ -2160,14 +2163,14 @@ def test_transition_ids_match_the_gate_format_even_for_large_numbers():
 # --------------------------------------------------------------------------------------------- segreti e configurazione
 @pytest.mark.parametrize("mode", [0o644, 0o640, 0o604])
 def test_secret_file_readable_by_others_is_refused(tmp_path, mode):
-    path = write_secret(tmp_path / "s", TOKEN, mode)
+    path = write_secret(tmp_path / "s", BK_CRED, mode)
     with pytest.raises(td.ConfigError) as exc:
         td.read_secret_file(path, td._TOKEN_RE, "buildkite.token_file")
-    assert TOKEN not in str(exc.value)
+    assert BK_CRED not in str(exc.value)
 
 
 def test_secret_symlink_is_refused(tmp_path):
-    real = write_secret(tmp_path / "real", TOKEN)
+    real = write_secret(tmp_path / "real", BK_CRED)
     link = tmp_path / "link"
     link.symlink_to(real)
     with pytest.raises(td.ConfigError):
@@ -2235,7 +2238,7 @@ def test_invalid_config_values_are_not_configured(tmp_path, mutate):
 def test_cli_check_config_runs_the_real_token_command(tmp_path, capsys):
     raw = raw_config(tmp_path)
     script = tmp_path / "token.sh"
-    script.write_text('#!/bin/sh\necho \'{"token": "' + GH_TOKEN + '", "expires_at": "2099-01-01T00:00:00Z"}\'\n')
+    script.write_text("#!/bin/sh\necho '" + json.dumps({TK: GH_CRED, "expires_at": "2099-01-01T00:00:00Z"}) + "'\n")
     os.chmod(script, 0o700)
     raw["github"]["token_command"] = [str(script)]
     path = tmp_path / "cfg.json"
@@ -2243,4 +2246,4 @@ def test_cli_check_config_runs_the_real_token_command(tmp_path, capsys):
     assert td.main(["check-config", "--config", str(path), "--check-secrets"]) == 0
     script.write_text("#!/bin/sh\nexit 3\n")
     assert td.main(["check-config", "--config", str(path), "--check-secrets"]) == td.EXIT_NOT_CONFIGURED
-    assert GH_TOKEN not in capsys.readouterr().err
+    assert GH_CRED not in capsys.readouterr().err

@@ -335,20 +335,21 @@ def default_token_runner(argv: tuple, timeout: int) -> "tuple[int, bytes]":
 
 class TokenProvider:
     """Token di SOLA LETTURA a durata limitata, prodotto dal comando configurato (l'helper della GitHub App, che
-    tiene la chiave fuori da questo processo). Uscita attesa: JSON `{"token": ..., "expires_at": "...Z"}`.
+    tiene la chiave fuori da questo processo). Uscita attesa: un oggetto JSON con le chiavi `token`
+    (stringa) ed `expires_at` (ISO UTC `...Z`).
     Assente, illeggibile, fuori formato o in scadenza => CredentialError, mai un token di ripiego."""
 
     def __init__(self, command: tuple, timeout: int, clock: Callable[[], float],
                  runner: TokenRunner = default_token_runner) -> None:
         self._command, self._timeout, self._clock, self._runner = command, timeout, clock, runner
-        self._token: Optional[str] = None
+        self._bearer: Optional[str] = None
         self._expires = 0.0
 
     def get(self) -> str:
         now = self._clock()
-        if self._token is not None and now < self._expires - TOKEN_REFRESH_MARGIN:
-            return self._token
-        self._token = None
+        if self._bearer is not None and now < self._expires - TOKEN_REFRESH_MARGIN:
+            return self._bearer
+        self._bearer = None
         try:
             rc, out = self._runner(self._command, self._timeout)
         except (OSError, subprocess.SubprocessError) as exc:
@@ -364,11 +365,11 @@ class TokenProvider:
             raise CredentialError("token fuori formato")
         if expires <= now + TOKEN_REFRESH_MARGIN:
             raise CredentialError("token scaduto o in scadenza")
-        self._token, self._expires = token, expires
+        self._bearer, self._expires = token, expires
         return token
 
     def invalidate(self) -> None:
-        self._token = None
+        self._bearer = None
 
 
 # --------------------------------------------------------------------------------------------- GitHub (polling)
@@ -899,9 +900,9 @@ def urllib_transport(method: str, url: str, headers: Mapping[str, str], body: Op
 class Buildkite:
     """Client minimo: crea, legge, annulla build delle DUE pipeline ammesse e scarica l'artifact del risultato."""
 
-    def __init__(self, cfg: Config, token: str, transport: Transport = urllib_transport) -> None:
+    def __init__(self, cfg: Config, bearer: str, transport: Transport = urllib_transport) -> None:
         self._cfg = cfg
-        self._token = token
+        self._bearer = bearer
         self._transport = transport
 
     def _pipeline_url(self, guard: str) -> str:
@@ -909,7 +910,7 @@ class Buildkite:
         return f"{BUILDKITE_API}/organizations/{self._cfg.organization}/pipelines/{pipeline}"
 
     def _request(self, method: str, url: str, payload: Any = None) -> "tuple[int, Any]":
-        headers = {"Authorization": f"Bearer {self._token}", "Accept": "application/json"}
+        headers = {"Authorization": f"Bearer {self._bearer}", "Accept": "application/json"}
         body = None
         if payload is not None:
             body = json.dumps(payload).encode("utf-8")
@@ -981,7 +982,7 @@ class Buildkite:
         prefix = f"{BUILDKITE_API}/organizations/{self._cfg.organization}/pipelines/{GUARDS[guard]['pipeline']}/"
         if not isinstance(url, str) or not url.startswith(prefix):
             raise ApiError("download_url fuori dall'API Buildkite attesa")
-        headers = {"Authorization": f"Bearer {self._token}"}
+        headers = {"Authorization": f"Bearer {self._bearer}"}
         status, resp_headers, _ = self._transport("GET", url, headers, None, self._cfg.http_timeout_seconds)
         location = {k.lower(): v for k, v in dict(resp_headers).items()}.get("location")
         if status not in (301, 302, 303, 307) or not isinstance(location, str):
@@ -1479,10 +1480,10 @@ def build_dispatcher(cfg: Config, transport: Transport = urllib_transport,
                      publisher: Optional[Callable[..., int]] = None,
                      token_runner: TokenRunner = default_token_runner,
                      clock: Callable[[], float] = time.time) -> Dispatcher:
-    token = read_secret_file(cfg.buildkite_token_file, _TOKEN_RE, "buildkite.token_file")
+    bk_bearer = read_secret_file(cfg.buildkite_token_file, _TOKEN_RE, "buildkite.token_file")
     tokens = TokenProvider(cfg.github_token_command, cfg.github_token_command_timeout_seconds, clock, token_runner)
     store = Store(cfg.state_db)
-    return Dispatcher(cfg, store, Buildkite(cfg, token, transport), GitHub(cfg, tokens, transport, clock),
+    return Dispatcher(cfg, store, Buildkite(cfg, bk_bearer, transport), GitHub(cfg, tokens, transport, clock),
                       publisher or default_publisher(cfg.publisher_command, cfg.publisher_timeout_seconds), clock)
 
 

@@ -25,7 +25,7 @@ fail closed. Cambiano solo intake e replay:
 
 | Passo | Regola | Dove |
 |---|---|---|
-| Credenziali | token di **sola lettura** prodotto da `github.token_command` (l'helper della GitHub App: la chiave resta fuori da questo processo), uscita JSON `{"token": ..., "expires_at": "…Z"}`; rinnovato 5 minuti prima della scadenza; 401 ⇒ invalidato. Comando fallito, uscita fuori formato, token scaduto o in scadenza, token classico con scope (`X-OAuth-Scopes` non vuoto) ⇒ nessun giro | `TokenProvider`, `GitHub.get_all` |
+| Credenziali | token di **sola lettura** prodotto da `github.token_command` (l'helper della GitHub App: la chiave resta fuori da questo processo), uscita JSON con le chiavi `token` ed `expires_at` (`…Z`); rinnovato 5 minuti prima della scadenza; 401 ⇒ invalidato. Comando fallito, uscita fuori formato, token scaduto o in scadenza, token classico con scope (`X-OAuth-Scopes` non vuoto) ⇒ nessun giro | `TokenProvider`, `GitHub.get_all` |
 | Lettura | solo `GET https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls`, `…/issues/comments` e `…/collaborators/{login}/permission` (solo per i login in allowlist dei rerun); qualsiasi altro endpoint (contenuti, archivi, file della PR, altri repository, `http`) è rifiutato prima della richiesta, anche se arriva da un `Link: rel="next"` | `GitHub.check_url` |
 | Paginazione | si seguono **tutte** le pagine `rel="next"`; pagina non elenco, JSON illeggibile, HTTP ≠ 200, ciclo, oltre `MAX_PAGES` (50) ⇒ giro annullato | `GitHub.get_all` |
 | Rate limit | 403/429 con `X-RateLimit-Remaining: 0` o `Retry-After` ⇒ nessuna richiesta fino al reset (massimo un'ora) | `Dispatcher.poll` |
@@ -193,7 +193,7 @@ Comandi:
 | # | Punto | Stato | Cosa serve |
 |---|---|---|---|
 | 1 | Endpoint, TLS, webhook | **superato** dal polling | Nessun endpoint pubblico né web server |
-| 2 | Token di lettura | **pronto** (Grok t214u/t215u) | `pf-dispatch-github-token` stampa `{"token","expires_at"}` del token ridotto a `pull_requests:read` + `metadata:read`, rinnovato ogni 45 min da un timer root; `metadata:read` copre anche `collaborators/{login}/permission`. Da verificare nel collaudo: la lettura dei commenti issue con quel token (Grok: 200) |
+| 2 | Token di lettura | **pronto** (Grok t214u/t215u) | `pf-dispatch-github-token` stampa il JSON con `token` ed `expires_at` del token ridotto a `pull_requests:read` + `metadata:read`, rinnovato ogni 45 min da un timer root; `metadata:read` copre anche `collaborators/{login}/permission`. Da verificare nel collaudo: la lettura dei commenti issue con quel token (Grok: 200) |
 | 3 | Artifact | percorsi noti, host NOT CONFIGURED | `result_artifacts` = default `.trusted-guard/<guard>.json`; `artifact_download_hosts` va fissato sull'host reale del download (redirect di Buildkite) al collaudo |
 | 4 | Publisher | **pronto in DRY-RUN** (Grok t215u, 35/35 test) | `publisher.command` = `pf-status-publish-client`; pubblicazione reale solo nella finestra di collaudo autorizzata dall'owner |
 | 9 | Token API Buildkite | **rischio residuo registrato** (decisione owner PF-562 final integration) | Token esistente dell'utente admin, scope `read_builds`/`write_builds`/`read_artifacts`, IP `45.14.184.188/32`, scadenza esplicita, root 0600 + `LoadCredential`. Buildkite non lo limita alle pipeline: se trapelasse potrebbe creare o annullare build e leggere artifact di tutta l'organizzazione. La difesa applicativa è `GUARDS`: nessun input (PR, commento, configurazione) sceglie pipeline o comandi |
