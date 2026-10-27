@@ -41,6 +41,14 @@ un riavvio, il dispatcher elenca le build di `main` e cerca quella con lo stesso
 Un job `dispatched` riprende il polling dopo il riavvio; un job `publishing` ripubblica lo stesso esito (lo status
 GitHub è idempotente per contesto e SHA).
 
+**Pending ritentato.** Se la pubblicazione del `pending` all'avvio della build fallisce, si ritenta a ogni giro
+finché la build gira (rilievo Codex P1 su #569). Rivalutando un head già `success` (per esempio dopo un reopen), il
+vecchio `success` non resta l'esito visibile mentre la nuova build è in corso.
+
+**Risposte 5xx.** Ogni HTTP 5xx di Buildkite è un esito **ignoto** e si classifica prima di leggere il JSON (rilievo
+Codex P2 su #569): un 502 HTML del gateway dopo una creazione arrivata a Buildkite porta alla riconciliazione, non a
+un `error` che lascerebbe la build non seguita.
+
 **Pubblicazione fallita.** Se l'helper non pubblica, il job resta `publishing` e lo stesso esito si ritenta a ogni
 giro finché non va a buon fine, finché il job non viene sostituito o finché non scade una finestra pari a
 `build_timeout_seconds` del guard. Allo scadere il job diventa `publish_failed`, e il log lo dichiara. Il ritento

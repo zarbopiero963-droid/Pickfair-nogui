@@ -27,7 +27,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     fallita ritentata, una sola istanza sull'archivio (`flock`) con transizioni condizionate, build orfane di una
     creazione ambigua annullate, stesso `updated_at` senza sostituzione, `Content-Length` non ASCII, COMMIT
     fallito, timeout del publisher in configurazione;
-  - test offline con un finto Buildkite e un server HTTP reale su loopback; 22 mutazioni nell'area
+  - rilievi Codex su #569: `pending` ritentato mentre la build gira, risposta 5xx non JSON alla creazione trattata
+    come ambigua e riconciliata;
+  - test offline con un finto Buildkite e un server HTTP reale su loopback; 24 mutazioni nell'area
     `trusted_dispatcher` e una nell'area `trusted_gate`.
 - **#566 — deduplica dei check run fail-closed (`scripts/pr_automation_controller.dedupe_github_check_runs`):**
   - sull'head corrente nessun check run omonimo viene più scartato, salvo la copia esatta della stessa check run

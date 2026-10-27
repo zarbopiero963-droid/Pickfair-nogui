@@ -113,6 +113,8 @@ class FakeBuildkite:
                     self._new_build(pipeline, payload)
                 if self.fail_create == "transport":
                     raise td.TransportError("timeout")
+                if self.fail_create == "html502":
+                    return 502, {"Content-Type": "text/html"}, b"<html>502 Bad Gateway</html>"
                 code = 500 if self.fail_create == "http500" else 422
                 return code, {}, b'{"message":"no"}'
             return 201, {}, json.dumps(self._new_build(pipeline, payload)).encode()
@@ -1053,3 +1055,38 @@ def test_artifact_listing_asks_for_a_full_page(env):
     disp.tick()
     listing = [r[1] for r in bk.requests if "/artifacts" in r[1] and r[1].split("?")[0].endswith("/artifacts")]
     assert listing and all("per_page=100" in u for u in listing)
+
+
+# --------------------------------------------------------------------------------------------- rilievi Codex su #569
+def test_non_json_5xx_on_creation_is_ambiguous_and_reconciled(env):
+    """Codex P2 su #569: un 502 HTML del gateway dopo che la build e' stata creata non chiude il job come
+    `error`: e' una creazione ambigua, riconciliata al giro dopo senza una seconda creazione."""
+    disp, bk, pub, _ = env
+    bk.fail_create, bk.create_lands = "html502", True
+    send(disp, payload())
+    disp.tick()
+    assert {j["state"] for j in disp.store.active_jobs()} == {"creating"}
+    assert not pub.final()
+    bk.fail_create = None
+    disp.tick()
+    assert {j["state"] for j in disp.store.active_jobs()} == {"dispatched"}
+    assert len(bk.builds["pr-overlap-guard"]) == 1
+
+
+def test_failed_pending_publication_is_retried_while_the_build_runs(env):
+    """Codex P1 su #569: rivalutazione di un head gia' `success` (reopen) con l'helper momentaneamente in errore:
+    il `pending` si ritenta mentre la build gira, cosi' il vecchio `success` non resta visibile come esito."""
+    disp, bk, pub, _ = env
+    pub.rc = 1
+    send(disp, payload())
+    disp.tick()
+    assert all(j["pending_published"] == 0 for j in disp.store.active_jobs())
+    pub.rc = 0
+    bk.builds["pr-overlap-guard"][1]["state"] = "running"
+    bk.builds["pr-merge-readiness"][1]["state"] = "running"
+    disp.tick()
+    pendings = [c for c in pub.calls if c[2] == "pending" and c[1] == HEAD]
+    assert len(pendings) == 4                      # 2 falliti + 2 ritentati e riusciti
+    assert all(j["pending_published"] == 1 for j in disp.store.active_jobs())
+    disp.tick()
+    assert len([c for c in pub.calls if c[2] == "pending"]) == 4      # riuscito: non si ripete

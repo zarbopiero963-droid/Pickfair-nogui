@@ -387,6 +387,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   created_at REAL NOT NULL,
   dispatched_at REAL,
   publishing_since REAL,
+  pending_published INTEGER NOT NULL DEFAULT 0,
   updated_at REAL NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS jobs_active_current ON jobs(pr, head_sha, guard)
@@ -496,7 +497,7 @@ class Store:
     def update_job(self, job_id: int, now: float, *, expected_state: Optional[str] = None, **fields: Any) -> bool:
         """Con `expected_state` la modifica avviene solo se il job e' ancora in quello stato (True se applicata)."""
         allowed = {"state", "build_number", "build_url", "outcome", "description", "dispatched_at",
-                   "publishing_since"}
+                   "publishing_since", "pending_published"}
         if not fields or set(fields) - allowed:
             raise ValueError("campi non ammessi")
         cols = ", ".join(f"{k} = ?" for k in fields)
@@ -565,6 +566,10 @@ class Buildkite:
             body = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
         status, _, data = self._transport(method, url, headers, body, self._cfg.http_timeout_seconds)
+        if status >= 500:
+            # prima del JSON (rilievo Codex P2 su #569): un 502 HTML del gateway dopo una creazione arrivata a
+            # Buildkite e' un esito IGNOTO, non un rifiuto; per le letture i chiamanti trattano i due casi uguali
+            raise TransportError(f"HTTP {status}")
         if len(data) > MAX_API_BYTES:
             raise ApiError("risposta Buildkite troppo grande", status)
         try:
@@ -575,8 +580,6 @@ class Buildkite:
     def create_build(self, guard: str, env: Mapping[str, str], message: str) -> dict:
         status, data = self._request("POST", f"{self._pipeline_url(guard)}/builds",
                                      {"commit": "HEAD", "branch": BASE_REF, "message": message, "env": dict(env)})
-        if status >= 500:
-            raise TransportError(f"HTTP {status}")    # il server puo' aver creato la build: ambiguo
         if status != 201 or not isinstance(data, dict):
             raise ApiError(f"creazione build rifiutata (HTTP {status})", status)
         return data
@@ -830,9 +833,16 @@ class Dispatcher:
             return self._fail(job, "error", "build creata non corrisponde alla richiesta")
         self._set(job, state="dispatched", build_number=build["number"], build_url=build["web_url"],
                   dispatched_at=self.clock())
-        if self.publish(job["pr"], job["head_sha"], "pending", GUARDS[job["guard"]]["context"], build["web_url"],
-                        "build in corso") != 0:
-            log(f"job {job['id']}: status pending non pubblicato (l'esito finale verra' ritentato)")
+        self._publish_pending(job)
+
+    def _publish_pending(self, job: dict) -> None:
+        """`pending` sull'head finche' la build gira, ritentato a ogni giro se fallisce (rilievo Codex P1 su #569):
+        rivalutando un head gia' `success` (reopen), il vecchio `success` non deve restare l'esito visibile."""
+        if self.publish(job["pr"], job["head_sha"], "pending", GUARDS[job["guard"]]["context"], job["build_url"],
+                        "build in corso") == 0:
+            self._set(job, pending_published=1)
+        else:
+            log(f"job {job['id']}: status pending non pubblicato: ritento al prossimo giro")
 
     def _cancel_quietly(self, job: dict) -> None:
         try:
@@ -880,6 +890,8 @@ class Dispatcher:
             if timed_out:
                 self._cancel_quietly(job)
                 return self._fail(job, "error", "timeout della build")
+            if not job["pending_published"]:
+                self._publish_pending(job)
             return None
         if state == "blocked":
             self._cancel_quietly(job)

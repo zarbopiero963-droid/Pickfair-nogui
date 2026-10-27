@@ -4686,6 +4686,30 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "review P2-4: build di una creazione ambigua sostituita lasciata girare."
+    },
+    {
+      "id": "td_5xx_not_ambiguous",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if status >= 500:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "Codex P2 su #569: 502 HTML alla creazione chiuso come error: build arrivata a Buildkite mai seguita ne' annullata."
+    },
+    {
+      "id": "td_pending_not_retried",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if not job[\"pending_published\"]:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "Codex P1 su #569: pending fallito mai ritentato: il vecchio success resta l'esito visibile durante la rivalutazione."
     }
   ]
 }
