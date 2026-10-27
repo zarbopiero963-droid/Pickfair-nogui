@@ -59,3 +59,6 @@ dispatcher in DRY-RUN.
 
 Commit di collaudo non funzionale per P0-D (cambio di head con build in corso), richiesto da Grok in #573
 (REQ-E2E-003, segnale GO-PUSH-1). Esiti e identificativi delle build nel rapporto finale sulla #562.
+
+Secondo commit di collaudo non funzionale per P0-D (segnale GO-PUSH-2, REQ-E2E-005): nuovo head mentre le build
+dell'head precedente sono ancora attive, per osservare `superseded` e l'assenza di status sull'head vecchio.
