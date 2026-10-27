@@ -2,12 +2,12 @@
  "certification_verdict": "NO-GO",
  "checkpoint_commit": null,
  "code": {
-  "branch": "ccr-764b0316-9r1a1d",
-  "sha": "0dc0a9c269c37315656a70890f0bebebe6ee0f2f"
+  "branch": "main",
+  "sha": "a5f0f72d369698a9f9d5dcb2172600e4312a7135"
  },
- "mandate_id": "OWNER MANDATE PF-569 FINAL INTEGRATION & MERGE READINESS + PF-562 PUBLISHER & DISPATCHER FINAL INTEGRATION",
- "next_atomic_action": "#569 READY_FOR_OWNER_MERGE (head 0dc0a9c): attendere il merge owner; nessun nuovo push. Dopo il merge: CI su main, coordinamento con Grok per installazione pinned da main, publisher DRY-RUN, collaudi e2e (#562). #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
- "previous_checkpoint_sha": "d55ed17dabb4e8c9bd363c5bcc960dbdfa201d1d",
+ "mandate_id": "OWNER GO \u2014 MERGE PR #569 + certificazione e2e #562 (attivita gia autorizzate)",
+ "next_atomic_action": "#562 e2e: Grok installa main a5f0f72 sulla VPS, configura (artifact_download_hosts da fissare), DRY-RUN, prove fail-closed; Claude esegue /pf-trusted-rerun quando la lane e' attiva per dimostrare l'autonomia; pubblicazione reale solo in finestra owner. NON iniziare la riconciliazione globale delle schede: attendere il pacchetto audit di Grok. #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO.",
+ "previous_checkpoint_sha": "a819751655b2c9af3daaf0a6a20268eb421c58e4",
  "schema": "pf-current/1",
- "seq": 78
+ "seq": 79
 }

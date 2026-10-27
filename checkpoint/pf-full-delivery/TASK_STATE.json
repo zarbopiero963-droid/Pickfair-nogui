@@ -62,8 +62,8 @@
   "Governance/lane trusted: #564 16543be, #567 b7fb4e2, #568 22d1b71 (deduplica check run fail-closed, chiude #566); #565 tracciata"
  ],
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
- "mandate_id": "OWNER MANDATE PF-569 FINAL INTEGRATION & MERGE READINESS + PF-562 PUBLISHER & DISPATCHER FINAL INTEGRATION",
- "next_atomic_action": "#569 READY_FOR_OWNER_MERGE (head 0dc0a9c): attendere il merge owner; nessun nuovo push. Dopo il merge: CI su main, coordinamento con Grok per installazione pinned da main, publisher DRY-RUN, collaudi e2e (#562). #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
+ "mandate_id": "OWNER GO \u2014 MERGE PR #569 + certificazione e2e #562 (attivita gia autorizzate)",
+ "next_atomic_action": "#562 e2e: Grok installa main a5f0f72 sulla VPS, configura (artifact_download_hosts da fissare), DRY-RUN, prove fail-closed; Claude esegue /pf-trusted-rerun quando la lane e' attiva per dimostrare l'autonomia; pubblicazione reale solo in finestra owner. NON iniziare la riconciliazione globale delle schede: attendere il pacchetto audit di Grok. #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [

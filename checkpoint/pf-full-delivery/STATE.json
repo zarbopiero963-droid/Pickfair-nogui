@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 78,
- "updated_at": "2026-10-27T17:25:00Z",
+ "seq": 79,
+ "updated_at": "2026-10-27T17:35:00Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "#569 READY_FOR_OWNER_MERGE (head 0dc0a9c): attendere il merge owner; nessun nuovo push. Dopo il merge: CI su main, coordinamento con Grok per installazione pinned da main, publisher DRY-RUN, collaudi e2e (#562). #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO. Microstake OWNER-RESERVED.",
+ "next_atomic_action": "#562 e2e: Grok installa main a5f0f72 sulla VPS, configura (artifact_download_hosts da fissare), DRY-RUN, prove fail-closed; Claude esegue /pf-trusted-rerun quando la lane e' attiva per dimostrare l'autonomia; pubblicazione reale solo in finestra owner. NON iniziare la riconciliazione globale delle schede: attendere il pacchetto audit di Grok. #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "d55ed17dabb4e8c9bd363c5bcc960dbdfa201d1d",
+ "previous_checkpoint_sha": "a819751655b2c9af3daaf0a6a20268eb421c58e4",
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -603,11 +603,11 @@
  },
  "session_end": "seq 23 Claude Code: lotti locali verificati; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "OWNER MANDATE PF-569 FINAL INTEGRATION & MERGE READINESS + PF-562 PUBLISHER & DISPATCHER FINAL INTEGRATION",
+ "mandate_id": "OWNER GO — MERGE PR #569 + certificazione e2e #562 (attivita gia autorizzate)",
  "code": {
-  "branch": "ccr-764b0316-9r1a1d",
-  "sha": "0dc0a9c269c37315656a70890f0bebebe6ee0f2f",
-  "note": "#569 READY_FOR_OWNER_MERGE su 0dc0a9c (c.6448652357): 115/115 check verdi, Sol VALID_PASS 1/2 e Grok VALID_PASS 2/2 copertura completa, Codex senza rilievi, 0 thread, clean. PR tecnica streaming Grok non aperta (worktree locale ccr-grok-stream-569)"
+  "branch": "main",
+  "sha": "a5f0f72d369698a9f9d5dcb2172600e4312a7135",
+  "note": "#569 mergiata (owner GO) come a5f0f72, tree == head 0dc0a9c; CI main 12/12 verde. Consegna a Grok per e2e su #562 c.6448742798"
  },
  "blocks": [
   "Gate A #506 NON PASS",
