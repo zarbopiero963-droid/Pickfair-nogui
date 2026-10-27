@@ -4772,18 +4772,6 @@
       "rationale": "audit A4 su #569: 201 senza numero di build chiuso come error: build arrivata mai seguita."
     },
     {
-      "id": "td_cancel_forgotten",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "            return self._set(job, state=\"canceling\" if json.loads(job.get(\"pending_cancels\") or \"[]\") else \"done\")",
-      "mutated": "            return self._set(job, state=\"done\")",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "audit A5/A9 su #569: annullamento fallito dimenticato dopo la pubblicazione: build orfana."
-    },
-    {
       "id": "td_artifact_no_retry",
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
@@ -4830,6 +4818,42 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "audit A7 su #569: corpo dell'artifact troncato preso come risultato del guard."
+    },
+    {
+      "id": "td_pending_cancels_not_retried",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if job[\"state\"] != \"canceling\" and json.loads(job.get(\"pending_cancels\") or \"[]\"):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "Codex P2 su #569: annullamenti pendenti fermi finche' la pubblicazione fallisce."
+    },
+    {
+      "id": "td_superseded_empty_listing_retires",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if not numbers and within:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "Codex P2 su #569: creazione ambigua sostituita ritirata su elenco vuoto: build arrivata in ritardo orfana."
+    },
+    {
+      "id": "td_final_with_pending_cancels",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if fields.get(\"state\") in FINAL_STATES and json.loads(pending):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "invariante su #569: job chiuso con build ancora da annullare."
     }
   ]
 }

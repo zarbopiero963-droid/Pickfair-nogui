@@ -820,6 +820,10 @@ class Dispatcher:
             log(f"job {job['id']}: fallback non riuscito ({type(exc).__name__}): riprovo al prossimo giro")
 
     def advance(self, job: dict) -> None:
+        # Obbligo di annullamento persistente e indipendente dallo stato (rilievi Codex su #569): le build
+        # rimaste da annullare si ritentano a ogni giro, qualunque cosa stia facendo il job.
+        if job["state"] != "canceling" and json.loads(job.get("pending_cancels") or "[]"):
+            self._cancel_or_remember(job, json.loads(job["pending_cancels"]))
         if job["state"] == "canceling":                # esito gia' pubblicato: resta solo l'annullamento
             return self._retry_cancels(job)
         if job["superseded"]:
@@ -836,19 +840,29 @@ class Dispatcher:
         return None
 
     def _set(self, job: dict, **fields: Any) -> None:
+        # Invariante in un solo punto: nessun job passa a uno stato finale con build ancora da annullare; resta
+        # `canceling` (finestra dal momento della conversione) finche' l'annullamento non e' confermato.
+        pending = fields.get("pending_cancels", job.get("pending_cancels")) or "[]"
+        if fields.get("state") in FINAL_STATES and json.loads(pending):
+            fields["state"] = "canceling"
+            fields.setdefault("publishing_since", self.clock())
         self.store.update_job(job["id"], self.clock(), **fields)
         job.update(fields)
 
     def _supersede(self, job: dict) -> None:
         numbers = [job["build_number"]] if job["build_number"] is not None else []
         if job["state"] == "creating" and not numbers:
-            # creazione ambigua: la build puo' esistere anche senza numero; si cerca e si annulla
+            # creazione ambigua: la build puo' esistere anche senza numero, e comparire in ritardo; si cerca e si
+            # annulla, e un elenco vuoto non basta a ritirare il job prima della finestra (Codex P2 su #569)
+            within = self.clock() - job["created_at"] <= self.cfg.build_timeout_seconds[job["guard"]]
             try:
                 numbers = [b["number"] for b in self._builds_for(job) if _is_int(b.get("number"))]
             except (ApiError, TransportError) as exc:
-                if self.clock() - job["created_at"] <= self.cfg.build_timeout_seconds[job["guard"]]:
+                if within:
                     log(f"job {job['id']}: build sostituita non verificabile ({exc}): riprovo")
                     return None
+            if not numbers and within:
+                return None
         unconfirmed = False
         for number in numbers:
             try:
@@ -945,7 +959,8 @@ class Dispatcher:
         if self.clock() - since > self.cfg.build_timeout_seconds[job["guard"]]:
             log(f"job {job['id']}: annullamento mai confermato per le build {job['pending_cancels']}: "
                 "da verificare a mano")
-            return self._set(job, state="done")
+            return self._set(job, state="done", pending_cancels="[]", description=clean_description(
+                f"annullamento non confermato {job['pending_cancels']}; {job.get('description') or ''}"))
         return None
 
     def _recover_creation(self, job: dict) -> None:
@@ -1015,14 +1030,15 @@ class Dispatcher:
         rc = self.publish(job["pr"], job["head_sha"], outcome, GUARDS[job["guard"]]["context"], url,
                           job["description"] or outcome)
         if rc == 0:
-            # build ancora da annullare: si chiude solo quando l'annullamento e' confermato (stato `canceling`)
-            return self._set(job, state="canceling" if json.loads(job.get("pending_cancels") or "[]") else "done")
+            # con build ancora da annullare `_set` lo tiene in `canceling` finche' l'annullamento e' confermato
+            return self._set(job, state="done")
         # pubblicazione fallita: si ritenta a ogni giro (stesso esito, status idempotente) finche' il job non e'
         # sostituito o finisce la finestra pari al timeout della build; poi `publish_failed`, dichiarato nei log
         since = job.get("publishing_since") or job["updated_at"]
         if self.clock() - since > self.cfg.build_timeout_seconds[job["guard"]]:
             log(f"job {job['id']}: pubblicazione non riuscita entro la finestra: publish_failed")
-            return self._set(job, state="publish_failed")
+            # con build ancora da annullare `_set` lo tiene in `canceling` (Codex P2 su #569)
+            return self._set(job, state="publish_failed", publishing_since=self.clock())
         return None
 
 

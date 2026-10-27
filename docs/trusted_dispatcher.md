@@ -53,6 +53,10 @@ GitHub è idempotente per contesto e SHA).
   risposta illeggibile;
 - annullamenti non confermati: le build restano in `pending_cancels` e il job, pubblicato l'esito, resta
   `canceling` finché l'annullamento non è confermato o scade la finestra (poi log esplicito «da verificare a mano»);
+- **obbligo di annullamento persistente**: le build da annullare (`pending_cancels`) si ritentano a ogni giro in
+  qualunque stato del job, anche mentre la pubblicazione fallisce; un passaggio a uno stato finale con build ancora
+  da annullare diventa `canceling` (invariante in un solo punto, `Dispatcher._set`); una creazione ambigua
+  sostituita non si ritira su un elenco vuoto prima della finestra (rilievi Codex su #569);
 - fallback strutturale: un job che solleva un'eccezione inattesa a ogni giro, scaduto il timeout della build, viene
   annullato e chiuso con `error` («errore interno del dispatcher»), mai attivo per sempre.
 

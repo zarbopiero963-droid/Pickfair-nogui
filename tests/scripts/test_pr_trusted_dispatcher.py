@@ -1449,3 +1449,99 @@ def test_full_build_page_does_not_let_a_superseded_creation_retire_unchecked(env
     disp.tick()
     old = [j for j in disp.store.recent_jobs() if j["head_sha"] == HEAD]
     assert all(j["state"] == "creating" and j["superseded"] == 1 for j in old)
+
+
+# --------------------------------------------------------------------------------------------- Codex su cee448c
+def test_superseded_ambiguous_creation_waits_for_a_late_build_to_cancel_it(env):
+    """Codex P2 su #569 (cee448c): creazione in timeout, head nuovo prima che la build sia visibile. Elenco vuoto
+    entro la finestra non ritira il job: la build arrivata in ritardo viene trovata e annullata."""
+    disp, bk, _, clock = env
+    bk.fail_create = "transport"
+    send(disp, payload())
+    disp.tick()
+    bk.fail_create = None
+    send(disp, payload(head=HEAD2, updated="2026-10-27T10:01:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000fc")
+    disp.tick()
+    old = [j for j in disp.store.recent_jobs() if j["head_sha"] == HEAD]
+    assert all(j["state"] == "creating" and j["superseded"] == 1 for j in old)
+    for job in old:                                       # la build del vecchio head compare in ritardo
+        bk._new_build(td.GUARDS[job["guard"]]["pipeline"],
+                      {"branch": "main", "commit": "HEAD", "message": "m", "env": td.build_env(job)})
+    disp.tick()
+    old_numbers = {(td.GUARDS[j["guard"]]["pipeline"], n) for j in old for n in
+                   [b["number"] for b in bk.builds[td.GUARDS[j["guard"]]["pipeline"]].values()
+                    if b["env"]["PF_PR_HEAD_SHA"] == HEAD]}
+    assert old_numbers and old_numbers <= set(bk.canceled)
+    assert all(j["state"] == "superseded" for j in disp.store.recent_jobs() if j["head_sha"] == HEAD)
+    clock.now += 1
+
+
+def test_pending_cancels_are_retried_while_publication_keeps_failing(env):
+    """Codex P2 su #569 (cee448c): annullamento fallito sul timeout e publisher in errore. L'annullamento si
+    ritenta comunque a ogni giro; scaduta la finestra di pubblicazione il job non sparisce con build pendenti."""
+    disp, bk, pub, clock = env
+    send(disp, payload())
+    disp.tick()
+    bk.builds["pr-overlap-guard"][1]["state"] = "running"
+    bk.fail_cancel = True
+    pub.rc = 1
+    clock.now += 601
+    disp.tick()
+    assert _overlap(disp)["state"] == "publishing"
+    bk.fail_cancel = False
+    disp.tick()
+    assert ("pr-overlap-guard", 1) in bk.canceled
+    assert json.loads(_overlap(disp)["pending_cancels"]) == []
+
+
+def test_publication_window_expiry_never_drops_pending_cancels(env):
+    disp, bk, pub, clock = env
+    send(disp, payload())
+    disp.tick()
+    bk.builds["pr-overlap-guard"][1]["state"] = "running"
+    bk.fail_cancel = True
+    pub.rc = 1
+    clock.now += 601
+    disp.tick()
+    clock.now += disp.cfg.build_timeout_seconds["overlap"] + 1
+    disp.tick()
+    assert _overlap(disp)["state"] in td.ACTIVE_STATES        # ancora attivo: build da annullare
+    bk.fail_cancel = False
+    disp.tick()
+    assert ("pr-overlap-guard", 1) in bk.canceled
+
+
+def test_no_final_state_with_pending_cancels(env):
+    """Invariante in `_set`: un passaggio a uno stato finale con build da annullare diventa `canceling`."""
+    disp, _, _, _ = env
+    send(disp, payload())
+    job = disp.store.active_jobs()[0]
+    job = dict(job, pending_cancels="[7]")
+    disp.store.update_job(job["id"], disp.clock(), pending_cancels="[7]")
+    for final in td.FINAL_STATES:
+        disp._set(job, state=final)
+        assert job["state"] == "canceling" and disp.store.get_job(job["id"])["state"] == "canceling"
+    disp._set(job, state="done", pending_cancels="[]")
+    assert disp.store.get_job(job["id"])["state"] == "done"
+
+
+
+def test_full_build_page_reports_unverifiable_not_unconfirmed(env):
+    """Pagina piena: scaduta la finestra l'esito e' `error` con il motivo veritiero («non verificabile»), non
+    «non confermata» come per un elenco letto davvero vuoto."""
+    disp, bk, pub, clock = env
+    bk.fail_create = "transport"
+    send(disp, payload())
+    disp.tick()
+    bk.fail_create = None
+    orig = bk.__call__
+
+    def tr(method, url, headers, body, timeout):
+        if method == "GET" and "builds?" in url:
+            return 200, {}, json.dumps([{"number": 1000 + i, "env": {}} for i in range(100)]).encode()
+        return orig(method, url, headers, body, timeout)
+    disp.bk._transport = tr
+    clock.now += disp.cfg.build_timeout_seconds["readiness"] + 1
+    disp.tick()
+    descs = [c[5] for c in pub.final()]
+    assert descs and all("non verificabile" in d for d in descs)
