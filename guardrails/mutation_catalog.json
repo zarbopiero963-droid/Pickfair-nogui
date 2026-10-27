@@ -4464,8 +4464,8 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "                return \"duplicate\", []",
-      "mutated": "                pass",
+      "original": "            except sqlite3.IntegrityError:\n                return \"duplicate\", []",
+      "mutated": "            except sqlite3.IntegrityError:\n                pass",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
@@ -4728,7 +4728,7 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "        if unconfirmed and self.clock() - job[\"created_at\"] <= self.cfg.build_timeout_seconds[job[\"guard\"]]:",
+      "original": "        if unconfirmed and self.clock() - started <= self.cfg.build_timeout_seconds[job[\"guard\"]]:",
       "mutated": "        if False:",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
@@ -4854,6 +4854,54 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "invariante su #569: job chiuso con build ancora da annullare."
+    },
+    {
+      "id": "td_supersede_window_from_creation",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        started = job.get(\"dispatched_at\") or job[\"created_at\"]          # adottata tardi: finestra dall'adozione",
+      "mutated": "        started = job[\"created_at\"]",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit I1 su #569: build adottata tardi e sostituita: un solo tentativo di annullamento."
+    },
+    {
+      "id": "td_fallback_skips_publishing",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if job[\"state\"] in (\"publishing\", \"canceling\"):\n                since = job.get(\"publishing_since\") or job[\"created_at\"]",
+      "mutated": "            if False:\n                since = job.get(\"publishing_since\") or job[\"created_at\"]",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit I2 su #569: publisher che solleva a ogni giro: job attivo per sempre."
+    },
+    {
+      "id": "td_no_pending_during_reconcile",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if not job.get(\"pending_published\"):\n            # head rivalutato",
+      "mutated": "        if False:\n            # head rivalutato",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit I4 su #569: vecchio success visibile durante la riconciliazione di una creazione ambigua."
+    },
+    {
+      "id": "td_redelivery_after_purge",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if row is not None and row[\"delivery_id\"] == intake.delivery_id:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "audit I5 su #569: redelivery dopo la pulizia crea una seconda serie di build."
     }
   ]
 }

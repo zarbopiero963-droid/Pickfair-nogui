@@ -371,7 +371,8 @@ CREATE TABLE IF NOT EXISTS deliveries (
 CREATE TABLE IF NOT EXISTS pr_heads (
   pr INTEGER PRIMARY KEY,
   head_sha TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  delivery_id TEXT
 );
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -440,6 +441,12 @@ class Store:
                 if name not in cols:
                     db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {ddl}")
             db.execute("DROP INDEX IF EXISTS jobs_active")   # indice senza `superseded = 0` (P2-1)
+            if "delivery_id" not in {row[1] for row in db.execute("PRAGMA table_info(pr_heads)")}:
+                db.execute("ALTER TABLE pr_heads ADD COLUMN delivery_id TEXT")
+            # finestre ancorate: un job in pubblicazione/annullamento senza `publishing_since` userebbe
+            # `updated_at`, che si aggiorna a ogni giro, e non scadrebbe mai
+            db.execute("UPDATE jobs SET publishing_since = updated_at WHERE publishing_since IS NULL "
+                       "AND state IN ('publishing', 'canceling')")
         self._tx(fn)
 
     def close(self) -> None:
@@ -474,12 +481,17 @@ class Store:
                            (intake.delivery_id, now))
             except sqlite3.IntegrityError:
                 return "duplicate", []
-            row = db.execute("SELECT head_sha, updated_at FROM pr_heads WHERE pr = ?", (intake.pr,)).fetchone()
+            row = db.execute("SELECT head_sha, updated_at, delivery_id FROM pr_heads WHERE pr = ?",
+                             (intake.pr,)).fetchone()
+            if row is not None and row["delivery_id"] == intake.delivery_id:
+                # redelivery dell'ultimo evento dopo la pulizia di `deliveries`: resta un replay (audit su #569)
+                return "duplicate", []
             if row is not None and intake.updated_at < row["updated_at"]:
                 return "out_of_order", []
-            db.execute("INSERT INTO pr_heads(pr, head_sha, updated_at) VALUES (?, ?, ?) "
-                       "ON CONFLICT(pr) DO UPDATE SET head_sha = excluded.head_sha, updated_at = excluded.updated_at",
-                       (intake.pr, intake.head_sha, intake.updated_at))
+            db.execute("INSERT INTO pr_heads(pr, head_sha, updated_at, delivery_id) VALUES (?, ?, ?, ?) "
+                       "ON CONFLICT(pr) DO UPDATE SET head_sha = excluded.head_sha, updated_at = excluded.updated_at, "
+                       "delivery_id = excluded.delivery_id",
+                       (intake.pr, intake.head_sha, intake.updated_at, intake.delivery_id))
             # Solo un evento STRETTAMENTE piu' recente sostituisce gli altri head: con lo stesso `updated_at`
             # l'ordine non e' noto e restano in corsa entrambi (decide il ricontrollo dell'helper sull'head).
             if row is None or intake.updated_at > row["updated_at"]:
@@ -808,6 +820,15 @@ class Dispatcher:
         """Un job che solleva a ogni giro non resta attivo per sempre: scaduto il timeout della build, la build si
         annulla (o si ricorda da annullare) e l'esito e' `error` (audit indipendente su #569)."""
         try:
+            window = self.cfg.build_timeout_seconds[job["guard"]]
+            if job["state"] in ("publishing", "canceling"):
+                since = job.get("publishing_since") or job["created_at"]
+                if self.clock() - since <= window:
+                    return
+                if job["state"] == "publishing":
+                    return self._set(job, state="publish_failed", publishing_since=self.clock())
+                log(f"job {job['id']}: annullamento mai confermato {job.get('pending_cancels')}: da verificare a mano")
+                return self._set(job, state="done", pending_cancels="[]")
             started = job.get("dispatched_at") or job["created_at"]
             if job["state"] not in ("queued", "creating", "dispatched"):
                 return
@@ -872,7 +893,8 @@ class Dispatcher:
                 log(f"job {job['id']}: annullamento build {number} non confermato: {exc}")
         # annullamento non confermato: il job resta attivo e si ritenta al giro dopo (rilievo Codex P2 su #569),
         # fino alla finestra del timeout della build; poi si ritira, dichiarato nei log
-        if unconfirmed and self.clock() - job["created_at"] <= self.cfg.build_timeout_seconds[job["guard"]]:
+        started = job.get("dispatched_at") or job["created_at"]          # adottata tardi: finestra dall'adozione
+        if unconfirmed and self.clock() - started <= self.cfg.build_timeout_seconds[job["guard"]]:
             return None
         if unconfirmed:
             log(f"job {job['id']}: annullamento mai confermato entro la finestra: ritirato")
@@ -967,6 +989,13 @@ class Dispatcher:
         """Creazione con esito ignoto (timeout, 5xx, crash): si cerca la build per delivery e head. Una sola =>
         adottata; nessuna (elenco letto con successo) => error, mai una seconda creazione; piu' di una =>
         annullate tutte, error. Elenco illeggibile => si riprova fino al timeout della build, poi error."""
+        if not job.get("pending_published"):
+            # head rivalutato con creazione ambigua: `pending` subito, cosi' un vecchio `success` non resta l'esito
+            # visibile per tutta la finestra di riconciliazione (audit su #569)
+            url = f"{BUILDKITE_WEB}/{self.cfg.organization}/{GUARDS[job['guard']]['pipeline']}"
+            if self.publish(job["pr"], job["head_sha"], "pending", GUARDS[job["guard"]]["context"], url,
+                            "creazione build in verifica") == 0:
+                self._set(job, pending_published=1)
         try:
             found = self._builds_for(job)
         except (ApiError, TransportError) as exc:

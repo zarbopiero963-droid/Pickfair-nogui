@@ -57,8 +57,13 @@ GitHub è idempotente per contesto e SHA).
   qualunque stato del job, anche mentre la pubblicazione fallisce; un passaggio a uno stato finale con build ancora
   da annullare diventa `canceling` (invariante in un solo punto, `Dispatcher._set`); una creazione ambigua
   sostituita non si ritira su un elenco vuoto prima della finestra (rilievi Codex su #569);
+- redelivery dell'ultimo evento di una PR dopo la pulizia di `deliveries`: resta un replay (`pr_heads.delivery_id`);
+- creazione ambigua di un head rivalutato: `pending` pubblicato subito, così un vecchio `success` non resta l'esito
+  visibile durante la riconciliazione;
+- finestra di annullamento di una build sostituita dall'adozione (`dispatched_at`), non dalla creazione;
 - fallback strutturale: un job che solleva un'eccezione inattesa a ogni giro, scaduto il timeout della build, viene
-  annullato e chiuso con `error` («errore interno del dispatcher»), mai attivo per sempre.
+  annullato e chiuso con `error` («errore interno del dispatcher»), mai attivo per sempre; lo stesso vale per un job
+  in `publishing` o `canceling` (per esempio un publisher che solleva a ogni giro), scaduta la sua finestra.
 
 **Pending ritentato.** Se la pubblicazione del `pending` all'avvio della build fallisce, si ritenta a ogni giro
 finché la build gira (rilievo Codex P1 su #569). Rivalutando un head già `success` (per esempio dopo un reopen), il
@@ -218,5 +223,9 @@ funziona) dalla **readiness reale** (la PR è davvero mergiabile).
   finestra, poi `error` (fail closed). L'elenco degli artifact chiede `per_page=100`.
 - `ThreadingHTTPServer` non limita il numero dei thread: un limite alle connessioni va messo nel reverse proxy
   (punto 1).
+- Fra il ricontrollo «sostituito» e la pubblicazione c'è una finestra senza lock (audit su #569): un head più recente
+  arrivato proprio lì può ricevere `success` sullo SHA vecchio. Non ha effetto sulla PR: i check richiesti si
+  valutano sull'head corrente, e l'helper root rifiuta uno SHA che non è l'head. Un lock fra intake e pubblicazione
+  bloccherebbe i webhook fino al timeout del publisher (300 s), quindi non è stato aggiunto.
 - Un evento perso da GitHub (nessuna consegna) non produce status: il required check resta quello di Actions, e la
   PR non diventa mergiabile per questo (fail closed).

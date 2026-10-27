@@ -1545,3 +1545,109 @@ def test_full_build_page_reports_unverifiable_not_unconfirmed(env):
     disp.tick()
     descs = [c[5] for c in pub.final()]
     assert descs and all("non verificabile" in d for d in descs)
+
+
+# --------------------------------------------------------------------------------------------- audit avversariale (invarianti)
+def test_late_adopted_superseded_build_keeps_retrying_its_cancel(env):
+    """Audit I1: build adottata tardi e poi sostituita: la finestra di annullamento parte dall'adozione, non dalla
+    creazione, quindi un annullamento fallito si ritenta."""
+    disp, bk, _, clock = env
+    bk.fail_create = "transport"
+    send(disp, payload())
+    disp.tick()
+    bk.fail_create = None
+    clock.now += 590
+    for job in disp.store.recent_jobs():
+        bk._new_build(td.GUARDS[job["guard"]]["pipeline"],
+                      {"branch": "main", "commit": "HEAD", "message": "m", "env": td.build_env(job)})
+    disp.tick()
+    clock.now += 110
+    bk.fail_cancel = True
+    send(disp, payload(head=HEAD2, updated="2026-10-27T10:01:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000a1")
+    disp.tick()
+    old = [j for j in disp.store.recent_jobs() if j["guard"] == "overlap" and j["head_sha"] == HEAD][0]
+    assert old["state"] in td.ACTIVE_STATES
+    bk.fail_cancel = False
+    disp.tick()
+    assert ("pr-overlap-guard", 1) in bk.canceled
+
+
+def test_publisher_raising_every_tick_is_bounded(env):
+    """Audit I2: un publisher che solleva a ogni giro non tiene il job attivo per sempre."""
+    disp, bk, _, clock = env
+    send(disp, payload())
+    disp.tick()
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    bk.finish("pr-merge-readiness", 1, "passed", result("readiness"))
+
+    def boom(*a):
+        raise RuntimeError("publisher bug")
+    disp.publish = boom
+    for _ in range(3):
+        clock.now += 100_000
+        disp.tick()
+    assert not disp.store.active_jobs()
+
+
+def test_reopen_with_ambiguous_creation_publishes_pending_over_old_success(env):
+    """Audit I4: head gia' `success` rivalutato con creazione ambigua: `pending` subito, non dopo la finestra."""
+    disp, bk, pub, clock = env
+    send(disp, payload())
+    disp.tick()
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    bk.finish("pr-merge-readiness", 1, "passed", result("readiness"))
+    disp.tick()
+    bk.fail_create = "transport"
+    send(disp, payload(action="reopened", updated="2026-10-27T11:00:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000a2")
+    for _ in range(3):
+        clock.now += 60
+        disp.tick()
+    last = [c for c in pub.calls if c[3] == "overlap-check"][-1]
+    assert last[2] == "pending"
+    readiness_pending = [c for c in pub.calls if c[3] == "pr-merge-readiness" and c[2] == "pending"][-1]
+    assert "pr-merge-readiness" in readiness_pending[4]           # resta un self-check per la readiness
+
+
+def test_redelivery_after_retention_purge_is_still_a_replay(env):
+    """Audit I5: redelivery dell'ultimo evento dopo la pulizia di `deliveries`: nessuna seconda serie di build."""
+    disp, bk, _, clock = env
+    send(disp, payload())
+    disp.tick()
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    bk.finish("pr-merge-readiness", 1, "passed", result("readiness"))
+    disp.tick()
+    clock.now += (disp.cfg.delivery_retention_hours + 1) * 3600
+    disp.tick()
+    assert send(disp, payload())[0] == 200
+    disp.tick()
+    assert len(bk.builds["pr-overlap-guard"]) == 1
+
+
+def test_migration_backfills_publishing_since(tmp_path):
+    cfg = td.validate_config(raw_config(tmp_path))
+    store = td.Store(cfg.state_db)
+    store._db.execute("INSERT INTO jobs(delivery_id, event, pr, head_sha, guard, state, created_at, updated_at) "
+                      "VALUES ('d', 'opened', 1, ?, 'overlap', 'canceling', 1, 5)", (HEAD,))
+    store.close()
+    store = td.Store(cfg.state_db)
+    try:
+        assert store.recent_jobs()[0]["publishing_since"] == 5
+    finally:
+        store.close()
+
+
+def test_replay_of_an_earlier_delivery_with_the_same_timestamp_is_ignored(env):
+    """Due eventi con lo stesso `updated_at` (A poi B), poi il replay di A: lo blocca l'archivio delle delivery,
+    non il controllo sull'ultima delivery della PR (che ora e' B)."""
+    disp, bk, _, _ = env
+    send(disp, payload(head=HEAD, updated="2026-10-27T10:00:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000b1")
+    send(disp, payload(head=HEAD2, updated="2026-10-27T10:00:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000b2")
+    disp.tick()
+    for b in list(bk.builds["pr-overlap-guard"].values()) + list(bk.builds["pr-merge-readiness"].values()):
+        b["state"] = "canceled"
+    disp.tick()
+    before = len(bk.builds["pr-overlap-guard"])
+    assert send(disp, payload(head=HEAD, updated="2026-10-27T10:00:00Z"),
+                delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000b1")[0] == 200
+    disp.tick()
+    assert len(bk.builds["pr-overlap-guard"]) == before
