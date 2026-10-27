@@ -20,8 +20,8 @@ il risultato JSON del guard.
 | Evento | solo `pull_request` con azione `opened`, `synchronize`, `reopened` o `ready_for_review`; `ping` ⇒ 200 | `parse_event` |
 | PR | repository e repository base `zarbopiero963-droid/Pickfair-nogui`; numero intero `[1-9][0-9]{0,6}` (un booleano o una stringa sono rifiutati); head SHA di 40 esadecimali minuscoli; `updated_at` ISO; PR aperta, non in bozza, base `main`, head nello stesso repository | `parse_event` |
 | Replay | `X-GitHub-Delivery` (`[A-Za-z0-9-]{8,64}`, lo stesso formato del gate pre-command) unico nell'archivio SQLite; conservato `delivery_retention_hours` (≥ 24) | `Store.record_event` |
-| Ordine | evento con `updated_at` più vecchio dell'ultimo visto per la PR ⇒ scartato. Un head nuovo segna come sostituiti i job del vecchio head: le loro build vengono annullate e non pubblicano mai `success` | `Store.record_event`, `_supersede` |
-| Duplicati | indice unico parziale su (PR, head, guard) per i job attivi: un secondo evento per lo stesso head non avvia altre build | schema `jobs_active` |
+| Ordine | evento con `updated_at` più vecchio dell'ultimo visto per la PR ⇒ scartato. Un evento **strettamente** più recente con un head nuovo segna come sostituiti i job degli altri head: le loro build vengono annullate (anche quelle di una creazione ambigua, cercate per env) e non pubblicano mai `success`. Con lo stesso `updated_at` l'ordine non è noto: restano in corsa entrambi gli head e decide il ricontrollo dell'helper | `Store.record_event`, `_supersede` |
+| Duplicati | indice unico parziale su (PR, head, guard) per i job attivi **non sostituiti**: un secondo evento per lo stesso head non avvia altre build; un head che torna con un force-push (A → B → A) riparte, perché i vecchi job sostituiti di A non occupano il posto | schema `jobs_active_current` |
 | Build | solo `pr-overlap-guard` e `pr-merge-readiness` (tabella `GUARDS`, la configurazione non può aggiungerne), `branch=main`, `commit=HEAD`, env **esattamente** `PF_PR_NUMBER`, `PF_PR_HEAD_SHA`, `PF_PR_BASE_REF=main`, `PF_EVENT`, `PF_DELIVERY_ID` | `build_env`, `Buildkite.create_build` |
 | Verifica build | la build letta deve avere branch `main`, lo stesso env inviato e l'URL della pipeline giusta; altrimenti viene annullata ed è `error` | `build_matches_job` |
 | Esito | `success` **solo** con build `passed` **e** risultato del guard `PASS` con stesso repository, PR, guard e head. Build `failed` con verdetto `FAIL` coerente ⇒ `failure`. Tutto il resto (canceled, skipped, not_run, blocked, stato sconosciuto, timeout, artifact assente o illeggibile, head diverso = «stale SHA», build e verdetto in contraddizione) ⇒ `error` | `decide_outcome`, `_poll` |
@@ -41,6 +41,18 @@ un riavvio, il dispatcher elenca le build di `main` e cerca quella con lo stesso
 Un job `dispatched` riprende il polling dopo il riavvio; un job `publishing` ripubblica lo stesso esito (lo status
 GitHub è idempotente per contesto e SHA).
 
+**Pubblicazione fallita.** Se l'helper non pubblica, il job resta `publishing` e lo stesso esito si ritenta a ogni
+giro finché non va a buon fine, finché il job non viene sostituito o finché non scade una finestra pari a
+`build_timeout_seconds` del guard. Allo scadere il job diventa `publish_failed`, e il log lo dichiara. Il ritento
+copre anche il caso in cui un `success` vecchio sullo stesso head resterebbe visibile dopo un nuovo FAIL.
+
+**Una sola istanza.** L'archivio è protetto da un `flock` esclusivo su `<state_db>.lock`: una seconda istanza
+(`serve` lanciato due volte, sovrapposizione di systemd) si ferma con `NOT CONFIGURED` prima di toccare un job. Il
+server fa il bind della porta prima di avviare il worker. Le transizioni `queued → creating` sono condizionate allo
+stato letto, quindi una copia vecchia del job non crea una seconda build. Un COMMIT fallito viene annullato
+(ROLLBACK), così la connessione non resta dentro una transazione aperta. `jobs` apre l'archivio in sola lettura e
+funziona anche mentre il servizio è attivo.
+
 ## Modello di sicurezza
 
 | Minaccia | Difesa | Prova |
@@ -58,7 +70,9 @@ GitHub è idempotente per contesto e SHA).
 | Configurazione incompleta | ogni chiave obbligatoria, nessun default; chiave sconosciuta ⇒ errore; `NOT CONFIGURED`, exit 3, il servizio non parte | `test_every_missing_mandatory_key_is_not_configured`, `td_missing_key_default` |
 
 Le chiamate HTTP non seguono i redirect (`_NoRedirect`), usano solo `https://` e hanno il timeout
-`http_timeout_seconds`. Il corpo del webhook ha un tetto di 2 MiB (413 oltre), la lettura un timeout di 30 s.
+`http_timeout_seconds`. Il corpo del webhook ha un tetto di 2 MiB (413 oltre), la lettura un timeout di 30 s, e
+`Content-Length` deve essere fatto di sole cifre ASCII (411 altrimenti). L'uscita dell'helper di pubblicazione non
+viene copiata nei log del dispatcher: solo il codice di uscita.
 
 ## Configurazione (tutta obbligatoria)
 
@@ -72,7 +86,7 @@ Le chiamate HTTP non seguono i redirect (`_NoRedirect`), usano solo `https://` e
     "result_artifacts": {"overlap": "<relativo>/overlap.json", "readiness": "<relativo>/readiness.json"},
     "artifact_download_hosts": ["<host esatto>"]
   },
-  "publisher": {"command": ["/<eseguibile assoluto>", "..."]},
+  "publisher": {"command": ["/<eseguibile assoluto>", "..."], "timeout_seconds": 60},
   "state_db": "/<percorso assoluto>",
   "delivery_retention_hours": 24,
   "poll_interval_seconds": 15,
@@ -91,7 +105,7 @@ deciso dal codice. Comandi:
 
 Vincoli di formato: percorsi assoluti senza `..`; `result_artifacts.<guard>` relativo e con nome `<guard>.json` (il
 nome che scrive `scripts/ci/trusted_pr_guard.py`); `delivery_retention_hours` 24..2160; `poll_interval_seconds`
-1..300; `build_timeout_seconds.*` 60..21600; `http_timeout_seconds` 5..120; host senza caratteri jolly.
+1..300; `publisher.timeout_seconds` 5..300; `build_timeout_seconds.*` 60..21600; `http_timeout_seconds` 5..120; host senza caratteri jolly.
 
 ## Punti aperti: NOT CONFIGURED e BLOCKED_CONTRACT
 
@@ -161,5 +175,9 @@ funziona) dalla **readiness reale** (la PR è davvero mergiabile).
 - Il dispatcher non verifica di persona lo stato della PR al momento della pubblicazione: il contratto assegna il
   ricontrollo all'helper root, che è infrastruttura di Grok. Il dispatcher riduce la finestra con il proprio
   ricontrollo dei job sostituiti.
+- `list_builds` legge solo la prima pagina (100 build): oltre, una creazione ambigua risulta «non confermata» ed è
+  `error` (fail closed). L'elenco degli artifact chiede `per_page=100`.
+- `ThreadingHTTPServer` non limita il numero dei thread: un limite alle connessioni va messo nel reverse proxy
+  (punto 1).
 - Un evento perso da GitHub (nessuna consegna) non produce status: il required check resta quello di Actions, e la
   PR non diventa mergiabile per questo (fail closed).

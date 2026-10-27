@@ -53,7 +53,7 @@ def raw_config(tmp_path: Path) -> dict:
                                  "readiness": ".trusted-guard/readiness.json"},
             "artifact_download_hosts": [S3],
         },
-        "publisher": {"command": ["/usr/local/sbin/pf-publish-status"]},
+        "publisher": {"command": ["/usr/local/sbin/pf-publish-status"], "timeout_seconds": 60},
         "state_db": str(tmp_path / "state.sqlite3"),
         "delivery_retention_hours": 168,
         "poll_interval_seconds": 5,
@@ -120,7 +120,7 @@ class FakeBuildkite:
             if self.fail_list:
                 raise td.TransportError("rete")
             return 200, {}, json.dumps(list(self.builds[pipeline].values())).encode()
-        parts = tail.split("/")
+        parts = tail.split("?")[0].split("/")
         number = int(parts[1])
         build = self.builds[pipeline].get(number)
         if build is None:
@@ -653,7 +653,7 @@ def test_publisher_failure_is_recorded_not_success(env):
     bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
     disp.tick()
     states = {j["guard"]: j["state"] for j in disp.store.recent_jobs()}
-    assert states["overlap"] == "publish_failed"
+    assert states["overlap"] == "publishing"           # ritentata ai giri successivi, mai `done`
 
 
 # --------------------------------------------------------------------------------------------- pipeline / contesti
@@ -885,11 +885,171 @@ def test_http_server_end_to_end(env):
         conn.endheaders()
         assert conn.getresponse().status == 413
         conn.close()
-        try:
+        with pytest.raises(urllib.error.HTTPError) as exc:
             urllib.request.urlopen(base + "/github/webhook", timeout=5)  # noqa: S310
-        except urllib.error.HTTPError as exc:
-            assert exc.code == 405
+        assert exc.value.code == 405
     finally:
         server.shutdown()
         server.server_close()
     assert len(disp.store.recent_jobs()) == 2
+
+
+# --------------------------------------------------------------------------------------------- rilievi della review indipendente
+def test_force_push_back_to_an_earlier_head_dispatches_that_head(env):
+    """P2-1: A -> B -> di nuovo A prima del tick. I job vecchi di A, gia' sostituiti, non devono occupare il posto
+    dei job nuovi di A: l'head corrente resterebbe senza build e con `pending` per sempre."""
+    disp, bk, pub, _ = env
+    send(disp, payload(head=HEAD, updated="2026-10-27T10:00:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000c1")
+    disp.tick()
+    send(disp, payload(head=HEAD2, updated="2026-10-27T10:01:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000c2")
+    code, _ = send(disp, payload(head=HEAD, updated="2026-10-27T10:02:00Z"),
+                   delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000c3")
+    assert code == 202
+    disp.tick()
+    disp.tick()
+    active = disp.store.active_jobs()
+    assert {(j["head_sha"], j["guard"]) for j in active} == {(HEAD, "overlap"), (HEAD, "readiness")}
+    assert all(j["state"] == "dispatched" for j in active)
+    bk.finish("pr-overlap-guard", 2, "passed", result("overlap"))
+    disp.tick()
+    assert (42, HEAD, "success", "overlap-check") in [c[:4] for c in pub.final()]
+
+
+def test_events_with_the_same_updated_at_do_not_supersede_each_other(env):
+    """P3-1: due push nello stesso secondo consegnati in ordine inverso. Con lo stesso `updated_at` l'ordine non e'
+    noto: entrambi gli head restano in corsa e decide il ricontrollo dell'helper, mai l'ultimo arrivato."""
+    disp, bk, _, _ = env
+    send(disp, payload(head=HEAD2, updated="2026-10-27T10:00:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000d1")
+    send(disp, payload(head=HEAD, updated="2026-10-27T10:00:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000d2")
+    disp.tick()
+    heads = {json.loads(r[3])["env"]["PF_PR_HEAD_SHA"] for r in bk.requests if r[0] == "POST"}
+    assert heads == {HEAD, HEAD2}
+    assert not any(j["superseded"] for j in disp.store.recent_jobs())
+
+
+def test_failed_publication_is_retried_until_it_lands(env):
+    """P2-2: un helper temporaneamente in errore non lascia lo status richiesto su `pending` per sempre."""
+    disp, bk, pub, _ = env
+    send(disp, payload())
+    disp.tick()
+    pub.rc = 1
+    bk.finish("pr-overlap-guard", 1, "failed", result("overlap", verdict="FAIL"))
+    disp.tick()
+    disp.tick()
+    job = [j for j in disp.store.recent_jobs() if j["guard"] == "overlap"][0]
+    assert job["state"] == "publishing"
+    pub.rc = 0
+    disp.tick()
+    assert disp.store.get_job(job["id"])["state"] == "done"
+    assert [c[2] for c in pub.final() if c[3] == "overlap-check"] == ["failure"] * 3
+
+
+def test_failed_publication_gives_up_after_the_window(env):
+    disp, bk, pub, clock = env
+    send(disp, payload())
+    disp.tick()
+    pub.rc = 1
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    disp.tick()
+    clock.now += disp.cfg.build_timeout_seconds["overlap"] + 1
+    disp.tick()
+    job = [j for j in disp.store.recent_jobs() if j["guard"] == "overlap"][0]
+    assert job["state"] == "publish_failed"
+
+
+def test_superseded_ambiguous_creation_cancels_the_build_that_landed(env):
+    """P2-4: un job in `creating` sostituito da un push nuovo non lascia girare la build orfana."""
+    disp, bk, _, _ = env
+    bk.fail_create, bk.create_lands = "transport", True
+    send(disp, payload())
+    disp.tick()
+    bk.fail_create = None
+    send(disp, payload(head=HEAD2, updated="2026-10-27T10:01:00Z"), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000e1")
+    disp.tick()
+    assert ("pr-overlap-guard", 1) in bk.canceled and ("pr-merge-readiness", 1) in bk.canceled
+
+
+def test_second_instance_on_the_same_database_is_refused(env):
+    """P2-3: due processi sullo stesso archivio creerebbero due build per la stessa richiesta."""
+    disp, _, _, _ = env
+    with pytest.raises(td.ConfigError) as exc:
+        td.Store(disp.cfg.state_db)
+    assert "altra istanza" in str(exc.value)
+
+
+def test_job_transition_is_conditional_on_the_previous_state(env):
+    disp, bk, _, _ = env
+    send(disp, payload())
+    job = disp.store.active_jobs()[0]
+    disp.store.update_job(job["id"], disp.clock(), state="creating")
+    disp._create(dict(job))                      # copia vecchia ancora `queued`: non deve creare una seconda build
+    assert not [r for r in bk.requests if r[0] == "POST"]
+
+
+def test_jobs_command_reads_while_the_service_holds_the_lock(env, tmp_path, capsys):
+    disp, _, _, _ = env
+    send(disp, payload())
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps(raw_config(tmp_path)))
+    assert td.main(["jobs", "--config", str(path)]) == 0
+    assert len(json.loads(capsys.readouterr().out)) == 2
+
+
+@pytest.mark.parametrize("value", ["²", "+5", "-1", "1e3", "123456789"])
+def test_non_ascii_or_oversized_content_length_is_refused(env, value):
+    """P3-2: `'²'.isdigit()` e' vero e `int()` solleva: il gestore non deve morire senza risposta."""
+    disp, _, _, _ = env
+    server = ThreadingHTTPServer(("127.0.0.1", 0), td.make_handler(disp))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+        conn.putrequest("POST", "/github/webhook", skip_accept_encoding=True)
+        conn.putheader("Content-Length", value)    # http.client codifica in latin-1: arriva '\u00b2' com'e'
+        conn.endheaders()
+        assert conn.getresponse().status in (411, 413)
+        conn.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_failed_commit_leaves_the_store_usable(env, monkeypatch):
+    """P3-3: un COMMIT fallito non lascia la connessione dentro una transazione aperta."""
+    disp, _, _, _ = env
+    store = disp.store
+    real = store._db
+
+    class Flaky:
+        def __init__(self):
+            self.fail = True
+
+        def execute(self, sql, *args):
+            if sql == "COMMIT" and self.fail:
+                self.fail = False
+                raise td.sqlite3.OperationalError("database is locked")
+            return real.execute(sql, *args)
+
+    store._db = Flaky()
+    with pytest.raises(td.sqlite3.OperationalError):
+        send(disp, payload())
+    store._db = real
+    assert send(disp, payload(), delivery="0f3c2a10-aaaa-bbbb-cccc-0000000000f1")[0] == 202
+
+
+def test_publisher_timeout_is_mandatory_config(tmp_path):
+    raw = raw_config(tmp_path)
+    del raw["publisher"]["timeout_seconds"]
+    with pytest.raises(td.ConfigError) as exc:
+        td.validate_config(raw)
+    assert "publisher.timeout_seconds: MISSING" in exc.value.problems
+
+
+def test_artifact_listing_asks_for_a_full_page(env):
+    disp, bk, _, _ = env
+    send(disp, payload())
+    disp.tick()
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    disp.tick()
+    listing = [r[1] for r in bk.requests if "/artifacts" in r[1] and r[1].split("?")[0].endswith("/artifacts")]
+    assert listing and all("per_page=100" in u for u in listing)

@@ -4614,6 +4614,78 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "chiave obbligatoria mancante non segnalata come NOT CONFIGURED."
+    },
+    {
+      "id": "td_superseded_holds_slot",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "  WHERE superseded = 0 AND state IN",
+      "mutated": "  WHERE state IN",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "review indipendente P2-1: i job sostituiti occupano il posto dell'head ritornato con un force-push: nessuna build, pending per sempre."
+    },
+    {
+      "id": "td_equal_timestamp_supersedes",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if row is None or intake.updated_at > row[\"updated_at\"]:",
+      "mutated": "            if True:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "review P3-1: con lo stesso updated_at l'ultimo arrivato sostituisce l'head reale."
+    },
+    {
+      "id": "td_publish_not_retried",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if self.clock() - since > self.cfg.build_timeout_seconds[job[\"guard\"]]:",
+      "mutated": "        if True:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "review P2-2: pubblicazione fallita mai ritentata: status richiesto bloccato o success vecchio non corretto."
+    },
+    {
+      "id": "td_no_instance_lock",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "review P2-3: due istanze sullo stesso archivio creano due build per la stessa richiesta."
+    },
+    {
+      "id": "td_create_unconditional",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if not self.store.update_job(job[\"id\"], self.clock(), expected_state=\"queued\", state=\"creating\"):",
+      "mutated": "        if not self.store.update_job(job[\"id\"], self.clock(), state=\"creating\"):",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "review P2-3: transizione non condizionata: una copia vecchia del job crea una seconda build."
+    },
+    {
+      "id": "td_ambiguous_superseded_orphan",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if job[\"state\"] == \"creating\" and not numbers:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "review P2-4: build di una creazione ambigua sostituita lasciata girare."
     }
   ]
 }

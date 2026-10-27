@@ -31,6 +31,7 @@ Solo libreria standard. Nessun ordine Betfair, nessun accesso al codice delle PR
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import hmac
 import json
@@ -115,7 +116,7 @@ CONFIG_SCHEMA_KEYS = {
     "listen": {"host", "port", "path"},
     "webhook_secret_file": None,
     "buildkite": {"organization", "token_file", "result_artifacts", "artifact_download_hosts"},
-    "publisher": {"command"},
+    "publisher": {"command", "timeout_seconds"},
     "state_db": None,
     "delivery_retention_hours": None,
     "poll_interval_seconds": None,
@@ -135,6 +136,7 @@ class Config:
     result_artifacts: dict
     artifact_download_hosts: tuple
     publisher_command: tuple
+    publisher_timeout_seconds: int
     state_db: str
     delivery_retention_hours: int
     poll_interval_seconds: int
@@ -208,6 +210,9 @@ def validate_config(raw: Any) -> Config:
                                                                  for c in command)
             or not _abs_path(command[0])):
         problems.append("publisher.command: argv non vuoto con eseguibile a percorso assoluto")
+    pub_timeout = raw["publisher"]["timeout_seconds"]
+    if not _is_int(pub_timeout) or not 5 <= pub_timeout <= 300:
+        problems.append("publisher.timeout_seconds: intero 5..300")
     retention = raw["delivery_retention_hours"]
     if not _is_int(retention) or not MIN_RETENTION_HOURS <= retention <= 24 * 90:
         problems.append(f"delivery_retention_hours: intero {MIN_RETENTION_HOURS}..{24 * 90}")
@@ -227,7 +232,8 @@ def validate_config(raw: Any) -> Config:
     return Config(
         listen_host=host, listen_port=port, listen_path=path, webhook_secret_file=raw["webhook_secret_file"],
         organization=org, buildkite_token_file=bk["token_file"], result_artifacts=dict(artifacts),
-        artifact_download_hosts=tuple(hosts), publisher_command=tuple(command), state_db=raw["state_db"],
+        artifact_download_hosts=tuple(hosts), publisher_command=tuple(command),
+        publisher_timeout_seconds=pub_timeout, state_db=raw["state_db"],
         delivery_retention_hours=retention, poll_interval_seconds=poll, build_timeout_seconds=dict(timeouts),
         http_timeout_seconds=http_timeout)
 
@@ -380,18 +386,33 @@ CREATE TABLE IF NOT EXISTS jobs (
   description TEXT,
   created_at REAL NOT NULL,
   dispatched_at REAL,
+  publishing_since REAL,
   updated_at REAL NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS jobs_active ON jobs(pr, head_sha, guard)
-  WHERE state IN ('queued', 'creating', 'dispatched', 'publishing');
+CREATE UNIQUE INDEX IF NOT EXISTS jobs_active_current ON jobs(pr, head_sha, guard)
+  WHERE superseded = 0 AND state IN ('queued', 'creating', 'dispatched', 'publishing');
 """
 
 
 class Store:
     """SQLite con transazioni `BEGIN IMMEDIATE`: delivery, ordine e job di un evento si scrivono insieme o niente."""
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, *, read_only: bool = False) -> None:
         self._lock = threading.Lock()
+        self._lock_fd: Optional[int] = None
+        if read_only:
+            uri = "file:" + urllib.parse.quote(path) + "?mode=ro"
+            self._db = sqlite3.connect(uri, uri=True, isolation_level=None, check_same_thread=False, timeout=30)
+            self._db.row_factory = sqlite3.Row
+            return
+        # un solo processo scrittore: due istanze sullo stesso archivio creerebbero due build per la stessa richiesta
+        self._lock_fd = os.open(path + ".lock", os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(self._lock_fd)
+            self._lock_fd = None
+            raise ConfigError([f"state_db: archivio gia' in uso da un'altra istanza ({path})"]) from None
         self._db = sqlite3.connect(path, isolation_level=None, check_same_thread=False, timeout=30)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
@@ -401,16 +422,23 @@ class Store:
     def close(self) -> None:
         with self._lock:
             self._db.close()
+            if self._lock_fd is not None:
+                os.close(self._lock_fd)        # chiudere il descrittore rilascia il flock
+                self._lock_fd = None
 
     def _tx(self, fn: Callable[[sqlite3.Connection], Any]) -> Any:
         with self._lock:
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 result = fn(self._db)
+                self._db.execute("COMMIT")
             except BaseException:
-                self._db.execute("ROLLBACK")
+                # anche un COMMIT fallito (SQLITE_BUSY): mai lasciare la connessione dentro una transazione aperta
+                try:
+                    self._db.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
                 raise
-            self._db.execute("COMMIT")
             return result
 
     def record_event(self, intake: Intake, now: float) -> tuple[str, list[int]]:
@@ -429,9 +457,13 @@ class Store:
             db.execute("INSERT INTO pr_heads(pr, head_sha, updated_at) VALUES (?, ?, ?) "
                        "ON CONFLICT(pr) DO UPDATE SET head_sha = excluded.head_sha, updated_at = excluded.updated_at",
                        (intake.pr, intake.head_sha, intake.updated_at))
-            placeholders = ",".join("?" * len(ACTIVE_STATES))
-            db.execute(f"UPDATE jobs SET superseded = 1, updated_at = ? WHERE pr = ? AND head_sha != ? "  # nosec B608
-                       f"AND state IN ({placeholders})", (now, intake.pr, intake.head_sha, *ACTIVE_STATES))
+            # Solo un evento STRETTAMENTE piu' recente sostituisce gli altri head: con lo stesso `updated_at`
+            # l'ordine non e' noto e restano in corsa entrambi (decide il ricontrollo dell'helper sull'head).
+            if row is None or intake.updated_at > row["updated_at"]:
+                placeholders = ",".join("?" * len(ACTIVE_STATES))
+                db.execute(f"UPDATE jobs SET superseded = 1, updated_at = ? WHERE pr = ? "  # nosec B608
+                           f"AND head_sha != ? AND state IN ({placeholders})",
+                           (now, intake.pr, intake.head_sha, *ACTIVE_STATES))
             created: list[int] = []
             for guard in GUARDS:
                 cur = db.execute(
@@ -461,13 +493,19 @@ class Store:
             rows = self._db.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
 
-    def update_job(self, job_id: int, now: float, **fields: Any) -> None:
-        allowed = {"state", "build_number", "build_url", "outcome", "description", "dispatched_at"}
+    def update_job(self, job_id: int, now: float, *, expected_state: Optional[str] = None, **fields: Any) -> bool:
+        """Con `expected_state` la modifica avviene solo se il job e' ancora in quello stato (True se applicata)."""
+        allowed = {"state", "build_number", "build_url", "outcome", "description", "dispatched_at",
+                   "publishing_since"}
         if not fields or set(fields) - allowed:
             raise ValueError("campi non ammessi")
         cols = ", ".join(f"{k} = ?" for k in fields)
-        self._tx(lambda db: db.execute(f"UPDATE jobs SET {cols}, updated_at = ? WHERE id = ?",  # nosec B608
-                                       (*fields.values(), now, job_id)))
+        where, params = "id = ?", [job_id]
+        if expected_state is not None:
+            where, params = "id = ? AND state = ?", [job_id, expected_state]
+        cur = self._tx(lambda db: db.execute(f"UPDATE jobs SET {cols}, updated_at = ? WHERE {where}",  # nosec B608
+                                             (*fields.values(), now, *params)))
+        return cur.rowcount == 1
 
     def purge(self, now: float, retention_hours: int) -> None:
         cutoff = now - retention_hours * 3600
@@ -564,7 +602,7 @@ class Buildkite:
     def fetch_result(self, guard: str, number: int) -> bytes:
         """L'unico artifact `result_artifacts[guard]` della build, in stato `finished`. Il download segue UN
         redirect verso un host ammesso, SENZA Authorization."""
-        status, data = self._request("GET", f"{self._pipeline_url(guard)}/builds/{int(number)}/artifacts")
+        status, data = self._request("GET", f"{self._pipeline_url(guard)}/builds/{int(number)}/artifacts?per_page=100")
         if status != 200 or not isinstance(data, list):
             raise ApiError(f"elenco artifact fallito (HTTP {status})", status)
         wanted = self._cfg.result_artifacts[guard]
@@ -662,8 +700,8 @@ def default_publisher(command: tuple, timeout: int) -> Callable[..., int]:
             log(f"pubblicazione non eseguita: {type(exc).__name__}")
             return 1
         if proc.returncode != 0:
-            log(f"pubblicazione rifiutata (exit {proc.returncode}): "
-                f"{proc.stdout.decode('utf-8', 'replace')[-500:]!r}")
+            # l'uscita dell'helper non si copia nei log: il dettaglio resta nei log dell'helper stesso
+            log(f"pubblicazione rifiutata (exit {proc.returncode})")
         return proc.returncode
     return publish
 
@@ -737,19 +775,43 @@ class Dispatcher:
         job.update(fields)
 
     def _supersede(self, job: dict) -> None:
-        if job["build_number"] is not None:
+        numbers = [job["build_number"]] if job["build_number"] is not None else []
+        if job["state"] == "creating" and not numbers:
+            # creazione ambigua: la build puo' esistere anche senza numero; si cerca e si annulla
             try:
-                self.bk.cancel_build(job["guard"], job["build_number"])
+                numbers = [b["number"] for b in self._builds_for(job) if _is_int(b.get("number"))]
             except (ApiError, TransportError) as exc:
-                log(f"job {job['id']}: annullamento build {job['build_number']} non confermato: {exc}")
+                if self.clock() - job["created_at"] <= self.cfg.build_timeout_seconds[job["guard"]]:
+                    log(f"job {job['id']}: build sostituita non verificabile ({exc}): riprovo")
+                    return None
+        for number in numbers:
+            try:
+                self.bk.cancel_build(job["guard"], number)
+            except (ApiError, TransportError) as exc:
+                log(f"job {job['id']}: annullamento build {number} non confermato: {exc}")
         self._set(job, state="superseded", description="sostituito da un head piu' recente")
+        return None
+
+    def _builds_for(self, job: dict) -> list:
+        created_from = datetime.fromtimestamp(job["created_at"] - 300, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        expected = build_env(job)
+        return [b for b in self.bk.list_builds(job["guard"], created_from)
+                if isinstance(b, dict) and b.get("env") == expected]
 
     def _fail(self, job: dict, state: str, description: str) -> None:
-        self._set(job, state="publishing", outcome=state, description=clean_description(description))
+        self._to_publishing(job, state, description)
         self._publish_final(job)
 
+    def _to_publishing(self, job: dict, outcome: str, description: str) -> None:
+        self._set(job, state="publishing", outcome=outcome, description=clean_description(description),
+                  publishing_since=self.clock())
+
     def _create(self, job: dict) -> None:
-        self._set(job, state="creating")          # da qui in poi un crash lascia l'esito ambiguo, mai un retry cieco
+        # da qui in poi un crash lascia l'esito ambiguo, mai un retry cieco; transizione condizionata allo stato
+        # letto, cosi' una copia vecchia del job non crea una seconda build
+        if not self.store.update_job(job["id"], self.clock(), expected_state="queued", state="creating"):
+            return None
+        job["state"] = "creating"
         message = f"PR #{job['pr']} {job['head_sha'][:12]} ({job['guard']}, delivery {job['delivery_id']})"
         try:
             build = self.bk.create_build(job["guard"], build_env(job), message)
@@ -768,8 +830,9 @@ class Dispatcher:
             return self._fail(job, "error", "build creata non corrisponde alla richiesta")
         self._set(job, state="dispatched", build_number=build["number"], build_url=build["web_url"],
                   dispatched_at=self.clock())
-        self.publish(job["pr"], job["head_sha"], "pending", GUARDS[job["guard"]]["context"], build["web_url"],
-                     "build in corso")
+        if self.publish(job["pr"], job["head_sha"], "pending", GUARDS[job["guard"]]["context"], build["web_url"],
+                        "build in corso") != 0:
+            log(f"job {job['id']}: status pending non pubblicato (l'esito finale verra' ritentato)")
 
     def _cancel_quietly(self, job: dict) -> None:
         try:
@@ -781,15 +844,12 @@ class Dispatcher:
         """Creazione con esito ignoto (timeout, 5xx, crash): si cerca la build per delivery e head. Una sola =>
         adottata; nessuna (elenco letto con successo) => error, mai una seconda creazione; piu' di una =>
         annullate tutte, error. Elenco illeggibile => si riprova fino al timeout della build, poi error."""
-        created_from = datetime.fromtimestamp(job["created_at"] - 300, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
-            builds = self.bk.list_builds(job["guard"], created_from)
+            found = self._builds_for(job)
         except (ApiError, TransportError) as exc:
             if self.clock() - job["created_at"] > self.cfg.build_timeout_seconds[job["guard"]]:
                 return self._fail(job, "error", f"creazione build non verificabile: {exc}")
             return None
-        expected = build_env(job)
-        found = [b for b in builds if isinstance(b, dict) and b.get("env") == expected]
         if len(found) == 1:
             return self._adopt(job, found[0])
         for b in found:
@@ -830,7 +890,7 @@ class Dispatcher:
             except (ApiError, TransportError) as exc:
                 log(f"job {job['id']}: risultato non scaricato: {exc}")
         outcome, description = decide_outcome(build, artifact, job)
-        self._set(job, state="publishing", outcome=outcome, description=clean_description(description))
+        self._to_publishing(job, outcome, description)
         self._publish_final(job)
 
     def _publish_final(self, job: dict) -> None:
@@ -843,7 +903,15 @@ class Dispatcher:
         url = job["build_url"] or f"{BUILDKITE_WEB}/{self.cfg.organization}/{GUARDS[job['guard']]['pipeline']}"
         rc = self.publish(job["pr"], job["head_sha"], outcome, GUARDS[job["guard"]]["context"], url,
                           job["description"] or outcome)
-        self._set(job, state="done" if rc == 0 else "publish_failed")
+        if rc == 0:
+            return self._set(job, state="done")
+        # pubblicazione fallita: si ritenta a ogni giro (stesso esito, status idempotente) finche' il job non e'
+        # sostituito o finisce la finestra pari al timeout della build; poi `publish_failed`, dichiarato nei log
+        since = job.get("publishing_since") or job["updated_at"]
+        if self.clock() - since > self.cfg.build_timeout_seconds[job["guard"]]:
+            log(f"job {job['id']}: pubblicazione non riuscita entro la finestra: publish_failed")
+            return self._set(job, state="publish_failed")
+        return None
 
 
 # --------------------------------------------------------------------------------------------- server
@@ -871,8 +939,8 @@ def make_handler(dispatcher: Dispatcher) -> type:
             if urllib.parse.urlsplit(self.path).path != dispatcher.cfg.listen_path:
                 return self._reply(404, "percorso sconosciuto")
             raw_len = self.headers.get("Content-Length")
-            if raw_len is None or not raw_len.isdigit():
-                return self._reply(411, "Content-Length obbligatorio")
+            if raw_len is None or not re.fullmatch(r"[0-9]{1,8}", raw_len, re.ASCII):
+                return self._reply(411, "Content-Length obbligatorio (cifre ASCII)")
             length = int(raw_len)
             if length > MAX_BODY_BYTES:
                 return self._reply(413, "payload troppo grande")
@@ -893,7 +961,7 @@ def build_dispatcher(cfg: Config, transport: Transport = urllib_transport,
     token = read_secret_file(cfg.buildkite_token_file, _TOKEN_RE, "buildkite.token_file")
     store = Store(cfg.state_db)
     return Dispatcher(cfg, store, Buildkite(cfg, token, transport), secret,
-                      publisher or default_publisher(cfg.publisher_command, 60))
+                      publisher or default_publisher(cfg.publisher_command, cfg.publisher_timeout_seconds))
 
 
 def serve(cfg: Config) -> int:
@@ -908,9 +976,13 @@ def serve(cfg: Config) -> int:
                 log(f"tick fallito: {type(exc).__name__}")
             stop.wait(cfg.poll_interval_seconds)
 
+    try:
+        server = ThreadingHTTPServer((cfg.listen_host, cfg.listen_port), make_handler(dispatcher))
+    except OSError as exc:      # porta occupata: nessun worker parte, l'archivio si rilascia
+        dispatcher.store.close()
+        raise ConfigError([f"listen: bind non riuscito ({type(exc).__name__})"]) from None
     thread = threading.Thread(target=worker, name="pf-dispatch-worker", daemon=True)
     thread.start()
-    server = ThreadingHTTPServer((cfg.listen_host, cfg.listen_port), make_handler(dispatcher))
     log(f"in ascolto su {cfg.listen_host}:{cfg.listen_port}{cfg.listen_path}")
     try:
         server.serve_forever()
@@ -940,7 +1012,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             print("CONFIGURED")
             return EXIT_OK
         if args.command == "jobs":
-            store = Store(cfg.state_db)
+            store = Store(cfg.state_db, read_only=True)
             try:
                 print(json.dumps(store.recent_jobs(), indent=1))
             finally:

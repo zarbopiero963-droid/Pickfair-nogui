@@ -23,7 +23,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - smoke trusted: senza contesto PR del dispatcher il guard esce con motivo esplicito («contesto PR verificato
     assente»), mai con l'errore di argparse né con un numero di PR di ripiego; lo step va portato sul wrapper
     `scripts/ci/pr_merge_readiness.sh` (configurazione Buildkite, a cura di Grok);
-  - test offline con un finto Buildkite e un server HTTP reale su loopback; 16 mutazioni nell'area
+  - rilievi della review indipendente corretti prima della PR: head che torna con un force-push, pubblicazione
+    fallita ritentata, una sola istanza sull'archivio (`flock`) con transizioni condizionate, build orfane di una
+    creazione ambigua annullate, stesso `updated_at` senza sostituzione, `Content-Length` non ASCII, COMMIT
+    fallito, timeout del publisher in configurazione;
+  - test offline con un finto Buildkite e un server HTTP reale su loopback; 22 mutazioni nell'area
     `trusted_dispatcher` e una nell'area `trusted_gate`.
 - **#566 — deduplica dei check run fail-closed (`scripts/pr_automation_controller.dedupe_github_check_runs`):**
   - sull'head corrente nessun check run omonimo viene più scartato, salvo la copia esatta della stessa check run
