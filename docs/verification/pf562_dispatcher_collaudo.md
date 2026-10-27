@@ -54,3 +54,8 @@ dispatcher in DRY-RUN.
 |---|---|---|---|
 | DR04 | bozza → pronta | 20:43:5x | `ade82f9` |
 | DR05 | push di questo commit (nuovo head) | vedi l'ora del commit | questo commit |
+
+## Campagna E2E reale (P0-A…P0-D)
+
+Commit di collaudo non funzionale per P0-D (cambio di head con build in corso), richiesto da Grok in #573
+(REQ-E2E-003, segnale GO-PUSH-1). Esiti e identificativi delle build nel rapporto finale sulla #562.
