@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 PR-C2 — piano dei required check di `main` (`ops/ci/required_checks.json`, `scripts/ci/required_checks_plan.py`):**
+  - inventario reale del ruleset `PICKFAIR-MAIN-PROTECTION`: oggi è obbligatorio solo `overlap-check` di Actions,
+    quindi readiness, full-suite e overlap della lane non bloccano il merge (#576);
+  - piano in fasi F1–F3 (overlap e full-suite della lane, readiness tecnica, ritiro facoltativo dei check Actions), ogni
+    required check identificato da contesto **e** app (`integration_id`), nessuna fase che tolga un controllo prima
+    del sostituto;
+  - `required_checks_plan.py`: `validate`, `diff` col ruleset reale, `payload` da applicare, `evaluate` di un head
+    (solo `success` sullo SHA esatto; skipped, neutral, mancante, altra app e altro SHA bloccano), `matrix`;
+  - **opzione B (decisione owner D-C2-1):** la readiness della lane pubblica `pr-merge-readiness` (tecnica, required da
+    F2) e `pr-auto-merge` (autorizzazione all'auto-merge dell'agente, mai required): una PR a merge owner con i gate
+    verdi è mergiabile a mano dall'owner senza bypass (`trusted_pr_guard.py`, `pr_trusted_dispatcher.py`);
+  - proposte motivate D-C2-2 (strict da F2) e D-C2-3 (tenere l'overlap di Actions) in `docs/ci_required_checks.md`.
+    **Nessuna modifica al ruleset applicata.**
+
+  Test con dati reali (ruleset, head di #579), 7 mutazioni `rcp_*`.
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
   - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
     database SQLite) su `/dev/shm` solo se è davvero un tmpfs (`/proc/mounts`), scrivibile e con almeno 512 MiB

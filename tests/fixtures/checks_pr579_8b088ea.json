@@ -1,0 +1,61 @@
+{
+ "pr": 579,
+ "sha": "8b088eaeca9c6b1afdc46043cc9c56e987b455ad",
+ "source": "GET commits/{sha}/check-runs (filtrati) e /statuses, 28/10/2026",
+ "check_runs": [
+  {
+   "name": "Merge readiness",
+   "status": "completed",
+   "conclusion": "success",
+   "head_sha": "8b088eaeca9c6b1afdc46043cc9c56e987b455ad",
+   "app": {
+    "id": 15368,
+    "slug": "github-actions"
+   }
+  },
+  {
+   "name": "overlap-check",
+   "status": "completed",
+   "conclusion": "success",
+   "head_sha": "8b088eaeca9c6b1afdc46043cc9c56e987b455ad",
+   "app": {
+    "id": 15368,
+    "slug": "github-actions"
+   }
+  }
+ ],
+ "statuses": [
+  {
+   "context": "pr-merge-readiness",
+   "state": "failure",
+   "creator": {
+    "login": "pickfair-trusted-status[bot]"
+   },
+   "created_at": "2026-10-28T14:50:44Z"
+  },
+  {
+   "context": "overlap-check",
+   "state": "success",
+   "creator": {
+    "login": "pickfair-trusted-status[bot]"
+   },
+   "created_at": "2026-10-28T14:45:33Z"
+  },
+  {
+   "context": "pr-merge-readiness",
+   "state": "pending",
+   "creator": {
+    "login": "pickfair-trusted-status[bot]"
+   },
+   "created_at": "2026-10-28T14:44:29Z"
+  },
+  {
+   "context": "overlap-check",
+   "state": "pending",
+   "creator": {
+    "login": "pickfair-trusted-status[bot]"
+   },
+   "created_at": "2026-10-28T14:44:26Z"
+  }
+ ]
+}

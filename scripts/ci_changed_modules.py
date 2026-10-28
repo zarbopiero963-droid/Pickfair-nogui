@@ -202,6 +202,7 @@ MODULE_RULES = [
             "scripts/pr_automation_controller.py",  # #566: mutazioni della deduplica dei check run
             "scripts/pr_trusted_dispatcher.py",  # #562: mutazioni del dispatcher trusted
             "scripts/pr_full_suite_pipeline.py",  # #562 PR-B: mutazioni degli step M2 della full-suite
+            "scripts/ci/required_checks_plan.py",  # #562 PR-C2: mutazioni del piano dei required check
             "tests/",
             "core/",
             "order_manager.py",

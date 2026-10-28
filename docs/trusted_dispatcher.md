@@ -434,6 +434,27 @@ build della readiness (misurata 45–47 s sulle build #24–#26, Grok t267 su #5
 overlap nella pipeline Buildkite (`priority`, configurazione della UI, Grok), non una modifica del dispatcher. Non
 cambia l'ordine di nessun controllo e non introduce nessun PASS.
 
+## Readiness tecnica e autorizzazione all'auto-merge (#562 PR-C2, opzione B dell'owner)
+
+La build della readiness pubblica due status sullo stesso head, con lo stesso link alla build:
+- `pr-merge-readiness`: esito tecnico (`decide_outcome` sul `verdict` del guard), che può essere un required check;
+- `pr-auto-merge` (`AUTO_MERGE_CONTEXT`): esito di `decide_auto_merge` sul campo `auto_merge` del risultato. Mai
+  required.
+
+| Caso | `pr-merge-readiness` | `pr-auto-merge` |
+|---|---|---|
+| gate verdi, nessuna decisione owner | success | success |
+| gate verdi, PR a merge owner (file o label) | success | failure |
+| gate tecnici falliti | failure | failure |
+| readiness senza esito (timeout, annullata, artifact illeggibile) | error | error |
+| `auto_merge` assente, malformato o incoerente (PASS con tecnico failure) | come da tecnico | error |
+
+- `pending` si pubblica sui due contesti insieme, così un vecchio `success` di nessuno dei due resta visibile durante
+  una nuova valutazione.
+- La consegna è tracciata a parte (`aux_outcome`, `aux_description`, `aux_published`, con migrazione non distruttiva):
+  un `pr-auto-merge` non consegnato si ritenta senza ripubblicare né perdere l'esito tecnico.
+- `pr-auto-merge` è un self-check della readiness (`READINESS_SELF_STATUS_CONTEXTS`): l'attesa non lo aspetta mai.
+
 ## Punti aperti: NOT CONFIGURED e da decidere
 
 | # | Punto | Stato | Cosa serve |
@@ -493,8 +514,8 @@ reale** (la PR è davvero mergiabile).
 10. Isolamento: token di lettura e token Buildkite assenti da log, env delle build e artifact; l'App key solo negli
     helper.
 11. Required check `overlap-check` (ruleset 25459867, invariato): con `failure` la PR non è mergiabile.
-12. Readiness reale: `pr-merge-readiness` `success` solo con la PR davvero mergiabile. Su questa PR, che tocca file a
-    merge owner, il verdetto atteso è FAIL.
+12. Readiness reale: `pr-merge-readiness` `success` solo con i gate tecnici verdi. Su una PR che tocca file a merge
+    owner, dalla PR-C2 (opzione B) `pr-merge-readiness` può essere `success` e `pr-auto-merge` è `failure`.
 
 ## Limiti dichiarati
 
