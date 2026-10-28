@@ -9,6 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 F1 — paginazione GitHub reale nel dispatcher (`scripts/pr_trusted_dispatcher.py`), regressione di #576:**
+  - nel collaudo T252 una PR con 107 check run aveva il link `next` nella forma `/repositories/1189713160/…`, che il
+    client rifiutava: la readiness non partiva mai (fail-closed, nessun PASS) e Grok ha fatto rollback;
+  - il link `next` ora è validato in modo stretto da `GitHub.next_page_url`: host esatto, stesso path nella forma
+    `/repos/<repo>` o `/repositories/<TRUSTED_REPO_ID>` (id fisso), stessi parametri senza duplicati, `page`
+    successiva. La pagina si chiede all'URL canonico ricostruito dal client, mai a quello ricevuto;
+  - lo stesso difetto latente su `pulls` e `issues/comments` oltre i 100 elementi è chiuso dalla stessa funzione.
+
+  Test RED→GREEN (107 check su 2 pagine, 19 link manomessi, conteggi incoerenti, riavvio e head nuovo); il finto
+  GitHub dei test usa ora i link reali. 6 mutazioni nuove (gate del dispatcher 108/108).
 - **#562 — readiness non bloccante (`scripts/pr_trusted_dispatcher.py`, OWNER GO opzione A):**
   - con la nuova chiave obbligatoria `readiness_wait` il dispatcher crea la build `pr-merge-readiness` solo quando
     gli altri check dell'head sono chiusi da `settle_polls` giri (letti da `commits/<sha>/check-runs` e `…/statuses`),

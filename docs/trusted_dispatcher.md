@@ -27,7 +27,8 @@ fail closed. Cambiano solo intake e replay:
 |---|---|---|
 | Credenziali | token di **sola lettura** prodotto da `github.token_command` (l'helper della GitHub App: la chiave resta fuori da questo processo), uscita JSON con le chiavi `token` ed `expires_at` (`…Z`); rinnovato 5 minuti prima della scadenza; 401 ⇒ invalidato. Comando fallito, uscita fuori formato, token scaduto o in scadenza, token classico con scope (`X-OAuth-Scopes` non vuoto) ⇒ nessun giro | `TokenProvider`, `GitHub.get_all` |
 | Lettura | solo `GET https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls`, `…/issues/comments` e `…/collaborators/{login}/permission` (solo per i login in allowlist dei rerun); qualsiasi altro endpoint (contenuti, archivi, file della PR, altri repository, `http`) è rifiutato prima della richiesta, anche se arriva da un `Link: rel="next"` | `GitHub.check_url` |
-| Paginazione | si seguono **tutte** le pagine `rel="next"`; pagina non elenco, JSON illeggibile, HTTP ≠ 200, ciclo, oltre `MAX_PAGES` (50) ⇒ giro annullato | `GitHub.get_all` |
+| Paginazione | si seguono **tutte** le pagine `rel="next"`; pagina non elenco, JSON illeggibile, HTTP ≠ 200, oltre `MAX_PAGES` (50) ⇒ giro annullato | `GitHub.get_all` |
+| Link `next` (#562 F1) | il link vale solo come segnale: deve essere `https://api.github.com` senza credenziali, porta o frammento, con lo **stesso** path della richiesta, nella forma `/repos/<repo>/…` o in quella che GitHub usa davvero, `/repositories/1189713160/…` (`TRUSTED_REPO_ID`, fisso), gli stessi parametri una volta sola e `page` = pagina corrente + 1. Altrimenti ⇒ `ApiError`. La pagina si chiede poi all'URL canonico `/repos/<repo>/…` ricostruito dal client, mai a quello ricevuto; i redirect non si seguono | `GitHub.next_page_url` |
 | Rate limit | 403/429 con `X-RateLimit-Remaining: 0` o `Retry-After` ⇒ nessuna richiesta fino al reset (massimo un'ora) | `Dispatcher.poll` |
 | Voce PR | tipi esatti: numero `[1-9][0-9]{0,6}` (non booleano né stringa), `state=open`, `draft` booleano, head SHA di 40 esadecimali minuscoli, base del repository fidato; una voce malformata o una PR ripetuta con dati diversi annulla **tutto** il giro | `parse_pull`, `parse_pulls` |
 | Valutabile | base `main`, head nello stesso repository (niente fork né repository cancellato), non in bozza | `parse_pull` |
@@ -122,7 +123,7 @@ Codex, Sol, Grok e nelle revisioni indipendenti su #569):
 | Dati PR falsificati | si leggono solo dall'API GitHub autenticata del repository fidato, mai da un mittente esterno; voce malformata ⇒ giro annullato | `test_malformed_pr_item_aborts_the_whole_poll`, `test_github_client_refuses_any_other_endpoint` |
 | Credenziali assenti o scadute | nessun token di ripiego; scadenza controllata e rinnovo anticipato; 401 ⇒ token invalidato | `test_failing_token_command_means_no_poll`, `test_expired_or_expiring_token_is_refused`, `test_token_is_refreshed_before_expiry`, `td_token_expiry_unchecked` |
 | Token con permessi di scrittura | token classico con scope rifiutato; la sola lettura del token dell'App è un requisito dell'helper (Grok) | `test_classic_token_with_scopes_is_refused`, `td_classic_scoped_token_accepted` |
-| Elenco incompleto o ambiguo | paginazione completa; pagine malformate, cicli o oltre il limite ⇒ giro annullato; una sola assenza non chiude una PR | `test_pagination_beyond_the_limit_is_unverifiable_and_aborts`, `test_a_single_missing_listing_does_not_close_the_pr`, `td_pagination_ignored`, `td_close_after_one_miss` |
+| Elenco incompleto o ambiguo | paginazione completa; pagine malformate, link `next` non coerenti o oltre il limite ⇒ giro annullato; una sola assenza non chiude una PR | `test_pagination_beyond_the_limit_is_unverifiable_and_aborts`, `test_a_single_missing_listing_does_not_close_the_pr`, `td_pagination_ignored`, `td_close_after_one_miss` |
 | Codice di un fork | head repo ≠ repository ⇒ non valutabile | `td_fork_accepted` |
 | Codice della PR con privilegi trusted | build sempre su `main`/`HEAD` con le sole cinque variabili; il client GitHub non può leggere contenuti o archivi; nessun web server | `test_builds_always_run_main_never_the_pr_head`, `test_dispatcher_has_no_web_server_and_no_code_fetching_paths`, `td_github_endpoint_unrestricted` |
 | Doppie build | identificatore per transizione, indice unico sui job attivi, una sola istanza | `test_unchanged_state_polled_again_starts_no_new_builds`, `test_rerun_command_is_executed_once`, `td_rerun_replayed` |
@@ -246,6 +247,15 @@ attesa interna e 10 minuti di timeout.
 `…/statuses`: il client le ammette solo per uno SHA di 40 esadecimali del repository fidato. Il token del dispatcher
 deve quindi avere, in sola lettura, anche **Checks** e **Commit statuses**. Senza, le letture falliscono, la
 readiness resta in attesa e allo scadere dà `error`: è fail-closed.
+
+**Paginazione dei check (#562 F1).** Una PR ordinaria ha più di 100 check run (107 su #577), quindi l'elenco si legge
+su almeno due pagine. Nel collaudo T252 di #576 il link `next` di GitHub aveva la forma
+`/repositories/1189713160/commits/<sha>/check-runs?…&page=2` e il client lo rifiutava. La readiness restava
+in attesa senza mai partire (fail-closed, ma inutilizzabile) e Grok ha fatto rollback. Ora il link è validato da
+`GitHub.next_page_url` (tabella sopra). L'attesa si chiude solo dopo la lettura di **tutte** le pagine, con
+`total_count` uguale fra le pagine e pari agli elementi letti. Un link non coerente, una pagina mancante o un
+conteggio diverso lasciano l'attesa invariata, mai un via libera. Lo stesso difetto, latente, c'era su `pulls` e
+`issues/comments` oltre i 100 elementi: è corretto dalla stessa funzione.
 
 ## Punti aperti: NOT CONFIGURED e da decidere
 

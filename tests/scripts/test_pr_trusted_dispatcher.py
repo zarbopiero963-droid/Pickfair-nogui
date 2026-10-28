@@ -29,6 +29,7 @@ sys.modules["pr_trusted_dispatcher"] = td
 _spec.loader.exec_module(td)
 
 REPO = "zarbopiero963-droid/Pickfair-nogui"
+REPO_ID = 1189713160                             # id numerico del repository fidato (API GitHub)
 ORG = "pf-org-test"
 BK_CRED = "bkua_test_token_0123456789abcdef0123"
 GH_CRED = "gh-installation-cred-for-tests-0123456789"
@@ -79,7 +80,9 @@ class Clock:
 
 
 class FakeGitHub:
-    """`GET /repos/<repo>/pulls` e `GET /repos/<repo>/issues/comments` con paginazione `Link: rel="next"`."""
+    """`GET /repos/<repo>/pulls` e `GET /repos/<repo>/issues/comments` con paginazione `Link: rel="next"`. Come
+    l'API reale, il link `next` usa la forma `/repositories/<id numerico>/...` (#562, rollback T252 di #576);
+    `next_link_hook(url)` permette di manometterlo."""
 
     def __init__(self) -> None:
         self.pulls: dict[int, dict] = {}
@@ -97,6 +100,15 @@ class FakeGitHub:
         self.statuses: dict[str, list] = {}            # sha -> status, dal piu' recente
         self.checks_status = 200
         self.total_count_delta = 0
+        self.next_link_hook = None                     # url -> url: link `next` manomesso
+        self.link_style = "repositories"               # "repos" = forma canonica, mai usata da GitHub nei Link
+
+    def _next_link(self, path, query, page):
+        nxt = dict(query, page=str(page + 1))
+        if self.link_style == "repositories":
+            path = path.replace(f"/repos/{REPO}/", f"/repositories/{REPO_ID}/", 1)
+        url = f"https://api.github.com{path}?{urllib.parse.urlencode(nxt)}"
+        return f'<{self.next_link_hook(url) if self.next_link_hook else url}>; rel="next"'
 
     def put(self, pr, head, *, draft=False, base="main", head_repo=REPO) -> None:
         self.pulls[pr] = {"number": pr, "state": "open", "draft": draft,
@@ -115,6 +127,7 @@ class FakeGitHub:
         assert method == "GET", "il dispatcher legge GitHub solo in GET"
         assert headers.get("Authorization") == f"Bearer {GH_CRED}"
         parts = urllib.parse.urlsplit(url)
+        assert parts.path.startswith(f"/repos/{REPO}/"), "il client richiede solo l'URL canonico, mai il link ricevuto"
         query = {k: v[0] for k, v in urllib.parse.parse_qs(parts.query).items()}
         page = int(query.get("page", "1"))
         if self.rate_limit_reset is not None:
@@ -133,8 +146,7 @@ class FakeGitHub:
             data = self.check_runs.get(sha, []) if kind == "check-runs" else self.statuses.get(sha, [])
             chunk = data[(page - 1) * self.page_size: page * self.page_size]
             if page * self.page_size < len(data):
-                nxt = dict(query, page=str(page + 1))
-                headers_out["Link"] = f'<https://api.github.com{parts.path}?{urllib.parse.urlencode(nxt)}>; rel="next"'
+                headers_out["Link"] = self._next_link(parts.path, query, page)
             body = ({"total_count": len(data) + self.total_count_delta, "check_runs": chunk}
                     if kind == "check-runs" else chunk)
             return 200, headers_out, json.dumps(body).encode()
@@ -150,8 +162,7 @@ class FakeGitHub:
             return 404, {}, b"{}"
         chunk = data[(page - 1) * self.page_size: page * self.page_size]
         if page * self.page_size < len(data) and self.drop_next_link_on_page != page:
-            nxt = dict(query, page=str(page + 1))
-            headers_out["Link"] = f'<https://api.github.com{parts.path}?{urllib.parse.urlencode(nxt)}>; rel="next"'
+            headers_out["Link"] = self._next_link(parts.path, query, page)
         if self.break_page == page:
             return 200, headers_out, b'{"not": "a list"}'
         return 200, headers_out, json.dumps(chunk).encode()
@@ -2918,6 +2929,161 @@ def test_commit_check_paths_are_allowed_only_for_a_full_sha():
                 f"/repos/{REPO}/commits/{HEAD.upper()}/statuses"):
         with pytest.raises(td.ApiError):
             td.GitHub.check_url(f"https://api.github.com{bad}")
+
+
+# ------------------------------------------------------------------ paginazione reale `/repositories/<id>/` (#562 F1)
+# Rollback T252 di #576: con 107 check run il link `next` di GitHub ha la forma `/repositories/<id>/...` e il
+# dispatcher lo rifiutava, quindi la readiness non partiva mai. Il link vale solo come segnale di pagina successiva:
+# e' validato in modo stretto e la pagina si chiede all'URL canonico `/repos/<repo>/...` ricostruito dal client.
+def _many_runs(n, status="completed"):
+    return [_run(f"job-{i:03d}", status) for i in range(n)]
+
+
+def test_readiness_starts_with_107_check_runs_over_two_real_pages(wait_env):
+    disp, bk, pub, clock = wait_env
+    bk.gh.check_runs[HEAD] = _many_runs(107)
+    bk.gh.statuses[HEAD] = [_st("overlap-check", "success")]
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    _tick(disp, clock, 130)
+    _tick(disp, clock)
+    assert len(bk.builds["pr-merge-readiness"]) == 1
+    assert _readiness(disp)["gate_seen"] == 108
+    pages = [urllib.parse.urlsplit(u) for _, u, _ in bk.gh.requests if u.split("?")[0].endswith("/check-runs")]
+    assert {p.path for p in pages} == {f"/repos/{REPO}/commits/{HEAD}/check-runs"}
+    assert {dict(urllib.parse.parse_qsl(p.query)).get("page") for p in pages} == {None, "2"}
+
+
+def test_one_open_check_on_the_second_page_keeps_the_readiness_waiting(wait_env):
+    disp, bk, pub, clock = wait_env
+    bk.gh.check_runs[HEAD] = _many_runs(106) + [_run("ultimo", "in_progress")]
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    for _ in range(4):
+        _tick(disp, clock, 130)
+    assert not bk.builds["pr-merge-readiness"] and _readiness(disp)["state"] == "queued"
+
+
+def test_statuses_are_read_over_several_real_pages(wait_env):
+    disp, bk, pub, clock = wait_env
+    bk.gh.page_size = 2
+    bk.gh.check_runs[HEAD] = [_run("unit")]
+    bk.gh.statuses[HEAD] = [_st("a", "success"), _st("b", "success"), _st("c", "success"), _st("d", "pending")]
+    assert len(disp.gh.statuses(HEAD)) == 4
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    for _ in range(3):
+        _tick(disp, clock, 130)
+    assert not bk.builds["pr-merge-readiness"]                      # `d` pending sulla seconda pagina
+    bk.gh.statuses[HEAD][3] = _st("d", "success")
+    _tick(disp, clock)
+    _tick(disp, clock)
+    assert len(bk.builds["pr-merge-readiness"]) == 1
+
+
+def test_pulls_and_comments_follow_real_repositories_links(env):
+    disp, bk, _, clock = env
+    bk.gh.page_size = 2
+    for n in range(40, 45):
+        bk.gh.put(n, HEAD)
+    assert len(disp.gh.open_pulls()) == 5
+    for cid in range(1, 6):
+        bk.gh.comment(cid, 40, "ciao")
+    assert [c["id"] for c in disp.gh.comments_since("2000-01-01T00:00:00Z")] == [1, 2, 3, 4, 5]
+
+
+def _swap(old, new):
+    return lambda url: url.replace(old, new, 1)
+
+
+BAD_NEXT_LINKS = {
+    "host esterno": _swap("https://api.github.com/", "https://evil.example/"),
+    "host simile": _swap("https://api.github.com/", "https://api.github.com.evil.example/"),
+    "http in chiaro": _swap("https://", "http://"),
+    "credenziali nell'URL": _swap("https://api.github.com/", "https://x:y@api.github.com/"),
+    "porta": _swap("https://api.github.com/", "https://api.github.com:8443/"),
+    "id di un altro repository": _swap(f"/repositories/{REPO_ID}/", "/repositories/1189713161/"),
+    "id non numerico": _swap(f"/repositories/{REPO_ID}/", "/repositories/abc/"),
+    "altro repository per nome": _swap(f"/repositories/{REPO_ID}/", "/repos/other/repo/"),
+    "altro commit": _swap(f"/commits/{HEAD}/", f"/commits/{HEAD2}/"),
+    "altro endpoint": _swap("/check-runs?", "/statuses?"),
+    "path con risalita": _swap(f"/commits/{HEAD}/", f"/commits/{HEAD}/../{HEAD2}/"),
+    "pagina saltata": _swap("page=2", "page=3"),
+    "pagina all'indietro": _swap("page=2", "page=1"),
+    "pagina non numerica": _swap("page=2", "page=2x"),
+    "parametro cambiato": _swap("filter=latest", "filter=all"),
+    "parametro in piu'": _swap("page=2", "page=2&head_sha=x"),
+    "parametro mancante": _swap("filter=latest&", ""),
+    "parametro duplicato": _swap("page=2", "page=2&page=2"),
+    "frammento": lambda url: url + "#x",
+}
+
+
+@pytest.mark.parametrize("name", sorted(BAD_NEXT_LINKS))
+def test_tampered_next_link_is_refused(env, name):
+    disp, bk, _, _ = env
+    bk.gh.check_runs[HEAD] = _many_runs(107)
+    bk.gh.next_link_hook = BAD_NEXT_LINKS[name]
+    with pytest.raises(td.ApiError):
+        disp.gh.check_runs(HEAD)
+    assert all(urllib.parse.urlsplit(u).netloc == "api.github.com" for _, u, _ in bk.gh.requests)
+    assert len(bk.gh.requests) == 1                                 # la seconda pagina non e' mai richiesta
+
+
+def test_canonical_repos_link_is_still_accepted(env):
+    disp, bk, _, _ = env
+    bk.gh.link_style = "repos"
+    bk.gh.check_runs[HEAD] = _many_runs(107)
+    assert len(disp.gh.check_runs(HEAD)) == 107
+
+
+def test_tampered_next_link_keeps_the_readiness_waiting_and_never_passes(wait_env):
+    disp, bk, pub, clock = wait_env
+    bk.gh.check_runs[HEAD] = _many_runs(107)
+    bk.gh.next_link_hook = BAD_NEXT_LINKS["id di un altro repository"]
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    for _ in range(4):
+        _tick(disp, clock, 130)
+    assert not bk.builds["pr-merge-readiness"] and _readiness(disp)["state"] == "queued"
+    assert not [c for c in pub.final() if c[3] == "pr-merge-readiness"]
+
+
+def test_total_count_inconsistent_over_two_pages_is_refused(env):
+    disp, bk, _, _ = env
+    bk.gh.check_runs[HEAD] = _many_runs(107)
+    for delta in (1, -1):
+        bk.gh.total_count_delta = delta
+        with pytest.raises(td.ApiError):
+            disp.gh.check_runs(HEAD)
+
+
+def test_next_link_without_a_valid_target_is_refused(env):
+    disp, bk, _, _ = env
+    bk.gh.check_runs[HEAD] = _many_runs(107)
+    bk.gh.next_link_hook = lambda url: "https://api.github.com/"     # rel="next" presente, destinazione non valida
+    with pytest.raises(td.ApiError):
+        disp.gh.check_runs(HEAD)
+
+
+def test_paginated_wait_survives_restart_and_a_new_head(wait_env):
+    disp, bk, pub, clock = wait_env
+    bk.gh.check_runs[HEAD] = _many_runs(107)
+    bk.gh.check_runs[HEAD2] = _many_runs(107)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    _tick(disp, clock, 130)                                         # 1 giro stabile su 2, salvato
+    assert _readiness(disp)["gate_stable"] == 1
+    disp.store.close()
+    disp.store = td.Store(disp.cfg.state_db)                        # riavvio
+    bk.gh.put(42, HEAD2)                                            # head nuovo prima del via libera
+    disp.poll()
+    for _ in range(4):
+        _tick(disp, clock, 130)
+    builds = bk.builds["pr-merge-readiness"].values()
+    assert [b["env"]["PF_PR_HEAD_SHA"] for b in builds] == [HEAD2]      # mai una readiness per l'head vecchio
+    old = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness" and j["head_sha"] == HEAD]
+    assert old and all(j["state"] == "superseded" for j in old)
 
 
 def test_store_migration_adds_the_wait_columns(tmp_path):
