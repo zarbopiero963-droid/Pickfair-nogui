@@ -315,6 +315,10 @@ pipeline `pf-dedicated-ci` (target `full-suite`, contesto GitHub `full-suite`). 
 W1–W4, cioè gli stessi controlli dei workflow Actions che girano sulle PR (mappatura in
 `scripts/pr_full_suite_pipeline.py`, `WORKFLOW_MAP`).
 
+Con la PR-B (M2) la full-suite comprende anche l'Onda W5 dei workflow Linux fuori dalle PR: lockfile, build con
+AppImage e release in dry-run, Telegram live in simulazione. Sono 52 step in tutto. Dettaglio, limiti e requisiti
+della lane in [ci_m2_migration.md](ci_m2_migration.md).
+
 | Passo | Regola | Dove |
 |---|---|---|
 | Build | `commit` = SHA **esatto** dell'head della PR (mai `HEAD`), `branch` = branch di head della PR, env le stesse cinque `PF_*`. Coda `pickfair-dedicated`: nessun token, nessun segreto | `Dispatcher._create`, `Buildkite.create_build` |

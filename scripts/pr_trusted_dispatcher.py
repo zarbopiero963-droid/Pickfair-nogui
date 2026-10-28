@@ -92,6 +92,8 @@ FULL_SUITE_STEP_KEYS = frozenset({
     "w3-chaos-stateful", "w3-core-chaos", "w3-observability-runtime", "w3-observability-tests",
     "w4-live-sim-parity", "w4-build-linux-tests", "w1-pr-check", "w2-backstop", "w4-merge-simulation",
     "w1-mutation",
+    # M2 (#562 PR-B)
+    "w5-lockfile-fresh", "w5-telegram-live-sim", "w5-build-linux-appimage",
 })
 GITHUB_API = "https://api.github.com"
 BUILDKITE_API = "https://api.buildkite.com/v2"

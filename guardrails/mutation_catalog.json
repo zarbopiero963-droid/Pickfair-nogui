@@ -6546,6 +6546,78 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 PR-A (Sol su #584): build superata riletta comunque; un errore di lettura copre con pending l'esito della suite successiva."
+    },
+    {
+      "id": "fsp_m2_telegram_creds_allowed",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            'if env | grep -q \"^TG_\"; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
+      "mutated": "            'true',",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (M2): credenziali Telegram nella lane non fidata non fermano il job."
+    },
+    {
+      "id": "fsp_m2_lock_deletion_unchecked",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            '&& [ ! -f requirements-build-linux.lock ]; then '",
+      "mutated": "            '&& false; then '",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (M2): lock rimosso nella PR non rilevato."
+    },
+    {
+      "id": "fsp_m2_release_one_asset_enough",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            '[ ${#bins[@]} -eq 1 ] && [ ${#apps[@]} -eq 1 ] '",
+      "mutated": "            '[ ${#bins[@]} -eq 1 ] || [ ${#apps[@]} -eq 1 ] '",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (M2): release in dry-run preparata con un solo asset."
+    },
+    {
+      "id": "fsp_m2_lock_without_hashes",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            \"python -m pip install -q --require-hashes -r requirements-build-linux.lock\",",
+      "mutated": "            \"python -m pip install -q -r requirements-build-linux.lock\",",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (M2): toolchain di build installata senza verifica degli hash."
+    },
+    {
+      "id": "fsp_m2_pip_upgraded_before_lock",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            \"deactivate\",",
+      "mutated": "            \"python -m pip install -q --upgrade pip\",",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (M2): venv del preambolo (pip aggiornato non pinnato) usato per il lock."
+    },
+    {
+      "id": "fsp_m2_appimagetool_unpinned",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            f'export PATH=\"{APPIMAGETOOL_DIR}:$PATH\" APPIMAGETOOL_SHA256=\"$(awk \\'{{print $1; exit}}\\' {APPIMAGETOOL_DIR}/appimagetool.sha256)\"',",
+      "mutated": "            f'export PATH=\"{APPIMAGETOOL_DIR}:$PATH\"',",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (M2): appimagetool usato senza verifica dello sha256."
     }
   ]
 }
