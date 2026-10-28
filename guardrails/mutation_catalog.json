@@ -5912,30 +5912,6 @@
       "rationale": "PF-562 P0 (Sol su #583): job fratello con tid vecchio dopo il riallineamento: build doppia o intento spezzato."
     },
     {
-      "id": "td_p0_undelivered_not_adopted",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "            if not delivered:\n                # build conclusa",
-      "mutated": "            if False:\n                # build conclusa",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "PF-562 P0 (Sol su #583): esito mai consegnato chiuso come recovered: check pending per sempre."
-    },
-    {
-      "id": "td_p0_delivered_any_status",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "        return latest in (\"success\", \"failure\", \"error\")",
-      "mutated": "        return True",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "PF-562 P0 (Sol su #583): status pending/assente letto come esito consegnato."
-    },
-    {
       "id": "td_p0_unreadable_stays_creating",
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
@@ -5946,6 +5922,138 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 P0 (Sol su #583): status illeggibili: job lasciato creating, adottato e ripubblicato senza verifica."
+    },
+    {
+      "id": "td_p0_intent_env_conflict_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            raise ApiError(f\"build {b['number']} dello stesso intento con env diversa: conflitto\")",
+      "mutated": "            continue",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Codex P2 su #583): stesso intento con env diversa scartato come assenza: build doppia."
+    },
+    {
+      "id": "td_p0_intent_event_not_realigned",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                return self._builds_for(job, _realigned=True)",
+      "mutated": "                raise ApiError(\"x\")",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Codex P2 su #583): stesso intento ricostruito con un altro evento: bloccato invece di ritrovato."
+    },
+    {
+      "id": "td_p0_realign_unbounded",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if (not _realigned and own is not None and isinstance(env, dict)",
+      "mutated": "            if (own is not None and isinstance(env, dict)",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Codex P2 su #583): riallineamento dell'evento senza limite: ricorsione senza fine con due build discordi."
+    },
+    {
+      "id": "td_p0_undelivered_not_adopted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if publish:\n                # build conclusa",
+      "mutated": "            if False:\n                # build conclusa",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Sol su #583): esito mai consegnato chiuso come recovered: check pending per sempre."
+    },
+    {
+      "id": "td_p0_older_final_counts_as_delivered",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if st.get(\"state\") in (\"success\", \"failure\", \"error\") and seen >= number:",
+      "mutated": "            if st.get(\"state\") in (\"success\", \"failure\", \"error\") and seen >= 0:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Sol su #583): esito di una build precedente letto come consegna della nostra: esito mai pubblicato."
+    },
+    {
+      "id": "td_p0_hidden_final_not_restored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                return False, (st if hidden_by_wait else None)",
+      "mutated": "                return False, None",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Sol su #583): pending di attesa/recupero lasciato sopra l'esito consegnato: check pending per sempre."
+    },
+    {
+      "id": "td_p0_newer_status_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        newer = [n for n in seen if n is not None and n > number]",
+      "mutated": "        newer = []",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Codex su #583, f0804b8): job ripristinato pubblica l'esito di una build vecchia sopra lo status di una piu' recente (verde falso)."
+    },
+    {
+      "id": "td_p0_final_guard_off_publish",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        current = self._final_still_current(job)\n        if current is False:\n            return None\n        rc = self._send_final(job) if current else 1",
+      "mutated": "        current = True\n        rc = self._send_final(job) if current else 1",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Codex su #583, f0804b8): pubblicazione finale senza confronto con gli status piu' recenti."
+    },
+    {
+      "id": "td_p0_final_guard_off_redeliver",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if current and self._send_final(job) == 0:",
+      "mutated": "        if self._send_final(job) == 0:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Codex su #583, f0804b8): riconsegna senza confronto: esito superato o non verificabile ripubblicato."
+    },
+    {
+      "id": "td_p0_blind_success",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if job.get(\"outcome\") == \"success\":\n                log(f\"job {job['id']}: status dell'head non leggibili",
+      "mutated": "            if False:\n                log(f\"job {job['id']}: status dell'head non leggibili",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Codex su #583, f0804b8): status illeggibili: success pubblicato alla cieca."
+    },
+    {
+      "id": "td_p0_rekey_dispatched_sibling",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                       \"AND head_sha = ? AND state = 'queued' AND build_number IS NULL\",",
+      "mutated": "                       \"AND head_sha = ?\",",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Codex su #583, f0804b8): riallineamento anche dei job gia' avviati: build letta non corrispondente, annullata."
     }
   ]
 }

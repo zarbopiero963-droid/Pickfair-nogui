@@ -16,9 +16,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     build remote dello stesso intento: in corso ⇒ adottata, conclusa ⇒ `recovered` senza ripubblicare, non
     verificabile ⇒ nessuna build e `pending` subito sull'head (`RECOVERY_UNCERTAIN`, poi `error`; Codex P1 su #583). Dopo la creazione si ricontrolla, per due
     istanze concorrenti;
-  - build ritrovata conclusa: si ripubblica solo se l'esito non risulta consegnato (ultimo status `pending` o
-    assente); `seq` riportato indietro dallo snapshot: metadato `pf_head`, transizione riallineata al tid remoto
-    dello stesso head (Sol su #583);
+  - build ritrovata conclusa: si ripubblica solo se nessuno status con build uguale o più recente è consegnato
+    (correlazione per numero di build: un PASS vecchio non copre mai un FAIL più recente); `seq` riportato indietro dallo snapshot: metadato `pf_head`, transizione riallineata al tid remoto
+    dello stesso head (Sol su #583); stesso intento con un altro evento ⇒ evento riallineato, con un'altra env ⇒
+    conflitto, nessuna build (Codex su #583);
+  - mai l'esito di una build vecchia sopra lo status di una più recente: confronto per numero di build prima di ogni
+    pubblicazione o riconsegna finale; `success` non verificabile non si pubblica (Codex su #583);
   - rerun rifiutati se il commento ha più di 6 ore (orario GitHub) o se la PR manca dall'ultimo elenco delle aperte.
 
   Test RED→GREEN su snapshot SQLite reali (rerun concluso, in corso, crash fra creazione e registrazione, Buildkite

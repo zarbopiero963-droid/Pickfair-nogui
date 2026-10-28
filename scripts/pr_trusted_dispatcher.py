@@ -1002,8 +1002,10 @@ class Store:
         PR risale almeno a quello, e il tid entra nel registro delle transizioni. Tutto in una transazione."""
 
         def fn(db: sqlite3.Connection) -> None:
+            # solo i job ancora senza build: uno gia' avviato resta legato alla propria build e al proprio intento
             db.execute("UPDATE jobs SET delivery_id = ?, event = ?, updated_at = ? WHERE delivery_id = ? AND pr = ? "
-                       "AND head_sha = ?", (new_tid, event, now, old_tid, pr, head_sha))
+                       "AND head_sha = ? AND state = 'queued' AND build_number IS NULL",
+                       (new_tid, event, now, old_tid, pr, head_sha))
             db.execute("UPDATE pr_state SET seq = MAX(seq, ?), updated_at = ? WHERE pr = ?", (seq, now, pr))
             db.execute("INSERT OR IGNORE INTO transitions(tid, pr, head_sha, kind, created_at) VALUES (?, ?, ?, ?, ?)",
                        (new_tid, pr, head_sha, event, now))
@@ -1467,7 +1469,10 @@ class Dispatcher:
     def _redeliver(self, job: dict) -> None:
         """Nuovo tentativo di consegna di un esito `publish_failed` (vedi `redeliverable_jobs`). Ogni tentativo
         aggiorna `updated_at`, quindi un esito ancora da consegnare non viene ripulito."""
-        if self._send_final(job) == 0:
+        current = self._final_still_current(job)
+        if current is False:
+            return None
+        if current and self._send_final(job) == 0:
             log(f"job {job['id']}: esito {job['outcome']} riconsegnato")
             return self._set(job, state="done")
         return self._set(job, state="publish_failed", publishing_since=self.clock())
@@ -1624,7 +1629,7 @@ class Dispatcher:
         self._set(job, state="superseded", description="sostituito da un head piu' recente")
         return None
 
-    def _builds_for(self, job: dict) -> list:
+    def _builds_for(self, job: dict, _realigned: bool = False) -> list:
         """Build gia' esistenti per l'intento del job, ordinate per numero: quelle col metadato `pf_intent` (a
         qualunque data, anche prima di un ripristino dell'archivio) piu' quelle con l'env identico nella finestra
         (build create prima del metadato). Ogni elenco illeggibile o pieno => eccezione: assenza NON dimostrata."""
@@ -1633,8 +1638,27 @@ class Dispatcher:
         found = {b["number"]: b for b in self.bk.list_builds(job["guard"], created_from)
                  if isinstance(b, dict) and b.get("env") == expected and _is_int(b.get("number"))}
         for b in self.bk.list_builds_by_intent(job["guard"], job["delivery_id"]):
-            if isinstance(b, dict) and b.get("env") == expected and _is_int(b.get("number")):
+            if not isinstance(b, dict) or not _is_int(b.get("number")):
+                continue
+            env = b.get("env")
+            if env == expected:
                 found[b["number"]] = b
+                continue
+            # stesso `pf_intent`, env diversa: mai prova di assenza (Codex P2 su #583). Solo l'evento diverso, per una
+            # transizione ricostruita da un archivio ripristinato (es. `ready_for_review` ricostruito `synchronize`),
+            # e' la stessa valutazione: si riallinea l'evento e si rilegge. Ogni altra differenza e' un conflitto.
+            own = _TRANSITION_TID_RE.fullmatch(job["delivery_id"])
+            if (not _realigned and own is not None and isinstance(env, dict)
+                    and env.get("PF_EVENT") in TRANSITION_EVENTS
+                    and {k: v for k, v in env.items() if k != "PF_EVENT"}
+                    == {k: v for k, v in expected.items() if k != "PF_EVENT"}):
+                log(f"job {job['id']}: intento {job['delivery_id']} gia' eseguito come {env['PF_EVENT']}: evento "
+                    "riallineato")
+                self.store.rekey_transition(job["delivery_id"], job["delivery_id"], env["PF_EVENT"], job["pr"],
+                                            job["head_sha"], int(own.group(2)), self.clock())
+                job["event"] = env["PF_EVENT"]
+                return self._builds_for(job, _realigned=True)
+            raise ApiError(f"build {b['number']} dello stesso intento con env diversa: conflitto")
         return [found[n] for n in sorted(found)]
 
     def _fail(self, job: dict, state: str, description: str) -> None:
@@ -1747,18 +1771,28 @@ class Dispatcher:
         if keep.get("state") in BUILD_TERMINAL:
             if not build_matches_job(keep, job["guard"], job, self.cfg.organization):
                 return self._fail(job, "error", "build precedente dell'intento non corrisponde alla richiesta")
-            delivered = self._final_visible(job)
-            if delivered is None:
+            delivery = self._delivery(job, keep["number"])
+            if delivery is None:
                 # status dell'head illeggibili: si torna `queued` e si riprova (entro la finestra), mai `creating`,
                 # che al giro dopo adotterebbe la build e ripubblicherebbe senza la verifica di consegna
                 if job["state"] == "creating" and self.store.update_job(job["id"], self.clock(),
                                                                          expected_state="creating", state="queued"):
                     job["state"] = "queued"
                 return None
-            if not delivered:
+            publish, restore = delivery
+            if publish:
                 # build conclusa ma esito mai consegnato (crash fra la fine della build e la pubblicazione, Sol su
                 # #583): si adotta, e l'esito si ricava dalla build come per ogni altra
                 return self._adopt(job, keep)
+            if restore is not None:
+                # un `pending` di attesa o recupero copre l'esito gia' consegnato: lo si ripristina com'era (mai
+                # l'esito di questa build, che e' piu' vecchio o uguale)
+                if self.publish(job["pr"], job["head_sha"], restore["state"], GUARDS[job["guard"]]["context"],
+                                restore["target_url"], clean_description(str(restore.get("description") or
+                                                                             "esito ripristinato"))) != 0:
+                    if self.store.update_job(job["id"], self.clock(), expected_state="creating", state="queued"):
+                        job["state"] = "queued"
+                    return None
             # esito gia' visibile sull'head: non si ripubblica, un esito piu' recente dello stesso SHA resta valido;
             # `final_published` evita che l'annullamento dei doppioni lo rimandi in consegna
             return self._set(job, state="done", outcome="recovered", final_published=1, build_number=keep["number"],
@@ -1766,9 +1800,56 @@ class Dispatcher:
                              description=f"intento gia' eseguito dalla build {keep['number']}: esito non ripubblicato")
         return self._adopt(job, keep)
 
-    def _final_visible(self, job: dict) -> Optional[bool]:
-        """True se l'ultimo status del contesto del job sull'head e' un esito finale (consegnato), False se e'
-        `pending` o assente, None se gli status non si leggono (oltre la finestra della build => `error`)."""
+    def _status_build(self, job: dict, status: Any) -> Optional[int]:
+        """Numero della build del guard a cui punta il `target_url` di uno status, se e' una build della pipeline."""
+        prefix = f"{BUILDKITE_WEB}/{self.cfg.organization}/{GUARDS[job['guard']]['pipeline']}/builds/"
+        url = status.get("target_url") if isinstance(status, dict) else None
+        if isinstance(url, str) and url.startswith(prefix) and url[len(prefix):].isdigit():
+            number = int(url[len(prefix):])
+            return number if number > 0 else None
+        return None
+
+    def _newer_on_github(self, job: dict) -> Optional[int]:
+        """Build piu' recente di quella del job con uno status sullo stesso contesto e head, se esiste: l'esito del
+        job e' superato (archivio ripristinato con un job ancora attivo, Codex su #583). Status illeggibili =>
+        eccezione."""
+        number = job.get("build_number")
+        if not _is_int(number):
+            return None
+        statuses = self.gh.statuses(job["head_sha"])
+        if not isinstance(statuses, list):
+            raise ApiError("status fuori formato")
+        context = GUARDS[job["guard"]]["context"]
+        seen = [self._status_build(job, st) for st in statuses if isinstance(st, dict) and st.get("context") == context]
+        newer = [n for n in seen if n is not None and n > number]
+        return max(newer) if newer else None
+
+    def _final_still_current(self, job: dict) -> Optional[bool]:
+        """Prima di pubblicare l'esito finale: True se nessuna build piu' recente ha gia' uno status (pubblicare),
+        False se superato (job chiuso senza pubblicare), None se non verificabile per un `success` (si riprova: mai
+        un verde alla cieca). Un esito negativo non verificabile si pubblica: non puo' dare un verde falso."""
+        try:
+            newer = self._newer_on_github(job)
+        except (ApiError, TransportError, CredentialError, RateLimited) as exc:
+            if job.get("outcome") == "success":
+                log(f"job {job['id']}: status dell'head non leggibili ({exc}): success non pubblicato, riprovo")
+                return None
+            return True
+        if newer is None:
+            return True
+        log(f"job {job['id']}: esito della build {job['build_number']} superato dalla build {newer}: non pubblicato")
+        self._set(job, state="superseded",
+                  description=f"esito della build {job['build_number']} superato dalla build {newer}")
+        return False
+
+    def _delivery(self, job: dict, number: int) -> Optional[tuple[bool, Optional[dict]]]:
+        """Esito della build `number` dell'intento, ritrovata conclusa: gia' consegnato o no? Si correla con gli status
+        del contesto sull'head tramite il numero di build del loro `target_url` (crescente per pipeline). (pubblicare,
+        status da ripristinare). Uno status finale di questa build o di una piu' recente => consegnato o superato:
+        non si ripubblica; se a coprirlo c'e' un `pending` senza build (attesa, recupero), quello status si
+        ripristina com'era. Altrimenti (nessuno status con build, o solo di build precedenti) => si pubblica l'esito di
+        questa; se nel frattempo una build piu' recente e' in corso, la pubblicazione la ferma `_final_still_current`.
+        Status illeggibili => None (Sol su #583)."""
         context = GUARDS[job["guard"]]["context"]
         try:
             statuses = self.gh.statuses(job["head_sha"])
@@ -1780,9 +1861,20 @@ class Dispatcher:
             return None
         if not isinstance(statuses, list):
             return None
-        latest = next((st.get("state") for st in statuses if isinstance(st, dict) and st.get("context") == context),
-                      None)
-        return latest in ("success", "failure", "error")
+        mine = [st for st in statuses if isinstance(st, dict) and st.get("context") == context]   # dal piu' recente
+        hidden_by_wait = False
+        for st in mine:
+            seen = self._status_build(job, st)
+            if seen is None:
+                if st.get("state") == "pending":
+                    hidden_by_wait = True              # `pending` di attesa o recupero: non dice nulla sull'esito
+                continue
+            if st.get("state") == "pending":
+                continue                               # una build piu' recente in corso la ferma `_final_still_current`
+            if st.get("state") in ("success", "failure", "error") and seen >= number:
+                return False, (st if hidden_by_wait else None)
+            break                                      # esito di una build precedente: il nostro non e' arrivato
+        return True, None
 
     def _adopt(self, job: dict, build: Any) -> None:
         if not build_matches_job(build, job["guard"], job, self.cfg.organization):
@@ -1926,7 +2018,10 @@ class Dispatcher:
         fresh = self.store.get_job(job["id"])
         if fresh.get("superseded"):
             return self._supersede(job)
-        rc = self._send_final(job)
+        current = self._final_still_current(job)
+        if current is False:
+            return None
+        rc = self._send_final(job) if current else 1
         if rc == 0:
             # con build ancora da annullare `_set` lo tiene in `canceling` finche' l'annullamento e' confermato
             return self._set(job, state="done")
