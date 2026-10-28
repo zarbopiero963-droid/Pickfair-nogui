@@ -9,6 +9,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 — documentazione della lane trusted riallineata (`docs/ci_trusted_lane.md`):**
+  - il token GitHub della lane è un token di installazione dell'App `pickfair-trusted-status`, in sola lettura, scritto
+    in tmpfs da `pf-lane-token-mint.service` e rinnovato da `pf-lane-token-refresh.timer`; prima il documento
+    descriveva un file statico in `LoadCredential` (deriva D3);
+  - aggiunto il runbook di emergenza senza VPS (§5): ripiego su GitHub Actions, nessun failover automatico, e nessuno
+    status pubblicato a mano;
+  - il limite «NOT VERIFIED end-to-end» sostituito dal riferimento alla certificazione E2E.
+  - requisito della CLI corretto in `gh` ≥ 2.48: la readiness usa `gh api --paginate --slurp`, assente in 2.45/2.47
+    (gate Sol/Grok `UNKNOWN` sulla lane, #575 build #17).
+
+  Nessuna modifica al codice.
 - **#562 D2: risultato del guard caricato come artifact su Buildkite (`scripts/ci/pr_overlap_guard.sh`,
   `scripts/ci/pr_merge_readiness.sh`):** nella campagna E2E reale (#573, build `pr-overlap-guard` #17 e
   `pr-merge-readiness` #10) il dispatcher non trovava `.trusted-guard/<guard>.json` tra gli artifact e pubblicava
