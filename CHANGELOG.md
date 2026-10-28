@@ -31,6 +31,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - **#562 P1 — readiness di SHA superati:** verificato che non trattengono la coda trusted oltre il giro che vede il
     nuovo head. La build viene annullata nello stesso giro che crea l'overlap nuovo; quella in attesa non ha build. Due test
     di regressione; nessuna modifica di codice (`docs/trusted_dispatcher.md`).
+- **#562 PR-A — suite completa automatica su ogni PR (`scripts/pr_trusted_dispatcher.py`,
+  `scripts/pr_full_suite_pipeline.py`):**
+  - con la nuova chiave obbligatoria `full_suite.enabled: true` il dispatcher trusted avvia a ogni transizione e
+    rerun anche la pipeline `pf-dedicated-ci` della lane non fidata, sul commit **esatto** e sul branch della PR, e
+    pubblica il contesto `full-suite`;
+  - `success` solo se la build è `passed` sul commit dell'head e contiene tutti i 49 step attesi
+    (`FULL_SUITE_STEP_KEYS`), ognuno `passed` e non soft-fail; build fallita ⇒ `failure`; step mancanti o stato
+    incoerente ⇒ `error`;
+  - gli step (Onde W1–W4, equivalenti ai workflow Actions su PR, mapping verificato da test) li genera
+    `scripts/pr_full_suite_pipeline.py`, caricato dallo step di avvio da `origin/main`, mai dal checkout della PR;
+  - una configurazione senza `full_suite` è `NOT CONFIGURED`.
+  - il recupero dopo uno snapshot (P0, #583) vale anche per la suite: ricerca per intento sul commit dell'head, massimo
+    della PR con il solo filtro `pf_pr` (le build stanno sui branch della PR), consegna correlata e `pending` di recupero
+    sul contesto `full-suite` e sulla pipeline `pf-dedicated-ci`, mai su quelli di un guard trusted.
+
+  - con `readiness_wait` e `full_suite` entrambe attive, `readiness_wait.max_seconds` ≥ `full_suite.build_timeout_seconds`
+    (la readiness attende anche lo status `full-suite`).
+  - **readiness prematura (#562 P0):** con la full-suite attiva la readiness non parte e non passa senza la full-suite
+    dello **stesso intento** (stesso `delivery_id`, PR e SHA). Servono l'esito finale pubblicato dal dispatcher e lo
+    stesso esito come ultimo status `full-suite` sull'head; assenza, `pending` o incoerenza ⇒ attesa, mai successo.
+    Con la suite `failure`/`error` la readiness è negativa senza build. Un `success` della readiness senza suite
+    superata si pubblica `error`. `full_suite.enabled: true` richiede `readiness_wait.enabled: true`.
+
+  Test RED→GREEN, 12 mutazioni nuove (gate del dispatcher 120/120).
 - **#562 F1 — paginazione GitHub reale nel dispatcher (`scripts/pr_trusted_dispatcher.py`), regressione di #576:**
   - nel collaudo T252 una PR con 107 check run aveva il link `next` nella forma `/repositories/1189713160/…`, che il
     client rifiutava: la readiness non partiva mai (fail-closed, nessun PASS) e Grok ha fatto rollback;

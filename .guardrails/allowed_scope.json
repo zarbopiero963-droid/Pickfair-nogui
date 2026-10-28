@@ -3050,6 +3050,21 @@
       ],
       "max_files": 6
     },
+    "trusted-dispatcher-562-full-suite": {
+      "description": "PF-562 PR-A (mandato owner M1/M2 e autonomia Claude §11, 28/10/2026, D-1..D-4): suite completa automatica su ogni PR. scripts/pr_trusted_dispatcher.py: target full-suite (pipeline pf-dedicated-ci, lane non fidata, commit esatto e branch della PR, contesto full-suite), attivato dalla chiave obbligatoria full_suite; success solo con tutti gli step FULL_SUITE_STEP_KEYS passed. scripts/pr_full_suite_pipeline.py: generatore degli step W1-W4 caricato da origin/main, mapping verso i workflow Actions. Test RED/GREEN, mutazioni, docs, CHANGELOG. File a merge owner (scripts/pr_*.py).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/trusted_dispatcher.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/pr_full_suite_pipeline.py",
+        "scripts/pr_trusted_dispatcher.py",
+        "tests/scripts/test_pr_full_suite_pipeline.py",
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "max_files": 8
+    },
     "trusted-dispatcher-562-p0-rerun-recovery": {
       "description": "PF-562 P0 (mandati owner 28/10/2026 'Fix recovery rerun', addendum 'Deduplicazione remota obbligatoria', 'Correzione rischi residui'; Grok T252/T263 R1): dopo il ripristino di uno snapshot SQLite il dispatcher rigiocava rerun e transizioni gia' eseguiti. Identita' stabile dell'intento (metadato Buildkite pf_intent = tid), verifica remota prima di ogni creazione (in corso => adottata, conclusa => recovered senza ripubblicare, incerto => nessuna build), ricontrollo dopo la creazione per istanze concorrenti, rerun oltre 6 ore (orario GitHub) o su PR assente dall'elenco rifiutati. Test RED/GREEN, mutazioni, docs, CHANGELOG. File a merge owner (scripts/pr_*.py).",
       "allow_tests": true,
