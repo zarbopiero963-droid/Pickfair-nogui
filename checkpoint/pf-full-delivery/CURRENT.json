@@ -2,12 +2,12 @@
  "certification_verdict": "NO-GO",
  "checkpoint_commit": null,
  "code": {
-  "branch": "pf562-pr1-p0-rerun-recovery",
-  "sha": "44be54d80cae8e2392442ad1a62e1ee333ca4f97"
+  "branch": "main",
+  "sha": "5c3aaaa5c9226a256bf4ffff4c13288f2a14f453"
  },
  "mandate_id": "OWNER FINAL MANDATE \u2014 chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
- "next_atomic_action": "#562 PR 1/4 #583 PR583_READY_FOR_OWNER_MERGE su head 44be54d (branch pf562-pr1-p0-rerun-recovery): Sol+Grok VALID_PASS, 8/8 thread risolti, 112 check (solo readiness FAIL atteso manual-review-required), 3661 passed, mutation 143/143; Codex advisory in corso. Attendere merge owner; poi verifica main + CI, deploy Grok da main (token meta_data pf_intent/pf_pr, Commit statuses), drill snapshot, rebase PR-A 2167196 (estendere controlli consegna al target full-suite), PR-B, PR-C2. LIVE NO-GO.",
- "previous_checkpoint_sha": "0e7d757445d721a3f10c29b8920d95d119d98224",
+ "next_atomic_action": "#583 MERGED come 5c3aaaa (albero = head 44be54d), CI push main 12/12 verde. Owner: CONSOLIDATION=REJECTED, 4 PR separate. PR-A rebasata su main in /home/user/pfa: adattamento P0->full-suite (PIPELINES per consegna/status/pending incerto, pf_pr senza filtro branch per la suite), 2 test RED->GREEN nuovi, 3762 passed, mutation in corso. Prossimo: recovery drill Grok su #562 (deploy da main), poi apertura PR-A. LIVE NO-GO.",
+ "previous_checkpoint_sha": "4208ec2fbd517b2089ee6e03973bc391a3e215be",
  "schema": "pf-current/1",
- "seq": 85
+ "seq": 86
 }
