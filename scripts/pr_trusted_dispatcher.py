@@ -60,6 +60,9 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional
 
 TRUSTED_REPO = "zarbopiero963-droid/Pickfair-nogui"
+#: id numerico di TRUSTED_REPO: GitHub lo usa nei link `next` della paginazione (`/repositories/<id>/...`). Fisso:
+#: un link con un altro id e' rifiutato (#562 F1, rollback T252 di #576)
+TRUSTED_REPO_ID = 1189713160
 BASE_REF = "main"
 #: Unica fonte delle pipeline avviabili: la configurazione non puo' aggiungerne altre.
 GUARDS: dict[str, dict[str, str]] = {
@@ -550,14 +553,37 @@ class GitHub:
         except (ValueError, RecursionError):
             raise ApiError("risposta GitHub non JSON") from None
 
+    @staticmethod
+    def next_page_url(link: str, path: str, params: Mapping[str, str], page: int) -> str:
+        """URL della pagina `page + 1`, ricostruito dal client in forma canonica `/repos/<repo>/...`. Il link `next`
+        ricevuto vale solo come segnale e deve descrivere ESATTAMENTE quella pagina: `https://api.github.com`
+        senza credenziali, porta o frammento; lo stesso path, nella forma `/repos/<repo>/...` o in quella che GitHub
+        usa davvero, `/repositories/<TRUSTED_REPO_ID>/...`; gli stessi parametri, una volta sola, piu' `page` uguale
+        a `page + 1`. Ogni altra cosa (host, repository, commit, endpoint, parametri diversi) => ApiError."""
+        prefix = f"/repos/{TRUSTED_REPO}/"
+        if not path.startswith(prefix):
+            raise ApiError("paginazione fuori dal repository fidato")
+        expected = {**params, "page": str(page + 1)}
+        try:
+            parts = urllib.parse.urlsplit(link)
+            pairs = urllib.parse.parse_qsl(parts.query, keep_blank_values=True, strict_parsing=True)
+        except ValueError:
+            raise ApiError("link di paginazione GitHub malformato") from None
+        aliases = (path, f"/repositories/{TRUSTED_REPO_ID}/{path[len(prefix):]}")
+        if parts.scheme != "https" or parts.netloc != "api.github.com" or parts.fragment or parts.path not in aliases:
+            raise ApiError(f"link di paginazione GitHub non ammesso: {parts.path}")
+        if len(dict(pairs)) != len(pairs) or dict(pairs) != expected:
+            raise ApiError("link di paginazione GitHub con parametri o pagina inattesi")
+        return f"{GITHUB_API}{path}?{urllib.parse.urlencode(expected)}"
+
     def get_all(self, path: str, params: Mapping[str, str], key: Optional[str] = None) -> list:
         """Tutte le pagine. Con `key` ogni pagina e' un oggetto `{"total_count": n, key: [...]}` (check run): il
-        totale deve restare lo stesso fra le pagine e coincidere con gli elementi letti."""
+        totale deve restare lo stesso fra le pagine e coincidere con gli elementi letti. Le pagine successive si
+        chiedono sempre all'URL canonico (`next_page_url`), mai a quello del link ricevuto."""
         url: Optional[str] = f"{GITHUB_API}{path}?{urllib.parse.urlencode(params)}"
         items: list = []
-        seen: set = set()
         total: Optional[int] = None
-        for _ in range(MAX_PAGES):
+        for page_number in range(1, MAX_PAGES + 1):
             h, page = self._request(url)
             if key is not None:
                 if not isinstance(page, dict) or not _is_int(page.get("total_count")) \
@@ -572,10 +598,8 @@ class GitHub:
                 if total is not None and len(items) != total:
                     raise ApiError("elenco GitHub incompleto rispetto a total_count")
                 return items
-            url = m.group(1)
-            if url in seen:
-                raise ApiError("paginazione GitHub ciclica")
-            seen.add(url)
+            # pagina successiva strettamente crescente: nessun ciclo possibile, MAX_PAGES limita la lettura
+            url = self.next_page_url(m.group(1), path, params, page_number)
         raise ApiError("paginazione GitHub oltre il limite: elenco non verificabile")
 
     def open_pulls(self) -> list:
