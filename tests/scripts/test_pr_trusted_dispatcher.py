@@ -66,6 +66,7 @@ def raw_config(tmp_path: Path) -> dict:
         "poll_interval_seconds": 60,
         "build_timeout_seconds": {"overlap": 600, "readiness": 900},
         "http_timeout_seconds": 30,
+        "readiness_wait": {"enabled": False, "max_seconds": 7200, "settle_polls": 2, "min_delay_seconds": 120},
     }
 
 
@@ -92,6 +93,10 @@ class FakeGitHub:
         self.requests: list[tuple[str, str, dict]] = []
         self.permissions: dict[str, str] = {RERUNNER: "admin"}     # login -> permesso effettivo sul repository
         self.permission_status = 200
+        self.check_runs: dict[str, list] = {}          # sha -> check run (attesa della readiness)
+        self.statuses: dict[str, list] = {}            # sha -> status, dal piu' recente
+        self.checks_status = 200
+        self.total_count_delta = 0
 
     def put(self, pr, head, *, draft=False, base="main", head_repo=REPO) -> None:
         self.pulls[pr] = {"number": pr, "state": "open", "draft": draft,
@@ -121,6 +126,18 @@ class FakeGitHub:
             data = [self.pulls[k] for k in sorted(self.pulls)]
         elif parts.path == f"/repos/{REPO}/issues/comments":
             data = [c for c in self.comments if c["updated_at"] >= query["since"]]
+        elif parts.path.startswith(f"/repos/{REPO}/commits/"):
+            sha, kind = parts.path.split("/")[-2:]
+            if self.checks_status != 200:
+                return self.checks_status, {}, b'{"message":"x"}'
+            data = self.check_runs.get(sha, []) if kind == "check-runs" else self.statuses.get(sha, [])
+            chunk = data[(page - 1) * self.page_size: page * self.page_size]
+            if page * self.page_size < len(data):
+                nxt = dict(query, page=str(page + 1))
+                headers_out["Link"] = f'<https://api.github.com{parts.path}?{urllib.parse.urlencode(nxt)}>; rel="next"'
+            body = ({"total_count": len(data) + self.total_count_delta, "check_runs": chunk}
+                    if kind == "check-runs" else chunk)
+            return 200, headers_out, json.dumps(body).encode()
         elif parts.path.startswith(f"/repos/{REPO}/collaborators/") and parts.path.endswith("/permission"):
             login = parts.path.split("/")[-2]
             if self.permission_status != 200:
@@ -2565,7 +2582,8 @@ def test_secret_out_of_format_is_refused_without_echo(tmp_path, value):
     ("buildkite", "result_artifacts"), ("buildkite", "artifact_download_hosts"), ("publisher",),
     ("publisher", "command"), ("publisher", "timeout_seconds"), ("state_db",), ("retention_hours",),
     ("poll_interval_seconds",), ("build_timeout_seconds",), ("build_timeout_seconds", "readiness"),
-    ("http_timeout_seconds",),
+    ("http_timeout_seconds",), ("readiness_wait",), ("readiness_wait", "enabled"), ("readiness_wait", "max_seconds"),
+    ("readiness_wait", "settle_polls"), ("readiness_wait", "min_delay_seconds"),
 ])
 def test_every_missing_mandatory_key_is_not_configured(tmp_path, path):
     raw = raw_config(tmp_path)
@@ -2601,6 +2619,13 @@ def test_every_missing_mandatory_key_is_not_configured(tmp_path, path):
     lambda r: r["build_timeout_seconds"].update(overlap=59),
     lambda r: r.update(http_timeout_seconds="30"),
     lambda r: r.update(state_db="/var/lib/../etc/x"),
+    lambda r: r["readiness_wait"].update(enabled="false"),
+    lambda r: r["readiness_wait"].update(max_seconds=599),
+    lambda r: r["readiness_wait"].update(max_seconds=21601),
+    lambda r: r["readiness_wait"].update(settle_polls=0),
+    lambda r: r["readiness_wait"].update(settle_polls=True),
+    lambda r: r["readiness_wait"].update(min_delay_seconds=-1),
+    lambda r: r["readiness_wait"].update(extra=1),
 ])
 def test_invalid_config_values_are_not_configured(tmp_path, mutate):
     raw = raw_config(tmp_path)
@@ -2621,3 +2646,295 @@ def test_cli_check_config_runs_the_real_token_command(tmp_path, capsys):
     script.write_text("#!/bin/sh\nexit 3\n")
     assert td.main(["check-config", "--config", str(path), "--check-secrets"]) == td.EXIT_NOT_CONFIGURED
     assert GH_CRED not in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------------------------- readiness non bloccante
+# (#562 opzione A, OWNER GO): la build della readiness parte solo quando gli altri check dell'head sono chiusi.
+def _run(name, status="completed", conclusion="success"):
+    return {"name": name, "status": status, "conclusion": conclusion if status == "completed" else None}
+
+
+def _st(context, state):
+    return {"context": context, "state": state}
+
+
+@pytest.fixture()
+def wait_env(tmp_path):
+    raw = raw_config(tmp_path)
+    raw["readiness_wait"]["enabled"] = True
+    cfg = td.validate_config(raw)
+    bk = FakeBuildkite()
+    pub = Publisher()
+    clock = Clock()
+    disp = make_dispatcher(cfg, bk, pub, clock)
+    yield disp, bk, pub, clock
+    disp.store.close()
+
+
+def _readiness(disp):
+    return [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+
+
+def _open_checks(gh, sha=HEAD):
+    gh.check_runs[sha] = [_run("unit"), _run("tests", "in_progress"), _run("GPT-6.1 Sol push-range review", "queued")]
+    gh.statuses[sha] = [_st("overlap-check", "pending")]
+
+
+def _close_checks(gh, sha=HEAD, *, failed=False):
+    gh.check_runs[sha] = [_run("unit"), _run("tests", conclusion="failure" if failed else "success"),
+                          _run("GPT-6.1 Sol push-range review")]
+    gh.statuses[sha] = [_st("overlap-check", "success"), _st("overlap-check", "pending")]   # dal piu' recente
+
+
+def _tick(disp, clock, seconds=60):
+    clock.now += seconds
+    disp.tick()
+
+
+def test_readiness_waits_for_open_checks_without_any_build(wait_env):
+    disp, bk, pub, clock = wait_env
+    _open_checks(bk.gh)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    for _ in range(5):
+        _tick(disp, clock)
+    assert not bk.builds["pr-merge-readiness"]                      # nessun agent occupato durante l'attesa
+    assert len(bk.builds["pr-overlap-guard"]) == 1                  # l'overlap parte subito
+    waiting = [c for c in pub.calls if c[3] == "pr-merge-readiness"]
+    assert waiting == [(42, HEAD, "pending", "pr-merge-readiness", f"https://buildkite.com/{ORG}/pr-merge-readiness",
+                        "in attesa degli altri check")]
+    assert _readiness(disp)["state"] == "queued"
+
+
+def test_readiness_starts_after_checks_are_closed_and_stable(wait_env):
+    disp, bk, pub, clock = wait_env
+    _open_checks(bk.gh)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    _tick(disp, clock, 130)                                         # oltre min_delay, ma check aperti
+    _close_checks(bk.gh)
+    _tick(disp, clock)                                              # 1 giro stabile su 2
+    assert not bk.builds["pr-merge-readiness"]
+    _tick(disp, clock)                                              # 2 giri stabili: via libera
+    assert len(bk.builds["pr-merge-readiness"]) == 1
+    job = _readiness(disp)
+    assert job["state"] == "dispatched" and job["released_at"] == clock.now and job["gate_seen"] == 4
+    # una volta avviata non si rilegge piu' lo stato dei check
+    n = len([r for r in bk.gh.requests if "/commits/" in r[1]])
+    _tick(disp, clock)
+    assert len([r for r in bk.gh.requests if "/commits/" in r[1]]) == n
+
+
+def test_readiness_never_waits_for_its_own_self_checks(wait_env):
+    disp, bk, pub, clock = wait_env
+    bk.gh.check_runs[HEAD] = [_run("unit"), _run("Merge readiness", "in_progress")]
+    bk.gh.statuses[HEAD] = [_st("pr-merge-readiness", "pending"), _st("overlap-check", "success")]
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    for _ in range(4):
+        _tick(disp, clock, 60)
+    assert len(bk.builds["pr-merge-readiness"]) == 1
+
+
+def test_a_failed_check_releases_the_readiness_which_judges_it(wait_env):
+    # l'attesa guarda solo la chiusura dei check: l'esito lo decide la readiness, quindi mai un PASS dal gate
+    disp, bk, pub, clock = wait_env
+    _close_checks(bk.gh, failed=True)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    for _ in range(4):
+        _tick(disp, clock, 60)
+    assert len(bk.builds["pr-merge-readiness"]) == 1
+    assert not [c for c in pub.final() if c[3] == "pr-merge-readiness"]
+
+
+@pytest.mark.parametrize("still_open", ["status", "run_queued", "run_in_progress", "no_checks"])
+def test_any_open_check_or_no_check_at_all_keeps_waiting(wait_env, still_open):
+    disp, bk, pub, clock = wait_env
+    _close_checks(bk.gh)
+    if still_open == "status":
+        bk.gh.statuses[HEAD] = [_st("full-suite", "pending")] + bk.gh.statuses[HEAD]
+    elif still_open == "run_queued":
+        bk.gh.check_runs[HEAD].append(_run("e2e", "queued"))
+    elif still_open == "run_in_progress":
+        bk.gh.check_runs[HEAD].append(_run("mutation", "in_progress"))
+    else:
+        bk.gh.check_runs[HEAD], bk.gh.statuses[HEAD] = [], []
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    for _ in range(10):
+        _tick(disp, clock, 60)
+    assert not bk.builds["pr-merge-readiness"]
+
+
+def test_a_growing_rollup_resets_the_stability_count(wait_env):
+    disp, bk, pub, clock = wait_env
+    _close_checks(bk.gh)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    _tick(disp, clock, 130)                                         # 1 giro stabile
+    bk.gh.check_runs[HEAD].append(_run("late-check"))               # un check nuovo, gia' chiuso
+    _tick(disp, clock)                                              # conteggio cambiato: si riparte da 1
+    assert not bk.builds["pr-merge-readiness"]
+    _tick(disp, clock)
+    assert len(bk.builds["pr-merge-readiness"]) == 1
+
+
+def test_min_delay_is_respected_even_if_everything_is_closed(wait_env):
+    disp, bk, pub, clock = wait_env
+    _close_checks(bk.gh)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    for _ in range(3):
+        _tick(disp, clock, 30)                                      # 90 s < 120 s
+    assert not bk.builds["pr-merge-readiness"]
+    _tick(disp, clock, 40)
+    _tick(disp, clock, 30)
+    assert len(bk.builds["pr-merge-readiness"]) == 1
+
+
+def test_wait_beyond_the_maximum_is_error_and_never_a_build(wait_env):
+    disp, bk, pub, clock = wait_env
+    _open_checks(bk.gh)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    _tick(disp, clock, 3600)
+    _tick(disp, clock, 3601)                                        # 7201 s
+    assert not bk.builds["pr-merge-readiness"]
+    (final,) = [c for c in pub.final() if c[3] == "pr-merge-readiness"]
+    assert final[2] == "error" and "attesa dei check oltre 7200 s" in final[5]
+    assert _readiness(disp)["state"] == "done"
+
+
+def test_unreadable_checks_keep_waiting_and_end_in_error_at_the_maximum(wait_env):
+    disp, bk, pub, clock = wait_env
+    bk.gh.checks_status = 500
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    for _ in range(20):
+        _tick(disp, clock, 300)
+    assert not bk.builds["pr-merge-readiness"]
+    _tick(disp, clock, 1300)
+    (final,) = [c for c in pub.final() if c[3] == "pr-merge-readiness"]
+    assert final[2] == "error"
+
+
+def test_incomplete_check_run_listing_is_not_a_release(wait_env):
+    disp, bk, pub, clock = wait_env
+    _close_checks(bk.gh)
+    bk.gh.total_count_delta = 1                                     # total_count > check run ricevuti
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    for _ in range(6):
+        _tick(disp, clock, 60)
+    assert not bk.builds["pr-merge-readiness"]
+
+
+def test_new_head_drops_the_old_wait_and_waits_on_the_new_sha(wait_env):
+    disp, bk, pub, clock = wait_env
+    _open_checks(bk.gh)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    _tick(disp, clock, 130)
+    _close_checks(bk.gh)                                            # il vecchio head si chiude...
+    _open_checks(bk.gh, HEAD2)
+    bk.gh.put(42, HEAD2)                                            # ...ma arriva un head nuovo
+    disp.poll()
+    for _ in range(4):
+        _tick(disp, clock)
+    assert not bk.builds["pr-merge-readiness"]                      # nessuna readiness per il vecchio head
+    old = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness" and j["head_sha"] == HEAD][0]
+    assert old["state"] == "superseded"
+    _close_checks(bk.gh, HEAD2)
+    _tick(disp, clock)
+    _tick(disp, clock)
+    (build,) = bk.builds["pr-merge-readiness"].values()
+    assert build["env"]["PF_PR_HEAD_SHA"] == HEAD2
+
+
+def test_wait_state_survives_a_restart_without_duplicates(wait_env):
+    disp, bk, pub, clock = wait_env
+    _close_checks(bk.gh)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    _tick(disp, clock, 130)                                         # 1 giro stabile salvato
+    assert _readiness(disp)["gate_stable"] == 1
+    disp.store.close()
+    disp.store = td.Store(disp.cfg.state_db)                        # riavvio
+    _tick(disp, clock)
+    _tick(disp, clock)
+    disp.poll()
+    _tick(disp, clock)
+    assert len(bk.builds["pr-merge-readiness"]) == 1
+
+
+def test_released_readiness_build_window_starts_at_the_release(wait_env):
+    # dopo un'attesa lunga, una creazione con esito ignoto non e' gia' fuori finestra (si riconcilia)
+    disp, bk, pub, clock = wait_env
+    _open_checks(bk.gh)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    _tick(disp, clock, 3000)
+    _close_checks(bk.gh)
+    bk.fail_create, bk.create_lands = "transport", True
+    _tick(disp, clock)
+    _tick(disp, clock)
+    assert _readiness(disp)["state"] == "creating"
+    bk.fail_create, bk.fail_list = None, True                       # elenco illeggibile: si riprova nella finestra
+    _tick(disp, clock)
+    assert _readiness(disp)["state"] == "creating"                  # finestra dal via libera, non dall'attesa
+    bk.fail_list = False
+    _tick(disp, clock)
+    job = _readiness(disp)
+    assert job["state"] == "dispatched" and job["build_number"] == 1
+    assert not [c for c in pub.final() if c[3] == "pr-merge-readiness"]
+
+
+def test_readiness_without_wait_is_unchanged(env):
+    disp, bk, _, _ = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    assert len(bk.builds["pr-merge-readiness"]) == 1                # opzione A spenta: avvio immediato
+    assert not [r for r in bk.gh.requests if "/commits/" in r[1]]
+
+
+def test_checks_gate_latest_status_wins_and_malformed_data_is_refused():
+    pending, seen = td.checks_gate([_run("a")], [_st("x", "success"), _st("x", "pending")])
+    assert pending == [] and seen == 2
+    pending, _ = td.checks_gate([], [_st("x", "pending"), _st("x", "success")])
+    assert pending == ["x"]
+    for runs, statuses in ([{"name": 1, "status": "completed"}], []), ([], [{"context": "x", "state": "weird"}]), \
+            ("x", []), ([], None), ([{"name": "a"}], []):
+        with pytest.raises(td.ApiError):
+            td.checks_gate(runs, statuses)
+
+
+def test_commit_check_paths_are_allowed_only_for_a_full_sha():
+    td.GitHub.check_url(f"https://api.github.com/repos/{REPO}/commits/{HEAD}/check-runs?filter=latest")
+    td.GitHub.check_url(f"https://api.github.com/repos/{REPO}/commits/{HEAD}/statuses?per_page=100")
+    for bad in (f"/repos/{REPO}/commits/main/check-runs", f"/repos/{REPO}/commits/{HEAD}/comments",
+                f"/repos/{REPO}/commits/{HEAD}", f"/repos/other/repo/commits/{HEAD}/statuses",
+                f"/repos/{REPO}/commits/{HEAD.upper()}/statuses"):
+        with pytest.raises(td.ApiError):
+            td.GitHub.check_url(f"https://api.github.com{bad}")
+
+
+def test_store_migration_adds_the_wait_columns(tmp_path):
+    import sqlite3
+    path = str(tmp_path / "old.sqlite3")
+    db = sqlite3.connect(path)
+    db.executescript("""
+CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, delivery_id TEXT NOT NULL, event TEXT NOT NULL,
+  pr INTEGER NOT NULL, head_sha TEXT NOT NULL, guard TEXT NOT NULL, state TEXT NOT NULL,
+  superseded INTEGER NOT NULL DEFAULT 0, build_number INTEGER, build_url TEXT, outcome TEXT, description TEXT,
+  created_at REAL NOT NULL, dispatched_at REAL, updated_at REAL NOT NULL);
+""")
+    db.commit()
+    db.close()
+    store = td.Store(path)
+    try:
+        cols = {r[1] for r in store._db.execute("PRAGMA table_info(jobs)")}
+        assert {"gate_seen", "gate_stable", "released_at"} <= cols
+    finally:
+        store.close()

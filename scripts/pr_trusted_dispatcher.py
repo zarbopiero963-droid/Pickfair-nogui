@@ -92,6 +92,9 @@ _RERUN_RE = re.compile(r"/pf-trusted-rerun ([0-9a-f]{40})", re.ASCII)
 _LINK_NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
 _GITHUB_PATHS = (f"/repos/{TRUSTED_REPO}/pulls", f"/repos/{TRUSTED_REPO}/issues/comments")
 # permesso attuale di un login sul repository fidato (solo per i login in allowlist dei rerun)
+# check run e status di UN commit (solo per l'attesa della readiness, #562 opzione A): sola lettura, SHA di 40 hex
+_COMMIT_CHECKS_PATH_RE = re.compile(rf"/repos/{re.escape(TRUSTED_REPO)}/commits/[0-9a-f]{{40}}/(check-runs|statuses)",
+                                    re.ASCII)
 _PERMISSION_PATH_RE = re.compile(rf"/repos/{re.escape(TRUSTED_REPO)}/collaborators/({_LOGIN_RE.pattern})/permission",
                                  re.ASCII)
 
@@ -156,6 +159,7 @@ CONFIG_SCHEMA_KEYS = {
     "poll_interval_seconds": None,
     "build_timeout_seconds": set(GUARDS),
     "http_timeout_seconds": None,
+    "readiness_wait": {"enabled", "max_seconds", "settle_polls", "min_delay_seconds"},
 }
 
 
@@ -175,6 +179,11 @@ class Config:
     poll_interval_seconds: int
     build_timeout_seconds: dict
     http_timeout_seconds: int
+    # readiness non bloccante (#562 opzione A): la build parte solo quando gli altri check dell'head sono chiusi
+    readiness_wait_enabled: bool = False
+    readiness_wait_max_seconds: int = 7200
+    readiness_wait_settle_polls: int = 2
+    readiness_wait_min_delay_seconds: int = 120
 
 
 def _is_int(value: Any) -> bool:
@@ -261,6 +270,15 @@ def validate_config(raw: Any) -> Config:
     http_timeout = raw["http_timeout_seconds"]
     if not _is_int(http_timeout) or not 5 <= http_timeout <= 120:
         problems.append("http_timeout_seconds: intero 5..120")
+    wait = raw["readiness_wait"]
+    if not isinstance(wait["enabled"], bool):
+        problems.append("readiness_wait.enabled: booleano true/false")
+    if not _is_int(wait["max_seconds"]) or not 600 <= wait["max_seconds"] <= 6 * 3600:
+        problems.append("readiness_wait.max_seconds: intero 600..21600")
+    if not _is_int(wait["settle_polls"]) or not 1 <= wait["settle_polls"] <= 10:
+        problems.append("readiness_wait.settle_polls: intero 1..10")
+    if not _is_int(wait["min_delay_seconds"]) or not 0 <= wait["min_delay_seconds"] <= 3600:
+        problems.append("readiness_wait.min_delay_seconds: intero 0..3600")
     if problems:
         raise ConfigError(problems)
     return Config(
@@ -269,7 +287,9 @@ def validate_config(raw: Any) -> Config:
         result_artifacts=dict(artifacts), artifact_download_hosts=tuple(hosts),
         publisher_command=tuple(raw["publisher"]["command"]), publisher_timeout_seconds=pub_timeout,
         state_db=raw["state_db"], retention_hours=retention, poll_interval_seconds=poll,
-        build_timeout_seconds=dict(timeouts), http_timeout_seconds=http_timeout)
+        build_timeout_seconds=dict(timeouts), http_timeout_seconds=http_timeout,
+        readiness_wait_enabled=wait["enabled"], readiness_wait_max_seconds=wait["max_seconds"],
+        readiness_wait_settle_polls=wait["settle_polls"], readiness_wait_min_delay_seconds=wait["min_delay_seconds"])
 
 
 def load_config(path: Optional[str]) -> Config:
@@ -492,7 +512,8 @@ class GitHub:
         except ValueError:
             raise ApiError("URL GitHub malformata") from None
         if parts.scheme != "https" or parts.netloc != "api.github.com" \
-                or (parts.path not in _GITHUB_PATHS and not _PERMISSION_PATH_RE.fullmatch(parts.path)):
+                or (parts.path not in _GITHUB_PATHS and not _PERMISSION_PATH_RE.fullmatch(parts.path)
+                    and not _COMMIT_CHECKS_PATH_RE.fullmatch(parts.path)):
             raise ApiError(f"URL GitHub non ammessa: {parts.path}")
 
     def _rate_limit_until(self, headers: Mapping[str, str]) -> float:
@@ -529,17 +550,27 @@ class GitHub:
         except (ValueError, RecursionError):
             raise ApiError("risposta GitHub non JSON") from None
 
-    def get_all(self, path: str, params: Mapping[str, str]) -> list:
+    def get_all(self, path: str, params: Mapping[str, str], key: Optional[str] = None) -> list:
+        """Tutte le pagine. Con `key` ogni pagina e' un oggetto `{"total_count": n, key: [...]}` (check run): il
+        totale deve restare lo stesso fra le pagine e coincidere con gli elementi letti."""
         url: Optional[str] = f"{GITHUB_API}{path}?{urllib.parse.urlencode(params)}"
         items: list = []
         seen: set = set()
+        total: Optional[int] = None
         for _ in range(MAX_PAGES):
             h, page = self._request(url)
+            if key is not None:
+                if not isinstance(page, dict) or not _is_int(page.get("total_count")) \
+                        or (total is not None and page["total_count"] != total):
+                    raise ApiError("pagina GitHub con totale fuori formato o cambiato durante la lettura")
+                total, page = page["total_count"], page.get(key)
             if not isinstance(page, list):
                 raise ApiError("pagina GitHub non e' un elenco")
             items.extend(page)
             m = _LINK_NEXT_RE.search(h.get("link", ""))
             if m is None:
+                if total is not None and len(items) != total:
+                    raise ApiError("elenco GitHub incompleto rispetto a total_count")
                 return items
             url = m.group(1)
             if url in seen:
@@ -570,6 +601,20 @@ class GitHub:
         if perm not in REPO_PERMISSIONS or not isinstance(who, str) or who.lower() != login.lower():
             raise ApiError("permesso GitHub fuori formato")
         return perm
+
+    def check_runs(self, sha: str) -> list:
+        """Check run dell'ultimo tentativo di ogni job (`filter=latest`) sul commit, tutte le pagine, numero letto
+        uguale a `total_count`. Elenco incompleto o malformato => ApiError."""
+        if not _SHA_RE.fullmatch(sha):
+            raise ApiError("SHA non valido")
+        return self.get_all(f"/repos/{TRUSTED_REPO}/commits/{sha}/check-runs", {"filter": "latest", "per_page": "100"},
+                            key="check_runs")
+
+    def statuses(self, sha: str) -> list:
+        """Status del commit, dal piu' recente (ordine dell'API), tutte le pagine."""
+        if not _SHA_RE.fullmatch(sha):
+            raise ApiError("SHA non valido")
+        return self.get_all(f"/repos/{TRUSTED_REPO}/commits/{sha}/statuses", {"per_page": "100"})
 
 
 # `author_association` non certifica i permessi attuali (MEMBER = membro dell'organizzazione, COLLABORATOR anche in
@@ -661,6 +706,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   pending_published INTEGER NOT NULL DEFAULT 0,
   pending_cancels TEXT NOT NULL DEFAULT '[]',
   final_published INTEGER NOT NULL DEFAULT 0,
+  gate_seen INTEGER NOT NULL DEFAULT -1,
+  gate_stable INTEGER NOT NULL DEFAULT 0,
+  released_at REAL,
   updated_at REAL NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS jobs_active_current ON jobs(pr, head_sha, guard)
@@ -673,6 +721,10 @@ MIGRATION_COLUMNS = (
     ("pending_published", "INTEGER NOT NULL DEFAULT 0"),
     ("pending_cancels", "TEXT NOT NULL DEFAULT '[]'"),
     ("final_published", "INTEGER NOT NULL DEFAULT 0"),
+    # attesa della readiness (#562 opzione A): check osservati, giri stabili consecutivi, istante del via libera
+    ("gate_seen", "INTEGER NOT NULL DEFAULT -1"),
+    ("gate_stable", "INTEGER NOT NULL DEFAULT 0"),
+    ("released_at", "REAL"),
 )
 
 
@@ -909,7 +961,8 @@ class Store:
     def update_job(self, job_id: int, now: float, *, expected_state: Optional[str] = None, **fields: Any) -> bool:
         """Con `expected_state` la modifica avviene solo se il job e' ancora in quello stato (True se applicata)."""
         allowed = {"state", "build_number", "build_url", "outcome", "description", "dispatched_at",
-                   "publishing_since", "pending_published", "pending_cancels", "final_published"}
+                   "publishing_since", "pending_published", "pending_cancels", "final_published", "gate_seen",
+                   "gate_stable", "released_at"}
         if not fields or set(fields) - allowed:
             raise ValueError("campi non ammessi")
         cols = ", ".join(f"{k} = ?" for k in fields)
@@ -1122,6 +1175,46 @@ def decide_outcome(build: Mapping[str, Any], artifact: Optional[bytes], job: Map
     return "error", f"build {state} incoerente con verdetto {verdict!r}"
 
 
+#: i self-check della readiness non si attendono (dipendenza circolare): lo status della lane `pr-merge-readiness`
+#: e il check run Actions «Merge readiness», come `is_self_check` di `scripts/pr_flow_automation.py`
+READINESS_SELF_STATUS_CONTEXTS = frozenset({GUARDS["readiness"]["context"]})
+STATUS_STATES = frozenset({"pending", "success", "failure", "error"})
+
+
+def _is_readiness_self_check(name: str) -> bool:
+    return "merge readiness" in name.lower()
+
+
+def checks_gate(runs: Any, statuses: Any) -> tuple[list, int]:
+    """(check ancora aperti, check osservati) sull'head, esclusi i self-check della readiness. Un check run conta
+    aperto finche' non e' `completed`; uno status finche' il suo ultimo valore (l'API li restituisce dal piu' recente)
+    e' `pending`. L'esito (success/failure) non conta qui: lo giudica la readiness. Dati fuori formato => ApiError."""
+    if not isinstance(runs, list) or not isinstance(statuses, list):
+        raise ApiError("check o status fuori formato")
+    pending: list = []
+    seen = 0
+    for run in runs:
+        if not isinstance(run, dict) or not isinstance(run.get("name"), str) or not isinstance(run.get("status"), str):
+            raise ApiError("check run fuori formato")
+        if _is_readiness_self_check(run["name"]):
+            continue
+        seen += 1
+        if run["status"] != "completed":
+            pending.append(run["name"])
+    latest: dict = {}
+    for st in statuses:
+        if not isinstance(st, dict) or not isinstance(st.get("context"), str) or st.get("state") not in STATUS_STATES:
+            raise ApiError("status fuori formato")
+        latest.setdefault(st["context"], st["state"])
+    for context, state in latest.items():
+        if context in READINESS_SELF_STATUS_CONTEXTS:
+            continue
+        seen += 1
+        if state == "pending":
+            pending.append(context)
+    return sorted(pending), seen
+
+
 # contratto del publisher a socket (Grok t215u): 1..140 caratteri ASCII stampabili, senza ` $ \
 _DESCRIPTION_FORBIDDEN = frozenset("`$\\")
 _DESCRIPTION_RE = re.compile(r"[\x20-\x23\x25-\x5b\x5d-\x5f\x61-\x7e]{1,%d}" % DESCRIPTION_MAX)
@@ -1295,10 +1388,13 @@ class Dispatcher:
                     return self._set(job, state="publish_failed", publishing_since=self.clock())
                 log(f"job {job['id']}: annullamento mai confermato {job.get('pending_cancels')}: da verificare a mano")
                 return self._set(job, state=self._after_cancels(job), pending_cancels="[]")
-            started = job.get("dispatched_at") or job["created_at"]
+            started = job.get("dispatched_at") or self._started(job)
             if job["state"] not in ("queued", "creating", "dispatched"):
                 return
-            if self.clock() - started <= self.cfg.build_timeout_seconds[job["guard"]]:
+            window = self.cfg.build_timeout_seconds[job["guard"]]
+            if job["state"] == "queued" and self._waits_for_checks(job):
+                window = max(window, self.cfg.readiness_wait_max_seconds)     # l'attesa dei check ha la sua finestra
+            if self.clock() - started <= window:
                 return
             if job.get("build_number") is not None:
                 self._cancel_or_remember(job, [job["build_number"]])
@@ -1320,6 +1416,8 @@ class Dispatcher:
             return self._supersede(job)
         state = job["state"]
         if state == "queued":
+            if self._waits_for_checks(job):
+                return self._await_checks(job)
             return self._create(job)
         if state == "creating":
             return self._recover_creation(job)
@@ -1328,6 +1426,50 @@ class Dispatcher:
         if state == "publishing":
             return self._publish_final(job)
         return None
+
+    def _waits_for_checks(self, job: dict) -> bool:
+        return job["guard"] == "readiness" and self.cfg.readiness_wait_enabled and not job.get("released_at")
+
+    @staticmethod
+    def _started(job: dict) -> float:
+        """Inizio della finestra della build: il via libera dell'attesa della readiness, altrimenti la creazione."""
+        return job.get("released_at") or job["created_at"]
+
+    def _await_checks(self, job: dict) -> None:
+        """Readiness non bloccante (#562 opzione A): la build della readiness si crea solo quando gli altri check
+        dell'head sono chiusi da `settle_polls` giri consecutivi, con lo stesso numero di check e dopo
+        `min_delay_seconds`. L'attesa la tiene il dispatcher, non un agent Buildkite. Oltre `max_seconds` => `error`,
+        mai PASS. Un head nuovo sostituisce il job (`apply_poll`), quindi l'attesa vecchia non avvia nulla."""
+        now = self.clock()
+        waited = now - job["created_at"]
+        if waited > self.cfg.readiness_wait_max_seconds:
+            return self._fail(job, "error", f"attesa dei check oltre {self.cfg.readiness_wait_max_seconds} s: "
+                                            "readiness non avviata")
+        if now < self.rate_limited_until:
+            return None
+        if not job.get("pending_published"):
+            # `pending` subito: un vecchio esito sullo stesso SHA (rerun, riapertura) non resta visibile nell'attesa
+            url = f"{BUILDKITE_WEB}/{self.cfg.organization}/{GUARDS[job['guard']]['pipeline']}"
+            if self.publish(job["pr"], job["head_sha"], "pending", GUARDS[job["guard"]]["context"], url,
+                            "in attesa degli altri check") == 0:
+                self._set(job, pending_published=1)
+        try:
+            pending, seen = checks_gate(self.gh.check_runs(job["head_sha"]), self.gh.statuses(job["head_sha"]))
+        except RateLimited as exc:
+            self.rate_limited_until = exc.until
+            log(f"job {job['id']}: lettura dei check rinviata: {exc}")
+            return None
+        except (ApiError, TransportError, CredentialError) as exc:
+            log(f"job {job['id']}: check dell'head non leggibili ({exc}): attesa invariata")
+            return None
+        if pending or seen == 0 or waited < self.cfg.readiness_wait_min_delay_seconds:
+            return self._set(job, gate_seen=-1, gate_stable=0)
+        stable = job["gate_stable"] + 1 if seen == job["gate_seen"] else 1
+        if stable < self.cfg.readiness_wait_settle_polls:
+            return self._set(job, gate_seen=seen, gate_stable=stable)
+        self._set(job, gate_seen=seen, gate_stable=stable, released_at=now)
+        log(f"job {job['id']}: {seen} check chiusi sull'head dopo {int(waited)} s: avvio della readiness")
+        return self._create(job)
 
     def _dry_run(self, job: dict) -> None:
         """DRY-RUN: il job e' valutato fino al punto in cui scriverebbe fuori (build, annullamenti, status) e chiuso
@@ -1356,7 +1498,7 @@ class Dispatcher:
         if job["state"] == "creating" and not numbers:
             # creazione ambigua: la build puo' esistere anche senza numero, e comparire in ritardo; si cerca e si
             # annulla, e un elenco vuoto non basta a ritirare il job prima della finestra (Codex P2 su #569)
-            within = self.clock() - job["created_at"] <= self.cfg.build_timeout_seconds[job["guard"]]
+            within = self.clock() - self._started(job) <= self.cfg.build_timeout_seconds[job["guard"]]
             try:
                 numbers = [b["number"] for b in self._builds_for(job) if _is_int(b.get("number"))]
             except (ApiError, TransportError) as exc:
@@ -1374,7 +1516,7 @@ class Dispatcher:
                 log(f"job {job['id']}: annullamento build {number} non confermato: {exc}")
         # annullamento non confermato: il job resta attivo e si ritenta al giro dopo (rilievo Codex P2 su #569),
         # fino alla finestra del timeout della build; poi si ritira, dichiarato nei log
-        started = job.get("dispatched_at") or job["created_at"]          # adottata tardi: finestra dall'adozione
+        started = job.get("dispatched_at") or self._started(job)        # adottata tardi: finestra dall'adozione
         if unconfirmed and self.clock() - started <= self.cfg.build_timeout_seconds[job["guard"]]:
             return None
         if unconfirmed:
@@ -1386,7 +1528,7 @@ class Dispatcher:
         return None
 
     def _builds_for(self, job: dict) -> list:
-        created_from = datetime.fromtimestamp(job["created_at"] - 300, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        created_from = datetime.fromtimestamp(self._started(job) - 300, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         expected = build_env(job)
         return [b for b in self.bk.list_builds(job["guard"], created_from)
                 if isinstance(b, dict) and b.get("env") == expected]
@@ -1491,14 +1633,14 @@ class Dispatcher:
         try:
             found = self._builds_for(job)
         except (ApiError, TransportError) as exc:
-            if self.clock() - job["created_at"] > self.cfg.build_timeout_seconds[job["guard"]]:
+            if self.clock() - self._started(job) > self.cfg.build_timeout_seconds[job["guard"]]:
                 return self._fail(job, "error", f"creazione build non verificabile: {exc}")
             return None
         if len(found) == 1:
             return self._adopt(job, found[0])
         if not found:
             # una build puo' comparire in ritardo: l'assenza vale solo scaduta la finestra della build
-            if self.clock() - job["created_at"] <= self.cfg.build_timeout_seconds[job["guard"]]:
+            if self.clock() - self._started(job) <= self.cfg.build_timeout_seconds[job["guard"]]:
                 return None
             return self._fail(job, "error", "creazione build non confermata")
         self._cancel_or_remember(job, [b.get("number") for b in found])
@@ -1511,7 +1653,7 @@ class Dispatcher:
         except (ApiError, TransportError) as exc:
             build = None
             log(f"job {job['id']}: lettura build fallita: {exc}")
-        timed_out = self.clock() - (job["dispatched_at"] or job["created_at"]) > self.cfg.build_timeout_seconds[guard]
+        timed_out = self.clock() - (job["dispatched_at"] or self._started(job)) > self.cfg.build_timeout_seconds[guard]
         if build is not None and not build_matches_job(build, guard, job, self.cfg.organization):
             self._cancel_quietly(job)
             return self._fail(job, "error", "build letta non corrisponde alla richiesta")

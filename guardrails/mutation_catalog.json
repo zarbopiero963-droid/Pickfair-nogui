@@ -4668,7 +4668,7 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "            if self.clock() - job[\"created_at\"] <= self.cfg.build_timeout_seconds[job[\"guard\"]]:\n                return None\n            return self._fail(job, \"error\", \"creazione build non confermata\")",
+      "original": "            if self.clock() - self._started(job) <= self.cfg.build_timeout_seconds[job[\"guard\"]]:\n                return None\n            return self._fail(job, \"error\", \"creazione build non confermata\")",
       "mutated": "            return self._fail(job, \"error\", \"creazione build non confermata\")",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
@@ -4788,7 +4788,7 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "        started = job.get(\"dispatched_at\") or job[\"created_at\"]          # adottata tardi: finestra dall'adozione",
+      "original": "        started = job.get(\"dispatched_at\") or self._started(job)        # adottata tardi: finestra dall'adozione",
       "mutated": "        started = job[\"created_at\"]",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
@@ -5028,7 +5028,7 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "                or (parts.path not in _GITHUB_PATHS and not _PERMISSION_PATH_RE.fullmatch(parts.path)):",
+      "original": "                or (parts.path not in _GITHUB_PATHS and not _PERMISSION_PATH_RE.fullmatch(parts.path)\n                    and not _COMMIT_CHECKS_PATH_RE.fullmatch(parts.path)):",
       "mutated": "                or False:",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
@@ -5502,6 +5502,150 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 polling: build di una PR chiusa lasciate girare e pubblicare."
+    },
+    {
+      "id": "td_wait_open_checks_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if pending or seen == 0 or waited < self.cfg.readiness_wait_min_delay_seconds:",
+      "mutated": "        if seen == 0 or waited < self.cfg.readiness_wait_min_delay_seconds:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 opzione A: readiness avviata con check ancora aperti."
+    },
+    {
+      "id": "td_wait_without_checks_released",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if pending or seen == 0 or waited < self.cfg.readiness_wait_min_delay_seconds:",
+      "mutated": "        if pending or waited < self.cfg.readiness_wait_min_delay_seconds:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 opzione A: readiness avviata senza alcun check registrato."
+    },
+    {
+      "id": "td_wait_min_delay_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if pending or seen == 0 or waited < self.cfg.readiness_wait_min_delay_seconds:",
+      "mutated": "        if pending or seen == 0:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 opzione A: readiness avviata prima che i check si registrino."
+    },
+    {
+      "id": "td_wait_no_maximum",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if waited > self.cfg.readiness_wait_max_seconds:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 opzione A: attesa infinita invece di error."
+    },
+    {
+      "id": "td_wait_self_check_awaited",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if _is_readiness_self_check(run[\"name\"]):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 opzione A: la readiness attende il proprio check run Actions (dipendenza circolare)."
+    },
+    {
+      "id": "td_wait_self_status_awaited",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if context in READINESS_SELF_STATUS_CONTEXTS:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 opzione A: la readiness attende il proprio status (dipendenza circolare)."
+    },
+    {
+      "id": "td_wait_oldest_status_wins",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        latest.setdefault(st[\"context\"], st[\"state\"])",
+      "mutated": "        latest[st[\"context\"]] = st[\"state\"]",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 opzione A: conta lo status piu' vecchio invece dell'ultimo."
+    },
+    {
+      "id": "td_wait_no_stability",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if stable < self.cfg.readiness_wait_settle_polls:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 opzione A: via libera al primo giro senza stabilita'."
+    },
+    {
+      "id": "td_wait_stability_not_reset",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        stable = job[\"gate_stable\"] + 1 if seen == job[\"gate_seen\"] else 1",
+      "mutated": "        stable = job[\"gate_stable\"] + 1",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 opzione A: rollup che cresce non azzera la stabilita'."
+    },
+    {
+      "id": "td_wait_disabled",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if self._waits_for_checks(job):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 opzione A: opzione A abilitata ma readiness avviata subito."
+    },
+    {
+      "id": "td_wait_window_from_creation",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        return job.get(\"released_at\") or job[\"created_at\"]",
+      "mutated": "        return job[\"created_at\"]",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 opzione A: finestra della build contata dall'inizio dell'attesa."
+    },
+    {
+      "id": "td_wait_total_count_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                if total is not None and len(items) != total:",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 opzione A: elenco dei check run incompleto accettato."
     }
   ]
 }
