@@ -3023,6 +3023,19 @@
         "docs/ci_trusted_lane.md"
       ],
       "max_files": 3
+    },
+    "trusted-dispatcher-562-readiness-wait": {
+      "description": "PF-562 OWNER GO opzione A (mandato owner 28/10/2026 'Readiness non bloccante'): il dispatcher trusted avvia la readiness solo quando gli altri check dell'head sono chiusi (check-runs e statuses del commit, esclusi i self-check), attesa massima configurabile 7200 s gestita dal dispatcher, timeout => error, head nuovo => attesa sostituita, persistenza e recovery. Chiave obbligatoria readiness_wait. Test RED/GREEN, mutazioni, docs, CHANGELOG. File a merge owner (scripts/pr_*.py).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/trusted_dispatcher.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/pr_trusted_dispatcher.py",
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "max_files": 6
     }
   }
 }

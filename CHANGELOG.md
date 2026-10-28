@@ -9,6 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 — readiness non bloccante (`scripts/pr_trusted_dispatcher.py`, OWNER GO opzione A):**
+  - con la nuova chiave obbligatoria `readiness_wait` il dispatcher crea la build `pr-merge-readiness` solo quando
+    gli altri check dell'head sono chiusi da `settle_polls` giri (letti da `commits/<sha>/check-runs` e `…/statuses`),
+    senza attendere i propri self-check;
+  - durante l'attesa nessun agent Buildkite è occupato: la readiness lanciata al push, con 300 s di attesa, falliva
+    su ogni PR la cui CI durava di più (#575, build #16);
+  - oltre `max_seconds` (7200) ⇒ `error`; un head nuovo sostituisce l'attesa; lo stato dell'attesa sopravvive al
+    riavvio.
+
+  Test RED→GREEN, 12 mutazioni nuove (gate del dispatcher 102/102).
 - **#562 — documentazione della lane trusted riallineata (`docs/ci_trusted_lane.md`):**
   - il token GitHub della lane è un token di installazione dell'App `pickfair-trusted-status`, in sola lettura, scritto
     in tmpfs da `pf-lane-token-mint.service` e rinnovato da `pf-lane-token-refresh.timer`; prima il documento

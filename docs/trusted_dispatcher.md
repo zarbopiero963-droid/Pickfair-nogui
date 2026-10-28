@@ -155,7 +155,8 @@ Le chiamate HTTP non seguono i redirect (`_NoRedirect`), usano solo `https://` e
   "retention_hours": 168,
   "poll_interval_seconds": 60,
   "build_timeout_seconds": {"overlap": 600, "readiness": 900},
-  "http_timeout_seconds": 30
+  "http_timeout_seconds": 30,
+  "readiness_wait": {"enabled": true, "max_seconds": 7200, "settle_polls": 2, "min_delay_seconds": 120}
 }
 ```
 
@@ -185,6 +186,8 @@ Vincoli:
 - `publisher.timeout_seconds` 5..300;
 - `build_timeout_seconds.*` 60..21600;
 - `http_timeout_seconds` 5..120;
+- `readiness_wait.enabled` booleano esplicito; `max_seconds` 600..21600; `settle_polls` 1..10;
+  `min_delay_seconds` 0..3600. Senza `readiness_wait` la configurazione è `NOT CONFIGURED`;
 - `result_artifacts.<guard>` relativo e con nome `<guard>.json`;
 - host senza caratteri jolly.
 
@@ -215,6 +218,35 @@ Comandi:
     ricrea i job (dedupe). Per ripetere la prova da zero, rimuoverlo prima dell'avvio;
 - `jobs --config F` e `reruns --config F`: consultazione in sola lettura degli ultimi job e dei comandi di rerun.
 
+## Readiness non bloccante (#562, OWNER GO opzione A)
+
+Con `readiness_wait.enabled: true` il job `readiness` di una transizione o di un rerun **non crea subito la build**.
+Resta `queued` nell'archivio e il dispatcher, a ogni giro, legge i check run (`filter=latest`) e gli status
+dell'head. Crea la build della readiness solo quando valgono tutte queste condizioni:
+- nessun check run è aperto (`status` diverso da `completed`) e nessuno status ha come ultimo valore `pending`;
+- c'è almeno un check;
+- il numero dei check è rimasto uguale per `settle_polls` giri consecutivi;
+- sono passati almeno `min_delay_seconds` dalla transizione, così i workflow fanno in tempo a registrarsi.
+
+L'attesa la tiene il dispatcher: nessun agent Buildkite resta occupato. Per questo la pipeline può restare a 300 s di
+attesa interna e 10 minuti di timeout.
+
+| Regola | Dove |
+|---|---|
+| Non si attendono i self-check della readiness: lo status `pr-merge-readiness` della lane e il check run Actions «Merge readiness», come `is_self_check` di `scripts/pr_flow_automation.py`. Niente dipendenza circolare | `checks_gate`, `READINESS_SELF_STATUS_CONTEXTS` |
+| Si attendono tutti gli altri: workflow Actions, review Sol/Grok/Codex, `overlap-check` della lane, `full-suite` se presente. L'esito non conta: un check `failure` rilascia la readiness, che lo giudica e dà FAIL. Il gate non dichiara mai PASS | `checks_gate` |
+| `pending` subito, «in attesa degli altri check»: un vecchio esito sullo stesso SHA non resta visibile | `_await_checks` |
+| Oltre `max_seconds` (7200) senza via libera ⇒ `error` «attesa dei check oltre … s», nessuna build | `_await_checks` |
+| Check o status illeggibili, `total_count` diverso dagli elementi, rate limit ⇒ nessun via libera, si ritenta; resta valido il limite di `max_seconds` | `GitHub.get_all(key=…)`, `checks_gate` |
+| Head nuovo ⇒ il job in attesa è sostituito come gli altri: nessuna build per il vecchio head, nuova attesa sul nuovo | `Store.apply_poll` |
+| Riavvio ⇒ stato dell'attesa persistente (`gate_seen`, `gate_stable`, `released_at`), nessun doppione | schema `jobs` |
+| Dopo il via libera la finestra della build (riconciliazione, timeout) parte da `released_at`, non dall'inizio dell'attesa | `_started` |
+
+**Permessi del token del dispatcher (Grok).** Le letture nuove sono `GET /repos/…/commits/<sha40>/check-runs` e
+`…/statuses`: il client le ammette solo per uno SHA di 40 esadecimali del repository fidato. Il token del dispatcher
+deve quindi avere, in sola lettura, anche **Checks** e **Commit statuses**. Senza, le letture falliscono, la
+readiness resta in attesa e allo scadere dà `error`: è fail-closed.
+
 ## Punti aperti: NOT CONFIGURED e da decidere
 
 | # | Punto | Stato | Cosa serve |
@@ -224,7 +256,7 @@ Comandi:
 | 3 | Artifact | percorsi noti, host NOT CONFIGURED | `result_artifacts` = default `.trusted-guard/<guard>.json`; `artifact_download_hosts` va fissato sull'host reale del download (redirect di Buildkite) al collaudo |
 | 4 | Publisher | **pronto in DRY-RUN** (Grok t215u, 35/35 test) | `publisher.command` = `pf-status-publish-client`; pubblicazione reale solo nella finestra di collaudo autorizzata dall'owner |
 | 9 | Token API Buildkite | **rischio residuo registrato** (decisione owner PF-562 final integration) | Token esistente dell'utente admin, scope `read_builds`/`write_builds`/`read_artifacts`, IP `45.14.184.188/32`, scadenza esplicita, root 0600 + `LoadCredential`. Buildkite non lo limita alle pipeline: se trapelasse potrebbe creare o annullare build e leggere artifact di tutta l'organizzazione. La difesa applicativa è `GUARDS`: nessun input (PR, commento, configurazione) sceglie pipeline o comandi |
-| 5 | Tempi della readiness | da decidere (Grok) | Avviata sul push, prima che finiscano le review Sol/Grok, la readiness è quasi sempre FAIL; la si può rilanciare con il rerun quando i check sono chiusi |
+| 5 | Tempi della readiness | **deciso** (OWNER GO opzione A) | Readiness non bloccante: il dispatcher la avvia solo a check chiusi (sezione «Readiness non bloccante»); serve `readiness_wait` in configurazione e il token del dispatcher con Checks e Commit statuses in lettura |
 | 6 | Allowlist dei rerun | decisa (OWNER GO PF-570), da configurare sul VPS | `rerun.allowed_logins: ["zarbopiero963-droid"]`; serve anche il permesso attuale di scrittura letto dall'API |
 | 7 | Coda trusted in pausa | operativo | Build `scheduled` fino al timeout, poi `error`: nessun PASS |
 | 8 | Valori di `PF_EVENT` | da verificare (Grok) | Il gate pre-command deve ammettere `ready_for_review` e `manual`; se li rifiuta la build fallisce e lo status è `failure`/`error`, mai PASS |
