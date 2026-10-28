@@ -154,7 +154,11 @@ chiusi, oppure con un timeout ≥ 115 minuti e `PF_READINESS_WAIT_SECONDS=6600`,
 
 ## Requisiti infrastrutturali (Grok)
 
-- `python3` ≥ 3.10, `gh` ≥ 2.40 e `buildkite-agent` (upload dell'artifact del risultato) nel `PATH` dell'agent trusted. Uscita di rete verso `api.github.com` (REST e
+- `python3` ≥ 3.10, `gh` ≥ **2.48** e `buildkite-agent` (upload dell'artifact del risultato) nel `PATH` dell'agent trusted. La
+  readiness legge i commenti delle review con `gh api … --paginate --slurp`. `--slurp` esiste solo da gh 2.48.0: con
+  2.45.0 e 2.47.0 il comando esce subito con «unknown flag: --slurp», prima di qualsiasi richiesta. Il gate Sol/Grok
+  diventa allora `UNKNOWN` e la readiness `failure` (#575, build `pr-merge-readiness` #17). È fail-closed, ma su
+  ogni PR. Il vecchio requisito «≥ 2.40» era sbagliato. Uscita di rete verso `api.github.com` (REST e
   GraphQL).
 - Mappatura dal trigger nel gate pre-command: `PF_PR_NUMBER` e `PF_PR_HEAD_SHA` dello stesso evento.
 - Token GitHub (D3 della #562): non c'è più un file statico in `LoadCredential`.

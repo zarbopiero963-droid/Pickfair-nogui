@@ -3015,7 +3015,7 @@
       "max_files": 6
     },
     "trusted-lane-562-docs-d3-runbook": {
-      "description": "PF-562 PR-C1 (mandato owner M1/M2 e autonomia Claude §11, 28/10/2026; richiesta Grok REQ-007 #573 c.6465432569): solo documentazione. Deriva D3 in docs/ci_trusted_lane.md (token di installazione App read-only in tmpfs, mint/refresh), runbook di emergenza senza VPS (§5: ripiego GHA, nessun failover automatico), limite NOT VERIFIED sostituito dal riferimento alla certificazione E2E. CHANGELOG. Nessun codice.",
+      "description": "PF-562 PR-C1 (mandato owner M1/M2 e autonomia Claude §11, 28/10/2026; richiesta Grok REQ-007 #573 c.6465432569): solo documentazione. Deriva D3 in docs/ci_trusted_lane.md (token di installazione App read-only in tmpfs, mint/refresh), runbook di emergenza senza VPS (§5: ripiego GHA, nessun failover automatico), limite NOT VERIFIED sostituito dal riferimento alla certificazione E2E. CHANGELOG. Nessun codice. Estensione dichiarata (stesso file): requisito gh >= 2.48 (gh api --slurp), causa del gate UNKNOWN sulla lane (#575 build #17).",
       "allow_tests": false,
       "files": [
         ".guardrails/allowed_scope.json",

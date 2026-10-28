@@ -16,6 +16,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - aggiunto il runbook di emergenza senza VPS (§5): ripiego su GitHub Actions, nessun failover automatico, e nessuno
     status pubblicato a mano;
   - il limite «NOT VERIFIED end-to-end» sostituito dal riferimento alla certificazione E2E.
+  - requisito della CLI corretto in `gh` ≥ 2.48: la readiness usa `gh api --paginate --slurp`, assente in 2.45/2.47
+    (gate Sol/Grok `UNKNOWN` sulla lane, #575 build #17).
 
   Nessuna modifica al codice.
 - **#562 D2: risultato del guard caricato come artifact su Buildkite (`scripts/ci/pr_overlap_guard.sh`,
