@@ -6,8 +6,8 @@
   "sha": "a20de8a6ab67688e3d7b1e657eb04144a483e8c4"
  },
  "mandate_id": "OWNER FINAL MANDATE \u2014 chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
- "next_atomic_action": "#562: pila locale e su ccr-764b0316-9r1a1d a20de8a = P0 replay a04f27c -> PR-A 2167196 (con P0 readiness prematura) -> PR-B 0911597 -> PR-C2 a20de8a; tutte TESTED (3829 passed, mutation 146/33/6/7 PASS), merge owner. Attendere RUNTIME_CERTIFIED_A_I di Grok (Test C) e GO condizionato; poi aprire UNA PR alla volta: prima P0 (a04f27c), poi PR-A, PR-B, PR-C2, riallineando i branch dopo ogni merge. FULL_SUITE_WITHIN_BUDGET PENDING (misura reale su PR-A), timeout 7200 invariato, TASKSMAX_RESOLVED. POSITIVE_E2E_PENDING. LIVE NO-GO.",
- "previous_checkpoint_sha": "d18c971a6b2179d0165a96a6e169428aeee38850",
+ "next_atomic_action": "#562 F1 RUNTIME_CERTIFIED_A_I (Grok t270, c.6476676491), POSITIVE_E2E_PENDING. GO condizionato a Claude: verificare main/SHA, riprendere da questo checkpoint, rebase, aprire UNA PR alla volta: prima P0 rerun-replay (a04f27c), poi PR-A 2167196 (49 step, percorso status full-suite, review+CI sullo SHA esatto, coordinamento Grok per readiness positiva e misura budget), poi PR-B, PR-C2. Merge owner. FULL_SUITE_WITHIN_BUDGET PENDING, max_seconds 7200 invariato, TASKSMAX_RESOLVED. LIVE NO-GO.",
+ "previous_checkpoint_sha": "6b956f5c7a9c265fb43c7ccf5193134254df59ba",
  "schema": "pf-current/1",
- "seq": 81
+ "seq": 82
 }
