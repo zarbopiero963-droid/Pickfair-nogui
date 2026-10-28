@@ -257,6 +257,60 @@ in attesa senza mai partire (fail-closed, ma inutilizzabile) e Grok ha fatto rol
 conteggio diverso lasciano l'attesa invariata, mai un via libera. Lo stesso difetto, latente, c'era su `pulls` e
 `issues/comments` oltre i 100 elementi: è corretto dalla stessa funzione.
 
+## Recovery da snapshot: identità degli intenti e deduplicazione remota (#562 P0)
+
+**Difetto (rollback T252, #562 c.6471475567).** La deduplicazione era solo locale. Il cursore `comments_since` e la
+tabella `reruns` stanno nello stesso SQLite, quindi ripristinando uno snapshot più vecchio tornano indietro insieme.
+Il dispatcher allora:
+- ha riletto il commento di rerun su #575, già mergiata, e non trovandolo in `reruns` lo ha rieseguito;
+- ha rigenerato le transizioni di #577 con gli stessi tid, perché anche `seq` era stato ripristinato;
+- ha creato build doppie (overlap #29/#30, readiness #21/#22). Il publisher le ha rifiutate perché le PR non erano
+  aperte.
+
+**Principio.** L'archivio locale non prova mai che un'operazione remota non sia avvenuta. Riavvio normale (archivio
+intatto) e ripristino di uno snapshot (archivio che ha perso eventi) sono casi distinti. Il dispatcher non li deve
+riconoscere: verifica sempre su Buildkite.
+
+| Passo | Regola | Dove |
+|---|---|---|
+| Identità dell'intento | il tid (`p<pr>-t<seq>-<sha12>` per una transizione, `p<pr>-r<comment_id>-<sha12>` per un rerun) è deterministico, viaggia nella build come `PF_DELIVERY_ID` e come metadato Buildkite `pf_intent` | `Buildkite.create_build`, `INTENT_META_KEY` |
+| Prima di creare | si cercano le build della pipeline con `meta_data[pf_intent]=<tid>`, a qualunque data, più quelle con l'env identico nella finestra (build create prima del metadato) | `Dispatcher._builds_for`, `Buildkite.list_builds_by_intent` |
+| Build trovata in corso | adottata e seguita fino all'esito: nessuna build nuova | `Dispatcher._resume_prior` |
+| Build trovata conclusa | job chiuso `done` con esito `recovered`, **senza ripubblicare**: l'esito l'aveva già pubblicato chi l'aveva creata | `_resume_prior` |
+| Più build dello stesso intento | si segue la più vecchia, le altre si annullano | `_resume_prior`, `_create` |
+| Stato remoto non verificabile (elenco illeggibile o pagina piena) | **nessuna build**. Il job resta `queued` (log `RECOVERY_UNCERTAIN`) e oltre la finestra della build diventa `error`, mai una creazione | `_create` |
+| Due istanze insieme | dopo la creazione si ricontrolla: con build doppie dello stesso intento si tiene la più vecchia e le altre si annullano | `_create` |
+| Rerun vecchio | rifiutato e registrato se il commento, per l'orario di **GitHub**, ha più di `RERUN_MAX_AGE_SECONDS` (6 h) | `record_rerun`, `_rerun_too_old` |
+| Rerun su una PR chiusa o mergiata | rifiutato se la PR manca dall'ultimo elenco delle PR aperte (`missing`), anche prima della seconda assenza che la chiude | `record_rerun` |
+
+**Limiti dichiarati (non è exactly-once).**
+- Le build create da versioni precedenti non hanno il metadato. Si riconoscono solo nella finestra temporale del job.
+  Per i rerun c'è in più il limite di 6 ore, sull'orario del commento.
+- La garanzia vale finché Buildkite conserva le build (retention dell'organizzazione). Una build cancellata dalla
+  retention non è più una prova. Per i rerun copre il limite di 6 ore; per le transizioni l'head deve essere ancora
+  quello corrente.
+- Due istanze che creano nello stesso istante possono produrre per pochi secondi due build. La seconda viene
+  annullata appena una delle due ricontrolla. Va comunque evitato di far girare due dispatcher.
+- Lo snapshot va preso con l'API di backup di SQLite, oppure a servizio fermo e con il WAL. Il ripristino non
+  richiede altre azioni: è proprio il caso coperto qui.
+
+## Readiness di SHA superati e coda trusted (#562 P1)
+
+Verifica sul codice: una readiness di uno SHA superato **non** occupa la coda trusted oltre il giro di polling che
+vede il nuovo head.
+- **In attesa** (opzione A): non ha build, quindi non c'è nessun agent da liberare. È sostituita e non avvia più nulla.
+- **Già avviata**: `Store.apply_poll` la marca sostituita e lo stesso `tick` ne annulla la build (`_supersede`),
+  mentre crea l'overlap del nuovo head.
+
+Il ritardo massimo per l'overlap del nuovo head è quindi `poll_interval_seconds` più il tempo di annullamento
+dell'agent. Lo provano `test_obsolete_readiness_build_is_cancelled_in_the_same_round_that_starts_the_new_overlap` e
+`test_waiting_obsolete_readiness_holds_no_agent_and_starts_nothing`.
+
+Una readiness **valida** di un'altra PR non si interrompe: può precedere l'overlap al massimo per la durata di una
+build della readiness (misurata 45–47 s sulle build #24–#26, Grok t267 su #562; limite `build_timeout_seconds.readiness`). Se serve ridurla, la leva è la priorità dello step di
+overlap nella pipeline Buildkite (`priority`, configurazione della UI, Grok), non una modifica del dispatcher. Non
+cambia l'ordine di nessun controllo e non introduce nessun PASS.
+
 ## Punti aperti: NOT CONFIGURED e da decidere
 
 | # | Punto | Stato | Cosa serve |

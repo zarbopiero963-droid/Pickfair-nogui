@@ -186,10 +186,16 @@ class FakeBuildkite:
         self.download_url_override: str | None = None
         self.mutate_build = None
         self.fail_cancel = False
+        self.fail_list_intent = False      # elenco per metadato illeggibile (#562 P0)
+        self.full_page_intent = False      # elenco per metadato a pagina piena: assenza non verificabile
+        self.on_create = None              # hook(pipeline, payload) prima della risposta: creazione concorrente
+        self.clock = None                  # con un Clock: `created_at` sulle build e filtro `created_from` reale
     def _new_build(self, pipeline: str, payload: dict) -> dict:
         number = len(self.builds[pipeline]) + 1
         build = {"number": number, "state": "scheduled", "branch": payload["branch"], "commit": payload["commit"],
                  "env": dict(payload["env"]), "message": payload["message"],
+                 "meta_data": dict(payload.get("meta_data") or {}),
+                 **({"created_at": td.iso(self.clock.now)} if self.clock else {}),
                  "web_url": f"https://buildkite.com/{ORG}/{pipeline}/builds/{number}"}
         self.builds[pipeline][number] = build
         return build
@@ -223,11 +229,25 @@ class FakeBuildkite:
                     return 502, {"Content-Type": "text/html"}, b"<html>502 Bad Gateway</html>"
                 code = 500 if self.fail_create == "http500" else 422
                 return code, {}, b'{"message":"no"}'
+            if self.on_create:
+                self.on_create(pipeline, payload)
             return 201, {}, json.dumps(self._new_build(pipeline, payload)).encode()
         if method == "GET" and tail.startswith("builds?"):
+            query = dict(urllib.parse.parse_qsl(tail.partition("?")[2]))
+            intent = query.get("meta_data[pf_intent]")
+            if intent is not None:
+                # l'API reale filtra per metadato: solo le build con quel `pf_intent`, a qualunque data
+                if self.fail_list_intent:
+                    raise td.TransportError("rete")
+                if self.full_page_intent:
+                    return 200, {}, json.dumps([{"number": n} for n in range(1, 101)]).encode()
+                hits = [b for b in self.builds[pipeline].values() if b.get("meta_data", {}).get("pf_intent") == intent]
+                return 200, {}, json.dumps(hits).encode()
             if self.fail_list:
                 raise td.TransportError("rete")
-            return 200, {}, json.dumps(list(self.builds[pipeline].values())).encode()
+            since = query.get("created_from", "")
+            return 200, {}, json.dumps([b for b in self.builds[pipeline].values()
+                                        if b.get("created_at", since) >= since]).encode()
         parts = tail.split("?")[0].split("/")
         number = int(parts[1])
         build = self.builds[pipeline].get(number)
@@ -1369,6 +1389,32 @@ def test_full_build_page_is_not_proof_of_absence(env):
     assert {j["state"] for j in disp.store.active_jobs()} == {"creating"} and not pub.final()
 
 
+def test_full_window_page_is_not_proof_of_absence_even_with_an_empty_intent_listing(env):
+    """Audit A8 con #562 P0: l'elenco per intento vuoto non compensa una finestra a pagina piena (una build creata
+    senza metadato, o non ancora indicizzata, puo' stare nella pagina dopo): scaduta la finestra l'esito resta
+    «non verificabile», mai «non confermata» come per un'assenza dimostrata."""
+    disp, bk, pub, clock = env
+    bk.fail_create = "transport"
+    send(disp, payload())
+    disp.tick()
+    bk.fail_create = None
+    orig = bk.__call__
+
+    def tr(method, url, headers, body, timeout):
+        if method == "GET" and "builds?" in url and "pf_intent" in urllib.parse.unquote(url):
+            return 200, {}, b"[]"
+        if method == "GET" and "builds?" in url:
+            return 200, {}, json.dumps([{"number": 1000 + i, "env": {}} for i in range(100)]).encode()
+        return orig(method, url, headers, body, timeout)
+    disp.bk._transport = tr
+    disp.tick()
+    assert {j["state"] for j in disp.store.active_jobs()} == {"creating"} and not pub.final()
+    clock.now += disp.cfg.build_timeout_seconds["readiness"] + 1
+    disp.tick()
+    descs = [c[5] for c in pub.final()]
+    assert descs and all("non verificabile" in d for d in descs)
+
+
 def test_exception_escaping_advance_still_times_out(env, monkeypatch):
     """Fallback strutturale: un job che solleva a ogni giro diventa `error` scaduto il timeout della build."""
     disp, bk, pub, clock = env
@@ -2253,7 +2299,9 @@ def test_builds_always_run_main_never_the_pr_head(env):
     disp.tick()
     for sent in _posts(bk):
         assert sent["branch"] == "main" and sent["commit"] == "HEAD"
-        assert set(sent) == {"commit", "branch", "message", "env"}
+        assert set(sent) == {"commit", "branch", "message", "env", "meta_data"}
+        # identita' stabile dell'intento (#562 P0): solo il tid, mai altri dati
+        assert sent["meta_data"] == {"pf_intent": sent["env"]["PF_DELIVERY_ID"]}
         assert set(sent["env"]) == {"PF_PR_NUMBER", "PF_PR_HEAD_SHA", "PF_PR_BASE_REF", "PF_EVENT", "PF_DELIVERY_ID"}
 
 
@@ -3104,3 +3152,284 @@ CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, delivery_id TEXT NOT NU
         assert {"gate_seen", "gate_stable", "released_at"} <= cols
     finally:
         store.close()
+
+
+# --------------------------------------------------------------- recovery da snapshot: deduplicazione remota (P0)
+# Rollback T252 (#562 c.6471475567): ripristinato uno snapshot vecchio, il dispatcher ha riletto il commento di rerun
+# di #575 e le transizioni di #577 come nuovi (assenti dall'archivio) e ha creato build doppie. L'archivio locale non
+# prova che un intento non sia stato eseguito: prima di creare si cercano le build remote con lo stesso `pf_intent`.
+import sqlite3 as _sqlite3
+
+RERUN_TID = "p42-r9101-aaaaaaaaaaaa"
+
+
+def _snapshot(disp, path):
+    dst = _sqlite3.connect(str(path))
+    disp.store._db.backup(dst)
+    dst.close()
+
+
+def _restore(disp, path):
+    """Ripristino di uno snapshot come nel rollback T252: l'archivio torna allo stato salvato."""
+    disp.store.close()
+    src, dst = _sqlite3.connect(str(path)), _sqlite3.connect(disp.cfg.state_db)
+    src.backup(dst)
+    dst.close()
+    src.close()
+    disp.store = td.Store(disp.cfg.state_db)
+
+
+def _consume_rerun(disp, bk, clock, cid=9101, finish=True):
+    bk.gh.comment(cid, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    clock.now += 20
+    assert disp.poll() == [f"p42-r{cid}-aaaaaaaaaaaa"]
+    disp.tick()
+    if finish:
+        bk.finish("pr-overlap-guard", 2, "passed", result("overlap"))
+        bk.finish("pr-merge-readiness", 2, "passed", result("readiness"))
+        disp.tick()
+
+
+def _intent_jobs(disp, tid=RERUN_TID):
+    return [j for j in disp.store.recent_jobs() if j["delivery_id"] == tid]
+
+
+@pytest.fixture()
+def snap_env(env, tmp_path):
+    disp, bk, pub, clock = env
+    bk.clock = clock
+    _rerun_ready(disp, bk)
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)                                          # snapshot PRIMA del rerun
+    return disp, bk, pub, clock, snap
+
+
+def test_restored_snapshot_does_not_replay_a_consumed_and_finished_rerun(snap_env):
+    disp, bk, pub, clock, snap = snap_env
+    _consume_rerun(disp, bk, clock)
+    posts, finals = len(_posts(bk)), len(pub.final())
+    clock.now += 600                                               # fuori dalla finestra temporale del nuovo job
+    _restore(disp, snap)
+    for _ in range(3):                                             # polling ripetuto dopo il ripristino
+        disp.poll()
+        disp.tick()
+    assert len(_posts(bk)) == posts, "build doppia dopo il ripristino dello snapshot"
+    assert len(pub.final()) == finals, "esito vecchio ripubblicato"
+    jobs = _intent_jobs(disp)
+    assert jobs and all(j["outcome"] == "recovered" and j["build_number"] == 2 for j in jobs)
+
+
+def test_restored_snapshot_adopts_a_rerun_build_still_running(snap_env):
+    disp, bk, pub, clock, snap = snap_env
+    _consume_rerun(disp, bk, clock, finish=False)
+    posts = len(_posts(bk))
+    clock.now += 600
+    _restore(disp, snap)
+    disp.poll()
+    disp.tick()
+    assert len(_posts(bk)) == posts
+    assert {j["state"] for j in _intent_jobs(disp)} == {"dispatched"}
+    assert {j["build_number"] for j in _intent_jobs(disp)} == {2}
+    bk.finish("pr-overlap-guard", 2, "passed", result("overlap"))
+    bk.finish("pr-merge-readiness", 2, "passed", result("readiness"))
+    disp.tick()
+    assert len(_posts(bk)) == posts and {j["state"] for j in _intent_jobs(disp)} == {"done"}
+
+
+@pytest.mark.parametrize("flag", ["fail_list_intent", "full_page_intent"])
+def test_unverifiable_remote_state_blocks_new_builds_then_errors(snap_env, flag):
+    disp, bk, pub, clock, snap = snap_env
+    _consume_rerun(disp, bk, clock)
+    posts = len(_posts(bk))
+    _restore(disp, snap)
+    setattr(bk, flag, True)
+    disp.poll()
+    for _ in range(3):
+        disp.tick()
+    assert len(_posts(bk)) == posts and {j["state"] for j in _intent_jobs(disp)} == {"queued"}
+    clock.now += 1000                                              # oltre la finestra della build (900 s)
+    disp.tick()
+    assert len(_posts(bk)) == posts, "creata una build con lo stato remoto incerto"
+    errors = [c for c in pub.final() if "RECOVERY_UNCERTAIN" in c[5]]
+    assert {c[3] for c in errors} == {"overlap-check", "pr-merge-readiness"}
+    assert all(c[2] == "error" for c in errors)
+
+
+def test_new_legit_rerun_after_restore_runs_exactly_once(snap_env):
+    disp, bk, pub, clock, snap = snap_env
+    _consume_rerun(disp, bk, clock)
+    _restore(disp, snap)
+    disp.poll()
+    disp.tick()
+    posts = len(_posts(bk))
+    bk.gh.comment(9102, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    clock.now += 20
+    assert disp.poll() == ["p42-r9102-aaaaaaaaaaaa"]
+    disp.tick()
+    clock.now += 30
+    disp.poll()
+    disp.tick()
+    new = _posts(bk)[posts:]
+    assert len(new) == 2 and {p["env"]["PF_DELIVERY_ID"] for p in new} == {"p42-r9102-aaaaaaaaaaaa"}
+
+
+def test_normal_restart_keeps_reruns_deduplicated_without_remote_effects(snap_env):
+    disp, bk, pub, clock, snap = snap_env
+    _consume_rerun(disp, bk, clock)
+    posts = len(_posts(bk))
+    disp.store.close()
+    disp.store = td.Store(disp.cfg.state_db)                       # riavvio: archivio intatto
+    for _ in range(3):
+        clock.now += 30
+        disp.poll()
+        disp.tick()
+    assert len(_posts(bk)) == posts
+    assert disp.store.recent_reruns()[0]["comment_id"] == 9101 and len(disp.store.recent_reruns()) == 1
+
+
+def test_crash_between_build_creation_and_local_record_then_restore(snap_env):
+    """La build e' creata ma la risposta si perde (crash/timeout) e poi l'archivio torna allo snapshot."""
+    disp, bk, pub, clock, snap = snap_env
+    bk.fail_create, bk.create_lands = "transport", True
+    bk.gh.comment(9101, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    clock.now += 20
+    disp.poll()
+    disp.tick()
+    landed = len(bk.builds["pr-overlap-guard"]) + len(bk.builds["pr-merge-readiness"])
+    bk.fail_create, bk.create_lands = None, False
+    _restore(disp, snap)
+    disp.poll()
+    disp.tick()
+    assert len(bk.builds["pr-overlap-guard"]) + len(bk.builds["pr-merge-readiness"]) == landed
+    assert {j["build_number"] for j in _intent_jobs(disp)} == {2}
+
+
+def test_two_dispatchers_racing_on_the_same_intent_keep_one_build(snap_env, tmp_path):
+    disp, bk, pub, clock, snap = snap_env
+    raced = []
+
+    def concurrent(pipeline, payload):
+        # l'altra istanza crea la build dello stesso intento un attimo prima di noi
+        if not raced and payload["env"]["PF_DELIVERY_ID"] == RERUN_TID:
+            raced.append(bk._new_build(pipeline, payload)["number"])
+    bk.on_create = concurrent
+    _consume_rerun(disp, bk, clock, finish=False)
+    for pipe in ("pr-overlap-guard", "pr-merge-readiness"):
+        live = [n for n, b in bk.builds[pipe].items() if b["meta_data"].get("pf_intent") == RERUN_TID
+                and (pipe, n) not in bk.canceled]
+        assert len(live) == 1, (pipe, live)
+    assert {j["build_number"] for j in _intent_jobs(disp)} <= {2, 3}
+
+
+def test_second_instance_with_an_old_archive_adopts_instead_of_creating(snap_env, tmp_path):
+    disp, bk, pub, clock, snap = snap_env
+    _consume_rerun(disp, bk, clock, finish=False)
+    posts = len(_posts(bk))
+    raw = raw_config(tmp_path)
+    raw["state_db"] = str(tmp_path / "other.sqlite3")
+    other = make_dispatcher(td.validate_config(raw), bk, pub, clock)
+    try:
+        _restore(other, snap)                                      # seconda istanza partita da una copia vecchia
+        other.poll()
+        other.tick()
+        assert len(_posts(bk)) == posts
+        assert {j["build_number"] for j in _intent_jobs(other)} == {2}
+    finally:
+        other.store.close()
+
+
+def test_head_change_during_recovery_invalidates_the_old_rerun_and_dedups_the_transition(snap_env):
+    disp, bk, pub, clock, snap = snap_env
+    _consume_rerun(disp, bk, clock)
+    bk.gh.put(42, HEAD2)                                           # push dopo lo snapshot
+    disp.poll()
+    disp.tick()
+    posts = len(_posts(bk))
+    _restore(disp, snap)
+    disp.poll()
+    disp.tick()
+    assert len(_posts(bk)) == posts, "transizione o rerun rigiocati dopo il ripristino"
+    audit = {r["comment_id"]: r for r in disp.store.recent_reruns()}
+    assert audit[9101]["accepted"] == 0 and "head corrente" in audit[9101]["reason"]
+
+
+def test_transitions_replayed_from_a_restored_snapshot_create_no_builds(env, tmp_path):
+    """Il caso #577 di T252: transizioni gia' eseguite rigiocate dall'archivio ripristinato."""
+    disp, bk, pub, clock = env
+    bk.clock = clock
+    snap = tmp_path / "snap.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    posts = len(_posts(bk))
+    clock.now += 600
+    _restore(disp, snap)
+    disp.poll()
+    disp.tick()
+    assert len(_posts(bk)) == posts
+
+
+def test_rerun_older_than_the_maximum_age_is_rejected_by_its_github_timestamp(env):
+    disp, bk, _, clock = env
+    _rerun_ready(disp, bk)
+    disp.store.set_meta("comments_floor", td.iso(clock.now - td.RERUN_MAX_AGE_SECONDS - 100))
+    disp.store.set_meta("comments_since", td.iso(clock.now - td.RERUN_MAX_AGE_SECONDS - 100))
+    bk.gh.comment(9103, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now - td.RERUN_MAX_AGE_SECONDS - 10))
+    assert disp.poll() == []
+    audit = disp.store.recent_reruns()[0]
+    assert audit["accepted"] == 0 and "piu' vecchio" in audit["reason"]
+
+
+def test_rerun_on_a_pr_missing_from_the_open_listing_is_rejected(env):
+    """Il caso #575 di T252: PR gia' mergiata ma ancora `open` nell'archivio ripristinato (serve una seconda assenza
+    per chiuderla). Un rerun su una PR assente dall'ultimo elenco non e' mai eseguito."""
+    disp, bk, _, clock = env
+    _rerun_ready(disp, bk)
+    posts = len(_posts(bk))
+    bk.gh.pulls.pop(42)
+    bk.gh.comment(9104, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    clock.now += 20
+    assert disp.poll() == []
+    disp.tick()
+    audit = disp.store.recent_reruns()[0]
+    assert audit["accepted"] == 0 and "assente dall'ultimo elenco" in audit["reason"]
+    assert len(_posts(bk)) == posts
+
+
+# --- #562 P1: una readiness di uno SHA superato non ritarda i controlli dell'head corrente.
+
+def test_obsolete_readiness_build_is_cancelled_in_the_same_round_that_starts_the_new_overlap(env):
+    """Push nuovo mentre la readiness del vecchio head gira: nello STESSO giro la build vecchia e' annullata (agent
+    trusted liberato) e l'overlap del nuovo head e' creato; nessun esito sul vecchio head."""
+    disp, bk, pub, _ = env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    disp.tick()
+    assert len(bk.builds["pr-merge-readiness"]) == 1 and not bk.canceled
+    bk.gh.put(42, HEAD2)
+    disp.poll()
+    disp.tick()
+    assert ("pr-merge-readiness", 1) in bk.canceled
+    assert len(bk.builds["pr-overlap-guard"]) == 2 and len(bk.builds["pr-merge-readiness"]) == 2
+    assert bk.builds["pr-overlap-guard"][2]["env"]["PF_PR_HEAD_SHA"] == HEAD2
+    assert not [c for c in pub.final() if c[1] == HEAD and c[3] == "pr-merge-readiness"]
+
+
+def test_waiting_obsolete_readiness_holds_no_agent_and_starts_nothing(wait_env):
+    """Readiness in attesa (opzione A) del vecchio head: nessuna build da annullare, nessuna build creata dopo la
+    sostituzione; l'overlap del nuovo head parte subito."""
+    disp, bk, pub, clock = wait_env
+    _open_checks(bk.gh)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    _tick(disp, clock)
+    bk.gh.put(42, HEAD2)
+    disp.poll()
+    _tick(disp, clock)
+    assert not bk.builds["pr-merge-readiness"] and bk.canceled == [("pr-overlap-guard", 1)]   # solo l'overlap vecchio
+    assert [b["env"]["PF_PR_HEAD_SHA"] for b in bk.builds["pr-overlap-guard"].values()] == [HEAD, HEAD2]
+    old = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness" and j["head_sha"] == HEAD]
+    assert [j["state"] for j in old] == ["superseded"]

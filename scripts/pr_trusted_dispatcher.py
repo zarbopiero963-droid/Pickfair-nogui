@@ -79,6 +79,13 @@ MIN_RETENTION_HOURS = 24
 DESCRIPTION_MAX = 140
 TOKEN_REFRESH_MARGIN = 300              # un token che scade entro 5 minuti si rinnova prima di usarlo
 CLOSE_AFTER_MISSES = 2                  # una PR e' chiusa solo se manca da due elenchi completi consecutivi
+#: rerun piu' vecchio di cosi' (orario di creazione del COMMENTO su GitHub, non dell'archivio locale): rifiutato e
+#: registrato. Seconda difesa dopo la verifica su Buildkite: limita cio' che un archivio vecchio puo' far rileggere.
+RERUN_MAX_AGE_SECONDS = 6 * 3600
+#: metadato Buildkite con l'identita' stabile dell'intento (= `PF_DELIVERY_ID`, il tid): sopravvive a crash, riavvii e
+#: ripristino di uno snapshot dell'archivio, quindi e' la prova remota che l'intento ha gia' una build (#562 P0)
+INTENT_META_KEY = "pf_intent"
+INTENT_PAGE = 100                       # una pagina piena di build per lo stesso intento: assenza non verificabile
 COMMENTS_OVERLAP_SECONDS = 120          # sovrapposizione fra giri per i commenti: i doppioni li toglie l'archivio
 
 _PR_RE = re.compile(r"[1-9][0-9]{0,6}", re.ASCII)
@@ -679,6 +686,14 @@ def parse_rerun_comment(item: Any) -> Optional[RerunRequest]:
                         login=login, user_type=user_type, created_at=str(item.get("created_at")))
 
 
+def _rerun_too_old(created_at: str, now: float) -> bool:
+    """Orario di creazione del commento (GitHub) oltre `RERUN_MAX_AGE_SECONDS`; illeggibile => troppo vecchio."""
+    try:
+        return now - parse_iso(created_at) > RERUN_MAX_AGE_SECONDS
+    except (TypeError, ValueError):
+        return True
+
+
 # --------------------------------------------------------------------------------------------- archivio
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pr_state (
@@ -909,11 +924,17 @@ class Store:
                 reason = f"permesso attuale {req.permission or 'non verificato'} senza scrittura sul repository"
             elif not req.head_sha:
                 reason = "commento modificato dopo la pubblicazione"
+            elif _rerun_too_old(req.created_at, now):
+                reason = f"comando piu' vecchio di {RERUN_MAX_AGE_SECONDS // 3600} ore (orario del commento)"
             elif floor is None or req.created_at <= floor:
                 # stesso secondo del primo avvio compreso: non si sa se e' anteriore, quindi non si esegue
                 reason = "comando non successivo al primo avvio del dispatcher"
             elif row is None or not row["open"]:
                 reason = "PR non aperta"
+            elif row["missing"]:
+                # assente dall'ultimo elenco delle PR aperte (chiusa o mergiata, non ancora confermata): dopo il
+                # ripristino di uno snapshot e' il caso di #575 in T252, mai un rerun da eseguire
+                reason = "PR assente dall'ultimo elenco delle PR aperte"
             elif not row["eligible"]:
                 reason = "PR non valutabile (bozza, base diversa da main o fork)"
             elif row["head_sha"] != req.head_sha:
@@ -1075,7 +1096,8 @@ class Buildkite:
         try:
             status, data = self._request("POST", f"{self._pipeline_url(guard)}/builds",
                                          {"commit": "HEAD", "branch": BASE_REF, "message": message,
-                                          "env": dict(env)})
+                                          "env": dict(env),
+                                          "meta_data": {INTENT_META_KEY: env.get("PF_DELIVERY_ID", "")}})
         except ApiError as exc:
             if exc.status is not None and 400 <= exc.status < 500:
                 raise
@@ -1102,6 +1124,20 @@ class Buildkite:
         if len(data) >= 100:
             # pagina piena: la build cercata puo' stare nella pagina dopo; l'assenza non e' dimostrata
             raise ApiError("elenco build pieno: assenza non verificabile")
+        return data
+
+    def list_builds_by_intent(self, guard: str, intent: str) -> list:
+        """Build della pipeline con il metadato dell'intento (`pf_intent`), a qualunque data: la prova remota che un
+        intento ha gia' una build, indipendente dall'archivio locale. Pagina piena => assenza non verificabile."""
+        if not _TID_RE.fullmatch(intent):
+            raise ApiError("identita' dell'intento fuori formato")
+        query = urllib.parse.urlencode({"branch": BASE_REF, f"meta_data[{INTENT_META_KEY}]": intent,
+                                        "per_page": str(INTENT_PAGE)})
+        status, data = self._request("GET", f"{self._pipeline_url(guard)}/builds?{query}")
+        if status != 200 or not isinstance(data, list):
+            raise ApiError(f"elenco build dell'intento fallito (HTTP {status})", status)
+        if len(data) >= INTENT_PAGE:
+            raise ApiError("elenco build dell'intento pieno: assenza non verificabile")
         return data
 
     def cancel_build(self, guard: str, number: int) -> None:
@@ -1552,10 +1588,17 @@ class Dispatcher:
         return None
 
     def _builds_for(self, job: dict) -> list:
+        """Build gia' esistenti per l'intento del job, ordinate per numero: quelle col metadato `pf_intent` (a
+        qualunque data, anche prima di un ripristino dell'archivio) piu' quelle con l'env identico nella finestra
+        (build create prima del metadato). Ogni elenco illeggibile o pieno => eccezione: assenza NON dimostrata."""
         created_from = datetime.fromtimestamp(self._started(job) - 300, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         expected = build_env(job)
-        return [b for b in self.bk.list_builds(job["guard"], created_from)
-                if isinstance(b, dict) and b.get("env") == expected]
+        found = {b["number"]: b for b in self.bk.list_builds(job["guard"], created_from)
+                 if isinstance(b, dict) and b.get("env") == expected and _is_int(b.get("number"))}
+        for b in self.bk.list_builds_by_intent(job["guard"], job["delivery_id"]):
+            if isinstance(b, dict) and b.get("env") == expected and _is_int(b.get("number")):
+                found[b["number"]] = b
+        return [found[n] for n in sorted(found)]
 
     def _fail(self, job: dict, state: str, description: str) -> None:
         self._to_publishing(job, state, description)
@@ -1569,11 +1612,23 @@ class Dispatcher:
         self._set(job, state="publishing", outcome=outcome, description=cleaned, publishing_since=self.clock())
 
     def _create(self, job: dict) -> None:
+        # L'archivio locale non prova che l'intento non abbia gia' una build (crash, ripristino di uno snapshot,
+        # seconda istanza): prima si cercano le build remote dello stesso intento (#562 P0). Non verificabile =>
+        # nessuna build, il job resta in attesa (RECOVERY_UNCERTAIN) e alla scadenza e' `error`, mai una creazione.
+        try:
+            prior = self._builds_for(job)
+        except (ApiError, TransportError) as exc:
+            if self.clock() - self._started(job) > self.cfg.build_timeout_seconds[job["guard"]]:
+                return self._fail(job, "error", f"RECOVERY_UNCERTAIN: build precedenti non verificabili ({exc})")
+            log(f"job {job['id']}: RECOVERY_UNCERTAIN, build precedenti non verificabili ({exc}): nessuna creazione")
+            return None
         # da qui in poi un crash lascia l'esito ambiguo, mai un retry cieco; transizione condizionata allo stato
         # letto, cosi' una copia vecchia del job non crea una seconda build
         if not self.store.update_job(job["id"], self.clock(), expected_state="queued", state="creating"):
             return None
         job["state"] = "creating"
+        if prior:
+            return self._resume_prior(job, prior)
         message = f"PR #{job['pr']} {job['head_sha'][:12]} ({job['guard']}, delivery {job['delivery_id']})"
         try:
             build = self.bk.create_build(job["guard"], build_env(job), message)
@@ -1582,7 +1637,41 @@ class Dispatcher:
             return
         except ApiError as exc:
             return self._fail(job, "error", str(exc))
+        # due istanze possono aver creato insieme (nessuna vedeva l'altra): si tiene la build piu' vecchia dello
+        # stesso intento e si annullano le altre; elenco illeggibile => si prosegue con la propria (gia' creata)
+        # solo con una build creata leggibile: una risposta senza numero resta al percorso di `_adopt` (error)
+        try:
+            twins = [b for b in self._builds_for(job) if b["number"] != build.get("number")] \
+                if isinstance(build, dict) and _is_int(build.get("number")) else []
+        except (ApiError, TransportError) as exc:
+            log(f"job {job['id']}: verifica dei doppioni non riuscita ({exc}): proseguo con la build {build.get('number')}")
+            twins = []
+        if twins:
+            keep = min([build, *twins], key=lambda b: b["number"])
+            for other in [build, *twins]:
+                if other is not keep:
+                    self._cancel_or_remember(job, [other["number"]])
+            log(f"job {job['id']}: build doppie dello stesso intento, tengo la {keep['number']}")
+            build = keep
         self._adopt(job, build)
+
+    def _resume_prior(self, job: dict, prior: list) -> None:
+        """L'intento ha gia' una build (es. dopo il ripristino di uno snapshot): nessuna nuova. In corso => adottata
+        e seguita fino all'esito; gia' conclusa => job chiuso SENZA ripubblicare (l'esito era stato pubblicato da
+        chi l'aveva creata); piu' build dello stesso intento => si segue la piu' vecchia, le altre annullate."""
+        keep, others = prior[0], prior[1:]
+        if others:
+            self._cancel_or_remember(job, [b["number"] for b in others])
+        log(f"job {job['id']}: intento {job['delivery_id']} gia' eseguito dalla build {keep.get('number')}: "
+            "nessuna nuova build")
+        if keep.get("state") in BUILD_TERMINAL:
+            if not build_matches_job(keep, job["guard"], job, self.cfg.organization):
+                return self._fail(job, "error", "build precedente dell'intento non corrisponde alla richiesta")
+            # nulla da pubblicare: `final_published` evita che l'annullamento dei doppioni lo rimandi in consegna
+            return self._set(job, state="done", outcome="recovered", final_published=1, build_number=keep["number"],
+                             build_url=keep["web_url"],
+                             description=f"intento gia' eseguito dalla build {keep['number']}: esito non ripubblicato")
+        return self._adopt(job, keep)
 
     def _adopt(self, job: dict, build: Any) -> None:
         if not build_matches_job(build, job["guard"], job, self.cfg.organization):

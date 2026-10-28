@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 P0 — nessuna build doppia dopo il ripristino di uno snapshot (`scripts/pr_trusted_dispatcher.py`):**
+  - causa (rollback T252): cursore dei commenti e tabella `reruns` tornano indietro insieme allo snapshot, quindi i
+    rerun e le transizioni già eseguiti venivano rigiocati come nuovi;
+  - ogni build porta l'identità dell'intento (metadato Buildkite `pf_intent` = tid). Prima di creare si cercano le
+    build remote dello stesso intento: in corso ⇒ adottata, conclusa ⇒ `recovered` senza ripubblicare, non
+    verificabile ⇒ nessuna build (`RECOVERY_UNCERTAIN`, poi `error`). Dopo la creazione si ricontrolla, per due
+    istanze concorrenti;
+  - rerun rifiutati se il commento ha più di 6 ore (orario GitHub) o se la PR manca dall'ultimo elenco delle aperte.
+
+  Test RED→GREEN su snapshot SQLite reali (rerun concluso, in corso, crash fra creazione e registrazione, Buildkite
+  illeggibile o a pagina piena, rerun nuovo legittimo, due istanze, cambio di head, transizioni rigiocate) e
+  mutazioni `td_p0_*`. Limiti dichiarati in `docs/trusted_dispatcher.md`.
+  - **#562 P1 — readiness di SHA superati:** verificato che non trattengono la coda trusted oltre il giro che vede il
+    nuovo head. La build viene annullata nello stesso giro che crea l'overlap nuovo; quella in attesa non ha build. Due test
+    di regressione; nessuna modifica di codice (`docs/trusted_dispatcher.md`).
 - **#562 F1 — paginazione GitHub reale nel dispatcher (`scripts/pr_trusted_dispatcher.py`), regressione di #576:**
   - nel collaudo T252 una PR con 107 check run aveva il link `next` nella forma `/repositories/1189713160/…`, che il
     client rifiutava: la readiness non partiva mai (fail-closed, nessun PASS) e Grok ha fatto rollback;

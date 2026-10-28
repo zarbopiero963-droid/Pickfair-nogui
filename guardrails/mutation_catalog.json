@@ -5718,6 +5718,114 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 F1 (paginazione /repositories/<id>): pagina successiva chiesta all'URL ricevuto invece che a quello canonico."
+    },
+    {
+      "id": "td_p0_no_prior_check",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            prior = self._builds_for(job)\n",
+      "mutated": "            prior = []\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (recovery da snapshot): nessuna verifica remota prima di creare: lo snapshot ripristinato rigioca i rerun."
+    },
+    {
+      "id": "td_p0_intent_lookup_skipped",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        for b in self.bk.list_builds_by_intent(job[\"guard\"], job[\"delivery_id\"]):",
+      "mutated": "        for b in []:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (recovery da snapshot): build dell'intento cercate solo nella finestra temporale."
+    },
+    {
+      "id": "td_p0_full_page_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            raise ApiError(\"elenco build dell'intento pieno: assenza non verificabile\")",
+      "mutated": "            return []",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (recovery da snapshot): elenco per metadato a pagina piena preso come assenza."
+    },
+    {
+      "id": "td_p0_recovered_republished",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if keep.get(\"state\") in BUILD_TERMINAL:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (recovery da snapshot): build gia' conclusa dell'intento riadottata e ripubblicata."
+    },
+    {
+      "id": "td_p0_twins_kept",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if twins:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (recovery da snapshot): build doppie di due istanze concorrenti non annullate."
+    },
+    {
+      "id": "td_p0_age_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            elif _rerun_too_old(req.created_at, now):",
+      "mutated": "            elif False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (recovery da snapshot): rerun vecchio di ore accettato dopo il ripristino."
+    },
+    {
+      "id": "td_p0_no_intent_meta",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "\"meta_data\": {INTENT_META_KEY: env.get(\"PF_DELIVERY_ID\", \"\")}})",
+      "mutated": "\"meta_data\": {}})",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (recovery da snapshot): build create senza l'identita' dell'intento."
+    },
+    {
+      "id": "td_p0_uncertain_timeout_creates",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                return self._fail(job, \"error\", f\"RECOVERY_UNCERTAIN: build precedenti non verificabili ({exc})\")",
+      "mutated": "                prior = []",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (recovery da snapshot): stato remoto incerto: alla scadenza si crea comunque la build."
+    },
+    {
+      "id": "td_p0_missing_pr_rerun_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            elif row[\"missing\"]:",
+      "mutated": "            elif False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0: rerun su una PR assente dall'ultimo elenco delle aperte (mergiata, archivio ripristinato) accettato."
     }
   ]
 }
