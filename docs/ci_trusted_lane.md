@@ -36,13 +36,19 @@ Il guard verifica anche le variabili Buildkite, quando sono presenti:
 - `BUILDKITE_PULL_REQUEST` deve essere `false`;
 - `BUILDKITE_BRANCH` deve essere `main`.
 
-**Token.** Il token GitHub deve essere **fine-grained, in sola lettura**, limitato a questo repository:
-- Contents: read;
-- Pull requests: read;
-- Commit statuses: read;
-- Checks: read;
+**Token.** Il token GitHub deve essere **in sola lettura** e limitato a questo repository. Sulla lane trusted è un
+**token di installazione** della GitHub App `pickfair-trusted-status` (D3 della #562, c.6465081812), a durata
+limitata, con questi permessi e nessuno in scrittura:
 - Actions: read;
-- Issues: read (per i commenti delle review AI).
+- Checks: read;
+- Contents: read;
+- Issues: read (per i commenti delle review AI);
+- Metadata: read;
+- Pull requests: read.
+
+Il PAT con permessi di scrittura usato prima è stato tolto dalla VPS. Le prove di scrittura col token App (label,
+commento, status, ref) danno 403. Il percorso reale di readiness, che legge anche gli status (`overlap-check`), è
+stato collaudato con questi permessi in P0-A (build `pr-merge-readiness` #14 su #573).
 
 Il token è opaco: si accetta qualunque valore di ASCII stampabile senza spazi, da 20 a 8192 caratteri (PAT
 fine-grained, `ghs_` di Actions, formati futuri). Vuoto, con spazi, a capo o caratteri di controllo ⇒ FAIL prima di
@@ -151,8 +157,15 @@ chiusi, oppure con un timeout ≥ 115 minuti e `PF_READINESS_WAIT_SECONDS=6600`,
 - `python3` ≥ 3.10, `gh` ≥ 2.40 e `buildkite-agent` (upload dell'artifact del risultato) nel `PATH` dell'agent trusted. Uscita di rete verso `api.github.com` (REST e
   GraphQL).
 - Mappatura dal trigger nel gate pre-command: `PF_PR_NUMBER` e `PF_PR_HEAD_SHA` dello stesso evento.
-  Il token arriva via `LoadCredential=github-token:/etc/buildkite-agent-trusted/secrets/github-token`, quindi
-  dentro `CREDENTIALS_DIRECTORY`.
+- Token GitHub (D3 della #562): non c'è più un file statico in `LoadCredential`.
+  - `pf-lane-token-mint.service` crea all'avvio dell'agent un token di installazione dell'App `pickfair-trusted-status`
+    e lo scrive in tmpfs, in `/run/pf-lane/github-token`. Il file non resta su disco persistente.
+  - `pf-lane-token-refresh.timer` lo rinnova ogni 5 minuti mentre l'agent è fermo, così nessun job parte con un token
+    in scadenza.
+  - Il gate pre-command passa al guard un percorso fisso, che il job non può scegliere: `PF_GITHUB_TOKEN_FILE` e
+    `CREDENTIALS_DIRECTORY` impostati dalla build vengono rifiutati.
+  - Il mint rifiuta un token i cui permessi non sono esattamente quelli elencati sopra.
+  - Il dispatcher ha un proprio token, separato (`github.token_command`, solo `pull_requests` e `metadata` in lettura).
 - Il job trusted non deve esportare il token in variabili d'ambiente: lo legge il guard dal file.
 - Il contesto PR (`PF_PR_NUMBER`, `PF_PR_HEAD_SHA`) lo imposta solo il dispatcher trusted
   (`scripts/pr_trusted_dispatcher.py`, contratto e configurazione in [trusted_dispatcher.md](trusted_dispatcher.md)),
@@ -160,11 +173,47 @@ chiusi, oppure con un timeout ≥ 115 minuti e `PF_READINESS_WAIT_SECONDS=6600`,
   «contesto PR verificato assente». Uno step Buildkite che lanciasse `scripts/pr_merge_readiness.py` senza
   argomenti (lo smoke di #562, exit 2 di argparse) va portato sul wrapper `scripts/ci/pr_merge_readiness.sh`.
 
+## Emergenza senza VPS (runbook, §5 della #562)
+
+Quando la VPS 45.14.184.188, la lane trusted o `pf-dispatch` non sono disponibili, si ripiega su **GitHub Actions**.
+Il ripiego **non è automatico**: nessun componente sposta da solo i controlli da una CI all'altra, e un failover
+automatico non è mai stato dimostrato, quindi non va dichiarato.
+
+1. **Riconoscere il guasto.**
+   - Sulla PR gli status `overlap-check` / `pr-merge-readiness` della lane restano `pending`, mancano sull'head nuovo
+     oppure finiscono in `error` («timeout della build», «lettura build fallita»).
+   - Sulla VPS `/usr/local/sbin/pf-dispatch-health` esce con codice 1 (servizio fermo, dry-run attivo o errori negli
+     ultimi 15 minuti).
+   - Un `pending` o un `error` non è mai un PASS: la PR **non** si mergia sulla base di quegli status.
+2. **Cosa resta valido senza la VPS.** I workflow Actions girano a ogni push sulle PR, indipendenti dalla VPS:
+   - `overlap-check` di `.github/workflows/pr-overlap-guard.yml`, oggi l'unico required check del ruleset (legato
+     all'app GitHub Actions, #562 c.6437684386: lo status omonimo pubblicato dalla lane non lo soddisfa);
+   - le review Sol/Grok/Codex;
+   - `Merge readiness`;
+   - le suite di test.
+
+   Il gate di merge vigente (spec §0.9) si valuta su questi. Gli status della lane trusted non sono required checks
+   finché l'owner non decide altrimenti (D-3 della #562).
+3. **Se gli status della lane diventano required (D-3).** Un guasto della VPS **blocca il merge**: non lo bypassa.
+   Le uniche strade sono due:
+   - aspettare il ripristino;
+   - una decisione esplicita dell'owner registrata sulla issue, che non viene mai dalla sola urgenza.
+
+   Non si pubblicano status a mano per sbloccare una PR.
+4. **Ripristino.** Grok riavvia i servizi. Il dispatcher riprende dallo stato salvato: nessuna build duplicata,
+   esiti pubblicati una volta sola, un head cambiato durante il fermo viene rilevato al primo giro (P0-B, certificato).
+   Se una build è stata persa si usa un rerun (`/pf-trusted-rerun <sha>`, vedi
+   [trusted_dispatcher.md](trusted_dispatcher.md)), mai una ripubblicazione manuale dello status.
+5. **Annotare** sulla issue #562 l'inizio e la fine del guasto, le PR coinvolte e gli status rimasti stantii.
+
 ## Limiti dichiarati
 
-- **NOT VERIFIED end-to-end.** Il percorso reale con token, `gh` e status GitHub resta da collaudare sulla lane
-  dopo che l'owner fornisce il token. Verificato offline: 151 test e mutazioni. Smoke dell'overlap guard sull'API
-  pubblica reale su #561: PASS sull'head corrente, FAIL su un head stantio.
+- **Collaudato end-to-end (#562 CERTIFIED, c.6465081812).** Percorso reale con token App, `gh` 2.45 e status
+  GitHub sull'head della PR di collaudo #573:
+  - P0-A: `overlap-check` `success`, `pr-merge-readiness` `failure` con verdetto reale, un solo `pending` e un solo
+    finale per contesto;
+  - P0-B, P0-C, P0-D: PASS (riavvio, errori 403/429/5xx/timeout, cambio di head).
+  Restano i residui dichiarati su #562 (R1, R3, R4).
 - Il workflow Actions `.github/workflows/pr-overlap-guard.yml` non ha più la copia inline: esegue lo script canonico
   (Fase 2 di PF-GOV-DOC-WORKFLOW-ALIGN-01, sezione «Riserva GitHub Actions» qui sotto). Le due fasi hanno evitato una
   dipendenza circolare: su `pull_request` il workflow esegue lo script del commit base, e finché `main` aveva la
