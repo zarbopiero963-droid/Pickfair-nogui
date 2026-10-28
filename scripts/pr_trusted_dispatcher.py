@@ -85,12 +85,12 @@ RERUN_MAX_AGE_SECONDS = 6 * 3600
 #: metadato Buildkite con l'identita' stabile dell'intento (= `PF_DELIVERY_ID`, il tid): sopravvive a crash, riavvii e
 #: ripristino di uno snapshot dell'archivio, quindi e' la prova remota che l'intento ha gia' una build (#562 P0)
 INTENT_META_KEY = "pf_intent"
-#: metadato Buildkite PR + head SHA (#562 P0, Sol su #583): il `seq` delle transizioni sta nell'archivio locale e uno
-#: snapshot lo riporta indietro, quindi la stessa valutazione di un head puo' rinascere con un tid diverso
-HEAD_META_KEY = "pf_head"
+#: metadato Buildkite con il numero della PR (#562 P0, Sol e Codex su #583): il `seq` delle transizioni sta
+#: nell'archivio locale e uno snapshot lo riporta indietro; dalle build della PR si ricava il `seq` piu' alto gia' usato
+PR_META_KEY = "pf_pr"
 TRANSITION_EVENTS = frozenset({"opened", "reopened", "synchronize", "ready_for_review"})   # `Store.apply_poll`
 _TRANSITION_TID_RE = re.compile(r"p([0-9]+)-t([0-9]+)-([0-9a-f]{12})", re.ASCII)
-_HEAD_META_RE = re.compile(r"[0-9]{1,10}-[0-9a-f]{40}", re.ASCII)
+_PR_META_RE = re.compile(r"[1-9][0-9]{0,9}", re.ASCII)
 INTENT_PAGE = 100                       # una pagina piena di build per lo stesso intento: assenza non verificabile
 COMMENTS_OVERLAP_SECONDS = 120          # sovrapposizione fra giri per i commenti: i doppioni li toglie l'archivio
 
@@ -1121,7 +1121,7 @@ class Buildkite:
                                          {"commit": "HEAD", "branch": BASE_REF, "message": message,
                                           "env": dict(env),
                                           "meta_data": {INTENT_META_KEY: env.get("PF_DELIVERY_ID", ""),
-                                                        HEAD_META_KEY: head_meta(env)}})
+                                                        PR_META_KEY: env.get("PF_PR_NUMBER", "")}})
         except ApiError as exc:
             if exc.status is not None and 400 <= exc.status < 500:
                 raise
@@ -1157,20 +1157,20 @@ class Buildkite:
             raise ApiError("identita' dell'intento fuori formato")
         return self._list_builds_by_meta(guard, INTENT_META_KEY, intent)
 
-    def list_builds_by_head(self, guard: str, head: str) -> list:
-        """Build della pipeline con il metadato `pf_head` (`<pr>-<sha40>`), a qualunque data: tutte le valutazioni
-        di quell'head, anche con un tid che l'archivio locale non conosce piu'. Pagina piena => non verificabile."""
-        if not _HEAD_META_RE.fullmatch(head):
-            raise ApiError("PR o head SHA fuori formato")
-        return self._list_builds_by_meta(guard, HEAD_META_KEY, head)
+    def list_builds_by_pr(self, guard: str, pr: str) -> list:
+        """Build piu' recenti della pipeline con il metadato `pf_pr`, a qualunque data (l'API le restituisce dalla piu'
+        recente): bastano per il `seq` piu' alto e l'ultima valutazione della PR, quindi la pagina piena e' ammessa."""
+        if not _PR_META_RE.fullmatch(pr):
+            raise ApiError("numero della PR fuori formato")
+        return self._list_builds_by_meta(guard, PR_META_KEY, pr, full_page_ok=True)
 
-    def _list_builds_by_meta(self, guard: str, key: str, value: str) -> list:
+    def _list_builds_by_meta(self, guard: str, key: str, value: str, full_page_ok: bool = False) -> list:
         query = urllib.parse.urlencode({"branch": BASE_REF, f"meta_data[{key}]": value,
                                         "per_page": str(INTENT_PAGE)})
         status, data = self._request("GET", f"{self._pipeline_url(guard)}/builds?{query}")
         if status != 200 or not isinstance(data, list):
             raise ApiError(f"elenco build dell'intento fallito (HTTP {status})", status)
-        if len(data) >= INTENT_PAGE:
+        if len(data) >= INTENT_PAGE and not full_page_ok:
             raise ApiError("elenco build dell'intento pieno: assenza non verificabile")
         return data
 
@@ -1226,11 +1226,6 @@ def build_env(job: Mapping[str, Any]) -> dict[str, str]:
         "PF_EVENT": job["event"],
         "PF_DELIVERY_ID": job["delivery_id"],
     }
-
-
-def head_meta(env: Mapping[str, str]) -> str:
-    """Valore del metadato `pf_head` di una build: `<pr>-<sha40>`."""
-    return f"{env.get('PF_PR_NUMBER', '')}-{env.get('PF_PR_HEAD_SHA', '')}"
 
 
 def build_matches_job(build: Any, guard: str, job: Mapping[str, Any], org: str) -> bool:
@@ -1728,34 +1723,42 @@ class Dispatcher:
         self._adopt(job, build)
 
     def _adopt_later_transition(self, job: dict) -> None:
-        """Transizione locale con un `seq` piu' basso di una gia' eseguita su Buildkite per lo stesso PR e head
-        (snapshot ripristinato: il `seq` locale e' tornato indietro, Sol su #583). La valutazione e' la stessa: il job
-        e i suoi fratelli prendono il tid remoto, cosi' la deduplicazione per intento la ritrova. Un ritorno legittimo
-        a uno SHA gia' visto ha un `seq` piu' alto di ogni build remota e non e' toccato. Elenco illeggibile o pieno
-        => eccezione (stato remoto incerto)."""
+        """Transizione locale con il `seq` non oltre il piu' alto gia' usato su Buildkite per la PR: l'archivio e' stato
+        ripristinato e il contatore locale e' tornato indietro (Sol e Codex su #583). Se l'ultima valutazione remota
+        della PR (build piu' recente) e' dello stesso head con la stessa env, e' questa stessa valutazione: il job e i
+        fratelli in coda prendono quel tid. Altrimenti e' una transizione nuova, avvenuta dopo il ripristino: prende
+        un tid oltre il massimo remoto. In entrambi i casi il `seq` locale risale oltre il massimo remoto, quindi un
+        ritorno legittimo a uno SHA gia' visto resta una valutazione nuova. Elenco illeggibile => eccezione."""
         own = _TRANSITION_TID_RE.fullmatch(job["delivery_id"])
         if own is None:
             return None                                    # rerun: il tid (id del commento) e' gia' stabile
         expected = {k: v for k, v in build_env(job).items() if k not in ("PF_DELIVERY_ID", "PF_EVENT")}
-        best: Optional[tuple[int, str, str]] = None
-        for b in self.bk.list_builds_by_head(job["guard"], head_meta(build_env(job))):
+        remote: list[tuple[int, int, str, dict]] = []      # (numero build, seq, tid, env)
+        for b in self.bk.list_builds_by_pr(job["guard"], str(job["pr"])):
             env = b.get("env") if isinstance(b, dict) else None
-            if not isinstance(env, dict) or not isinstance(env.get("PF_DELIVERY_ID"), str):
+            if not isinstance(env, dict) or not _is_int(b.get("number")) or not isinstance(env.get("PF_DELIVERY_ID"),
+                                                                                           str):
                 continue
             m = _TRANSITION_TID_RE.fullmatch(env["PF_DELIVERY_ID"])
-            if (m is None or int(m.group(1)) != job["pr"] or m.group(3) != job["head_sha"][:12]
-                    or int(m.group(2)) <= int(own.group(2))
-                    or {k: v for k, v in env.items() if k not in ("PF_DELIVERY_ID", "PF_EVENT")} != expected
-                    or env.get("PF_EVENT") not in TRANSITION_EVENTS):
-                continue
-            if best is None or int(m.group(2)) > best[0]:
-                best = (int(m.group(2)), env["PF_DELIVERY_ID"], env["PF_EVENT"])
-        if best is None:
+            if m is not None and int(m.group(1)) == job["pr"]:
+                remote.append((b["number"], int(m.group(2)), env["PF_DELIVERY_ID"], env))
+        if not remote:
             return None
-        seq, tid, event = best
-        log(f"job {job['id']}: transizione {job['delivery_id']} gia' eseguita come {tid} (archivio ripristinato): "
-            "riallineata")
-        self.store.rekey_transition(job["delivery_id"], tid, event, job["pr"], job["head_sha"], seq, self.clock())
+        top_seq = max(seq for _, seq, _, _ in remote)
+        if int(own.group(2)) > top_seq:
+            return None                                    # contatore locale avanti: nessun ripristino in gioco
+        _, _, last_tid, last_env = max(remote)              # ultima valutazione della PR (build piu' recente)
+        same = ({k: v for k, v in last_env.items() if k not in ("PF_DELIVERY_ID", "PF_EVENT")} == expected
+                and last_env.get("PF_EVENT") in TRANSITION_EVENTS)
+        if same:
+            tid, event = last_tid, last_env["PF_EVENT"]
+            log(f"job {job['id']}: transizione {job['delivery_id']} gia' eseguita come {tid} (archivio ripristinato): "
+                "riallineata")
+        else:
+            tid, event = f"p{job['pr']}-t{top_seq + 1}-{job['head_sha'][:12]}", job["event"]
+            log(f"job {job['id']}: contatore locale dietro a quello remoto ({top_seq}): transizione nuova {tid}")
+        self.store.rekey_transition(job["delivery_id"], tid, event, job["pr"], job["head_sha"],
+                                    max(top_seq, int(_TRANSITION_TID_RE.fullmatch(tid).group(2))), self.clock())
         job.update(delivery_id=tid, event=event)
         return None
 
@@ -1843,12 +1846,13 @@ class Dispatcher:
         return False
 
     def _delivery(self, job: dict, number: int) -> Optional[tuple[bool, Optional[dict]]]:
-        """Esito della build `number` dell'intento, ritrovata conclusa: gia' consegnato o no? Si correla con gli status
-        del contesto sull'head tramite il numero di build del loro `target_url` (crescente per pipeline). (pubblicare,
-        status da ripristinare). Uno status finale di questa build o di una piu' recente => consegnato o superato:
-        non si ripubblica; se a coprirlo c'e' un `pending` senza build (attesa, recupero), quello status si
-        ripristina com'era. Altrimenti (nessuno status con build, o solo di build precedenti) => si pubblica l'esito di
-        questa; se nel frattempo una build piu' recente e' in corso, la pubblicazione la ferma `_final_still_current`.
+        """Esito della build `number` dell'intento, ritrovata conclusa: gia' consegnato o no? (pubblicare, status da
+        ripristinare). Si correla con gli status del contesto sull'head tramite il numero di build del `target_url`
+        (crescente per pipeline):
+        - uno status di una build piu' recente, in qualunque stato => superato, non si pubblica; se lo status con build
+          piu' recente e' finale e coperto da un `pending` senza build (attesa, recupero), lo si ripristina com'era;
+        - ultimo status con build = esito finale di questa build => consegnato (ripristinato se coperto);
+        - altrimenti (nessuno status con build, `pending` di questa build, esito di una precedente) => si pubblica.
         Status illeggibili => None (Sol su #583)."""
         context = GUARDS[job["guard"]]["context"]
         try:
@@ -1862,19 +1866,21 @@ class Dispatcher:
         if not isinstance(statuses, list):
             return None
         mine = [st for st in statuses if isinstance(st, dict) and st.get("context") == context]   # dal piu' recente
-        hidden_by_wait = False
-        for st in mine:
-            seen = self._status_build(job, st)
-            if seen is None:
-                if st.get("state") == "pending":
-                    hidden_by_wait = True              # `pending` di attesa o recupero: non dice nulla sull'esito
-                continue
-            if st.get("state") == "pending":
-                continue                               # una build piu' recente in corso la ferma `_final_still_current`
-            if st.get("state") in ("success", "failure", "error") and seen >= number:
-                return False, (st if hidden_by_wait else None)
-            break                                      # esito di una build precedente: il nostro non e' arrivato
-        return True, None
+        built = [(n, st) for n, st in ((self._status_build(job, st), st) for st in mine) if n is not None]
+        if not built:
+            return True, None                          # nessuno status con build: l'esito non e' mai arrivato
+        newest = max(n for n, _ in built)
+        top_n, top = built[0]                          # lo status con build piu' recente in ordine di pubblicazione
+        hidden_by_wait = any(st.get("state") == "pending" for st in mine[:mine.index(top)])   # attesa/recupero sopra
+        final = top.get("state") in ("success", "failure", "error")
+        if newest > number:
+            # una build piu' recente ha gia' uno status: questo esito e' superato e non si ripubblica. Si ripristina
+            # solo lo status finale che un `pending` senza build ha coperto (cio' che era visibile prima); con la build
+            # piu' recente ancora in corso non si ripristina nulla (Sol su #583)
+            return False, (top if final and hidden_by_wait else None)
+        if top_n == number and final:
+            return False, (top if hidden_by_wait else None)
+        return True, None                              # ultimo status: `pending` di questa build o di una vecchia
 
     def _adopt(self, job: dict, build: Any) -> None:
         if not build_matches_job(build, job["guard"], job, self.cfg.organization):

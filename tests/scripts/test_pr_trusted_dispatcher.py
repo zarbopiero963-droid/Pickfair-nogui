@@ -236,7 +236,7 @@ class FakeBuildkite:
             query = dict(urllib.parse.parse_qsl(tail.partition("?")[2]))
             meta = [(k[len("meta_data["):-1], v) for k, v in query.items() if k.startswith("meta_data[")]
             if meta:
-                # l'API reale filtra per metadato (`pf_intent`, `pf_head`): solo le build con quel valore, a
+                # l'API reale filtra per metadato (`pf_intent`, `pf_pr`): solo le build con quel valore, a
                 # qualunque data
                 if self.fail_list_intent:
                     raise td.TransportError("rete")
@@ -2304,7 +2304,7 @@ def test_builds_always_run_main_never_the_pr_head(env):
         assert set(sent) == {"commit", "branch", "message", "env", "meta_data"}
         # identita' stabile dell'intento (#562 P0): solo il tid, mai altri dati
         assert sent["meta_data"] == {"pf_intent": sent["env"]["PF_DELIVERY_ID"],
-                                     "pf_head": f"{sent['env']['PF_PR_NUMBER']}-{sent['env']['PF_PR_HEAD_SHA']}"}
+                                     "pf_pr": sent["env"]["PF_PR_NUMBER"]}
         assert set(sent["env"]) == {"PF_PR_NUMBER", "PF_PR_HEAD_SHA", "PF_PR_BASE_REF", "PF_EVENT", "PF_DELIVERY_ID"}
 
 
@@ -3595,9 +3595,9 @@ def _three_heads_then_restore(disp, bk, pub, clock, tmp_path, drop_readiness_t3=
         disp.tick()
         _finish_all(bk)
         disp.tick()
-    if drop_readiness_t3:                          # readiness di C mai creata prima del ripristino
+    if drop_readiness_t3:                          # readiness di B e C mai create prima del ripristino
         pipe = bk.builds["pr-merge-readiness"]
-        for n in [n for n, b in pipe.items() if b["env"]["PF_PR_HEAD_SHA"] == HEAD3]:
+        for n in [n for n, b in pipe.items() if b["env"]["PF_PR_HEAD_SHA"] in (HEAD2, HEAD3)]:
             del pipe[n]
     _github_sees(bk, pub, sha=HEAD3)
     clock.now += 600
@@ -3619,7 +3619,7 @@ def test_rekeyed_transition_keeps_sibling_jobs_on_the_same_tid(env, tmp_path):
 
 
 def test_later_transition_with_a_different_env_is_not_adopted(env, tmp_path):
-    """Una build con lo stesso `pf_head` e un `seq` piu' alto ma un'env diversa (base diversa) non e' la stessa
+    """Una build della stessa PR e dello stesso head con un `seq` piu' alto ma un'env diversa (base diversa) non e' la stessa
     valutazione: non si riallinea, si crea la build."""
     disp, bk, pub, clock = env
     bk.clock = clock
@@ -3627,13 +3627,14 @@ def test_later_transition_with_a_different_env_is_not_adopted(env, tmp_path):
         bk._new_build(pipe, {"branch": "main", "commit": "HEAD", "message": "m",
                              "env": {"PF_PR_NUMBER": "42", "PF_PR_HEAD_SHA": HEAD, "PF_PR_BASE_REF": "develop",
                                      "PF_EVENT": "opened", "PF_DELIVERY_ID": f"p42-t9-{HEAD[:12]}"},
-                             "meta_data": {"pf_intent": f"p42-t9-{HEAD[:12]}", "pf_head": f"42-{HEAD}"}})
+                             "meta_data": {"pf_intent": f"p42-t9-{HEAD[:12]}", "pf_pr": "42"}})
     bk.gh.put(42, HEAD)
     disp.poll()
     disp.tick()
     created = [p["env"]["PF_DELIVERY_ID"] for p in _posts(bk)]
-    assert created.count(f"p42-t1-{HEAD[:12]}") == 2
-    assert {j["delivery_id"] for j in disp.store.recent_jobs()} == {f"p42-t1-{HEAD[:12]}"}
+    # contatore remoto a 9: transizione nuova oltre il massimo (t10), mai riallineata alla build t9 di un'altra env
+    assert created == [f"p42-t10-{HEAD[:12]}"] * 2
+    assert {j["delivery_id"] for j in disp.store.recent_jobs()} == {f"p42-t10-{HEAD[:12]}"}
 
 
 def test_restored_waiting_readiness_does_not_leave_its_own_pending_over_the_final(wait_env, tmp_path):
@@ -3705,23 +3706,29 @@ def test_same_intent_rebuilt_with_another_event_after_restore_is_recovered_not_d
 
 
 def test_same_intent_with_a_conflicting_env_blocks_creation(env):
-    """Stesso `pf_intent`, env diversa oltre l'evento (base diversa): non e' prova di assenza ma un conflitto.
-    Nessuna build; oltre la finestra `error`."""
+    """Stesso `pf_intent` (un rerun: tid stabile), env diversa oltre l'evento (base diversa): non e' prova di
+    assenza ma un conflitto. Nessuna build; oltre la finestra `error`."""
     disp, bk, pub, clock = env
     bk.clock = clock
-    tid = f"p42-t1-{HEAD[:12]}"
+    _rerun_ready(disp, bk)
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    bk.finish("pr-merge-readiness", 1, "passed", result("readiness"))
+    disp.tick()
+    tid = f"p42-r9301-{HEAD[:12]}"
     for pipe in ("pr-overlap-guard", "pr-merge-readiness"):
         bk._new_build(pipe, {"branch": "main", "commit": "HEAD", "message": "m",
                              "env": {"PF_PR_NUMBER": "42", "PF_PR_HEAD_SHA": HEAD, "PF_PR_BASE_REF": "develop",
-                                     "PF_EVENT": "opened", "PF_DELIVERY_ID": tid},
-                             "meta_data": {"pf_intent": tid, "pf_head": f"42-{HEAD}"}})
-    bk.gh.put(42, HEAD)
+                                     "PF_EVENT": "manual", "PF_DELIVERY_ID": tid},
+                             "meta_data": {"pf_intent": tid, "pf_pr": "42"}})
+    posts = len(_posts(bk))
+    bk.gh.comment(9301, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    clock.now += 20
     disp.poll()
     disp.tick()
-    assert not _posts(bk)
+    assert len(_posts(bk)) == posts
     clock.now += 1000
     disp.tick()
-    assert not _posts(bk)
+    assert len(_posts(bk)) == posts
     errors = [c for c in pub.final() if "RECOVERY_UNCERTAIN" in c[5]]
     assert {c[3] for c in errors} == {"overlap-check", "pr-merge-readiness"} and all(c[2] == "error" for c in errors)
 
@@ -3737,7 +3744,7 @@ def test_same_intent_with_two_different_events_is_a_conflict_not_a_loop(env):
             bk._new_build(pipe, {"branch": "main", "commit": "HEAD", "message": "m",
                                  "env": {"PF_PR_NUMBER": "42", "PF_PR_HEAD_SHA": HEAD, "PF_PR_BASE_REF": "main",
                                          "PF_EVENT": event, "PF_DELIVERY_ID": tid},
-                                 "meta_data": {"pf_intent": tid, "pf_head": f"42-{HEAD}"}})
+                                 "meta_data": {"pf_intent": tid, "pf_pr": "42"}})
     bk.gh.put(42, HEAD)
     disp.poll()
     job = [j for j in disp.store.active_jobs() if j["guard"] == "overlap"][0]
@@ -3918,3 +3925,98 @@ def test_redelivery_of_a_success_waits_while_statuses_are_unreadable(env, monkey
     disp.poll()
     disp.tick()
     assert [c[2] for c in pub.calls[calls:] if c[3] == "overlap-check"] == ["success"]
+
+
+def test_restore_never_republishes_an_older_final_while_a_newer_build_is_running(snap_env):
+    """Sol su #583 (f6c6dbe): status dal piu' recente «pending senza build -> pending build 3 -> success build 2».
+    La build 3 e' in corso: il success della build 2 non si ripristina e non si ripubblica."""
+    disp, bk, pub, clock, snap = snap_env
+    _consume_rerun(disp, bk, clock)                                # rerun: build 2 PASS, consegnato
+    ctx_url = {"overlap-check": "pr-overlap-guard", "pr-merge-readiness": "pr-merge-readiness"}
+    statuses = []
+    for ctx, pipe in ctx_url.items():
+        statuses += [{"context": ctx, "state": "pending", "description": "in attesa",
+                      "target_url": f"https://buildkite.com/{ORG}/{pipe}"},
+                     {"context": ctx, "state": "pending", "description": "build in corso",
+                      "target_url": f"https://buildkite.com/{ORG}/{pipe}/builds/3"},
+                     {"context": ctx, "state": "success", "description": "PASS",
+                      "target_url": f"https://buildkite.com/{ORG}/{pipe}/builds/2"}]
+    calls = len(pub.calls)
+    clock.now += 600
+    _restore(disp, snap)
+    bk.gh.statuses[HEAD] = statuses
+    disp.poll()
+    disp.tick()
+    assert not [c for c in pub.calls[calls:] if c[2] != "pending"], "esito vecchio ripubblicato sopra una build in corso"
+
+
+def test_restore_recovers_the_pr_sequence_high_water_mark(env, tmp_path):
+    """Codex P1 su #583 (f6c6dbe): snapshot su A (t1); poi B t2, A t3, B t4. Ripristinato l'archivio, la PR passa a C
+    (mai vista): e' una transizione nuova e prende t5, oltre il massimo remoto. Il ritorno successivo a B e' una
+    valutazione nuova (t6): mai riallineata alla vecchia t4 di B, quindi le build partono."""
+    disp, bk, pub, clock = env
+    bk.clock = clock
+    head_c, = ("c" * 40,)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    _finish_all(bk)
+    disp.tick()
+    snap = tmp_path / "snap.sqlite3"
+    _snapshot(disp, snap)
+    for head in (HEAD2, HEAD, HEAD2):
+        clock.now += 60
+        bk.gh.put(42, head)
+        disp.poll()
+        disp.tick()
+        _finish_all(bk)
+        disp.tick()
+    assert [p["env"]["PF_DELIVERY_ID"] for p in _posts(bk)][-2:] == [f"p42-t4-{HEAD2[:12]}"] * 2
+    clock.now += 600
+    _restore(disp, snap)
+    bk.gh.put(42, head_c)
+    disp.poll()
+    disp.tick()
+    assert [p["env"]["PF_DELIVERY_ID"] for p in _posts(bk)][-2:] == [f"p42-t5-{head_c[:12]}"] * 2
+    _finish_all(bk)
+    disp.tick()
+    posts = len(_posts(bk))
+    clock.now += 60
+    bk.gh.put(42, HEAD2)
+    disp.poll()
+    disp.tick()
+    new = [p["env"]["PF_DELIVERY_ID"] for p in _posts(bk)[posts:]]
+    assert new == [f"p42-t6-{HEAD2[:12]}"] * 2, "ritorno legittimo a B riallineato a una valutazione vecchia"
+
+
+def test_restored_old_fail_never_overwrites_a_newer_pass_on_the_same_sha(snap_env):
+    """Simmetrico del caso di Sol (mandato owner su #583): rerun r1 FAIL, poi r2 PASS sullo stesso SHA. Ripristinato
+    l'archivio (solo r1 rigiocato) con un lookup incerto: l'esito di r1 non torna mai sopra quello di r2."""
+    disp, bk, pub, clock, snap = snap_env
+    _consume_rerun(disp, bk, clock, finish=False)                 # r1 = 9101: build 2
+    bk.finish("pr-overlap-guard", 2, "failed", result("overlap", verdict="FAIL"))
+    bk.finish("pr-merge-readiness", 2, "failed", result("readiness", verdict="FAIL"))
+    disp.tick()
+    bk.gh.comment(9102, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    clock.now += 20
+    disp.poll()
+    disp.tick()
+    bk.finish("pr-overlap-guard", 3, "passed", result("overlap"))
+    bk.finish("pr-merge-readiness", 3, "passed", result("readiness"))
+    disp.tick()
+    _github_sees(bk, pub)
+    assert _latest(bk) == {"overlap-check": "success", "pr-merge-readiness": "success"}
+    bk.gh.comments = [c for c in bk.gh.comments if c["id"] != 9102]
+    posts = len(_posts(bk))
+    clock.now += 600
+    _restore(disp, snap)
+    bk.fail_list_intent = True
+    disp.poll()
+    disp.tick()
+    _github_sees(bk, pub)
+    bk.fail_list_intent = False
+    for _ in range(3):
+        disp.tick()
+        _github_sees(bk, pub)
+    assert len(_posts(bk)) == posts
+    assert _latest(bk) == {"overlap-check": "success", "pr-merge-readiness": "success"}, "FAIL vecchio sopra un PASS"

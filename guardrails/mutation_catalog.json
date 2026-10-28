@@ -5840,18 +5840,6 @@
       "rationale": "PF-562 P0 (Codex P1 su #583): stato remoto incerto senza pending: un vecchio success resta l'esito visibile."
     },
     {
-      "id": "td_p0_head_meta_missing",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "                                                        HEAD_META_KEY: head_meta(env)}})",
-      "mutated": "                                                        }})",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "PF-562 P0 (Sol su #583): build senza `pf_head`: dopo il ripristino la valutazione dello stesso head non si ritrova."
-    },
-    {
       "id": "td_p0_later_transition_skipped",
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
@@ -5862,30 +5850,6 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 P0 (Sol su #583): seq locale riportato indietro: transizione dello stesso head con tid diverso, build doppia."
-    },
-    {
-      "id": "td_p0_later_seq_not_greater",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "                    or int(m.group(2)) <= int(own.group(2))",
-      "mutated": "                    or int(m.group(2)) < 0",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "PF-562 P0 (Sol su #583): ritorno legittimo a uno SHA gia' visto riallineato a una valutazione vecchia: valutazione nuova persa."
-    },
-    {
-      "id": "td_p0_later_env_unchecked",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "                    or {k: v for k, v in env.items() if k not in (\"PF_DELIVERY_ID\", \"PF_EVENT\")} != expected",
-      "mutated": "                    or False",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "PF-562 P0 (Sol su #583): build di un'altra PR/base adottata come stessa valutazione."
     },
     {
       "id": "td_p0_seq_not_bumped",
@@ -5972,30 +5936,6 @@
       "rationale": "PF-562 P0 (Sol su #583): esito mai consegnato chiuso come recovered: check pending per sempre."
     },
     {
-      "id": "td_p0_older_final_counts_as_delivered",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "            if st.get(\"state\") in (\"success\", \"failure\", \"error\") and seen >= number:",
-      "mutated": "            if st.get(\"state\") in (\"success\", \"failure\", \"error\") and seen >= 0:",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "PF-562 P0 (Sol su #583): esito di una build precedente letto come consegna della nostra: esito mai pubblicato."
-    },
-    {
-      "id": "td_p0_hidden_final_not_restored",
-      "module": "scripts.pr_trusted_dispatcher",
-      "area": "trusted_dispatcher",
-      "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "                return False, (st if hidden_by_wait else None)",
-      "mutated": "                return False, None",
-      "tests": [
-        "tests/scripts/test_pr_trusted_dispatcher.py"
-      ],
-      "rationale": "PF-562 P0 (Sol su #583): pending di attesa/recupero lasciato sopra l'esito consegnato: check pending per sempre."
-    },
-    {
       "id": "td_p0_newer_status_ignored",
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
@@ -6054,6 +5994,102 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 P0 (Codex su #583, f0804b8): riallineamento anche dei job gia' avviati: build letta non corrispondente, annullata."
+    },
+    {
+      "id": "td_p0_delivery_newer_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if newest > number:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Sol su #583, f6c6dbe): esito vecchio ripubblicato mentre una build piu' recente e' in corso o gia' conclusa (verde falso)."
+    },
+    {
+      "id": "td_p0_delivery_newer_not_restored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            return False, (top if final and hidden_by_wait else None)",
+      "mutated": "            return False, None",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Sol su #583, f6c6dbe): esito piu' recente coperto dal pending di recupero lasciato nascosto: check pending per sempre."
+    },
+    {
+      "id": "td_p0_delivery_same_build_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if top_n == number and final:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Sol su #583, f6c6dbe): esito gia' consegnato della stessa build ripubblicato (sopra eventuali esiti successivi)."
+    },
+    {
+      "id": "td_p0_hidden_final_not_restored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            return False, (top if hidden_by_wait else None)",
+      "mutated": "            return False, None",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Sol su #583, f6c6dbe): pending di attesa lasciato sopra l'esito consegnato della stessa build: check pending per sempre."
+    },
+    {
+      "id": "td_p0_pr_meta_missing",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                                                        PR_META_KEY: env.get(\"PF_PR_NUMBER\", \"\")}})",
+      "mutated": "                                                        }})",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Sol e Codex su #583): build senza `pf_pr`: dopo il ripristino il seq remoto della PR non si ricava, build doppie."
+    },
+    {
+      "id": "td_p0_high_water_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if int(own.group(2)) > top_seq:",
+      "mutated": "        if True:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Sol e Codex su #583): contatore locale dietro a quello remoto ignorato: valutazione gia' eseguita rifatta (build doppie)."
+    },
+    {
+      "id": "td_p0_latest_env_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        same = ({k: v for k, v in last_env.items() if k not in (\"PF_DELIVERY_ID\", \"PF_EVENT\")} == expected",
+      "mutated": "        same = (True",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Sol e Codex su #583): ultima valutazione remota di un altro head adottata: ritorno legittimo a uno SHA perso (verde vecchio)."
+    },
+    {
+      "id": "td_p0_new_transition_reuses_old_tid",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            tid, event = f\"p{job['pr']}-t{top_seq + 1}-{job['head_sha'][:12]}\", job[\"event\"]",
+      "mutated": "            tid, event = job[\"delivery_id\"], job[\"event\"]",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Sol e Codex su #583): transizione nuova dopo il ripristino con il seq locale arretrato: ritorni successivi riallineati a valutazioni vecchie."
     }
   ]
 }
