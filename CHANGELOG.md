@@ -9,6 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 PR-B (M2) — workflow Linux fuori dalle PR nella full-suite (`scripts/pr_full_suite_pipeline.py`):**
+  - `w5-lockfile-fresh` (generate-linux-lockfile): lock hash ancora valido, e lock rimosso nella PR ⇒ FAIL;
+  - `w5-build-linux-appimage` (build-linux): eseguibili PyInstaller e AppImage dal lock `--require-hashes`, senza
+    aggiornare pip; appimagetool solo se preinstallato con sha256; release in **DRY-RUN** (asset e `SHA256SUMS`
+    come artifact), mai pubblicata;
+  - `w5-telegram-live-sim` (telegram-live-integration): i 7 scenari del test live con le stesse asserzioni e la
+    rete bloccata (`tests/integration/test_telegram_live_sim.py`). Lo scenario 5 del test live era stantio dal
+    motore neutro (#448): ora attende *nessun segnale* dal formato legacy, che è il comportamento sicuro;
+  - ogni workflow è mappato, extra, escluso o non migrato con il motivo; `WORKFLOW_LIMITS` dichiara ciò che non
+    è certificato. Dispatcher: i tre step entrano in `FULL_SUITE_STEP_KEYS` (52).
+
+  Test RED→GREEN, prove bash reali, 6 mutazioni `fsp_m2_*`. Documento: `docs/ci_m2_migration.md`.
 - **#562 P0 — nessuna build doppia dopo il ripristino di uno snapshot (`scripts/pr_trusted_dispatcher.py`):**
   - causa (rollback T252): cursore dei commenti e tabella `reruns` tornano indietro insieme allo snapshot, quindi i
     rerun e le transizioni già eseguiti venivano rigiocati come nuovi;

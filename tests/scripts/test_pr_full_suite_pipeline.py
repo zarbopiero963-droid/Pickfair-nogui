@@ -64,7 +64,7 @@ def _pipeline() -> dict:
 
 def test_main_prints_the_pipeline_json_and_refuses_arguments(capsys):
     steps = _pipeline()["steps"]
-    assert len(steps) == len(fsp.JOBS) == 49
+    assert len(steps) == len(fsp.JOBS) == 52
     assert fsp.main(["--anything"]) == 2
 
 
@@ -107,7 +107,7 @@ def test_fast_checks_run_before_modules_and_heavy_suites():
     prio = [s["priority"] for s in steps]
     assert prio == sorted(prio, reverse=True)                       # ordine di elenco = ordine di priorita'
     heavy = {s["key"] for s in steps if s["priority"] == 0}
-    assert heavy == {"w1-pr-check", "w2-backstop", "w4-merge-simulation", "w1-mutation"}
+    assert heavy == {"w1-pr-check", "w2-backstop", "w4-merge-simulation", "w1-mutation", "w5-build-linux-appimage"}
 
 
 def test_module_table_matches_the_workflow_inputs():
@@ -191,3 +191,116 @@ def test_quarantine_step_takes_the_checker_from_main_not_from_the_pr():
     (step,) = [s for s in _pipeline()["steps"] if s["key"] == "w1-quarantine"]
     assert 'git worktree add -q --detach "$B" FETCH_HEAD' in step["command"]
     assert 'python3 "$B/scripts/ci/check_ci_quarantine.py" .' in step["command"]
+
+
+# ----------------------------------------------------------------------------------------------- M2 (#562 PR-B)
+def _job(key):
+    return next(j for j in fsp.JOBS if j.key == key)
+
+
+def _commands(key):
+    return "\n".join(_job(key).commands)
+
+
+def test_every_workflow_file_is_mapped_extra_excluded_or_not_migrated_with_a_reason():
+    names = {p.stem for p in WORKFLOWS.glob("*.y*ml")}
+    groups = (set(fsp.WORKFLOW_MAP), set(fsp.WORKFLOW_EXTRA), set(fsp.WORKFLOW_EXCLUDED),
+              set(fsp.WORKFLOW_NOT_MIGRATED))
+    assert sum(len(g) for g in groups) == len(set().union(*groups)), "un workflow in due gruppi"
+    assert names == set().union(*groups), "workflow senza step ne' motivo di esclusione"
+    assert all(isinstance(r, str) and len(r) > 10 for r in fsp.WORKFLOW_NOT_MIGRATED.values())
+    # i non migrati non girano sulle PR: quelli che ci girano devono essere mappati o esclusi esplicitamente
+    assert not set(fsp.WORKFLOW_NOT_MIGRATED) & _pr_workflows()
+
+
+def test_limits_are_declared_only_for_covered_workflows():
+    covered = set(fsp.WORKFLOW_MAP) | set(fsp.WORKFLOW_EXTRA)
+    assert set(fsp.WORKFLOW_LIMITS) <= covered
+    assert {"telegram-live-integration", "build-linux"} <= set(fsp.WORKFLOW_LIMITS)
+    assert all(len(r) > 20 for r in fsp.WORKFLOW_LIMITS.values())
+
+
+def test_real_telegram_and_windows_workflows_are_never_migrated():
+    assert "telegram-test" in fsp.WORKFLOW_NOT_MIGRATED and "build-windows-exe" in fsp.WORKFLOW_NOT_MIGRATED
+    text = json.dumps(_pipeline()).lower()
+    for forbidden in ("api.telegram.org", "sendmessage", "tg_bot_token", "tg_session_string", "windows"):
+        assert forbidden not in text, forbidden
+
+
+def test_build_linux_job_mirrors_the_workflow_build_steps():
+    wf = json.dumps(_workflow("build-linux")["jobs"]["build"]["steps"])
+    cmd = _commands("w5-build-linux-appimage")
+    for piece in ("--require-hashes -r requirements-build-linux.lock", "python -m pytest tests/packaging -q",
+                  "pyinstaller --noconfirm --clean pickfair.spec", "chmod +x dist/pickfair dist/pickfair-headless",
+                  "packaging/build_appimage.sh dist/pickfair", "import tkinter"):
+        assert piece in wf and piece in cmd, piece
+
+
+def test_build_linux_job_never_publishes_and_never_downloads_tools():
+    cmd = _commands("w5-build-linux-appimage")
+    for forbidden in ("gh ", "release create", "release upload", "curl", "wget", "APPIMAGETOOL_URL"):
+        assert forbidden not in cmd, forbidden
+    assert "DRY-RUN" in cmd and "SHA256SUMS" in cmd
+    assert fsp.APPIMAGETOOL_DIR in cmd and "APPIMAGETOOL_SHA256=" in cmd
+
+
+def test_build_linux_job_installs_the_lock_with_a_fresh_pip_never_upgraded():
+    cmd = _job("w5-build-linux-appimage").commands
+    after = cmd[cmd.index("deactivate"):]
+    assert not any("--upgrade pip" in c for c in after)            # il pip aggiornato del preambolo resta fuori
+    install = next(i for i, c in enumerate(after) if "--require-hashes" in c)
+    assert any("BVENV" in c and "-m venv" in c for c in after[:install])
+
+
+def test_lockfile_job_mirrors_the_workflow_pins_and_arguments():
+    wf = json.dumps(_workflow("generate-linux-lockfile"))
+    cmd = _commands("w5-lockfile-fresh")
+    for piece in ('pip==24.3.1', 'pip-tools==7.4.1', "--generate-hashes --allow-unsafe --no-annotate",
+                  "requirements-build-linux.in"):
+        assert piece in wf and piece in cmd, piece
+
+
+def _bash(script, cwd, env=None):
+    return subprocess.run(["bash", "-c", "set -euo pipefail\n" + script], cwd=cwd, env=env,
+                          capture_output=True, text=True)
+
+
+@pytest.mark.skipif(shutil.which("bash") is None or shutil.which("git") is None, reason="bash/git assenti")
+def test_lockfile_removed_in_the_pr_fails_against_main(tmp_path):
+    guard = next(c for c in _job("w5-lockfile-fresh").commands if "presente su main ma rimosso" in c)
+    run = lambda *a: subprocess.run(["git", *a], cwd=tmp_path, check=True, capture_output=True)
+    run("init", "-q", "-b", "main")
+    (tmp_path / "requirements-build-linux.lock").write_text("x==1 --hash=sha256:00\n")
+    run("add", ".")
+    run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "main")
+    run("update-ref", "FETCH_HEAD", "HEAD")
+    assert _bash(guard, tmp_path).returncode == 0                   # lock presente: nessun errore
+    (tmp_path / "requirements-build-linux.lock").unlink()
+    res = _bash(guard, tmp_path)
+    assert res.returncode == 1 and "rimosso nella PR" in res.stdout
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash assente")
+def test_telegram_sim_job_refuses_telegram_credentials_in_the_lane(tmp_path):
+    guard = _job("w5-telegram-live-sim").commands[0]
+    clean = {"PATH": "/usr/bin:/bin"}
+    assert _bash(guard, tmp_path, clean).returncode == 0
+    assert _bash(guard, tmp_path, {**clean, "TG_BOT_TOKEN": "x"}).returncode == 1
+    assert "tests/integration/test_telegram_live_sim.py" in _commands("w5-telegram-live-sim")
+
+
+@pytest.mark.skipif(shutil.which("bash") is None or shutil.which("sha256sum") is None, reason="bash assente")
+@pytest.mark.parametrize("assets,ok", [((), False), (("bin",), False), (("app",), False), (("bin", "app"), True),
+                                       (("bin", "bin2", "app"), False)])
+def test_dry_run_release_requires_exactly_both_assets(tmp_path, assets, ok):
+    cmds = _job("w5-build-linux-appimage").commands
+    start = next(i for i, c in enumerate(cmds) if c.startswith("shopt -s nullglob"))
+    out = tmp_path / "bk-out"
+    out.mkdir()
+    names = {"bin": "Pickfair-Linux-bin-v1-20261028.tar.gz", "bin2": "Pickfair-Linux-bin-v2-20261028.tar.gz",
+             "app": "Pickfair-v1-x86_64.AppImage"}
+    for a in assets:
+        (out / names[a]).write_bytes(b"x")
+    res = _bash("\n".join(cmds[start:]), tmp_path)
+    assert (res.returncode == 0) is ok, res.stdout + res.stderr
+    assert (out / "SHA256SUMS").exists() is ok

@@ -52,6 +52,10 @@ FULL_DEPS = "pip install -q -r requirements.txt -r requirements-dev.txt pytest p
 RUNTIME_DEPS = "pip install -q -r requirements.txt -r requirements-dev.txt pytest"
 PYTEST_ONLY = "pip install -q pytest"
 
+#: appimagetool della lane (M2, PR-B), installato da Grok con il suo sha256 accanto: il job non lo scarica mai
+#: (su Actions `build_appimage.sh` prende la release `continuous` senza pin) e senza file si ferma fail-closed
+APPIMAGETOOL_DIR = "/var/lib/buildkite/tools/appimagetool"
+
 _PATH_RE = re.compile(r"[A-Za-z0-9_./-]+", re.ASCII)
 _GLOB_RE = re.compile(r"[A-Za-z0-9_./*-]+", re.ASCII)
 _KEY_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}", re.ASCII)
@@ -291,6 +295,26 @@ def _jobs() -> tuple:
         Job("w4-build-linux-tests", "W4 build-linux (solo tests/packaging)", 20, 1, (
             'python -c "import tkinter" 2>/dev/null || echo "NOTE: tkinter assente (GHA usa apt python3-tk)"',
             RUNTIME_DEPS, "python -m pytest tests/packaging -q")),
+        # --- M2 (#562 PR-B): workflow Linux fuori dalle PR o finora esclusi -------------------------------------
+        Job("w5-lockfile-fresh", "W5 generate-linux-lockfile (lock hash ancora valido)", 20, 1, (
+            'python -m pip install -q "pip==24.3.1" "pip-tools==7.4.1"',
+            'FRESH="$TMPDIR/fresh-linux-$BUILDKITE_JOB_ID.lock"',
+            'if [ -f requirements-build-linux.lock ]; then cp requirements-build-linux.lock "$FRESH"; fi',
+            'pip-compile --generate-hashes --allow-unsafe --no-annotate --output-file "$FRESH" '
+            "requirements-build-linux.in",
+            'cp "$FRESH" bk-out/requirements-build-linux.fresh.lock',
+            "git fetch -q origin main",
+            'if git cat-file -e FETCH_HEAD:requirements-build-linux.lock 2>/dev/null '
+            '&& [ ! -f requirements-build-linux.lock ]; then '
+            'echo "requirements-build-linux.lock presente su main ma rimosso nella PR"; exit 1; fi',
+            'if [ -f requirements-build-linux.lock ]; then diff -u requirements-build-linux.lock "$FRESH" '
+            '|| { echo "requirements-build-linux.lock STALE: rigeneralo"; exit 1; }; '
+            'echo "OK: il lock combacia con la rigenerazione"; '
+            'else echo "NOTE: nessun requirements-build-linux.lock committato"; fi')),
+        Job("w5-telegram-live-sim", "W5 telegram-live-integration in simulazione (nessun messaggio reale)", 15, 1, (
+            'if env | grep -q "^TG_"; then echo "credenziali Telegram nella lane non fidata: fermo"; exit 1; fi',
+            RUNTIME_DEPS,
+            "pytest -q tests/integration/test_telegram_live_sim.py --junitxml=bk-out/telegram-live-sim.xml")),
     ]
     heavy = [
         Job("w1-pr-check", "W1 pr-check (suite completa)", 40, 0, (
@@ -312,6 +336,37 @@ def _jobs() -> tuple:
             FULL_DEPS,
             "python scripts/run_mutation_guardrails.py --fail-under 80 --jobs 2 "
             "--output bk-out/mutation_guardrails_report.json")),
+        Job("w5-build-linux-appimage", "W5 build-linux: eseguibili, AppImage e release in DRY-RUN", 45, 0, (
+            'python -c "import tkinter; print(\'Tk\', tkinter.TkVersion)" '
+            '|| { echo "tkinter assente nel python della lane: GUI non impacchettabile (fail-closed)"; exit 1; }',
+            '[ -f requirements-build-linux.lock ] || { echo "requirements-build-linux.lock mancante (fail-closed)"; '
+            "exit 1; }",
+            f'[ -x {APPIMAGETOOL_DIR}/appimagetool ] && [ -s {APPIMAGETOOL_DIR}/appimagetool.sha256 ] '
+            f'|| {{ echo "appimagetool non installato in {APPIMAGETOOL_DIR} (infrastruttura): fermo"; exit 1; }}',
+            # venv dedicato SENZA aggiornare pip: il lock hash-verificato e' l'unica sorgente della toolchain
+            "deactivate",
+            f'BVENV="$TMPDIR/bvenv-$BUILDKITE_JOB_ID"; {PYTHON} -m venv "$BVENV"; . "$BVENV/bin/activate"',
+            "trap 'rm -rf \"$VENV\" \"$HOME\" \"$BVENV\" Pickfair.AppDir' EXIT",
+            "python -m pip install -q --require-hashes -r requirements-build-linux.lock",
+            "python -m pytest tests/packaging -q",
+            'ver=$(python -c "import tomllib; print(tomllib.load(open(\'pyproject.toml\', \'rb\'))[\'project\'][\'version\'])")',
+            '[ -n "$ver" ] || { echo "version mancante in pyproject.toml"; exit 1; }',
+            'stamp=$(date -u +%Y%m%d); BINTAR="Pickfair-Linux-bin-v${ver}-${stamp}"; '
+            'APPIMAGE="Pickfair-v${ver}-x86_64.AppImage"',
+            "pyinstaller --noconfirm --clean pickfair.spec",
+            "chmod +x dist/pickfair dist/pickfair-headless",
+            'tar -czf "bk-out/${BINTAR}.tar.gz" -C dist pickfair pickfair-headless',
+            f'export PATH="{APPIMAGETOOL_DIR}:$PATH" APPIMAGETOOL_SHA256="$(awk \'{{print $1; exit}}\' {APPIMAGETOOL_DIR}/appimagetool.sha256)"',
+            "chmod +x packaging/build_appimage.sh packaging/AppRun",
+            'packaging/build_appimage.sh dist/pickfair "bk-out/${APPIMAGE}"',
+            'python -c "import sys; [sys.exit(f + \' non ELF\') for f in sys.argv[1:] '
+            'if open(f, \'rb\').read(4) != b\'\\x7fELF\']" dist/pickfair dist/pickfair-headless "bk-out/${APPIMAGE}"',
+            # release in DRY-RUN: stessi controlli di `build-linux.yml` (entrambi gli asset), nessuna pubblicazione
+            "shopt -s nullglob; bins=(bk-out/Pickfair-Linux-bin-*.tar.gz); apps=(bk-out/Pickfair-*-x86_64.AppImage)",
+            '[ ${#bins[@]} -eq 1 ] && [ ${#apps[@]} -eq 1 ] '
+            '|| { echo "asset mancante (binari: ${#bins[@]}, AppImage: ${#apps[@]}): release non preparata"; exit 1; }',
+            '(cd bk-out && sha256sum "${bins[0]#bk-out/}" "${apps[0]#bk-out/}" > SHA256SUMS && cat SHA256SUMS)',
+            'echo "DRY-RUN release: asset e SHA256SUMS pronti come artifact; nessuna release GitHub pubblicata"')),
     ]
     return tuple(fast + modules + heavy)
 
@@ -335,6 +390,7 @@ WORKFLOW_MAP = {
     "noise-free-pr-gate": ("w4-noise-free",), "ci-dynamic-intelligent": ("w4-ci-dynamic-detect", "w2-backstop"),
     "merge-simulation-hard": ("w4-merge-simulation",), "live-sim-parity": ("w4-live-sim-parity",),
     "live-gate": ("w4-live-gate",), "incident-snapshot": ("w4-incident-snapshot",),
+    "generate-linux-lockfile": ("w5-lockfile-fresh",),
 }
 # `pnl-engine.yml` ha anche il job `pnl-invariants`
 WORKFLOW_MAP["pnl-engine"] = ("w2-pnl-engine", "w2-pnl-invariants")
@@ -342,7 +398,9 @@ WORKFLOW_MAP["pnl-engine"] = ("w2-pnl-engine", "w2-pnl-invariants")
 #: copertura piu' ampia di quella di Actions, non un'equivalenza (#562 W3/W4)
 WORKFLOW_EXTRA = {
     "chaos-runtime": ("w3-chaos-runtime",), "chaos-stateful": ("w3-chaos-stateful",),
-    "core-chaos": ("w3-core-chaos",), "build-linux": ("w4-build-linux-tests",),
+    "core-chaos": ("w3-core-chaos",),
+    "build-linux": ("w4-build-linux-tests", "w5-build-linux-appimage"),
+    "telegram-live-integration": ("w5-telegram-live-sim",),
 }
 
 #: workflow su `pull_request` NON portati nella full-suite, con il motivo (restano su Actions o su altro percorso)
@@ -352,12 +410,31 @@ WORKFLOW_EXCLUDED = {
     "pr-overlap-guard": "lane trusted (`overlap-check` del dispatcher) e required check di Actions",
     "pr-merge-readiness": "lane trusted (`pr-merge-readiness` del dispatcher) e `Merge readiness` di Actions",
     "complete-task-on-merge": "contabilita' dei task alla chiusura della PR, non un controllo",
-    "generate-linux-lockfile": "rigenera il lockfile: PR-B (M2), non un test",
     "pr-review-openrouter-gpt56-sol": "review AI: `pull_request_target` con secret, resta su Actions",
     "pr-review-xai-grok46": "review AI: `pull_request_target` con secret, resta su Actions",
     "pr-review-claude-fable5": "reviewer sospeso (P41)",
     "pr-review-openrouter-fugu-ultra": "reviewer sospeso (P41)",
     "pr-review-openrouter-gpt-astra": "reviewer sospeso (P41)",
+}
+
+
+#: workflow fuori dalle PR (M2, #562 PR-B) NON migrati, con il motivo: nessuno e' dichiarato equivalente
+WORKFLOW_NOT_MIGRATED = {
+    "build-windows-exe": "build Windows: esclusa dal mandato #562 (solo workflow Linux)",
+    "telegram-test": "invia un messaggio Telegram reale: vietato (nessun invio Telegram reale)",
+    "merge-simulation": "variante manuale di `merge-simulation-hard`, gia' coperta da w4-merge-simulation",
+    "queue-on-pr-closed": "recupero manuale della coda task: scrive sul repository, non e' un controllo",
+    "pr-overlap-guard-diagnostic": "diagnostica manuale della lane trusted (overlap-check), non della full-suite",
+    "_module-ultra-check": "workflow riusabile: eseguito tramite i moduli (`ultra_check`, `MODULES`)",
+}
+
+#: cio' che la migrazione NON certifica, workflow per workflow: mai dichiarato PASS
+WORKFLOW_LIMITS = {
+    "telegram-live-integration": "simulazione offline degli stessi 7 scenari: trasporto Telethon/Bot API, "
+                                 "consegna e chat reale NON certificati (servono credenziali e GO owner)",
+    "build-linux": "release in DRY-RUN (asset e SHA256SUMS come artifact Buildkite): la pubblicazione della "
+                   "GitHub Release sui tag resta su Actions; avvio grafico dell'AppImage NON eseguito",
+    "generate-linux-lockfile": "la Job Summary di Actions diventa l'artifact requirements-build-linux.fresh.lock",
 }
 
 
