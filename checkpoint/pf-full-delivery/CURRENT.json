@@ -2,12 +2,12 @@
  "certification_verdict": "NO-GO",
  "checkpoint_commit": null,
  "code": {
-  "branch": "main",
-  "sha": "a5f0f72d369698a9f9d5dcb2172600e4312a7135"
+  "branch": "ccr-764b0316-9r1a1d",
+  "sha": "a20de8a6ab67688e3d7b1e657eb04144a483e8c4"
  },
- "mandate_id": "OWNER GO \u2014 MERGE PR #569 + certificazione e2e #562 (attivita gia autorizzate)",
- "next_atomic_action": "#562 e2e: Grok installa main a5f0f72 sulla VPS, configura (artifact_download_hosts da fissare), DRY-RUN, prove fail-closed; Claude esegue /pf-trusted-rerun quando la lane e' attiva per dimostrare l'autonomia; pubblicazione reale solo in finestra owner. NON iniziare la riconciliazione globale delle schede: attendere il pacchetto audit di Grok. #562 NOT CERTIFIED, #351 NOT READY. LIVE NO-GO.",
- "previous_checkpoint_sha": "a819751655b2c9af3daaf0a6a20268eb421c58e4",
+ "mandate_id": "OWNER FINAL MANDATE \u2014 chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
+ "next_atomic_action": "#562: pila locale e su ccr-764b0316-9r1a1d a20de8a = P0 replay a04f27c -> PR-A 2167196 (con P0 readiness prematura) -> PR-B 0911597 -> PR-C2 a20de8a; tutte TESTED (3829 passed, mutation 146/33/6/7 PASS), merge owner. Attendere RUNTIME_CERTIFIED_A_I di Grok (Test C) e GO condizionato; poi aprire UNA PR alla volta: prima P0 (a04f27c), poi PR-A, PR-B, PR-C2, riallineando i branch dopo ogni merge. FULL_SUITE_WITHIN_BUDGET PENDING (misura reale su PR-A), timeout 7200 invariato, TASKSMAX_RESOLVED. POSITIVE_E2E_PENDING. LIVE NO-GO.",
+ "previous_checkpoint_sha": "d2406bb0dbd6deaab2e612ff5dd5d6ba6b6c8a28",
  "schema": "pf-current/1",
- "seq": 79
+ "seq": 80
 }
