@@ -129,7 +129,8 @@ Codex, Sol, Grok e nelle revisioni indipendenti su #569):
 | Doppie build | identificatore per transizione, indice unico sui job attivi, una sola istanza | `test_unchanged_state_polled_again_starts_no_new_builds`, `test_rerun_command_is_executed_once`, `td_rerun_replayed` |
 | Rerun abusivo | allowlist di login, account utente con permesso attuale di scrittura (`collaborators/{login}/permission`), commento non modificato, SHA = head corrente; permesso non verificabile ⇒ lettura annullata; audit di ogni comando | `test_unauthorized_or_stale_rerun_is_rejected_and_audited`, `test_rerun_command_without_verified_permissions_keeps_the_cursor`, `test_rerun_accepted_only_with_current_write_permission`, `td_rerun_login_unchecked`, `td_rerun_permission_unchecked`, `td_rerun_read_permission_accepted`, `td_rerun_permission_404_as_write`, `td_rerun_permission_other_user`, `td_rerun_bot_accepted`, `td_rerun_permissions_optional`, `td_rerun_stale_sha_accepted` |
 | Esito su uno SHA vecchio | sostituzione per head; ricontrollo prima della pubblicazione; identità del risultato; ricontrollo dell'helper | `test_new_commit_is_synchronize_and_cancels_the_old_builds`, `td_publish_recheck_skipped`, `td_stale_sha_accepted` |
-| Pipeline non autorizzate | solo le due di `GUARDS` | `test_only_the_two_contract_pipelines_can_be_started` |
+| Pipeline non autorizzate | solo le due di `GUARDS` e, se abilitata, `pf-dedicated-ci` (`PIPELINES`); la configurazione non può aggiungerne | `test_only_the_two_contract_pipelines_can_be_started`, `test_store_refuses_unknown_targets` |
+| Full-suite falsamente verde | build sul commit dell'head e branch della PR verificati; `success` solo con tutti gli step di `main` presenti e `passed` | `test_full_suite_passed_build_that_is_not_complete_is_error_never_success`, `test_full_suite_build_on_another_commit_or_branch_is_refused`, `test_full_suite_step_keys_are_exactly_the_generator_steps`, `td_suite_missing_steps_ignored`, `td_suite_stale_commit_accepted`, `td_suite_soft_fail_accepted`, `td_suite_commit_not_matched`, `td_suite_built_on_main` |
 | Status diagnostico scambiato per richiesto | contesti fissi; lo status della readiness è self-check, quello dell'overlap no | `test_readiness_status_is_a_self_check_and_overlap_status_is_not` |
 | Descrizione dello status fuori dal contratto del socket | `clean_description`: ASCII stampabile, al massimo 140 caratteri, mai `` ` `` `$` `\`; accenti alla lettera base, altri caratteri vietati a `?` visibile, troncamento chiuso da `...`, originale nei log; il publisher rifiuta (exit 2, niente invio) una descrizione che non rispetta il formato | `test_status_description_matches_the_socket_contract`, `test_fail_reason_with_forbidden_characters_reaches_the_publisher_cleaned_and_logged`, `test_default_publisher_refuses_a_description_outside_the_contract`, `td_description_forbidden_kept`, `td_description_cut_silently`, `td_description_accents_lost`, `td_publisher_sends_invalid_description` |
 | Comando di rerun anteriore all'attivazione | limite inferiore persistente `comments_floor` (istante del primo avvio): il cursore non torna mai prima, e un comando con `created_at` ≤ limite (stesso secondo compreso) è rifiutato e registrato; id di commento fuori misura ⇒ comando malformato | `test_overlap_never_moves_the_cursor_before_the_first_start`, `test_command_in_the_same_second_as_the_first_start_is_rejected`, `test_cursor_floor_survives_restart_and_old_commands_never_build`, `test_comment_id_out_of_range_is_a_malformed_command`, `td_rerun_cursor_before_start`, `td_rerun_floor_unchecked`, `td_rerun_floor_same_second`, `td_comment_id_unbounded` |
@@ -157,7 +158,8 @@ Le chiamate HTTP non seguono i redirect (`_NoRedirect`), usano solo `https://` e
   "poll_interval_seconds": 60,
   "build_timeout_seconds": {"overlap": 600, "readiness": 900},
   "http_timeout_seconds": 30,
-  "readiness_wait": {"enabled": true, "max_seconds": 7200, "settle_polls": 2, "min_delay_seconds": 120}
+  "readiness_wait": {"enabled": true, "max_seconds": 7200, "settle_polls": 2, "min_delay_seconds": 120},
+  "full_suite": {"enabled": true, "build_timeout_seconds": 7200}
 }
 ```
 
@@ -189,6 +191,11 @@ Vincoli:
 - `http_timeout_seconds` 5..120;
 - `readiness_wait.enabled` booleano esplicito; `max_seconds` 600..21600; `settle_polls` 1..10;
   `min_delay_seconds` 0..3600. Senza `readiness_wait` la configurazione è `NOT CONFIGURED`;
+- `full_suite.enabled` booleano esplicito (`true`/`false`, mai `"true"` o `1`); `full_suite.build_timeout_seconds`
+  600..21600. Una configurazione senza `full_suite` è `NOT CONFIGURED`: aggiornando il dispatcher la chiave va
+  aggiunta, anche solo con `"enabled": false`;
+- con `readiness_wait` e `full_suite` entrambe attive, `readiness_wait.max_seconds` ≥ `full_suite.build_timeout_seconds`:
+  la readiness attende anche lo status `full-suite`, e un'attesa più corta finirebbe in `error` mentre la suite gira;
 - `result_artifacts.<guard>` relativo e con nome `<guard>.json`;
 - host senza caratteri jolly.
 
@@ -235,7 +242,7 @@ attesa interna e 10 minuti di timeout.
 | Regola | Dove |
 |---|---|
 | Non si attendono i self-check della readiness: lo status `pr-merge-readiness` della lane e il check run Actions «Merge readiness», come `is_self_check` di `scripts/pr_flow_automation.py`. Niente dipendenza circolare | `checks_gate`, `READINESS_SELF_STATUS_CONTEXTS` |
-| Si attendono tutti gli altri: workflow Actions, review Sol/Grok/Codex, `overlap-check` della lane, `full-suite` se presente. L'esito non conta: un check `failure` rilascia la readiness, che lo giudica e dà FAIL. Il gate non dichiara mai PASS | `checks_gate` |
+| Si attendono tutti gli altri: workflow Actions, review Sol/Grok/Codex, `overlap-check` della lane. L'esito non conta: un check `failure` rilascia la readiness, che lo giudica e dà FAIL. Il gate non dichiara mai PASS. Con la full-suite attiva vale in più la sezione «Readiness e full-suite dello stesso intento» qui sotto | `checks_gate` |
 | `pending` subito, «in attesa degli altri check»: un vecchio esito sullo stesso SHA non resta visibile | `_await_checks` |
 | Oltre `max_seconds` (7200) senza via libera ⇒ `error` «attesa dei check oltre … s», nessuna build | `_await_checks` |
 | Check o status illeggibili, `total_count` diverso dagli elementi, rate limit ⇒ nessun via libera, si ritenta; resta valido il limite di `max_seconds` | `GitHub.get_all(key=…)`, `checks_gate` |
@@ -257,6 +264,98 @@ in attesa senza mai partire (fail-closed, ma inutilizzabile) e Grok ha fatto rol
 conteggio diverso lasciano l'attesa invariata, mai un via libera. Lo stesso difetto, latente, c'era su `pulls` e
 `issues/comments` oltre i 100 elementi: è corretto dalla stessa funzione.
 
+## Readiness e full-suite dello stesso intento (#562 P0, readiness prematura)
+
+Prima di questa correzione la readiness si sbloccava quando i check **visibili** sull'head erano chiusi. Uno status
+`full-suite` non ancora pubblicato (creazione della build in ritardo, pubblicazione fallita, rate limit, API in
+ritardo) non era fra i check visibili: la readiness poteva partire, e passare, mentre la suite non esisteva ancora.
+
+Ogni transizione e ogni rerun creano i job di tutti i target con lo stesso identificativo dell'intento
+(`delivery_id`). Con `full_suite.enabled: true` la readiness dipende dalla full-suite **di quello stesso intento**,
+sullo stesso PR e SHA (`Dispatcher._suite_verdict`, `Store.intent_job`):
+
+| Caso | Effetto | Dove |
+|---|---|---|
+| `full_suite.enabled: true` con `readiness_wait.enabled: false` | configurazione rifiutata: la readiness partirebbe insieme alla suite | `validate_config` |
+| job della suite dell'intento assente, sostituito, in corso, esito non consegnato (`publish_failed`) o non verdetto | si attende, mai via libera | `_suite_verdict` |
+| suite conclusa ma ultimo status `full-suite` sull'head assente, `pending` o diverso dall'esito pubblicato dal dispatcher | si attende: la prova è anche remota | `_suite_verdict` |
+| status `full-suite: success` sull'head pubblicato da altri mentre la build dell'intento gira | non è prova, si attende | `_suite_verdict` |
+| suite dell'intento ritrovata conclusa dopo un ripristino dell'archivio (`recovered`, #562 P0): l'esito non è stato riletto | si attende; allo scadere readiness `error`, mai PASS. Serve un nuovo push o un rerun | `_suite_verdict` |
+| suite `failure` / `error` sull'head, altri check chiusi | readiness `failure` / `error` senza build | `_await_checks` |
+| suite mai conclusa entro `readiness_wait.max_seconds` | readiness `error`, nessuna build | `_await_checks` |
+| esito `success` della readiness senza la suite dell'intento `success` (archivio ripristinato, stato incoerente) | pubblicato `error`, mai `success`: ultima difesa | `_to_publishing` |
+| head nuovo, riavvio | la suite del vecchio head non vale per il nuovo; l'archivio persistente conserva il vincolo | `Store.apply_poll`, schema `jobs` |
+
+### Budget dei 7200 s, dal codice
+
+- **Da dove decorre.** `waited = now - created_at` del job readiness (`_await_checks`), cioè dal giro di polling che
+  registra la transizione: fino a `poll_interval_seconds` (60) dopo il push. Il tempo fra push e rilevamento è fuori
+  dalla finestra.
+- **Cosa ricade dentro.** Il massimo, non la somma, di tre rami paralleli: check Actions e review; build `overlap`
+  (coda trusted); full-suite (coda `pickfair-dedicated`: attesa + esecuzione + pubblicazione dello status al giro
+  successivo, ≤ 60 s). Poi la stabilizzazione: `settle_polls` (2) giri consecutivi con lo stesso numero di check,
+  cioè 60–120 s dopo l'ultimo cambiamento. `min_delay_seconds` (120) decorre anch'esso dall'inizio della finestra, quindi
+  si sovrappone alla suite e non si aggiunge.
+- **Cosa resta fuori.** Dopo il via libera la build della readiness ha la propria finestra
+  (`build_timeout_seconds.readiness`, da `released_at`): attesa sulla coda trusted, esecuzione del guard (misurata
+  45–47 s sulle build #24–#26, Grok t267 su #562), pubblicazione.
+- **Percorso critico atteso.** Suite in coda + suite in esecuzione + ≤ 60 s di pubblicazione + ≤ 120 s di
+  stabilizzazione. Con l'unica esecuzione completa registrata (Buildkite #6 del 26/10/2026, circa 2820 s, sequenziale
+  sulla VPS precedente) sono circa 3000 s più l'attesa in coda, quindi circa 4200 s di margine su 7200. Con la stima di
+  Grok (2800–3600 s) il caso peggiore è circa 3780 s. È una stima, non una misura:
+  `FULL_SUITE_WITHIN_BUDGET` resta PENDING finché la suite non gira davvero sulla PR-A.
+- La suite ha anche il proprio limite (`full_suite.build_timeout_seconds`, dalla creazione del job). La
+  configurazione impone che non superi `readiness_wait.max_seconds`.
+
+## Full-suite sulla lane non fidata (#562 PR-A)
+
+Con `full_suite.enabled: true` ogni transizione e ogni rerun avviano, oltre ai due guard trusted, una build della
+pipeline `pf-dedicated-ci` (target `full-suite`, contesto GitHub `full-suite`). È la suite completa delle Onde
+W1–W4, cioè gli stessi controlli dei workflow Actions che girano sulle PR (mappatura in
+`scripts/pr_full_suite_pipeline.py`, `WORKFLOW_MAP`).
+
+| Passo | Regola | Dove |
+|---|---|---|
+| Build | `commit` = SHA **esatto** dell'head della PR (mai `HEAD`), `branch` = branch di head della PR, env le stesse cinque `PF_*`. Coda `pickfair-dedicated`: nessun token, nessun segreto | `Dispatcher._create`, `Buildkite.create_build` |
+| Branch | dalla voce `head.ref` dell'elenco PR, ammesso solo `[A-Za-z0-9][A-Za-z0-9._/-]{0,199}` senza `..`, `//`, `/`/`.`/`.lock` finali. Ref assente o fuori formato ⇒ nessuna build, `full-suite` = `error`; i guard trusted non ne dipendono | `clean_ref`, `parse_pull` |
+| Verifica build | stesso env, branch di head, commit dell'head, URL della pipeline; altrimenti annullata ed `error` | `build_matches_job` |
+| Esito | `success` **solo** con build `passed` sul commit dell'head **e** tutti gli step di `FULL_SUITE_STEP_KEYS` presenti e `passed`, non soft-fail; gli altri step (lo step di avvio, scenari di collaudo con `if:`) `passed` oppure non eseguiti per condizione (`broken`, `skipped`), mai falliti o soft-fail; di uno step rilanciato conta l'ultimo tentativo. Build `failed` ⇒ `failure` con il primo step fallito. Step attesi mancanti, stato incoerente, elenco dei job illeggibile, `canceled`/`blocked`/`skipped` ⇒ `error`. Nessun artifact: un file prodotto dal codice della PR non aggiungerebbe garanzie | `decide_suite_outcome` |
+| Riconciliazione | creazione ambigua cercata per **commit** dell'head (non per `main`) e per env | `Buildkite.list_builds`, `_builds_for` |
+| Sostituzione, rerun, riavvio, riconsegna | come per i guard: un head nuovo annulla la build della suite, nessun esito sul vecchio head | `Store.apply_poll`, `_supersede` |
+
+**Definizione delle suite da `main`.** La configurazione di `pf-dedicated-ci` nella UI di Buildkite (Grok) contiene
+un solo step di avvio, sulla coda `pickfair-dedicated`, che prende il generatore dal `main` remoto e carica i passi
+senza interpolazione:
+
+```bash
+set -euo pipefail
+[ "$(git rev-parse HEAD)" = "$BUILDKITE_COMMIT" ] || exit 2
+git fetch -q origin main
+git show FETCH_HEAD:scripts/pr_full_suite_pipeline.py > "$TMPDIR/pf_full_suite_pipeline.py"
+/var/lib/buildkite/tools/py311/bin/python3.11 -I "$TMPDIR/pf_full_suite_pipeline.py" > "$TMPDIR/pipeline.json"
+buildkite-agent pipeline upload --no-interpolation "$TMPDIR/pipeline.json"
+```
+
+Nella UI ogni `$` va scritto `$$`. Una PR cambia il codice sotto test ma non l'elenco dei controlli: non può togliere
+uno step né sostituirlo con `exit 0`, perché sia il generatore sia `FULL_SUITE_STEP_KEYS` vengono da `main`.
+`scripts/pr_full_suite_pipeline.py` è un file a merge owner (pattern `scripts/pr_*.py`).
+
+**Requisiti della coda non fidata (Grok):**
+- `no-local-hooks` e `no-plugins` sugli agent `pickfair-dedicated`: una PR non deve poter portare hook propri;
+- trigger nativo della pipeline spento: le build le crea solo il dispatcher;
+- pubblicazione degli status di Buildkite verso GitHub spenta: lo status lo pubblica solo il publisher;
+- il publisher deve ammettere il contesto `full-suite`.
+
+**Limiti dichiarati.**
+- Il codice della PR esegue i propri test: una PR che modifica un test può farlo passare. È lo stesso limite di
+  Actions `pull_request`, coperto da review e merge gate.
+- Un job della PR può chiamare `buildkite-agent pipeline upload` e aggiungere step. Non può però rendere superato uno
+  step fallito, e uno step aggiunto deve comunque essere `passed`.
+- Se `main` aggiunge o rinomina uno step, il dispatcher installato lo deve conoscere (`FULL_SUITE_STEP_KEYS`). Uno
+  step atteso che manca dà `error` finché il dispatcher non viene aggiornato: è fail-closed.
+- `pr-guard` resta su Actions (metadati della PR e registro dello scope), come le review AI, overlap e readiness
+  (`WORKFLOW_EXCLUDED`).
+
 ## Recovery da snapshot: identità degli intenti e deduplicazione remota (#562 P0)
 
 **Difetto (rollback T252, #562 c.6471475567).** La deduplicazione era solo locale. Il cursore `comments_since` e la
@@ -274,7 +373,7 @@ riconoscere: verifica sempre su Buildkite.
 | Passo | Regola | Dove |
 |---|---|---|
 | Identità dell'intento | il tid (`p<pr>-t<seq>-<sha12>` per una transizione, `p<pr>-r<comment_id>-<sha12>` per un rerun) è deterministico, viaggia nella build come `PF_DELIVERY_ID` e come metadato Buildkite `pf_intent` | `Buildkite.create_build`, `INTENT_META_KEY` |
-| Prima di creare | si cercano le build della pipeline con `meta_data[pf_intent]=<tid>`, a qualunque data, più quelle con l'env identico nella finestra (build create prima del metadato) | `Dispatcher._builds_for`, `Buildkite.list_builds_by_intent` |
+| Prima di creare | si cercano le build della pipeline con `meta_data[pf_intent]=<tid>`, a qualunque data, nello stesso ambito di `list_builds` (`main` per i guard trusted, commit dell'head per la full-suite), più quelle con l'env identico nella finestra (build create prima del metadato) | `Dispatcher._builds_for`, `Buildkite.list_builds_by_intent` |
 | Build trovata in corso | adottata e seguita fino all'esito: nessuna build nuova | `Dispatcher._resume_prior` |
 | Build trovata conclusa | job chiuso `done` con esito `recovered`, **senza ripubblicare**: l'esito l'aveva già pubblicato chi l'aveva creata | `_resume_prior` |
 | Più build dello stesso intento | si segue la più vecchia, le altre si annullano | `_resume_prior`, `_create` |

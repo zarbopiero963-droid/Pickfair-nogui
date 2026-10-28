@@ -69,6 +69,30 @@ GUARDS: dict[str, dict[str, str]] = {
     "overlap": {"pipeline": "pr-overlap-guard", "context": "overlap-check"},
     "readiness": {"pipeline": "pr-merge-readiness", "context": "pr-merge-readiness"},
 }
+#: Suite completa sulla lane NON fidata (#562 PR-A): build sul commit ESATTO della PR, nessun token, nessun artifact
+#: del guard. Si attiva solo con `full_suite.enabled` (chiave obbligatoria, nessun default).
+SUITE = "full-suite"
+SUITE_TARGET = {"pipeline": "pf-dedicated-ci", "context": "full-suite"}
+#: tutte le pipeline che il dispatcher conosce; quelle avviate dipendono dalla configurazione (`Config.targets`)
+PIPELINES: dict[str, dict[str, str]] = {**GUARDS, SUITE: SUITE_TARGET}
+#: stati ammessi in una build `passed` per uno step NON atteso (scenari con `if:` non eseguiti: Buildkite li segna
+#: `broken`): mai `failed`, `canceled`, `timed_out` o soft-fail
+SUITE_EXTRA_STEP_STATES = ("passed", "broken", "skipped")
+#: step che una build `full-suite` deve contenere, tutti `passed`, per valere `success`: le chiavi di
+#: `scripts/pr_full_suite_pipeline.py` (un test le confronta). Una build che ne perde anche uno non e' mai un PASS.
+FULL_SUITE_STEP_KEYS = frozenset({
+    "w1-repo-guardrails-ext", "w1-repo-guardrails", "w1-quarantine", "w4-noise-free", "w4-ci-dynamic-detect",
+    "w4-readiness-gate", "w4-rollback-gate", "w4-live-gate", "w4-incident-snapshot", "w3-observability-minimum",
+    "w1-unit", "w1-core-guardrails", "w1-core-invariants", "w1-recovery-guardrails", "w3-smoke-core-fast",
+    "w2-money-management", "w2-dutching", "w2-pnl-engine", "w2-order-manager", "w2-risk-middleware",
+    "w2-rate-limiter", "w2-reconciliation-engine", "w2-session-manager", "w2-execution-guard",
+    "w2-trading-engine", "w2-copy-engine", "w2-simulation-broker", "w2-runtime-controller",
+    "w2-telegram-listener", "w2-pnl-invariants", "w2-trading-engine-hard", "w2-stateful-integrity",
+    "w3-integration", "w3-e2e", "w3-smoke", "w3-failure", "w3-net", "w3-chaos-critical", "w3-chaos-runtime",
+    "w3-chaos-stateful", "w3-core-chaos", "w3-observability-runtime", "w3-observability-tests",
+    "w4-live-sim-parity", "w4-build-linux-tests", "w1-pr-check", "w2-backstop", "w4-merge-simulation",
+    "w1-mutation",
+})
 GITHUB_API = "https://api.github.com"
 BUILDKITE_API = "https://api.buildkite.com/v2"
 BUILDKITE_WEB = "https://buildkite.com"
@@ -89,6 +113,9 @@ INTENT_PAGE = 100                       # una pagina piena di build per lo stess
 COMMENTS_OVERLAP_SECONDS = 120          # sovrapposizione fra giri per i commenti: i doppioni li toglie l'archivio
 
 _PR_RE = re.compile(r"[1-9][0-9]{0,6}", re.ASCII)
+# branch di head della PR, usato solo dalla full-suite (campo `branch` della build): fuori formato => ref vuoto, e la
+# full-suite di quella PR finisce `error` senza fermare i guard trusted
+_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}", re.ASCII)
 _SHA_RE = re.compile(r"[0-9a-f]{40}", re.ASCII)
 MAX_COMMENT_ID = 10 ** 15
 _TID_RE = re.compile(r"[A-Za-z0-9-]{8,64}", re.ASCII)         # stesso formato del gate pre-command (PF_DELIVERY_ID)
@@ -170,6 +197,7 @@ CONFIG_SCHEMA_KEYS = {
     "build_timeout_seconds": set(GUARDS),
     "http_timeout_seconds": None,
     "readiness_wait": {"enabled", "max_seconds", "settle_polls", "min_delay_seconds"},
+    "full_suite": {"enabled", "build_timeout_seconds"},
 }
 
 
@@ -187,13 +215,19 @@ class Config:
     state_db: str
     retention_hours: int
     poll_interval_seconds: int
-    build_timeout_seconds: dict
+    build_timeout_seconds: dict             # per ogni target attivo, full-suite compresa se abilitata
     http_timeout_seconds: int
     # readiness non bloccante (#562 opzione A): la build parte solo quando gli altri check dell'head sono chiusi
     readiness_wait_enabled: bool = False
     readiness_wait_max_seconds: int = 7200
     readiness_wait_settle_polls: int = 2
     readiness_wait_min_delay_seconds: int = 120
+    full_suite_enabled: bool = False
+
+    @property
+    def targets(self) -> tuple:
+        """Pipeline avviate a ogni transizione: i due guard trusted e, se abilitata, la full-suite."""
+        return (*GUARDS, SUITE) if self.full_suite_enabled else tuple(GUARDS)
 
 
 def _is_int(value: Any) -> bool:
@@ -289,17 +323,34 @@ def validate_config(raw: Any) -> Config:
         problems.append("readiness_wait.settle_polls: intero 1..10")
     if not _is_int(wait["min_delay_seconds"]) or not 0 <= wait["min_delay_seconds"] <= 3600:
         problems.append("readiness_wait.min_delay_seconds: intero 0..3600")
+    suite = raw["full_suite"]
+    # booleano ESPLICITO: un valore ambiguo (stringa, 0/1) non accende ne' spegne la suite in silenzio
+    if not isinstance(suite["enabled"], bool):
+        problems.append("full_suite.enabled: booleano true/false")
+    suite_timeout = suite["build_timeout_seconds"]
+    if not _is_int(suite_timeout) or not 600 <= suite_timeout <= 6 * 3600:
+        problems.append("full_suite.build_timeout_seconds: intero 600..21600")
+    # la readiness attende anche lo status `full-suite`: un'attesa piu' corta della suite finirebbe in `error`
+    if not problems and wait["enabled"] and suite["enabled"] and wait["max_seconds"] < suite_timeout:
+        problems.append("readiness_wait.max_seconds: almeno full_suite.build_timeout_seconds con entrambe attive")
+    if not problems and suite["enabled"] and not wait["enabled"]:
+        # senza attesa la readiness partirebbe insieme alla suite e non potrebbe mai avere la suite conclusa (#562 P0)
+        problems.append("readiness_wait.enabled: obbligatoria con full_suite.enabled")
     if problems:
         raise ConfigError(problems)
+    timeouts = dict(timeouts)
+    if suite["enabled"]:
+        timeouts[SUITE] = suite_timeout
     return Config(
         github_token_command=tuple(gh["token_command"]), github_token_command_timeout_seconds=token_timeout,
         rerun_allowed_logins=frozenset(logins), organization=org, buildkite_token_file=bk["token_file"],
         result_artifacts=dict(artifacts), artifact_download_hosts=tuple(hosts),
         publisher_command=tuple(raw["publisher"]["command"]), publisher_timeout_seconds=pub_timeout,
         state_db=raw["state_db"], retention_hours=retention, poll_interval_seconds=poll,
-        build_timeout_seconds=dict(timeouts), http_timeout_seconds=http_timeout,
+        build_timeout_seconds=timeouts, http_timeout_seconds=http_timeout,
         readiness_wait_enabled=wait["enabled"], readiness_wait_max_seconds=wait["max_seconds"],
-        readiness_wait_settle_polls=wait["settle_polls"], readiness_wait_min_delay_seconds=wait["min_delay_seconds"])
+        readiness_wait_settle_polls=wait["settle_polls"], readiness_wait_min_delay_seconds=wait["min_delay_seconds"],
+        full_suite_enabled=suite["enabled"])
 
 
 def load_config(path: Optional[str]) -> Config:
@@ -466,6 +517,7 @@ class Observed:
     pr: int
     head_sha: str
     eligible: bool          # base main, head nello stesso repository, non in bozza
+    head_ref: str = ""      # branch di head, solo per la full-suite; "" se assente o fuori formato
 
 
 def _get(obj: Any, *keys: str) -> Any:
@@ -495,7 +547,16 @@ def parse_pull(item: Any) -> Observed:
         raise ApiError(f"PR #{number}: repository head fuori formato")
     eligible = (not item["draft"] and item["base"]["ref"] == BASE_REF
                 and head_repo is not None and head_repo["full_name"] == TRUSTED_REPO)
-    return Observed(pr=number, head_sha=head_sha, eligible=eligible)
+    return Observed(pr=number, head_sha=head_sha, eligible=eligible, head_ref=clean_ref(_get(item, "head", "ref")))
+
+
+def clean_ref(ref: Any) -> str:
+    """Branch di head ammesso come `branch` di una build della full-suite, altrimenti "" (fail-closed solo per la
+    full-suite di quella PR: i guard trusted non ne dipendono)."""
+    if (not isinstance(ref, str) or not _REF_RE.fullmatch(ref) or ".." in ref or "//" in ref
+            or ref.endswith(("/", ".lock", "."))):
+        return ""
+    return ref
 
 
 def parse_pulls(items: list) -> list:
@@ -703,6 +764,7 @@ CREATE TABLE IF NOT EXISTS pr_state (
   open INTEGER NOT NULL,
   missing INTEGER NOT NULL DEFAULT 0,
   seq INTEGER NOT NULL DEFAULT 0,
+  head_ref TEXT NOT NULL DEFAULT '',
   updated_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS transitions (
@@ -748,6 +810,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   gate_seen INTEGER NOT NULL DEFAULT -1,
   gate_stable INTEGER NOT NULL DEFAULT 0,
   released_at REAL,
+  head_ref TEXT NOT NULL DEFAULT '',
   updated_at REAL NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS jobs_active_current ON jobs(pr, head_sha, guard)
@@ -764,13 +827,21 @@ MIGRATION_COLUMNS = (
     ("gate_seen", "INTEGER NOT NULL DEFAULT -1"),
     ("gate_stable", "INTEGER NOT NULL DEFAULT 0"),
     ("released_at", "REAL"),
+    ("head_ref", "TEXT NOT NULL DEFAULT ''"),
+)
+# stesse aggiunte per `pr_state` (branch di head per la full-suite, #562 PR-A)
+MIGRATION_PR_STATE_COLUMNS = (
+    ("head_ref", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
 class Store:
     """SQLite con transazioni `BEGIN IMMEDIATE`: stato delle PR, transizioni e job si scrivono insieme o niente."""
 
-    def __init__(self, path: str, *, read_only: bool = False) -> None:
+    def __init__(self, path: str, *, read_only: bool = False, targets: tuple = tuple(GUARDS)) -> None:
+        if not targets or any(t not in PIPELINES for t in targets):
+            raise ValueError("target non ammessi")
+        self._targets = tuple(targets)
         self._lock = threading.Lock()
         self._lock_fd: Optional[int] = None
         if read_only:
@@ -801,6 +872,10 @@ class Store:
             for name, ddl in MIGRATION_COLUMNS:
                 if name not in cols:
                     db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {ddl}")
+            pr_cols = {row[1] for row in db.execute("PRAGMA table_info(pr_state)")}
+            for name, ddl in MIGRATION_PR_STATE_COLUMNS:
+                if name not in pr_cols:
+                    db.execute(f"ALTER TABLE pr_state ADD COLUMN {name} {ddl}")
             db.execute("DROP INDEX IF EXISTS jobs_active")   # indice senza `superseded = 0` (P2-1)
             # finestre ancorate: un job in pubblicazione/annullamento senza `publishing_since` userebbe
             # `updated_at`, che si aggiorna a ogni giro, e non scadrebbe mai
@@ -838,18 +913,19 @@ class Store:
                    f"AND (? IS NULL OR head_sha != ?) AND state IN ({placeholders})",
                    (now, pr, keep_head, keep_head, *ACTIVE_STATES))
 
-    @staticmethod
-    def _new_jobs(db: sqlite3.Connection, tid: str, kind: str, pr: int, head_sha: str, now: float) -> list[int]:
+    def _new_jobs(self, db: sqlite3.Connection, tid: str, kind: str, pr: int, head_sha: str, now: float,
+                  head_ref: str = "") -> list[int]:
         if not _TID_RE.fullmatch(tid):
             raise ValueError("identificatore di transizione fuori formato")
         db.execute("INSERT INTO transitions(tid, pr, head_sha, kind, created_at) VALUES (?, ?, ?, ?, ?)",
                    (tid, pr, head_sha, kind, now))
         created: list[int] = []
         placeholders = ",".join("?" * len(ACTIVE_STATES))
-        for guard in GUARDS:
+        for guard in self._targets:
             cur = db.execute(
-                "INSERT OR IGNORE INTO jobs(delivery_id, event, pr, head_sha, guard, state, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)", (tid, kind, pr, head_sha, guard, now, now))
+                "INSERT OR IGNORE INTO jobs(delivery_id, event, pr, head_sha, guard, state, head_ref, created_at, "
+                "updated_at) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
+                (tid, kind, pr, head_sha, guard, head_ref, now, now))
             if cur.rowcount == 1:
                 created.append(int(cur.lastrowid))
                 # gli status GitHub sono per SHA e contesto: una valutazione nuova dello stesso SHA, anche di un'altra
@@ -885,12 +961,13 @@ class Store:
                 if kind is not None and o.eligible:
                     seq += 1
                     tid = f"p{o.pr}-t{seq}-{o.head_sha[:12]}"
-                    self._new_jobs(db, tid, kind, o.pr, o.head_sha, now)
+                    self._new_jobs(db, tid, kind, o.pr, o.head_sha, now, o.head_ref)
                     created.append(tid)
-                db.execute("INSERT INTO pr_state(pr, head_sha, eligible, open, missing, seq, updated_at) "
-                           "VALUES (?, ?, ?, 1, 0, ?, ?) ON CONFLICT(pr) DO UPDATE SET head_sha = excluded.head_sha, "
-                           "eligible = excluded.eligible, open = 1, missing = 0, seq = excluded.seq, "
-                           "updated_at = excluded.updated_at", (o.pr, o.head_sha, int(o.eligible), seq, now))
+                db.execute("INSERT INTO pr_state(pr, head_sha, eligible, open, missing, seq, head_ref, updated_at) "
+                           "VALUES (?, ?, ?, 1, 0, ?, ?, ?) ON CONFLICT(pr) DO UPDATE SET "
+                           "head_sha = excluded.head_sha, eligible = excluded.eligible, open = 1, missing = 0, "
+                           "seq = excluded.seq, head_ref = excluded.head_ref, updated_at = excluded.updated_at",
+                           (o.pr, o.head_sha, int(o.eligible), seq, o.head_ref, now))
             for row in db.execute("SELECT pr, missing FROM pr_state WHERE open = 1").fetchall():
                 if row["pr"] in seen:
                     continue
@@ -948,7 +1025,7 @@ class Store:
             if reason:
                 return "rejected", reason
             self._supersede_pr(db, req.pr, now, keep_head=None)   # anche i job dello stesso head: si rivaluta
-            self._new_jobs(db, tid, "manual", req.pr, req.head_sha, now)
+            self._new_jobs(db, tid, "manual", req.pr, req.head_sha, now, row["head_ref"])
             return "accepted", tid
 
         return self._tx(fn)
@@ -987,6 +1064,13 @@ class Store:
     def get_job(self, job_id: int) -> dict:
         with self._lock:
             row = self._db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return dict(row) if row is not None else {}
+
+    def intent_job(self, delivery_id: str, pr: int, head_sha: str, guard: str) -> dict:
+        """Job dello stesso intento (transizione o rerun) per un altro target: {} se assente."""
+        with self._lock:
+            row = self._db.execute("SELECT * FROM jobs WHERE delivery_id = ? AND pr = ? AND head_sha = ? AND guard = ? "
+                                   "ORDER BY id DESC LIMIT 1", (delivery_id, pr, head_sha, guard)).fetchone()
         return dict(row) if row is not None else {}
 
     def recent_jobs(self, limit: int = 50) -> list[dict]:
@@ -1072,7 +1156,7 @@ class Buildkite:
         self._transport = transport
 
     def _pipeline_url(self, guard: str) -> str:
-        pipeline = GUARDS[guard]["pipeline"]     # KeyError su un guard non ammesso: mai una pipeline libera
+        pipeline = PIPELINES[guard]["pipeline"]  # KeyError su un target non ammesso: mai una pipeline libera
         return f"{BUILDKITE_API}/organizations/{self._cfg.organization}/pipelines/{pipeline}"
 
     def _request(self, method: str, url: str, payload: Any = None) -> "tuple[int, Any]":
@@ -1089,13 +1173,14 @@ class Buildkite:
         except (ValueError, RecursionError):        # RecursionError: JSON annidato all'estremo, non ValueError
             raise ApiError("risposta Buildkite non JSON", status) from None
 
-    def create_build(self, guard: str, env: Mapping[str, str], message: str) -> dict:
+    def create_build(self, guard: str, env: Mapping[str, str], message: str, *, commit: str = "HEAD",
+                     branch: str = BASE_REF) -> dict:
         """Solo un rifiuto 4xx esplicito e' un esito DEFINITO (nessuna build). Ogni altra risposta non
         interpretabile (5xx, 201 con corpo troncato o non JSON, 2xx inattesi) e' AMBIGUA: la build puo' esistere,
         quindi TransportError e riconciliazione (rilievi Codex P2 su #569)."""
         try:
             status, data = self._request("POST", f"{self._pipeline_url(guard)}/builds",
-                                         {"commit": "HEAD", "branch": BASE_REF, "message": message,
+                                         {"commit": commit, "branch": branch, "message": message,
                                           "env": dict(env),
                                           "meta_data": {INTENT_META_KEY: env.get("PF_DELIVERY_ID", "")}})
         except ApiError as exc:
@@ -1116,8 +1201,11 @@ class Buildkite:
             raise ApiError(f"lettura build fallita (HTTP {status})", status)
         return data
 
-    def list_builds(self, guard: str, created_from: str) -> list:
-        query = urllib.parse.urlencode({"branch": BASE_REF, "created_from": created_from, "per_page": "100"})
+    def list_builds(self, guard: str, created_from: str, *, commit: Optional[str] = None) -> list:
+        """Build della pipeline dal momento indicato: su `main` per i guard trusted, sul commit della PR per la
+        full-suite."""
+        scope = {"commit": commit} if commit is not None else {"branch": BASE_REF}
+        query = urllib.parse.urlencode({**scope, "created_from": created_from, "per_page": "100"})
         status, data = self._request("GET", f"{self._pipeline_url(guard)}/builds?{query}")
         if status != 200 or not isinstance(data, list):
             raise ApiError(f"elenco build fallito (HTTP {status})", status)
@@ -1126,12 +1214,14 @@ class Buildkite:
             raise ApiError("elenco build pieno: assenza non verificabile")
         return data
 
-    def list_builds_by_intent(self, guard: str, intent: str) -> list:
+    def list_builds_by_intent(self, guard: str, intent: str, *, commit: Optional[str] = None) -> list:
         """Build della pipeline con il metadato dell'intento (`pf_intent`), a qualunque data: la prova remota che un
-        intento ha gia' una build, indipendente dall'archivio locale. Pagina piena => assenza non verificabile."""
+        intento ha gia' una build, indipendente dall'archivio locale. Stesso ambito di `list_builds` (`main` per i
+        guard trusted, commit della PR per la full-suite). Pagina piena => assenza non verificabile."""
         if not _TID_RE.fullmatch(intent):
             raise ApiError("identita' dell'intento fuori formato")
-        query = urllib.parse.urlencode({"branch": BASE_REF, f"meta_data[{INTENT_META_KEY}]": intent,
+        scope = {"commit": commit} if commit is not None else {"branch": BASE_REF}
+        query = urllib.parse.urlencode({**scope, f"meta_data[{INTENT_META_KEY}]": intent,
                                         "per_page": str(INTENT_PAGE)})
         status, data = self._request("GET", f"{self._pipeline_url(guard)}/builds?{query}")
         if status != 200 or not isinstance(data, list):
@@ -1195,12 +1285,18 @@ def build_env(job: Mapping[str, Any]) -> dict[str, str]:
 
 
 def build_matches_job(build: Any, guard: str, job: Mapping[str, Any], org: str) -> bool:
-    """La build letta e' quella chiesta: branch main, env identico a quello inviato, URL della pipeline giusta."""
+    """La build letta e' quella chiesta: env identico a quello inviato, URL della pipeline giusta e, per i guard
+    trusted, branch main; per la full-suite branch di head della PR e commit ESATTO dell'head (mai `HEAD`)."""
     if not isinstance(build, dict):
         return False
     number, url = build.get("number"), build.get("web_url")
-    prefix = f"{BUILDKITE_WEB}/{org}/{GUARDS[guard]['pipeline']}/builds/"
-    return (_is_int(number) and number > 0 and build.get("branch") == BASE_REF
+    prefix = f"{BUILDKITE_WEB}/{org}/{PIPELINES[guard]['pipeline']}/builds/"
+    if guard == SUITE:
+        where = (bool(job.get("head_ref")) and build.get("branch") == job["head_ref"]
+                 and build.get("commit") == job["head_sha"])
+    else:
+        where = build.get("branch") == BASE_REF
+    return (_is_int(number) and number > 0 and where
             and build.get("env") == build_env(job)
             and isinstance(url, str) and url == f"{prefix}{number}")
 
@@ -1273,6 +1369,42 @@ def checks_gate(runs: Any, statuses: Any) -> tuple[list, int]:
         if state == "pending":
             pending.append(context)
     return sorted(pending), seen
+
+
+def decide_suite_outcome(build: Mapping[str, Any], job: Mapping[str, Any]) -> tuple[str, str]:
+    """Esito della full-suite (#562 PR-A), dallo stato della build e dei suoi step: nessun artifact, perche' un file
+    prodotto dal codice della PR non aggiungerebbe garanzie. `success` SOLO se la build e' `passed` sul commit
+    dell'head E contiene tutti gli step `FULL_SUITE_STEP_KEYS` (definiti su `main`), ciascuno `passed` e non
+    soft-fail. Ogni altro step presente deve essere `passed`, oppure non eseguito per una condizione (`broken`,
+    `skipped`: per esempio gli scenari di collaudo con `if:` della pipeline), mai fallito o soft-fail. Build
+    `failed` coerente => `failure`. Tutto il resto (step mancanti, stato incoerente, elenco job illeggibile) =>
+    `error`."""
+    state = build.get("state")
+    if state not in ("passed", "failed"):
+        return "error", f"build {state}: nessun verdetto"
+    if build.get("commit") != job["head_sha"]:
+        return "error", "stale SHA: la build ha eseguito un commit diverso dall'head"
+    jobs = build.get("jobs")
+    if not isinstance(jobs, list) or not all(isinstance(j, dict) for j in jobs):
+        return "error", "elenco degli step della build illeggibile"
+    steps: dict[Any, list] = {}
+    for j in jobs:
+        if j.get("type") == "script":
+            steps.setdefault(j.get("step_key"), []).append(j)
+    # un retry lascia il tentativo vecchio `retried`: conta l'ultimo tentativo di ogni step
+    current = {k: [x for x in js if not x.get("retried")] or js for k, js in steps.items()}
+    missing = sorted(FULL_SUITE_STEP_KEYS - set(steps))
+    if state == "failed":
+        failed = sorted(str(k) for k, js in current.items() if any(x.get("state") != "passed" for x in js))
+        first = failed[0] if failed else "build failed"
+        return "failure", f"FAIL: {first}" + (f" (+{len(failed) - 1})" if len(failed) > 1 else "")
+    if missing:
+        return "error", f"suite incompleta: {len(missing)} step attesi assenti (es. {missing[0]})"
+    for key, js in current.items():
+        allowed = ("passed",) if key in FULL_SUITE_STEP_KEYS else SUITE_EXTRA_STEP_STATES
+        if any(x.get("state") not in allowed or x.get("soft_failed") for x in js):
+            return "error", f"build passed incoerente: step {key} non passed"
+    return "success", f"PASS ({len(steps)} step)"
 
 
 # contratto del publisher a socket (Grok t215u): 1..140 caratteri ASCII stampabili, senza ` $ \
@@ -1514,7 +1646,8 @@ class Dispatcher:
                             "in attesa degli altri check") == 0:
                 self._set(job, pending_published=1)
         try:
-            pending, seen = checks_gate(self.gh.check_runs(job["head_sha"]), self.gh.statuses(job["head_sha"]))
+            statuses = self.gh.statuses(job["head_sha"])
+            pending, seen = checks_gate(self.gh.check_runs(job["head_sha"]), statuses)
         except RateLimited as exc:
             self.rate_limited_until = exc.until
             log(f"job {job['id']}: lettura dei check rinviata: {exc}")
@@ -1522,6 +1655,13 @@ class Dispatcher:
         except (ApiError, TransportError, CredentialError) as exc:
             log(f"job {job['id']}: check dell'head non leggibili ({exc}): attesa invariata")
             return None
+        if self.cfg.full_suite_enabled:
+            suite, why = self._suite_verdict(job, statuses)
+            if suite == "wait":
+                pending = [*pending, why]
+            elif suite != "success" and not pending:
+                # suite conclusa e non superata: readiness negativa senza build (mai un PASS con la suite rossa)
+                return self._fail(job, suite, f"readiness non avviata: {why}")
         if pending or seen == 0 or waited < self.cfg.readiness_wait_min_delay_seconds:
             return self._set(job, gate_seen=-1, gate_stable=0)
         stable = job["gate_stable"] + 1 if seen == job["gate_seen"] else 1
@@ -1531,13 +1671,37 @@ class Dispatcher:
         log(f"job {job['id']}: {seen} check chiusi sull'head dopo {int(waited)} s: avvio della readiness")
         return self._create(job)
 
+    def _suite_verdict(self, job: dict, statuses: Optional[list] = None) -> tuple[str, str]:
+        """Full-suite dello STESSO intento della readiness (#562 P0, readiness prematura): (`wait`|`success`|`failure`|
+        `error`, motivo). Conclusa solo con esito finale pubblicato dal dispatcher e, se `statuses` e' dato, lo stesso
+        esito come ultimo status `full-suite` sull'head: assenza, `pending` o incoerenza => `wait`, mai successo."""
+        suite = self.store.intent_job(job["delivery_id"], job["pr"], job["head_sha"], SUITE)
+        if not suite:
+            return "wait", "full-suite dell'intento non registrata"
+        if suite["superseded"] or suite["state"] == "superseded":
+            return "wait", "full-suite dell'intento sostituita"
+        if not (suite["final_published"] and suite["state"] in ("done", "canceling")):
+            return "wait", "full-suite in corso"
+        outcome = suite.get("outcome")
+        if outcome not in ("success", "failure", "error"):
+            return "wait", f"full-suite con esito {outcome}"
+        if statuses is not None:
+            latest = next((st.get("state") for st in statuses if st.get("context") == SUITE_TARGET["context"]), None)
+            if latest != outcome:
+                return "wait", f"full-suite {outcome} non visibile sull'head (status {latest or 'assente'})"
+        if outcome != "success":
+            return ("failure" if outcome == "failure" else "error"), f"full-suite {outcome} sull'head"
+        return "success", "full-suite success sull'head"
+
     def _dry_run(self, job: dict) -> None:
         """DRY-RUN: il job e' valutato fino al punto in cui scriverebbe fuori (build, annullamenti, status) e chiuso
         `done` con esito `dry_run`; nel log la build che verrebbe creata, con le cinque variabili esatte."""
         if job["state"] == "queued" and not job["superseded"]:
             env = " ".join(f"{k}={v}" for k, v in build_env(job).items())
-            log(f"DRY-RUN job {job['id']}: creerei {GUARDS[job['guard']]['pipeline']} su main con {env}; "
-                f"pubblicherei pending su {job['head_sha']} ({GUARDS[job['guard']]['context']})")
+            where = (f"sul commit {job['head_sha']} ({job.get('head_ref') or 'ref assente'})" if job["guard"] == SUITE
+                     else "su main")
+            log(f"DRY-RUN job {job['id']}: creerei {PIPELINES[job['guard']]['pipeline']} {where} con {env}; "
+                f"pubblicherei pending su {job['head_sha']} ({PIPELINES[job['guard']]['context']})")
         # nessuna build reale dietro un job di collaudo: gli annullamenti pendenti si azzerano, altrimenti `_set` lo
         # terrebbe `canceling` e ritenterebbe un annullamento verso Buildkite
         self._set(job, state="done", outcome="dry_run", pending_cancels="[]",
@@ -1593,9 +1757,10 @@ class Dispatcher:
         (build create prima del metadato). Ogni elenco illeggibile o pieno => eccezione: assenza NON dimostrata."""
         created_from = datetime.fromtimestamp(self._started(job) - 300, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         expected = build_env(job)
-        found = {b["number"]: b for b in self.bk.list_builds(job["guard"], created_from)
+        commit = job["head_sha"] if job["guard"] == SUITE else None
+        found = {b["number"]: b for b in self.bk.list_builds(job["guard"], created_from, commit=commit)
                  if isinstance(b, dict) and b.get("env") == expected and _is_int(b.get("number"))}
-        for b in self.bk.list_builds_by_intent(job["guard"], job["delivery_id"]):
+        for b in self.bk.list_builds_by_intent(job["guard"], job["delivery_id"], commit=commit):
             if isinstance(b, dict) and b.get("env") == expected and _is_int(b.get("number")):
                 found[b["number"]] = b
         return [found[n] for n in sorted(found)]
@@ -1605,6 +1770,11 @@ class Dispatcher:
         self._publish_final(job)
 
     def _to_publishing(self, job: dict, outcome: str, description: str) -> None:
+        if outcome == "success" and job["guard"] == "readiness" and self.cfg.full_suite_enabled:
+            suite, why = self._suite_verdict(job)
+            if suite != "success":
+                # ultima difesa: nessun PASS della readiness senza la full-suite dello stesso intento superata
+                outcome, description = "error", f"readiness senza full-suite superata: {why}"
         cleaned = clean_description(description)
         if cleaned != description:
             # lo status porta la forma pulita; il testo completo resta qui (repr: nessun a capo nel log)
@@ -1630,8 +1800,14 @@ class Dispatcher:
         if prior:
             return self._resume_prior(job, prior)
         message = f"PR #{job['pr']} {job['head_sha'][:12]} ({job['guard']}, delivery {job['delivery_id']})"
+        where: dict[str, str] = {}
+        if job["guard"] == SUITE:
+            if not job.get("head_ref"):
+                # senza branch valido non si crea nessuna build: mai una suite su `main` o su un ref indovinato
+                return self._fail(job, "error", "branch di head della PR assente o fuori formato")
+            where = {"commit": job["head_sha"], "branch": job["head_ref"]}
         try:
-            build = self.bk.create_build(job["guard"], build_env(job), message)
+            build = self.bk.create_build(job["guard"], build_env(job), message, **where)
         except TransportError as exc:
             log(f"job {job['id']}: creazione build con esito ignoto ({exc}): riconciliazione")
             return
@@ -1686,7 +1862,7 @@ class Dispatcher:
     def _publish_pending(self, job: dict) -> None:
         """`pending` sull'head finche' la build gira, ritentato a ogni giro se fallisce (rilievo Codex P1 su #569):
         rivalutando un head gia' `success` (reopen), il vecchio `success` non deve restare l'esito visibile."""
-        if self.publish(job["pr"], job["head_sha"], "pending", GUARDS[job["guard"]]["context"], job["build_url"],
+        if self.publish(job["pr"], job["head_sha"], "pending", PIPELINES[job["guard"]]["context"], job["build_url"],
                         "build in corso") == 0:
             self._set(job, pending_published=1)
         else:
@@ -1739,8 +1915,8 @@ class Dispatcher:
         if not job.get("pending_published"):
             # head rivalutato con creazione ambigua: `pending` subito, cosi' un vecchio `success` non resta l'esito
             # visibile per tutta la finestra di riconciliazione (audit su #569)
-            url = f"{BUILDKITE_WEB}/{self.cfg.organization}/{GUARDS[job['guard']]['pipeline']}"
-            if self.publish(job["pr"], job["head_sha"], "pending", GUARDS[job["guard"]]["context"], url,
+            url = f"{BUILDKITE_WEB}/{self.cfg.organization}/{PIPELINES[job['guard']]['pipeline']}"
+            if self.publish(job["pr"], job["head_sha"], "pending", PIPELINES[job["guard"]]["context"], url,
                             "creazione build in verifica") == 0:
                 self._set(job, pending_published=1)
         try:
@@ -1783,6 +1959,10 @@ class Dispatcher:
             return None
         if state == "blocked":
             self._cancel_quietly(job)
+        if guard == SUITE:
+            outcome, description = decide_suite_outcome(build, job)
+            self._to_publishing(job, outcome, description)
+            return self._publish_final(job)
         artifact: Optional[bytes] = None
         if state in ("passed", "failed"):
             try:
@@ -1803,8 +1983,8 @@ class Dispatcher:
         outcome = job["outcome"]
         if outcome not in ("success", "failure", "error"):
             outcome, job["description"] = "error", "esito interno non valido"
-        url = job["build_url"] or f"{BUILDKITE_WEB}/{self.cfg.organization}/{GUARDS[job['guard']]['pipeline']}"
-        rc = self.publish(job["pr"], job["head_sha"], outcome, GUARDS[job["guard"]]["context"], url,
+        url = job["build_url"] or f"{BUILDKITE_WEB}/{self.cfg.organization}/{PIPELINES[job['guard']]['pipeline']}"
+        rc = self.publish(job["pr"], job["head_sha"], outcome, PIPELINES[job["guard"]]["context"], url,
                           job["description"] or outcome)
         if rc == 0:
             # consegna registrata a parte dallo stato: `canceling` non deve far dimenticare un esito non consegnato
@@ -1841,7 +2021,7 @@ def build_dispatcher(cfg: Config, transport: Transport = urllib_transport,
     if dry_run:
         transport, publisher = read_only_transport(transport), dry_run_publisher
     tokens = TokenProvider(cfg.github_token_command, cfg.github_token_command_timeout_seconds, clock, token_runner)
-    store = Store(cfg.state_db + ".dry-run" if dry_run else cfg.state_db)
+    store = Store(cfg.state_db + ".dry-run" if dry_run else cfg.state_db, targets=cfg.targets)
     return Dispatcher(cfg, store, Buildkite(cfg, bk_bearer, transport), GitHub(cfg, tokens, transport, clock),
                       publisher or default_publisher(cfg.publisher_command, cfg.publisher_timeout_seconds), clock,
                       dry_run=dry_run)

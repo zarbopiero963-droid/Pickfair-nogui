@@ -5199,8 +5199,8 @@
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
-      "original": "    store = Store(cfg.state_db + \".dry-run\" if dry_run else cfg.state_db)",
-      "mutated": "    store = Store(cfg.state_db)",
+      "original": "    store = Store(cfg.state_db + \".dry-run\" if dry_run else cfg.state_db, targets=cfg.targets)",
+      "mutated": "    store = Store(cfg.state_db, targets=cfg.targets)",
       "rationale": "#562 DRY-RUN: il collaudo scrive nell'archivio reale e poi il servizio vero salta le transizioni gia' viste."
     },
     {
@@ -5720,6 +5720,282 @@
       "rationale": "PF-562 F1 (paginazione /repositories/<id>): pagina successiva chiesta all'URL ricevuto invece che a quello canonico."
     },
     {
+      "id": "td_suite_missing_steps_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    if missing:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A: build full-suite passed senza alcuni step attesi pubblicata success."
+    },
+    {
+      "id": "td_suite_stale_commit_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    if build.get(\"commit\") != job[\"head_sha\"]:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A: esito di una build su un commit diverso dall'head pubblicato sull'head."
+    },
+    {
+      "id": "td_suite_soft_fail_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if any(x.get(\"state\") not in allowed or x.get(\"soft_failed\") for x in js):",
+      "mutated": "        if any(x.get(\"state\") not in allowed for x in js):",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A: step soft-fail contato come superato."
+    },
+    {
+      "id": "td_suite_branch_not_matched",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        where = (bool(job.get(\"head_ref\")) and build.get(\"branch\") == job[\"head_ref\"]",
+      "mutated": "        where = (True",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A: build della full-suite su un branch diverso adottata."
+    },
+    {
+      "id": "td_suite_commit_not_matched",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                 and build.get(\"commit\") == job[\"head_sha\"])",
+      "mutated": "                 and True)",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A: build della full-suite su un commit diverso adottata senza annullarla."
+    },
+    {
+      "id": "td_suite_built_on_main",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            where = {\"commit\": job[\"head_sha\"], \"branch\": job[\"head_ref\"]}",
+      "mutated": "            where = {}",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A: full-suite eseguita su main/HEAD invece del commit della PR."
+    },
+    {
+      "id": "td_suite_without_ref_created",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if not job.get(\"head_ref\"):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A: build della full-suite creata senza branch di head valido."
+    },
+    {
+      "id": "td_suite_targets_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        for guard in self._targets:",
+      "mutated": "        for guard in GUARDS:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A: full-suite abilitata ma mai avviata."
+    },
+    {
+      "id": "td_suite_retry_history_counted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    current = {k: [x for x in js if not x.get(\"retried\")] or js for k, js in steps.items()}",
+      "mutated": "    current = steps",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A: tentativo vecchio di uno step rilanciato conta ancora."
+    },
+    {
+      "id": "td_suite_enabled_not_strict",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    if not isinstance(suite[\"enabled\"], bool):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A: valore ambiguo di full_suite.enabled accende la suite."
+    },
+    {
+      "id": "td_suite_expected_step_not_run_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        allowed = (\"passed\",) if key in FULL_SUITE_STEP_KEYS else SUITE_EXTRA_STEP_STATES",
+      "mutated": "        allowed = SUITE_EXTRA_STEP_STATES",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A: step atteso della full-suite non eseguito (broken/skipped) contato come superato."
+    },
+    {
+      "id": "td_suite_wait_shorter_than_suite_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    if not problems and wait[\"enabled\"] and suite[\"enabled\"] and wait[\"max_seconds\"] < suite_timeout:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A: readiness con attesa piu' corta della full-suite accettata (error mentre la suite gira)."
+    },
+    {
+      "id": "td_rp_suite_without_wait_accepted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    if not problems and suite[\"enabled\"] and not wait[\"enabled\"]:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 readiness prematura: full-suite senza attesa della readiness accettata: readiness in parallelo alla suite."
+    },
+    {
+      "id": "td_rp_suite_wait_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                pending = [*pending, why]",
+      "mutated": "                pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 readiness prematura: suite in corso o non visibile ignorata: readiness avviata prima della suite."
+    },
+    {
+      "id": "td_rp_red_suite_released",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            elif suite != \"success\" and not pending:",
+      "mutated": "            elif False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 readiness prematura: suite rossa: la readiness parte comunque invece di chiudersi negativa."
+    },
+    {
+      "id": "td_rp_missing_suite_success",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            return \"wait\", \"full-suite dell'intento non registrata\"",
+      "mutated": "            return \"success\", \"full-suite dell'intento non registrata\"",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 readiness prematura: suite dell'intento assente trattata come superata."
+    },
+    {
+      "id": "td_rp_superseded_suite_counts",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if suite[\"superseded\"] or suite[\"state\"] == \"superseded\":",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 readiness prematura: suite sostituita usata come prova."
+    },
+    {
+      "id": "td_rp_unpublished_suite_counts",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if not (suite[\"final_published\"] and suite[\"state\"] in (\"done\", \"canceling\")):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 readiness prematura: suite non conclusa o esito non consegnato usata come prova."
+    },
+    {
+      "id": "td_rp_odd_outcome_counts",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            return \"wait\", f\"full-suite con esito {outcome}\"",
+      "mutated": "            pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 readiness prematura: esito della suite non verdetto (dry_run, nullo) usato come prova."
+    },
+    {
+      "id": "td_rp_remote_skipped",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if statuses is not None:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 readiness prematura: status dell'head non letto: la suite non visibile su GitHub basta."
+    },
+    {
+      "id": "td_rp_remote_mismatch_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if latest != outcome:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 readiness prematura: status remoto assente/pending/diverso ignorato."
+    },
+    {
+      "id": "td_rp_failure_as_error",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            return (\"failure\" if outcome == \"failure\" else \"error\"), f\"full-suite {outcome} sull'head\"",
+      "mutated": "            return \"error\", f\"full-suite {outcome} sull'head\"",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 readiness prematura: suite fallita riportata come error invece di failure."
+    },
+    {
+      "id": "td_rp_last_defense_off",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if suite != \"success\":\n                # ultima difesa",
+      "mutated": "            if False:\n                # ultima difesa",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 readiness prematura: readiness success pubblicata senza suite superata."
+    },
+    {
       "id": "td_p0_no_prior_check",
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
@@ -5736,7 +6012,7 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "        for b in self.bk.list_builds_by_intent(job[\"guard\"], job[\"delivery_id\"]):",
+      "original": "        for b in self.bk.list_builds_by_intent(job[\"guard\"], job[\"delivery_id\"], commit=commit):",
       "mutated": "        for b in []:",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
@@ -5826,6 +6102,18 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 P0: rerun su una PR assente dall'ultimo elenco delle aperte (mergiata, archivio ripristinato) accettato."
+    },
+    {
+      "id": "td_p0_suite_intent_on_main",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        for b in self.bk.list_builds_by_intent(job[\"guard\"], job[\"delivery_id\"], commit=commit):",
+      "mutated": "        for b in self.bk.list_builds_by_intent(job[\"guard\"], job[\"delivery_id\"]):",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 + PR-A: ricerca per intento della full-suite su main: build della PR mai trovata, deduplicazione remota cieca."
     }
   ]
 }
