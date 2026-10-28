@@ -5646,6 +5646,78 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 opzione A: elenco dei check run incompleto accettato."
+    },
+    {
+      "id": "td_page_host_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if parts.scheme != \"https\" or parts.netloc != \"api.github.com\" or parts.fragment or parts.path not in aliases:",
+      "mutated": "        if parts.scheme != \"https\" or parts.fragment or parts.path not in aliases:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 F1 (paginazione /repositories/<id>): link next verso un host diverso da api.github.com accettato."
+    },
+    {
+      "id": "td_page_any_repository_id",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if parts.scheme != \"https\" or parts.netloc != \"api.github.com\" or parts.fragment or parts.path not in aliases:",
+      "mutated": "        if parts.scheme != \"https\" or parts.netloc != \"api.github.com\" or parts.fragment or not parts.path.endswith(path[len(prefix):]):",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 F1 (paginazione /repositories/<id>): link next di un altro repository (id o nome) accettato."
+    },
+    {
+      "id": "td_page_fragment_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if parts.scheme != \"https\" or parts.netloc != \"api.github.com\" or parts.fragment or parts.path not in aliases:",
+      "mutated": "        if parts.scheme != \"https\" or parts.netloc != \"api.github.com\" or parts.path not in aliases:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 F1 (paginazione /repositories/<id>): link next con frammento accettato."
+    },
+    {
+      "id": "td_page_params_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if len(dict(pairs)) != len(pairs) or dict(pairs) != expected:",
+      "mutated": "        if len(dict(pairs)) != len(pairs) or dict(pairs).get(\"page\") != expected[\"page\"]:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 F1 (paginazione /repositories/<id>): link next con parametri cambiati o aggiunti accettato."
+    },
+    {
+      "id": "td_page_duplicates_unchecked",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if len(dict(pairs)) != len(pairs) or dict(pairs) != expected:",
+      "mutated": "        if dict(pairs) != expected:",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 F1 (paginazione /repositories/<id>): link next con parametri duplicati accettato."
+    },
+    {
+      "id": "td_page_link_url_used",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        return f\"{GITHUB_API}{path}?{urllib.parse.urlencode(expected)}\"",
+      "mutated": "        return link",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 F1 (paginazione /repositories/<id>): pagina successiva chiesta all'URL ricevuto invece che a quello canonico."
     }
   ]
 }
