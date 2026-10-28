@@ -234,14 +234,16 @@ class FakeBuildkite:
             return 201, {}, json.dumps(self._new_build(pipeline, payload)).encode()
         if method == "GET" and tail.startswith("builds?"):
             query = dict(urllib.parse.parse_qsl(tail.partition("?")[2]))
-            intent = query.get("meta_data[pf_intent]")
-            if intent is not None:
-                # l'API reale filtra per metadato: solo le build con quel `pf_intent`, a qualunque data
+            meta = [(k[len("meta_data["):-1], v) for k, v in query.items() if k.startswith("meta_data[")]
+            if meta:
+                # l'API reale filtra per metadato (`pf_intent`, `pf_head`): solo le build con quel valore, a
+                # qualunque data
                 if self.fail_list_intent:
                     raise td.TransportError("rete")
                 if self.full_page_intent:
                     return 200, {}, json.dumps([{"number": n} for n in range(1, 101)]).encode()
-                hits = [b for b in self.builds[pipeline].values() if b.get("meta_data", {}).get("pf_intent") == intent]
+                (key, value), = meta
+                hits = [b for b in self.builds[pipeline].values() if b.get("meta_data", {}).get(key) == value]
                 return 200, {}, json.dumps(hits).encode()
             if self.fail_list:
                 raise td.TransportError("rete")
@@ -2301,7 +2303,8 @@ def test_builds_always_run_main_never_the_pr_head(env):
         assert sent["branch"] == "main" and sent["commit"] == "HEAD"
         assert set(sent) == {"commit", "branch", "message", "env", "meta_data"}
         # identita' stabile dell'intento (#562 P0): solo il tid, mai altri dati
-        assert sent["meta_data"] == {"pf_intent": sent["env"]["PF_DELIVERY_ID"]}
+        assert sent["meta_data"] == {"pf_intent": sent["env"]["PF_DELIVERY_ID"],
+                                     "pf_head": f"{sent['env']['PF_PR_NUMBER']}-{sent['env']['PF_PR_HEAD_SHA']}"}
         assert set(sent["env"]) == {"PF_PR_NUMBER", "PF_PR_HEAD_SHA", "PF_PR_BASE_REF", "PF_EVENT", "PF_DELIVERY_ID"}
 
 
@@ -3204,9 +3207,15 @@ def snap_env(env, tmp_path):
     return disp, bk, pub, clock, snap
 
 
+def _github_sees(bk, pub, sha=HEAD):
+    """Status dell'head come li restituisce GitHub: quelli pubblicati, dal piu' recente."""
+    bk.gh.statuses[sha] = [{"context": c[3], "state": c[2]} for c in reversed(pub.calls) if c[1] == sha]
+
+
 def test_restored_snapshot_does_not_replay_a_consumed_and_finished_rerun(snap_env):
     disp, bk, pub, clock, snap = snap_env
     _consume_rerun(disp, bk, clock)
+    _github_sees(bk, pub)                                          # esiti consegnati: visibili sull'head
     posts, finals = len(_posts(bk)), len(pub.final())
     clock.now += 600                                               # fuori dalla finestra temporale del nuovo job
     _restore(disp, snap)
@@ -3253,6 +3262,32 @@ def test_unverifiable_remote_state_blocks_new_builds_then_errors(snap_env, flag)
     errors = [c for c in pub.final() if "RECOVERY_UNCERTAIN" in c[5]]
     assert {c[3] for c in errors} == {"overlap-check", "pr-merge-readiness"}
     assert all(c[2] == "error" for c in errors)
+
+
+@pytest.mark.parametrize("flag", ["fail_list_intent", "full_page_intent"])
+def test_uncertain_remote_state_publishes_pending_over_an_old_success(env, flag):
+    """Codex P1 su #583: rerun su uno SHA gia' `success` con lo stato remoto dell'intento non verificabile. Il job
+    resta senza build, ma `pending` va pubblicato subito: il vecchio `success` non resta l'esito visibile per tutta
+    la finestra della build."""
+    disp, bk, pub, clock = env
+    bk.clock = clock
+    _rerun_ready(disp, bk)
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    bk.finish("pr-merge-readiness", 1, "passed", result("readiness"))
+    disp.tick()
+    assert {(c[3], c[2]) for c in pub.final()} == {("overlap-check", "success"), ("pr-merge-readiness", "success")}
+    calls = len(pub.calls)
+    setattr(bk, flag, True)
+    bk.gh.comment(9101, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now + 10))
+    clock.now += 20
+    disp.poll()
+    disp.tick()
+    new = pub.calls[calls:]
+    assert {(c[3], c[2]) for c in new} == {("overlap-check", "pending"), ("pr-merge-readiness", "pending")}
+    assert all("non verificabile" in c[5] for c in new)
+    posts = len(_posts(bk))
+    disp.tick()                                                    # nessuna ripubblicazione a ogni giro
+    assert len(pub.calls) == calls + 2 and len(_posts(bk)) == posts
 
 
 def test_new_legit_rerun_after_restore_runs_exactly_once(snap_env):
@@ -3433,3 +3468,168 @@ def test_waiting_obsolete_readiness_holds_no_agent_and_starts_nothing(wait_env):
     assert [b["env"]["PF_PR_HEAD_SHA"] for b in bk.builds["pr-overlap-guard"].values()] == [HEAD, HEAD2]
     old = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness" and j["head_sha"] == HEAD]
     assert [j["state"] for j in old] == ["superseded"]
+
+
+# --- Sol su #583: esito mai consegnato (B1) e `seq` delle transizioni riportato indietro dallo snapshot (B2).
+
+def _finish_all(bk):
+    """Conclude con PASS ogni build ancora aperta, col risultato dell'head della sua env."""
+    for pipe, guard in (("pr-overlap-guard", "overlap"), ("pr-merge-readiness", "readiness")):
+        for n, b in bk.builds[pipe].items():
+            if b["state"] not in td.BUILD_TERMINAL:
+                bk.finish(pipe, n, "passed", result(guard, head=b["env"]["PF_PR_HEAD_SHA"]))
+
+
+def test_restored_finished_build_whose_outcome_was_never_delivered_is_published_once(snap_env):
+    """Crash fra la fine della build e la pubblicazione, poi archivio ripristinato: l'ultimo status visibile e'
+    ancora `pending`, quindi l'esito non e' consegnato. Nessuna build nuova; l'esito si ricava dalla build e si
+    pubblica una volta (prima restava `pending` per sempre)."""
+    disp, bk, pub, clock, snap = snap_env
+    _consume_rerun(disp, bk, clock, finish=False)                 # build del rerun create, esito non pubblicato
+    _github_sees(bk, pub)                                          # su GitHub: `pending` del rerun
+    for pipe in ("pr-overlap-guard", "pr-merge-readiness"):
+        assert bk.builds[pipe][2]["env"]["PF_DELIVERY_ID"] == RERUN_TID
+    bk.finish("pr-overlap-guard", 2, "passed", result("overlap"))
+    bk.finish("pr-merge-readiness", 2, "passed", result("readiness"))
+    posts, finals = len(_posts(bk)), len(pub.final())
+    clock.now += 600
+    _restore(disp, snap)
+    for _ in range(3):
+        disp.poll()
+        disp.tick()
+    assert len(_posts(bk)) == posts, "build doppia dopo il ripristino"
+    new = pub.final()[finals:]
+    assert sorted((c[3], c[2]) for c in new) == [("overlap-check", "success"), ("pr-merge-readiness", "success")]
+    assert {j["outcome"] for j in _intent_jobs(disp)} == {"success"}
+
+
+def test_restored_finished_build_with_unreadable_statuses_never_builds_and_errors(snap_env, monkeypatch):
+    disp, bk, pub, clock, snap = snap_env
+    _consume_rerun(disp, bk, clock)
+    posts, finals = len(_posts(bk)), len(pub.final())
+    clock.now += 600
+    _restore(disp, snap)
+
+    def boom(sha):
+        raise td.TransportError("rete")
+    monkeypatch.setattr(disp.gh, "statuses", boom)
+    disp.poll()
+    disp.tick()
+    assert len(_posts(bk)) == posts and len(pub.final()) == finals
+    assert {j["state"] for j in _intent_jobs(disp)} == {"queued"}
+    clock.now += 1000
+    disp.tick()
+    assert len(_posts(bk)) == posts
+    errors = [c for c in pub.final()[finals:] if "RECOVERY_UNCERTAIN" in c[5]]
+    assert {c[3] for c in errors} == {"overlap-check", "pr-merge-readiness"} and all(c[2] == "error" for c in errors)
+
+
+def test_restored_snapshot_with_an_older_seq_reuses_the_later_transition_of_the_same_head(env, tmp_path):
+    """Sol B2 su #583: snapshot con `seq`=1 (head A); poi head B (t2) e C (t3) eseguiti. Ripristinato l'archivio
+    mentre la PR e' su C, la transizione rinasce come t2 per C: stesso head, tid diverso. Si riallinea a t3 e non
+    parte nessuna build; il `seq` locale risale, la transizione successiva e' t4."""
+    disp, bk, pub, clock = env
+    bk.clock = clock
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    _finish_all(bk)
+    disp.tick()
+    snap = tmp_path / "snap.sqlite3"
+    _snapshot(disp, snap)                                          # seq=1, head A
+    for head in (HEAD2, HEAD3):
+        clock.now += 60
+        bk.gh.put(42, head)
+        disp.poll()
+        disp.tick()
+        _finish_all(bk)
+        disp.tick()
+    assert {p["env"]["PF_DELIVERY_ID"] for p in _posts(bk)} == {
+        f"p42-t1-{HEAD[:12]}", f"p42-t2-{HEAD2[:12]}", f"p42-t3-{HEAD3[:12]}"}
+    _github_sees(bk, pub, sha=HEAD3)
+    posts = len(_posts(bk))
+    clock.now += 600
+    _restore(disp, snap)
+    for _ in range(3):
+        disp.poll()
+        disp.tick()
+    assert len(_posts(bk)) == posts, "build doppia per un head gia' valutato dopo lo snapshot"
+    jobs = [j for j in disp.store.recent_jobs() if j["head_sha"] == HEAD3]
+    assert jobs and {j["delivery_id"] for j in jobs} == {f"p42-t3-{HEAD3[:12]}"}
+    assert {j["outcome"] for j in jobs} == {"recovered"}
+    bk.gh.put(42, "d" * 40)                                        # push nuovo: tid oltre quello remoto
+    clock.now += 60
+    assert disp.poll() == [f"p42-t4-{'d' * 12}"]
+
+
+def test_legitimate_return_to_an_already_built_sha_still_builds(env):
+    """Senza ripristino, il ritorno a uno SHA gia' valutato (A -> B -> A) e' una valutazione nuova: `seq` 3 e'
+    oltre ogni build remota di A (seq 1), quindi si crea la build (nessuna valutazione legittima persa)."""
+    disp, bk, pub, clock = env
+    bk.clock = clock
+    for head in (HEAD, HEAD2, HEAD):
+        clock.now += 60
+        bk.gh.put(42, head)
+        disp.poll()
+        disp.tick()
+        _finish_all(bk)
+        disp.tick()
+    tids = [p["env"]["PF_DELIVERY_ID"] for p in _posts(bk)]
+    assert tids.count(f"p42-t3-{HEAD[:12]}") == 2 and tids.count(f"p42-t1-{HEAD[:12]}") == 2
+
+
+def _three_heads_then_restore(disp, bk, pub, clock, tmp_path, drop_readiness_t3=False):
+    bk.clock = clock
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    _finish_all(bk)
+    disp.tick()
+    snap = tmp_path / "snap.sqlite3"
+    _snapshot(disp, snap)
+    for head in (HEAD2, HEAD3):
+        clock.now += 60
+        bk.gh.put(42, head)
+        disp.poll()
+        disp.tick()
+        _finish_all(bk)
+        disp.tick()
+    if drop_readiness_t3:                          # readiness di C mai creata prima del ripristino
+        pipe = bk.builds["pr-merge-readiness"]
+        for n in [n for n, b in pipe.items() if b["env"]["PF_PR_HEAD_SHA"] == HEAD3]:
+            del pipe[n]
+    _github_sees(bk, pub, sha=HEAD3)
+    clock.now += 600
+    _restore(disp, snap)
+
+
+def test_rekeyed_transition_keeps_sibling_jobs_on_the_same_tid(env, tmp_path):
+    """L'overlap ritrova t3 per C, la readiness no (mai creata): nello stesso giro la readiness usa il tid
+    riallineato, quindi la sua build nuova e' dello stesso intento (t3), mai un intento spezzato su t2."""
+    disp, bk, pub, clock = env
+    _three_heads_then_restore(disp, bk, pub, clock, tmp_path, drop_readiness_t3=True)
+    posts = len(_posts(bk))
+    disp.poll()
+    disp.tick()
+    new = _posts(bk)[posts:]
+    assert [p["env"]["PF_DELIVERY_ID"] for p in new] == [f"p42-t3-{HEAD3[:12]}"]   # solo la readiness mancante
+    jobs = [j for j in disp.store.recent_jobs() if j["head_sha"] == HEAD3]
+    assert {j["delivery_id"] for j in jobs} == {f"p42-t3-{HEAD3[:12]}"}
+
+
+def test_later_transition_with_a_different_env_is_not_adopted(env, tmp_path):
+    """Una build con lo stesso `pf_head` e un `seq` piu' alto ma un'env diversa (base diversa) non e' la stessa
+    valutazione: non si riallinea, si crea la build."""
+    disp, bk, pub, clock = env
+    bk.clock = clock
+    for pipe in ("pr-overlap-guard", "pr-merge-readiness"):
+        bk._new_build(pipe, {"branch": "main", "commit": "HEAD", "message": "m",
+                             "env": {"PF_PR_NUMBER": "42", "PF_PR_HEAD_SHA": HEAD, "PF_PR_BASE_REF": "develop",
+                                     "PF_EVENT": "opened", "PF_DELIVERY_ID": f"p42-t9-{HEAD[:12]}"},
+                             "meta_data": {"pf_intent": f"p42-t9-{HEAD[:12]}", "pf_head": f"42-{HEAD}"}})
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    created = [p["env"]["PF_DELIVERY_ID"] for p in _posts(bk)]
+    assert created.count(f"p42-t1-{HEAD[:12]}") == 2
+    assert {j["delivery_id"] for j in disp.store.recent_jobs()} == {f"p42-t1-{HEAD[:12]}"}

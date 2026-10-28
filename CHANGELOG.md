@@ -14,8 +14,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     rerun e le transizioni già eseguiti venivano rigiocati come nuovi;
   - ogni build porta l'identità dell'intento (metadato Buildkite `pf_intent` = tid). Prima di creare si cercano le
     build remote dello stesso intento: in corso ⇒ adottata, conclusa ⇒ `recovered` senza ripubblicare, non
-    verificabile ⇒ nessuna build (`RECOVERY_UNCERTAIN`, poi `error`). Dopo la creazione si ricontrolla, per due
+    verificabile ⇒ nessuna build e `pending` subito sull'head (`RECOVERY_UNCERTAIN`, poi `error`; Codex P1 su #583). Dopo la creazione si ricontrolla, per due
     istanze concorrenti;
+  - build ritrovata conclusa: si ripubblica solo se l'esito non risulta consegnato (ultimo status `pending` o
+    assente); `seq` riportato indietro dallo snapshot: metadato `pf_head`, transizione riallineata al tid remoto
+    dello stesso head (Sol su #583);
   - rerun rifiutati se il commento ha più di 6 ore (orario GitHub) o se la PR manca dall'ultimo elenco delle aperte.
 
   Test RED→GREEN su snapshot SQLite reali (rerun concluso, in corso, crash fra creazione e registrazione, Buildkite
