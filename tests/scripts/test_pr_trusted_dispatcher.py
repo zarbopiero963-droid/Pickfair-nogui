@@ -243,8 +243,11 @@ class FakeBuildkite:
                 if self.full_page_intent:
                     return 200, {}, json.dumps([{"number": n} for n in range(1, 101)]).encode()
                 (key, value), = meta
-                hits = [b for b in self.builds[pipeline].values() if b.get("meta_data", {}).get(key) == value]
-                return 200, {}, json.dumps(hits).encode()
+                # come l'API: dalla build piu' recente, a pagine di `per_page`
+                hits = sorted((b for b in self.builds[pipeline].values() if b.get("meta_data", {}).get(key) == value),
+                              key=lambda b: b["number"], reverse=True)
+                size, page = int(query.get("per_page", "100")), int(query.get("page", "1"))
+                return 200, {}, json.dumps(hits[(page - 1) * size:page * size]).encode()
             if self.fail_list:
                 raise td.TransportError("rete")
             since = query.get("created_from", "")
@@ -4020,3 +4023,121 @@ def test_restored_old_fail_never_overwrites_a_newer_pass_on_the_same_sha(snap_en
         _github_sees(bk, pub)
     assert len(_posts(bk)) == posts
     assert _latest(bk) == {"overlap-check": "success", "pr-merge-readiness": "success"}, "FAIL vecchio sopra un PASS"
+
+
+def _rerun_builds(bk, head, n, start=7000):
+    """`n` build di rerun della PR 42 su `head` in entrambe le pipeline (dalla piu' vecchia)."""
+    for i in range(n):
+        tid = f"p42-r{start + i}-{head[:12]}"
+        for pipe in ("pr-overlap-guard", "pr-merge-readiness"):
+            b = bk._new_build(pipe, {"branch": "main", "commit": "HEAD", "message": "m",
+                                     "env": {"PF_PR_NUMBER": "42", "PF_PR_HEAD_SHA": head, "PF_PR_BASE_REF": "main",
+                                             "PF_EVENT": "manual", "PF_DELIVERY_ID": tid},
+                                     "meta_data": {"pf_intent": tid, "pf_pr": "42"}})
+            b["state"] = "passed"
+
+
+def test_hundred_reruns_do_not_hide_the_pr_sequence_high_water_mark(env, tmp_path):
+    """Sol su #583 (f50b9ae): snapshot su A (t1); poi B t2, C t3 e 100 rerun su C. Ripristinato l'archivio, il
+    ritorno a B e' una valutazione nuova: le pagine si leggono fino all'ultima transizione (t3), quindi B prende t4
+    e le build partono, mai la vecchia t2 riadottata."""
+    disp, bk, pub, clock = env
+    bk.clock = clock
+    head_c = "c" * 40
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    _finish_all(bk)
+    disp.tick()
+    snap = tmp_path / "snap.sqlite3"
+    _snapshot(disp, snap)
+    for head in (HEAD2, head_c):
+        clock.now += 60
+        bk.gh.put(42, head)
+        disp.poll()
+        disp.tick()
+        _finish_all(bk)
+        disp.tick()
+    _rerun_builds(bk, head_c, 100)
+    clock.now += 600
+    _restore(disp, snap)
+    posts = len(_posts(bk))
+    bk.gh.put(42, HEAD2)
+    disp.poll()
+    disp.tick()
+    new = [p["env"]["PF_DELIVERY_ID"] for p in _posts(bk)[posts:]]
+    assert new == [f"p42-t4-{HEAD2[:12]}"] * 2, "vecchia valutazione t2 riadottata dopo cento rerun"
+
+
+def test_too_many_pages_without_transitions_is_uncertain_never_a_guess(env):
+    """Oltre `PR_PAGES_MAX` pagine di sole build di rerun il massimo non e' verificabile: nessuna build, poi
+    `error` (fail-closed)."""
+    disp, bk, pub, clock = env
+    bk.clock = clock
+    assert td.PR_PAGES_MAX == 10 and td.INTENT_PAGE == 100        # limite dichiarato in docs: 10 pagine da 100
+    _rerun_builds(bk, HEAD, 1001)
+    for pipe in ("pr-overlap-guard", "pr-merge-readiness"):
+        for b in bk.builds[pipe].values():
+            b["created_at"] = "2000-01-01T00:00:00Z"            # fuori dalla finestra del job: conta solo `pf_pr`
+        # una transizione vecchia, nella pagina oltre il limite
+        bk.builds[pipe][min(bk.builds[pipe])]["env"]["PF_DELIVERY_ID"] = f"p42-t5-{HEAD[:12]}"
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    assert not _posts(bk)
+    clock.now += 1000
+    disp.tick()
+    assert not _posts(bk)
+    errors = [c for c in pub.final() if "RECOVERY_UNCERTAIN" in c[5]]
+    assert {c[3] for c in errors} == {"overlap-check", "pr-merge-readiness"}
+    assert all("pagine" in c[5] for c in errors)                # il motivo e' il limite di pagine, non altro
+
+
+def test_unreadable_statuses_during_recovery_publish_pending_over_an_old_success(snap_env, monkeypatch):
+    """Codex P1 su #583 (f50b9ae): SHA gia' `success` (build 1); le build del rerun falliscono ma il loro `pending`
+    non era arrivato; dopo il ripristino gli status GitHub non si leggono. Nessuna build, ma `pending` subito: il
+    vecchio `success` non resta l'esito visibile mentre la verifica di consegna e' sospesa."""
+    disp, bk, pub, clock, snap = snap_env
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    bk.finish("pr-merge-readiness", 1, "passed", result("readiness"))
+    disp.tick()
+    _consume_rerun(disp, bk, clock, finish=False)
+    bk.finish("pr-overlap-guard", 2, "failed", result("overlap", verdict="FAIL"))
+    bk.finish("pr-merge-readiness", 2, "failed", result("readiness", verdict="FAIL"))
+    posts, calls = len(_posts(bk)), len(pub.calls)
+    clock.now += 600
+    _restore(disp, snap)
+
+    def boom(sha):
+        raise td.TransportError("rete")
+    monkeypatch.setattr(disp.gh, "statuses", boom)
+    disp.poll()
+    disp.tick()
+    new = pub.calls[calls:]
+    assert {(c[3], c[2]) for c in new} == {("overlap-check", "pending"), ("pr-merge-readiness", "pending")}
+    assert len(_posts(bk)) == posts
+    disp.tick()                                                    # nessuna ripubblicazione a ogni giro
+    assert len(pub.calls) == calls + 2
+
+
+def test_restore_only_brings_back_the_status_of_the_newest_build(snap_env):
+    """Grok su #583 (f50b9ae): dal piu' recente «pending senza build -> success build 2 (ripubblicato tardi) ->
+    failure build 3». Lo status da ripristinare e' solo quello della build piu' recente (3): un finale piu' vecchio
+    pubblicato dopo non torna mai visibile sopra di essa; nel dubbio nulla si ripristina (resta `pending`)."""
+    disp, bk, pub, clock, snap = snap_env
+    _consume_rerun(disp, bk, clock)                                # rerun: build 2
+    statuses = []
+    for ctx, pipe in (("overlap-check", "pr-overlap-guard"), ("pr-merge-readiness", "pr-merge-readiness")):
+        statuses += [{"context": ctx, "state": "pending", "description": "in attesa",
+                      "target_url": f"https://buildkite.com/{ORG}/{pipe}"},
+                     {"context": ctx, "state": "success", "description": "PASS",
+                      "target_url": f"https://buildkite.com/{ORG}/{pipe}/builds/2"},
+                     {"context": ctx, "state": "failure", "description": "FAIL",
+                      "target_url": f"https://buildkite.com/{ORG}/{pipe}/builds/3"}]
+    calls = len(pub.calls)
+    clock.now += 600
+    _restore(disp, snap)
+    bk.gh.statuses[HEAD] = statuses
+    disp.poll()
+    disp.tick()
+    assert not [c for c in pub.calls[calls:] if c[2] == "success"], "finale vecchio ripristinato sopra la build 3"

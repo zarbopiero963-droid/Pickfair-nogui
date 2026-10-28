@@ -92,6 +92,7 @@ TRANSITION_EVENTS = frozenset({"opened", "reopened", "synchronize", "ready_for_r
 _TRANSITION_TID_RE = re.compile(r"p([0-9]+)-t([0-9]+)-([0-9a-f]{12})", re.ASCII)
 _PR_META_RE = re.compile(r"[1-9][0-9]{0,9}", re.ASCII)
 INTENT_PAGE = 100                       # una pagina piena di build per lo stesso intento: assenza non verificabile
+PR_PAGES_MAX = 10                       # pagine di build di una PR lette per trovarne l'ultima transizione
 COMMENTS_OVERLAP_SECONDS = 120          # sovrapposizione fra giri per i commenti: i doppioni li toglie l'archivio
 
 _PR_RE = re.compile(r"[1-9][0-9]{0,6}", re.ASCII)
@@ -1158,15 +1159,27 @@ class Buildkite:
         return self._list_builds_by_meta(guard, INTENT_META_KEY, intent)
 
     def list_builds_by_pr(self, guard: str, pr: str) -> list:
-        """Build piu' recenti della pipeline con il metadato `pf_pr`, a qualunque data (l'API le restituisce dalla piu'
-        recente): bastano per il `seq` piu' alto e l'ultima valutazione della PR, quindi la pagina piena e' ammessa."""
+        """Build della pipeline con il metadato `pf_pr`, dalla piu' recente (ordine dell'API), pagina dopo pagina fino
+        alla prima pagina che contiene una transizione della PR o alla fine dell'elenco: col `seq` crescente la
+        transizione piu' recente porta il massimo, e i rerun (anche cento di fila) non la nascondono (Sol su #583).
+        Oltre `PR_PAGES_MAX` pagine senza transizioni => eccezione: stato remoto incerto, mai un massimo indovinato."""
         if not _PR_META_RE.fullmatch(pr):
             raise ApiError("numero della PR fuori formato")
-        return self._list_builds_by_meta(guard, PR_META_KEY, pr, full_page_ok=True)
+        found: list = []
+        for page in range(1, PR_PAGES_MAX + 1):
+            data = self._list_builds_by_meta(guard, PR_META_KEY, pr, full_page_ok=True, page=page)
+            found.extend(data)
+            if len(data) < INTENT_PAGE or any(
+                    isinstance(b, dict) and isinstance(b.get("env"), dict)
+                    and isinstance(b["env"].get("PF_DELIVERY_ID"), str)
+                    and _TRANSITION_TID_RE.fullmatch(b["env"]["PF_DELIVERY_ID"]) for b in data):
+                return found
+        raise ApiError(f"oltre {PR_PAGES_MAX} pagine di build della PR senza transizioni: massimo non verificabile")
 
-    def _list_builds_by_meta(self, guard: str, key: str, value: str, full_page_ok: bool = False) -> list:
+    def _list_builds_by_meta(self, guard: str, key: str, value: str, full_page_ok: bool = False,
+                             page: int = 1) -> list:
         query = urllib.parse.urlencode({"branch": BASE_REF, f"meta_data[{key}]": value,
-                                        "per_page": str(INTENT_PAGE)})
+                                        "per_page": str(INTENT_PAGE), "page": str(page)})
         status, data = self._request("GET", f"{self._pipeline_url(guard)}/builds?{query}")
         if status != 200 or not isinstance(data, list):
             raise ApiError(f"elenco build dell'intento fallito (HTTP {status})", status)
@@ -1781,6 +1794,14 @@ class Dispatcher:
                 if job["state"] == "creating" and self.store.update_job(job["id"], self.clock(),
                                                                          expected_state="creating", state="queued"):
                     job["state"] = "queued"
+                if job["state"] == "queued" and not job.get("pending_published"):
+                    # `pending` senza build, ritentato finche' non arriva: un vecchio esito sullo stesso SHA non resta
+                    # visibile mentre la verifica di consegna e' sospesa (Codex P1 su #583). Senza numero di build non
+                    # vale mai come consegna in `_delivery`
+                    url = f"{BUILDKITE_WEB}/{self.cfg.organization}/{GUARDS[job['guard']]['pipeline']}"
+                    if self.publish(job["pr"], job["head_sha"], "pending", GUARDS[job["guard"]]["context"], url,
+                                    "esito della build ritrovata in verifica") == 0:
+                        self._set(job, pending_published=1)
                 return None
             publish, restore = delivery
             if publish:
@@ -1877,7 +1898,8 @@ class Dispatcher:
             # una build piu' recente ha gia' uno status: questo esito e' superato e non si ripubblica. Si ripristina
             # solo lo status finale che un `pending` senza build ha coperto (cio' che era visibile prima); con la build
             # piu' recente ancora in corso non si ripristina nulla (Sol su #583)
-            return False, (top if final and hidden_by_wait else None)
+            # (Grok su #583: e solo se e' lo status della build piu' recente, mai un finale vecchio pubblicato dopo)
+            return False, (top if final and hidden_by_wait and top_n == newest else None)
         if top_n == number and final:
             return False, (top if hidden_by_wait else None)
         return True, None                              # ultimo status: `pending` di questa build o di una vecchia

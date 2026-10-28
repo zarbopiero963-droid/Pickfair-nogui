@@ -6012,7 +6012,7 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "            return False, (top if final and hidden_by_wait else None)",
+      "original": "            return False, (top if final and hidden_by_wait and top_n == newest else None)",
       "mutated": "            return False, None",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
@@ -6090,6 +6090,54 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 P0 (Sol e Codex su #583): transizione nuova dopo il ripristino con il seq locale arretrato: ritorni successivi riallineati a valutazioni vecchie."
+    },
+    {
+      "id": "td_p0_pr_pages_single",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        for page in range(1, PR_PAGES_MAX + 1):",
+      "mutated": "        for page in range(1, 2):",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Sol su #583, f50b9ae): solo la prima pagina: cento rerun nascondono l'ultima transizione, ritorno legittimo bloccato."
+    },
+    {
+      "id": "td_p0_pr_pages_unbounded",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "PR_PAGES_MAX = 10                       # pagine di build di una PR lette per trovarne l'ultima transizione",
+      "mutated": "PR_PAGES_MAX = 100                       # pagine di build di una PR lette per trovarne l'ultima transizione",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Sol su #583, f50b9ae): limite di pagine non rispettato: massimo letto oltre la soglia dichiarata invece di RECOVERY_UNCERTAIN."
+    },
+    {
+      "id": "td_p0_delivery_unverified_no_pending",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                if job[\"state\"] == \"queued\" and not job.get(\"pending_published\"):\n                    # `pending` senza build, ritentato finche' non arriva",
+      "mutated": "                if False:\n                    # `pending` senza build, ritentato finche' non arriva",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Codex P1 su #583, f50b9ae): verifica di consegna sospesa senza pending: un vecchio success resta l'esito visibile."
+    },
+    {
+      "id": "td_p0_restore_not_newest",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            return False, (top if final and hidden_by_wait and top_n == newest else None)",
+      "mutated": "            return False, (top if final and hidden_by_wait else None)",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 P0 (Grok su #583, f50b9ae): ripristinato un finale vecchio pubblicato dopo, sopra la build piu' recente."
     }
   ]
 }
