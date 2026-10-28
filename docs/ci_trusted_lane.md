@@ -192,14 +192,23 @@ automatico non è mai stato dimostrato, quindi non va dichiarato.
    - `Merge readiness`;
    - le suite di test.
 
-   Il gate di merge vigente (spec §0.9) si valuta su questi. Gli status della lane trusted non sono required checks
-   finché l'owner non decide altrimenti (D-3 della #562).
-3. **Se gli status della lane diventano required (D-3).** Un guasto della VPS **blocca il merge**: non lo bypassa.
-   Le uniche strade sono due:
-   - aspettare il ripristino;
-   - una decisione esplicita dell'owner registrata sulla issue, che non viene mai dalla sola urgenza.
+   Gli status della lane trusted non sono required checks finché l'owner non decide altrimenti (D-3 della #562).
+3. **Lo status della lane già pubblicato blocca comunque.** `Merge readiness` (Actions) esegue
+   `scripts/pr_merge_readiness.py`, che legge **tutti** i check e gli status dell'head (`split_checks`), anche quelli
+   non richiesti dal ruleset. Contano due casi, e nessuno dei due si risolve passando ad Actions:
+   - **Guasto prima che la lane pubblichi qualcosa su quell'head.** Lo status della lane non esiste, `Merge readiness`
+     non lo vede, e il gate di merge vigente (spec §0.9) si valuta sui controlli Actions qui sopra.
+   - **Guasto che lascia un `overlap-check` della lane `pending` o `error` sull'head.** `Merge readiness` lo conta fra
+     i `pending` o i `blockers`, e un `overlap-check` verde di Actions con lo stesso nome **non** lo annulla. Il merge
+     resta bloccato. Lo stesso vale per qualsiasi altro status non self-check della lane (per esempio `full-suite`
+     dopo la PR-A). Lo status `pr-merge-readiness` della lane è invece riconosciuto come self-check (vedi
+     «Nessuna dipendenza circolare») e non blocca la readiness di Actions.
 
-   Non si pubblicano status a mano per sbloccare una PR.
+   In entrambi i casi un `pending` o un `error` non diventa PASS, e c'è un solo modo per sbloccare: il ripristino
+   della lane, con un esito nuovo pubblicato dal dispatcher sullo stesso head (punto 4). In alternativa serve una
+   decisione esplicita dell'owner registrata sulla issue, che non viene mai dalla sola urgenza. Lo stesso vale, a
+   maggior ragione, se gli status della lane diventano required (D-3). Non si pubblicano status a mano per sbloccare
+   una PR.
 4. **Ripristino.** Grok riavvia i servizi. Il dispatcher riprende dallo stato salvato: nessuna build duplicata,
    esiti pubblicati una volta sola, un head cambiato durante il fermo viene rilevato al primo giro (P0-B, certificato).
    Se una build è stata persa si usa un rerun (`/pf-trusted-rerun <sha>`, vedi
