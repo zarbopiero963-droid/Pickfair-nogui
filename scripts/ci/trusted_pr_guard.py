@@ -21,10 +21,16 @@ per i due wrapper `scripts/ci/pr_overlap_guard.sh` e `scripts/ci/pr_merge_readin
 Provenienza verificata prima di ogni verdetto: repository fisso (e `BUILDKITE_REPO`, se presente, deve coincidere),
 contesto Buildkite non di PR e su `main`, PR aperta, base = repository e branch attesi, base SHA antenato di `main`,
 head nello stesso repository (niente fork), head = `PF_PR_HEAD_SHA`; a fine valutazione head, stato, repository e
-branch base riletti uguali. La readiness e' FAIL anche con la label `manual-review-required` o con un file a merge
-owner nel diff (`scripts/pr_autonomy_policy.is_owner_manual_path`): PASS vuol dire mergiabile senza decisioni owner.
+branch base riletti uguali.
 
-Exit 0 solo con verdetto PASS; ogni altro esito (dato mancante, incoerente, errore di rete o API, check rosso o
+La readiness ha DUE verdetti (opzione B dell'owner, #562 PR-C2). `verdict` e' la readiness TECNICA: PASS solo con
+tutti i gate tecnici soddisfatti; da lei dipendono l'exit e lo status `pr-merge-readiness`, che puo' essere un required
+check. `auto_merge` e' l'autorizzazione all'auto-merge dell'agente (status `pr-auto-merge`, mai required): FAIL anche
+con la label `manual-review-required` (all'inizio o alla rilettura finale) o con un file a merge owner nel diff
+(`scripts/pr_autonomy_policy.is_owner_manual_path`), e FAIL se la readiness tecnica e' FAIL o se l'autorizzazione non
+e' verificabile. Una PR a merge owner con i gate verdi resta mergiabile a mano dall'owner, senza bypass.
+
+Exit 0 solo con verdetto (tecnico) PASS; ogni altro esito (dato mancante, incoerente, errore di rete o API, check rosso o
 pendente, review non conclusiva) => exit 1. Nessuna dipendenza oltre la libreria standard e `api.github.com`
 (la readiness delega a `scripts/pr_merge_readiness.py`, che usa la CLI `gh`).
 """
@@ -272,11 +278,11 @@ def label_names(pr: Mapping[str, Any]) -> list[str]:
     return sorted(lb["name"] for lb in labels)
 
 
-def verify_head_unchanged(gh: GitHub, ctx: Mapping[str, Any], *, owner_labels: bool = False) -> None:
+def verify_head_unchanged(gh: GitHub, ctx: Mapping[str, Any]) -> dict:
     """Rilettura finale: head, stato, repository e branch base devono essere quelli verificati all'inizio. Una PR
-    ridiretta su un altro branch durante l'attesa non resta certificata (rilievo Codex P2 su #563). Per la readiness
-    (`owner_labels`) anche la label `manual-review-required` si rilegge qui: aggiunta durante l'attesa => FAIL
-    (rilievo Codex P1 su 80e0867)."""
+    ridiretta su un altro branch durante l'attesa non resta certificata (rilievo Codex P2 su #563). Restituisce la PR
+    riletta: per la readiness le sue label decidono l'autorizzazione all'auto-merge (`owner_decision_reasons`,
+    rilievo Codex P1 su 80e0867: una label aggiunta durante l'attesa conta)."""
     pr = gh.get(f"/repos/{TRUSTED_REPO}/pulls/{ctx['pr']}")
     if not isinstance(pr, dict) or pr.get("state") != "open":
         raise GuardError("head o stato della PR cambiati durante la valutazione")
@@ -288,8 +294,7 @@ def verify_head_unchanged(gh: GitHub, ctx: Mapping[str, Any], *, owner_labels: b
     if base.get("ref") != ctx["base_ref"] or not isinstance(base_repo, str) \
             or base_repo.lower() != TRUSTED_REPO.lower():
         raise GuardError("repository o branch base della PR cambiati durante la valutazione")
-    if owner_labels and MANUAL_LABEL in label_names(pr):
-        raise GuardError(f"label {MANUAL_LABEL} presente a fine valutazione: merge riservato all'owner")
+    return pr
 
 
 # --------------------------------------------------------------------------------------------- overlap guard
@@ -410,12 +415,16 @@ def load_autonomy_policy(repo_root: Path) -> Any:
 
 
 def owner_decision_reasons(gh: GitHub, ctx: Mapping[str, Any], verified: Mapping[str, Any],
-                           repo_root: Path) -> list[str]:
-    """Una PR riservata all'owner non e' mai PASS (review indipendente P1 su #563): label `manual-review-required` o
-    file a merge owner nel diff COMPLETO (tutte le pagine, elenco incompleto => FAIL)."""
+                           repo_root: Path, final_pr: Optional[Mapping[str, Any]] = None) -> list[str]:
+    """Motivi per cui l'AUTO-MERGE dell'agente non e' autorizzato (opzione B dell'owner, #562 PR-C2; review
+    indipendente P1 su #563): label `manual-review-required` all'inizio o alla rilettura finale, o file a merge owner
+    nel diff COMPLETO (tutte le pagine, elenco incompleto => GuardError). Non toccano la readiness tecnica: una PR a
+    merge owner con i gate verdi resta mergiabile a mano dall'owner, senza bypass."""
     reasons: list[str] = []
     if MANUAL_LABEL in verified.get("labels", []):
         reasons.append(f"label {MANUAL_LABEL}: merge riservato all'owner")
+    elif final_pr is not None and MANUAL_LABEL in label_names(final_pr):
+        reasons.append(f"label {MANUAL_LABEL} presente a fine valutazione: merge riservato all'owner")
     policy = load_autonomy_policy(repo_root)
     owner_files = sorted(p for p in pr_files(gh, ctx["pr"], verified.get("changed_files"))
                          if policy.is_owner_manual_path(p))
@@ -475,6 +484,9 @@ def main(guard: str, argv: list[str], env: Mapping[str, str], *, transport: Tran
          repo_root: Optional[Path] = None) -> int:
     token: Optional[str] = None
     result: dict[str, Any] = {"guard": guard, "repo": TRUSTED_REPO, "verdict": "FAIL", "reasons": []}
+    if guard == "readiness":
+        # autorizzazione all'auto-merge: separata dalla readiness tecnica, FAIL finche' non e' provata
+        result["auto_merge"] = {"verdict": "FAIL", "reasons": ["valutazione non completata"]}
     try:
         if guard not in ("overlap", "readiness"):
             raise GuardError("controllo sconosciuto")
@@ -491,23 +503,36 @@ def main(guard: str, argv: list[str], env: Mapping[str, str], *, transport: Tran
         result["base_sha"] = verified["base_sha"]
         if guard == "overlap":
             reasons = run_overlap(gh, ctx, verified)
+            verify_head_unchanged(gh, ctx)
         else:
             root = repo_root or Path(__file__).resolve().parents[2]
-            reasons = owner_decision_reasons(gh, ctx, verified, root)
-            reasons += run_readiness(ctx, wait, token, root, readiness_runner)
-        verify_head_unchanged(gh, ctx, owner_labels=(guard == "readiness"))
+            reasons = run_readiness(ctx, wait, token, root, readiness_runner)
+            final_pr = verify_head_unchanged(gh, ctx)
+            try:
+                owner = owner_decision_reasons(gh, ctx, verified, root, final_pr)
+            except GuardError as exc:
+                owner = [f"autorizzazione non verificabile: {exc}"]
+            auto = (["readiness tecnica FAIL"] if reasons else []) + owner
+            result["auto_merge"] = {"verdict": "PASS" if not auto else "FAIL",
+                                    "reasons": [redact(r, token) for r in auto]}
         result["reasons"] = [redact(r, token) for r in reasons]
         result["verdict"] = "PASS" if not reasons else "FAIL"
     except GuardError as exc:
-        result["reasons"] = [redact(str(exc), token)]
+        result["verdict"], result["reasons"] = "FAIL", [redact(str(exc), token)]
     except Exception as exc:  # qualunque errore inatteso e' FAIL, mai PASS
-        result["reasons"] = [f"errore inatteso: {type(exc).__name__}"]
+        result["verdict"], result["reasons"] = "FAIL", [f"errore inatteso: {type(exc).__name__}"]
+    if result["verdict"] != "PASS" and "auto_merge" in result:
+        result["auto_merge"] = {"verdict": "FAIL", "reasons": ["readiness tecnica FAIL"]}
     if not write_result(env, guard, result) and result["verdict"] == "PASS":
         result["verdict"] = "FAIL"
         result["reasons"] = ["risultato non scritto: verdetto non pubblicabile"]
     print(f"[{guard}] PR #{result.get('pr', '?')} head {result.get('head_sha', '?')}: {result['verdict']}")
     for r in result["reasons"]:
         print(f"  - {r}")
+    if "auto_merge" in result:
+        print(f"[{guard}] auto-merge: {result['auto_merge']['verdict']}")
+        for r in result["auto_merge"]["reasons"]:
+            print(f"  - {r}")
     return 0 if result["verdict"] == "PASS" else 1
 
 

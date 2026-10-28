@@ -3095,6 +3095,29 @@
         "tests/scripts/test_pr_full_suite_pipeline.py"
       ],
       "max_files": 11
+    },
+    "trusted-ci-562-c2-required-checks": {
+      "description": "PF-562 PR-C2, mandato owner 28/10/2026 'Preparazione parallela PR-A, PR-B e PR-C2' e punto 5 del mandato 'Dispatcher fix, runtime certification & CI completion': inventario reale di ruleset e emittenti, matrice GitHub Actions <-> Buildkite, piano dei required check in fasi senza finestre di bypass (contesto + integration_id), verifica/diff/payload/evaluate fail-closed, rollback e recovery, decisioni owner D-C2-1..3. Nessuna modifica operativa al ruleset. Test, mutazioni, docs, CHANGELOG. Opzione B approvata dall'owner (28/10/2026): la readiness della lane pubblica pr-merge-readiness (tecnica, required da F2) e pr-auto-merge (autorizzazione all'auto-merge, mai required); guard con due verdetti, dispatcher con secondo status, pending, ritentativi e self-check. File a merge owner (scripts/pr_*.py, scripts/ci/trusted_pr_guard.py). Estensione dichiarata: scripts/ci_changed_modules.py per attivare la lane mutation-guardrails su scripts/ci/required_checks_plan.py.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ci_required_checks.md",
+        "docs/ci_trusted_lane.md",
+        "docs/trusted_dispatcher.md",
+        "guardrails/mutation_catalog.json",
+        "ops/ci/required_checks.json",
+        "scripts/ci/required_checks_plan.py",
+        "scripts/ci/trusted_pr_guard.py",
+        "scripts/ci_changed_modules.py",
+        "scripts/pr_trusted_dispatcher.py",
+        "tests/fixtures/checks_pr579_8b088ea.json",
+        "tests/fixtures/ruleset_25459867_20261028.json",
+        "tests/scripts/test_pr_trusted_dispatcher.py",
+        "tests/scripts/test_required_checks_plan.py",
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "max_files": 16
     }
   }
 }
