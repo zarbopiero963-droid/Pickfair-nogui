@@ -3228,7 +3228,8 @@ def test_full_suite_step_keys_are_exactly_the_generator_steps():
 
 def test_full_suite_is_off_unless_enabled(env):
     disp, bk, _, _ = env
-    assert disp.cfg.targets == ("overlap", "readiness") and "full-suite" not in disp.cfg.build_timeout_seconds
+    # nessuna suite nuova; il timeout resta per un job gia' nell'archivio (rollback, Codex su #584)
+    assert disp.cfg.targets == ("overlap", "readiness") and disp.cfg.build_timeout_seconds["full-suite"] == 10800
     bk.gh.put(42, HEAD)
     disp.poll()
     disp.tick()
@@ -4673,7 +4674,8 @@ def test_full_suite_restored_snapshot_recognizes_the_delivered_suite_outcome(sui
     assert len(bk.builds[SUITE_PIPE]) == posts, "suite doppia dopo il ripristino dello snapshot"
     assert len(_suite_final(pub)) == finals, "esito della suite ripubblicato"
     suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"]
-    assert suite[0]["outcome"] == "recovered" and suite[0]["build_number"] == 1
+    # esito consegnato da questa stessa build conservato, non ripubblicato (Codex su #584)
+    assert suite[0]["outcome"] == "success" and suite[0]["build_number"] == 1 and suite[0]["final_published"]
 
 
 def test_full_suite_uncertain_recovery_publishes_pending_on_the_suite_context(suite_env):
@@ -4687,3 +4689,80 @@ def test_full_suite_uncertain_recovery_publishes_pending_on_the_suite_context(su
     assert not bk.builds[SUITE_PIPE]
     pend = [c for c in pub.calls if c[3] == "full-suite"]
     assert pend and pend[-1][2] == "pending" and pend[-1][4] == f"https://buildkite.com/{ORG}/{SUITE_PIPE}"
+
+
+@pytest.mark.parametrize("state,verdict", [("passed", "success"), ("failed", "failure")])
+def test_full_suite_recovered_after_a_snapshot_keeps_the_delivered_verdict_for_readiness(suite_env, tmp_path,
+                                                                                         state, verdict):
+    """Codex P2 su #584: suite conclusa e consegnata, poi archivio ripristinato. Il job ritrovato non ripubblica
+    nulla, ma conserva l'esito consegnato da quella stessa build: la readiness dello stesso intento lo consuma
+    (PASS o negativa) invece di attendere fino all'`error`."""
+    disp, bk, pub, clock = suite_env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, state, _suite_jobs(**({"w1-pr-check": "failed"} if state == "failed" else {})))
+    disp.tick()
+    _github_sees(bk, pub)
+    finals = len(_suite_final(pub))
+    clock.now += 600
+    _restore(disp, snap)
+    disp.poll()
+    disp.tick()
+    assert len(_suite_final(pub)) == finals and len(bk.builds[SUITE_PIPE]) == 1
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    readiness = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+    assert suite["state"] == "done" and suite["final_published"] and suite["build_number"] == 1
+    assert disp._suite_verdict(readiness, bk.gh.statuses[HEAD])[0] == verdict
+
+
+def test_full_suite_recovered_when_a_newer_suite_build_owns_the_status_is_not_a_verdict(suite_env, tmp_path):
+    """L'esito si conserva solo se l'ultimo status `full-suite` e' proprio della build ritrovata: uno status di
+    un'altra build (piu' recente) non vale come verdetto della suite di questo intento."""
+    disp, bk, pub, clock = suite_env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    _github_sees(bk, pub)
+    bk.gh.statuses[HEAD].insert(0, {"context": "full-suite", "state": "success", "description": "PASS",
+                                    "target_url": f"https://buildkite.com/{ORG}/{SUITE_PIPE}/builds/7"})
+    clock.now += 600
+    _restore(disp, snap)
+    disp.poll()
+    disp.tick()
+    readiness = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+    assert disp._suite_verdict(readiness, bk.gh.statuses[HEAD])[0] == "wait"
+
+
+def test_disabling_the_suite_keeps_the_timeout_of_a_persisted_suite_job(suite_env, tmp_path):
+    """Codex P2 su #584 (rollback `full_suite.enabled: false`): un job della suite gia' nell'archivio continua fino
+    all'esito con il proprio timeout; nessun `KeyError` sul timeout, nessuna nuova suite."""
+    disp, bk, pub, clock = suite_env
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    assert [j["state"] for j in disp.store.recent_jobs() if j["guard"] == "full-suite"] == ["dispatched"]
+    raw = raw_config(tmp_path)
+    raw["state_db"] = disp.cfg.state_db
+    raw["full_suite"]["enabled"] = False
+    cfg = td.validate_config(raw)
+    assert "full-suite" not in cfg.targets and cfg.build_timeout_seconds["full-suite"] == raw["full_suite"][
+        "build_timeout_seconds"]
+    disp.store.close()
+    off = make_dispatcher(cfg, bk, pub, clock)
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    off.tick()
+    assert _suite_final(pub) and _suite_final(pub)[-1][2] == "success"
+    clock.now += 99999
+    off.poll()
+    off.tick()                                                     # oltre ogni timeout: nessuna eccezione
+    off.store.close()
+    disp.store = td.Store(cfg.state_db, targets=cfg.targets)

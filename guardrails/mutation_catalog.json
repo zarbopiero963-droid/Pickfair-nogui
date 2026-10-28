@@ -6462,6 +6462,42 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 PR-A sopra il P0: pending di recupero incerto della suite cercato fra i guard trusted (nessun pending sulla suite)."
+    },
+    {
+      "id": "td_pa_suite_timeout_only_when_enabled",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    timeouts[SUITE] = suite_timeout\n",
+      "mutated": "    if suite[\"enabled\"]:\n        timeouts[SUITE] = suite_timeout\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A (Codex su #584): con la suite spenta un job della suite gia' nell'archivio perde il timeout (KeyError, status pending per sempre)."
+    },
+    {
+      "id": "td_pa_suite_recovered_verdict_dropped",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                    outcome = seen[\"state\"]\n",
+      "mutated": "                    outcome = \"recovered\"\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A (Codex su #584): suite ritrovata dopo uno snapshot senza esito: la readiness dello stesso intento attende fino all'error."
+    },
+    {
+      "id": "td_pa_suite_recovered_any_build",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "self._status_build(job, seen) == keep[\"number\"]",
+      "mutated": "self._status_build(job, seen) is not None",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A (Codex su #584): verdetto della suite ritrovata preso dallo status di un'altra build."
     }
   ]
 }

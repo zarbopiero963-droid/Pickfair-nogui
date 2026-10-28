@@ -191,3 +191,38 @@ def test_quarantine_step_takes_the_checker_from_main_not_from_the_pr():
     (step,) = [s for s in _pipeline()["steps"] if s["key"] == "w1-quarantine"]
     assert 'git worktree add -q --detach "$B" FETCH_HEAD' in step["command"]
     assert 'python3 "$B/scripts/ci/check_ci_quarantine.py" .' in step["command"]
+
+
+def _git(cwd, *args):
+    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=cwd, text=True,
+                          capture_output=True, check=True).stdout.strip()
+
+
+def test_merge_simulation_runs_again_in_the_same_persistent_checkout(tmp_path):
+    """Sol su #584: gli agent Buildkite riusano il checkout (`git clean -ffxdq`, `git checkout -f`), che non
+    cancella i branch locali. La seconda build nello stesso checkout non deve fallire perche' il branch della
+    simulazione di merge esiste gia': la suite sarebbe rossa senza alcuna regressione."""
+    if shutil.which("bash") is None or shutil.which("git") is None:
+        pytest.skip("bash o git assenti")
+    origin, work = tmp_path / "origin.git", tmp_path / "checkout"
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _git(seed, "init", "-q", "-b", "main")
+    (seed / "a.txt").write_text("main\n")
+    _git(seed, "add", "a.txt")
+    _git(seed, "commit", "-q", "-m", "main")
+    _git(tmp_path, "clone", "-q", "--bare", str(seed), str(origin))
+    _git(tmp_path, "clone", "-q", str(origin), str(work))
+    _git(work, "checkout", "-q", "-b", "feature")
+    (work / "b.txt").write_text("pr\n")
+    _git(work, "add", "b.txt")
+    _git(work, "commit", "-q", "-m", "pr")
+    head = _git(work, "rev-parse", "HEAD")
+    (job,) = [j for j in fsp.JOBS if j.key == "w4-merge-simulation"]
+    script = "set -euo pipefail\n" + "\n".join(job.commands[:3])   # fetch, branch, merge con main
+    for _ in range(2):                                             # due build sullo stesso checkout
+        _git(work, "checkout", "-q", "-f", head)                   # come il checkout dell'agent
+        _git(work, "clean", "-ffxdq")
+        proc = subprocess.run(["bash", "-c", script], cwd=work, text=True, capture_output=True, check=False)
+        assert proc.returncode == 0, proc.stderr
+        assert _git(work, "merge-base", "--is-ancestor", head, "HEAD") == ""

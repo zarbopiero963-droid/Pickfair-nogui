@@ -346,8 +346,9 @@ def validate_config(raw: Any) -> Config:
     if problems:
         raise ConfigError(problems)
     timeouts = dict(timeouts)
-    if suite["enabled"]:
-        timeouts[SUITE] = suite_timeout
+    # sempre, anche con la suite spenta: un job della suite gia' nell'archivio (rollback `enabled: false`) arriva
+    # comunque al proprio esito o alla scadenza (Codex su #584). `targets` decide se se ne creano di nuovi
+    timeouts[SUITE] = suite_timeout
     return Config(
         github_token_command=tuple(gh["token_command"]), github_token_command_timeout_seconds=token_timeout,
         rerun_allowed_logins=frozenset(logins), organization=org, buildkite_token_file=bk["token_file"],
@@ -1997,7 +1998,16 @@ class Dispatcher:
                     return None
             # esito gia' visibile sull'head: non si ripubblica, un esito piu' recente dello stesso SHA resta valido;
             # `final_published` evita che l'annullamento dei doppioni lo rimandi in consegna
-            return self._set(job, state="done", outcome="recovered", final_published=1, build_number=keep["number"],
+            outcome = "recovered"
+            if job["guard"] == SUITE:
+                # la readiness dello stesso intento consuma l'esito della suite: si conserva quello consegnato da
+                # QUESTA build, se e' l'ultimo status `full-suite` sull'head; altrimenti resta `recovered` (attesa,
+                # poi `error`), mai un verdetto preso da un'altra build (Codex su #584)
+                seen = restore if restore is not None else self._latest_built_status(job)
+                if (isinstance(seen, dict) and self._status_build(job, seen) == keep["number"]
+                        and seen.get("state") in ("success", "failure", "error")):
+                    outcome = seen["state"]
+            return self._set(job, state="done", outcome=outcome, final_published=1, build_number=keep["number"],
                              build_url=keep["web_url"],
                              description=f"intento gia' eseguito dalla build {keep['number']}: esito non ripubblicato")
         return self._adopt(job, keep)
@@ -2010,6 +2020,19 @@ class Dispatcher:
             number = int(url[len(prefix):])
             return number if number > 0 else None
         return None
+
+    def _latest_built_status(self, job: dict) -> Optional[dict]:
+        """Ultimo status del contesto sull'head che punta a una build della pipeline (dal piu' recente); None se assente
+        o illeggibile."""
+        try:
+            statuses = self.gh.statuses(job["head_sha"])
+        except (ApiError, TransportError, CredentialError, RateLimited):
+            return None
+        if not isinstance(statuses, list):
+            return None
+        context = PIPELINES[job["guard"]]["context"]
+        return next((st for st in statuses if isinstance(st, dict) and st.get("context") == context
+                     and self._status_build(job, st) is not None), None)
 
     def _newer_on_github(self, job: dict) -> Optional[int]:
         """Build piu' recente di quella del job con uno status sullo stesso contesto e head, se esiste: l'esito del

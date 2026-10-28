@@ -303,7 +303,7 @@ def _jobs() -> tuple:
             "pytest -q -m serial --junitxml=bk-out/bs-serial.xml")),
         Job("w4-merge-simulation", "W4 merge-simulation-hard (merge con main + suite completa)", 45, 0, (
             "git -c user.name=ci-bot -c user.email=ci@bot.local fetch -q origin main",
-            "git checkout -q -b merge-sim-branch",
+            "git checkout -q -B merge-sim-branch",   # -B: il checkout persistente conserva i branch locali (Sol)
             'git -c user.name=ci-bot -c user.email=ci@bot.local merge --no-ff --no-edit origin/main '
             '|| { echo "MERGE CONFLICT"; exit 1; }',
             "python scripts/check_merge_markers.py", FULL_DEPS, "python scripts/validate_guardrails.py",
