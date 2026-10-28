@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 83,
- "updated_at": "2026-10-28T18:11:08Z",
+ "seq": 84,
+ "updated_at": "2026-10-28T22:37:51Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "#562 PR 1/4 aperta: #583 (branch pf562-pr1-p0-rerun-recovery, head a04f27c, P0 replay; il branch designato ccr-764b0316-9r1a1d resta sulla pila intera a20de8a). Attendere check settled, review Sol/Grok, verdetto Grok, merge owner; poi rebase PR-A 2167196 / PR-B 0911597 / PR-C2 a20de8a sul nuovo main e aprire la successiva. RUNTIME_CERTIFIED_A_I (Grok seq 82), TIMEOUT_BEHAVIOR PASS, FULL_SUITE_WITHIN_BUDGET PENDING, POSITIVE_E2E PENDING. LIVE NO-GO.",
+ "next_atomic_action": "#562 PR 1/4 #583 PR583_READY_FOR_OWNER_MERGE su head 44be54d (branch pf562-pr1-p0-rerun-recovery): Sol+Grok VALID_PASS, 8/8 thread risolti, 112 check (solo readiness FAIL atteso manual-review-required), 3661 passed, mutation 143/143; Codex advisory in corso. Attendere merge owner; poi verifica main + CI, deploy Grok da main (token meta_data pf_intent/pf_pr, Commit statuses), drill snapshot, rebase PR-A 2167196 (estendere controlli consegna al target full-suite), PR-B, PR-C2. LIVE NO-GO.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "2bbee7a3c144f912a6a6462f5dceb7df3de76093",
+ "previous_checkpoint_sha": "57d1bdd6e12fa41d33c103eaced30bb62e01170c",
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -605,9 +605,9 @@
  "repository": "zarbopiero963-droid/Pickfair-nogui",
  "mandate_id": "OWNER FINAL MANDATE — chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
  "code": {
-  "branch": "ccr-764b0316-9r1a1d",
-  "sha": "a20de8a6ab67688e3d7b1e657eb04144a483e8c4",
-  "note": "pila #562 su e0e85ee: a04f27c P0 replay, 2167196 PR-A, 0911597 PR-B, a20de8a PR-C2; nessuna PR aperta, nulla installato"
+  "branch": "pf562-pr1-p0-rerun-recovery",
+  "sha": "44be54d80cae8e2392442ad1a62e1ee333ca4f97",
+  "note": "#583 head 44be54d READY_FOR_OWNER_MERGE; pila PR-A/B/C2 locale da riallineare dopo il merge"
  },
  "blocks": [
   "Gate A #506 NON PASS",

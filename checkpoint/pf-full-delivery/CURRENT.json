@@ -2,12 +2,12 @@
  "certification_verdict": "NO-GO",
  "checkpoint_commit": null,
  "code": {
-  "branch": "ccr-764b0316-9r1a1d",
-  "sha": "a20de8a6ab67688e3d7b1e657eb04144a483e8c4"
+  "branch": "pf562-pr1-p0-rerun-recovery",
+  "sha": "44be54d80cae8e2392442ad1a62e1ee333ca4f97"
  },
  "mandate_id": "OWNER FINAL MANDATE \u2014 chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
- "next_atomic_action": "#562 PR 1/4 aperta: #583 (branch pf562-pr1-p0-rerun-recovery, head a04f27c, P0 replay; il branch designato ccr-764b0316-9r1a1d resta sulla pila intera a20de8a). Attendere check settled, review Sol/Grok, verdetto Grok, merge owner; poi rebase PR-A 2167196 / PR-B 0911597 / PR-C2 a20de8a sul nuovo main e aprire la successiva. RUNTIME_CERTIFIED_A_I (Grok seq 82), TIMEOUT_BEHAVIOR PASS, FULL_SUITE_WITHIN_BUDGET PENDING, POSITIVE_E2E PENDING. LIVE NO-GO.",
- "previous_checkpoint_sha": "2bbee7a3c144f912a6a6462f5dceb7df3de76093",
+ "next_atomic_action": "#562 PR 1/4 #583 PR583_READY_FOR_OWNER_MERGE su head 44be54d (branch pf562-pr1-p0-rerun-recovery): Sol+Grok VALID_PASS, 8/8 thread risolti, 112 check (solo readiness FAIL atteso manual-review-required), 3661 passed, mutation 143/143; Codex advisory in corso. Attendere merge owner; poi verifica main + CI, deploy Grok da main (token meta_data pf_intent/pf_pr, Commit statuses), drill snapshot, rebase PR-A 2167196 (estendere controlli consegna al target full-suite), PR-B, PR-C2. LIVE NO-GO.",
+ "previous_checkpoint_sha": "57d1bdd6e12fa41d33c103eaced30bb62e01170c",
  "schema": "pf-current/1",
- "seq": 83
+ "seq": 84
 }
