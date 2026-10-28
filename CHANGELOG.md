@@ -9,6 +9,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 P0 — nessuna build doppia dopo il ripristino di uno snapshot (`scripts/pr_trusted_dispatcher.py`):**
+  - causa (rollback T252): cursore dei commenti e tabella `reruns` tornano indietro insieme allo snapshot, quindi i
+    rerun e le transizioni già eseguiti venivano rigiocati come nuovi;
+  - ogni build porta l'identità dell'intento (metadato Buildkite `pf_intent` = tid). Prima di creare si cercano le
+    build remote dello stesso intento: in corso ⇒ adottata, conclusa ⇒ `recovered` senza ripubblicare, non
+    verificabile ⇒ nessuna build e `pending` subito sull'head (`RECOVERY_UNCERTAIN`, poi `error`; Codex P1 su #583). Dopo la creazione si ricontrolla, per due
+    istanze concorrenti;
+  - build ritrovata conclusa: si ripubblica solo se nessuno status con build uguale o più recente è consegnato
+    (correlazione per numero di build: un PASS vecchio non copre mai un FAIL più recente); `seq` riportato indietro dallo snapshot: metadato `pf_pr`, si recupera il `seq` più alto della PR;
+    la transizione si riallinea all'ultima valutazione remota se è dello stesso head, altrimenti prende un tid
+    oltre il massimo (Sol e Codex su #583); stesso intento con un altro evento ⇒ evento riallineato, con un'altra env ⇒
+    conflitto, nessuna build (Codex su #583);
+  - mai l'esito di una build vecchia sopra lo status di una più recente: confronto per numero di build prima di ogni
+    pubblicazione o riconsegna finale; `success` non verificabile non si pubblica (Codex su #583);
+  - rerun rifiutati se il commento ha più di 6 ore (orario GitHub) o se la PR manca dall'ultimo elenco delle aperte.
+
+  Test RED→GREEN su snapshot SQLite reali (rerun concluso, in corso, crash fra creazione e registrazione, Buildkite
+  illeggibile o a pagina piena, rerun nuovo legittimo, due istanze, cambio di head, transizioni rigiocate) e
+  mutazioni `td_p0_*`. Limiti dichiarati in `docs/trusted_dispatcher.md`.
+  - **#562 P1 — readiness di SHA superati:** verificato che non trattengono la coda trusted oltre il giro che vede il
+    nuovo head. La build viene annullata nello stesso giro che crea l'overlap nuovo; quella in attesa non ha build. Due test
+    di regressione; nessuna modifica di codice (`docs/trusted_dispatcher.md`).
 - **#562 F1 — paginazione GitHub reale nel dispatcher (`scripts/pr_trusted_dispatcher.py`), regressione di #576:**
   - nel collaudo T252 una PR con 107 check run aveva il link `next` nella forma `/repositories/1189713160/…`, che il
     client rifiutava: la readiness non partiva mai (fail-closed, nessun PASS) e Grok ha fatto rollback;
