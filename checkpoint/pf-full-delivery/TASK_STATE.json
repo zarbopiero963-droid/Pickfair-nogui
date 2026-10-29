@@ -63,7 +63,7 @@
  ],
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "mandate_id": "OWNER FINAL MANDATE \u2014 chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
- "next_atomic_action": "#585 READY_FOR_OWNER_MANUAL_MERGE su 6191aac (#562 c.6505539246): BK34 PASS 49/49 4727 s, mutation 969 s tmpfs 565K+5E; Sol/Grok VALID_PASS ultimo range; Codex nessun rilievo; 0 thread. ATTESA merge owner. Poi: verifica main, deploy generatore (Grok/VPS), M2_POST_MERGE_CERTIFICATION 52 step, PR-C2 (ramo locale c2-trial in /home/user/pfc2, bk_observe), PR temporanea ZERO_GH_ACTIONS, STOP.",
+ "next_atomic_action": "#585 MERGED 6fa29b2. #587 PR-C2 head f4749c7 (BK35/36 51/52, FAIL solo w5-build-linux-appimage: appimagetool mancante). Locale non pushato: e376f2d (Codex sostitutivo P2 bk_observe). Script ops/ci/PF562_VPS_UNBLOCK.sh pronto in worktree /home/user/pfvps (715bb84, 19 test), non in PR (regola una PR). ATTESA owner: hash appimagetool (A/B/C), accesso SSH operatore, decisione review dello script (in #587 o eccezione). Grok range 6fa29b2..2c2d8fc = REVIEW_UNKNOWN; Codex sostitutivo parziale (formato). Nessun merge.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [
