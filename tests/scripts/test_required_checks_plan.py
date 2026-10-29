@@ -55,7 +55,8 @@ def _green(plan, phase, sha=SHA):
             runs.append({"name": req["context"], "status": "completed", "conclusion": "success", "head_sha": sha,
                          "app": {"id": req["integration_id"]}})
         else:
-            statuses.append({"context": req["context"], "state": "success", "creator": {"login": pub["status_creator"]}})
+            statuses.append({"context": req["context"], "state": "success", "creator": {"login": pub["status_creator"]},
+                             "url": f"https://api.github.com/repos/o/r/statuses/{sha}"})
     return runs, statuses
 
 
@@ -147,7 +148,8 @@ def test_a_failed_errored_or_pending_required_status_blocks(state, expected):
 def test_the_latest_status_wins_so_an_old_success_does_not_hide_a_new_failure():
     plan, phase = _plan(), 1
     runs, statuses = _green(plan, phase)
-    newest = [{"context": "full-suite", "state": "failure", "creator": {"login": "pickfair-trusted-status[bot]"}}]
+    newest = [{"context": "full-suite", "state": "failure", "creator": {"login": "pickfair-trusted-status[bot]"},
+               "url": f"https://api.github.com/repos/o/r/statuses/{SHA}"}]
     assert rcp.evaluate(plan, phase, SHA, runs, newest + statuses)
 
 
@@ -302,3 +304,38 @@ def test_owner_merge_pr_with_green_gates_satisfies_the_planned_required_checks()
     statuses = [{"context": "pr-auto-merge", "state": "failure",
                  "creator": {"login": "pickfair-trusted-status[bot]"}}] + statuses
     assert rcp.evaluate(plan, phase, SHA, runs, statuses) == []
+
+
+# --- Sol su #587: status di un altro SHA, ruleset che non protegge main
+
+@pytest.mark.parametrize("phase", [1, 2, 3])
+def test_green_lane_statuses_of_another_sha_do_not_count(phase):
+    plan = _plan()
+    runs, statuses = _green(plan, phase, sha=OTHER)          # tutti verdi, ma esportati per il commit OTHER
+    runs = [dict(r, head_sha=SHA) for r in runs]
+    reasons = rcp.evaluate(plan, phase, SHA, runs, statuses)
+    assert reasons and all("assente sull'head" in r for r in reasons)
+
+
+def test_status_without_url_does_not_count():
+    plan = _plan()
+    runs, statuses = _green(plan, 1)
+    statuses = [{k: v for k, v in s.items() if k != "url"} for s in statuses]
+    assert rcp.evaluate(plan, 1, SHA, runs, statuses)
+
+
+@pytest.mark.parametrize("mutate, ok", [
+    (lambda r: None, True),
+    (lambda r: r["conditions"]["ref_name"]["exclude"].append("refs/heads/main"), False),
+    (lambda r: r["conditions"]["ref_name"]["exclude"].append("refs/heads/*"), False),
+    (lambda r: r["conditions"]["ref_name"]["exclude"].append("~DEFAULT_BRANCH"), False),
+    (lambda r: r["conditions"]["ref_name"].update(include=["refs/heads/release"]), False),
+    (lambda r: r["conditions"]["ref_name"].update(include=["refs/heads/main"]), True),
+    (lambda r: r.update(target="tag"), False),
+    (lambda r: r.pop("conditions"), False),
+])
+def test_diff_requires_the_ruleset_to_apply_to_main(mutate, ok):
+    ruleset = _ruleset()
+    mutate(ruleset)
+    problems = rcp.diff(_plan(), ruleset)
+    assert (not any("refs/heads/main" in p for p in problems)) is ok

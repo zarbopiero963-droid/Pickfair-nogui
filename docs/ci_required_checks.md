@@ -167,7 +167,8 @@ Il payload esatto di ogni fase: `python3 scripts/ci/required_checks_plan.py payl
   - GitHub accetta `success`, `skipped` e `neutral` per i check run. La lane pubblica **status**, che non hanno
     `skipped`.
   - `required_checks_plan.py evaluate` è più severo: vale solo `success` sullo SHA esatto. Mancante, pending, failure,
-    error, skipped, neutral, un'altra app o un altro SHA bloccano.
+    error, skipped, neutral, un'altra app o un altro SHA bloccano. Per gli status lo SHA si legge dall'`url` che l'API
+    `commits/{sha}/statuses` restituisce (`…/statuses/{sha}`): uno status senza `url` o di un altro commit non conta.
 - **SHA:** gli status e i check run sono legati al commit, e GitHub valuta quelli dell'head corrente. Con `strict` (F2)
   anche la base è quella aggiornata. Dispatcher e full-suite verificano lo SHA (`SHA mismatch`, `stale SHA`).
 - **Stati della lane:** `pending` mentre gira, `success` o `failure` per l'esito, `error` quando l'esito non è
@@ -182,7 +183,9 @@ Il payload esatto di ogni fase: `python3 scripts/ci/required_checks_plan.py payl
 
 1. **Prima:** esportare il ruleset (`GET …/rulesets/25459867`) e salvarlo. È il punto di rollback.
 2. `required_checks_plan.py diff --plan ops/ci/required_checks.json --ruleset <export>` deve dare OK. Se il ruleset
-   reale non coincide con lo stato attuale del piano, ci si ferma.
+   reale non coincide con lo stato attuale del piano, ci si ferma. `diff` controlla anche che il ruleset sia attivo,
+   senza bypass e che si applichi davvero a `refs/heads/main`: target `branch`, `main` incluso e non escluso
+   (`~DEFAULT_BRANCH`, `~ALL` o un pattern che lo copre).
 3. Verificare la precondizione della fase. Per F1, l'ultima PR reale deve avere `full-suite` = `success` sullo SHA
    esatto, pubblicato da `pickfair-trusted-status`.
 4. L'owner applica il payload della fase, aggiungendo prima di togliere, nella UI (Settings → Rules → Rulesets →

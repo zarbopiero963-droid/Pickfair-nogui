@@ -24,6 +24,7 @@ Exit: 0 = OK, 1 = piano non valido / divergenza / head bloccato, 2 = uso o input
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import importlib.util
 import json
 import re
@@ -135,6 +136,27 @@ def live_required(ruleset: Mapping[str, Any]) -> tuple[list[dict], bool]:
             bool(params.get("strict_required_status_checks_policy")))
 
 
+MAIN_REF = "refs/heads/main"
+
+
+def _ref_matches(patterns: Any, ref: str = MAIN_REF) -> bool:
+    if not isinstance(patterns, list):
+        return False
+    return any(p in ("~DEFAULT_BRANCH", "~ALL") or (isinstance(p, str) and fnmatch.fnmatchcase(ref, p))
+               for p in patterns)
+
+
+def ruleset_applies_to_main(ruleset: Mapping[str, Any]) -> bool:
+    """Il ruleset protegge davvero `main` (Sol su #587): target branch, `main` incluso e non escluso. Condizioni
+    assenti o illeggibili => no (fail-closed). `main` e' il default branch del repository."""
+    if ruleset.get("target") != "branch":
+        return False
+    ref_name = (ruleset.get("conditions") or {}).get("ref_name")
+    if not isinstance(ref_name, dict):
+        return False
+    return _ref_matches(ref_name.get("include")) and not _ref_matches(ref_name.get("exclude"))
+
+
 def diff(plan: Mapping[str, Any], ruleset: Mapping[str, Any]) -> list[str]:
     """Differenze fra il ruleset reale e lo stato `current` del piano: vuoto = piano allineato."""
     problems = []
@@ -144,6 +166,8 @@ def diff(plan: Mapping[str, Any], ruleset: Mapping[str, Any]) -> list[str]:
         problems.append(f"ruleset non attivo: {ruleset.get('enforcement')}")
     if ruleset.get("bypass_actors"):
         problems.append("ruleset con bypass_actors: un required check si potrebbe saltare")
+    if not ruleset_applies_to_main(ruleset):
+        problems.append("ruleset che non si applica a refs/heads/main (target, include o exclude)")
     live, strict = live_required(ruleset)
     key = lambda r: (str(r["context"]), r["integration_id"])            # noqa: E731
     want = sorted(required_after(plan, 0), key=key)
@@ -158,7 +182,7 @@ def evaluate(plan: Mapping[str, Any], phase: int, sha: str, check_runs: Iterable
              statuses: Iterable[Mapping[str, Any]]) -> list[str]:
     """Motivi di blocco dell'head `sha` per i required check dopo `phase` fasi; vuoto = mergiabile per questi check.
     `check_runs` = elenco API `check-runs` (con `app.id`, `head_sha`); `statuses` = elenco API `statuses`, dal piu'
-    recente, con `creator.login`."""
+    recente, con `creator.login` e `url` (che porta lo SHA dello status)."""
     if not _SHA_RE.fullmatch(sha or ""):
         raise PlanError("SHA non valido")
     pubs = plan["publishers"]
@@ -184,8 +208,11 @@ def evaluate(plan: Mapping[str, Any], phase: int, sha: str, check_runs: Iterable
                     reasons.append(f"{name}: {concl} (vale solo success)")
         else:
             creator = pub.get("status_creator")
+            # solo status dello SHA valutato (Sol su #587): l'API `commits/{sha}/statuses` ne riporta l'URL
+            # `.../statuses/{sha}`; uno status senza URL o di un altro commit non conta
             latest = next((s for s in statuses if isinstance(s, dict) and s.get("context") == req["context"]
-                           and (s.get("creator") or {}).get("login") == creator), None)
+                           and (s.get("creator") or {}).get("login") == creator
+                           and str(s.get("url") or "").endswith(f"/statuses/{sha}")), None)
             if latest is None:
                 reasons.append(f"{name}: assente sull'head")
             elif latest.get("state") != "success":

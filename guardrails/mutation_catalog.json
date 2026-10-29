@@ -6960,8 +6960,8 @@
       "module": "scripts.ci.required_checks_plan",
       "area": "trusted_dispatcher",
       "file": "scripts/ci/required_checks_plan.py",
-      "original": "                           and (s.get(\"creator\") or {}).get(\"login\") == creator), None)",
-      "mutated": "                           ), None)",
+      "original": "                           and (s.get(\"creator\") or {}).get(\"login\") == creator\n",
+      "mutated": "                           and True\n",
       "tests": [
         "tests/scripts/test_required_checks_plan.py"
       ],
@@ -7086,6 +7086,42 @@
         "tests/scripts/test_trusted_pr_guard.py"
       ],
       "rationale": "PF-562 PR-C2 opzione B: push o retarget durante l'attesa della readiness non rilevato."
+    },
+    {
+      "id": "rcp_status_of_another_sha_counts",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "                           and str(s.get(\"url\") or \"\").endswith(f\"/statuses/{sha}\")), None)\n",
+      "mutated": "                           ), None)\n",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: status verdi di un altro commit contano per lo SHA valutato (Sol su #587)."
+    },
+    {
+      "id": "rcp_ruleset_scope_not_checked",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "    if not ruleset_applies_to_main(ruleset):\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: diff OK per un ruleset che non protegge main (Sol su #587)."
+    },
+    {
+      "id": "rcp_main_exclude_ignored",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "    return _ref_matches(ref_name.get(\"include\")) and not _ref_matches(ref_name.get(\"exclude\"))\n",
+      "mutated": "    return _ref_matches(ref_name.get(\"include\"))\n",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: main escluso dal ruleset non rilevato (Sol su #587)."
     }
   ]
 }
