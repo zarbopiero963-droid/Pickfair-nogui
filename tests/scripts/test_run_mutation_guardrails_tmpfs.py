@@ -24,6 +24,11 @@ runner = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = runner
 _spec.loader.exec_module(runner)
 
+#: scelta del tmpfs (percorsi e mount POSIX) e pulizia per proprietario (os.getuid): solo POSIX. Su Windows il
+#: runner resta su disco e la pulizia non cancella niente (provato dai test senza questo segno) (GPT-6.1 Sol su #585)
+POSIX_ONLY = pytest.mark.skipif(os.name != "posix" or not hasattr(os, "getuid"),
+                                reason="tmpfs e pulizia per proprietario solo POSIX")
+
 MODULO = "def liability(stake, price):\n    return stake * (price - 1.0)\n"
 LIAB = "    return stake * (price - 1.0)"
 #: il test scrive un database nel suo tmp_path e annota dove: prova quale TMPDIR vede pytest
@@ -96,6 +101,7 @@ def _fake_tmpfs(tmp_path, monkeypatch):
 
 # --- scelta del tmpfs
 
+@POSIX_ONLY
 def test_only_a_real_writable_tmpfs_with_space_is_chosen(tmp_path):
     shm = tmp_path / "shm"
     shm.mkdir()
@@ -134,6 +140,7 @@ def test_non_writable_tmpfs_is_refused(tmp_path):
 
 # --- run reale sul tmpfs (finto: directory annunciata come tmpfs) e su disco
 
+@POSIX_ONLY
 def test_run_on_tmpfs_puts_sandbox_and_test_files_there_and_leaves_nothing(tmp_path, monkeypatch):
     shm = _fake_tmpfs(tmp_path, monkeypatch)
     rc, report, seen = _run(_repo(tmp_path, MUTS), tmp_path, monkeypatch, "--jobs", "2")
@@ -144,12 +151,14 @@ def test_run_on_tmpfs_puts_sandbox_and_test_files_there_and_leaves_nothing(tmp_p
     assert not list(shm.iterdir()), "workspace rimasto in RAM a fine run"
 
 
+@POSIX_ONLY
 def test_each_worker_has_its_own_test_tmpdir(tmp_path, monkeypatch):
     _fake_tmpfs(tmp_path, monkeypatch)
     _, _, seen = _run(_repo(tmp_path, MUTS), tmp_path, monkeypatch, "--jobs", "3")
     assert len(set(seen)) == 3
 
 
+@POSIX_ONLY
 def test_tmpfs_off_and_fallback_keep_results_identical(tmp_path, monkeypatch):
     _fake_tmpfs(tmp_path, monkeypatch)
     rc_t, rep_t, _ = _run(_repo(tmp_path / "a", MUTS), tmp_path / "a", monkeypatch, "--jobs", "2")
@@ -161,6 +170,7 @@ def test_tmpfs_off_and_fallback_keep_results_identical(tmp_path, monkeypatch):
     assert seen_d and not any(s.startswith(str(tmp_path / "shm")) for s in seen_d)
 
 
+@POSIX_ONLY
 def test_nested_runner_stays_on_disk_and_never_cleans_the_shared_tmpfs(tmp_path, monkeypatch):
     shm = _fake_tmpfs(tmp_path, monkeypatch)
     outer = shm / (runner.TMP_PREFIX + "outer-run")
@@ -234,6 +244,7 @@ def test_low_free_space_stops_the_run_fail_closed(tmp_path, monkeypatch):
     assert report["summary"]["gate_passed"] is False
 
 
+@POSIX_ONLY
 def test_stale_workspaces_of_killed_runs_are_removed_only_when_old(tmp_path):
     old, fresh, other = tmp_path / "pf_mutation_old", tmp_path / "pf_mutation_new", tmp_path / "keep"
     for d in (old, fresh, other):
@@ -245,6 +256,7 @@ def test_stale_workspaces_of_killed_runs_are_removed_only_when_old(tmp_path):
     assert not old.exists() and fresh.exists() and other.exists()
 
 
+@POSIX_ONLY
 def test_stale_cleanup_never_follows_a_symlink(tmp_path):
     target = tmp_path / "precious"
     target.mkdir()
@@ -270,6 +282,7 @@ def test_the_words_alone_in_printed_source_are_not_space_exhaustion():
     assert not runner._NO_SPACE_RE.search(out)
 
 
+@POSIX_ONLY
 def test_workspace_left_on_tmpfs_after_the_run_is_an_error(tmp_path, monkeypatch):
     shm = _fake_tmpfs(tmp_path, monkeypatch)
 
@@ -310,6 +323,7 @@ def test_module_collects_without_posix_only_apis():
 
 # --- Codex e Grok su #585 (fb3ffd8): noexec, residui prima dello spazio, nessun os.getuid
 
+@POSIX_ONLY
 def test_noexec_tmpfs_is_refused_because_tests_execute_scripts_there(tmp_path):
     shm = tmp_path / "shm"
     shm.mkdir()
@@ -320,6 +334,7 @@ def test_noexec_tmpfs_is_refused_because_tests_execute_scripts_there(tmp_path):
     assert root == real
 
 
+@POSIX_ONLY
 def test_stale_workspaces_are_removed_before_the_free_space_check(tmp_path, monkeypatch):
     shm = tmp_path / "shm"
     stale = shm / (runner.TMP_PREFIX + "killed-run")
@@ -361,6 +376,7 @@ def test_real_execution_probe_runs_a_script_and_leaves_nothing(tmp_path):
     assert not list(tmp_path.iterdir()), "script di prova non rimosso"
 
 
+@POSIX_ONLY
 def test_tmpfs_where_scripts_cannot_run_is_refused_even_without_noexec(tmp_path, monkeypatch):
     shm = tmp_path / "shm"
     shm.mkdir()
@@ -377,3 +393,12 @@ def test_execution_probe_failure_is_false(tmp_path, monkeypatch):
     monkeypatch.setattr(runner.subprocess, "run", denied)
     assert runner._can_execute_in(tmp_path) is False
     assert not list(tmp_path.iterdir())
+
+
+def test_tmpfs_and_owner_cleanup_tests_are_skipped_where_posix_apis_are_missing():
+    """GPT-6.1 Sol su #585: i test che dipendono da os.getuid o dai mount POSIX portano il segno POSIX_ONLY."""
+    src = Path(__file__).read_text(encoding="utf-8")
+    for name in ("test_stale_workspaces_are_removed_before_the_free_space_check",
+                 "test_stale_workspaces_of_killed_runs_are_removed_only_when_old",
+                 "test_stale_cleanup_never_follows_a_symlink"):
+        assert f"@POSIX_ONLY\ndef {name}(" in src, name
