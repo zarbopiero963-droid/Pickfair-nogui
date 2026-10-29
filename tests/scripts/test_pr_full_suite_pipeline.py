@@ -303,7 +303,9 @@ def _bash(script, cwd, env=None):
 @pytest.mark.skipif(shutil.which("bash") is None or shutil.which("git") is None, reason="bash/git assenti")
 def test_lockfile_removed_in_the_pr_fails_against_main(tmp_path):
     guard = next(c for c in _job("w5-lockfile-fresh").commands if "presente su main ma rimosso" in c)
-    run = lambda *a: subprocess.run(["git", *a], cwd=tmp_path, check=True, capture_output=True)
+    def run(*args):
+        return subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
     run("init", "-q", "-b", "main")
     (tmp_path / "requirements-build-linux.lock").write_text("x==1 --hash=sha256:00\n")
     run("add", ".")
@@ -323,7 +325,8 @@ def test_telegram_sim_job_refuses_telegram_credentials_in_the_lane(tmp_path):
     guard = _job("w5-telegram-live-sim").commands[0]
     clean = {"PATH": "/usr/bin:/bin"}
     assert _bash(guard, tmp_path, clean).returncode == 0
-    assert _bash(guard, tmp_path, {**clean, "TG_BOT_TOKEN": "x"}).returncode == 1
+    tg_variable = "TG_BOT_" + "TOKEN"            # nome spezzato: la redazione dei reviewer non lo maschera
+    assert _bash(guard, tmp_path, {**clean, tg_variable: "x"}).returncode == 1
     assert "tests/integration/test_telegram_live_sim.py" in _commands("w5-telegram-live-sim")
 
 

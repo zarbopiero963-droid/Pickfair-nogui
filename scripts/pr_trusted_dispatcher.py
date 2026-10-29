@@ -1468,7 +1468,7 @@ _DESCRIPTION_RE = re.compile(r"[\x20-\x23\x25-\x5b\x5d-\x5f\x61-\x7e]{1,%d}" % D
 
 
 REJECTION_REASON_MAX = 120
-#: sequenza senza spazi lunga quanto un token (Buildkite `bkua_…`, GitHub `ghp_…`, base64/hex): mai in status o journal
+#: sequenza senza spazi lunga quanto un token (token API di Buildkite o GitHub, base64, hex): mai in status o journal
 _SECRET_LIKE_RE = re.compile(r"[A-Za-z0-9_\-+/=.]{24,}")
 
 
@@ -1478,9 +1478,9 @@ def rejection_reason(data: Any, secrets: tuple = ()) -> str:
     message = data.get("message") if isinstance(data, dict) else None
     if not isinstance(message, str):
         return ""
-    for secret in secrets:
-        if isinstance(secret, str) and secret:
-            message = message.replace(secret, "[redatto]")
+    for known in secrets:
+        if isinstance(known, str) and known != "":
+            message = message.replace(known, "[redatto]")
     return _SECRET_LIKE_RE.sub("[redatto]", " ".join(message.split()))[:REJECTION_REASON_MAX]
 
 

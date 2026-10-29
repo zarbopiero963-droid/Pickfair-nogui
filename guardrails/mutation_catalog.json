@@ -6678,6 +6678,18 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 PR-B (owner su #585): motivo di Buildkite pubblicato senza redazione: un token o segreto nella risposta finirebbe in status e journal."
+    },
+    {
+      "id": "td_pb_known_credential_kept",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            message = message.replace(known, \"[redatto]\")\n",
+      "mutated": "            pass\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-B (owner su #585): il token noto del dispatcher non viene tolto per valore; se è più corto della regola generica finirebbe in status e journal."
     }
   ]
 }

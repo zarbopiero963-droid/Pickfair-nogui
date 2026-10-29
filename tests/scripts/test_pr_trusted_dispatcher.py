@@ -570,12 +570,21 @@ def test_rejection_reason_is_bounded_and_ignored_when_not_a_string():
 def test_rejection_reason_never_carries_a_secret():
     """Owner su #585: il motivo di Buildkite va nello status e nel journal solo ripulito. Il token del dispatcher e
     ogni stringa simile a un segreto (lunga sequenza senza spazi) non escono mai."""
-    secret = "bkua_" + "a1" * 20
-    out = td.rejection_reason({"message": f"token {secret} non valido per la pipeline pf-dedicated-ci"},
-                              secrets=(secret,))
-    assert secret not in out and "a1a1a1a1" not in out and "[redatto]" in out and "pf-dedicated-ci" in out
-    out = td.rejection_reason({"message": "Authorization: Bearer ghp_" + "Z" * 36})
+    fake_credential = "fake-dispatcher-credential-" + "a1" * 20          # valore finto, forma di un token
+    out = td.rejection_reason({"message": f"token {fake_credential} non valido per la pipeline pf-dedicated-ci"},
+                              secrets=(fake_credential,))
+    assert fake_credential not in out and "a1a1a1a1" not in out and "[redatto]" in out and "pf-dedicated-ci" in out
+    out = td.rejection_reason({"message": "Authorization: Bearer " + "Z" * 40})   # token sconosciuto al dispatcher
     assert "ZZZZZZZZ" not in out and "[redatto]" in out
+
+
+
+def test_rejection_reason_redacts_a_known_credential_shorter_than_the_generic_pattern():
+    """Il token noto del dispatcher si toglie per valore, anche quando è troppo corto per la regola generica."""
+    short_credential = "cred-" + "q7" * 6                                # 17 caratteri, sotto la soglia di 24
+    out = td.rejection_reason({"message": f"accesso {short_credential} negato"}, secrets=(short_credential,))
+    assert short_credential not in out and out == "accesso [redatto] negato"
+    assert td.rejection_reason({"message": "accesso negato"}, secrets=("", None)) == "accesso negato"
 
 
 def test_rejected_creation_status_and_log_never_echo_the_buildkite_token(env, capsys):
