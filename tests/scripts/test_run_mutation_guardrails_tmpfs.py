@@ -69,7 +69,8 @@ MUTS = [_mut("zero", "    return 0.0"), _mut("double", "    return stake * (pric
 
 def _mounts(tmp_path: Path, *rows) -> str:
     path = tmp_path / "mounts"
-    path.write_text("".join(f"dev {mnt} {fs} rw 0 0\n" for mnt, fs in rows), encoding="utf-8")
+    lines = "".join(f"dev {r[0]} {r[1]} {r[2] if len(r) > 2 else 'rw,nosuid,nodev'} 0 0\n" for r in rows)
+    path.write_text(lines, encoding="utf-8")
     return str(path)
 
 
@@ -305,3 +306,50 @@ def test_module_collects_without_posix_only_apis():
     """L'import del modulo di test non chiama API solo POSIX (skipif valutato alla raccolta)."""
     src = Path(__file__).read_text(encoding="utf-8")
     assert "skipif(os." + "geteuid()" not in src
+
+
+# --- Codex e Grok su #585 (fb3ffd8): noexec, residui prima dello spazio, nessun os.getuid
+
+def test_noexec_tmpfs_is_refused_because_tests_execute_scripts_there(tmp_path):
+    shm = tmp_path / "shm"
+    shm.mkdir()
+    real = str(shm.resolve())
+    root, why = runner.choose_tmp_root((str(shm),), _mounts(tmp_path, (real, "tmpfs", "rw,nosuid,nodev,noexec")), 1)
+    assert root is None and "montato noexec" in why
+    root, _ = runner.choose_tmp_root((str(shm),), _mounts(tmp_path, (real, "tmpfs", "rw,nosuid,nodev")), 1)
+    assert root == real
+
+
+def test_stale_workspaces_are_removed_before_the_free_space_check(tmp_path, monkeypatch):
+    shm = tmp_path / "shm"
+    stale = shm / (runner.TMP_PREFIX + "killed-run")
+    stale.mkdir(parents=True)
+    past = time.time() - runner.STALE_TMP_SECONDS - 60
+    os.utime(stale, (past, past))
+    # il tmpfs e' "pieno" finche' il residuo esiste
+    monkeypatch.setattr(runner, "_free_bytes", lambda path: 0 if stale.exists() else 2**30)
+    real = str(shm.resolve())
+    root, why = runner.choose_tmp_root((str(shm),), _mounts(tmp_path, (real, "tmpfs")), 2**20)
+    assert root == real and "rimossi 1 workspace residui" in why and not stale.exists()
+
+
+def test_stale_cleanup_deletes_nothing_without_getuid(tmp_path, monkeypatch):
+    old = tmp_path / (runner.TMP_PREFIX + "old")
+    old.mkdir()
+    past = time.time() - runner.STALE_TMP_SECONDS - 60
+    os.utime(old, (past, past))
+
+    class OsWithoutGetuid:                        # come su Windows: proprietario non verificabile
+        def __getattr__(self, name):
+            if name == "getuid":
+                raise AttributeError(name)
+            return getattr(os, name)
+
+    monkeypatch.setattr(runner, "os", OsWithoutGetuid())
+    assert runner.clean_stale_tmp(str(tmp_path)) == [] and old.exists()
+
+
+def test_mount_options_are_read_from_the_longest_mount_point(tmp_path):
+    mounts = _mounts(tmp_path, ("/", "ext4", "rw"), ("/dev/shm", "tmpfs", "rw,noexec"))
+    assert runner._mount_info(Path("/dev/shm/x"), mounts) == ("tmpfs", frozenset({"rw", "noexec"}))
+    assert runner._mount_info(Path("/home"), mounts) == ("ext4", frozenset({"rw"}))

@@ -178,13 +178,13 @@ def build_sandbox(repo_root: Path, dest: Path) -> None:
         shutil.copy2(src, target)
 
 
-def _mount_fstype(path: Path, mounts_file: str | None = None) -> str | None:
-    """Tipo di filesystem del mount point piu' lungo che contiene ``path`` (``/proc/mounts``)."""
+def _mount_info(path: Path, mounts_file: str | None = None) -> tuple[str | None, frozenset]:
+    """Tipo e opzioni del mount point piu' lungo che contiene ``path`` (``/proc/mounts``)."""
     try:
         lines = Path(mounts_file or MOUNTS_FILE).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return None
-    best, fstype = "", None
+        return None, frozenset()
+    best, info = "", (None, frozenset())
     target = str(path)
     for line in lines:
         parts = line.split()
@@ -193,8 +193,13 @@ def _mount_fstype(path: Path, mounts_file: str | None = None) -> str | None:
         mnt = parts[1].replace("\\040", " ")
         inside = target == mnt or target.startswith(mnt.rstrip("/") + "/")
         if inside and len(mnt) >= len(best):
-            best, fstype = mnt, parts[2]
-    return fstype
+            opts = frozenset(parts[3].split(",")) if len(parts) > 3 else frozenset()
+            best, info = mnt, (parts[2], opts)
+    return info
+
+
+def _mount_fstype(path: Path, mounts_file: str | None = None) -> str | None:
+    return _mount_info(path, mounts_file)[0]
 
 
 def _free_bytes(path: Path) -> int:
@@ -214,33 +219,46 @@ def choose_tmp_root(candidates: tuple | None = None, mounts_file: str | None = N
                 motivi.append(f"{cand}: assente")
                 continue
             real = path.resolve()
-            fstype = _mount_fstype(real, mounts_file)
+            fstype, opts = _mount_info(real, mounts_file)
             if fstype != "tmpfs":
                 motivi.append(f"{cand}: filesystem {fstype or 'sconosciuto'}, non tmpfs")
                 continue
             if not os.access(real, os.W_OK | os.X_OK):
                 motivi.append(f"{cand}: non scrivibile")
                 continue
+            # i test eseguono script creati in tmp_path (Codex su #585): su un mount noexec fallirebbero gia' sul
+            # codice originale e il gate darebbe INCONCLUSIVE
+            if "noexec" in opts:
+                motivi.append(f"{cand}: montato noexec")
+                continue
+            # prima i residui dei run uccisi, poi lo spazio: altrimenti un tmpfs pieno di residui verrebbe scartato
+            # per sempre (Codex su #585)
+            stale = clean_stale_tmp(str(real))
             free = _free_bytes(real)
         except OSError as exc:
             motivi.append(f"{cand}: {type(exc).__name__}")
             continue
+        pulizia = f"; rimossi {len(stale)} workspace residui" if stale else ""
         if free < min_free:
-            motivi.append(f"{cand}: {free // 2**20} MiB liberi, minimo {min_free // 2**20}")
+            motivi.append(f"{cand}: {free // 2**20} MiB liberi, minimo {min_free // 2**20}{pulizia}")
             continue
-        return str(real), f"tmpfs {real} ({free // 2**20} MiB liberi)"
+        return str(real), f"tmpfs {real} ({free // 2**20} MiB liberi{pulizia})"
     return None, "disco (" + "; ".join(motivi or ["nessun candidato"]) + ")"
 
 
 def clean_stale_tmp(root: str, max_age: int | None = None, now: float | None = None) -> list[str]:
     """Rimuove le directory ``pf_mutation_*`` di questo utente piu' vecchie di ``max_age`` (run uccisi)."""
     removed = []
+    getuid = getattr(os, "getuid", None)
+    if getuid is None:                         # proprietario non verificabile (Windows): non si cancella niente
+        return removed
+    uid = getuid()
     max_age = STALE_TMP_SECONDS if max_age is None else max_age
     now = time.time() if now is None else now
     for entry in Path(root).glob(TMP_PREFIX + "*"):
         try:
             st = entry.lstat()
-            if not entry.is_dir() or entry.is_symlink() or st.st_uid != os.getuid() or now - st.st_mtime <= max_age:
+            if not entry.is_dir() or entry.is_symlink() or st.st_uid != uid or now - st.st_mtime <= max_age:
                 continue
         except OSError:
             continue
@@ -577,10 +595,6 @@ def main(argv: list[str] | None = None) -> int:
         tmp_root, tmp_reason = None, "disco (runner annidato in una mutazione)"
     else:
         tmp_root, tmp_reason = choose_tmp_root()
-    if tmp_root:
-        stale = clean_stale_tmp(tmp_root)
-        if stale:
-            print(f"Removed stale mutation workspaces: {', '.join(stale)}")
     print(f"Temporary workspaces: {tmp_reason}", flush=True)
     with tempfile.TemporaryDirectory(prefix=TMP_PREFIX, dir=tmp_root, ignore_cleanup_errors=True) as tmp:
         results = _run_all(entries, repo_root, tmp, args.jobs, args.pytest_arg, args.timeout_sec)

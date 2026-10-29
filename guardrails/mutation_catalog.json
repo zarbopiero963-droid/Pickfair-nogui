@@ -6768,8 +6768,8 @@
       "module": "scripts.run_mutation_guardrails",
       "area": "trusted_dispatcher",
       "file": "scripts/run_mutation_guardrails.py",
-      "original": "            if not entry.is_dir() or entry.is_symlink() or st.st_uid != os.getuid() or now - st.st_mtime <= max_age:\n",
-      "mutated": "            if not entry.is_dir() or entry.is_symlink() or st.st_uid != os.getuid():\n",
+      "original": "            if not entry.is_dir() or entry.is_symlink() or st.st_uid != uid or now - st.st_mtime <= max_age:\n",
+      "mutated": "            if not entry.is_dir() or entry.is_symlink() or st.st_uid != uid:\n",
       "tests": [
         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
       ],
@@ -6780,8 +6780,8 @@
       "module": "scripts.run_mutation_guardrails",
       "area": "trusted_dispatcher",
       "file": "scripts/run_mutation_guardrails.py",
-      "original": "            if not entry.is_dir() or entry.is_symlink() or st.st_uid != os.getuid() or now - st.st_mtime <= max_age:\n",
-      "mutated": "            if not entry.is_dir() or st.st_uid != os.getuid() or now - st.st_mtime <= max_age:\n",
+      "original": "            if not entry.is_dir() or entry.is_symlink() or st.st_uid != uid or now - st.st_mtime <= max_age:\n",
+      "mutated": "            if not entry.is_dir() or st.st_uid != uid or now - st.st_mtime <= max_age:\n",
       "tests": [
         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
       ],
@@ -6834,6 +6834,42 @@
         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
       ],
       "rationale": "PF-562 PR-B (GPT-6.1 Sol su #585): os.statvfs non esiste su Windows, il runner si fermerebbe anche con --tmpfs off."
+    },
+    {
+      "id": "rmg_tmpfs_noexec_accepted",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "            if \"noexec\" in opts:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (Codex su #585): /dev/shm noexec accettato, i test che eseguono script in tmp_path cadono sul codice originale e il gate va INCONCLUSIVE."
+    },
+    {
+      "id": "rmg_tmpfs_space_before_stale_cleanup",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "            stale = clean_stale_tmp(str(real))\n",
+      "mutated": "            stale = []\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (Codex su #585): i residui dei run uccisi non vengono rimossi prima del controllo dello spazio, il tmpfs resta scartato per sempre."
+    },
+    {
+      "id": "rmg_tmpfs_cleanup_without_owner_check",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    if getuid is None:                         # proprietario non verificabile (Windows): non si cancella niente\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (Grok su #585): senza os.getuid (Windows) la pulizia si fermerebbe con AttributeError invece di non cancellare niente."
     }
   ]
 }
