@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 PR-C2 — sblocco della VPS in un comando (`ops/ci/PF562_VPS_UNBLOCK.sh`):** preflight fail-closed,
+  `appimagetool` installato solo con lo sha256 approvato e mai eseguito prima, backup e aggiornamento del dispatcher
+  dallo SHA di `main` verificato, 52 step = `FULL_SUITE_STEP_KEYS` con M2 obbligatori, un solo dispatcher, rollback
+  automatico e manuale, dry-run di default. 19 test con stub (`tests/scripts/test_pf562_vps_unblock.py`). Non eseguito:
+  serve l'operatore con accesso amministrativo e il binario approvato.
 - **#562 PR-C2 — osservabilità Buildkite in sola lettura (`scripts/ci/bk_observe.py`):** build, step, log e artifact
   della lane trusted via API REST, solo `GET` con host e pipeline fissi, nessun token nel codice. `report` dà PASS solo
   con SHA e `pf_intent` esatti, build unica, numero di step atteso, tutti `passed` ed entro il budget; FAIL, PENDING

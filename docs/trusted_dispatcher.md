@@ -455,6 +455,42 @@ La build della readiness pubblica due status sullo stesso head, con lo stesso li
   un `pr-auto-merge` non consegnato si ritenta senza ripubblicare né perdere l'esito tecnico.
 - `pr-auto-merge` è un self-check della readiness (`READINESS_SELF_STATUS_CONTEXTS`): l'attesa non lo aspetta mai.
 
+## Sblocco della VPS in un comando (`ops/ci/PF562_VPS_UNBLOCK.sh`, #562)
+
+Lo script porta la lane alla full-suite a 52 step: installa `appimagetool` verificato e aggiorna il dispatcher da `main`.
+Si esegue come root sulla VPS, solo da un operatore con accesso amministrativo già autorizzato. Test:
+`tests/scripts/test_pf562_vps_unblock.py`.
+
+```bash
+sudo bash ops/ci/PF562_VPS_UNBLOCK.sh --main-sha <SHA di origin/main> --appimagetool-sha256 <hash approvato> \
+     [--appimagetool-file <binario>]            # dry-run: solo preflight e piano
+sudo bash ops/ci/PF562_VPS_UNBLOCK.sh … --apply # applica
+sudo bash ops/ci/PF562_VPS_UNBLOCK.sh --rollback /root/pf562-unblock-<timestamp>
+```
+
+- **Preflight fail-closed.** Si ferma se manca una di queste condizioni: utente root, Linux x86_64, agent
+  `pickfair-dedicated-vps-01` sulla coda `pickfair-dedicated`, unit `pf-dispatch.service`, Python 3.11 della lane con
+  tkinter. `--main-sha` deve coincidere con `origin/main`.
+- **appimagetool.**
+  - Il binario viene accettato solo se il suo sha256 coincide con `--appimagetool-sha256`, che non ha default:
+    lo approva l'owner.
+  - Non viene mai eseguito prima della verifica.
+  - Si installa `root:root 0555`, con `appimagetool.sha256` `0444`, e non deve essere scrivibile dal job.
+- **Dispatcher.**
+  - Il percorso dello script e della configurazione si leggono da `ExecStart` della unit.
+  - Il backup copre script, configurazione e archivio SQLite, con `manifest.sha256`.
+  - Il file nuovo viene da `git show <main-sha>:scripts/pr_trusted_dispatcher.py` e passa `check-config` sulla
+    configurazione esistente **prima** di sostituire quello installato.
+  - Configurazione, credenziali, timeout, concorrenza e unit non vengono toccati.
+- **Verifiche dopo l'applicazione.**
+  - Un solo processo `serve`.
+  - Il generatore di `main` ha 52 step, uguali a `FULL_SUITE_STEP_KEYS`, con i 3 M2 obbligatori.
+  - `check-config` passa e nel journal non ci sono `Traceback` né `NOT CONFIGURED`.
+  - Se una verifica fallisce, rollback automatico; se il rollback stesso fallisce, exit 3.
+- **Rollback manuale.** `--rollback` verifica il manifest, ripristina lo script e lo stato di `appimagetool`, riavvia il
+  servizio e controlla che resti un solo dispatcher attivo.
+- Lo script non pubblica nulla su GitHub. Il rerun della PR è il push successivo, una sola build per intento.
+
 ## Punti aperti: NOT CONFIGURED e da decidere
 
 | # | Punto | Stato | Cosa serve |
