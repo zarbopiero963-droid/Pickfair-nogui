@@ -3098,6 +3098,43 @@
         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
       ],
       "max_files": 14
+    },
+    "audit_f33_fullscope_harness": {
+      "description": "F-33 (#586, GO-IMPLEMENT-LOCAL owner 29/10/2026): harness full-scope di collaudo — generatore combinatorio pairwise/three-way riproducibile con seed e report di copertura (tools/combi), inventario delle 190 chiavi censite, tracciatore pytest dei requisiti UNVERIFIED (marker pf_requirement, report per requisito con SHA e seed), child runner HeadlessApp reale in SIM con SIGKILL esterno e riavvio, netguard, oracolo Decimal indipendente, test L1 delle configurazioni persistite, scenari E2E SIM-COMBO-001/CASH-002/DUP-005/RESTART-003 (sonda RST-03). Solo test e tooling: nessun file applicativo di produzione; i difetti trovati sono xfail strict con riferimento alla scheda F-xx (F-05 CSH-06, F-01/F-02 SL, F-18 NF-16). Marker pytest nuovi in pytest.ini; art/ in .gitignore; docs/testing/full_scope_harness.md; CHANGELOG.",
+      "allow_tests": true,
+      "files": [
+        ".gitignore",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/testing/full_scope_harness.md",
+        "pytest.ini",
+        "tests/fullscope/README.md",
+        "tests/fullscope/__init__.py",
+        "tests/fullscope/combi/__init__.py",
+        "tests/fullscope/combi/test_generator.py",
+        "tests/fullscope/config/__init__.py",
+        "tests/fullscope/config/test_l1_settings_roundtrip.py",
+        "tests/fullscope/conftest.py",
+        "tests/fullscope/harness/__init__.py",
+        "tests/fullscope/harness/child_runner.py",
+        "tests/fullscope/harness/netguard/sitecustomize.py",
+        "tests/fullscope/harness/oracle.py",
+        "tests/fullscope/harness/runner.py",
+        "tests/fullscope/harness/test_harness_selfcheck.py",
+        "tests/fullscope/requirements/__init__.py",
+        "tests/fullscope/requirements/catalog.json",
+        "tests/fullscope/requirements/test_tracker.py",
+        "tests/fullscope/requirements/tracker.py",
+        "tests/fullscope/scenarios/__init__.py",
+        "tests/fullscope/scenarios/test_sim_cash_002.py",
+        "tests/fullscope/scenarios/test_sim_combo_001.py",
+        "tests/fullscope/scenarios/test_sim_dup_005.py",
+        "tests/fullscope/scenarios/test_sim_restart_003.py",
+        "tools/combi/__init__.py",
+        "tools/combi/generator.py",
+        "tools/combi/inventory.json"
+      ],
+      "max_files": 30
     }
   }
 }

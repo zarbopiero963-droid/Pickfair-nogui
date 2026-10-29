@@ -8,6 +8,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **F-33 (#586) — harness full-scope di collaudo (solo test e tooling, GO-IMPLEMENT-LOCAL owner 29/10/2026):**
+  `tools/combi/` (inventario delle 190 chiavi censite con dominio e classe ATTIVA/LEGACY; generatore pairwise /
+  three-way greedy riproducibile con seed, vincoli, tuple non estendibili escluse, report di copertura verificato);
+  `tests/fullscope/` (tracciatore pytest dei requisiti UNVERIFIED con marker `pf_requirement` e
+  `requirements_report.json` per SHA/seed; child runner HeadlessApp reale in SIM con SIGKILL esterno al checkpoint e
+  riavvio sullo stesso HOME; netguard; oracolo Decimal indipendente; livello 1 sulle 79 chiavi persistite; scenari
+  SIM-COMBO-001, SIM-CASH-002, SIM-DUP-005, SIM-RESTART-003 con sonda RST-03). Nessun file applicativo toccato.
+  Finding tracciati come xfail strict: hedge del cashout assente dal ledger (CSH-06 → F-05), monitor SL/TP inerte
+  (→ F-01/F-02), loader fail-open su valori illeggibili/infiniti (NF-16 → F-18). Marker nuovi in `pytest.ini`;
+  `art/` ignorato; `docs/testing/full_scope_harness.md`.
+
 ### Changed
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
   - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
