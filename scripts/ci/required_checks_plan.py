@@ -161,7 +161,7 @@ def evaluate(plan: Mapping[str, Any], phase: int, sha: str, check_runs: Iterable
     recente, con `creator.login`."""
     if not _SHA_RE.fullmatch(sha or ""):
         raise PlanError("SHA non valido")
-    pubs, checks = plan["publishers"], plan["checks"]
+    pubs = plan["publishers"]
     by_id = {p["integration_id"]: p for p in pubs.values()}
     reasons = []
     for req in required_after(plan, phase):

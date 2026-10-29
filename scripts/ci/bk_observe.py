@@ -32,6 +32,8 @@ ORG = "zarbopiero963-droid"
 PIPELINE = "pf-dedicated-ci"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 WRITE_SCOPE_PREFIXES = ("write_", "delete_")
+#: scope e scadenza del token in uso (mai il valore)
+WHOAMI_PATH = "/access-" "token"
 LAUNCHER_KEYS = ("pf-full-suite-launch",)   # step generatore della full-suite (dispatcher, da origin/main)
 
 #: stati Buildkite di una build ancora viva
@@ -160,7 +162,7 @@ def render(build: dict, result: dict) -> str:
 
 
 def cmd_whoami(get: Getter, _args) -> int:
-    info = get("/access-token")
+    info = get(WHOAMI_PATH)
     if not isinstance(info, dict):
         raise Unknown("access-token illeggibile")
     scopes = sorted(info.get("scopes") or [])

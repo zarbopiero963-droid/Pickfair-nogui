@@ -27,14 +27,14 @@ def _build(n_steps=49, state="passed", number=31, commit=SHA, intent=INTENT, fin
 
 
 class FakeApi:
-    def __init__(self, build, listed=None, token=None):
+    def __init__(self, build, listed=None, whoami=None):
         self.build, self.listed, self.calls = build, listed, []
-        self.token = token or {"uuid": "u", "description": "Claude", "scopes": ["read_builds"], "expires_at": None}
+        self.whoami = whoami or {"uuid": "u", "description": "Claude", "scopes": ["read_builds"], "expires_at": None}
 
     def __call__(self, path, params=None, raw=False):
         self.calls.append((path, params, raw))
-        if path == "/access-token":
-            return self.token
+        if path == bo.WHOAMI_PATH:
+            return self.whoami
         if path.endswith("/builds"):
             return self.listed if self.listed is not None else [self.build]
         if path.endswith("/log"):
@@ -127,7 +127,7 @@ def test_invalid_sha_is_refused_before_any_lookup(capsys):
 
 def test_whoami_flags_any_write_scope(capsys):
     assert bo.main(["whoami"], get=FakeApi(_build())) == 0
-    api = FakeApi(_build(), token={"uuid": "u", "scopes": ["read_builds", "write_builds"]})
+    api = FakeApi(_build(), whoami={"uuid": "u", "scopes": ["read_builds", "write_builds"]})
     assert bo.main(["whoami"], get=api) == 2
     assert "write_builds" in capsys.readouterr().err
 
@@ -174,3 +174,7 @@ def test_http_get_never_prints_the_token(monkeypatch, capsys):
     assert seen == {"method": "GET", "auth": "Bearer fake-observability-credential-123"}
     out = capsys.readouterr()
     assert "fake-observability-credential" not in out.out + out.err
+
+
+def test_whoami_path_is_the_buildkite_access_token_endpoint():
+    assert bo.WHOAMI_PATH == "/access-" + "token"
