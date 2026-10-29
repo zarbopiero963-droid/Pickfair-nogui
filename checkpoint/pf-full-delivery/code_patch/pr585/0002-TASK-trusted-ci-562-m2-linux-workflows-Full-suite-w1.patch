@@ -1,0 +1,116 @@
+From 03c05024c0803c0750053c3bcff44c126295f985 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 29 Oct 2026 12:00:34 +0000
+Subject: [PATCH 2/2] [TASK: trusted-ci-562-m2-linux-workflows] Full-suite:
+ w1-mutation per primo (priorita' 3), timeout e --jobs invariati
+
+GO owner #562 (FULL_SUITE_PERFORMANCE_REMEDIATION, punto 4): lo step piu' lungo parte
+per primo invece che dopo ~3700 s di coda (BK #31). Stesse mutazioni, timeout 45 minuti,
+--jobs 2, nessuna dipendenza aggiunta. Efficace solo dal generatore di main (dopo merge).
+Test RED->GREEN e mutazione fsp_perf_mutation_not_first.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01UP4hJAwjKVqkhz7fdoSSKv
+---
+ guardrails/mutation_catalog.json             | 12 ++++++++++++
+ scripts/pr_full_suite_pipeline.py            |  8 +++++---
+ tests/scripts/test_pr_full_suite_pipeline.py | 16 ++++++++++++++--
+ 3 files changed, 31 insertions(+), 5 deletions(-)
+
+diff --git a/guardrails/mutation_catalog.json b/guardrails/mutation_catalog.json
+index 492cdc6..3e491d9 100644
+--- a/guardrails/mutation_catalog.json
++++ b/guardrails/mutation_catalog.json
+@@ -6690,6 +6690,18 @@
+         "tests/scripts/test_pr_trusted_dispatcher.py"
+       ],
+       "rationale": "PF-562 PR-B (owner su #585): il token noto del dispatcher non viene tolto per valore; se è più corto della regola generica finirebbe in status e journal."
++    },
++    {
++      "id": "fsp_perf_mutation_not_first",
++      "module": "scripts.pr_full_suite_pipeline",
++      "area": "trusted_dispatcher",
++      "file": "scripts/pr_full_suite_pipeline.py",
++      "original": "        Job(\"w1-mutation\", \"W1 mutation-guardrails\", 45, 3, (",
++      "mutated": "        Job(\"w1-mutation\", \"W1 mutation-guardrails\", 45, 0, (",
++      "tests": [
++        "tests/scripts/test_pr_full_suite_pipeline.py"
++      ],
++      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner #562): mutation di nuovo per ultimo, lo step piu' lungo parte dopo ~3700 s di coda (BK #31)."
+     }
+   ]
+ }
+diff --git a/scripts/pr_full_suite_pipeline.py b/scripts/pr_full_suite_pipeline.py
+index f140514..825cdf9 100644
+--- a/scripts/pr_full_suite_pipeline.py
++++ b/scripts/pr_full_suite_pipeline.py
+@@ -66,7 +66,7 @@ class Job:
+     key: str
+     label: str
+     timeout: int            # minuti
+-    priority: int           # 2 = veloce (prima), 1 = moduli, 0 = pesante
++    priority: int           # 3 = mutation (per primo), 2 = veloce, 1 = moduli, 0 = pesante
+     commands: tuple
+ 
+ 
+@@ -336,7 +336,8 @@ def _jobs() -> tuple:
+             '|| { echo "MERGE CONFLICT"; exit 1; }',
+             "python scripts/check_merge_markers.py", FULL_DEPS, "python scripts/validate_guardrails.py",
+             'pytest -q -n 2 --dist worksteal -m "not serial" -x', "pytest -q -x -m serial")),
+-        Job("w1-mutation", "W1 mutation-guardrails", 45, 0, (
++        # priorita' massima: lo step piu' lungo parte per primo (FULL_SUITE_PERFORMANCE_REMEDIATION, owner #562)
++        Job("w1-mutation", "W1 mutation-guardrails", 45, 3, (
+             FULL_DEPS,
+             "python scripts/run_mutation_guardrails.py --fail-under 80 --jobs 2 "
+             "--output bk-out/mutation_guardrails_report.json")),
+@@ -372,7 +373,8 @@ def _jobs() -> tuple:
+             '(cd bk-out && sha256sum "${bins[0]#bk-out/}" "${apps[0]#bk-out/}" > SHA256SUMS && cat SHA256SUMS)',
+             'echo "DRY-RUN release: asset e SHA256SUMS pronti come artifact; nessuna release GitHub pubblicata"')),
+     ]
+-    return tuple(fast + modules + heavy)
++    first = [j for j in heavy if j.priority == 3]                     # il mutation, lo step piu' lungo
++    return tuple(first + fast + modules + [j for j in heavy if j.priority != 3])
+ 
+ 
+ JOBS = _jobs()
+diff --git a/tests/scripts/test_pr_full_suite_pipeline.py b/tests/scripts/test_pr_full_suite_pipeline.py
+index 6c751db..5fef010 100644
+--- a/tests/scripts/test_pr_full_suite_pipeline.py
++++ b/tests/scripts/test_pr_full_suite_pipeline.py
+@@ -76,7 +76,7 @@ def test_every_step_runs_on_the_untrusted_queue_with_the_sha_check_first():
+         assert lines[:len(fsp.PREAMBLE)] == list(fsp.PREAMBLE), step["key"]
+         assert lines[1] == '[ "$(git rev-parse HEAD)" = "$BUILDKITE_COMMIT" ] || { echo "SHA mismatch"; exit 2; }'
+         assert isinstance(step["timeout_in_minutes"], int) and 1 <= step["timeout_in_minutes"] <= 60
+-        assert step["priority"] in (0, 1, 2)
++        assert step["priority"] in (0, 1, 2, 3)
+ 
+ 
+ def test_step_keys_are_unique_and_well_formed():
+@@ -107,7 +107,8 @@ def test_fast_checks_run_before_modules_and_heavy_suites():
+     prio = [s["priority"] for s in steps]
+     assert prio == sorted(prio, reverse=True)                       # ordine di elenco = ordine di priorita'
+     heavy = {s["key"] for s in steps if s["priority"] == 0}
+-    assert heavy == {"w1-pr-check", "w2-backstop", "w4-merge-simulation", "w1-mutation", "w5-build-linux-appimage"}
++    assert heavy == {"w1-pr-check", "w2-backstop", "w4-merge-simulation", "w5-build-linux-appimage"}
++    assert steps[0]["key"] == "w1-mutation" and steps[0]["priority"] == 3
+ 
+ 
+ def test_module_table_matches_the_workflow_inputs():
+@@ -362,3 +363,14 @@ def test_lockfile_job_pins_the_canonical_header_like_the_workflow():
+     lock = ROOT / "requirements-build-linux.lock"
+     if lock.exists():
+         assert f"#    {canonical}\n" in lock.read_text(encoding="utf-8")
++
++
++# --- FULL_SUITE_PERFORMANCE_REMEDIATION (#562, BK #31): mutation per primo (GO owner). Stesse mutazioni,
++# stesso timeout di 45 minuti, stesso `--jobs 2`, nessuna dipendenza aggiunta: cambia solo l'ordine.
++
++def test_mutation_is_the_single_highest_priority_step_with_unchanged_timeout_and_jobs():
++    steps = {s["key"]: s for s in _pipeline()["steps"]}
++    mutation = steps["w1-mutation"]
++    assert mutation["priority"] == 3 and all(s["priority"] < 3 for k, s in steps.items() if k != "w1-mutation")
++    assert mutation["timeout_in_minutes"] == 45
++    assert "--jobs 2 " in mutation["command"] and "--fail-under 80" in mutation["command"]
+-- 
+2.43.0
+

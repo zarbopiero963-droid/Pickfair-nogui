@@ -1,7 +1,7 @@
 From 076eca53cd1f1aa37c437ecc4e86613fcf902675 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 29 Oct 2026 10:13:25 +0000
-Subject: [PATCH] [TASK: trusted-ci-562-m2-linux-workflows] Review: nessuna
+Subject: [PATCH 1/2] [TASK: trusted-ci-562-m2-linux-workflows] Review: nessuna
  riga rilevante mascherata ai reviewer, token noto corto redatto per valore
 
 - La redazione dei workflow Sol/Grok (regola chiave/valore) nascondeva la condizione

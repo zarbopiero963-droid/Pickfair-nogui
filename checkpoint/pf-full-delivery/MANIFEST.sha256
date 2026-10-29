@@ -1,9 +1,9 @@
-9b9f2bdbc957411a6ec10a70d7766da48313d3304f1406a706ee04cb854905ad  ./AGENT_LEASE.json
-a57c27a0c4de4cefb1c33f87f475ba46cc4626759fea90ba902bc3b19fc38dc4  ./CURRENT.json
+14ac19f819305c0528b0f36525ddeae2dd0febcc5dce4f469b7a85a8d76bb6af  ./AGENT_LEASE.json
+af1ee3745e795a576920127239ce1ca7c6c6cad7a7253591751568b58e6bb265  ./CURRENT.json
 b16de4364ede8eea3d4331e7a1abfb7f770e2021a894470f6ef05304841afd48  ./HANDOFF.md
 e3ed79c96dd685be45967051fecead98d20c5100f45ef5a5e502bfd8bce3aaed  ./RUNBOOK.md
-98d71669678018863b5999a800382688b2a4c0c9b2422cbb2220e13fcd70f0ab  ./STATE.json
-13f769220712f9d52de7f78bde718327603361ec611ee6b35c115bf80d70a67b  ./TASK_STATE.json
+787aed6e7e2c02939249379513cf56ac5c0e8fc303ff2fcd6a8dc9ddd01b2547  ./STATE.json
+419a35f188f19bed94ae39a91f8280e1970e0e0e7d15c1c32b88bc6aa1819709  ./TASK_STATE.json
 33ff6ba2c707df497e037cde49af026b8e1a96bfc60f2d013853fb182d7d2f4c  ./a06/build_crosswalk.py
 40d2d7b61387e939f82be90fe882134ac42a2a747e40ed5a2724177960c6d0e5  ./a06/reconcile_gate_close02.py
 b2390ec338fb9ed511b542eed343d4cf776ed48d6592791b59b72b24e1e6ef8b  ./campaign/child_campaign.py
@@ -16,7 +16,8 @@ c4920859b19b40ce04ef85786e08021baa8e7634880d966659ad3699f85d3f95  ./campaign/ora
 85a3736262cf37c321bf5033715e3fe911dd5f5b3a704d933f468b9c67ca34e5  ./campaign/report_all.md
 5bef14fbbc3bd692a2037c40a9f5a0becc6b6e01ef08b6169f2ff9514a4f57fd  ./campaign/run.py
 0fd227fef5048f22a12e958cb57fe6798c7b010f5e9b15050c6df70caeb7d43d  ./code_patch/BASELINE.json
-4870b6c5267f56a78d670344d021c2df961b38cc87d7744db9f0e09e0d9d7ffd  ./code_patch/pr585/0001-TASK-trusted-ci-562-m2-linux-workflows-Review-nessun.patch
+d66f30f74fe901d7b34f9e7b4a87bc4ffc00f2c2568682aff861b4dbfd754667  ./code_patch/pr585/0001-TASK-trusted-ci-562-m2-linux-workflows-Review-nessun.patch
+73dbabad719b60d1ee9c5cba7fe927e7825fb4e8f236514cda78cfff6aef715e  ./code_patch/pr585/0002-TASK-trusted-ci-562-m2-linux-workflows-Full-suite-w1.patch
 e5d93458a46349530c59ec421688d1956c1c39cff0a12333b30bc3547fad93cd  ./code_patch/prc2/0001-TASK-trusted-ci-562-c2-required-checks-Osservabilita.patch
 fb586b0e49715e3962fe8eeda8cbb521772ca2462c766b6456e1b1e3e5ce444f  ./critical/child_replay2.py
 884ce10612f993728a760f88c935edb239d4ea26bb658c6305c8b81cce2c8b4b  ./critical/critical_oracle.py
