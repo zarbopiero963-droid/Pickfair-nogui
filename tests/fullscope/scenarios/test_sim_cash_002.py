@@ -29,6 +29,7 @@ def cash002():
 
 def test_hedge_is_opposite_side_and_pnl_matches_oracle(cash002):
     r = cash002
+    assert all(w["met"] for w in r["waits"]), r["waits"]
     pre = next(s for s in r["snaps"] if s["tag"].endswith("cashout:1.851"))
     legs = [leg for leg in O.exchange_legs(pre) if leg["market_id"] == "1.851"]
     assert {leg["side"] for leg in legs} == {"BACK", "LAY"}, "hedge non sul lato opposto: " + O.describe(pre)

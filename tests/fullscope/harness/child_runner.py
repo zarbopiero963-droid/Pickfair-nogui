@@ -307,7 +307,12 @@ try:
             ev = BOOK.get(m, {}).get("event") or f"Ev{m} v X"
             t_c = time.time()
             app.bus.publish("SIGNAL_RECEIVED", {"signal_type": "CASHOUT", "event_name": ev, "source": "FULLSCOPE"})
-            wait_for(f"{i}:cashout:{m}", lambda: since(t_c, {"CASHOUT_SUCCESS", "CASHOUT_FAILED", "CASHOUT_REQUEST_SUPPRESSED"}))
+            # esito esplicito del cashout, oppure (comando soppresso senza evento, es. seconda richiesta sulla stessa
+            # posizione) bus fermo per almeno 2 s: cosi' un comando ignorato non brucia il deadline intero
+            t_grace = time.time() + 2.0
+            wait_for(f"{i}:cashout:{m}",
+                     lambda: since(t_c, {"CASHOUT_SUCCESS", "CASHOUT_FAILED", "CASHOUT_REQUEST_SUPPRESSED"})
+                     or time.time() >= t_grace)
             time.sleep(1.0)
         elif op == "cashout_all":
             t_c = time.time()

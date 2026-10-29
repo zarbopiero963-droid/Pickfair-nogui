@@ -17,7 +17,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   riavvio sullo stesso HOME; netguard; oracolo Decimal indipendente; livello 1 sulle 79 chiavi persistite; scenari
   SIM-COMBO-001, SIM-CASH-002, SIM-DUP-005, SIM-RESTART-003 con sonda RST-03). Nessun file applicativo toccato.
   Finding tracciati come xfail strict: hedge del cashout assente dal ledger (CSH-06 → F-05), monitor SL/TP inerte
-  (→ F-01/F-02), loader fail-open su valori illeggibili/infiniti (NF-16 → F-18). Marker nuovi in `pytest.ini`;
+  (→ F-01/F-02), loader fail-open su valori illeggibili/infiniti (NF-16 → F-18, xfail imperativo). Marker nuovi in `pytest.ini`;
   `art/` ignorato; `docs/testing/full_scope_harness.md`.
 
 ### Changed

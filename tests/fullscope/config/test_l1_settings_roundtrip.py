@@ -2,7 +2,8 @@
 save -> SQLite -> load (SettingsService + Database su file) con i valori rappresentativi dell'inventario; per le 42
 chiavi Roserpina anche l'effetto sul RoserpinaConfig caricato. I valori INVALIDI documentano il comportamento del
 loader: dove oggi un valore illeggibile diventa un default silenzioso (NF-16/NF-17, scheda F-18) il test e' xfail
-strict con riferimento: diventera' verde quando F-18 rende il loader fail-closed.
+IMPERATIVO con riferimento (pytest.xfail nel ramo fail-open): diventera' verde quando F-18 rende il loader
+fail-closed, perche' il ramo non sara' piu' raggiunto.
 
 Dati: tools/combi/inventory.json (190 chiavi, 79 con round-trip nelle settings).
 """
@@ -36,15 +37,6 @@ REQUIRED = {"roserpina.target_profit_cycle_pct": 3.0, "roserpina.max_single_bet_
 def _svc(tmp_path):
     db = Database(str(tmp_path / "l1.db"))
     return SettingsService(db), db
-
-
-def _as_stored(value):
-    """Come il DB restituisce il valore: str(value) per tutto, '' per None."""
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return str(int(value)) if False else str(value)
-    return str(value)
 
 
 def _same(stored, value):

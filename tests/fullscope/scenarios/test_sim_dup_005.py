@@ -15,6 +15,7 @@ def test_replayed_command_and_repeated_signal_place_one_order():
                {"op": "replay_cmd", "m": "1.821"},                               # stesso CMD_QUICK_BET ripubblicato
                {"op": "signal", "m": "1.821", "price": 2.0, "stake": 3.0},       # stesso segnale di nuovo
                {"op": "wait", "s": 1}], home=home, scenario="sim_dup_005")
+    assert all(w["met"] for w in r["waits"]), r["waits"]
     s = r["snaps"][-1]
     live = [o for o in s["orders"] if o["market_id"] == "1.821" and o["status"] in ("SUBMITTED", "COMPLETED", "INFLIGHT", "AMBIGUOUS")]
     assert len(live) == 1, "intento duplicato inviato piu' volte: " + O.describe(s)

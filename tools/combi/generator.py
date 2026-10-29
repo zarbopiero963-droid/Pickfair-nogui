@@ -77,6 +77,9 @@ class CoverageReport:
             "tuples_excluded_by_constraints": self.tuples_excluded_by_constraints,
             "coverage_pct": self.coverage_pct,
             "complete": self.tuples_covered == self.tuples_required,
+            # nessuna tupla richiesta (vincoli contraddittori o dominio degenere): copertura al 100% VUOTA, da non
+            # leggere come successo (rilievo A13 locale)
+            "vacuous": self.tuples_required == 0,
             "constraints": list(self.constraints),
             "repo_sha": self.repo_sha,
             "inventory_sha256": self.inventory_sha256,
@@ -226,7 +229,7 @@ def generate(
                 # prova a inserirla in un caso esistente compatibile (parametri gia' fissati uguali o assenti)
                 placed = False
                 for case in cases:
-                    if all(case.get(n, values[n]) == values[n] or _key(case.get(n)) == _key(values[n]) for n in values):
+                    if all(n not in case or _key(case[n]) == _key(values[n]) for n in values):
                         trial = dict(case)
                         trial.update(values)
                         if _allowed(trial, constraints) and _complete(trial, params, constraints) is not None:

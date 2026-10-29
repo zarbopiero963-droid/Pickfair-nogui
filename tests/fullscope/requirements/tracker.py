@@ -42,6 +42,16 @@ def head_sha(root: Optional[str] = None) -> str:
         return ""
 
 
+def tree_dirty(root: Optional[str] = None) -> bool:
+    """True se il working tree ha modifiche non committate: un report su albero sporco non e' riferibile allo SHA."""
+    try:
+        out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root or repo_root(),
+                             capture_output=True, text=True, timeout=10, check=False)
+        return bool(out.stdout.strip())
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def seed() -> int:
     try:
         return int(os.environ.get(SEED_ENV, "0"))
@@ -102,6 +112,7 @@ class RequirementTracker:
             "schema": "pf-requirements-report/1",
             "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
             "repo_sha": sha,
+            "tree_dirty": tree_dirty(),
             "seed": seed_value,
             "catalog": self.catalog.get("source", ""),
             "counts": {"catalog": len(self.known), "covered": len(covered),
