@@ -5058,3 +5058,72 @@ def test_decide_auto_merge_table(outcome, auto, expected):
     art = json.dumps({"auto_merge": auto} if auto is not None else {}).encode()
     assert td.decide_auto_merge(outcome, art)[0] == expected
     assert td.decide_auto_merge("success", b"{not json")[0] == "error"
+
+
+# --- Codex su #587 (PR-C2): descrizione dell'autorizzazione ripulita, consegna di `pr-auto-merge` dopo un ripristino
+
+def test_long_auto_merge_reason_is_cleaned_to_the_socket_contract(env):
+    """Codex P2: il motivo owner-only con piu' file supera i 140 caratteri; il publisher di produzione lo rifiuterebbe
+    a ogni tentativo e `pr-auto-merge` resterebbe pending. Si pubblica ripulito come lo status tecnico."""
+    disp, bk, pub, _ = env
+    reason = "FAIL: file a merge owner: " + ", ".join(f"scripts/pr_policy_{i}.py" for i in range(6))
+    assert len(reason) > td.DESCRIPTION_MAX
+    _finish_both(disp, bk, ("passed", dict(result("readiness"), auto_merge={"verdict": "FAIL", "reasons": [reason]})))
+    finals = _aux_final(pub)
+    assert len(finals) == 1 and finals[0][0] == "failure"
+    assert finals[0][1] == td.clean_description(finals[0][1]) and len(finals[0][1]) <= td.DESCRIPTION_MAX
+
+
+def test_restored_readiness_never_leaves_an_undelivered_auto_merge_status_pending(env, tmp_path):
+    """Codex P2: readiness tecnica consegnata, `pr-auto-merge` no, poi ripristino di uno snapshot precedente. Il job
+    ritrovato non chiude in silenzio: l'autorizzazione persa con lo snapshot si pubblica `error`, mai `success`."""
+    disp, bk, pub, clock = env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    pub.aux_rc = 1                                                 # la pubblicazione dell'autorizzazione fallisce
+    for pipe, guard in (("pr-overlap-guard", "overlap"), ("pr-merge-readiness", "readiness")):
+        for n, b in bk.builds[pipe].items():
+            bk.finish(pipe, n, "passed", dict(result(guard, head=b["env"]["PF_PR_HEAD_SHA"]),
+                                              **({"auto_merge": {"verdict": "PASS"}} if guard == "readiness" else {})))
+    disp.tick()
+    assert [c[2] for c in pub.final() if c[3] == "pr-merge-readiness"] == ["success"]
+    job = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+    assert job["final_published"] == 1 and job["aux_published"] == 0   # tentativo fallito, non consegnato
+    bk.gh.statuses[HEAD] = [{"context": c[3], "state": c[2], "target_url": c[4], "description": c[5]}
+                            for c in reversed(pub.all_calls) if c[1] == HEAD and (c[3] != td.AUTO_MERGE_CONTEXT
+                                                                                    or c[2] == "pending")]
+    pub.aux_rc = None
+    clock.now += 600
+    _restore(disp, snap)
+    seen = len(pub.aux)
+    for _ in range(3):
+        disp.poll()
+        disp.tick()
+    finals = [(c[2], c[5]) for c in pub.aux[seen:] if c[2] != "pending"]
+    assert finals and all(s == "error" for s, _ in finals), finals
+    assert len(bk.builds["pr-merge-readiness"]) == 1, "build doppia dopo il ripristino"
+
+
+def test_restored_readiness_with_a_delivered_auto_merge_status_publishes_nothing_new(env, tmp_path):
+    disp, bk, pub, clock = env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    _finish_all(bk)
+    disp.tick()
+    bk.gh.statuses[HEAD] = [{"context": c[3], "state": c[2], "target_url": c[4], "description": c[5]}
+                            for c in reversed(pub.all_calls) if c[1] == HEAD]
+    aux_before = len(pub.aux)
+    clock.now += 600
+    _restore(disp, snap)
+    for _ in range(3):
+        disp.poll()
+        disp.tick()
+    assert len(pub.aux) == aux_before

@@ -87,7 +87,16 @@ def script_steps(build: dict) -> list:
     jobs = build.get("jobs")
     if not isinstance(jobs, list):
         raise Unknown("build senza elenco dei job")
-    return [j for j in jobs if j.get("type") == "script" and j.get("step_key") not in LAUNCHER_KEYS]
+    scripts = [j for j in jobs if j.get("type") == "script" and j.get("step_key") not in LAUNCHER_KEYS]
+    # un retry lascia il tentativo vecchio `retried`: conta l'ultimo di ogni step, come `decide_suite_outcome()` del
+    # dispatcher (Codex su #587); uno step con soli tentativi `retried` resta com'e'
+    by_key: dict = {}
+    for j in scripts:
+        by_key.setdefault(j.get("step_key"), []).append(j)
+    current = []
+    for attempts in by_key.values():
+        current.extend([a for a in attempts if not a.get("retried")] or attempts)
+    return current
 
 
 def find_builds(get: Getter, sha: str | None = None, intent: str | None = None) -> list:

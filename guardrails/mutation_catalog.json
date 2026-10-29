@@ -7122,6 +7122,78 @@
         "tests/scripts/test_required_checks_plan.py"
       ],
       "rationale": "PF-562 PR-C2: main escluso dal ruleset non rilevato (Sol su #587)."
+    },
+    {
+      "id": "td_c2_aux_description_not_cleaned",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                                  clean_description(aux_desc))\n",
+      "mutated": "                                  aux_desc)\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2: motivo lungo dell'autorizzazione rifiutato dal publisher, pr-auto-merge pending per sempre (Codex su #587)."
+    },
+    {
+      "id": "td_c2_recovery_ignores_auto_merge",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if job[\"guard\"] == \"readiness\" and not self._recovered_auto_merge_delivered(job):\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2: dopo un ripristino l'autorizzazione non consegnata resta pending per sempre (Codex su #587)."
+    },
+    {
+      "id": "td_c2_recovered_auto_merge_success",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if self.publish(job[\"pr\"], job[\"head_sha\"], \"error\", AUTO_MERGE_CONTEXT, url,\n",
+      "mutated": "        if self.publish(job[\"pr\"], job[\"head_sha\"], \"success\", AUTO_MERGE_CONTEXT, url,\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2: autorizzazione persa con lo snapshot pubblicata success: auto-merge senza valutazione."
+    },
+    {
+      "id": "bko_retried_attempt_counted",
+      "module": "scripts.ci.bk_observe",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/bk_observe.py",
+      "original": "        current.extend([a for a in attempts if not a.get(\"retried\")] or attempts)\n",
+      "mutated": "        current.extend(attempts)\n",
+      "tests": [
+        "tests/scripts/test_bk_observe.py"
+      ],
+      "rationale": "PF-562 PR-C2: tentativo superato da un retry contato: FAIL e step in piu' su una build passata (Codex su #587)."
+    },
+    {
+      "id": "bko_sha_not_checked",
+      "module": "scripts.ci.bk_observe",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/bk_observe.py",
+      "original": "    if build.get(\"commit\") != sha:\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_bk_observe.py"
+      ],
+      "rationale": "PF-562 PR-C2: build di un altro SHA certificata."
+    },
+    {
+      "id": "bko_duplicates_ignored",
+      "module": "scripts.ci.bk_observe",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/bk_observe.py",
+      "original": "    if dupes:\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_bk_observe.py"
+      ],
+      "rationale": "PF-562 PR-C2: build duplicate per lo stesso intento non segnalate."
     }
   ]
 }

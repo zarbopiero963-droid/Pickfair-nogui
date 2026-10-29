@@ -2062,10 +2062,43 @@ class Dispatcher:
                     return self._recovery_pending(job)
                 if mine and computed is not None and seen.get("state") == computed:
                     outcome = computed
+            if job["guard"] == "readiness" and not self._recovered_auto_merge_delivered(job):
+                # readiness tecnica consegnata, autorizzazione no (Codex su #587): il suo esito e' perso con lo
+                # snapshot, quindi si pubblica `error`, mai `success`. Fallita la consegna o illeggibili gli status, il
+                # job torna `queued` e si riprova, senza un `pending` sul contesto tecnico gia' consegnato
+                return self._requeue_recovery(job)
             return self._set(job, state="done", outcome=outcome, final_published=1, build_number=keep["number"],
                              build_url=keep["web_url"],
                              description=f"intento gia' eseguito dalla build {keep['number']}: esito non ripubblicato")
         return self._adopt(job, keep)
+
+    def _recovered_auto_merge_delivered(self, job: dict) -> bool:
+        """`pr-auto-merge` con un esito finale sull'head (gia' consegnato, o pubblicato ora come `error`)? False se gli
+        status non si leggono o la pubblicazione fallisce."""
+        try:
+            statuses = self.gh.statuses(job["head_sha"])
+        except (ApiError, TransportError, CredentialError, RateLimited) as exc:
+            log(f"job {job['id']}: status dell'head non leggibili ({exc}): autorizzazione in verifica")
+            return False
+        if not isinstance(statuses, list):
+            return False
+        latest = next((st for st in statuses if isinstance(st, dict) and st.get("context") == AUTO_MERGE_CONTEXT), None)
+        if isinstance(latest, dict) and latest.get("state") in ("success", "failure", "error"):
+            return True
+        url = f"{BUILDKITE_WEB}/{self.cfg.organization}/{PIPELINES[job['guard']]['pipeline']}"
+        if self.publish(job["pr"], job["head_sha"], "error", AUTO_MERGE_CONTEXT, url,
+                        clean_description("autorizzazione all'auto-merge non verificabile dopo il ripristino")) != 0:
+            return False
+        self._set(job, aux_published=1)
+        return True
+
+    def _requeue_recovery(self, job: dict) -> None:
+        """Il job ritrovato torna `queued` e si riprova al giro dopo, senza pubblicare nulla."""
+        if job["state"] != "creating":
+            return None
+        if self.store.update_job(job["id"], self.clock(), expected_state="creating", state="queued"):
+            job["state"] = "queued"
+        return None
 
     def _status_build(self, job: dict, status: Any) -> Optional[int]:
         """Numero della build del guard a cui punta il `target_url` di uno status, se e' una build della pipeline."""
@@ -2341,7 +2374,9 @@ class Dispatcher:
                 aux_state, aux_desc = "error", "autorizzazione all'auto-merge non calcolata"
             if aux_state == "success" and outcome != "success":
                 aux_state, aux_desc = "error", "autorizzazione incoerente con la readiness tecnica"
-            aux_rc = self.publish(job["pr"], job["head_sha"], aux_state, AUTO_MERGE_CONTEXT, url, aux_desc)
+            # stesso contratto del socket dello status tecnico (Codex su #587): un motivo lungo non blocca la consegna
+            aux_rc = self.publish(job["pr"], job["head_sha"], aux_state, AUTO_MERGE_CONTEXT, url,
+                                  clean_description(aux_desc))
             if aux_rc == 0:
                 self._set(job, aux_published=1)
             rc = rc or aux_rc

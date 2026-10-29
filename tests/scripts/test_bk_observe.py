@@ -178,3 +178,19 @@ def test_http_get_never_prints_the_token(monkeypatch, capsys):
 
 def test_whoami_path_is_the_buildkite_access_token_endpoint():
     assert bo.WHOAMI_PATH == "/access-" + "token"
+
+
+def test_a_retried_attempt_superseded_by_a_passing_one_is_not_counted(capsys):
+    """Codex su #587: dopo un retry riuscito Buildkite conserva il tentativo vecchio (`retried: true`). Conta solo
+    l'ultimo tentativo di ogni step, come `decide_suite_outcome()` del dispatcher."""
+    b = _build()
+    old = dict(_step("s3", state="failed"), id="job-s3-old", retried=True, exit_status=1)
+    b["jobs"].insert(4, old)
+    assert _report(FakeApi(b)) == 0
+    assert "step (escluso il launcher): 49" in capsys.readouterr().out
+
+
+def test_a_step_whose_only_attempt_was_retried_still_counts(capsys):
+    b = _build()
+    b["jobs"][4]["retried"] = True                           # nessun tentativo nuovo: resta quello che c'e'
+    assert _report(FakeApi(b)) == 0
