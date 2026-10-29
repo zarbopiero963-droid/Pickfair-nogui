@@ -63,7 +63,7 @@
  ],
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "mandate_id": "OWNER FINAL MANDATE \u2014 chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
- "next_atomic_action": "#585: PR585_TRUSTED_BOOTSTRAP_RESOLUTION = NEEDS_OWNER_DECISION (#562 c.6496070054). Caso C: generatore da main@5f2fef7, runner+catalogo dalla PR. Runner gia' 1 copia/worker. Causa fdatasync SQLite; diag locale dispatcher 182 mut: disco 701 s, tmpfs 309 s. Attesa decisione owner su TMPDIR tmpfs nel runner. Commit locali non pushati 076eca5+03c0502 (code_patch/pr585).",
+ "next_atomic_action": "#585 head fb3ffd8: monitorare full-suite BK sul nuovo SHA (49 step, mutation 563, tmp_root nel log, <=45 min, budget 7200), status full-suite/readiness, review Sol/Grok/Codex, risolvere thread Codex P1 a check chiusi; pubblicare PR585_FINAL_CERTIFICATION su #562; poi attesa merge owner. Nessun merge.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [

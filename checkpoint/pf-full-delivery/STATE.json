@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 91,
- "updated_at": "2026-10-29T12:00:47Z",
+ "seq": 92,
+ "updated_at": "2026-10-29T13:14:34Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "#585: PR585_TRUSTED_BOOTSTRAP_RESOLUTION = NEEDS_OWNER_DECISION (#562 c.6496070054). Caso C: generatore da main@5f2fef7, runner+catalogo dalla PR. Runner gia' 1 copia/worker. Causa fdatasync SQLite; diag locale dispatcher 182 mut: disco 701 s, tmpfs 309 s. Attesa decisione owner su TMPDIR tmpfs nel runner. Commit locali non pushati 076eca5+03c0502 (code_patch/pr585).",
+ "next_atomic_action": "#585 head fb3ffd8: monitorare full-suite BK sul nuovo SHA (49 step, mutation 563, tmp_root nel log, <=45 min, budget 7200), status full-suite/readiness, review Sol/Grok/Codex, risolvere thread Codex P1 a check chiusi; pubblicare PR585_FINAL_CERTIFICATION su #562; poi attesa merge owner. Nessun merge.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "edf656ce3f4f388232c3124080d6ad215f979736",
+ "previous_checkpoint_sha": "53fcc5403e92b6793cd6076de7f6821d7a110dd2",
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -606,8 +606,8 @@
  "mandate_id": "OWNER FINAL MANDATE — chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
  "code": {
   "branch": "pf562-pr3-m2-linux-workflows",
-  "sha": "185078e42f30c9e9f29ad2858b73fd27fb6ff70a",
-  "note": "#585 head 185078e (BK31 FAIL); locali 076eca5, 03c0502 in code_patch/pr585"
+  "sha": "fb3ffd8458b553e8d2c8611b8a7c42702aaa80b1",
+  "note": "#585 push correttivo unico (076eca5,03c0502,fb3ffd8 tmpfs runner)"
  },
  "blocks": [
   "Gate A #506 NON PASS",
