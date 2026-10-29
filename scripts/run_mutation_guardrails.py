@@ -23,7 +23,12 @@ accorgersene. Regole:
 - pytest rc 1 = KILLED, rc 0 = SURVIVED, ogni altro rc (collezione fallita,
   nessun test, interruzione) o timeout = INCONCLUSIVE;
 - le mutazioni equivalenti sono dichiarate nel catalogo con la motivazione,
-  restano nel report e non entrano nel punteggio.
+  restano nel report e non entrano nel punteggio;
+- sandbox e file temporanei dei test (``TMPDIR``, quindi ``tmp_path``) stanno
+  su tmpfs quando ``/dev/shm`` e' un tmpfs scrivibile con spazio sufficiente,
+  altrimenti su disco, e il report dice quale (``tmp_root``). Ogni worker ha la
+  sua directory temporanea, svuotata prima di ogni esecuzione di pytest; spazio
+  esaurito o ``No space left on device`` nell'output non diventano mai KILLED.
 
 Il punteggio si calcola solo su KILLED / (KILLED + SURVIVED). Il gate fallisce
 se: nessuna mutazione valutabile, punteggio sotto ``--fail-under``, almeno un
@@ -36,6 +41,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -58,6 +64,24 @@ EQUIVALENT = "EQUIVALENT"
 
 _REQUIRED_KEYS = ("id", "module", "area", "file", "original", "mutated", "tests", "rationale")
 _COPY_IGNORE = {".git", "__pycache__", ".pytest_cache", ".venv", "venv", "node_modules"}
+
+#: tmpfs per sandbox e file temporanei dei test (FULL_SUITE_PERFORMANCE_REMEDIATION, GO owner #562): sul disco
+#: della lane i commit SQLite dei test (~9.500 `fdatasync` per `test_pr_trusted_dispatcher.py`) saturano il journal;
+#: stesse mutazioni, stessi test, stessi criteri. Solo directory gia' montate come tmpfs: mai `/tmp` per ipotesi.
+TMPFS_CANDIDATES = ("/dev/shm",)
+#: spazio libero minimo per scegliere il tmpfs e per avviare ogni esecuzione di pytest
+TMPFS_MIN_FREE_BYTES = 512 * 1024 * 1024
+#: residui di run uccisi senza pulizia (kill del job): rimossi solo se piu' vecchi di cosi'
+STALE_TMP_SECONDS = 3 * 3600
+TMP_PREFIX = "pf_mutation_"
+MOUNTS_FILE = "/proc/mounts"
+#: impostata nei pytest lanciati dal runner: un runner annidato (i test del runner stesso, anche mutati) resta su
+#: disco e non tocca mai la directory tmpfs condivisa, dove sta il workspace del runner che lo esegue
+NESTED_ENV = "PF_MUTATION_NESTED"
+#: solo righe di eccezione di pytest (`E   ...`): il testo nel sorgente stampato di un test non conta
+_NO_SPACE_RE = re.compile(
+    r"^E\s+(?:\w+\.)*(?:OSError|IOError).*\[Errno 28\]|^E\s+MemoryError\b"
+    r"|^E\s+(?:\w+\.)*OperationalError: database or disk is full", re.MULTILINE)
 
 
 class MutationRunnerError(Exception):
@@ -154,6 +178,132 @@ def build_sandbox(repo_root: Path, dest: Path) -> None:
         shutil.copy2(src, target)
 
 
+def _mount_info(path: Path, mounts_file: str | None = None) -> tuple[str | None, frozenset]:
+    """Tipo e opzioni del mount point piu' lungo che contiene ``path`` (``/proc/mounts``)."""
+    try:
+        lines = Path(mounts_file or MOUNTS_FILE).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None, frozenset()
+    best, info = "", (None, frozenset())
+    target = str(path)
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        mnt = parts[1].replace("\\040", " ")
+        inside = target == mnt or target.startswith(mnt.rstrip("/") + "/")
+        if inside and len(mnt) >= len(best):
+            opts = frozenset(parts[3].split(",")) if len(parts) > 3 else frozenset()
+            best, info = mnt, (parts[2], opts)
+    return info
+
+
+def _mount_fstype(path: Path, mounts_file: str | None = None) -> str | None:
+    return _mount_info(path, mounts_file)[0]
+
+
+def _can_execute_in(directory: Path) -> bool:
+    """Prova reale: uno script creato in ``directory`` si puo' eseguire, come fanno i test con ``tmp_path``.
+
+    L'opzione ``noexec`` letta da ``/proc/mounts`` non basta da sola (mount annidati, LSM, opzioni non riportate).
+    Fuori da POSIX non si prova (``True``): li' il tmpfs non viene comunque scelto (niente ``/proc/mounts``)."""
+    if os.name != "posix":
+        return True
+    fd, probe = tempfile.mkstemp(prefix=TMP_PREFIX + "exec-", suffix=".sh", dir=str(directory))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("#!/bin/sh\nexit 0\n")
+        os.chmod(probe, 0o700)
+        return subprocess.run([probe], capture_output=True, timeout=10, check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+    finally:
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass
+
+
+def _free_bytes(path: Path) -> int:
+    # shutil.disk_usage esiste anche su Windows, os.statvfs no (GPT-6.1 Sol su #585)
+    return shutil.disk_usage(path).free
+
+
+def choose_tmp_root(candidates: tuple | None = None, mounts_file: str | None = None,
+                    min_free: int | None = None) -> tuple[str | None, str]:
+    """Primo candidato che e' davvero un tmpfs, scrivibile e con spazio; altrimenti ``None`` (disco) e il motivo."""
+    min_free = TMPFS_MIN_FREE_BYTES if min_free is None else min_free
+    motivi = []
+    for cand in TMPFS_CANDIDATES if candidates is None else candidates:
+        path = Path(cand)
+        try:
+            if not path.is_dir():
+                motivi.append(f"{cand}: assente")
+                continue
+            real = path.resolve()
+            fstype, opts = _mount_info(real, mounts_file)
+            if fstype != "tmpfs":
+                motivi.append(f"{cand}: filesystem {fstype or 'sconosciuto'}, non tmpfs")
+                continue
+            if not os.access(real, os.W_OK | os.X_OK):
+                motivi.append(f"{cand}: non scrivibile")
+                continue
+            # i test eseguono script creati in tmp_path (Codex su #585): su un mount noexec fallirebbero gia' sul
+            # codice originale e il gate darebbe INCONCLUSIVE
+            if "noexec" in opts:
+                motivi.append(f"{cand}: montato noexec")
+                continue
+            if not _can_execute_in(real):
+                motivi.append(f"{cand}: esecuzione di script non consentita (prova reale)")
+                continue
+            # prima i residui dei run uccisi, poi lo spazio: altrimenti un tmpfs pieno di residui verrebbe scartato
+            # per sempre (Codex su #585)
+            stale = clean_stale_tmp(str(real))
+            free = _free_bytes(real)
+        except OSError as exc:
+            motivi.append(f"{cand}: {type(exc).__name__}")
+            continue
+        pulizia = f"; rimossi {len(stale)} workspace residui" if stale else ""
+        if free < min_free:
+            motivi.append(f"{cand}: {free // 2**20} MiB liberi, minimo {min_free // 2**20}{pulizia}")
+            continue
+        return str(real), f"tmpfs {real} ({free // 2**20} MiB liberi{pulizia})"
+    return None, "disco (" + "; ".join(motivi or ["nessun candidato"]) + ")"
+
+
+def clean_stale_tmp(root: str, max_age: int | None = None, now: float | None = None) -> list[str]:
+    """Rimuove le directory ``pf_mutation_*`` di questo utente piu' vecchie di ``max_age`` (run uccisi)."""
+    removed = []
+    getuid = getattr(os, "getuid", None)
+    if getuid is None:                         # proprietario non verificabile (Windows): non si cancella niente
+        return removed
+    uid = getuid()
+    max_age = STALE_TMP_SECONDS if max_age is None else max_age
+    now = time.time() if now is None else now
+    for entry in Path(root).glob(TMP_PREFIX + "*"):
+        try:
+            st = entry.lstat()
+            if not entry.is_dir() or entry.is_symlink() or st.st_uid != uid or now - st.st_mtime <= max_age:
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(entry, ignore_errors=True)
+        removed.append(entry.name)
+    return removed
+
+
+def worker_tmp_dir(sandbox: Path) -> Path:
+    """``TMPDIR`` dei test di un worker: accanto alla sua sandbox, mai condiviso con un altro worker."""
+    return sandbox.parent / f"{sandbox.name}-tmp"
+
+
+def _reset_dir(path: Path) -> None:
+    shutil.rmtree(path, ignore_errors=True)
+    if path.exists():
+        raise MutationRunnerError(f"temporary directory not cleaned: {path}")
+    path.mkdir(parents=True)
+
+
 def _kill_process_tree(proc: subprocess.Popen) -> None:
     """Termina pytest e cio' che ha lanciato. Su POSIX l'intero gruppo di
     processi; dove `killpg` non esiste (Windows) `taskkill /T`, e in ultima
@@ -178,6 +328,14 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
 def _run_pytest(sandbox: Path, tests: list[str], pytest_args: list[str], timeout_sec: int):
     env = os.environ.copy()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    # file temporanei dei test (tmp_path, SQLite) nella directory del worker, svuotata a ogni esecuzione: niente
+    # residui fra una mutazione e l'altra, niente contaminazioni fra worker
+    test_tmp = worker_tmp_dir(sandbox)
+    _reset_dir(test_tmp)
+    if _free_bytes(test_tmp) < TMPFS_MIN_FREE_BYTES:
+        raise MutationRunnerError(f"temporary space below {TMPFS_MIN_FREE_BYTES // 2**20} MiB in {test_tmp}")
+    env["TMPDIR"] = str(test_tmp)
+    env[NESTED_ENV] = "1"
     env["PYTHONPATH"] = str(sandbox) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     cmd = [sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *tests, *pytest_args]
     start = time.monotonic()
@@ -266,6 +424,11 @@ def run_mutation(
     result.duration_sec = round(duration, 2)
     result.stdout_tail = out
     result.status = _status_from_rc(rc)
+    if result.status == KILLED and _NO_SPACE_RE.search(out or ""):
+        # un test caduto per spazio o memoria esauriti non ha intercettato la mutazione
+        result.status = INCONCLUSIVE
+        result.detail = "test failed for exhausted temporary space or memory, not for the mutation"
+        return result
     if rc is None:
         result.detail = f"timeout after {timeout_sec}s"
     elif result.status == INCONCLUSIVE:
@@ -362,6 +525,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--jobs", type=_jobs, default=1,
         help="Mutations run in parallel, one sandbox per worker (default 1: sequential)",
     )
+    parser.add_argument(
+        "--tmpfs", choices=("auto", "off"), default="auto",
+        help="auto: sandbox e file temporanei dei test su /dev/shm se e' un tmpfs utilizzabile; off: su disco",
+    )
     return parser.parse_args(argv)
 
 
@@ -447,14 +614,24 @@ def main(argv: list[str] | None = None) -> int:
     watched = {e["file"] for e in entries}
     before = {f: _sha256(repo_root / f) for f in watched if (repo_root / f).is_file()}
 
-    with tempfile.TemporaryDirectory(prefix="pf_mutation_") as tmp:
+    if args.tmpfs == "off":
+        tmp_root, tmp_reason = None, "disco (--tmpfs off)"
+    elif os.environ.get(NESTED_ENV):
+        tmp_root, tmp_reason = None, "disco (runner annidato in una mutazione)"
+    else:
+        tmp_root, tmp_reason = choose_tmp_root()
+    print(f"Temporary workspaces: {tmp_reason}", flush=True)
+    with tempfile.TemporaryDirectory(prefix=TMP_PREFIX, dir=tmp_root, ignore_cleanup_errors=True) as tmp:
         results = _run_all(entries, repo_root, tmp, args.jobs, args.pytest_arg, args.timeout_sec)
+    if tmp_root and Path(tmp).exists():
+        raise MutationRunnerError(f"mutation workspace not removed from tmpfs: {tmp}")
 
     after = {f: _sha256(repo_root / f) for f in before}
     if after != before:
         raise MutationRunnerError("repository files changed during the mutation run")
 
     summary = summarize(results, required_areas, args.fail_under)
+    summary["tmp_root"] = tmp_reason
     # Moduli con una specifica in guardrails/mutations/ ma nessuna mutazione
     # reale nel catalogo: elencati in ogni report, mai esclusi in silenzio.
     spec_modules = set()

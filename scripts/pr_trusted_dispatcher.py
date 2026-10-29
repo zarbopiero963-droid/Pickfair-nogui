@@ -92,6 +92,8 @@ FULL_SUITE_STEP_KEYS = frozenset({
     "w3-chaos-stateful", "w3-core-chaos", "w3-observability-runtime", "w3-observability-tests",
     "w4-live-sim-parity", "w4-build-linux-tests", "w1-pr-check", "w2-backstop", "w4-merge-simulation",
     "w1-mutation",
+    # M2 (#562 PR-B)
+    "w5-lockfile-fresh", "w5-telegram-live-sim", "w5-build-linux-appimage",
 })
 GITHUB_API = "https://api.github.com"
 BUILDKITE_API = "https://api.buildkite.com/v2"
@@ -1214,7 +1216,10 @@ class Buildkite:
                 raise
             raise TransportError(f"risposta di creazione non interpretabile ({exc})") from None
         if 400 <= status < 500:
-            raise ApiError(f"creazione build rifiutata (HTTP {status})", status)
+            # il motivo di Buildkite (es. pipeline o branch non ammessi) entra nell'errore, quindi nello status e nel
+            # journal: senza, un rifiuto non e' diagnosticabile (certificazione #585)
+            reason = rejection_reason(data, secrets=(self._bearer,))
+            raise ApiError(f"creazione build rifiutata (HTTP {status}{': ' + reason if reason else ''})", status)
         if (status != 201 or not isinstance(data, dict) or not _is_int(data.get("number"))
                 or data["number"] <= 0):
             # anche un 201 senza un numero di build utilizzabile: la build puo' esistere, si riconcilia
@@ -1460,6 +1465,23 @@ def decide_suite_outcome(build: Mapping[str, Any], job: Mapping[str, Any]) -> tu
 # contratto del publisher a socket (Grok t215u): 1..140 caratteri ASCII stampabili, senza ` $ \
 _DESCRIPTION_FORBIDDEN = frozenset("`$\\")
 _DESCRIPTION_RE = re.compile(r"[\x20-\x23\x25-\x5b\x5d-\x5f\x61-\x7e]{1,%d}" % DESCRIPTION_MAX)
+
+
+REJECTION_REASON_MAX = 120
+#: sequenza senza spazi lunga quanto un token (token API di Buildkite o GitHub, base64, hex): mai in status o journal
+_SECRET_LIKE_RE = re.compile(r"[A-Za-z0-9_\-+/=.]{24,}")
+
+
+def rejection_reason(data: Any, secrets: tuple = ()) -> str:
+    """Il campo `message` di una risposta 4xx di Buildkite, su una riga e troncato; "" se assente o non testo. I
+    `secrets` noti (il token del dispatcher) e ogni stringa simile a un segreto diventano `[redatto]` (owner su #585)."""
+    message = data.get("message") if isinstance(data, dict) else None
+    if not isinstance(message, str):
+        return ""
+    for known in secrets:
+        if isinstance(known, str) and known != "":
+            message = message.replace(known, "[redatto]")
+    return _SECRET_LIKE_RE.sub("[redatto]", " ".join(message.split()))[:REJECTION_REASON_MAX]
 
 
 def clean_description(text: str) -> str:
@@ -1838,6 +1860,7 @@ class Dispatcher:
         return [found[n] for n in sorted(found)]
 
     def _fail(self, job: dict, state: str, description: str) -> None:
+        log(f"job {job['id']}: {state}: {description!r}")   # il motivo resta nel journal anche se lo status si perde
         self._to_publishing(job, state, description)
         self._publish_final(job)
 

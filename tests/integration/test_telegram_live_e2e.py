@@ -286,11 +286,16 @@ async def test_custom_pattern_next_gol(listener_with_patterns):
 async def test_legacy_signal_emoji_format():
     """
     Il bot invia il formato emoji classico senza pattern custom.
-    Il parser legacy estrae event_name, price, stake, minute.
+    Dal motore neutro (#448) il parsing 'legacy' hardcoded non esiste piu'
+    (`TelegramListener._parse_legacy_signal` restituisce sempre None): senza
+    pattern dell'utente il messaggio NON produce un segnale, mai un ordine con
+    dati indovinati. Aspettativa precedente (event_name/price/stake estratti)
+    rimasta stantia perche' il test, senza segreti, non girava mai: l'ha
+    trovata la simulazione offline (`test_telegram_live_sim.py`, #562 M2).
     """
     from telegram_listener import TelegramListener
 
-    # Listener senza DB (nessun pattern custom → va diretto al legacy parser)
+    # Listener senza DB: nessun pattern custom, nessun parser legacy
     listener = TelegramListener(
         api_id=int(TG_API_ID),
         api_hash=TG_API_HASH,
@@ -306,11 +311,7 @@ async def test_legacy_signal_emoji_format():
 
     signal = listener.parse_signal(received_text)
 
-    assert signal is not None
-    assert "Atalanta" in signal.get("event_name", "")
-    assert abs(signal.get("price", 0) - 2.50) < 0.01
-    assert signal.get("stake") == 8.0
-    assert signal.get("minute") == 71
+    assert signal is None, f"formato legacy senza pattern: nessun segnale atteso, ottenuto {signal!r}"
 
 
 # =========================================================

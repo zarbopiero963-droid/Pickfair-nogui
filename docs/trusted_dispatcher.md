@@ -315,6 +315,10 @@ pipeline `pf-dedicated-ci` (target `full-suite`, contesto GitHub `full-suite`). 
 W1–W4, cioè gli stessi controlli dei workflow Actions che girano sulle PR (mappatura in
 `scripts/pr_full_suite_pipeline.py`, `WORKFLOW_MAP`).
 
+Con la PR-B (M2) la full-suite comprende anche l'Onda W5 dei workflow Linux fuori dalle PR: lockfile, build con
+AppImage e release in dry-run, Telegram live in simulazione. Sono 52 step in tutto. Dettaglio, limiti e requisiti
+della lane in [ci_m2_migration.md](ci_m2_migration.md).
+
 | Passo | Regola | Dove |
 |---|---|---|
 | Build | `commit` = SHA **esatto** dell'head della PR (mai `HEAD`), `branch` = branch di head della PR, env le stesse cinque `PF_*`. Coda `pickfair-dedicated`: nessun token, nessun segreto | `Dispatcher._create`, `Buildkite.create_build` |
@@ -346,6 +350,8 @@ uno step né sostituirlo con `exit 0`, perché sia il generatore sia `FULL_SUITE
 - trigger nativo della pipeline spento: le build le crea solo il dispatcher;
 - pubblicazione degli status di Buildkite verso GitHub spenta: lo status lo pubblica solo il publisher;
 - il publisher deve ammettere il contesto `full-suite`.
+
+**Rifiuto della creazione.** Un 4xx di Buildkite è un rifiuto definito (nessuna build, `error`). Il campo `message` della risposta, su una riga e troncato a 120 caratteri, entra nella descrizione dello status e nel journal (`job N: error: ...`) dopo la redazione: il token del dispatcher e ogni sequenza senza spazi di almeno 24 caratteri (forma di un token) diventano `[redatto]`, così il motivo (es. pipeline o branch non ammessi) è diagnosticabile senza accesso alla VPS (certificazione #585). `rejection_reason`, `Dispatcher._fail`.
 
 **Limiti dichiarati.**
 - Il codice della PR esegue i propri test: una PR che modifica un test può farlo passare. È lo stesso limite di

@@ -9,6 +9,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
+  - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
+    database SQLite) su `/dev/shm` solo se è davvero un tmpfs (`/proc/mounts`), scrivibile e con almeno 512 MiB
+    liberi; altrimenti su disco, e il report lo dice (`tmp_root`). Causa misurata: ~9.500 `fdatasync` per
+    esecuzione di `test_pr_trusted_dispatcher.py` sul disco saturo della lane. Stesse mutazioni, stesso `-x`,
+    stesso timeout per mutazione, stessi criteri; `--tmpfs off` per il disco. Prova locale, 182 mutazioni del
+    dispatcher con `--jobs 2`: 701 s su disco, 309 s su tmpfs, 182/182 KILLED in entrambi;
+  - ogni worker ha il suo `TMPDIR`, svuotato prima di ogni pytest; spazio o memoria esauriti (righe `E` di
+    pytest con `[Errno 28]`, `MemoryError`, `database or disk is full`) ⇒ INCONCLUSIVE, mai KILLED; spazio
+    sotto soglia o workspace rimasto in RAM ⇒ errore del run; residui di run uccisi rimossi dopo 3 ore;
+    un runner annidato in una mutazione resta su disco e non pulisce il tmpfs condiviso;
+  - `w1-mutation` con priorità 3: parte per primo. Timeout 45 minuti e `--jobs 2` invariati. Questo vale solo
+    dopo il merge, perché il generatore si carica da `main`; il runner invece gira dal checkout della PR.
+
+  Test RED→GREEN (`tests/scripts/test_run_mutation_guardrails_tmpfs.py`), mutazioni `rmg_tmpfs_*` e
+  `fsp_perf_mutation_not_first`.
+- **#562 PR-B (M2) — workflow Linux fuori dalle PR nella full-suite (`scripts/pr_full_suite_pipeline.py`):**
+  - test `test_lockfile_removed_in_the_pr_fails_against_main`: `FETCH_HEAD` scritto come lo scrive `git fetch` (git ≥ 2.45
+    rifiuta `update-ref` sugli pseudoref; falliva sui runner con git 2.56);
+  - `w5-lockfile-fresh` fissa l'header canonico (`CUSTOM_COMPILE_COMMAND`) come il workflow Actions: senza, il lock
+    rigenerato porta il percorso temporaneo e risulta sempre STALE (Sol e Codex su #585);
+  - rifiuto della creazione di una build (4xx di Buildkite): il `message` della risposta, su una riga e troncato, entra
+    nello status e nel journal (`scripts/pr_trusted_dispatcher.py`), redatto (token e stringhe simili a segreti ⇒ `[redatto]`),
+    per diagnosticare senza VPS il 422 visto su #585;
+  - `w5-lockfile-fresh` (generate-linux-lockfile): lock hash ancora valido, e lock rimosso nella PR ⇒ FAIL;
+  - `w5-build-linux-appimage` (build-linux): eseguibili PyInstaller e AppImage dal lock `--require-hashes`, senza
+    aggiornare pip; appimagetool solo se preinstallato con sha256; release in **DRY-RUN** (asset e `SHA256SUMS`
+    come artifact), mai pubblicata;
+  - `w5-telegram-live-sim` (telegram-live-integration): i 7 scenari del test live con le stesse asserzioni e la
+    rete bloccata (`tests/integration/test_telegram_live_sim.py`). Lo scenario 5 del test live era stantio dal
+    motore neutro (#448): ora attende *nessun segnale* dal formato legacy, che è il comportamento sicuro;
+  - ogni workflow è mappato, extra, escluso o non migrato con il motivo; `WORKFLOW_LIMITS` dichiara ciò che non
+    è certificato. Dispatcher: i tre step entrano in `FULL_SUITE_STEP_KEYS` (52).
+
+  Test RED→GREEN, prove bash reali, 6 mutazioni `fsp_m2_*`. Documento: `docs/ci_m2_migration.md`.
 - **#562 P0 — nessuna build doppia dopo il ripristino di uno snapshot (`scripts/pr_trusted_dispatcher.py`):**
   - causa (rollback T252): cursore dei commenti e tabella `reruns` tornano indietro insieme allo snapshot, quindi i
     rerun e le transizioni già eseguiti venivano rigiocati come nuovi;

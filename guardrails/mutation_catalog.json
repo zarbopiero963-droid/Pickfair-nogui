@@ -6546,6 +6546,366 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 PR-A (Sol su #584): build superata riletta comunque; un errore di lettura copre con pending l'esito della suite successiva."
+    },
+    {
+      "id": "fsp_m2_telegram_creds_allowed",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            'if env | grep -q \"^TG_\"; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
+      "mutated": "            'true',",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (M2): credenziali Telegram nella lane non fidata non fermano il job."
+    },
+    {
+      "id": "fsp_m2_lock_deletion_unchecked",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            '&& [ ! -f requirements-build-linux.lock ]; then '",
+      "mutated": "            '&& false; then '",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (M2): lock rimosso nella PR non rilevato."
+    },
+    {
+      "id": "fsp_m2_release_one_asset_enough",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            '[ ${#bins[@]} -eq 1 ] && [ ${#apps[@]} -eq 1 ] '",
+      "mutated": "            '[ ${#bins[@]} -eq 1 ] || [ ${#apps[@]} -eq 1 ] '",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (M2): release in dry-run preparata con un solo asset."
+    },
+    {
+      "id": "fsp_m2_lock_without_hashes",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            \"python -m pip install -q --require-hashes -r requirements-build-linux.lock\",",
+      "mutated": "            \"python -m pip install -q -r requirements-build-linux.lock\",",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (M2): toolchain di build installata senza verifica degli hash."
+    },
+    {
+      "id": "fsp_m2_pip_upgraded_before_lock",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            \"deactivate\",",
+      "mutated": "            \"python -m pip install -q --upgrade pip\",",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (M2): venv del preambolo (pip aggiornato non pinnato) usato per il lock."
+    },
+    {
+      "id": "fsp_m2_appimagetool_unpinned",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            f'export PATH=\"{APPIMAGETOOL_DIR}:$PATH\" APPIMAGETOOL_SHA256=\"$(awk \\'{{print $1; exit}}\\' {APPIMAGETOOL_DIR}/appimagetool.sha256)\"',",
+      "mutated": "            f'export PATH=\"{APPIMAGETOOL_DIR}:$PATH\"',",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (M2): appimagetool usato senza verifica dello sha256."
+    },
+    {
+      "id": "td_pb_reject_reason_dropped",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            reason = rejection_reason(data, secrets=(self._bearer,))\n",
+      "mutated": "            reason = \"\"\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-B (certificazione #585): motivo del 4xx di Buildkite scartato, rifiuto non diagnosticabile da status e journal."
+    },
+    {
+      "id": "td_pb_fail_not_logged",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        log(f\"job {job['id']}: {state}: {description!r}\")",
+      "mutated": "        pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-B: motivo dell'errore del job non registrato nel journal."
+    },
+    {
+      "id": "td_pb_reason_unbounded",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    return _SECRET_LIKE_RE.sub(\"[redatto]\", \" \".join(message.split()))[:REJECTION_REASON_MAX]",
+      "mutated": "    return _SECRET_LIKE_RE.sub(\"[redatto]\", \" \".join(message.split()))",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-B: motivo di Buildkite non troncato."
+    },
+    {
+      "id": "fsp_m2_lock_header_not_canonical",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            \"CUSTOM_COMPILE_COMMAND='pip-compile --generate-hashes --allow-unsafe --no-annotate --output-file \"\n            \"requirements-build-linux.lock requirements-build-linux.in' \"\n",
+      "mutated": "",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (Sol e Codex su #585): header del lock rigenerato con il percorso temporaneo, diff sempre STALE e full-suite bloccata su PR valide."
+    },
+    {
+      "id": "td_pb_reason_not_redacted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    return _SECRET_LIKE_RE.sub(\"[redatto]\", \" \".join(message.split()))[:REJECTION_REASON_MAX]",
+      "mutated": "    return \" \".join(message.split())[:REJECTION_REASON_MAX]",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-B (owner su #585): motivo di Buildkite pubblicato senza redazione: un token o segreto nella risposta finirebbe in status e journal."
+    },
+    {
+      "id": "td_pb_known_credential_kept",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            message = message.replace(known, \"[redatto]\")\n",
+      "mutated": "            pass\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-B (owner su #585): il token noto del dispatcher non viene tolto per valore; se è più corto della regola generica finirebbe in status e journal."
+    },
+    {
+      "id": "fsp_perf_mutation_not_first",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "        Job(\"w1-mutation\", \"W1 mutation-guardrails\", 45, 3, (",
+      "mutated": "        Job(\"w1-mutation\", \"W1 mutation-guardrails\", 45, 0, (",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner #562): mutation di nuovo per ultimo, lo step piu' lungo parte dopo ~3700 s di coda (BK #31)."
+    },
+    {
+      "id": "rmg_tmpfs_tmpdir_not_set",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    env[\"TMPDIR\"] = str(test_tmp)\n",
+      "mutated": "    pass\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): file temporanei dei test fuori dalla directory del worker (disco o condivisi fra worker)."
+    },
+    {
+      "id": "rmg_tmpfs_not_a_tmpfs_accepted",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "            if fstype != \"tmpfs\":\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): un filesystem qualsiasi preso per tmpfs (es. /tmp su disco)."
+    },
+    {
+      "id": "rmg_tmpfs_enospc_counted_killed",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    if result.status == KILLED and _NO_SPACE_RE.search(out or \"\"):\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): spazio o memoria esauriti contati come mutazione intercettata: falso KILLED."
+    },
+    {
+      "id": "rmg_tmpfs_worker_tmp_not_reset",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    _reset_dir(test_tmp)\n",
+      "mutated": "    test_tmp.mkdir(parents=True, exist_ok=True)\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): residui di una mutazione visibili alla successiva."
+    },
+    {
+      "id": "rmg_tmpfs_low_space_ignored",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    if _free_bytes(test_tmp) < TMPFS_MIN_FREE_BYTES:\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): spazio temporaneo insufficiente non ferma il run."
+    },
+    {
+      "id": "rmg_tmpfs_stale_any_age",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "            if not entry.is_dir() or entry.is_symlink() or st.st_uid != uid or now - st.st_mtime <= max_age:\n",
+      "mutated": "            if not entry.is_dir() or entry.is_symlink() or st.st_uid != uid:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): la pulizia cancellerebbe il workspace di un run in corso."
+    },
+    {
+      "id": "rmg_tmpfs_stale_follows_symlink",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "            if not entry.is_dir() or entry.is_symlink() or st.st_uid != uid or now - st.st_mtime <= max_age:\n",
+      "mutated": "            if not entry.is_dir() or st.st_uid != uid or now - st.st_mtime <= max_age:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): la pulizia seguirebbe un symlink fuori dal tmpfs."
+    },
+    {
+      "id": "rmg_tmpfs_workspace_leak_unchecked",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    if tmp_root and Path(tmp).exists():\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): workspace lasciato in RAM a fine run senza errore."
+    },
+    {
+      "id": "rmg_tmpfs_nested_not_marked",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    env[NESTED_ENV] = \"1\"\n",
+      "mutated": "    pass\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): un runner annidato (test del runner, anche mutati) userebbe il tmpfs condiviso e potrebbe cancellare il workspace del runner che lo esegue."
+    },
+    {
+      "id": "rmg_tmpfs_nested_uses_shared_tmpfs",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    elif os.environ.get(NESTED_ENV):\n",
+      "mutated": "    elif False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION: il runner annidato pulirebbe la directory tmpfs condivisa."
+    },
+    {
+      "id": "rmg_tmpfs_free_space_not_portable",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    return shutil.disk_usage(path).free\n",
+      "mutated": "    st = os.statvfs(path); return st.f_bavail * st.f_frsize\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (GPT-6.1 Sol su #585): os.statvfs non esiste su Windows, il runner si fermerebbe anche con --tmpfs off."
+    },
+    {
+      "id": "rmg_tmpfs_noexec_accepted",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "            if \"noexec\" in opts:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (Codex su #585): /dev/shm noexec accettato, i test che eseguono script in tmp_path cadono sul codice originale e il gate va INCONCLUSIVE."
+    },
+    {
+      "id": "rmg_tmpfs_space_before_stale_cleanup",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "            stale = clean_stale_tmp(str(real))\n",
+      "mutated": "            stale = []\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (Codex su #585): i residui dei run uccisi non vengono rimossi prima del controllo dello spazio, il tmpfs resta scartato per sempre."
+    },
+    {
+      "id": "rmg_tmpfs_cleanup_without_owner_check",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    if getuid is None:                         # proprietario non verificabile (Windows): non si cancella niente\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (Grok su #585): senza os.getuid (Windows) la pulizia si fermerebbe con AttributeError invece di non cancellare niente."
+    },
+    {
+      "id": "rmg_tmpfs_exec_probe_skipped",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "            if not _can_execute_in(real):\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (owner su #585): tmpfs su cui gli script dei test non si eseguono accettato senza la prova reale."
+    },
+    {
+      "id": "rmg_tmpfs_exec_probe_always_true",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "        return subprocess.run([probe], capture_output=True, timeout=10, check=False).returncode == 0\n",
+      "mutated": "        return True\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (owner su #585): la prova di esecuzione non esegue niente e accetta sempre."
+    },
+    {
+      "id": "rmg_tmpfs_exec_error_accepted",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    except (OSError, subprocess.SubprocessError):\n        return False\n",
+      "mutated": "    except (OSError, subprocess.SubprocessError):\n        return True\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (owner su #585): un'esecuzione negata viene presa per riuscita."
     }
   ]
 }
