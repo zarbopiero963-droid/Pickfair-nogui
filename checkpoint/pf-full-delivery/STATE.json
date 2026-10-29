@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 88,
- "updated_at": "2026-10-28T22:37:51Z",
+ "seq": 89,
+ "updated_at": "2026-10-29T10:19:01Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "#562 PR 2/4 #584 PR584_READY_FOR_OWNER_MERGE su 83de350: Sol+Grok VALID_PASS sull'ultimo range, Codex nessun rilievo, 0 thread aperti, 112 check conclusi (solo readiness FAIL atteso manual-review-required), locale 3770 passed, mutation 177/177; fix loop 5/10. Attendere merge owner; poi verifica main+CI, deploy Grok da main con full_suite+readiness_wait, misura FULL_SUITE_WITHIN_BUDGET e POSITIVE_E2E; poi PR-B (rebase /home/user/pfb), PR-C2. LIVE NO-GO.",
+ "next_atomic_action": "#585: attendere fine BK #31 (pf_intent p585-t3-185078e42f30, 49 step); pubblicare PR585 BK31 report su #562; poi push unico di 076eca5 (code_patch/pr585: redazione reviewer, test token corto, mutazione td_pb_known_credential_kept, E731) con suite 3800 passed, mutation td 182/182, fsp 7/7; ricertificare nuovo HEAD (BK, Sol/Grok/Codex, thread Codex P1 da risolvere a check settled). Poi PR-C2 (code_patch/prc2: bk_observe.py+test+doc).",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "58f55a9b92f6dd1298dda354d922d5df5aacade7",
+ "previous_checkpoint_sha": "1193f04ba5d10d4b069aec0cc9c31dd6daf3b798",
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -605,9 +605,9 @@
  "repository": "zarbopiero963-droid/Pickfair-nogui",
  "mandate_id": "OWNER FINAL MANDATE — chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
  "code": {
-  "branch": "pf562-pr2-full-suite",
-  "sha": "83de35060269e45838a3f48ee5ef2efcd96fca48",
-  "note": "#584 READY_FOR_OWNER_MERGE"
+  "branch": "pf562-pr3-m2-linux-workflows",
+  "sha": "185078e42f30c9e9f29ad2858b73fd27fb6ff70a",
+  "note": "#585 head in certificazione (BK #31); commit locale non pushato 076eca5 in code_patch/pr585"
  },
  "blocks": [
   "Gate A #506 NON PASS",
@@ -1481,5 +1481,19 @@
   "stale_snapshot_recovery": "NON certificata fino al fix P0 rerun-replay",
   "report": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/562#issuecomment-6476676491",
   "writer": "grok-bot (Matchpilot)"
+ },
+ "pr585": {
+  "head": "185078e42f30c9e9f29ad2858b73fd27fb6ff70a",
+  "bk_build": 31,
+  "intent": "p585-t3-185078e42f30",
+  "reviews": {
+   "312fc0a..9af362b": "Sol VALID_INCONCLUSIVE, Grok VALID_INCONCLUSIVE (redazione)",
+   "9af362b..185078e": "Sol VALID_PASS, Grok VALID_PASS",
+   "5f2fef7..312fc0a": "Sol VALID_BLOCKERS (corretto in 9af362b), Grok tentativo 2/2 UNKNOWN in corso"
+  },
+  "codex": "185078e nessun rilievo",
+  "open_thread": "Codex P1 CUSTOM_COMPILE_COMMAND corretto in 9af362b, da risolvere",
+  "local_commit": "076eca5",
+  "buildkite_readonly": "token via proxy, scope read_pipelines/read_builds/read_build_logs/read_artifacts"
  }
 }

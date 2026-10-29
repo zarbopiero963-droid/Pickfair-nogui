@@ -2,12 +2,12 @@
  "certification_verdict": "NO-GO",
  "checkpoint_commit": null,
  "code": {
-  "branch": "pf562-pr2-full-suite",
-  "sha": "83de35060269e45838a3f48ee5ef2efcd96fca48"
+  "branch": "pf562-pr3-m2-linux-workflows",
+  "sha": "185078e42f30c9e9f29ad2858b73fd27fb6ff70a"
  },
  "mandate_id": "OWNER FINAL MANDATE \u2014 chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
- "next_atomic_action": "#562 PR 2/4 #584 PR584_READY_FOR_OWNER_MERGE su 83de350: Sol+Grok VALID_PASS sull'ultimo range, Codex nessun rilievo, 0 thread aperti, 112 check conclusi (solo readiness FAIL atteso manual-review-required), locale 3770 passed, mutation 177/177; fix loop 5/10. Attendere merge owner; poi verifica main+CI, deploy Grok da main con full_suite+readiness_wait, misura FULL_SUITE_WITHIN_BUDGET e POSITIVE_E2E; poi PR-B (rebase /home/user/pfb), PR-C2. LIVE NO-GO.",
- "previous_checkpoint_sha": "58f55a9b92f6dd1298dda354d922d5df5aacade7",
+ "next_atomic_action": "#585: attendere fine BK #31 (pf_intent p585-t3-185078e42f30, 49 step); pubblicare PR585 BK31 report su #562; poi push unico di 076eca5 (code_patch/pr585: redazione reviewer, test token corto, mutazione td_pb_known_credential_kept, E731) con suite 3800 passed, mutation td 182/182, fsp 7/7; ricertificare nuovo HEAD (BK, Sol/Grok/Codex, thread Codex P1 da risolvere a check settled). Poi PR-C2 (code_patch/prc2: bk_observe.py+test+doc).",
+ "previous_checkpoint_sha": "1193f04ba5d10d4b069aec0cc9c31dd6daf3b798",
  "schema": "pf-current/1",
- "seq": 88
+ "seq": 89
 }

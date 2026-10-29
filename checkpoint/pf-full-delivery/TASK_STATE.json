@@ -63,7 +63,7 @@
  ],
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "mandate_id": "OWNER FINAL MANDATE \u2014 chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
- "next_atomic_action": "#562 PR 2/4 #584 PR584_READY_FOR_OWNER_MERGE su 83de350: Sol+Grok VALID_PASS sull'ultimo range, Codex nessun rilievo, 0 thread aperti, 112 check conclusi (solo readiness FAIL atteso manual-review-required), locale 3770 passed, mutation 177/177; fix loop 5/10. Attendere merge owner; poi verifica main+CI, deploy Grok da main con full_suite+readiness_wait, misura FULL_SUITE_WITHIN_BUDGET e POSITIVE_E2E; poi PR-B (rebase /home/user/pfb), PR-C2. LIVE NO-GO.",
+ "next_atomic_action": "#585: attendere fine BK #31 (pf_intent p585-t3-185078e42f30, 49 step); pubblicare PR585 BK31 report su #562; poi push unico di 076eca5 (code_patch/pr585: redazione reviewer, test token corto, mutazione td_pb_known_credential_kept, E731) con suite 3800 passed, mutation td 182/182, fsp 7/7; ricertificare nuovo HEAD (BK, Sol/Grok/Codex, thread Codex P1 da risolvere a check settled). Poi PR-C2 (code_patch/prc2: bk_observe.py+test+doc).",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [
