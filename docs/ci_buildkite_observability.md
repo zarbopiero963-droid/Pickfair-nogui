@@ -29,7 +29,9 @@
   - la durata non supera il budget.
 - **FAIL (1)** se c'è uno SHA o un intento diverso, una build duplicata, uno step fallito o non eseguito (`canceled`, `skipped`, ecc.), un numero di step sbagliato, un budget superato o una build `failed`/`canceled`. Uno step fallito rende FAIL anche una build ancora in corso.
 - **PENDING (3)** se la build o uno step sono ancora attivi.
-- **UNKNOWN (4)** se una risposta è assente o illeggibile, oppure se mancano i job o i tempi.
+- **UNKNOWN (4)** se una risposta è assente o illeggibile, se mancano i job o i tempi, oppure se la build non ha alcuno step eseguito oltre al launcher.
+
+`--expect-steps` è obbligatorio: senza il numero di step atteso non si certifica la completezza della suite.
 
 Un PENDING o un UNKNOWN non vale mai come PASS. Il verdetto riguarda solo la build indicata e non certifica gli head successivi.
 

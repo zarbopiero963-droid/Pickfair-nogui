@@ -7194,6 +7194,18 @@
         "tests/scripts/test_bk_observe.py"
       ],
       "rationale": "PF-562 PR-C2: build duplicate per lo stesso intento non segnalate."
+    },
+    {
+      "id": "bko_no_steps_pass",
+      "module": "scripts.ci.bk_observe",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/bk_observe.py",
+      "original": "    elif duration is None or not steps:\n",
+      "mutated": "    elif duration is None:\n",
+      "tests": [
+        "tests/scripts/test_bk_observe.py"
+      ],
+      "rationale": "PF-562 PR-C2 (Codex su #587): build passed senza step eseguiti certificata PASS."
     }
   ]
 }

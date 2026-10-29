@@ -8,7 +8,7 @@ illeggibile è UNKNOWN, una build in corso è PENDING: mai PASS.
 
   bk_observe.py whoami
   bk_observe.py find      --sha <40 hex> | --intent <pf_intent>
-  bk_observe.py report    --build 31 --sha <40 hex> --intent <pf_intent> [--expect-steps 49] [--budget 7200]
+  bk_observe.py report    --build 31 --sha <40 hex> --intent <pf_intent> --expect-steps 49|52 [--budget 7200]
   bk_observe.py log       --build 31 --step w1-pr-check [--tail 200]
   bk_observe.py artifacts --build 31
 
@@ -144,7 +144,8 @@ def evaluate(build: dict, others: list, sha: str, intent: str, expect_steps: int
         verdict = "PENDING"
     elif problems or state != "passed":
         verdict = "FAIL" if state in {"failed", "canceled", "passed"} else "UNKNOWN"
-    elif duration is None:
+    elif duration is None or not steps:
+        # nessuno step eseguito (elenco vuoto o solo il launcher) non prova niente (Codex su #587)
         verdict = "UNKNOWN"
     else:
         verdict = "PASS"
@@ -231,7 +232,7 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("--build", type=int, required=True)
     r.add_argument("--sha", required=True)
     r.add_argument("--intent", required=True)
-    r.add_argument("--expect-steps", type=int)
+    r.add_argument("--expect-steps", type=int, required=True)   # completezza della suite: sempre dichiarata
     r.add_argument("--budget", type=int, default=7200)
     lg = sub.add_parser("log")
     lg.add_argument("--build", type=int, required=True)

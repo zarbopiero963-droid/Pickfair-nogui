@@ -194,3 +194,24 @@ def test_a_step_whose_only_attempt_was_retried_still_counts(capsys):
     b = _build()
     b["jobs"][4]["retried"] = True                           # nessun tentativo nuovo: resta quello che c'e'
     assert _report(FakeApi(b)) == 0
+
+
+@pytest.mark.parametrize("jobs", [[], [_step("pf-full-suite-launch")]])
+def test_a_build_with_no_executed_step_is_never_pass(jobs, capsys):
+    """Codex su #587: build `passed` senza step eseguiti (elenco vuoto o solo il launcher) non e' una prova."""
+    b = _build()
+    b["jobs"] = jobs
+    rc = bo.main(["report", "--build", "31", "--sha", SHA, "--intent", INTENT, "--expect-steps", "49"], get=FakeApi(b))
+    assert rc != 0 and "VERDETTO_BUILD = PASS" not in capsys.readouterr().out
+
+
+def test_report_requires_the_expected_step_count():
+    """Senza il numero di step atteso non si certifica la completezza della suite: l'argomento e' obbligatorio."""
+    with pytest.raises(SystemExit):
+        bo.main(["report", "--build", "31", "--sha", SHA, "--intent", INTENT], get=FakeApi(_build()))
+
+
+def test_no_step_build_is_unknown_even_without_a_count_check():
+    b = _build()
+    b["jobs"] = []
+    assert bo.evaluate(b, [b], SHA, INTENT, None, 7200)["verdict"] == "UNKNOWN"
