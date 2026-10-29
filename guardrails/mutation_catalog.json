@@ -6702,6 +6702,126 @@
         "tests/scripts/test_pr_full_suite_pipeline.py"
       ],
       "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner #562): mutation di nuovo per ultimo, lo step piu' lungo parte dopo ~3700 s di coda (BK #31)."
+    },
+    {
+      "id": "rmg_tmpfs_tmpdir_not_set",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    env[\"TMPDIR\"] = str(test_tmp)\n",
+      "mutated": "    pass\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): file temporanei dei test fuori dalla directory del worker (disco o condivisi fra worker)."
+    },
+    {
+      "id": "rmg_tmpfs_not_a_tmpfs_accepted",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "            if fstype != \"tmpfs\":\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): un filesystem qualsiasi preso per tmpfs (es. /tmp su disco)."
+    },
+    {
+      "id": "rmg_tmpfs_enospc_counted_killed",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    if result.status == KILLED and _NO_SPACE_RE.search(out or \"\"):\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): spazio o memoria esauriti contati come mutazione intercettata: falso KILLED."
+    },
+    {
+      "id": "rmg_tmpfs_worker_tmp_not_reset",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    _reset_dir(test_tmp)\n",
+      "mutated": "    test_tmp.mkdir(parents=True, exist_ok=True)\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): residui di una mutazione visibili alla successiva."
+    },
+    {
+      "id": "rmg_tmpfs_low_space_ignored",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    if _free_bytes(test_tmp) < TMPFS_MIN_FREE_BYTES:\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): spazio temporaneo insufficiente non ferma il run."
+    },
+    {
+      "id": "rmg_tmpfs_stale_any_age",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "            if not entry.is_dir() or entry.is_symlink() or st.st_uid != os.getuid() or now - st.st_mtime <= max_age:\n",
+      "mutated": "            if not entry.is_dir() or entry.is_symlink() or st.st_uid != os.getuid():\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): la pulizia cancellerebbe il workspace di un run in corso."
+    },
+    {
+      "id": "rmg_tmpfs_stale_follows_symlink",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "            if not entry.is_dir() or entry.is_symlink() or st.st_uid != os.getuid() or now - st.st_mtime <= max_age:\n",
+      "mutated": "            if not entry.is_dir() or st.st_uid != os.getuid() or now - st.st_mtime <= max_age:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): la pulizia seguirebbe un symlink fuori dal tmpfs."
+    },
+    {
+      "id": "rmg_tmpfs_workspace_leak_unchecked",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    if tmp_root and Path(tmp).exists():\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): workspace lasciato in RAM a fine run senza errore."
+    },
+    {
+      "id": "rmg_tmpfs_nested_not_marked",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    env[NESTED_ENV] = \"1\"\n",
+      "mutated": "    pass\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner tmpfs): un runner annidato (test del runner, anche mutati) userebbe il tmpfs condiviso e potrebbe cancellare il workspace del runner che lo esegue."
+    },
+    {
+      "id": "rmg_tmpfs_nested_uses_shared_tmpfs",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    elif os.environ.get(NESTED_ENV):\n",
+      "mutated": "    elif False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION: il runner annidato pulirebbe la directory tmpfs condivisa."
     }
   ]
 }

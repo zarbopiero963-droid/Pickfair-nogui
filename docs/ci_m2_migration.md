@@ -63,6 +63,24 @@ Sulla coda `pickfair-dedicated` (lane non fidata, nessun segreto):
 6. Il dispatcher installato deve conoscere i tre step nuovi (`FULL_SUITE_STEP_KEYS`): finché non è aggiornato, la
    full-suite dà `error` (step attesi mancanti o in più: fail-closed).
 
+## Prestazioni della full-suite (FULL_SUITE_PERFORMANCE_REMEDIATION, #562)
+
+Misurato sulla BK #31 (`185078e`): i 50 job girano in serie su un solo agent, e `w1-mutation` è andato in timeout
+a 45 minuti con 457 mutazioni su 552 (0 sopravvissute).
+- **Causa.** È il disco della lane, saturo per i `fdatasync` di SQLite dei test (`tmp_path`). Non è un problema di CPU né di memoria: `memory.events` è pulito su 50 job su 50.
+- **Chi decide cosa.**
+
+  | Componente | Da dove arriva | Cosa decide |
+  |---|---|---|
+  | **Generatore** | da `main`, `git show FETCH_HEAD:scripts/pr_full_suite_pipeline.py` | step, timeout e priorità |
+  | **Mutation runner, catalogo e test** | dal checkout della PR | come girano le mutazioni |
+
+- **Correzione.** Il runner usa un tmpfs verificato per sandbox e `TMPDIR` dei test, con ritorno al disco se non è disponibile (vedi CHANGELOG). Lascia invariati:
+  - mutazioni e criteri;
+  - timeout di 45 minuti e budget di 7200 s;
+  - `--jobs 2` e `spawn=1`.
+- **Priorità di `w1-mutation`.** Ha priorità 3 e parte per primo, ma solo dopo il merge.
+
 ## Prove locali (non sostituiscono il run su Buildkite)
 
 - `tests/scripts/test_pr_full_suite_pipeline.py`:

@@ -9,6 +9,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
+  - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
+    database SQLite) su `/dev/shm` solo se è davvero un tmpfs (`/proc/mounts`), scrivibile e con almeno 512 MiB
+    liberi; altrimenti su disco, e il report lo dice (`tmp_root`). Causa misurata: ~9.500 `fdatasync` per
+    esecuzione di `test_pr_trusted_dispatcher.py` sul disco saturo della lane. Stesse mutazioni, stesso `-x`,
+    stesso timeout per mutazione, stessi criteri; `--tmpfs off` per il disco. Prova locale, 182 mutazioni del
+    dispatcher con `--jobs 2`: 701 s su disco, 309 s su tmpfs, 182/182 KILLED in entrambi;
+  - ogni worker ha il suo `TMPDIR`, svuotato prima di ogni pytest; spazio o memoria esauriti (righe `E` di
+    pytest con `[Errno 28]`, `MemoryError`, `database or disk is full`) ⇒ INCONCLUSIVE, mai KILLED; spazio
+    sotto soglia o workspace rimasto in RAM ⇒ errore del run; residui di run uccisi rimossi dopo 3 ore;
+    un runner annidato in una mutazione resta su disco e non pulisce il tmpfs condiviso;
+  - `w1-mutation` con priorità 3: parte per primo. Timeout 45 minuti e `--jobs 2` invariati. Questo vale solo
+    dopo il merge, perché il generatore si carica da `main`; il runner invece gira dal checkout della PR.
+
+  Test RED→GREEN (`tests/scripts/test_run_mutation_guardrails_tmpfs.py`), mutazioni `rmg_tmpfs_*` e
+  `fsp_perf_mutation_not_first`.
 - **#562 PR-B (M2) — workflow Linux fuori dalle PR nella full-suite (`scripts/pr_full_suite_pipeline.py`):**
   - test `test_lockfile_removed_in_the_pr_fails_against_main`: `FETCH_HEAD` scritto come lo scrive `git fetch` (git ≥ 2.45
     rifiuta `update-ref` sugli pseudoref; falliva sui runner con git 2.56);
