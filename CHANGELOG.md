@@ -9,6 +9,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 PR-C2 — osservabilità Buildkite in sola lettura (`scripts/ci/bk_observe.py`):** build, step, log e artifact
+  della lane trusted via API REST, solo `GET` con host e pipeline fissi, nessun token nel codice. `report` dà PASS solo
+  con SHA e `pf_intent` esatti, build unica, numero di step atteso, tutti `passed` ed entro il budget; FAIL, PENDING
+  o UNKNOWN altrimenti. 21 test su risposte simulate. Documento: `docs/ci_buildkite_observability.md`.
 - **#562 PR-C2 — piano dei required check di `main` (`ops/ci/required_checks.json`, `scripts/ci/required_checks_plan.py`):**
   - inventario reale del ruleset `PICKFAIR-MAIN-PROTECTION`: oggi è obbligatorio solo `overlap-check` di Actions,
     quindi readiness, full-suite e overlap della lane non bloccano il merge (#576);
