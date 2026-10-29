@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 92,
- "updated_at": "2026-10-29T13:14:34Z",
+ "seq": 93,
+ "updated_at": "2026-10-29T13:22:55Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "#585 head fb3ffd8: monitorare full-suite BK sul nuovo SHA (49 step, mutation 563, tmp_root nel log, <=45 min, budget 7200), status full-suite/readiness, review Sol/Grok/Codex, risolvere thread Codex P1 a check chiusi; pubblicare PR585_FINAL_CERTIFICATION su #562; poi attesa merge owner. Nessun merge.",
+ "next_atomic_action": "#585 head fb3ffd8, BK #32 in corso (pf_intent p585-t4-fb3ffd8458b5). Commit locali NON pushati 7f365a3+19ce4f7 (code_patch/pr585: Sol/Grok Windows, Codex noexec/stale). Attesa: fine BK32 + autorizzazione owner a un secondo push. Nessun merge.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "53fcc5403e92b6793cd6076de7f6821d7a110dd2",
+ "previous_checkpoint_sha": "829a1c9ee78ba7b4cad8b105f06e06b7f2c75fe5",
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
