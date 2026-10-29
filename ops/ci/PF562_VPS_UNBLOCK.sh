@@ -38,6 +38,8 @@ AGENT_QUEUE="${PF562_AGENT_QUEUE:-pickfair-dedicated}"
 DISPATCH_UNIT="${PF562_DISPATCH_UNIT:-pf-dispatch.service}"
 BACKUP_BASE="${PF562_BACKUP_BASE:-/root}"
 PY_MINOR="${PF562_PY_MINOR:-11}"            # la lane usa Python 3.11
+INSTALL_OWNER="${PF562_INSTALL_OWNER:-root}" # proprietario di appimagetool (root; altro solo nei test non-root)
+INSTALL_GROUP="${PF562_INSTALL_GROUP:-root}"
 EXPECTED_STEPS=52
 M2_STEPS=(w5-lockfile-fresh w5-build-linux-appimage w5-telegram-live-sim)
 
@@ -76,6 +78,10 @@ preflight_host() {
   [ -x "$LANE_PYTHON" ] || die "Python della lane assente: $LANE_PYTHON"
   "$LANE_PYTHON" -c "import sys; assert sys.version_info[:2] == (3, ${PY_MINOR})" || die "il Python della lane non e' 3.${PY_MINOR}"
   "$LANE_PYTHON" -c 'import tkinter; print("Tk", tkinter.TkVersion)' >/dev/null 2>&1 || die "tkinter assente nel Python della lane"
+  local bad
+  if bad="$(agent_can_replace "$TOOLS_DIR/appimagetool")"; then
+    die "$bad e' scrivibile da $AGENT_USER: il job potrebbe sostituire appimagetool (correggere i permessi, poi rilanciare)"
+  fi
   log "preflight host OK: $(uname -s) $(uname -m), agent ${AGENT_NAME} coda ${AGENT_QUEUE}, unit ${DISPATCH_UNIT}, Python 3.${PY_MINOR} + tkinter"
 }
 
@@ -93,6 +99,23 @@ dispatcher_paths() {
 }
 
 dispatcher_count() { pgrep -fc 'pr_trusted_dispatcher\.py.* serve' || true; }
+
+# il job (utente dell'agent) puo' sostituire `path`? Vale per il file e per OGNI directory sopra (Sol su #587): una
+# directory scrivibile permette di rinominare il figlio e rimpiazzare binario e checksum. Una directory sticky di un
+# altro utente (/tmp) non lo permette. Stampa il primo percorso pericoloso; nessuno => exit 1.
+agent_can_replace() {
+  local p="$1" mode owner
+  while :; do
+    if [ -e "$p" ] && runuser -u "$AGENT_USER" -- test -w "$p"; then
+      mode="$(stat -c %a "$p")"; owner="$(stat -c %U "$p")"
+      if ! { [ -d "$p" ] && [ $(( 8#$mode & 01000 )) -ne 0 ] && [ "$owner" != "$AGENT_USER" ]; }; then
+        printf '%s\n' "$p"; return 0
+      fi
+    fi
+    [ "$p" = "/" ] && return 1
+    p="$(dirname "$p")"
+  done
+}
 
 # ---------------------------------------------------------------------------------------------------------- rollback
 do_rollback() {
@@ -203,22 +226,27 @@ if [ -d "$AIT_DIR" ]; then tar -C "$TOOLS_DIR" -czf "$BK/appimagetool.tgz" appim
 log "backup: $BK"
 
 fail_and_rollback() {
+  trap - ERR
   log "FERMO: $*. Rollback automatico da $BK"
   if do_rollback "$BK"; then exit 1; else log "ROLLBACK NON COMPLETO: intervento manuale"; exit 3; fi
 }
 
+# da qui ogni comando che fallisce (anche una scrittura) riporta allo stato del backup (Sol su #587)
+set -E
+trap 'fail_and_rollback "errore non previsto alla riga $LINENO"' ERR
+
 # ------------------------------------------------------------------------------------------------- appimagetool
 if [ "$ALREADY_AIT" -ne 1 ]; then
-  install -d -o root -g root -m 0755 "$AIT_DIR"
-  install -o root -g root -m 0555 "$AIT_CAND" "$AIT_DIR/appimagetool.new"
+  install -d -o "$INSTALL_OWNER" -g "$INSTALL_GROUP" -m 0755 "$AIT_DIR"
+  install -o "$INSTALL_OWNER" -g "$INSTALL_GROUP" -m 0555 "$AIT_CAND" "$AIT_DIR/appimagetool.new"
   mv -f "$AIT_DIR/appimagetool.new" "$AIT_DIR/appimagetool"
   printf '%s  appimagetool\n' "$AIT_SHA" > "$AIT_DIR/appimagetool.sha256.new"
-  chown root:root "$AIT_DIR/appimagetool.sha256.new"; chmod 0444 "$AIT_DIR/appimagetool.sha256.new"
+  chown "$INSTALL_OWNER:$INSTALL_GROUP" "$AIT_DIR/appimagetool.sha256.new"; chmod 0444 "$AIT_DIR/appimagetool.sha256.new"
   mv -f "$AIT_DIR/appimagetool.sha256.new" "$AIT_DIR/appimagetool.sha256"
 fi
 ( cd "$AIT_DIR" && sha256sum -c --quiet appimagetool.sha256 ) || fail_and_rollback "verifica sha256 di appimagetool installato"
-for f in "$AIT_DIR" "$AIT_DIR/appimagetool" "$AIT_DIR/appimagetool.sha256"; do
-  if runuser -u "$AGENT_USER" -- test -w "$f"; then fail_and_rollback "$f scrivibile da $AGENT_USER"; fi
+for f in "$AIT_DIR/appimagetool" "$AIT_DIR/appimagetool.sha256"; do
+  if bad="$(agent_can_replace "$f")"; then fail_and_rollback "$bad scrivibile da $AGENT_USER"; fi
 done
 runuser -u "$AGENT_USER" -- test -x "$AIT_DIR/appimagetool" || fail_and_rollback "appimagetool non eseguibile da $AGENT_USER"
 

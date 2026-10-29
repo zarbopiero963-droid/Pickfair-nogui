@@ -20,6 +20,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "ops" / "ci" / "PF562_VPS_UNBLOCK.sh"
 PY = "/usr/bin/python3.12"
+#: utente fittizio del job, sempre diverso da chi esegue i test (che possiede i file creati)
+AGENT = "daemon" if subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip() == "nobody" else "nobody"
 
 pytestmark = pytest.mark.skipif(
     os.name != "posix" or shutil.which("bash") is None or shutil.which("git") is None or not Path(PY).exists()
@@ -109,7 +111,10 @@ def lane(tmp_path):
     env = {
         "PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path),
         "PF562_TOOLS_DIR": str(tools), "PF562_LANE_PYTHON": PY, "PF562_PY_MINOR": "12",
-        "PF562_AGENT_CFG": str(agent_cfg), "PF562_AGENT_USER": "root", "PF562_BACKUP_BASE": str(backups),
+        "PF562_AGENT_CFG": str(agent_cfg), "PF562_AGENT_USER": AGENT, "PF562_BACKUP_BASE": str(backups),
+        # installazione col proprietario corrente: i test girano anche su runner non-root (Sol su #587)
+        "PF562_INSTALL_OWNER": subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip(),
+        "PF562_INSTALL_GROUP": subprocess.run(["id", "-gn"], capture_output=True, text=True).stdout.strip(),
         "PF562_REPO_URL": f"file://{bare}", "STUB_PY": PY, "STUB_DISP": str(disp), "STUB_CFG": str(cfg_path),
         "STUB_LOG": str(tmp_path / "systemctl.log"),
     }
@@ -233,3 +238,29 @@ def test_script_never_downloads_without_a_hash_and_never_runs_the_tool():
     assert not any('"$AIT_CAND" ' in ln and "sha256sum" not in ln and "cp " not in ln and "install " not in ln
                    and "curl" not in ln and "head -c" not in ln for ln in body), "il candidato non si esegue"
     assert "--appimage-extract" not in src and "Betfair" not in "\n".join(body)
+
+
+
+# --- GPT-6.1 Sol su #587: directory superiori scrivibili dal job, errori dopo il backup
+
+def test_a_tools_directory_writable_by_the_job_stops_the_preflight(lane):
+    lane["tools"].chmod(0o777)                                     # il job potrebbe rinominare appimagetool/
+    res = _run(lane, *_base(lane), "--apply")
+    assert res.returncode == 1 and f"scrivibile da {AGENT}" in res.stdout and str(lane["tools"]) in res.stdout
+    assert not (lane["tools"] / "appimagetool").exists() and not list(lane["backups"].glob("pf562-unblock-*"))
+
+
+def test_a_sticky_directory_of_another_user_is_not_a_risk(lane):
+    lane["tools"].chmod(0o1777)                                    # come /tmp: il job non rinomina file altrui
+    res = _run(lane, *_base(lane))
+    assert res.returncode == 0, res.stdout + res.stderr
+
+
+def test_a_write_error_after_the_backup_rolls_back(lane):
+    old = lane["disp"].read_text()
+    ait_dir = lane["tools"] / "appimagetool"
+    ait_dir.mkdir()
+    (ait_dir / "appimagetool.sha256.new").mkdir()                  # la scrittura del checksum fallira'
+    res = _run(lane, *_base(lane), "--apply")
+    assert res.returncode in (1, 3) and "errore non previsto" in res.stdout and "Rollback automatico" in res.stdout
+    assert lane["disp"].read_text() == old and not (ait_dir / "appimagetool").exists()
