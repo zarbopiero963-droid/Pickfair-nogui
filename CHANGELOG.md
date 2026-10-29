@@ -49,7 +49,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     sul contesto `full-suite` e sulla pipeline `pf-dedicated-ci`, mai su quelli di un guard trusted.
   - suite ritrovata conclusa dopo uno snapshot: il verdetto si ricalcola dagli step della build e vale solo se coincide
     con lo status consegnato da quella build (la readiness non attende fino all'`error`, uno status di terzi non
-    diventa mai un PASS; un errore di lettura transitorio lascia il job ritentabile, non `recovered` per sempre); il timeout della suite resta in config anche con `full_suite.enabled: false`, così un job già
+    diventa mai un PASS; un errore di lettura transitorio lascia il job ritentabile, non `recovered` per sempre;
+    una build superata da una più recente si chiude `recovered` senza rileggerla né coprirne l'esito); il timeout della suite resta in config anche con `full_suite.enabled: false`, così un job già
     nell'archivio arriva al proprio esito durante un rollback (Codex su #584).
 
   - con `readiness_wait` e `full_suite` entrambe attive, `readiness_wait.max_seconds` ≥ `full_suite.build_timeout_seconds`

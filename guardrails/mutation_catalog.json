@@ -6492,8 +6492,8 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "self._status_build(job, seen) == keep[\"number\"]",
-      "mutated": "self._status_build(job, seen) is not None",
+      "original": "mine = isinstance(seen, dict) and self._status_build(job, seen) == keep[\"number\"]",
+      "mutated": "mine = isinstance(seen, dict) and self._status_build(job, seen) is not None",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
@@ -6504,8 +6504,8 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "                computed = self._recovered_suite_verdict(job, keep[\"number\"])\n",
-      "mutated": "                computed = seen.get(\"state\") if isinstance(seen, dict) else None\n",
+      "original": "computed = self._recovered_suite_verdict(job, keep[\"number\"]) if mine else None",
+      "mutated": "computed = seen.get(\"state\") if mine else None",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
@@ -6516,8 +6516,8 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "and seen.get(\"state\") == computed):",
-      "mutated": "and seen.get(\"state\") in (\"success\", \"failure\", \"error\")):",
+      "original": "if mine and computed is not None and seen.get(\"state\") == computed:",
+      "mutated": "if mine and computed is not None and seen.get(\"state\") in (\"success\", \"failure\", \"error\"):",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
@@ -6534,6 +6534,18 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 PR-A (Sol su #584): errore transitorio nel rileggere la suite ritrovata chiude il job recovered per sempre (readiness in error con suite verde)."
+    },
+    {
+      "id": "td_pa_suite_superseded_still_read",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "computed = self._recovered_suite_verdict(job, keep[\"number\"]) if mine else None",
+      "mutated": "computed = self._recovered_suite_verdict(job, keep[\"number\"])",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A (Sol su #584): build superata riletta comunque; un errore di lettura copre con pending l'esito della suite successiva."
     }
   ]
 }

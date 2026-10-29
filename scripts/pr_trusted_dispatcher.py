@@ -1994,7 +1994,11 @@ class Dispatcher:
                 # `recovered`, attesa e poi `error`
                 try:
                     seen = restore if restore is not None else self._latest_built_status(job)
-                    computed = self._recovered_suite_verdict(job, keep["number"])
+                    # status di un'altra build (piu' recente): la build ritrovata e' superata, si chiude `recovered`
+                    # senza rileggerla, cosi' un errore di lettura non copre mai con un `pending` l'esito della suite
+                    # successiva (Sol su #584)
+                    mine = isinstance(seen, dict) and self._status_build(job, seen) == keep["number"]
+                    computed = self._recovered_suite_verdict(job, keep["number"]) if mine else None
                 except (ApiError, TransportError, CredentialError, RateLimited) as exc:
                     # errore di lettura transitorio: il job resta ritentabile, mai chiuso `recovered` per sempre (la
                     # readiness andrebbe in `error` con una suite verde, Sol su #584); oltre la finestra, `error`
@@ -2002,8 +2006,7 @@ class Dispatcher:
                         return self._fail(job, "error", f"RECOVERY_UNCERTAIN: suite ritrovata non verificabile ({exc})")
                     log(f"job {job['id']}: suite ritrovata non verificabile ({exc}): riprovo")
                     return self._recovery_pending(job)
-                if (computed is not None and isinstance(seen, dict)
-                        and self._status_build(job, seen) == keep["number"] and seen.get("state") == computed):
+                if mine and computed is not None and seen.get("state") == computed:
                     outcome = computed
             return self._set(job, state="done", outcome=outcome, final_published=1, build_number=keep["number"],
                              build_url=keep["web_url"],

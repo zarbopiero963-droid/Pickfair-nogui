@@ -4827,3 +4827,30 @@ def test_full_suite_recovery_retries_after_a_transient_read_error(suite_env, tmp
     assert all(c[2] == "success" and c[4].endswith(f"/{SUITE_PIPE}/builds/1") for c in restored) and len(restored) <= 1
     _github_sees(bk, pub)                                          # cio' che GitHub mostra dopo il ripristino
     assert disp._suite_verdict(readiness, bk.gh.statuses[HEAD])[0] == "success"
+
+
+def test_full_suite_recovery_never_covers_a_newer_suite_outcome_with_pending(suite_env, tmp_path):
+    """Sol su #584 (3da2fe7): l'ultimo status `full-suite` e' di una build piu' recente. La build ritrovata e'
+    superata: si chiude `recovered` senza rileggerla, e un errore di lettura non pubblica mai un `pending` sopra
+    l'esito della suite successiva."""
+    disp, bk, pub, clock = suite_env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    _github_sees(bk, pub)
+    bk.gh.statuses[HEAD].insert(0, {"context": "full-suite", "state": "success", "description": "PASS",
+                                    "target_url": f"https://buildkite.com/{ORG}/{SUITE_PIPE}/builds/7"})
+    calls = len(pub.calls)
+    clock.now += 600
+    _restore(disp, snap)
+    disp.poll()
+    bk.fail_get = True                                             # la build vecchia non si legge
+    disp.tick()
+    assert not [c for c in pub.calls[calls:] if c[3] == "full-suite"], "status della suite ripubblicato o coperto"
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    assert suite["state"] == "done" and suite["outcome"] == "recovered"
