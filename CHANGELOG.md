@@ -47,8 +47,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - il recupero dopo uno snapshot (P0, #583) vale anche per la suite: ricerca per intento sul commit dell'head, massimo
     della PR con il solo filtro `pf_pr` (le build stanno sui branch della PR), consegna correlata e `pending` di recupero
     sul contesto `full-suite` e sulla pipeline `pf-dedicated-ci`, mai su quelli di un guard trusted.
-  - suite ritrovata conclusa dopo uno snapshot: conserva l'esito consegnato da quella build (la readiness non attende
-    fino all'`error`); il timeout della suite resta in config anche con `full_suite.enabled: false`, così un job già
+  - suite ritrovata conclusa dopo uno snapshot: il verdetto si ricalcola dagli step della build e vale solo se coincide
+    con lo status consegnato da quella build (la readiness non attende fino all'`error`, uno status di terzi non
+    diventa mai un PASS); il timeout della suite resta in config anche con `full_suite.enabled: false`, così un job già
     nell'archivio arriva al proprio esito durante un rollback (Codex su #584).
 
   - con `readiness_wait` e `full_suite` entrambe attive, `readiness_wait.max_seconds` ≥ `full_suite.build_timeout_seconds`

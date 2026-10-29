@@ -6480,7 +6480,7 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "                    outcome = seen[\"state\"]\n",
+      "original": "                    outcome = computed\n",
       "mutated": "                    outcome = \"recovered\"\n",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
@@ -6498,6 +6498,30 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 PR-A (Codex su #584): verdetto della suite ritrovata preso dallo status di un'altra build."
+    },
+    {
+      "id": "td_pa_suite_recovered_verdict_from_status",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                computed = self._recovered_suite_verdict(job, keep[\"number\"])\n",
+      "mutated": "                computed = seen.get(\"state\") if isinstance(seen, dict) else None\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A (Sol su #584): verdetto della suite ritrovata preso dallo status GitHub (falsificabile da terzi) invece che dalla build."
+    },
+    {
+      "id": "td_pa_suite_recovered_status_mismatch",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "and seen.get(\"state\") == computed):",
+      "mutated": "and seen.get(\"state\") in (\"success\", \"failure\", \"error\")):",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A (Sol su #584): verdetto ricalcolato accettato anche se lo status consegnato da quella build dice altro."
     }
   ]
 }

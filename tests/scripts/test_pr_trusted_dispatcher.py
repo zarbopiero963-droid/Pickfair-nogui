@@ -4766,3 +4766,29 @@ def test_disabling_the_suite_keeps_the_timeout_of_a_persisted_suite_job(suite_en
     off.tick()                                                     # oltre ogni timeout: nessuna eccezione
     off.store.close()
     disp.store = td.Store(cfg.state_db, targets=cfg.targets)
+
+
+def test_full_suite_recovered_verdict_comes_from_the_build_not_from_a_forged_status(suite_env, tmp_path):
+    """Sol su #584 (4f6147c): suite fallita, poi uno `success` pubblicato da terzi con l'URL della stessa build e
+    archivio ripristinato. Il verdetto si ricalcola dagli step della build (failure): lo status falso non diventa
+    mai un PASS per la readiness, e non vale nemmeno come consegna (resta `recovered`: attesa, poi `error`)."""
+    disp, bk, pub, clock = suite_env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, "failed", _suite_jobs(**{"w1-pr-check": "failed"}))
+    disp.tick()
+    _github_sees(bk, pub)
+    bk.gh.statuses[HEAD].insert(0, {"context": "full-suite", "state": "success", "description": "PASS",
+                                    "target_url": f"https://buildkite.com/{ORG}/{SUITE_PIPE}/builds/1"})
+    clock.now += 600
+    _restore(disp, snap)
+    disp.poll()
+    disp.tick()
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    readiness = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+    assert suite["outcome"] == "recovered"                         # consegna non coerente col verdetto ricalcolato
+    assert disp._suite_verdict(readiness, bk.gh.statuses[HEAD])[0] == "wait"

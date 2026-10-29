@@ -2000,13 +2000,16 @@ class Dispatcher:
             # `final_published` evita che l'annullamento dei doppioni lo rimandi in consegna
             outcome = "recovered"
             if job["guard"] == SUITE:
-                # la readiness dello stesso intento consuma l'esito della suite: si conserva quello consegnato da
-                # QUESTA build, se e' l'ultimo status `full-suite` sull'head; altrimenti resta `recovered` (attesa,
-                # poi `error`), mai un verdetto preso da un'altra build (Codex su #584)
+                # la readiness dello stesso intento consuma l'esito della suite (Codex su #584). Il verdetto si
+                # RICALCOLA dagli step della build, come nel percorso normale: lo status GitHub prova solo che quel
+                # verdetto e' stato consegnato da QUESTA build (ultimo status `full-suite`, stesso numero, stesso
+                # stato). Uno status di terzi o di un'altra build non e' mai un verdetto (Sol su #584): resta
+                # `recovered`, attesa e poi `error`
                 seen = restore if restore is not None else self._latest_built_status(job)
-                if (isinstance(seen, dict) and self._status_build(job, seen) == keep["number"]
-                        and seen.get("state") in ("success", "failure", "error")):
-                    outcome = seen["state"]
+                computed = self._recovered_suite_verdict(job, keep["number"])
+                if (computed is not None and isinstance(seen, dict)
+                        and self._status_build(job, seen) == keep["number"] and seen.get("state") == computed):
+                    outcome = computed
             return self._set(job, state="done", outcome=outcome, final_published=1, build_number=keep["number"],
                              build_url=keep["web_url"],
                              description=f"intento gia' eseguito dalla build {keep['number']}: esito non ripubblicato")
@@ -2020,6 +2023,17 @@ class Dispatcher:
             number = int(url[len(prefix):])
             return number if number > 0 else None
         return None
+
+    def _recovered_suite_verdict(self, job: dict, number: int) -> Optional[str]:
+        """Verdetto della build della suite ritrovata, ricalcolato dalla build stessa (`decide_suite_outcome`); None
+        se la build non e' leggibile o non corrisponde alla richiesta."""
+        try:
+            build = self.bk.get_build(SUITE, number)
+        except (ApiError, TransportError):
+            return None
+        if not build_matches_job(build, SUITE, job, self.cfg.organization):
+            return None
+        return decide_suite_outcome(build, job)[0]
 
     def _latest_built_status(self, job: dict) -> Optional[dict]:
         """Ultimo status del contesto sull'head che punta a una build della pipeline (dal piu' recente); None se assente
