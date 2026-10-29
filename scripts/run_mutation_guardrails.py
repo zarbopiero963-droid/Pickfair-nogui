@@ -198,8 +198,8 @@ def _mount_fstype(path: Path, mounts_file: str | None = None) -> str | None:
 
 
 def _free_bytes(path: Path) -> int:
-    st = os.statvfs(path)
-    return st.f_bavail * st.f_frsize
+    # shutil.disk_usage esiste anche su Windows, os.statvfs no (GPT-6.1 Sol su #585)
+    return shutil.disk_usage(path).free
 
 
 def choose_tmp_root(candidates: tuple | None = None, mounts_file: str | None = None,

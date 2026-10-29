@@ -6822,6 +6822,18 @@
         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
       ],
       "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION: il runner annidato pulirebbe la directory tmpfs condivisa."
+    },
+    {
+      "id": "rmg_tmpfs_free_space_not_portable",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    return shutil.disk_usage(path).free\n",
+      "mutated": "    st = os.statvfs(path); return st.f_bavail * st.f_frsize\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (GPT-6.1 Sol su #585): os.statvfs non esiste su Windows, il runner si fermerebbe anche con --tmpfs off."
     }
   ]
 }

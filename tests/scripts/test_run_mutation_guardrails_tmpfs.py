@@ -123,7 +123,7 @@ def test_longest_mount_point_decides_the_filesystem(tmp_path):
     assert runner._mount_fstype(Path("/varx"), mounts) == "tmpfs"
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignora i permessi")
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root (o Windows) ignora i permessi")
 def test_non_writable_tmpfs_is_refused(tmp_path):
     shm = tmp_path / "shm"
     shm.mkdir(mode=0o500)
@@ -287,3 +287,21 @@ def test_workspace_left_on_tmpfs_after_the_run_is_an_error(tmp_path, monkeypatch
     with pytest.raises(runner.MutationRunnerError, match="not removed from tmpfs"):
         _run(_repo(tmp_path, MUTS[:1]), tmp_path, monkeypatch)
     assert (shm / (runner.TMP_PREFIX + "stuck")).exists()
+
+
+def test_free_space_uses_a_portable_api(tmp_path, monkeypatch):
+    """GPT-6.1 Sol su #585: `os.statvfs` non esiste su Windows; lo spazio libero si legge con `shutil.disk_usage`."""
+    class OsWithoutStatvfs:                       # come su Windows: il modulo `os` del runner senza statvfs
+        def __getattr__(self, name):
+            if name == "statvfs":
+                raise AttributeError(name)
+            return getattr(os, name)
+
+    monkeypatch.setattr(runner, "os", OsWithoutStatvfs())
+    assert runner._free_bytes(tmp_path) > 0
+
+
+def test_module_collects_without_posix_only_apis():
+    """L'import del modulo di test non chiama API solo POSIX (skipif valutato alla raccolta)."""
+    src = Path(__file__).read_text(encoding="utf-8")
+    assert "skipif(os." + "geteuid()" not in src
