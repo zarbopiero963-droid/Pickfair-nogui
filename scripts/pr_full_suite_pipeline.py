@@ -66,7 +66,7 @@ class Job:
     key: str
     label: str
     timeout: int            # minuti
-    priority: int           # 2 = veloce (prima), 1 = moduli, 0 = pesante
+    priority: int           # 3 = mutation (per primo), 2 = veloce, 1 = moduli, 0 = pesante
     commands: tuple
 
 
@@ -336,7 +336,8 @@ def _jobs() -> tuple:
             '|| { echo "MERGE CONFLICT"; exit 1; }',
             "python scripts/check_merge_markers.py", FULL_DEPS, "python scripts/validate_guardrails.py",
             'pytest -q -n 2 --dist worksteal -m "not serial" -x', "pytest -q -x -m serial")),
-        Job("w1-mutation", "W1 mutation-guardrails", 45, 0, (
+        # priorita' massima: lo step piu' lungo parte per primo (FULL_SUITE_PERFORMANCE_REMEDIATION, owner #562)
+        Job("w1-mutation", "W1 mutation-guardrails", 45, 3, (
             FULL_DEPS,
             "python scripts/run_mutation_guardrails.py --fail-under 80 --jobs 2 "
             "--output bk-out/mutation_guardrails_report.json")),
@@ -372,7 +373,8 @@ def _jobs() -> tuple:
             '(cd bk-out && sha256sum "${bins[0]#bk-out/}" "${apps[0]#bk-out/}" > SHA256SUMS && cat SHA256SUMS)',
             'echo "DRY-RUN release: asset e SHA256SUMS pronti come artifact; nessuna release GitHub pubblicata"')),
     ]
-    return tuple(fast + modules + heavy)
+    first = [j for j in heavy if j.priority == 3]                     # il mutation, lo step piu' lungo
+    return tuple(first + fast + modules + [j for j in heavy if j.priority != 3])
 
 
 JOBS = _jobs()

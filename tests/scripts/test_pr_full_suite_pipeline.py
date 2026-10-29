@@ -76,7 +76,7 @@ def test_every_step_runs_on_the_untrusted_queue_with_the_sha_check_first():
         assert lines[:len(fsp.PREAMBLE)] == list(fsp.PREAMBLE), step["key"]
         assert lines[1] == '[ "$(git rev-parse HEAD)" = "$BUILDKITE_COMMIT" ] || { echo "SHA mismatch"; exit 2; }'
         assert isinstance(step["timeout_in_minutes"], int) and 1 <= step["timeout_in_minutes"] <= 60
-        assert step["priority"] in (0, 1, 2)
+        assert step["priority"] in (0, 1, 2, 3)
 
 
 def test_step_keys_are_unique_and_well_formed():
@@ -107,7 +107,8 @@ def test_fast_checks_run_before_modules_and_heavy_suites():
     prio = [s["priority"] for s in steps]
     assert prio == sorted(prio, reverse=True)                       # ordine di elenco = ordine di priorita'
     heavy = {s["key"] for s in steps if s["priority"] == 0}
-    assert heavy == {"w1-pr-check", "w2-backstop", "w4-merge-simulation", "w1-mutation", "w5-build-linux-appimage"}
+    assert heavy == {"w1-pr-check", "w2-backstop", "w4-merge-simulation", "w5-build-linux-appimage"}
+    assert steps[0]["key"] == "w1-mutation" and steps[0]["priority"] == 3
 
 
 def test_module_table_matches_the_workflow_inputs():
@@ -362,3 +363,14 @@ def test_lockfile_job_pins_the_canonical_header_like_the_workflow():
     lock = ROOT / "requirements-build-linux.lock"
     if lock.exists():
         assert f"#    {canonical}\n" in lock.read_text(encoding="utf-8")
+
+
+# --- FULL_SUITE_PERFORMANCE_REMEDIATION (#562, BK #31): mutation per primo (GO owner). Stesse mutazioni,
+# stesso timeout di 45 minuti, stesso `--jobs 2`, nessuna dipendenza aggiunta: cambia solo l'ordine.
+
+def test_mutation_is_the_single_highest_priority_step_with_unchanged_timeout_and_jobs():
+    steps = {s["key"]: s for s in _pipeline()["steps"]}
+    mutation = steps["w1-mutation"]
+    assert mutation["priority"] == 3 and all(s["priority"] < 3 for k, s in steps.items() if k != "w1-mutation")
+    assert mutation["timeout_in_minutes"] == 45
+    assert "--jobs 2 " in mutation["command"] and "--fail-under 80" in mutation["command"]

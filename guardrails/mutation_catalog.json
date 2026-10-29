@@ -6690,6 +6690,18 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 PR-B (owner su #585): il token noto del dispatcher non viene tolto per valore; se è più corto della regola generica finirebbe in status e journal."
+    },
+    {
+      "id": "fsp_perf_mutation_not_first",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "        Job(\"w1-mutation\", \"W1 mutation-guardrails\", 45, 3, (",
+      "mutated": "        Job(\"w1-mutation\", \"W1 mutation-guardrails\", 45, 0, (",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B FULL_SUITE_PERFORMANCE_REMEDIATION (GO owner #562): mutation di nuovo per ultimo, lo step piu' lungo parte dopo ~3700 s di coda (BK #31)."
     }
   ]
 }
