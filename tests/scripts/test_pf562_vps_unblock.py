@@ -264,3 +264,25 @@ def test_a_write_error_after_the_backup_rolls_back(lane):
     res = _run(lane, *_base(lane), "--apply")
     assert res.returncode in (1, 3) and "errore non previsto" in res.stdout and "Rollback automatico" in res.stdout
     assert lane["disp"].read_text() == old and not (ait_dir / "appimagetool").exists()
+
+
+# --- Codex su #587: un appimagetool gia' presente si riusa solo con proprietario e permessi attesi
+
+def test_an_installed_tool_with_wrong_modes_is_reinstalled_and_normalized(lane):
+    assert _run(lane, *_base(lane), "--apply").returncode == 0
+    ait_dir = lane["tools"] / "appimagetool"
+    (ait_dir / "appimagetool").chmod(0o755)                        # stesso hash, permessi allargati
+    (ait_dir / "appimagetool.sha256").chmod(0o644)
+    ait_dir.chmod(0o775)
+    res = _run(lane, *_base(lane), "--apply")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "(gia installato)" not in res.stdout
+    assert stat.S_IMODE((ait_dir / "appimagetool").stat().st_mode) == 0o555
+    assert stat.S_IMODE((ait_dir / "appimagetool.sha256").stat().st_mode) == 0o444
+    assert stat.S_IMODE(ait_dir.stat().st_mode) == 0o755
+
+
+def test_default_download_is_the_pinned_1_9_1_release_not_continuous():
+    src = SCRIPT.read_text()
+    assert 'APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/1.9.1/' in src
+    assert "download/continuous/" not in src

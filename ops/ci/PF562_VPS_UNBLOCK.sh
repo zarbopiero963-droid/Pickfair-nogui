@@ -27,7 +27,9 @@ set -euo pipefail
 umask 077
 
 REPO_URL="${PF562_REPO_URL:-https://github.com/zarbopiero963-droid/Pickfair-nogui.git}"
-APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+# release fissa 1.9.1 (opzione B, owner su #562): sha256 atteso ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0,
+# sempre passato a mano con --appimagetool-sha256 e verificato prima di installare
+APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
 # percorsi della lane: le variabili PF562_* servono SOLO ai test automatici (tests/scripts/test_pf562_vps_unblock.py)
 TOOLS_DIR="${PF562_TOOLS_DIR:-/var/lib/buildkite/tools}"
 LANE_PYTHON="${PF562_LANE_PYTHON:-/var/lib/buildkite/tools/py311/bin/python3.11}"
@@ -193,7 +195,11 @@ GOT_SHA="$(sha256sum "$AIT_CAND" | awk '{print $1}')"
 [ "$(head -c 4 "$AIT_CAND" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ] || die "appimagetool non e' un ELF"
 ALREADY_AIT=0
 if [ -f "$AIT_DIR/appimagetool" ] && [ "$(sha256sum "$AIT_DIR/appimagetool" | awk '{print $1}')" = "$AIT_SHA" ] \
-   && [ "$(awk '{print $1; exit}' "$AIT_DIR/appimagetool.sha256" 2>/dev/null)" = "$AIT_SHA" ]; then
+   && [ "$(awk '{print $1; exit}' "$AIT_DIR/appimagetool.sha256" 2>/dev/null)" = "$AIT_SHA" ] \
+   && [ "$(stat -c '%U:%G %a' "$AIT_DIR")" = "$INSTALL_OWNER:$INSTALL_GROUP 755" ] \
+   && [ "$(stat -c '%U:%G %a' "$AIT_DIR/appimagetool")" = "$INSTALL_OWNER:$INSTALL_GROUP 555" ] \
+   && [ "$(stat -c '%U:%G %a' "$AIT_DIR/appimagetool.sha256")" = "$INSTALL_OWNER:$INSTALL_GROUP 444" ]; then
+  # riuso solo con proprietario e permessi attesi; altrimenti si reinstalla e si normalizza (Codex su #587)
   ALREADY_AIT=1
 fi
 
@@ -238,6 +244,7 @@ trap 'fail_and_rollback "errore non previsto alla riga $LINENO"' ERR
 # ------------------------------------------------------------------------------------------------- appimagetool
 if [ "$ALREADY_AIT" -ne 1 ]; then
   install -d -o "$INSTALL_OWNER" -g "$INSTALL_GROUP" -m 0755 "$AIT_DIR"
+  chown "$INSTALL_OWNER:$INSTALL_GROUP" "$AIT_DIR"; chmod 0755 "$AIT_DIR"   # install -d non corregge una dir esistente
   install -o "$INSTALL_OWNER" -g "$INSTALL_GROUP" -m 0555 "$AIT_CAND" "$AIT_DIR/appimagetool.new"
   mv -f "$AIT_DIR/appimagetool.new" "$AIT_DIR/appimagetool"
   printf '%s  appimagetool\n' "$AIT_SHA" > "$AIT_DIR/appimagetool.sha256.new"

@@ -7160,6 +7160,18 @@
       "rationale": "PF-562 PR-C2: autorizzazione persa con lo snapshot pubblicata success: auto-merge senza valutazione."
     },
     {
+      "id": "td_c2_after_cancels_ignores_aux",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if (fresh.get(\"guard\") == \"readiness\" and fresh.get(\"outcome\") and not fresh.get(\"aux_published\")\n",
+      "mutated": "        if (False and fresh.get(\"outcome\") and not fresh.get(\"aux_published\")\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2: retry di pr-auto-merge perso quando restano annullamenti pendenti (Codex su #587)."
+    },
+    {
       "id": "bko_retried_attempt_counted",
       "module": "scripts.ci.bk_observe",
       "area": "trusted_dispatcher",

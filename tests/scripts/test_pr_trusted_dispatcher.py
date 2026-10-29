@@ -5127,3 +5127,32 @@ def test_restored_readiness_with_a_delivered_auto_merge_status_publishes_nothing
         disp.poll()
         disp.tick()
     assert len(pub.aux) == aux_before
+
+
+def test_auto_merge_retry_survives_pending_cancels(env):
+    """Codex P1/P2 su #587 (ae7c039): status tecnico consegnato, `pr-auto-merge` che fallisce oltre la finestra mentre
+    resta una build da annullare. Confermato l'annullamento, il job non chiude `done` perdendo l'autorizzazione:
+    torna in riconsegna finche' anche `pr-auto-merge` e' pubblicato."""
+    disp, bk, pub, clock = env
+    send(disp, payload())
+    disp.tick()
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    bk.builds["pr-merge-readiness"][1]["state"] = "running"
+    bk.fail_cancel = True
+    pub.aux_rc = 1
+    clock.now += disp.cfg.build_timeout_seconds["readiness"] + 1
+    disp.tick()                                                    # timeout: `error` tecnico, annullamento fallito
+    clock.now += disp.cfg.build_timeout_seconds["readiness"] + 1
+    disp.tick()                                                    # finestra di pubblicazione scaduta
+    job = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+    assert job["final_published"] == 1 and job["aux_published"] == 0
+    bk.fail_cancel = False
+    pub.aux_rc = None
+    disp.tick()                                                    # annullamento confermato
+    job = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+    assert job["state"] == "publish_failed", "chiuso done con l'autorizzazione mai consegnata"
+    clock.now += td.REDELIVERY_SECONDS + 1
+    disp.tick()                                                    # riconsegna
+    job = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+    assert job["aux_published"] == 1 and job["state"] == "done", job["state"]
+    assert _aux_final(pub)[-1][0] == "error"

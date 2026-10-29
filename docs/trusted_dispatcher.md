@@ -476,6 +476,11 @@ sudo bash ops/ci/PF562_VPS_UNBLOCK.sh --rollback /root/pf562-unblock-<timestamp>
     lo approva l'owner.
   - Non viene mai eseguito prima della verifica.
   - Si installa `root:root 0555`, con `appimagetool.sha256` `0444`, e non deve essere scrivibile dal job.
+  - Un'installazione già presente si riusa solo se hash, proprietario e permessi (directory `0755`, binario `0555`,
+    checksum `0444`) sono quelli attesi; altrimenti si reinstalla e si normalizza.
+  - Senza `--appimagetool-file` scarica la release fissa **1.9.1** (opzione B, owner su #562), non `continuous`.
+    Hash osservato su due download: `ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0`. Upstream non
+    pubblica firme né checksum: la verifica indipendente è il download dell'operatore dalla VPS, che deve coincidere.
 - **Dispatcher.**
   - Il percorso dello script e della configurazione si leggono da `ExecStart` della unit.
   - Il backup copre script, configurazione e archivio SQLite, con `manifest.sha256`.

@@ -2264,6 +2264,10 @@ class Dispatcher:
         fresh = self.store.get_job(job["id"]) or job
         if fresh.get("outcome") and not fresh.get("final_published") and not fresh.get("superseded"):
             return "publish_failed"
+        # readiness: anche `pr-auto-merge` deve risultare consegnato, altrimenti il retry si perde (Codex su #587)
+        if (fresh.get("guard") == "readiness" and fresh.get("outcome") and not fresh.get("aux_published")
+                and not fresh.get("superseded")):
+            return "publish_failed"
         return "done"
 
     def _retry_cancels(self, job: dict) -> None:
