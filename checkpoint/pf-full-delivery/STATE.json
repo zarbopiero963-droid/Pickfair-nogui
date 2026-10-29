@@ -1,6 +1,6 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 87,
+ "seq": 88,
  "updated_at": "2026-10-28T22:37:51Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "#562 PR 2/4 #584 APERTA (PR-A, branch pf562-pr2-full-suite, head eef0e69 su main 5c3aaaa) dopo P0_RECOVERY_DRILL=PASS e PR583_RUNTIME_CERTIFIED=PASS (Grok c.6483143252). Locale 3762 passed, mutation dispatcher 170/170. Prossimo: CI+review Sol/Grok su #584, triage RED->GREEN, merge owner; poi Grok deploy da main con full_suite+readiness_wait, misura FULL_SUITE_WITHIN_BUDGET e POSITIVE_E2E; poi PR-B, PR-C2. LIVE NO-GO.",
+ "next_atomic_action": "#562 PR 2/4 #584 PR584_READY_FOR_OWNER_MERGE su 83de350: Sol+Grok VALID_PASS sull'ultimo range, Codex nessun rilievo, 0 thread aperti, 112 check conclusi (solo readiness FAIL atteso manual-review-required), locale 3770 passed, mutation 177/177; fix loop 5/10. Attendere merge owner; poi verifica main+CI, deploy Grok da main con full_suite+readiness_wait, misura FULL_SUITE_WITHIN_BUDGET e POSITIVE_E2E; poi PR-B (rebase /home/user/pfb), PR-C2. LIVE NO-GO.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "a54fd85bc4f71ffba6fa803e11de91b64064bdc6",
+ "previous_checkpoint_sha": "58f55a9b92f6dd1298dda354d922d5df5aacade7",
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -606,8 +606,8 @@
  "mandate_id": "OWNER FINAL MANDATE — chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
  "code": {
   "branch": "pf562-pr2-full-suite",
-  "sha": "eef0e6995c743de962817d4e87f8ae4fa18b26fa",
-  "note": "#584 PR-A aperta, merge owner"
+  "sha": "83de35060269e45838a3f48ee5ef2efcd96fca48",
+  "note": "#584 READY_FOR_OWNER_MERGE"
  },
  "blocks": [
   "Gate A #506 NON PASS",
