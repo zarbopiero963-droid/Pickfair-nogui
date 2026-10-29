@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 94,
- "updated_at": "2026-10-29T16:03:24Z",
+ "seq": 95,
+ "updated_at": "2026-10-29T18:51:17Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "#585 head 892a6a2: monitorare BK full-suite sul nuovo SHA, review Sol/Grok/Codex, risolvere thread a check chiusi, pubblicare PR585_SECOND_CORRECTIVE_PUSH_CERTIFICATION parte 2 su #562 (parte 1 c.6501790380: BK32 PASS 49/49 4838 s, mutation 951 s tmpfs). Poi richiesta merge owner. Nessun merge.",
+ "next_atomic_action": "#585 READY_FOR_OWNER_MANUAL_MERGE su 6191aac (#562 c.6505539246): BK34 PASS 49/49 4727 s, mutation 969 s tmpfs 565K+5E; Sol/Grok VALID_PASS ultimo range; Codex nessun rilievo; 0 thread. ATTESA merge owner. Poi: verifica main, deploy generatore (Grok/VPS), M2_POST_MERGE_CERTIFICATION 52 step, PR-C2 (ramo locale c2-trial in /home/user/pfc2, bk_observe), PR temporanea ZERO_GH_ACTIONS, STOP.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "432b165d3d42a1c7c64108363ca10e5f5f6b16fe",
+ "previous_checkpoint_sha": "d92f6407b087c7d99e5d9feadfdf315a5e02a202",
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -606,8 +606,8 @@
  "mandate_id": "OWNER FINAL MANDATE — chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
  "code": {
   "branch": "pf562-pr3-m2-linux-workflows",
-  "sha": "892a6a256c585b2d49fe4b7df14a148e4d6df112",
-  "note": "#585 secondo push (7f365a3,19ce4f7,892a6a2)"
+  "sha": "6191aaca8c208c0138d2a4bdd2b33b1cf1ebe84d",
+  "note": "#585 READY_FOR_OWNER_MANUAL_MERGE"
  },
  "blocks": [
   "Gate A #506 NON PASS",

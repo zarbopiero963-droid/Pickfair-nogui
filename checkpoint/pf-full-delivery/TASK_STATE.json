@@ -63,7 +63,7 @@
  ],
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "mandate_id": "OWNER FINAL MANDATE \u2014 chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
- "next_atomic_action": "#585 head 892a6a2: monitorare BK full-suite sul nuovo SHA, review Sol/Grok/Codex, risolvere thread a check chiusi, pubblicare PR585_SECOND_CORRECTIVE_PUSH_CERTIFICATION parte 2 su #562 (parte 1 c.6501790380: BK32 PASS 49/49 4838 s, mutation 951 s tmpfs). Poi richiesta merge owner. Nessun merge.",
+ "next_atomic_action": "#585 READY_FOR_OWNER_MANUAL_MERGE su 6191aac (#562 c.6505539246): BK34 PASS 49/49 4727 s, mutation 969 s tmpfs 565K+5E; Sol/Grok VALID_PASS ultimo range; Codex nessun rilievo; 0 thread. ATTESA merge owner. Poi: verifica main, deploy generatore (Grok/VPS), M2_POST_MERGE_CERTIFICATION 52 step, PR-C2 (ramo locale c2-trial in /home/user/pfc2, bk_observe), PR temporanea ZERO_GH_ACTIONS, STOP.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [
