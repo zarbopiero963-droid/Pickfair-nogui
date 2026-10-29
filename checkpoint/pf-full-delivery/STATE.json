@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 89,
- "updated_at": "2026-10-29T10:19:01Z",
+ "seq": 90,
+ "updated_at": "2026-10-29T11:31:25Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "#585: attendere fine BK #31 (pf_intent p585-t3-185078e42f30, 49 step); pubblicare PR585 BK31 report su #562; poi push unico di 076eca5 (code_patch/pr585: redazione reviewer, test token corto, mutazione td_pb_known_credential_kept, E731) con suite 3800 passed, mutation td 182/182, fsp 7/7; ricertificare nuovo HEAD (BK, Sol/Grok/Codex, thread Codex P1 da risolvere a check settled). Poi PR-C2 (code_patch/prc2: bk_observe.py+test+doc).",
+ "next_atomic_action": "#585 BK31 FAIL (w1-mutation timed_out 45 min, 457/552, 0 survived; 6398 s; seriale 1 agent). Rapporto FULL_SUITE_PERFORMANCE_REMEDIATION fase 1 su #562 c.6495475360. ATTESA decisione owner: R1 timeout mutation 75 min + R2 priorita' nel push unico #585 (con 076eca5), merge #585 con full-suite FAIL da causa main, R3 spawn=2 VPS (SSH BLOCKED da Claude). Nessun push fino a decisione.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "1193f04ba5d10d4b069aec0cc9c31dd6daf3b798",
+ "previous_checkpoint_sha": "b7c4b3b6308add1b01d9d3d5936131a2e07596b3",
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -1494,6 +1494,21 @@
   "codex": "185078e nessun rilievo",
   "open_thread": "Codex P1 CUSTOM_COMPILE_COMMAND corretto in 9af362b, da risolvere",
   "local_commit": "076eca5",
-  "buildkite_readonly": "token via proxy, scope read_pipelines/read_builds/read_build_logs/read_artifacts"
+  "buildkite_readonly": "token via proxy, scope read_pipelines/read_builds/read_build_logs/read_artifacts",
+  "bk31": {
+   "state": "failed",
+   "duration_s": 6398,
+   "steps": 49,
+   "passed": 48,
+   "timed_out": "w1-mutation",
+   "mutations_done": 457,
+   "survived": 0,
+   "statuses": {
+    "full-suite": "failure",
+    "pr-merge-readiness": "failure",
+    "overlap-check": "success"
+   },
+   "memory_events": "50/50 job high0 max0 oom0"
+  }
  }
 }

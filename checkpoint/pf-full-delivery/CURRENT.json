@@ -6,8 +6,8 @@
   "sha": "185078e42f30c9e9f29ad2858b73fd27fb6ff70a"
  },
  "mandate_id": "OWNER FINAL MANDATE \u2014 chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
- "next_atomic_action": "#585: attendere fine BK #31 (pf_intent p585-t3-185078e42f30, 49 step); pubblicare PR585 BK31 report su #562; poi push unico di 076eca5 (code_patch/pr585: redazione reviewer, test token corto, mutazione td_pb_known_credential_kept, E731) con suite 3800 passed, mutation td 182/182, fsp 7/7; ricertificare nuovo HEAD (BK, Sol/Grok/Codex, thread Codex P1 da risolvere a check settled). Poi PR-C2 (code_patch/prc2: bk_observe.py+test+doc).",
- "previous_checkpoint_sha": "1193f04ba5d10d4b069aec0cc9c31dd6daf3b798",
+ "next_atomic_action": "#585 BK31 FAIL (w1-mutation timed_out 45 min, 457/552, 0 survived; 6398 s; seriale 1 agent). Rapporto FULL_SUITE_PERFORMANCE_REMEDIATION fase 1 su #562 c.6495475360. ATTESA decisione owner: R1 timeout mutation 75 min + R2 priorita' nel push unico #585 (con 076eca5), merge #585 con full-suite FAIL da causa main, R3 spawn=2 VPS (SSH BLOCKED da Claude). Nessun push fino a decisione.",
+ "previous_checkpoint_sha": "b7c4b3b6308add1b01d9d3d5936131a2e07596b3",
  "schema": "pf-current/1",
- "seq": 89
+ "seq": 90
 }
