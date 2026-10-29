@@ -68,6 +68,7 @@ def raw_config(tmp_path: Path) -> dict:
         "build_timeout_seconds": {"overlap": 600, "readiness": 900},
         "http_timeout_seconds": 30,
         "readiness_wait": {"enabled": False, "max_seconds": 7200, "settle_polls": 2, "min_delay_seconds": 120},
+        "full_suite": {"enabled": False, "build_timeout_seconds": 10800},
     }
 
 
@@ -110,10 +111,11 @@ class FakeGitHub:
         url = f"https://api.github.com{path}?{urllib.parse.urlencode(nxt)}"
         return f'<{self.next_link_hook(url) if self.next_link_hook else url}>; rel="next"'
 
-    def put(self, pr, head, *, draft=False, base="main", head_repo=REPO) -> None:
+    def put(self, pr, head, *, draft=False, base="main", head_repo=REPO, ref="feature/pr-branch") -> None:
         self.pulls[pr] = {"number": pr, "state": "open", "draft": draft,
                           "base": {"ref": base, "repo": {"full_name": REPO}},
-                          "head": {"sha": head, "repo": None if head_repo is None else {"full_name": head_repo}}}
+                          "head": {"sha": head, "ref": ref,
+                                   "repo": None if head_repo is None else {"full_name": head_repo}}}
 
     def comment(self, cid, pr, body, *, login=RERUNNER, created="2030-01-01T00:00:00Z", updated=None,
                 user_type="User") -> None:
@@ -174,7 +176,8 @@ class FakeBuildkite:
 
     def __init__(self) -> None:
         self.gh = FakeGitHub()
-        self.builds: dict[str, dict[int, dict]] = {"pr-overlap-guard": {}, "pr-merge-readiness": {}}
+        self.builds: dict[str, dict[int, dict]] = {"pr-overlap-guard": {}, "pr-merge-readiness": {},
+                                                    "pf-dedicated-ci": {}}
         self.artifacts: dict[tuple[str, int], bytes] = {}
         self.requests: list[tuple[str, str, dict, bytes | None]] = []
         self.fail_create: str | None = None
@@ -2314,8 +2317,13 @@ def test_builds_always_run_main_never_the_pr_head(env):
 def test_dispatcher_has_no_web_server_and_no_code_fetching_paths():
     source = (ROOT / "scripts" / "pr_trusted_dispatcher.py").read_text(encoding="utf-8")
     for forbidden in ("http.server", "socketserver", "/contents", "/tarball", "/zipball", "git clone",
-                      "checkout", "listen"):
+                      "checkout"):
         assert forbidden not in source, forbidden
+    # nessun socket in ascolto: la chiamata, non la parola (lo step `w2-telegram-listener` della full-suite la
+    # contiene come nome di un controllo, #562 PR-A)
+    import re
+    for call in (r"\.listen\s*\(", r"\.bind\s*\(", r"\.accept\s*\("):
+        assert not re.search(call, source), call
     assert td._GITHUB_PATHS == (f"/repos/{REPO}/pulls", f"/repos/{REPO}/issues/comments")
 
 
@@ -2649,6 +2657,7 @@ def test_secret_out_of_format_is_refused_without_echo(tmp_path, value):
     ("poll_interval_seconds",), ("build_timeout_seconds",), ("build_timeout_seconds", "readiness"),
     ("http_timeout_seconds",), ("readiness_wait",), ("readiness_wait", "enabled"), ("readiness_wait", "max_seconds"),
     ("readiness_wait", "settle_polls"), ("readiness_wait", "min_delay_seconds"),
+    ("http_timeout_seconds",), ("full_suite",), ("full_suite", "enabled"), ("full_suite", "build_timeout_seconds"),
 ])
 def test_every_missing_mandatory_key_is_not_configured(tmp_path, path):
     raw = raw_config(tmp_path)
@@ -2691,6 +2700,11 @@ def test_every_missing_mandatory_key_is_not_configured(tmp_path, path):
     lambda r: r["readiness_wait"].update(settle_polls=True),
     lambda r: r["readiness_wait"].update(min_delay_seconds=-1),
     lambda r: r["readiness_wait"].update(extra=1),
+    lambda r: r["full_suite"].update(enabled="true"),
+    lambda r: r["full_suite"].update(enabled=1),
+    lambda r: r["full_suite"].update(build_timeout_seconds=599),
+    lambda r: r["full_suite"].update(build_timeout_seconds=21601),
+    lambda r: r["full_suite"].update(pipeline="pickfair-nogui"),
 ])
 def test_invalid_config_values_are_not_configured(tmp_path, mutate):
     raw = raw_config(tmp_path)
@@ -3140,24 +3154,497 @@ def test_paginated_wait_survives_restart_and_a_new_head(wait_env):
     assert old and all(j["state"] == "superseded" for j in old)
 
 
-def test_store_migration_adds_the_wait_columns(tmp_path):
+# --------------------------------------------------------------------------------------------- full-suite (#562 PR-A)
+_gen_spec = importlib.util.spec_from_file_location("pr_full_suite_pipeline",
+                                                   ROOT / "scripts" / "pr_full_suite_pipeline.py")
+fsp = importlib.util.module_from_spec(_gen_spec)
+sys.modules["pr_full_suite_pipeline"] = fsp             # le dataclass del modulo lo cercano in sys.modules
+_gen_spec.loader.exec_module(fsp)
+
+SUITE_PIPE = "pf-dedicated-ci"
+
+
+@pytest.fixture()
+def suite_env(tmp_path):
+    raw = raw_config(tmp_path)
+    raw["full_suite"]["enabled"] = True
+    raw["readiness_wait"].update(enabled=True, max_seconds=10800)   # obbligatoria con la full-suite (#562 P0)
+    cfg = td.validate_config(raw)
+    bk = FakeBuildkite()
+    pub = Publisher()
+    clock = Clock()
+    disp = make_dispatcher(cfg, bk, pub, clock)
+    yield disp, bk, pub, clock
+    disp.store.close()
+
+
+
+
+def test_readiness_wait_shorter_than_the_suite_is_refused(tmp_path):
+    """La readiness attende anche lo status `full-suite`: un'attesa massima piu' corta del timeout della suite la
+    manderebbe in `error` mentre la suite gira ancora. Con entrambe attive la config lo rifiuta."""
+    raw = raw_config(tmp_path)
+    raw["readiness_wait"].update(enabled=True, max_seconds=7200)
+    raw["full_suite"].update(enabled=True, build_timeout_seconds=7201)
+    with pytest.raises(td.ConfigError) as exc:
+        td.validate_config(raw)
+    assert any("readiness_wait.max_seconds" in p and "full_suite" in p for p in exc.value.problems)
+    raw["full_suite"]["build_timeout_seconds"] = 7200
+    assert td.validate_config(raw).full_suite_enabled
+    # full-suite senza attesa della readiness: rifiutata, la readiness partirebbe insieme alla suite (#562 P0)
+    raw["full_suite"]["build_timeout_seconds"] = 10800
+    raw["readiness_wait"]["enabled"] = False
+    with pytest.raises(td.ConfigError) as exc:
+        td.validate_config(raw)
+    assert "readiness_wait.enabled: obbligatoria con full_suite.enabled" in exc.value.problems
+    # attesa senza full-suite: nessun vincolo sul massimo
+    raw["readiness_wait"].update(enabled=True, max_seconds=600)
+    raw["full_suite"]["enabled"] = False
+    assert not td.validate_config(raw).full_suite_enabled
+
+
+def _suite_jobs(keys=None, state="passed", **overrides):
+    """Job script di una build della full-suite (API REST v2): uno per step atteso, piu' lo step di avvio."""
+    jobs = [{"type": "script", "step_key": None, "state": "passed", "name": "pipeline upload da main"}]
+    for key in sorted(td.FULL_SUITE_STEP_KEYS if keys is None else keys):
+        jobs.append({"type": "script", "step_key": key, "state": overrides.get(key, state)})
+    return jobs
+
+
+def _finish_suite(bk, number, state, jobs):
+    bk.builds[SUITE_PIPE][number]["state"] = state
+    bk.builds[SUITE_PIPE][number]["jobs"] = jobs
+
+
+def _suite_final(pub):
+    return [c for c in pub.final() if c[3] == "full-suite"]
+
+
+def test_full_suite_step_keys_are_exactly_the_generator_steps():
+    # il dispatcher (trusted) e il generatore di main devono concordare: una suite che perde uno step non e' PASS
+    assert td.FULL_SUITE_STEP_KEYS == {j.key for j in fsp.JOBS}
+    assert len(td.FULL_SUITE_STEP_KEYS) == len(fsp.JOBS)
+
+
+def test_full_suite_is_off_unless_enabled(env):
+    disp, bk, _, _ = env
+    # nessuna suite nuova; il timeout resta per un job gia' nell'archivio (rollback, Codex su #584)
+    assert disp.cfg.targets == ("overlap", "readiness") and disp.cfg.build_timeout_seconds["full-suite"] == 10800
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    assert not bk.builds[SUITE_PIPE] and {j["guard"] for j in disp.store.recent_jobs()} == {"overlap", "readiness"}
+
+
+def test_full_suite_build_runs_the_exact_pr_head_on_its_branch(suite_env):
+    disp, bk, pub, _ = suite_env
+    assert disp.cfg.targets == ("overlap", "readiness", "full-suite")
+    assert disp.cfg.build_timeout_seconds["full-suite"] == 10800
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    sent = {url.split("/pipelines/")[1].split("/")[0]: json.loads(body) for m, url, _, body in bk.requests
+            if m == "POST"}
+    assert sent[SUITE_PIPE]["commit"] == HEAD and sent[SUITE_PIPE]["branch"] == "feature/x"
+    assert set(sent[SUITE_PIPE]) == {"commit", "branch", "message", "env", "meta_data"}
+    assert sent[SUITE_PIPE]["meta_data"] == {"pf_intent": sent[SUITE_PIPE]["env"]["PF_DELIVERY_ID"],
+                                             "pf_pr": "42"}   # #562 P0
+    assert set(sent[SUITE_PIPE]["env"]) == {"PF_PR_NUMBER", "PF_PR_HEAD_SHA", "PF_PR_BASE_REF", "PF_EVENT",
+                                            "PF_DELIVERY_ID"}
+    # i guard trusted restano su main / HEAD, mai sul codice della PR; la readiness attende la suite (#562 P0)
+    assert sent["pr-overlap-guard"]["commit"] == "HEAD" and sent["pr-overlap-guard"]["branch"] == "main"
+    assert "pr-merge-readiness" not in sent
+    pending = [c for c in pub.calls if c[3] == "full-suite"]
+    assert pending == [(42, HEAD, "pending", "full-suite", f"https://buildkite.com/{ORG}/{SUITE_PIPE}/builds/1",
+                        "build in corso")]
+
+
+def test_full_suite_success_needs_every_expected_step_passed(suite_env):
+    disp, bk, pub, _ = suite_env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    assert _suite_final(pub) == [(42, HEAD, "success", "full-suite", f"https://buildkite.com/{ORG}/{SUITE_PIPE}/builds/1",
+                                  f"PASS ({len(td.FULL_SUITE_STEP_KEYS) + 1} step)")]
+    # nessun artifact chiesto alla lane non fidata: l'esito e' lo stato della build
+    assert not [u for m, u, _, _ in bk.requests if SUITE_PIPE in u and "/artifacts" in u]
+
+
+@pytest.mark.parametrize("case", ["missing_step", "soft_failed", "step_not_passed", "no_jobs", "jobs_not_list",
+                                  "only_bootstrap", "extra_soft_failed", "extra_failed", "expected_broken"])
+def test_full_suite_passed_build_that_is_not_complete_is_error_never_success(suite_env, case):
+    disp, bk, pub, _ = suite_env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    keys = sorted(td.FULL_SUITE_STEP_KEYS)
+    jobs = {
+        "missing_step": _suite_jobs(keys[1:]),
+        "soft_failed": [dict(j, soft_failed=True) if j["step_key"] == keys[0] else j for j in _suite_jobs()],
+        "step_not_passed": _suite_jobs(**{keys[0]: "broken"}),
+        "no_jobs": None,
+        "jobs_not_list": {"x": 1},
+        "only_bootstrap": _suite_jobs([]),
+        "extra_soft_failed": _suite_jobs() + [{"type": "script", "step_key": "x", "state": "passed",
+                                               "soft_failed": True}],
+        "extra_failed": _suite_jobs() + [{"type": "script", "step_key": "x", "state": "failed"}],
+        "expected_broken": _suite_jobs(**{keys[0]: "broken"}),
+    }[case]
+    _finish_suite(bk, 1, "passed", jobs)
+    if jobs is None:
+        del bk.builds[SUITE_PIPE][1]["jobs"]
+    disp.tick()
+    (final,) = _suite_final(pub)
+    assert final[2] == "error", final
+
+
+def test_full_suite_tolerates_conditional_scenario_steps_not_run(suite_env):
+    # pf-dedicated-ci #12 (W1): gli scenari S0-S9 con `if: build.env("SCN") == ...` risultano `broken` in una build passed
+    disp, bk, pub, _ = suite_env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    extra = [{"type": "script", "step_key": f"s{i}", "state": "broken"} for i in range(10)]
+    _finish_suite(bk, 1, "passed", _suite_jobs() + extra + [{"type": "script", "step_key": "y", "state": "skipped"}])
+    disp.tick()
+    assert _suite_final(pub)[0][2] == "success"
+
+
+def test_full_suite_failed_build_is_failure_naming_the_failed_step(suite_env):
+    disp, bk, pub, _ = suite_env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, "failed", _suite_jobs(**{"w1-pr-check": "failed", "w1-mutation": "failed"}))
+    disp.tick()
+    (final,) = _suite_final(pub)
+    assert final[2] == "failure" and final[5] == "FAIL: w1-mutation (+1)"
+
+
+def test_full_suite_retried_step_counts_only_the_last_attempt(suite_env):
+    disp, bk, pub, _ = suite_env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    jobs = _suite_jobs() + [{"type": "script", "step_key": "w1-unit", "state": "failed", "retried": True}]
+    _finish_suite(bk, 1, "passed", jobs)
+    disp.tick()
+    assert _suite_final(pub)[0][2] == "success"
+
+
+@pytest.mark.parametrize("state", ["canceled", "blocked", "skipped", "not_run"])
+def test_full_suite_non_verdict_states_are_error(suite_env, state):
+    disp, bk, pub, _ = suite_env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, state, _suite_jobs())
+    disp.tick()
+    assert _suite_final(pub)[0][2] == "error"
+
+
+@pytest.mark.parametrize("field,value", [("commit", HEAD2), ("branch", "main"), ("branch", "other")])
+def test_full_suite_build_on_another_commit_or_branch_is_refused(suite_env, field, value):
+    disp, bk, pub, _ = suite_env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    bk.builds[SUITE_PIPE][1][field] = value
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    (final,) = _suite_final(pub)
+    assert final[2] == "error" and (SUITE_PIPE, 1) in bk.canceled
+
+
+def test_decide_suite_outcome_refuses_a_stale_commit_even_if_passed():
+    job = {"head_sha": HEAD}
+    build = {"state": "passed", "commit": HEAD2, "jobs": _suite_jobs()}
+    assert td.decide_suite_outcome(build, job)[0] == "error"
+    assert td.decide_suite_outcome(dict(build, commit=HEAD), job)[0] == "success"
+
+
+@pytest.mark.parametrize("ref", [None, "", "-rf", "a..b", "a//b", "x/", "x.lock", "a b", "é", "x" * 201])
+def test_full_suite_without_a_valid_head_ref_creates_no_build(suite_env, ref):
+    disp, bk, pub, _ = suite_env
+    bk.gh.put(42, HEAD, ref=ref)
+    disp.poll()
+    disp.tick()
+    assert not bk.builds[SUITE_PIPE]
+    (final,) = _suite_final(pub)
+    assert final[2] == "error" and "branch" in final[5]
+    # l'overlap non dipende dal ref; la readiness attende la suite dell'intento e non parte su una suite in errore
+    assert len(bk.builds["pr-overlap-guard"]) == 1 and not bk.builds["pr-merge-readiness"]
+
+
+@pytest.mark.parametrize("ref", ["main2", "feature/x", "ccr-764b0316-9r1a1d", "a_b.c-d/e"])
+def test_clean_ref_keeps_ordinary_branch_names(ref):
+    assert td.clean_ref(ref) == ref
+
+
+def test_full_suite_build_is_cancelled_by_a_new_head(suite_env):
+    disp, bk, pub, _ = suite_env
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    bk.gh.put(42, HEAD2)
+    disp.poll()
+    disp.tick()
+    assert (SUITE_PIPE, 1) in bk.canceled
+    assert not [c for c in pub.final() if c[1] == HEAD]                # nessun esito sul vecchio head
+    assert bk.builds[SUITE_PIPE][2]["commit"] == HEAD2
+
+
+def test_full_suite_ambiguous_creation_is_recovered_by_commit(suite_env):
+    disp, bk, pub, _ = suite_env
+    bk.fail_create, bk.create_lands = "transport", True
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    bk.fail_create = None
+    disp.tick()
+    lists = [u for m, u, _, _ in bk.requests if m == "GET" and f"/{SUITE_PIPE}/builds?" in u]
+    by_pr = [u for u in lists if "pf_pr" in urllib.parse.unquote(u)]
+    # finestra e intento sul commit dell'head; il massimo della PR (`pf_pr`) su tutti i suoi branch, mai su `main`
+    assert by_pr and all(f"commit={HEAD}" in u for u in lists if u not in by_pr)
+    assert all("branch=" not in u and "commit=" not in u for u in by_pr) and all("branch=" not in u for u in lists)
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    assert suite["state"] == "dispatched" and suite["build_number"] == 1
+
+
+def test_full_suite_rerun_uses_the_saved_head_ref(suite_env):
+    disp, bk, pub, clock = suite_env
+    bk.gh.put(42, HEAD, ref="feature/rerun")
+    disp.poll()
+    disp.poll()                                    # primo avvio dei rerun: fissa il limite inferiore
+    clock.now += 10
+    bk.gh.comment(7001, 42, f"/pf-trusted-rerun {HEAD}", created=td.iso(clock.now))
+    created = disp.poll()
+    assert any(t.startswith("p42-r7001-") for t in created)
+    disp.tick()
+    posts = [json.loads(b) for m, u, _, b in bk.requests if m == "POST" and f"/{SUITE_PIPE}/" in u]
+    assert posts[-1]["branch"] == "feature/rerun" and posts[-1]["commit"] == HEAD
+
+
+def test_store_migration_adds_wait_and_head_ref_columns_to_an_old_archive(tmp_path):
     import sqlite3
     path = str(tmp_path / "old.sqlite3")
     db = sqlite3.connect(path)
     db.executescript("""
+CREATE TABLE pr_state (pr INTEGER PRIMARY KEY, head_sha TEXT NOT NULL, eligible INTEGER NOT NULL,
+  open INTEGER NOT NULL, missing INTEGER NOT NULL DEFAULT 0, seq INTEGER NOT NULL DEFAULT 0, updated_at REAL NOT NULL);
 CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, delivery_id TEXT NOT NULL, event TEXT NOT NULL,
   pr INTEGER NOT NULL, head_sha TEXT NOT NULL, guard TEXT NOT NULL, state TEXT NOT NULL,
   superseded INTEGER NOT NULL DEFAULT 0, build_number INTEGER, build_url TEXT, outcome TEXT, description TEXT,
   created_at REAL NOT NULL, dispatched_at REAL, updated_at REAL NOT NULL);
+INSERT INTO pr_state VALUES (42, 'aaaa', 1, 1, 0, 3, 1.0);
 """)
     db.commit()
     db.close()
-    store = td.Store(path)
+    store = td.Store(path, targets=("overlap", "readiness", "full-suite"))
     try:
+        assert store._db.execute("SELECT head_ref, seq FROM pr_state WHERE pr = 42").fetchone()[:] == ("", 3)
         cols = {r[1] for r in store._db.execute("PRAGMA table_info(jobs)")}
-        assert {"gate_seen", "gate_stable", "released_at"} <= cols
+        assert {"gate_seen", "gate_stable", "released_at", "head_ref"} <= cols
     finally:
         store.close()
+
+
+def test_store_refuses_unknown_targets(tmp_path):
+    with pytest.raises(ValueError):
+        td.Store(str(tmp_path / "s.sqlite3"), targets=("overlap", "pf-trusted-smoke"))
+    with pytest.raises(ValueError):
+        td.Store(str(tmp_path / "s2.sqlite3"), targets=())
+
+
+# --- #562 P0: readiness prematura. La readiness parte e passa solo con la full-suite DELLO STESSO INTENTO conclusa,
+# esito pubblicato dal dispatcher e lo stesso esito visibile sull'head; l'assenza dello status non e' mai successo.
+
+def _visible(bk, pub, sha=HEAD, drop=()):
+    """Status dell'head come li vedrebbe GitHub: quelli pubblicati dal dispatcher, dal piu' recente, senza `drop`."""
+    bk.gh.statuses[sha] = [_st(c[3], c[2]) for c in reversed(pub.calls) if c[1] == sha and c[3] not in drop]
+
+
+def _suite_wait_start(suite_env):
+    disp, bk, pub, clock = suite_env
+    bk.gh.check_runs[HEAD] = [_run("unit")]
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    bk.finish("pr-overlap-guard", 1, "passed", result("overlap"))
+    disp.tick()
+    return disp, bk, pub, clock
+
+
+def _ticks(disp, clock, bk, pub, n=4, seconds=130, drop=()):
+    for _ in range(n):
+        _visible(bk, pub, drop=drop)
+        _tick(disp, clock, seconds)
+
+
+def test_readiness_never_starts_while_the_suite_status_is_missing_on_github(suite_env):
+    """Check della suite non ancora creato o API in ritardo: tutti gli altri check chiusi non bastano."""
+    disp, bk, pub, clock = _suite_wait_start(suite_env)
+    _ticks(disp, clock, bk, pub, drop=("full-suite",))
+    assert not bk.builds["pr-merge-readiness"] and _readiness(disp)["state"] == "queued"
+
+
+def test_readiness_waits_for_the_running_suite_then_passes_on_the_exact_head(suite_env):
+    disp, bk, pub, clock = _suite_wait_start(suite_env)
+    _ticks(disp, clock, bk, pub)                                    # suite `pending` visibile
+    assert not bk.builds["pr-merge-readiness"]
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    assert _suite_final(pub)[0][2] == "success"
+    _ticks(disp, clock, bk, pub, n=2, seconds=60)
+    assert len(bk.builds["pr-merge-readiness"]) == 1
+    bk.finish("pr-merge-readiness", 1, "passed", result("readiness"))
+    disp.tick()
+    final = [c for c in pub.final() if c[3] == "pr-merge-readiness"]
+    assert [(c[1], c[2]) for c in final] == [(HEAD, "success")]
+
+
+def test_suite_concluded_locally_but_not_visible_keeps_the_readiness_waiting(suite_env):
+    disp, bk, pub, clock = _suite_wait_start(suite_env)
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    bk.gh.statuses[HEAD] = [_st("overlap-check", "success"), _st("full-suite", "pending")]    # lettura vecchia
+    for _ in range(4):
+        _tick(disp, clock, 130)
+    assert not bk.builds["pr-merge-readiness"]
+    bk.gh.statuses[HEAD] = [_st("overlap-check", "success")]                                 # status assente
+    for _ in range(4):
+        _tick(disp, clock, 130)
+    assert not bk.builds["pr-merge-readiness"]
+
+
+def test_suite_success_published_by_someone_else_is_not_evidence(suite_env):
+    """Status `full-suite: success` sull'head mentre la build dell'intento gira: non e' prova, si attende."""
+    disp, bk, pub, clock = _suite_wait_start(suite_env)
+    bk.gh.statuses[HEAD] = [_st("full-suite", "success"), _st("overlap-check", "success")]
+    for _ in range(4):
+        _tick(disp, clock, 130)
+    assert not bk.builds["pr-merge-readiness"]
+
+
+def test_remote_suite_status_disagreeing_with_the_local_outcome_keeps_waiting(suite_env):
+    disp, bk, pub, clock = _suite_wait_start(suite_env)
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    bk.gh.statuses[HEAD] = [_st("full-suite", "failure"), _st("full-suite", "success"), _st("overlap-check", "success")]
+    for _ in range(4):
+        _tick(disp, clock, 130)
+    assert not bk.builds["pr-merge-readiness"]
+
+
+@pytest.mark.parametrize("state,expected", [("failed", "failure"), ("canceled", "error")])
+def test_suite_not_passed_makes_the_readiness_negative_without_a_build(suite_env, state, expected):
+    disp, bk, pub, clock = _suite_wait_start(suite_env)
+    _finish_suite(bk, 1, state, _suite_jobs(state="failed" if state == "failed" else "passed"))
+    disp.tick()
+    assert _suite_final(pub)[0][2] == expected
+    _ticks(disp, clock, bk, pub, n=3, seconds=60)
+    assert not bk.builds["pr-merge-readiness"]
+    final = [c for c in pub.final() if c[3] == "pr-merge-readiness"]
+    assert [c[2] for c in final] == [expected] and "full-suite" in final[0][5]
+
+
+def test_suite_still_running_at_the_wait_limit_is_error_never_pass(suite_env):
+    disp, bk, pub, clock = _suite_wait_start(suite_env)
+    _ticks(disp, clock, bk, pub, n=2)
+    clock.now += disp.cfg.readiness_wait_max_seconds + 1
+    disp.tick()
+    final = [c for c in pub.final() if c[3] == "pr-merge-readiness"]
+    assert [c[2] for c in final] == ["error"] and not bk.builds["pr-merge-readiness"]
+
+
+def test_old_head_suite_success_does_not_release_the_new_head_readiness(suite_env):
+    disp, bk, pub, clock = _suite_wait_start(suite_env)
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()                                                     # suite di HEAD: success
+    bk.gh.check_runs[HEAD2] = [_run("unit")]
+    bk.gh.put(42, HEAD2)
+    disp.poll()
+    disp.tick()
+    bk.finish("pr-overlap-guard", 2, "passed", result("overlap", head=HEAD2))
+    disp.tick()
+    for _ in range(4):
+        _visible(bk, pub, sha=HEAD)
+        _visible(bk, pub, sha=HEAD2)
+        _tick(disp, clock, 130)
+    assert not bk.builds["pr-merge-readiness"]                      # ne' l'head vecchio ne' il nuovo
+    new = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness" and j["head_sha"] == HEAD2]
+    assert [j["state"] for j in new] == ["queued"]
+
+
+def test_restart_during_the_wait_keeps_the_suite_requirement(suite_env, tmp_path):
+    disp, bk, pub, clock = _suite_wait_start(suite_env)
+    _ticks(disp, clock, bk, pub, n=2, drop=("full-suite",))
+    disp.store.close()
+    disp2 = make_dispatcher(disp.cfg, bk, pub, clock)              # stesso archivio su disco
+    for _ in range(4):
+        _visible(bk, pub, drop=("full-suite",))
+        _tick(disp2, clock, 130)
+    assert not bk.builds["pr-merge-readiness"]
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp2.tick()
+    _ticks(disp2, clock, bk, pub, n=2, seconds=60)
+    assert len(bk.builds["pr-merge-readiness"]) == 1
+    disp2.store.close()
+    disp.store = disp2.store                                        # chiusura idempotente del fixture
+
+
+def test_readiness_success_without_a_passed_suite_is_published_as_error(suite_env):
+    """Ultima difesa: anche se un esito `success` della readiness arrivasse senza la suite dell'intento superata
+    (archivio ripristinato, suite rilanciata), lo status pubblicato e' `error`, mai `success`."""
+    disp, bk, pub, clock = _suite_wait_start(suite_env)
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    _ticks(disp, clock, bk, pub, n=3)
+    assert len(bk.builds["pr-merge-readiness"]) == 1
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    disp.store.update_job(suite["id"], clock.now, outcome="error")
+    bk.finish("pr-merge-readiness", 1, "passed", result("readiness"))
+    disp.tick()
+    final = [c for c in pub.final() if c[3] == "pr-merge-readiness"]
+    assert [c[2] for c in final] == ["error"] and "full-suite" in final[0][5]
+
+
+def test_suite_verdict_without_the_intent_suite_job_waits(suite_env):
+    disp, bk, pub, clock = _suite_wait_start(suite_env)
+    job = _readiness(disp)
+    assert disp._suite_verdict({**job, "delivery_id": "p42-t99-" + HEAD[:12]}, []) == (
+        "wait", "full-suite dell'intento non registrata")
+
+
+@pytest.mark.parametrize("fields,reason", [
+    ({"superseded": 1}, "full-suite dell'intento sostituita"),
+    ({"state": "publish_failed", "final_published": 0}, "full-suite in corso"),
+    ({"outcome": "dry_run"}, "full-suite con esito dry_run"),
+])
+def test_suite_verdict_waits_on_a_suite_that_is_not_a_published_verdict(suite_env, fields, reason):
+    disp, bk, pub, clock = _suite_wait_start(suite_env)
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    assert disp._suite_verdict(_readiness(disp), [_st("full-suite", "success")]) == (
+        "success", "full-suite success sull'head")
+    with disp.store._lock:                       # stato forzato: campi che `update_job` non espone
+        disp.store._db.execute(f"UPDATE jobs SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?",
+                               (*fields.values(), suite["id"]))
+    assert disp._suite_verdict(_readiness(disp), [_st("full-suite", "success")]) == ("wait", reason)
+
+
+@pytest.mark.parametrize("value", ["true", 1, 0, None])
+def test_full_suite_enabled_must_be_an_explicit_boolean_even_with_the_wait_on(tmp_path, value):
+    """Il booleano esplicito e' il suo controllo, non un effetto collaterale dell'obbligo di attesa (#562 P0)."""
+    raw = raw_config(tmp_path)
+    raw["readiness_wait"].update(enabled=True, max_seconds=10800)
+    raw["full_suite"]["enabled"] = value
+    with pytest.raises(td.ConfigError) as exc:
+        td.validate_config(raw)
+    assert "full_suite.enabled: booleano true/false" in exc.value.problems
 
 
 # --------------------------------------------------------------- recovery da snapshot: deduplicazione remota (P0)
@@ -3182,7 +3669,7 @@ def _restore(disp, path):
     src.backup(dst)
     dst.close()
     src.close()
-    disp.store = td.Store(disp.cfg.state_db)
+    disp.store = td.Store(disp.cfg.state_db, targets=disp.cfg.targets)   # come all'avvio (`main`)
 
 
 def _consume_rerun(disp, bk, clock, cid=9101, finish=True):
@@ -4141,3 +4628,229 @@ def test_restore_only_brings_back_the_status_of_the_newest_build(snap_env):
     disp.poll()
     disp.tick()
     assert not [c for c in pub.calls[calls:] if c[2] == "success"], "finale vecchio ripristinato sopra la build 3"
+
+
+def test_full_suite_intent_lookup_is_scoped_to_the_pr_commit_not_main(suite_env):
+    """#562 P0 + PR-A: la build della suite e' sul branch della PR, quindi la ricerca per intento va per commit
+    dell'head (come `list_builds`); su `main` non la troverebbe mai e la deduplicazione remota sarebbe cieca."""
+    disp, bk, pub, clock = suite_env
+    bk.fail_create, bk.create_lands = "transport", True
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    bk.fail_create = None
+    disp.tick()
+    queries = [urllib.parse.parse_qs(urllib.parse.urlsplit(u).query) for m, u, _, _ in bk.requests
+               if m == "GET" and f"/pipelines/{SUITE_PIPE}/builds?" in u and "pf_intent" in urllib.parse.unquote(u)]
+    assert queries and all(q.get("commit") == [HEAD] and "branch" not in q for q in queries)
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    assert suite["state"] == "dispatched" and len(bk.builds[SUITE_PIPE]) == 1
+
+
+# --- PR-A sopra il P0 di #583: il recupero dopo uno snapshot vale anche per la full-suite (pipeline e contesto della
+# suite, non quelli dei guard trusted; massimo della PR sui branch della PR, non su `main`).
+
+def test_full_suite_restored_snapshot_recognizes_the_delivered_suite_outcome(suite_env, tmp_path):
+    """Archivio ripristinato dopo una suite conclusa e consegnata: la build si ritrova per intento sul commit, la
+    consegna si correla con lo status `full-suite` della pipeline della suite. Nessuna build nuova, nessun esito
+    ripubblicato, job `recovered`."""
+    disp, bk, pub, clock = suite_env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)                                          # prima della transizione
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    assert len(_suite_final(pub)) == 1
+    _github_sees(bk, pub)
+    posts, finals = len(bk.builds[SUITE_PIPE]), len(_suite_final(pub))
+    clock.now += 600                                               # fuori dalla finestra del nuovo job
+    _restore(disp, snap)
+    for _ in range(3):
+        disp.poll()
+        disp.tick()
+    assert len(bk.builds[SUITE_PIPE]) == posts, "suite doppia dopo il ripristino dello snapshot"
+    assert len(_suite_final(pub)) == finals, "esito della suite ripubblicato"
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"]
+    # esito consegnato da questa stessa build conservato, non ripubblicato (Codex su #584)
+    assert suite[0]["outcome"] == "success" and suite[0]["build_number"] == 1 and suite[0]["final_published"]
+
+
+def test_full_suite_uncertain_recovery_publishes_pending_on_the_suite_context(suite_env):
+    """Elenco per intento illeggibile: nessuna build della suite e `pending` subito sul contesto `full-suite` con
+    l'URL della pipeline della suite, mai su quello di un guard trusted."""
+    disp, bk, pub, _ = suite_env
+    bk.fail_list_intent = True
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    assert not bk.builds[SUITE_PIPE]
+    pend = [c for c in pub.calls if c[3] == "full-suite"]
+    assert pend and pend[-1][2] == "pending" and pend[-1][4] == f"https://buildkite.com/{ORG}/{SUITE_PIPE}"
+
+
+@pytest.mark.parametrize("state,verdict", [("passed", "success"), ("failed", "failure")])
+def test_full_suite_recovered_after_a_snapshot_keeps_the_delivered_verdict_for_readiness(suite_env, tmp_path,
+                                                                                         state, verdict):
+    """Codex P2 su #584: suite conclusa e consegnata, poi archivio ripristinato. Il job ritrovato non ripubblica
+    nulla, ma conserva l'esito consegnato da quella stessa build: la readiness dello stesso intento lo consuma
+    (PASS o negativa) invece di attendere fino all'`error`."""
+    disp, bk, pub, clock = suite_env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, state, _suite_jobs(**({"w1-pr-check": "failed"} if state == "failed" else {})))
+    disp.tick()
+    _github_sees(bk, pub)
+    finals = len(_suite_final(pub))
+    clock.now += 600
+    _restore(disp, snap)
+    disp.poll()
+    disp.tick()
+    assert len(_suite_final(pub)) == finals and len(bk.builds[SUITE_PIPE]) == 1
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    readiness = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+    assert suite["state"] == "done" and suite["final_published"] and suite["build_number"] == 1
+    assert disp._suite_verdict(readiness, bk.gh.statuses[HEAD])[0] == verdict
+
+
+def test_full_suite_recovered_when_a_newer_suite_build_owns_the_status_is_not_a_verdict(suite_env, tmp_path):
+    """L'esito si conserva solo se l'ultimo status `full-suite` e' proprio della build ritrovata: uno status di
+    un'altra build (piu' recente) non vale come verdetto della suite di questo intento."""
+    disp, bk, pub, clock = suite_env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    _github_sees(bk, pub)
+    bk.gh.statuses[HEAD].insert(0, {"context": "full-suite", "state": "success", "description": "PASS",
+                                    "target_url": f"https://buildkite.com/{ORG}/{SUITE_PIPE}/builds/7"})
+    clock.now += 600
+    _restore(disp, snap)
+    disp.poll()
+    disp.tick()
+    readiness = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+    assert disp._suite_verdict(readiness, bk.gh.statuses[HEAD])[0] == "wait"
+
+
+def test_disabling_the_suite_keeps_the_timeout_of_a_persisted_suite_job(suite_env, tmp_path):
+    """Codex P2 su #584 (rollback `full_suite.enabled: false`): un job della suite gia' nell'archivio continua fino
+    all'esito con il proprio timeout; nessun `KeyError` sul timeout, nessuna nuova suite."""
+    disp, bk, pub, clock = suite_env
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    assert [j["state"] for j in disp.store.recent_jobs() if j["guard"] == "full-suite"] == ["dispatched"]
+    raw = raw_config(tmp_path)
+    raw["state_db"] = disp.cfg.state_db
+    raw["full_suite"]["enabled"] = False
+    cfg = td.validate_config(raw)
+    assert "full-suite" not in cfg.targets and cfg.build_timeout_seconds["full-suite"] == raw["full_suite"][
+        "build_timeout_seconds"]
+    disp.store.close()
+    off = make_dispatcher(cfg, bk, pub, clock)
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    off.tick()
+    assert _suite_final(pub) and _suite_final(pub)[-1][2] == "success"
+    clock.now += 99999
+    off.poll()
+    off.tick()                                                     # oltre ogni timeout: nessuna eccezione
+    off.store.close()
+    disp.store = td.Store(cfg.state_db, targets=cfg.targets)
+
+
+def test_full_suite_recovered_verdict_comes_from_the_build_not_from_a_forged_status(suite_env, tmp_path):
+    """Sol su #584 (4f6147c): suite fallita, poi uno `success` pubblicato da terzi con l'URL della stessa build e
+    archivio ripristinato. Il verdetto si ricalcola dagli step della build (failure): lo status falso non diventa
+    mai un PASS per la readiness, e non vale nemmeno come consegna (resta `recovered`: attesa, poi `error`)."""
+    disp, bk, pub, clock = suite_env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, "failed", _suite_jobs(**{"w1-pr-check": "failed"}))
+    disp.tick()
+    _github_sees(bk, pub)
+    bk.gh.statuses[HEAD].insert(0, {"context": "full-suite", "state": "success", "description": "PASS",
+                                    "target_url": f"https://buildkite.com/{ORG}/{SUITE_PIPE}/builds/1"})
+    clock.now += 600
+    _restore(disp, snap)
+    disp.poll()
+    disp.tick()
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    readiness = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+    assert suite["outcome"] == "recovered"                         # consegna non coerente col verdetto ricalcolato
+    assert disp._suite_verdict(readiness, bk.gh.statuses[HEAD])[0] == "wait"
+
+
+def test_full_suite_recovery_retries_after_a_transient_read_error(suite_env, tmp_path):
+    """Sol su #584 (3bc6bd8): un errore transitorio nel rileggere la build ritrovata non chiude il job `recovered`
+    per sempre (la readiness andrebbe in `error` con una suite verde): il job resta ritentabile, nessuna build nuova,
+    e al giro dopo conserva l'esito consegnato."""
+    disp, bk, pub, clock = suite_env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    _github_sees(bk, pub)
+    finals = len(_suite_final(pub))
+    clock.now += 600
+    _restore(disp, snap)
+    disp.poll()
+    bk.fail_get = True                                             # lettura della build ritrovata: errore di rete
+    disp.tick()
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    assert suite["state"] != "done", "recupero chiuso su un errore transitorio"
+    bk.fail_get = False
+    _github_sees(bk, pub)
+    disp.tick()
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    readiness = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+    assert suite["state"] == "done" and suite["outcome"] == "success" and len(bk.builds[SUITE_PIPE]) == 1
+    # il `pending` di recupero ha coperto il finale: si ripristina lo STESSO status della build 1, nessun verdetto nuovo
+    restored = _suite_final(pub)[finals:]
+    assert all(c[2] == "success" and c[4].endswith(f"/{SUITE_PIPE}/builds/1") for c in restored) and len(restored) <= 1
+    _github_sees(bk, pub)                                          # cio' che GitHub mostra dopo il ripristino
+    assert disp._suite_verdict(readiness, bk.gh.statuses[HEAD])[0] == "success"
+
+
+def test_full_suite_recovery_never_covers_a_newer_suite_outcome_with_pending(suite_env, tmp_path):
+    """Sol su #584 (3da2fe7): l'ultimo status `full-suite` e' di una build piu' recente. La build ritrovata e'
+    superata: si chiude `recovered` senza rileggerla, e un errore di lettura non pubblica mai un `pending` sopra
+    l'esito della suite successiva."""
+    disp, bk, pub, clock = suite_env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    _github_sees(bk, pub)
+    bk.gh.statuses[HEAD].insert(0, {"context": "full-suite", "state": "success", "description": "PASS",
+                                    "target_url": f"https://buildkite.com/{ORG}/{SUITE_PIPE}/builds/7"})
+    calls = len(pub.calls)
+    clock.now += 600
+    _restore(disp, snap)
+    disp.poll()
+    bk.fail_get = True                                             # la build vecchia non si legge
+    disp.tick()
+    assert not [c for c in pub.calls[calls:] if c[3] == "full-suite"], "status della suite ripubblicato o coperto"
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    assert suite["state"] == "done" and suite["outcome"] == "recovered"
