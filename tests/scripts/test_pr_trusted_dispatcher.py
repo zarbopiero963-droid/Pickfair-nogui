@@ -183,6 +183,7 @@ class FakeBuildkite:
         self.fail_create: str | None = None
         self.create_lands = False          # con fail_create: la build viene comunque creata (esito ambiguo)
         self.fail_get = False
+        self.reject_body = None
         self.fail_list = False
         self.canceled: list[tuple[str, int]] = []
         self.redirect_host = S3
@@ -231,7 +232,7 @@ class FakeBuildkite:
                 if self.fail_create == "html502":
                     return 502, {"Content-Type": "text/html"}, b"<html>502 Bad Gateway</html>"
                 code = 500 if self.fail_create == "http500" else 422
-                return code, {}, b'{"message":"no"}'
+                return code, {}, (self.reject_body or b'{"message":"no"}')
             if self.on_create:
                 self.on_create(pipeline, payload)
             return 201, {}, json.dumps(self._new_build(pipeline, payload)).encode()
@@ -542,6 +543,49 @@ def test_rejected_build_creation_publishes_error(env):
     disp.tick()
     assert sorted(c[2] for c in pub.final()) == ["error", "error"]
     assert not bk.builds["pr-overlap-guard"]
+
+
+def test_rejected_build_creation_reports_the_buildkite_reason(env, capsys):
+    """Certificazione #585: un 422 di Buildkite senza motivo non e' diagnosticabile ne' dallo status ne' dal journal.
+    Il `message` della risposta (ripulito e troncato) entra nell'errore; resta un rifiuto definito, nessuna build."""
+    disp, bk, pub, _ = env
+    bk.fail_create = "http422"
+    send(disp, payload())
+    disp.tick()
+    finals = pub.final()
+    assert finals and all(c[2] == "error" and "HTTP 422: no" in c[5] for c in finals)
+    assert "HTTP 422: no" in capsys.readouterr().err
+    assert not bk.builds["pr-overlap-guard"]
+
+
+def test_rejection_reason_is_bounded_and_ignored_when_not_a_string():
+    long_text = "pipeline non ammessa " * 30
+    assert td.rejection_reason({"message": long_text}) == long_text.strip()[:td.REJECTION_REASON_MAX]
+    assert len(td.rejection_reason({"message": long_text})) == td.REJECTION_REASON_MAX
+    assert td.rejection_reason({"message": "riga\nnuova\tqui"}) == "riga nuova qui"
+    for data in (None, [], {"message": 5}, {"errors": ["a"]}, {"message": "   "}):
+        assert td.rejection_reason(data) == ""
+
+
+def test_rejection_reason_never_carries_a_secret():
+    """Owner su #585: il motivo di Buildkite va nello status e nel journal solo ripulito. Il token del dispatcher e
+    ogni stringa simile a un segreto (lunga sequenza senza spazi) non escono mai."""
+    secret = "bkua_" + "a1" * 20
+    out = td.rejection_reason({"message": f"token {secret} non valido per la pipeline pf-dedicated-ci"},
+                              secrets=(secret,))
+    assert secret not in out and "a1a1a1a1" not in out and "[redatto]" in out and "pf-dedicated-ci" in out
+    out = td.rejection_reason({"message": "Authorization: Bearer ghp_" + "Z" * 36})
+    assert "ZZZZZZZZ" not in out and "[redatto]" in out
+
+
+def test_rejected_creation_status_and_log_never_echo_the_buildkite_token(env, capsys):
+    disp, bk, pub, _ = env
+    bk.fail_create = "http422"
+    bk.reject_body = json.dumps({"message": f"credenziale {BK_CRED} rifiutata"}).encode()
+    send(disp, payload())
+    disp.tick()
+    assert pub.final() and not any(BK_CRED in str(a) for c in pub.calls for a in c)
+    assert BK_CRED not in capsys.readouterr().err
 
 
 def test_ambiguous_creation_adopts_the_build_that_landed(env):

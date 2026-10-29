@@ -10,6 +10,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 - **#562 PR-B (M2) — workflow Linux fuori dalle PR nella full-suite (`scripts/pr_full_suite_pipeline.py`):**
+  - test `test_lockfile_removed_in_the_pr_fails_against_main`: `FETCH_HEAD` scritto come lo scrive `git fetch` (git ≥ 2.45
+    rifiuta `update-ref` sugli pseudoref; falliva sui runner con git 2.56);
+  - `w5-lockfile-fresh` fissa l'header canonico (`CUSTOM_COMPILE_COMMAND`) come il workflow Actions: senza, il lock
+    rigenerato porta il percorso temporaneo e risulta sempre STALE (Sol e Codex su #585);
+  - rifiuto della creazione di una build (4xx di Buildkite): il `message` della risposta, su una riga e troncato, entra
+    nello status e nel journal (`scripts/pr_trusted_dispatcher.py`), redatto (token e stringhe simili a segreti ⇒ `[redatto]`),
+    per diagnosticare senza VPS il 422 visto su #585;
   - `w5-lockfile-fresh` (generate-linux-lockfile): lock hash ancora valido, e lock rimosso nella PR ⇒ FAIL;
   - `w5-build-linux-appimage` (build-linux): eseguibili PyInstaller e AppImage dal lock `--require-hashes`, senza
     aggiornare pip; appimagetool solo se preinstallato con sha256; release in **DRY-RUN** (asset e `SHA256SUMS`

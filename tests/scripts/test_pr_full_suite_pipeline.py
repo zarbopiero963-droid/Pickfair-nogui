@@ -308,7 +308,10 @@ def test_lockfile_removed_in_the_pr_fails_against_main(tmp_path):
     (tmp_path / "requirements-build-linux.lock").write_text("x==1 --hash=sha256:00\n")
     run("add", ".")
     run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "main")
-    run("update-ref", "FETCH_HEAD", "HEAD")
+    # FETCH_HEAD come lo scrive `git fetch` (file in .git): git >= 2.45 rifiuta `update-ref` sugli pseudoref
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True,
+                         text=True).stdout.strip()
+    (tmp_path / ".git" / "FETCH_HEAD").write_text(f"{sha}\t\tbranch 'main' of origin\n")
     assert _bash(guard, tmp_path).returncode == 0                   # lock presente: nessun errore
     (tmp_path / "requirements-build-linux.lock").unlink()
     res = _bash(guard, tmp_path)
@@ -339,3 +342,20 @@ def test_dry_run_release_requires_exactly_both_assets(tmp_path, assets, ok):
     res = _bash("\n".join(cmds[start:]), tmp_path)
     assert (res.returncode == 0) is ok, res.stdout + res.stderr
     assert (out / "SHA256SUMS").exists() is ok
+
+
+def test_lockfile_job_pins_the_canonical_header_like_the_workflow():
+    """Sol e Codex su #585: senza `CUSTOM_COMPILE_COMMAND` pip-compile scrive nell'header il percorso temporaneo
+    dell'output, e il diff con il lock committato fallisce anche con dipendenze invariate. Lo step usa lo stesso
+    comando canonico del workflow Actions, che e' anche la riga d'header del lock committato."""
+    wf_env = _workflow("generate-linux-lockfile")
+    canonical = next(step["env"]["CUSTOM_COMPILE_COMMAND"] for job in wf_env["jobs"].values()
+                     for step in job["steps"] if isinstance(step.get("env"), dict)
+                     and "CUSTOM_COMPILE_COMMAND" in step["env"])
+    cmd = _commands("w5-lockfile-fresh")
+    compile_line = next(c for c in _job("w5-lockfile-fresh").commands if "pip-compile " in c and "--output-file" in c)
+    assert f"CUSTOM_COMPILE_COMMAND='{canonical}'" in compile_line, compile_line
+    assert "pip-compile" in cmd
+    lock = ROOT / "requirements-build-linux.lock"
+    if lock.exists():
+        assert f"#    {canonical}\n" in lock.read_text(encoding="utf-8")

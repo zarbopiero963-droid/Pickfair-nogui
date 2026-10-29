@@ -6618,6 +6618,66 @@
         "tests/scripts/test_pr_full_suite_pipeline.py"
       ],
       "rationale": "PF-562 PR-B (M2): appimagetool usato senza verifica dello sha256."
+    },
+    {
+      "id": "td_pb_reject_reason_dropped",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            reason = rejection_reason(data, secrets=(self._bearer,))\n",
+      "mutated": "            reason = \"\"\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-B (certificazione #585): motivo del 4xx di Buildkite scartato, rifiuto non diagnosticabile da status e journal."
+    },
+    {
+      "id": "td_pb_fail_not_logged",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        log(f\"job {job['id']}: {state}: {description!r}\")",
+      "mutated": "        pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-B: motivo dell'errore del job non registrato nel journal."
+    },
+    {
+      "id": "td_pb_reason_unbounded",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    return _SECRET_LIKE_RE.sub(\"[redatto]\", \" \".join(message.split()))[:REJECTION_REASON_MAX]",
+      "mutated": "    return _SECRET_LIKE_RE.sub(\"[redatto]\", \" \".join(message.split()))",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-B: motivo di Buildkite non troncato."
+    },
+    {
+      "id": "fsp_m2_lock_header_not_canonical",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            \"CUSTOM_COMPILE_COMMAND='pip-compile --generate-hashes --allow-unsafe --no-annotate --output-file \"\n            \"requirements-build-linux.lock requirements-build-linux.in' \"\n",
+      "mutated": "",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "PF-562 PR-B (Sol e Codex su #585): header del lock rigenerato con il percorso temporaneo, diff sempre STALE e full-suite bloccata su PR valide."
+    },
+    {
+      "id": "td_pb_reason_not_redacted",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    return _SECRET_LIKE_RE.sub(\"[redatto]\", \" \".join(message.split()))[:REJECTION_REASON_MAX]",
+      "mutated": "    return \" \".join(message.split())[:REJECTION_REASON_MAX]",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-B (owner su #585): motivo di Buildkite pubblicato senza redazione: un token o segreto nella risposta finirebbe in status e journal."
     }
   ]
 }

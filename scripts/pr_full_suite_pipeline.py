@@ -300,6 +300,10 @@ def _jobs() -> tuple:
             'python -m pip install -q "pip==24.3.1" "pip-tools==7.4.1"',
             'FRESH="$TMPDIR/fresh-linux-$BUILDKITE_JOB_ID.lock"',
             'if [ -f requirements-build-linux.lock ]; then cp requirements-build-linux.lock "$FRESH"; fi',
+            # header canonico come nel workflow Actions: senza, pip-compile scrive il percorso temporaneo
+            # dell'output e il diff con il lock committato fallisce sempre (Sol e Codex su #585)
+            "CUSTOM_COMPILE_COMMAND='pip-compile --generate-hashes --allow-unsafe --no-annotate --output-file "
+            "requirements-build-linux.lock requirements-build-linux.in' "
             'pip-compile --generate-hashes --allow-unsafe --no-annotate --output-file "$FRESH" '
             "requirements-build-linux.in",
             'cp "$FRESH" bk-out/requirements-build-linux.fresh.lock',

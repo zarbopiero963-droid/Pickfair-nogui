@@ -351,6 +351,8 @@ uno step né sostituirlo con `exit 0`, perché sia il generatore sia `FULL_SUITE
 - pubblicazione degli status di Buildkite verso GitHub spenta: lo status lo pubblica solo il publisher;
 - il publisher deve ammettere il contesto `full-suite`.
 
+**Rifiuto della creazione.** Un 4xx di Buildkite è un rifiuto definito (nessuna build, `error`). Il campo `message` della risposta, su una riga e troncato a 120 caratteri, entra nella descrizione dello status e nel journal (`job N: error: ...`) dopo la redazione: il token del dispatcher e ogni sequenza senza spazi di almeno 24 caratteri (forma di un token) diventano `[redatto]`, così il motivo (es. pipeline o branch non ammessi) è diagnosticabile senza accesso alla VPS (certificazione #585). `rejection_reason`, `Dispatcher._fail`.
+
 **Limiti dichiarati.**
 - Il codice della PR esegue i propri test: una PR che modifica un test può farlo passare. È lo stesso limite di
   Actions `pull_request`, coperto da review e merge gate.
