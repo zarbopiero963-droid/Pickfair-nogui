@@ -6156,8 +6156,8 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "                if job[\"state\"] == \"creating\" and self.store.update_job(job[\"id\"], self.clock(),",
-      "mutated": "                if False and self.store.update_job(job[\"id\"], self.clock(),",
+      "original": "        if job[\"state\"] == \"creating\" and self.store.update_job(job[\"id\"], self.clock(),",
+      "mutated": "        if False and self.store.update_job(job[\"id\"], self.clock(),",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
@@ -6396,8 +6396,8 @@
       "module": "scripts.pr_trusted_dispatcher",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_trusted_dispatcher.py",
-      "original": "                if job[\"state\"] == \"queued\" and not job.get(\"pending_published\"):\n                    # `pending` senza build, ritentato finche' non arriva",
-      "mutated": "                if False:\n                    # `pending` senza build, ritentato finche' non arriva",
+      "original": "        if job[\"state\"] == \"queued\" and not job.get(\"pending_published\"):\n            # `pending` senza build, ritentato finche' non arriva",
+      "mutated": "        if False:\n            # `pending` senza build, ritentato finche' non arriva",
       "tests": [
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
@@ -6522,6 +6522,18 @@
         "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
       "rationale": "PF-562 PR-A (Sol su #584): verdetto ricalcolato accettato anche se lo status consegnato da quella build dice altro."
+    },
+    {
+      "id": "td_pa_suite_recovery_read_error_closes",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                    return self._recovery_pending(job)\n",
+      "mutated": "                    computed, seen = None, None\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-A (Sol su #584): errore transitorio nel rileggere la suite ritrovata chiude il job recovered per sempre (readiness in error con suite verde)."
     }
   ]
 }

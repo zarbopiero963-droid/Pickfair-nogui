@@ -4792,3 +4792,38 @@ def test_full_suite_recovered_verdict_comes_from_the_build_not_from_a_forged_sta
     readiness = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
     assert suite["outcome"] == "recovered"                         # consegna non coerente col verdetto ricalcolato
     assert disp._suite_verdict(readiness, bk.gh.statuses[HEAD])[0] == "wait"
+
+
+def test_full_suite_recovery_retries_after_a_transient_read_error(suite_env, tmp_path):
+    """Sol su #584 (3bc6bd8): un errore transitorio nel rileggere la build ritrovata non chiude il job `recovered`
+    per sempre (la readiness andrebbe in `error` con una suite verde): il job resta ritentabile, nessuna build nuova,
+    e al giro dopo conserva l'esito consegnato."""
+    disp, bk, pub, clock = suite_env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD, ref="feature/x")
+    disp.poll()
+    disp.tick()
+    _finish_suite(bk, 1, "passed", _suite_jobs())
+    disp.tick()
+    _github_sees(bk, pub)
+    finals = len(_suite_final(pub))
+    clock.now += 600
+    _restore(disp, snap)
+    disp.poll()
+    bk.fail_get = True                                             # lettura della build ritrovata: errore di rete
+    disp.tick()
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    assert suite["state"] != "done", "recupero chiuso su un errore transitorio"
+    bk.fail_get = False
+    _github_sees(bk, pub)
+    disp.tick()
+    suite = [j for j in disp.store.recent_jobs() if j["guard"] == "full-suite"][0]
+    readiness = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+    assert suite["state"] == "done" and suite["outcome"] == "success" and len(bk.builds[SUITE_PIPE]) == 1
+    # il `pending` di recupero ha coperto il finale: si ripristina lo STESSO status della build 1, nessun verdetto nuovo
+    restored = _suite_final(pub)[finals:]
+    assert all(c[2] == "success" and c[4].endswith(f"/{SUITE_PIPE}/builds/1") for c in restored) and len(restored) <= 1
+    _github_sees(bk, pub)                                          # cio' che GitHub mostra dopo il ripristino
+    assert disp._suite_verdict(readiness, bk.gh.statuses[HEAD])[0] == "success"

@@ -1968,20 +1968,7 @@ class Dispatcher:
                 return self._fail(job, "error", "build precedente dell'intento non corrisponde alla richiesta")
             delivery = self._delivery(job, keep["number"])
             if delivery is None:
-                # status dell'head illeggibili: si torna `queued` e si riprova (entro la finestra), mai `creating`,
-                # che al giro dopo adotterebbe la build e ripubblicherebbe senza la verifica di consegna
-                if job["state"] == "creating" and self.store.update_job(job["id"], self.clock(),
-                                                                         expected_state="creating", state="queued"):
-                    job["state"] = "queued"
-                if job["state"] == "queued" and not job.get("pending_published"):
-                    # `pending` senza build, ritentato finche' non arriva: un vecchio esito sullo stesso SHA non resta
-                    # visibile mentre la verifica di consegna e' sospesa (Codex P1 su #583). Senza numero di build non
-                    # vale mai come consegna in `_delivery`
-                    url = f"{BUILDKITE_WEB}/{self.cfg.organization}/{PIPELINES[job['guard']]['pipeline']}"
-                    if self.publish(job["pr"], job["head_sha"], "pending", PIPELINES[job["guard"]]["context"], url,
-                                    "esito della build ritrovata in verifica") == 0:
-                        self._set(job, pending_published=1)
-                return None
+                return self._recovery_pending(job)
             publish, restore = delivery
             if publish:
                 # build conclusa ma esito mai consegnato (crash fra la fine della build e la pubblicazione, Sol su
@@ -2005,8 +1992,16 @@ class Dispatcher:
                 # verdetto e' stato consegnato da QUESTA build (ultimo status `full-suite`, stesso numero, stesso
                 # stato). Uno status di terzi o di un'altra build non e' mai un verdetto (Sol su #584): resta
                 # `recovered`, attesa e poi `error`
-                seen = restore if restore is not None else self._latest_built_status(job)
-                computed = self._recovered_suite_verdict(job, keep["number"])
+                try:
+                    seen = restore if restore is not None else self._latest_built_status(job)
+                    computed = self._recovered_suite_verdict(job, keep["number"])
+                except (ApiError, TransportError, CredentialError, RateLimited) as exc:
+                    # errore di lettura transitorio: il job resta ritentabile, mai chiuso `recovered` per sempre (la
+                    # readiness andrebbe in `error` con una suite verde, Sol su #584); oltre la finestra, `error`
+                    if self.clock() - self._started(job) > self.cfg.build_timeout_seconds[job["guard"]]:
+                        return self._fail(job, "error", f"RECOVERY_UNCERTAIN: suite ritrovata non verificabile ({exc})")
+                    log(f"job {job['id']}: suite ritrovata non verificabile ({exc}): riprovo")
+                    return self._recovery_pending(job)
                 if (computed is not None and isinstance(seen, dict)
                         and self._status_build(job, seen) == keep["number"] and seen.get("state") == computed):
                     outcome = computed
@@ -2024,26 +2019,36 @@ class Dispatcher:
             return number if number > 0 else None
         return None
 
+    def _recovery_pending(self, job: dict) -> None:
+        """Verifica della build ritrovata sospesa (status o build illeggibili): si torna `queued` e si riprova entro la
+        finestra, mai `creating`, che al giro dopo adotterebbe la build e ripubblicherebbe senza la verifica."""
+        if job["state"] == "creating" and self.store.update_job(job["id"], self.clock(),
+                                                                 expected_state="creating", state="queued"):
+            job["state"] = "queued"
+        if job["state"] == "queued" and not job.get("pending_published"):
+            # `pending` senza build, ritentato finche' non arriva: un vecchio esito sullo stesso SHA non resta
+            # visibile mentre la verifica di consegna e' sospesa (Codex P1 su #583). Senza numero di build non
+            # vale mai come consegna in `_delivery`
+            url = f"{BUILDKITE_WEB}/{self.cfg.organization}/{PIPELINES[job['guard']]['pipeline']}"
+            if self.publish(job["pr"], job["head_sha"], "pending", PIPELINES[job["guard"]]["context"], url,
+                            "esito della build ritrovata in verifica") == 0:
+                self._set(job, pending_published=1)
+        return None
+
     def _recovered_suite_verdict(self, job: dict, number: int) -> Optional[str]:
         """Verdetto della build della suite ritrovata, ricalcolato dalla build stessa (`decide_suite_outcome`); None
-        se la build non e' leggibile o non corrisponde alla richiesta."""
-        try:
-            build = self.bk.get_build(SUITE, number)
-        except (ApiError, TransportError):
-            return None
+        se la build non corrisponde alla richiesta. Build illeggibile => eccezione: il chiamante riprova."""
+        build = self.bk.get_build(SUITE, number)
         if not build_matches_job(build, SUITE, job, self.cfg.organization):
             return None
         return decide_suite_outcome(build, job)[0]
 
     def _latest_built_status(self, job: dict) -> Optional[dict]:
-        """Ultimo status del contesto sull'head che punta a una build della pipeline (dal piu' recente); None se assente
-        o illeggibile."""
-        try:
-            statuses = self.gh.statuses(job["head_sha"])
-        except (ApiError, TransportError, CredentialError, RateLimited):
-            return None
+        """Ultimo status del contesto sull'head che punta a una build della pipeline (dal piu' recente); None se
+        assente. Status illeggibili => eccezione: il chiamante riprova."""
+        statuses = self.gh.statuses(job["head_sha"])
         if not isinstance(statuses, list):
-            return None
+            raise ApiError("status fuori formato")
         context = PIPELINES[job["guard"]]["context"]
         return next((st for st in statuses if isinstance(st, dict) and st.get("context") == context
                      and self._status_build(job, st) is not None), None)
