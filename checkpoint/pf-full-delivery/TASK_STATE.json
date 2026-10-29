@@ -63,7 +63,7 @@
  ],
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "mandate_id": "OWNER FINAL MANDATE \u2014 chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
- "next_atomic_action": "#585 head fb3ffd8, BK #32 in corso (pf_intent p585-t4-fb3ffd8458b5). Commit locali NON pushati 7f365a3+19ce4f7 (code_patch/pr585: Sol/Grok Windows, Codex noexec/stale). Attesa: fine BK32 + autorizzazione owner a un secondo push. Nessun merge.",
+ "next_atomic_action": "#585 head 892a6a2: monitorare BK full-suite sul nuovo SHA, review Sol/Grok/Codex, risolvere thread a check chiusi, pubblicare PR585_SECOND_CORRECTIVE_PUSH_CERTIFICATION parte 2 su #562 (parte 1 c.6501790380: BK32 PASS 49/49 4838 s, mutation 951 s tmpfs). Poi richiesta merge owner. Nessun merge.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [
