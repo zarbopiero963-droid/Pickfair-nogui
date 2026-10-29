@@ -202,6 +202,28 @@ def _mount_fstype(path: Path, mounts_file: str | None = None) -> str | None:
     return _mount_info(path, mounts_file)[0]
 
 
+def _can_execute_in(directory: Path) -> bool:
+    """Prova reale: uno script creato in ``directory`` si puo' eseguire, come fanno i test con ``tmp_path``.
+
+    L'opzione ``noexec`` letta da ``/proc/mounts`` non basta da sola (mount annidati, LSM, opzioni non riportate).
+    Fuori da POSIX non si prova (``True``): li' il tmpfs non viene comunque scelto (niente ``/proc/mounts``)."""
+    if os.name != "posix":
+        return True
+    fd, probe = tempfile.mkstemp(prefix=TMP_PREFIX + "exec-", suffix=".sh", dir=str(directory))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("#!/bin/sh\nexit 0\n")
+        os.chmod(probe, 0o700)
+        return subprocess.run([probe], capture_output=True, timeout=10, check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+    finally:
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass
+
+
 def _free_bytes(path: Path) -> int:
     # shutil.disk_usage esiste anche su Windows, os.statvfs no (GPT-6.1 Sol su #585)
     return shutil.disk_usage(path).free
@@ -230,6 +252,9 @@ def choose_tmp_root(candidates: tuple | None = None, mounts_file: str | None = N
             # codice originale e il gate darebbe INCONCLUSIVE
             if "noexec" in opts:
                 motivi.append(f"{cand}: montato noexec")
+                continue
+            if not _can_execute_in(real):
+                motivi.append(f"{cand}: esecuzione di script non consentita (prova reale)")
                 continue
             # prima i residui dei run uccisi, poi lo spazio: altrimenti un tmpfs pieno di residui verrebbe scartato
             # per sempre (Codex su #585)

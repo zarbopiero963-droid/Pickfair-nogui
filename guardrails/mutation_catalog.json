@@ -6870,6 +6870,42 @@
         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
       ],
       "rationale": "PF-562 PR-B (Grok su #585): senza os.getuid (Windows) la pulizia si fermerebbe con AttributeError invece di non cancellare niente."
+    },
+    {
+      "id": "rmg_tmpfs_exec_probe_skipped",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "            if not _can_execute_in(real):\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (owner su #585): tmpfs su cui gli script dei test non si eseguono accettato senza la prova reale."
+    },
+    {
+      "id": "rmg_tmpfs_exec_probe_always_true",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "        return subprocess.run([probe], capture_output=True, timeout=10, check=False).returncode == 0\n",
+      "mutated": "        return True\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (owner su #585): la prova di esecuzione non esegue niente e accetta sempre."
+    },
+    {
+      "id": "rmg_tmpfs_exec_error_accepted",
+      "module": "scripts.run_mutation_guardrails",
+      "area": "trusted_dispatcher",
+      "file": "scripts/run_mutation_guardrails.py",
+      "original": "    except (OSError, subprocess.SubprocessError):\n        return False\n",
+      "mutated": "    except (OSError, subprocess.SubprocessError):\n        return True\n",
+      "tests": [
+        "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+      ],
+      "rationale": "PF-562 PR-B (owner su #585): un'esecuzione negata viene presa per riuscita."
     }
   ]
 }

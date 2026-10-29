@@ -353,3 +353,27 @@ def test_mount_options_are_read_from_the_longest_mount_point(tmp_path):
     mounts = _mounts(tmp_path, ("/", "ext4", "rw"), ("/dev/shm", "tmpfs", "rw,noexec"))
     assert runner._mount_info(Path("/dev/shm/x"), mounts) == ("tmpfs", frozenset({"rw", "noexec"}))
     assert runner._mount_info(Path("/home"), mounts) == ("ext4", frozenset({"rw"}))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="prova di esecuzione solo POSIX")
+def test_real_execution_probe_runs_a_script_and_leaves_nothing(tmp_path):
+    assert runner._can_execute_in(tmp_path) is True
+    assert not list(tmp_path.iterdir()), "script di prova non rimosso"
+
+
+def test_tmpfs_where_scripts_cannot_run_is_refused_even_without_noexec(tmp_path, monkeypatch):
+    shm = tmp_path / "shm"
+    shm.mkdir()
+    real = str(shm.resolve())
+    monkeypatch.setattr(runner, "_can_execute_in", lambda directory: False)
+    root, why = runner.choose_tmp_root((str(shm),), _mounts(tmp_path, (real, "tmpfs", "rw,nosuid,nodev")), 1)
+    assert root is None and "esecuzione di script non consentita" in why
+
+
+@pytest.mark.skipif(os.name != "posix", reason="prova di esecuzione solo POSIX")
+def test_execution_probe_failure_is_false(tmp_path, monkeypatch):
+    def denied(*a, **kw):
+        raise PermissionError("noexec")
+    monkeypatch.setattr(runner.subprocess, "run", denied)
+    assert runner._can_execute_in(tmp_path) is False
+    assert not list(tmp_path.iterdir())
