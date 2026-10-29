@@ -3079,7 +3079,7 @@
       "max_files": 6
     },
     "trusted-ci-562-m2-linux-workflows": {
-      "description": "PF-562 PR-B (M2), mandato owner 28/10/2026 'Preparazione parallela PR-A, PR-B e PR-C2': workflow Linux fuori dalle PR nella full-suite. w5-lockfile-fresh (generate-linux-lockfile), w5-build-linux-appimage (PyInstaller + AppImage dal lock --require-hashes, release in DRY-RUN), w5-telegram-live-sim (7 scenari del test live offline, nessun messaggio reale). Mappa completa di tutti i workflow con limiti dichiarati; FULL_SUITE_STEP_KEYS aggiornati. Correzione dello scenario 5 stantio del test Telegram live (motore neutro #448). Test RED/GREEN, mutazioni, docs, CHANGELOG. File a merge owner (scripts/pr_*.py).",
+      "description": "PF-562 PR-B (M2), mandato owner 28/10/2026 'Preparazione parallela PR-A, PR-B e PR-C2': workflow Linux fuori dalle PR nella full-suite. w5-lockfile-fresh (generate-linux-lockfile), w5-build-linux-appimage (PyInstaller + AppImage dal lock --require-hashes, release in DRY-RUN), w5-telegram-live-sim (7 scenari del test live offline, nessun messaggio reale). Mappa completa di tutti i workflow con limiti dichiarati; FULL_SUITE_STEP_KEYS aggiornati. Correzione dello scenario 5 stantio del test Telegram live (motore neutro #448). Test RED/GREEN, mutazioni, docs, CHANGELOG. File a merge owner (scripts/pr_*.py). ESTENSIONE DICHIARATA (29/10/2026, certificazione #585): aggiunto tests/scripts/test_pr_trusted_dispatcher.py per i test RED->GREEN del motivo redatto del 4xx Buildkite nel dispatcher.",
       "allow_tests": true,
       "files": [
         ".guardrails/allowed_scope.json",
@@ -3092,9 +3092,10 @@
         "scripts/pr_trusted_dispatcher.py",
         "tests/integration/test_telegram_live_e2e.py",
         "tests/integration/test_telegram_live_sim.py",
-        "tests/scripts/test_pr_full_suite_pipeline.py"
+        "tests/scripts/test_pr_full_suite_pipeline.py",
+        "tests/scripts/test_pr_trusted_dispatcher.py"
       ],
-      "max_files": 11
+      "max_files": 12
     }
   }
 }
