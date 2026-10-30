@@ -15,6 +15,7 @@ Regole (fail-closed):
   sostituto, poi si toglie il vecchio, quindi nessuna finestra senza protezione;
 - un required check e' identificato da contesto **e** app che lo pubblica (`integration_id`): lo stesso nome
   pubblicato da un'altra app non conta;
+- una fase con `blocked_by` non vuoto (prerequisito tecnico aperto) non produce `payload`, ne' lei ne' le successive;
 - `evaluate` e' piu' severo di GitHub: per un required check vale solo `success` sullo SHA esatto. `skipped` e
   `neutral` di un check run (che GitHub accetta) qui bloccano; mancante, pending, failure, error e qualunque stato
   sconosciuto bloccano.
@@ -85,6 +86,9 @@ def validate(plan: Mapping[str, Any]) -> list[set]:
         _require(isinstance(ph.get("strict"), bool), f"fase {i}: strict booleano")
         _require(isinstance(ph.get("precondition"), str) and len(ph["precondition"]) > 10,
                  f"fase {i}: precondizione mancante")
+        blocked = ph.get("blocked_by", [])
+        _require(isinstance(blocked, list) and all(isinstance(b, str) and len(b) > 10 for b in blocked),
+                 f"fase {i}: blocked_by deve essere una lista di motivi")
         before = {checks[k]["control"] for k in state}
         state = (state | set(add)) - set(rem)
         after = {checks[k]["control"] for k in state}
@@ -119,6 +123,10 @@ def strict_after(plan: Mapping[str, Any], phase: int) -> bool:
 def payload(plan: Mapping[str, Any], phase: int) -> dict:
     """La regola `required_status_checks` del ruleset dopo `phase` fasi, pronta per la UI o l'API."""
     required = required_after(plan, phase)                  # valida piano e fase prima di leggere `strict`
+    # un prerequisito tecnico aperto blocca la fase e tutte le successive, che la includono (Codex su #587)
+    open_items = [(i, b) for i, ph in enumerate(plan["phases"][:phase], 1) for b in ph.get("blocked_by", [])]
+    if open_items:
+        raise PlanError(f"fase {phase} bloccata: " + "; ".join(f"fase {i}: {b}" for i, b in open_items))
     return {"type": "required_status_checks", "parameters": {
         "strict_required_status_checks_policy": strict_after(plan, phase), "do_not_enforce_on_create": False,
         "required_status_checks": sorted(required, key=lambda r: (r["context"], r["integration_id"]))}}

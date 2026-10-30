@@ -144,6 +144,13 @@ pending, ritentativi e self-check). Il dettaglio è in `docs/trusted_dispatcher.
 
 Il payload esatto di ogni fase: `python3 scripts/ci/required_checks_plan.py payload --plan ops/ci/required_checks.json --phase N`.
 
+**F2 è bloccata da un prerequisito tecnico aperto (`blocked_by` nel piano, Codex su #587).**
+- Con `pr-merge-readiness` required, il suo stesso status `pending` rende la PR `BLOCKED` mentre la readiness gira.
+- `effective_merge_state_ok()` in `scripts/pr_flow_automation.py` accetta solo `CLEAN` o `UNSTABLE`: la readiness
+  pubblicherebbe sempre failure, e ogni rerun ripeterebbe il ciclo.
+- Finché una PR dedicata (file a merge owner) non distingue il `BLOCKED` causato dal solo self-check, `payload` rifiuta
+  F2 e F3 (exit 1, «fase N bloccata»). F1 resta applicabile.
+
 **Proposta D-C2-2: `strict_required_status_checks_policy: true` da F2.**
 - Obbliga il branch a essere aggiornato con `main` prima del merge. Così overlap, full-suite e readiness si riferiscono
   alla combinazione che verrà davvero mergiata, e non a una base vecchia.

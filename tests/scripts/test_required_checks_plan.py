@@ -117,8 +117,16 @@ def test_malformed_or_incomplete_plans_are_refused(mutate, expected):
         rcp.validate(plan)
 
 
+def _unblocked():
+    """Il piano con i prerequisiti tecnici aperti (`blocked_by`) dichiarati risolti: per i test sul payload in se'."""
+    plan = _plan()
+    for ph in plan["phases"]:
+        ph.pop("blocked_by", None)
+    return plan
+
+
 def test_payload_identifies_each_check_by_context_and_app():
-    out = rcp.payload(_plan(), len(_plan()["phases"]))
+    out = rcp.payload(_unblocked(), len(_plan()["phases"]))
     assert out["type"] == "required_status_checks"
     req = out["parameters"]["required_status_checks"]
     assert all(isinstance(r["integration_id"], int) and r["integration_id"] > 0 for r in req)
@@ -339,3 +347,27 @@ def test_diff_requires_the_ruleset_to_apply_to_main(mutate, ok):
     mutate(ruleset)
     problems = rcp.diff(_plan(), ruleset)
     assert (not any("refs/heads/main" in p for p in problems)) is ok
+
+
+# ------------------------------------------------------- Codex su #587: readiness required che si blocca da sola
+def test_f2_payload_is_refused_while_the_readiness_self_block_is_open():
+    """Con `pr-merge-readiness` required, il suo stesso `pending` rende la PR `BLOCKED` e `effective_merge_state_ok()`
+    rifiuta `BLOCKED`: la readiness pubblicherebbe sempre failure. Finche' non e' gestito, il payload di F2 (e delle
+    fasi successive, che lo includono) non si genera; F1 resta applicabile."""
+    plan = _plan()
+    assert any("BLOCKED" in b for b in plan["phases"][1]["blocked_by"])
+    assert rcp.payload(plan, 1)["parameters"]["required_status_checks"]
+    for phase in (2, 3):
+        with pytest.raises(rcp.PlanError, match="bloccata"):
+            rcp.payload(plan, phase)
+    res = subprocess.run([sys.executable, str(SCRIPT), "payload", "--plan", str(PLAN_PATH), "--phase", "2"],
+                         capture_output=True, text=True)
+    assert res.returncode == 1 and "bloccata" in res.stderr
+
+
+@pytest.mark.parametrize("bad", ["", "x", 3, [""], [3]])
+def test_malformed_blocked_by_is_refused(bad):
+    plan = _plan()
+    plan["phases"][0]["blocked_by"] = bad
+    with pytest.raises(rcp.PlanError, match="blocked_by"):
+        rcp.validate(plan)

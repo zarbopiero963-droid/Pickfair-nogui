@@ -6944,6 +6944,18 @@
       "rationale": "PF-562 PR-C2: check run skipped/neutral accettato come required."
     },
     {
+      "id": "rcp_blocked_phase_payload",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "    if open_items:\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: payload di F2 generato con la readiness auto-bloccante ancora aperta (Codex su #587)."
+    },
+    {
       "id": "rcp_check_run_other_sha",
       "module": "scripts.ci.required_checks_plan",
       "area": "trusted_dispatcher",

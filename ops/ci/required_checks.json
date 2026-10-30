@@ -66,7 +66,10 @@
       "remove": [],
       "strict": true,
       "precondition": "F1 applicata; PR-C2 (opzione B) mergiata e installata, cioe' la readiness della lane pubblica separati pr-merge-readiness (tecnico) e pr-auto-merge; almeno 2 PR reali con pr-merge-readiness coerente con la Merge readiness di Actions",
-      "owner_decision": "D-C2-2 (strict)"
+      "owner_decision": "D-C2-2 (strict)",
+      "blocked_by": [
+        "readiness auto-bloccante: con pr-merge-readiness required il suo stesso pending rende la PR BLOCKED, e effective_merge_state_ok() di scripts/pr_flow_automation.py accetta solo CLEAN/UNSTABLE; serve distinguere il BLOCKED causato dal solo self-check (PR dedicata, file a merge owner) prima di applicare F2 (Codex su #587)"
+      ]
     },
     {
       "name": "F3 — ritiro dei check di Actions sostituiti (facoltativa)",
