@@ -106,3 +106,13 @@ def test_workflow_has_build_rigor():
     assert "tar -czf" in wf, "i binari nudi vanno impacchettati in tar.gz (+x)"
     # nome artifact versionato dalla version di pyproject.toml.
     assert "pyproject.toml" in wf, "il nome artifact deve derivare dalla version"
+
+
+def test_workflow_pins_appimagetool_1_9_1_with_full_sha256():
+    """PF562 opzione B (GO owner su #587): release fissa 1.9.1 con lo sha256 completo, mai il canale `continuous`,
+    che non conserva le build e rompeva il pin precedente."""
+    wf = _read(ROOT / ".github" / "workflows" / "build-linux.yml")
+    assert ('APPIMAGETOOL_URL: "https://github.com/AppImage/appimagetool/releases/download/1.9.1/'
+            'appimagetool-x86_64.AppImage"') in wf
+    assert 'APPIMAGETOOL_SHA256: "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"' in wf
+    assert "download/continuous/" not in wf and "a6d71e2b" not in wf

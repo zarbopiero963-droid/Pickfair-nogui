@@ -73,8 +73,8 @@ permesso minimo è quindi un **requisito dell'infrastruttura**, non verificabile
 4. Head: deve stare nello **stesso repository** (fork o repository cancellato ⇒ FAIL) e coincidere con
    `PF_PR_HEAD_SHA`.
 5. A fine valutazione la PR viene riletta: head, stato, repository base o branch base cambiati ⇒ FAIL. Una PR
-   ridiretta su un altro branch durante l'attesa non resta certificata. Per la readiness si rilegge anche la label `manual-review-required`:
-   aggiunta durante l'attesa ⇒ FAIL.
+   ridiretta su un altro branch durante l'attesa non resta certificata. Per la readiness si rilegge anche la label
+   `manual-review-required`: aggiunta durante l'attesa ⇒ `auto_merge` FAIL (opzione B, sotto).
 
 ## `pr_overlap_guard.sh`
 
@@ -95,9 +95,8 @@ Differenze volute dallo step inline:
 
 Esegue `scripts/pr_merge_readiness.py --repo … --pr … --ignore-safe-autofix --wait-pending-seconds <W>
 --poll-seconds 15`. Lo lancia dal checkout di main con un ambiente minimo: `GH_TOKEN`, `GH_CONFIG_DIR` temporanea,
-nessun altro token ereditato. Esito **PASS solo se tutte** queste condizioni valgono:
-- nessuna decisione owner aperta: niente label `manual-review-required` e nessun file a merge owner nel diff
-  completo (tutte le pagine), riconosciuto con `scripts/pr_autonomy_policy.is_owner_manual_path` dal checkout di main;
+nessun altro token ereditato. Esito tecnico (`verdict`, status `pr-merge-readiness`) **PASS solo se tutte** queste
+condizioni valgono:
 - exit 0;
 - `headRefOid` uguale all'head atteso;
 - `can_merge` è il booleano `true`;
@@ -112,8 +111,17 @@ Il gate Sol/Grok è **informativo** nel workflow GitHub Actions, qui invece **bl
 - `RERUN_REVIEW_ONCE`;
 - `STOP_OWNER` (anche `VALID_INCONCLUSIVE` o crediti esauriti).
 
-Il verdetto PASS significa «mergiabile senza decisioni owner aperte», non «approvato dall'owner». Una PR che la
-governance lascia alla decisione dell'owner resta FAIL qui, e decide l'owner.
+**Due verdetti (opzione B dell'owner, #562 PR-C2).**
+- `verdict` è la readiness **tecnica**: decide l'exit della build e lo status `pr-merge-readiness`, che può essere un
+  required check.
+- `auto_merge` è l'autorizzazione all'auto-merge dell'agente, pubblicata come status separato `pr-auto-merge` e **mai
+  required**. È PASS solo con `verdict` PASS e nessuna decisione owner aperta: niente label `manual-review-required`
+  (né all'inizio né alla rilettura finale) e nessun file a merge owner nel diff completo (tutte le pagine), riconosciuto
+  con `scripts/pr_autonomy_policy.is_owner_manual_path` dal checkout di main. Se il controllo non è verificabile, vale
+  FAIL.
+- Una PR a merge owner con i gate verdi è quindi tecnicamente pronta (`pr-merge-readiness` success) e l'owner la mergia
+  a mano senza bypass; l'agente non la mergia (`pr-auto-merge` failure).
+- PASS tecnico non vuol dire «approvato dall'owner».
 
 **Tempo.** Ogni check ancora pendente allo scadere dell'attesa dà FAIL, mai PASS. Il processo figlio viene fermato
 ad attesa + 120 s, e anche un timeout dà FAIL. Il guard fa inoltre quattro chiamate API, ciascuna con un timeout di

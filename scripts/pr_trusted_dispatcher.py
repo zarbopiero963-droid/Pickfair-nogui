@@ -817,6 +817,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   pending_published INTEGER NOT NULL DEFAULT 0,
   pending_cancels TEXT NOT NULL DEFAULT '[]',
   final_published INTEGER NOT NULL DEFAULT 0,
+  aux_outcome TEXT,
+  aux_description TEXT,
+  aux_published INTEGER NOT NULL DEFAULT 0,
   gate_seen INTEGER NOT NULL DEFAULT -1,
   gate_stable INTEGER NOT NULL DEFAULT 0,
   released_at REAL,
@@ -838,6 +841,10 @@ MIGRATION_COLUMNS = (
     ("gate_stable", "INTEGER NOT NULL DEFAULT 0"),
     ("released_at", "REAL"),
     ("head_ref", "TEXT NOT NULL DEFAULT ''"),
+    # autorizzazione all'auto-merge della readiness (#562 PR-C2, opzione B): esito e consegna separati
+    ("aux_outcome", "TEXT"),
+    ("aux_description", "TEXT"),
+    ("aux_published", "INTEGER NOT NULL DEFAULT 0"),
 )
 # stesse aggiunte per `pr_state` (branch di head per la full-suite, #562 PR-A)
 MIGRATION_PR_STATE_COLUMNS = (
@@ -1118,7 +1125,7 @@ class Store:
         """Con `expected_state` la modifica avviene solo se il job e' ancora in quello stato (True se applicata)."""
         allowed = {"state", "build_number", "build_url", "outcome", "description", "dispatched_at",
                    "publishing_since", "pending_published", "pending_cancels", "final_published", "gate_seen",
-                   "gate_stable", "released_at"}
+                   "gate_stable", "released_at", "aux_outcome", "aux_description", "aux_published"}
         if not fields or set(fields) - allowed:
             raise ValueError("campi non ammessi")
         cols = ", ".join(f"{k} = ?" for k in fields)
@@ -1386,9 +1393,34 @@ def decide_outcome(build: Mapping[str, Any], artifact: Optional[bytes], job: Map
     return "error", f"build {state} incoerente con verdetto {verdict!r}"
 
 
-#: i self-check della readiness non si attendono (dipendenza circolare): lo status della lane `pr-merge-readiness`
-#: e il check run Actions «Merge readiness», come `is_self_check` di `scripts/pr_flow_automation.py`
-READINESS_SELF_STATUS_CONTEXTS = frozenset({GUARDS["readiness"]["context"]})
+def decide_auto_merge(outcome: str, artifact: Optional[bytes]) -> tuple[str, str]:
+    """Esito di `pr-auto-merge` per una readiness gia' decisa (`outcome` da `decide_outcome`). `success` SOLO con
+    readiness tecnica `success` E `auto_merge.verdict` PASS nello stesso risultato del guard; readiness tecnica
+    `error` => `error`; autorizzazione assente, illeggibile o incoerente => `error`; altrimenti `failure`."""
+    if outcome not in ("success", "failure"):
+        return "error", "readiness tecnica senza esito"
+    try:
+        auto = json.loads((artifact or b"").decode("utf-8")).get("auto_merge")
+    except (UnicodeDecodeError, ValueError, RecursionError, AttributeError):
+        auto = None
+    verdict = auto.get("verdict") if isinstance(auto, dict) else None
+    if verdict == "PASS" and outcome == "success":
+        return "success", "PASS: auto-merge autorizzato"
+    if verdict == "FAIL":
+        reasons = auto.get("reasons")
+        first = reasons[0] if isinstance(reasons, list) and reasons and isinstance(reasons[0], str) else "FAIL"
+        return "failure", f"FAIL: {first}"
+    return "error", "autorizzazione all'auto-merge assente o incoerente"
+
+
+#: autorizzazione all'auto-merge dell'agente (opzione B dell'owner, #562 PR-C2): pubblicata dalla stessa build della
+#: readiness, separata dalla readiness tecnica e MAI required (una PR a merge owner resta mergiabile a mano)
+AUTO_MERGE_CONTEXT = "pr-auto-merge"
+
+#: i self-check della readiness non si attendono (dipendenza circolare): lo status della lane `pr-merge-readiness`,
+#: l'autorizzazione `pr-auto-merge` che la stessa build pubblica, e il check run Actions «Merge readiness», come
+#: `is_self_check` di `scripts/pr_flow_automation.py`
+READINESS_SELF_STATUS_CONTEXTS = frozenset({GUARDS["readiness"]["context"], AUTO_MERGE_CONTEXT})
 STATUS_STATES = frozenset({"pending", "success", "failure", "error"})
 
 
@@ -1717,8 +1749,7 @@ class Dispatcher:
         if not job.get("pending_published"):
             # `pending` subito: un vecchio esito sullo stesso SHA (rerun, riapertura) non resta visibile nell'attesa
             url = f"{BUILDKITE_WEB}/{self.cfg.organization}/{PIPELINES[job['guard']]['pipeline']}"
-            if self.publish(job["pr"], job["head_sha"], "pending", PIPELINES[job["guard"]]["context"], url,
-                            "in attesa degli altri check") == 0:
+            if self._pending_status(job, url, "in attesa degli altri check") == 0:
                 self._set(job, pending_published=1)
         try:
             statuses = self.gh.statuses(job["head_sha"])
@@ -2031,10 +2062,46 @@ class Dispatcher:
                     return self._recovery_pending(job)
                 if mine and computed is not None and seen.get("state") == computed:
                     outcome = computed
+            if job["guard"] == "readiness" and not self._recovered_auto_merge_delivered(job):
+                # readiness tecnica consegnata, autorizzazione no (Codex su #587): il suo esito e' perso con lo
+                # snapshot, quindi si pubblica `error`, mai `success`. Fallita la consegna o illeggibili gli status, il
+                # job torna `queued` e si riprova, senza un `pending` sul contesto tecnico gia' consegnato
+                return self._requeue_recovery(job)
             return self._set(job, state="done", outcome=outcome, final_published=1, build_number=keep["number"],
                              build_url=keep["web_url"],
                              description=f"intento gia' eseguito dalla build {keep['number']}: esito non ripubblicato")
         return self._adopt(job, keep)
+
+    def _recovered_auto_merge_delivered(self, job: dict) -> bool:
+        """`pr-auto-merge` con un esito finale sull'head (gia' consegnato, o pubblicato ora come `error`)? False se gli
+        status non si leggono o la pubblicazione fallisce."""
+        try:
+            statuses = self.gh.statuses(job["head_sha"])
+        except (ApiError, TransportError, CredentialError, RateLimited) as exc:
+            log(f"job {job['id']}: status dell'head non leggibili ({exc}): autorizzazione in verifica")
+            return False
+        if not isinstance(statuses, list):
+            return False
+        latest = next((st for st in statuses if isinstance(st, dict) and st.get("context") == AUTO_MERGE_CONTEXT), None)
+        if isinstance(latest, dict) and latest.get("state") in ("success", "failure", "error"):
+            # consegna verificata sugli status remoti: registrata, cosi' l'annullamento di una build doppia non
+            # rimanda il job in riconsegna sovrascrivendo gli status validi con `error` (Codex su #587)
+            self._set(job, aux_published=1)
+            return True
+        url = f"{BUILDKITE_WEB}/{self.cfg.organization}/{PIPELINES[job['guard']]['pipeline']}"
+        if self.publish(job["pr"], job["head_sha"], "error", AUTO_MERGE_CONTEXT, url,
+                        clean_description("autorizzazione all'auto-merge non verificabile dopo il ripristino")) != 0:
+            return False
+        self._set(job, aux_published=1)
+        return True
+
+    def _requeue_recovery(self, job: dict) -> None:
+        """Il job ritrovato torna `queued` e si riprova al giro dopo, senza pubblicare nulla."""
+        if job["state"] != "creating":
+            return None
+        if self.store.update_job(job["id"], self.clock(), expected_state="creating", state="queued"):
+            job["state"] = "queued"
+        return None
 
     def _status_build(self, job: dict, status: Any) -> Optional[int]:
         """Numero della build del guard a cui punta il `target_url` di uno status, se e' una build della pipeline."""
@@ -2160,11 +2227,18 @@ class Dispatcher:
                   dispatched_at=self.clock())
         self._publish_pending(job)
 
+    def _pending_status(self, job: dict, url: str, description: str) -> int:
+        """`pending` sul contesto del job e, per la readiness, anche su `pr-auto-merge`: un vecchio `success` di
+        nessuno dei due resta visibile mentre l'head si rivaluta. 0 solo se tutti sono pubblicati."""
+        rc = self.publish(job["pr"], job["head_sha"], "pending", PIPELINES[job["guard"]]["context"], url, description)
+        if job["guard"] == "readiness":
+            rc = self.publish(job["pr"], job["head_sha"], "pending", AUTO_MERGE_CONTEXT, url, description) or rc
+        return rc
+
     def _publish_pending(self, job: dict) -> None:
         """`pending` sull'head finche' la build gira, ritentato a ogni giro se fallisce (rilievo Codex P1 su #569):
         rivalutando un head gia' `success` (reopen), il vecchio `success` non deve restare l'esito visibile."""
-        if self.publish(job["pr"], job["head_sha"], "pending", PIPELINES[job["guard"]]["context"], job["build_url"],
-                        "build in corso") == 0:
+        if self._pending_status(job, job["build_url"], "build in corso") == 0:
             self._set(job, pending_published=1)
         else:
             log(f"job {job['id']}: status pending non pubblicato: ritento al prossimo giro")
@@ -2193,6 +2267,10 @@ class Dispatcher:
         fresh = self.store.get_job(job["id"]) or job
         if fresh.get("outcome") and not fresh.get("final_published") and not fresh.get("superseded"):
             return "publish_failed"
+        # readiness: anche `pr-auto-merge` deve risultare consegnato, altrimenti il retry si perde (Codex su #587)
+        if (fresh.get("guard") == "readiness" and fresh.get("outcome") and not fresh.get("aux_published")
+                and not fresh.get("superseded")):
+            return "publish_failed"
         return "done"
 
     def _retry_cancels(self, job: dict) -> None:
@@ -2217,8 +2295,7 @@ class Dispatcher:
             # head rivalutato con creazione ambigua: `pending` subito, cosi' un vecchio `success` non resta l'esito
             # visibile per tutta la finestra di riconciliazione (audit su #569)
             url = f"{BUILDKITE_WEB}/{self.cfg.organization}/{PIPELINES[job['guard']]['pipeline']}"
-            if self.publish(job["pr"], job["head_sha"], "pending", PIPELINES[job["guard"]]["context"], url,
-                            "creazione build in verifica") == 0:
+            if self._pending_status(job, url, "creazione build in verifica") == 0:
                 self._set(job, pending_published=1)
         try:
             found = self._builds_for(job)
@@ -2277,6 +2354,9 @@ class Dispatcher:
                         self._publish_pending(job)
                     return None
         outcome, description = decide_outcome(build, artifact, job)
+        if job["guard"] == "readiness":
+            aux_state, aux_desc = decide_auto_merge(outcome, artifact)
+            self._set(job, aux_outcome=aux_state, aux_description=aux_desc)
         self._to_publishing(job, outcome, description)
         self._publish_final(job)
 
@@ -2290,6 +2370,23 @@ class Dispatcher:
         if rc == 0:
             # consegna registrata a parte dallo stato: `canceling` non deve far dimenticare un esito non consegnato
             self._set(job, final_published=1)
+        if job["guard"] == "readiness" and not job.get("aux_published"):
+            # autorizzazione all'auto-merge: readiness tecnica senza esito o esito non calcolato => `error`
+            aux = job.get("aux_outcome")
+            if outcome == "error":
+                aux_state, aux_desc = "error", "readiness tecnica senza esito"
+            elif aux in ("success", "failure", "error"):
+                aux_state, aux_desc = aux, job.get("aux_description") or aux
+            else:
+                aux_state, aux_desc = "error", "autorizzazione all'auto-merge non calcolata"
+            if aux_state == "success" and outcome != "success":
+                aux_state, aux_desc = "error", "autorizzazione incoerente con la readiness tecnica"
+            # stesso contratto del socket dello status tecnico (Codex su #587): un motivo lungo non blocca la consegna
+            aux_rc = self.publish(job["pr"], job["head_sha"], aux_state, AUTO_MERGE_CONTEXT, url,
+                                  clean_description(aux_desc))
+            if aux_rc == 0:
+                self._set(job, aux_published=1)
+            rc = rc or aux_rc
         return rc
 
     def _publish_final(self, job: dict) -> None:

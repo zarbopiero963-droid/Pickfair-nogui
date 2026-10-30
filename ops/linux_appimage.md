@@ -80,20 +80,23 @@ locale, così la logica di packaging è verificabile fuori da GitHub Actions.
 
 ### Integrità di `appimagetool` (supply-chain)
 
-`appimagetool` viene scaricato dal canale ufficiale `continuous` (upstream **non
-pubblica checksum** per le release stabili, quindi non c'è un tag immutabile con
-hash pubblicato). Per non eseguire in CI un binario non verificato, si pinna un
-hash **nostro vetted**:
+`appimagetool` viene scaricato dalla release **fissa 1.9.1**
+(`https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage`,
+tag `1.9.1` = commit `8c8c91f`, 2025-11-18). Upstream **non pubblica checksum né firme**
+(le sezioni ELF `.sha256_sig` / `.sig_key` sono vuote), quindi si pinna un hash **nostro**:
+`ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0` (15.092.216 byte),
+osservato identico su due download. Il canale `continuous` non si usa più: non conserva le
+build precedenti (la build 295 pinnata in passato non è più scaricabile).
 
 - lo script **stampa sempre** lo `sha256` del binario scaricato;
 - se `APPIMAGETOOL_SHA256` è impostato (env, o `APPIMAGETOOL_SHA256` nel workflow),
   il download viene **verificato** e in caso di mismatch lo script si ferma
   **fail-closed** (`exit 3`), senza produrre l'AppImage.
 
-Quando upstream aggiorna `continuous`, l'hash cambia e la CI fallisce
-volutamente: si **ri-verifica** il nuovo binario e si aggiorna il valore pinnato
-in `.github/workflows/build-linux.yml` (step *Package GUI as AppImage*, env
-`APPIMAGETOOL_SHA256`). L'URL è sovrascrivibile con `APPIMAGETOOL_URL`.
+La lane Buildkite trusted usa lo stesso binario, installato sulla VPS da
+`ops/ci/PF562_VPS_UNBLOCK.sh` con lo stesso hash. Cambiare versione richiede un nuovo
+pin verificato in `.github/workflows/build-linux.yml` (step *Package GUI as AppImage*, env
+`APPIMAGETOOL_URL` e `APPIMAGETOOL_SHA256`) e sulla VPS.
 
 ## Toolchain di build hash-locked (supply-chain)
 

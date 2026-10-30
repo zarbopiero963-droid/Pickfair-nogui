@@ -434,6 +434,70 @@ build della readiness (misurata 45–47 s sulle build #24–#26, Grok t267 su #5
 overlap nella pipeline Buildkite (`priority`, configurazione della UI, Grok), non una modifica del dispatcher. Non
 cambia l'ordine di nessun controllo e non introduce nessun PASS.
 
+## Readiness tecnica e autorizzazione all'auto-merge (#562 PR-C2, opzione B dell'owner)
+
+La build della readiness pubblica due status sullo stesso head, con lo stesso link alla build:
+- `pr-merge-readiness`: esito tecnico (`decide_outcome` sul `verdict` del guard), che può essere un required check;
+- `pr-auto-merge` (`AUTO_MERGE_CONTEXT`): esito di `decide_auto_merge` sul campo `auto_merge` del risultato. Mai
+  required.
+
+| Caso | `pr-merge-readiness` | `pr-auto-merge` |
+|---|---|---|
+| gate verdi, nessuna decisione owner | success | success |
+| gate verdi, PR a merge owner (file o label) | success | failure |
+| gate tecnici falliti | failure | failure |
+| readiness senza esito (timeout, annullata, artifact illeggibile) | error | error |
+| `auto_merge` assente, malformato o incoerente (PASS con tecnico failure) | come da tecnico | error |
+
+- `pending` si pubblica sui due contesti insieme, così un vecchio `success` di nessuno dei due resta visibile durante
+  una nuova valutazione.
+- La consegna è tracciata a parte (`aux_outcome`, `aux_description`, `aux_published`, con migrazione non distruttiva):
+  un `pr-auto-merge` non consegnato si ritenta senza ripubblicare né perdere l'esito tecnico.
+- `pr-auto-merge` è un self-check della readiness (`READINESS_SELF_STATUS_CONTEXTS`): l'attesa non lo aspetta mai.
+
+## Sblocco della VPS in un comando (`ops/ci/PF562_VPS_UNBLOCK.sh`, #562)
+
+Lo script porta la lane alla full-suite a 52 step: installa `appimagetool` verificato e aggiorna il dispatcher da `main`.
+Si esegue come root sulla VPS, solo da un operatore con accesso amministrativo già autorizzato. Test:
+`tests/scripts/test_pf562_vps_unblock.py`.
+
+```bash
+sudo bash ops/ci/PF562_VPS_UNBLOCK.sh --main-sha <SHA di origin/main> --appimagetool-sha256 <hash approvato> \
+     [--appimagetool-file <binario>]            # dry-run: solo preflight e piano
+sudo bash ops/ci/PF562_VPS_UNBLOCK.sh … --apply # applica
+sudo bash ops/ci/PF562_VPS_UNBLOCK.sh --rollback /root/pf562-unblock-<timestamp>
+```
+
+- **Preflight fail-closed.** Si ferma se manca una di queste condizioni: utente root, Linux x86_64, agent
+  `pickfair-dedicated-vps-01` sulla coda `pickfair-dedicated`, unit `pf-dispatch.service`, Python 3.11 della lane con
+  tkinter. `--main-sha` deve coincidere con `origin/main`.
+- **appimagetool.**
+  - Il binario viene accettato solo se il suo sha256 coincide con `--appimagetool-sha256`, che non ha default:
+    lo approva l'owner.
+  - Non viene mai eseguito prima della verifica.
+  - Si installa `root:root 0555`, con `appimagetool.sha256` `0444`, e non deve essere scrivibile dal job.
+  - Un'installazione già presente si riusa solo se hash, proprietario e permessi (directory `0755`, binario `0555`,
+    checksum `0444`) sono quelli attesi; altrimenti si reinstalla e si normalizza.
+  - Senza `--appimagetool-file` scarica la release fissa **1.9.1** (opzione B, owner su #562), non `continuous`.
+    Hash osservato su due download: `ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0`. Upstream non
+    pubblica firme né checksum: la verifica indipendente è il download dell'operatore dalla VPS, che deve coincidere.
+- **Dispatcher.**
+  - Il percorso dello script e della configurazione si leggono da `ExecStart` della unit.
+  - Il backup copre script, configurazione e archivio SQLite, con `manifest.sha256`.
+  - Il file nuovo viene da `git show <main-sha>:scripts/pr_trusted_dispatcher.py` e passa `check-config` sulla
+    configurazione esistente **prima** di sostituire quello installato.
+  - Configurazione, credenziali, timeout, concorrenza e unit non vengono toccati.
+- **Verifiche dopo l'applicazione.**
+  - Un solo processo `serve`.
+  - Il generatore di `main` ha 52 step, uguali a `FULL_SUITE_STEP_KEYS`, con i 3 M2 obbligatori.
+  - `check-config` passa e nel journal dell'invocazione systemd corrente (`_SYSTEMD_INVOCATION_ID`) non ci sono
+    `Traceback` né `NOT CONFIGURED`. Gli errori del dispatcher vecchio non contano, anche se scritti nello stesso secondo
+    del riavvio; un `InvocationID` illeggibile porta al rollback.
+  - Se una verifica fallisce, rollback automatico; se il rollback stesso fallisce, exit 3.
+- **Rollback manuale.** `--rollback` verifica il manifest, ripristina lo script e lo stato di `appimagetool`, riavvia il
+  servizio e controlla che resti un solo dispatcher attivo.
+- Lo script non pubblica nulla su GitHub. Il rerun della PR è il push successivo, una sola build per intento.
+
 ## Punti aperti: NOT CONFIGURED e da decidere
 
 | # | Punto | Stato | Cosa serve |
@@ -493,8 +557,8 @@ reale** (la PR è davvero mergiabile).
 10. Isolamento: token di lettura e token Buildkite assenti da log, env delle build e artifact; l'App key solo negli
     helper.
 11. Required check `overlap-check` (ruleset 25459867, invariato): con `failure` la PR non è mergiabile.
-12. Readiness reale: `pr-merge-readiness` `success` solo con la PR davvero mergiabile. Su questa PR, che tocca file a
-    merge owner, il verdetto atteso è FAIL.
+12. Readiness reale: `pr-merge-readiness` `success` solo con i gate tecnici verdi. Su una PR che tocca file a merge
+    owner, dalla PR-C2 (opzione B) `pr-merge-readiness` può essere `success` e `pr-auto-merge` è `failure`.
 
 ## Limiti dichiarati
 

@@ -582,28 +582,70 @@ def test_guards_only_issue_get_requests():
 
 
 # --------------------------------------------------------------------------------------------- rilievi su #563
-def test_readiness_is_fail_with_the_manual_review_label(tmp_path):
-    """Review indipendente P1 su #563: una PR riservata all'owner non e' mai PASS."""
+def _auto(tmp_path):
+    return result(tmp_path, "readiness")["auto_merge"]
+
+
+def _technical_pass_auto_fail(tmp_path, needle):
+    """Opzione B (owner, #562 PR-C2): la readiness tecnica e' PASS (mergiabile a mano dall'owner, senza bypass),
+    l'auto-merge dell'agente e' FAIL con il motivo owner."""
+    res = result(tmp_path, "readiness")
+    assert res["verdict"] == "PASS" and res["reasons"] == []
+    assert res["auto_merge"]["verdict"] == "FAIL"
+    assert any(needle in r for r in res["auto_merge"]["reasons"]), res["auto_merge"]
+
+
+def test_readiness_with_the_manual_review_label_is_technical_pass_but_no_auto_merge(tmp_path):
+    """Review indipendente P1 su #563: una PR riservata all'owner non e' mai auto-mergiata dall'agente."""
     fake = FakeGitHub()
     fake.prs[561] = FakeGitHub.pr(561, labels=["manual-review-required"])
-    assert run("readiness", tmp_path, fake) == 1
-    assert any("manual-review-required" in r for r in result(tmp_path, "readiness")["reasons"])
+    assert run("readiness", tmp_path, fake) == 0
+    _technical_pass_auto_fail(tmp_path, "manual-review-required")
+
+
+def test_clean_readiness_authorises_the_auto_merge(tmp_path):
+    assert run("readiness", tmp_path, FakeGitHub()) == 0
+    assert _auto(tmp_path) == {"verdict": "PASS", "reasons": []}
+
+
+def test_technical_fail_is_never_an_auto_merge_pass(tmp_path):
+    assert run("readiness", tmp_path, FakeGitHub(), decision=clean_decision(can_merge=False)) == 1
+    res = result(tmp_path, "readiness")
+    assert res["verdict"] == "FAIL" and res["auto_merge"]["verdict"] == "FAIL"
+
+
+def test_early_failure_leaves_the_auto_merge_fail(tmp_path):
+    assert run("readiness", tmp_path, FakeGitHub(), env=env_for(tmp_path, PF_PR_HEAD_SHA="x")) == 1
+    assert _auto(tmp_path)["verdict"] == "FAIL"
+
+
+def test_overlap_has_no_auto_merge_verdict(tmp_path):
+    assert run("overlap", tmp_path, FakeGitHub()) == 0
+    assert "auto_merge" not in result(tmp_path, "overlap")
+
+
+def test_unverifiable_owner_files_fail_only_the_auto_merge(tmp_path):
+    fake = FakeGitHub()
+    fake.prs[561] = dict(FakeGitHub.pr(561), changed_files=99)       # elenco dei file incompleto
+    assert run("readiness", tmp_path, fake) == 0
+    _technical_pass_auto_fail(tmp_path, "autorizzazione non verificabile")
 
 
 @pytest.mark.parametrize("owner_file", ["CLAUDE.md", ".github/workflows/pr-guard.yml", "scripts/pr_autonomy_policy.py",
                                         "scripts/ci/trusted_pr_guard.py", "requirements.txt"])
-def test_readiness_is_fail_with_an_owner_manual_file_in_the_diff(tmp_path, owner_file):
+def test_owner_manual_file_in_the_diff_blocks_only_the_auto_merge(tmp_path, owner_file):
     fake = FakeGitHub()
     fake.files[561].append(owner_file)
-    assert run("readiness", tmp_path, fake) == 1
-    assert any(owner_file in r for r in result(tmp_path, "readiness")["reasons"])
+    assert run("readiness", tmp_path, fake) == 0
+    _technical_pass_auto_fail(tmp_path, owner_file)
 
 
 def test_readiness_owner_check_reads_every_page_of_files(tmp_path):
     fake = FakeGitHub()
     fake.page_size = 2
     fake.files[561] = [f"docs/f{i}.md" for i in range(5)] + ["AGENTS.md"]
-    assert run("readiness", tmp_path, fake) == 1
+    assert run("readiness", tmp_path, fake) == 0
+    _technical_pass_auto_fail(tmp_path, "AGENTS.md")
 
 
 @pytest.mark.parametrize("labels", [None, [{"name": 5}], [{"title": "manual-review-required"}], ["manual-review-required"]])
@@ -649,32 +691,33 @@ def test_previous_result_is_removed_before_the_evaluation(tmp_path):
     assert json.loads((out / "overlap.json").read_text())["verdict"] == "FAIL"
 
 
-def test_owner_label_added_during_the_readiness_wait_is_fail(tmp_path):
-    """Rilievo Codex P1 su 80e0867: la label manual-review-required aggiunta mentre la readiness attende non viene
-    certificata PASS: la rilettura finale ricontrolla le label."""
+def test_owner_label_added_during_the_readiness_wait_blocks_the_auto_merge(tmp_path):
+    """Rilievo Codex P1 su 80e0867: la label manual-review-required aggiunta mentre la readiness attende conta: la
+    rilettura finale ricontrolla le label (ora per l'autorizzazione all'auto-merge)."""
     fake = FakeGitHub()
 
     def runner(repo_root, pr, wait, token, output):
         fake.prs[561] = FakeGitHub.pr(561, labels=["manual-review-required"])
         Path(output).write_text(json.dumps(clean_decision()))
         return 0
-    assert g.main("readiness", [], env_for(tmp_path), transport=fake, readiness_runner=runner, repo_root=ROOT) == 1
-    assert any("manual-review-required" in r for r in result(tmp_path, "readiness")["reasons"])
+    assert g.main("readiness", [], env_for(tmp_path), transport=fake, readiness_runner=runner, repo_root=ROOT) == 0
+    _technical_pass_auto_fail(tmp_path, "a fine valutazione")
 
 
-def test_unreadable_labels_in_the_final_read_are_fail(tmp_path):
+def test_unreadable_labels_in_the_final_read_block_the_auto_merge(tmp_path):
     fake = FakeGitHub()
 
     def runner(repo_root, pr, wait, token, output):
         fake.prs[561] = dict(FakeGitHub.pr(561), labels=None)
         Path(output).write_text(json.dumps(clean_decision()))
         return 0
-    assert g.main("readiness", [], env_for(tmp_path), transport=fake, readiness_runner=runner, repo_root=ROOT) == 1
+    assert g.main("readiness", [], env_for(tmp_path), transport=fake, readiness_runner=runner, repo_root=ROOT) == 0
+    _technical_pass_auto_fail(tmp_path, "autorizzazione non verificabile")
 
 
-def test_owner_label_present_at_the_start_stays_fail_even_if_removed_during_the_wait(tmp_path):
-    """Prudente: la readiness e' iniziata con una decisione owner aperta, quindi il verdetto non e' PASS anche se la
-    label sparisce durante l'attesa (si rilancia la readiness dopo)."""
+def test_owner_label_present_at_the_start_keeps_the_auto_merge_fail_even_if_removed(tmp_path):
+    """Prudente: la readiness e' iniziata con una decisione owner aperta, quindi l'auto-merge non e' autorizzato
+    anche se la label sparisce durante l'attesa (si rilancia la readiness dopo)."""
     fake = FakeGitHub()
     fake.prs[561] = FakeGitHub.pr(561, labels=["manual-review-required"])
 
@@ -682,15 +725,16 @@ def test_owner_label_present_at_the_start_stays_fail_even_if_removed_during_the_
         fake.prs[561] = FakeGitHub.pr(561)
         Path(output).write_text(json.dumps(clean_decision()))
         return 0
-    assert g.main("readiness", [], env_for(tmp_path), transport=fake, readiness_runner=runner, repo_root=ROOT) == 1
+    assert g.main("readiness", [], env_for(tmp_path), transport=fake, readiness_runner=runner, repo_root=ROOT) == 0
+    _technical_pass_auto_fail(tmp_path, "manual-review-required")
 
 
-def test_owner_file_renamed_to_an_unprotected_path_is_fail(tmp_path):
+def test_owner_file_renamed_to_an_unprotected_path_blocks_the_auto_merge(tmp_path):
     """Rilievo Codex P1 su faa61d1: il rename sposta il nome protetto in `previous_filename`."""
     fake = FakeGitHub()
     fake.files[561].append({"filename": "docs/archived_policy.md", "previous_filename": "AGENTS.md", "status": "renamed"})
-    assert run("readiness", tmp_path, fake) == 1
-    assert any("AGENTS.md" in r for r in result(tmp_path, "readiness")["reasons"])
+    assert run("readiness", tmp_path, fake) == 0
+    _technical_pass_auto_fail(tmp_path, "AGENTS.md")
 
 
 @pytest.mark.parametrize("entry", [{"filename": "docs/x.md", "status": "renamed"},

@@ -1,0 +1,97 @@
+{
+  "description": "Piano dei required check di main (#562 PR-C2). Dichiarativo: nessuna fase si applica da sola. Ogni fase la applica l'owner nella UI o con l'API dei ruleset, dopo il proprio GO; `scripts/ci/required_checks_plan.py` verifica il piano, lo confronta col ruleset reale e produce il payload esatto da applicare.",
+  "ruleset": {
+    "id": 25459867,
+    "name": "PICKFAIR-MAIN-PROTECTION",
+    "evidence": "GET /repos/zarbopiero963-droid/Pickfair-nogui/rulesets/25459867 del 28/10/2026 (tests/fixtures/ruleset_25459867_20261028.json); bypass_actors [] (Grok T252, #562 c.6471467252)"
+  },
+  "publishers": {
+    "github-actions": {
+      "integration_id": 15368,
+      "kind": "check_run",
+      "evidence": "app.id dei check run sull'head di #579 (113 check run)"
+    },
+    "pickfair-trusted-status": {
+      "integration_id": 5492626,
+      "kind": "status",
+      "status_creator": "pickfair-trusted-status[bot]",
+      "evidence": "App 5492626 / installazione 175754936 (Grok T252, #562 c.6471467252); creator degli status della lane sull'head di #579. Da riverificare nella UI dell'App prima di applicare una fase."
+    }
+  },
+  "checks": {
+    "actions-overlap": {
+      "context": "overlap-check",
+      "publisher": "github-actions",
+      "control": "overlap"
+    },
+    "lane-overlap": {
+      "context": "overlap-check",
+      "publisher": "pickfair-trusted-status",
+      "control": "overlap"
+    },
+    "lane-full-suite": {
+      "context": "full-suite",
+      "publisher": "pickfair-trusted-status",
+      "control": "full-suite"
+    },
+    "lane-readiness": {
+      "context": "pr-merge-readiness",
+      "publisher": "pickfair-trusted-status",
+      "control": "readiness"
+    }
+  },
+  "current": {
+    "required": [
+      "actions-overlap"
+    ],
+    "strict": false
+  },
+  "phases": [
+    {
+      "name": "F1 — overlap e full-suite della lane",
+      "add": [
+        "lane-overlap",
+        "lane-full-suite"
+      ],
+      "remove": [],
+      "strict": false,
+      "precondition": "PR-A mergiata e full-suite certificata in runtime da Grok su almeno una PR reale (52 step, success sullo SHA esatto)",
+      "owner_decision": null
+    },
+    {
+      "name": "F2 — readiness tecnica della lane obbligatoria",
+      "add": [
+        "lane-readiness"
+      ],
+      "remove": [],
+      "strict": true,
+      "precondition": "F1 applicata; PR-C2 (opzione B) mergiata e installata, cioe' la readiness della lane pubblica separati pr-merge-readiness (tecnico) e pr-auto-merge; almeno 2 PR reali con pr-merge-readiness coerente con la Merge readiness di Actions",
+      "owner_decision": "D-C2-2 (strict)",
+      "blocked_by": [
+        "readiness auto-bloccante: con pr-merge-readiness required il suo stesso pending rende la PR BLOCKED, e effective_merge_state_ok() di scripts/pr_flow_automation.py accetta solo CLEAN/UNSTABLE; serve distinguere il BLOCKED causato dal solo self-check (PR dedicata, file a merge owner) prima di applicare F2 (Codex su #587)"
+      ]
+    },
+    {
+      "name": "F3 — ritiro dei check di Actions sostituiti (facoltativa)",
+      "add": [],
+      "remove": [
+        "actions-overlap"
+      ],
+      "strict": true,
+      "precondition": "solo se l'owner decide di ritirare Actions come lane primaria (D-C2-3); la copertura dell'overlap resta della lane (overlap-check 5492626)",
+      "owner_decision": "D-C2-3"
+    }
+  ],
+  "controls": [
+    "overlap",
+    "full-suite",
+    "readiness"
+  ],
+  "never_required": [
+    {
+      "context": "pr-auto-merge",
+      "publisher": "pickfair-trusted-status",
+      "reason": "autorizzazione all'auto-merge dell'agente (opzione B dell'owner): FAIL per costruzione sulle PR a merge owner; se fosse richiesto, nessuna PR a merge owner sarebbe mergiabile senza bypass"
+    }
+  ]
+}

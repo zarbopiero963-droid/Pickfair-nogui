@@ -9,6 +9,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **#562 PR-C2 — sblocco della VPS in un comando (`ops/ci/PF562_VPS_UNBLOCK.sh`):** preflight fail-closed,
+  `appimagetool` installato solo con lo sha256 approvato e mai eseguito prima, backup e aggiornamento del dispatcher
+  dallo SHA di `main` verificato, 52 step = `FULL_SUITE_STEP_KEYS` con M2 obbligatori, un solo dispatcher, rollback
+  automatico e manuale, dry-run di default; riuso di `appimagetool` solo con proprietario e permessi attesi, download
+  di default dalla release fissa 1.9.1; journal letto solo per l'invocazione systemd corrente. 27 test con stub (`tests/scripts/test_pf562_vps_unblock.py`). Non eseguito:
+  serve l'operatore con accesso amministrativo e il binario approvato.
+- **#562 PR-C2 — osservabilità Buildkite in sola lettura (`scripts/ci/bk_observe.py`):** build, step, log e artifact
+  della lane trusted via API REST, solo `GET` con host e pipeline fissi, nessun token nel codice. `report` dà PASS solo
+  con SHA e `pf_intent` esatti, build unica, numero di step atteso, tutti `passed` ed entro il budget; FAIL, PENDING
+  o UNKNOWN altrimenti. 21 test su risposte simulate. Documento: `docs/ci_buildkite_observability.md`.
+- **#562 PR-C2 — piano dei required check di `main` (`ops/ci/required_checks.json`, `scripts/ci/required_checks_plan.py`):**
+  - inventario reale del ruleset `PICKFAIR-MAIN-PROTECTION`: oggi è obbligatorio solo `overlap-check` di Actions,
+    quindi readiness, full-suite e overlap della lane non bloccano il merge (#576);
+  - piano in fasi F1–F3 (overlap e full-suite della lane, readiness tecnica, ritiro facoltativo dei check Actions), ogni
+    required check identificato da contesto **e** app (`integration_id`), nessuna fase che tolga un controllo prima
+    del sostituto;
+  - `required_checks_plan.py`: `validate`, `diff` col ruleset reale, `payload` da applicare, `evaluate` di un head
+    (solo `success` sullo SHA esatto; skipped, neutral, mancante, altra app e altro SHA bloccano), `matrix`;
+  - **opzione B (decisione owner D-C2-1):** la readiness della lane pubblica `pr-merge-readiness` (tecnica, required da
+    F2) e `pr-auto-merge` (autorizzazione all'auto-merge dell'agente, mai required): una PR a merge owner con i gate
+    verdi è mergiabile a mano dall'owner senza bypass (`trusted_pr_guard.py`, `pr_trusted_dispatcher.py`);
+  - proposte motivate D-C2-2 (strict da F2) e D-C2-3 (tenere l'overlap di Actions) in `docs/ci_required_checks.md`.
+    **Nessuna modifica al ruleset applicata.**
+
+  Test con dati reali (ruleset, head di #579), 7 mutazioni `rcp_*`.
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
   - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
     database SQLite) su `/dev/shm` solo se è davvero un tmpfs (`/proc/mounts`), scrivibile e con almeno 512 MiB

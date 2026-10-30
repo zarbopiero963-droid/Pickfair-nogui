@@ -4044,8 +4044,8 @@
       "module": "scripts.ci.trusted_pr_guard",
       "area": "trusted_gate",
       "file": "scripts/ci/trusted_pr_guard.py",
-      "original": "        verify_head_unchanged(gh, ctx, owner_labels=(guard == \"readiness\"))\n",
-      "mutated": "        pass\n",
+      "original": "            verify_head_unchanged(gh, ctx)\n",
+      "mutated": "            pass\n",
       "tests": [
         "tests/scripts/test_trusted_pr_guard.py"
       ],
@@ -4224,8 +4224,8 @@
       "module": "scripts.ci.trusted_pr_guard",
       "area": "trusted_gate",
       "file": "scripts/ci/trusted_pr_guard.py",
-      "original": "            reasons = owner_decision_reasons(gh, ctx, verified, root)\n",
-      "mutated": "            reasons = []\n",
+      "original": "                owner = owner_decision_reasons(gh, ctx, verified, root, final_pr)",
+      "mutated": "                owner = []",
       "tests": [
         "tests/scripts/test_trusted_pr_guard.py"
       ],
@@ -4296,8 +4296,8 @@
       "module": "scripts.ci.trusted_pr_guard",
       "area": "trusted_gate",
       "file": "scripts/ci/trusted_pr_guard.py",
-      "original": "    if owner_labels and MANUAL_LABEL in label_names(pr):",
-      "mutated": "    if False:",
+      "original": "    elif final_pr is not None and MANUAL_LABEL in label_names(final_pr):",
+      "mutated": "    elif False:",
       "tests": [
         "tests/scripts/test_trusted_pr_guard.py"
       ],
@@ -4308,8 +4308,8 @@
       "module": "scripts.ci.trusted_pr_guard",
       "area": "trusted_gate",
       "file": "scripts/ci/trusted_pr_guard.py",
-      "original": "        verify_head_unchanged(gh, ctx, owner_labels=(guard == \"readiness\"))",
-      "mutated": "        verify_head_unchanged(gh, ctx, owner_labels=False)",
+      "original": "                owner = owner_decision_reasons(gh, ctx, verified, root, final_pr)",
+      "mutated": "                owner = owner_decision_reasons(gh, ctx, verified, root)",
       "tests": [
         "tests/scripts/test_trusted_pr_guard.py"
       ],
@@ -6906,6 +6906,342 @@
         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
       ],
       "rationale": "PF-562 PR-B (owner su #585): un'esecuzione negata viene presa per riuscita."
+    },
+    {
+      "id": "rcp_coverage_window_allowed",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "        _require(before <= after, f\"fase {i}: toglie la copertura di {sorted(before - after)}\")",
+      "mutated": "        pass",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: una fase che toglie un controllo prima del sostituto accettata (finestra di bypass)."
+    },
+    {
+      "id": "rcp_check_run_any_app",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "                    and (r.get(\"app\") or {}).get(\"id\") == req[\"integration_id\"]]",
+      "mutated": "                    ]",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: check run omonimo di un'altra app accettato."
+    },
+    {
+      "id": "rcp_check_run_skipped_ok",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "                elif concl != \"success\":",
+      "mutated": "                elif concl not in (\"success\", \"skipped\", \"neutral\"):",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: check run skipped/neutral accettato come required."
+    },
+    {
+      "id": "rcp_blocked_phase_payload",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "    if open_items:\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: payload di F2 generato con la readiness auto-bloccante ancora aperta (Codex su #587)."
+    },
+    {
+      "id": "rcp_check_run_other_sha",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "            if any(r.get(\"head_sha\") != sha for r in runs):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: check run di un altro SHA accettato."
+    },
+    {
+      "id": "rcp_status_any_creator",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "                           and (s.get(\"creator\") or {}).get(\"login\") == creator\n",
+      "mutated": "                           and True\n",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: status omonimo di un altro autore accettato."
+    },
+    {
+      "id": "rcp_final_controls_unchecked",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "    _require({checks[k][\"control\"] for k in states[-1]} == set(CONTROLS),",
+      "mutated": "    _require(True,",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: piano finale senza tutti i controlli obbligatori accettato."
+    },
+    {
+      "id": "rcp_bypass_actors_ignored",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "    if ruleset.get(\"bypass_actors\"):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: ruleset con bypass_actors non segnalato."
+    },
+    {
+      "id": "tg_b_unverifiable_owner_ok",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "                owner = [f\"autorizzazione non verificabile: {exc}\"]",
+      "mutated": "                owner = []",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "PF-562 PR-C2 opzione B: autorizzazione non verificabile trattata come PASS."
+    },
+    {
+      "id": "tg_b_owner_blocks_technical",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "            reasons = run_readiness(ctx, wait, token, root, readiness_runner)",
+      "mutated": "            reasons = run_readiness(ctx, wait, token, root, readiness_runner) + owner_decision_reasons(gh, ctx, verified, root)",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "PF-562 PR-C2 opzione B: motivi owner tornano a bloccare la readiness tecnica (merge owner impossibile senza bypass)."
+    },
+    {
+      "id": "td_b_auto_without_technical",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "    if verdict == \"PASS\" and outcome == \"success\":",
+      "mutated": "    if verdict == \"PASS\":",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2 opzione B: auto-merge autorizzato con readiness tecnica fallita."
+    },
+    {
+      "id": "td_b_wait_on_auto_merge",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "READINESS_SELF_STATUS_CONTEXTS = frozenset({GUARDS[\"readiness\"][\"context\"], AUTO_MERGE_CONTEXT})",
+      "mutated": "READINESS_SELF_STATUS_CONTEXTS = frozenset({GUARDS[\"readiness\"][\"context\"]})",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2 opzione B: la readiness attende il proprio pr-auto-merge (dipendenza circolare)."
+    },
+    {
+      "id": "td_b_no_auto_pending",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            rc = self.publish(job[\"pr\"], job[\"head_sha\"], \"pending\", AUTO_MERGE_CONTEXT, url, description) or rc",
+      "mutated": "            pass",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2 opzione B: nessun pending su pr-auto-merge: un vecchio success resta visibile."
+    },
+    {
+      "id": "td_b_aux_marked_published",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if aux_rc == 0:\n                self._set(job, aux_published=1)",
+      "mutated": "            self._set(job, aux_published=1)",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2 opzione B: pr-auto-merge non consegnato segnato come pubblicato."
+    },
+    {
+      "id": "td_b_aux_failure_ignored",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            rc = rc or aux_rc",
+      "mutated": "            rc = rc",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2 opzione B: pubblicazione fallita di pr-auto-merge non ritentata."
+    },
+    {
+      "id": "tg_b_readiness_head_recheck_skipped",
+      "module": "scripts.ci.trusted_pr_guard",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/trusted_pr_guard.py",
+      "original": "            final_pr = verify_head_unchanged(gh, ctx)",
+      "mutated": "            final_pr = gh.get(f\"/repos/{TRUSTED_REPO}/pulls/{ctx['pr']}\")",
+      "tests": [
+        "tests/scripts/test_trusted_pr_guard.py"
+      ],
+      "rationale": "PF-562 PR-C2 opzione B: push o retarget durante l'attesa della readiness non rilevato."
+    },
+    {
+      "id": "rcp_status_of_another_sha_counts",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "                           and str(s.get(\"url\") or \"\").endswith(f\"/statuses/{sha}\")), None)\n",
+      "mutated": "                           ), None)\n",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: status verdi di un altro commit contano per lo SHA valutato (Sol su #587)."
+    },
+    {
+      "id": "rcp_ruleset_scope_not_checked",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "    if not ruleset_applies_to_main(ruleset):\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: diff OK per un ruleset che non protegge main (Sol su #587)."
+    },
+    {
+      "id": "rcp_main_exclude_ignored",
+      "module": "scripts.ci.required_checks_plan",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/required_checks_plan.py",
+      "original": "    return _ref_matches(ref_name.get(\"include\")) and not _ref_matches(ref_name.get(\"exclude\"))\n",
+      "mutated": "    return _ref_matches(ref_name.get(\"include\"))\n",
+      "tests": [
+        "tests/scripts/test_required_checks_plan.py"
+      ],
+      "rationale": "PF-562 PR-C2: main escluso dal ruleset non rilevato (Sol su #587)."
+    },
+    {
+      "id": "td_c2_aux_description_not_cleaned",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "                                  clean_description(aux_desc))\n",
+      "mutated": "                                  aux_desc)\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2: motivo lungo dell'autorizzazione rifiutato dal publisher, pr-auto-merge pending per sempre (Codex su #587)."
+    },
+    {
+      "id": "td_c2_recovery_ignores_auto_merge",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            if job[\"guard\"] == \"readiness\" and not self._recovered_auto_merge_delivered(job):\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2: dopo un ripristino l'autorizzazione non consegnata resta pending per sempre (Codex su #587)."
+    },
+    {
+      "id": "td_c2_recovered_auto_merge_success",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if self.publish(job[\"pr\"], job[\"head_sha\"], \"error\", AUTO_MERGE_CONTEXT, url,\n",
+      "mutated": "        if self.publish(job[\"pr\"], job[\"head_sha\"], \"success\", AUTO_MERGE_CONTEXT, url,\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2: autorizzazione persa con lo snapshot pubblicata success: auto-merge senza valutazione."
+    },
+    {
+      "id": "td_c2_after_cancels_ignores_aux",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "        if (fresh.get(\"guard\") == \"readiness\" and fresh.get(\"outcome\") and not fresh.get(\"aux_published\")\n",
+      "mutated": "        if (False and fresh.get(\"outcome\") and not fresh.get(\"aux_published\")\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2: retry di pr-auto-merge perso quando restano annullamenti pendenti (Codex su #587)."
+    },
+    {
+      "id": "td_c2_recovered_aux_delivery_not_recorded",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            self._set(job, aux_published=1)\n            return True\n",
+      "mutated": "            return True\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2: consegna di pr-auto-merge verificata ma non registrata: un annullamento doppio riconsegna e sovrascrive con error (Codex su #587)."
+    },
+    {
+      "id": "bko_retried_attempt_counted",
+      "module": "scripts.ci.bk_observe",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/bk_observe.py",
+      "original": "        current.extend([a for a in attempts if not a.get(\"retried\")] or attempts)\n",
+      "mutated": "        current.extend(attempts)\n",
+      "tests": [
+        "tests/scripts/test_bk_observe.py"
+      ],
+      "rationale": "PF-562 PR-C2: tentativo superato da un retry contato: FAIL e step in piu' su una build passata (Codex su #587)."
+    },
+    {
+      "id": "bko_sha_not_checked",
+      "module": "scripts.ci.bk_observe",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/bk_observe.py",
+      "original": "    if build.get(\"commit\") != sha:\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_bk_observe.py"
+      ],
+      "rationale": "PF-562 PR-C2: build di un altro SHA certificata."
+    },
+    {
+      "id": "bko_duplicates_ignored",
+      "module": "scripts.ci.bk_observe",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/bk_observe.py",
+      "original": "    if dupes:\n",
+      "mutated": "    if False:\n",
+      "tests": [
+        "tests/scripts/test_bk_observe.py"
+      ],
+      "rationale": "PF-562 PR-C2: build duplicate per lo stesso intento non segnalate."
+    },
+    {
+      "id": "bko_no_steps_pass",
+      "module": "scripts.ci.bk_observe",
+      "area": "trusted_dispatcher",
+      "file": "scripts/ci/bk_observe.py",
+      "original": "    elif duration is None or not steps:\n",
+      "mutated": "    elif duration is None:\n",
+      "tests": [
+        "tests/scripts/test_bk_observe.py"
+      ],
+      "rationale": "PF-562 PR-C2 (Codex su #587): build passed senza step eseguiti certificata PASS."
     }
   ]
 }
