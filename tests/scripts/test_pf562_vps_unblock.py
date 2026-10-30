@@ -41,7 +41,8 @@ STUBS = {
     "systemctl": """#!/bin/bash
 case "$1" in
   cat) [ "${STUB_UNIT:-1}" = 1 ];;
-  show) echo "{ path=$STUB_PY ; argv[]=$STUB_PY -I $STUB_DISP serve --config $STUB_CFG ; }";;
+  show) if [ "$3" = "InvocationID" ]; then echo "${STUB_INVOCATION-inv-new}"
+        else echo "{ path=$STUB_PY ; argv[]=$STUB_PY -I $STUB_DISP serve --config $STUB_CFG ; }"; fi;;
   restart|stop|start) echo "$1" >> "$STUB_LOG";;
   is-active) exit 0;;
   *) exit 0;;
@@ -54,15 +55,14 @@ f="${@: -1}"; op="${@: -2:1}"
 m=$(stat -c %a "$f"); o=${m: -1}
 case "$op" in -w) [ $((o & 2)) -ne 0 ];; -x) [ $((o & 1)) -ne 0 ];; *) exit 1;; esac
 """,
-    # STUB_JOURNAL: errori dopo il riavvio. STUB_JOURNAL_OLD: errori scritti PRIMA (epoch STUB_OLD_TS), visibili solo
-    # se la finestra `--since` li include (Grok su #587)
+    # STUB_JOURNAL: errori dell'avvio corrente (invocazione `inv-new`). STUB_JOURNAL_OLD: errori del dispatcher vecchio
+    # (invocazione `inv-old`), visibili se il filtro non isola l'invocazione nuova (Grok e Sol su #587)
     "journalctl": """#!/bin/bash
-since=""; prev=""
-for a in "$@"; do [ "$prev" = "--since" ] && since="$a"; prev="$a"; done
-printf "%s" "${STUB_JOURNAL:-}"
-if [ -n "${STUB_JOURNAL_OLD:-}" ]; then
-  case "$since" in @*) [ "${since#@}" -le "${STUB_OLD_TS:-0}" ] && printf "%s" "$STUB_JOURNAL_OLD";; *) printf "%s" "$STUB_JOURNAL_OLD";; esac
-fi
+inv=""
+for a in "$@"; do case "$a" in _SYSTEMD_INVOCATION_ID=*) inv="${a#_SYSTEMD_INVOCATION_ID=}";; esac; done
+[ -z "$inv" ] || [ "$inv" = "inv-new" ] && printf "%s" "${STUB_JOURNAL:-}"
+[ -z "$inv" ] || [ "$inv" = "inv-old" ] && printf "%s" "${STUB_JOURNAL_OLD:-}"
+exit 0
 """,
 }
 
@@ -314,11 +314,16 @@ def test_module_import_needs_no_system_commands():
 
 
 def test_journal_errors_written_before_the_restart_do_not_roll_back(lane):
-    """Grok su #587: la VPS da sbloccare ha gia' Traceback del dispatcher vecchio nel journal. Contano solo le righe
-    scritte dopo il riavvio, altrimenti lo sblocco si annulla da solo nel caso d'uso previsto."""
-    import time
-    old_ts = str(int(time.time()) - 30)
-    res = _run(lane, *_base(lane), "--apply", STUB_JOURNAL_OLD="Traceback (most recent call last)\nNOT CONFIGURED\n",
-               STUB_OLD_TS=old_ts)
+    """Grok e Sol su #587: la VPS da sbloccare ha gia' Traceback del dispatcher vecchio nel journal, anche nello stesso
+    secondo del riavvio. Contano solo le righe dell'invocazione systemd nuova, altrimenti lo sblocco si annulla da solo."""
+    res = _run(lane, *_base(lane), "--apply", STUB_JOURNAL_OLD="Traceback (most recent call last)\nNOT CONFIGURED\n")
     assert res.returncode == 0, res.stdout + res.stderr
     assert lane["disp"].read_text() == (ROOT / "scripts" / "pr_trusted_dispatcher.py").read_text()
+
+
+def test_unreadable_invocation_id_rolls_back(lane):
+    """Senza l'InvocationID dell'avvio nuovo il journal non si puo' attribuire: fail-closed, rollback."""
+    old = lane["disp"].read_text()
+    res = _run(lane, *_base(lane), "--apply", STUB_INVOCATION="")
+    assert res.returncode in (1, 3) and "InvocationID" in res.stdout and "Rollback automatico" in res.stdout
+    assert lane["disp"].read_text() == old

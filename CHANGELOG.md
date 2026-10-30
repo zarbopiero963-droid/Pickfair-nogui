@@ -13,7 +13,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `appimagetool` installato solo con lo sha256 approvato e mai eseguito prima, backup e aggiornamento del dispatcher
   dallo SHA di `main` verificato, 52 step = `FULL_SUITE_STEP_KEYS` con M2 obbligatori, un solo dispatcher, rollback
   automatico e manuale, dry-run di default; riuso di `appimagetool` solo con proprietario e permessi attesi, download
-  di default dalla release fissa 1.9.1; journal letto solo dal riavvio. 26 test con stub (`tests/scripts/test_pf562_vps_unblock.py`). Non eseguito:
+  di default dalla release fissa 1.9.1; journal letto solo per l'invocazione systemd corrente. 27 test con stub (`tests/scripts/test_pf562_vps_unblock.py`). Non eseguito:
   serve l'operatore con accesso amministrativo e il binario approvato.
 - **#562 PR-C2 — osservabilità Buildkite in sola lettura (`scripts/ci/bk_observe.py`):** build, step, log e artifact
   della lane trusted via API REST, solo `GET` con host e pipeline fissi, nessun token nel codice. `report` dà PASS solo

@@ -490,8 +490,9 @@ sudo bash ops/ci/PF562_VPS_UNBLOCK.sh --rollback /root/pf562-unblock-<timestamp>
 - **Verifiche dopo l'applicazione.**
   - Un solo processo `serve`.
   - Il generatore di `main` ha 52 step, uguali a `FULL_SUITE_STEP_KEYS`, con i 3 M2 obbligatori.
-  - `check-config` passa e nel journal scritto dopo il riavvio non ci sono `Traceback` né `NOT CONFIGURED` (gli errori del
-    dispatcher vecchio, precedenti al riavvio, non contano).
+  - `check-config` passa e nel journal dell'invocazione systemd corrente (`_SYSTEMD_INVOCATION_ID`) non ci sono
+    `Traceback` né `NOT CONFIGURED`. Gli errori del dispatcher vecchio non contano, anche se scritti nello stesso secondo
+    del riavvio; un `InvocationID` illeggibile porta al rollback.
   - Se una verifica fallisce, rollback automatico; se il rollback stesso fallisce, exit 3.
 - **Rollback manuale.** `--rollback` verifica il manifest, ripristina lo script e lo stato di `appimagetool`, riavvia il
   servizio e controlla che resti un solo dispatcher attivo.

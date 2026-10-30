@@ -258,8 +258,6 @@ done
 runuser -u "$AGENT_USER" -- test -x "$AIT_DIR/appimagetool" || fail_and_rollback "appimagetool non eseguibile da $AGENT_USER"
 
 # ------------------------------------------------------------------------------------------------- dispatcher
-# il journal si legge da QUI in poi: gli errori del dispatcher vecchio, scritti prima del riavvio, non contano (Grok su #587)
-JOURNAL_SINCE="@$(date +%s)"
 if [ "$ALREADY_DISP" -ne 1 ]; then
   # check-config col NUOVO script sulla configurazione esistente, prima di sostituire niente
   "$LANE_PYTHON" -I "$WORK/dispatcher.py" check-config --config "$DISP_CONFIG" >/dev/null \
@@ -275,7 +273,11 @@ systemctl is-active --quiet "$DISPATCH_UNIT" || fail_and_rollback "${DISPATCH_UN
 [ "$(sha256sum "$DISP_SCRIPT" | awk '{print $1}')" = "$NEW_DISP_SHA" ] || fail_and_rollback "script installato diverso da main"
 # smoke non finanziario: configurazione e journal recente senza errori di avvio (solo conteggi, mai il contenuto)
 "$LANE_PYTHON" -I "$DISP_SCRIPT" check-config --config "$DISP_CONFIG" >/dev/null || fail_and_rollback "check-config dopo l'aggiornamento"
-ERRS="$(journalctl -u "$DISPATCH_UNIT" --since "$JOURNAL_SINCE" --no-pager -o cat 2>/dev/null | grep -ciE 'traceback|NOT CONFIGURED' || true)"
+# journal della sola invocazione systemd corrente: gli errori del dispatcher vecchio, anche nello stesso secondo del
+# riavvio, non contano (Grok e Sol su #587). InvocationID illeggibile => journal non attribuibile => rollback
+INVOCATION="$(systemctl show -p InvocationID --value "$DISPATCH_UNIT" 2>/dev/null || true)"
+[[ "$INVOCATION" =~ ^[0-9A-Za-z-]+$ ]] || fail_and_rollback "InvocationID di ${DISPATCH_UNIT} illeggibile"
+ERRS="$(journalctl -u "$DISPATCH_UNIT" "_SYSTEMD_INVOCATION_ID=$INVOCATION" --no-pager -o cat 2>/dev/null | grep -ciE 'traceback|NOT CONFIGURED' || true)"
 [ "${ERRS:-0}" = "0" ] || fail_and_rollback "errori di avvio nel journal del dispatcher (${ERRS})"
 
 # ---------------------------------------------------------------------------------------------------------- report
