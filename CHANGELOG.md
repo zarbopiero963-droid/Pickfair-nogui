@@ -16,9 +16,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `requirements_report.json` per SHA/seed; child runner HeadlessApp reale in SIM con SIGKILL esterno al checkpoint e
   riavvio sullo stesso HOME; netguard; oracolo Decimal indipendente; livello 1 sulle 79 chiavi persistite; scenari
   SIM-COMBO-001, SIM-CASH-002, SIM-DUP-005, SIM-RESTART-003 con sonda RST-03). Nessun file applicativo toccato.
-  Finding tracciati come xfail strict: hedge del cashout assente dal ledger (CSH-06 → F-05), monitor SL/TP inerte
-  (→ F-01/F-02), loader fail-open su valori illeggibili/infiniti (NF-16 → F-18, xfail imperativo). Marker nuovi in `pytest.ini`;
-  `art/` ignorato; `docs/testing/full_scope_harness.md`.
+  Hardening finale (owner 30/10): binding L2/L3 → runtime SIM (`combi_runner.py`: caso → settings → istanza →
+  scenario → oracolo → `combi_runs.json`), 13 mutazioni del generatore nel catalogo (area `fullscope_tooling`, 12
+  uccise + 1 equivalente documentata), riconciliazione 47→43 requisiti, test negativi dell'oracolo, nessuna attesa
+  fissa, `bus_idle` su API pubblica, netguard TCP+UDP.
+  Finding tracciati come xfail con riferimento: hedge del cashout assente dal ledger (CSH-06 → F-05), monitor SL/TP
+  inerte (→ F-01/F-02), loader fail-open su valori illeggibili/infiniti (NF-16 → F-18), `starting_balance 0` /
+  `commission_pct 0` sostituiti dal default (→ F-18/F-17). Marker nuovi in `pytest.ini`; `art/` ignorato;
+  `docs/testing/full_scope_harness.md`.
 
 ### Changed
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**

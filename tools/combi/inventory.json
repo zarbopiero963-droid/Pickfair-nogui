@@ -2552,12 +2552,12 @@
    "l1_mode": "settings_roundtrip",
    "domain": {
     "kind": "float",
-    "min": 0.0,
+    "min": 0.01,
     "valid": [
-     0.0,
-     4.5,
+     50.0,
      100.0,
-     1000.0
+     1000.0,
+     5000.0
     ],
     "boundary": [
      0.0,
@@ -2568,7 +2568,8 @@
      "inf",
      -1,
      "abc"
-    ]
+    ],
+    "note": "0.0 e' un confine, non un valore rappresentativo: oggi ricade sul default 1000 (finding F-18/F-17, test dedicato)"
    },
    "source": "services/setting_service.py:556"
   },
@@ -2584,24 +2585,26 @@
    "roserpina42": false,
    "l1_mode": "settings_roundtrip",
    "domain": {
-    "kind": "float",
+    "kind": "pct",
     "min": 0.0,
+    "max": 100.0,
     "valid": [
-     0.0,
+     2.0,
      4.5,
-     100.0,
-     1000.0
+     6.5
     ],
     "boundary": [
      0.0,
-     0.01
+     0.01,
+     100.0
     ],
     "invalid": [
      "nan",
      "inf",
      -1,
      "abc"
-    ]
+    ],
+    "note": "SIM: il broker rifiuta il settlement se la commissione differisce dalla policy Betfair Italia 4.5 (COMMISSION_POLICY_VIOLATION, fail-closed): valori diversi da 4.5 non sono eseguibili nel runtime; round-trip di storage soltanto. Esclusa dai gruppi combinatori eseguiti."
    },
    "source": "services/setting_service.py:557"
   },
@@ -3218,23 +3221,26 @@
    "l1_mode": "settings_roundtrip",
    "domain": {
     "kind": "float",
-    "min": 0.0,
+    "min": 5.0,
     "valid": [
-     0.0,
-     60.0,
-     120.0,
-     1000.0
+     5.0,
+     10.0,
+     20.0
     ],
     "boundary": [
      0.0,
-     0.01
+     4.99,
+     5.0,
+     60.0,
+     300.0
     ],
     "invalid": [
      "nan",
      "inf",
      -1,
      "abc"
-    ]
+    ],
+    "note": "0.0 e' un confine: oggi `float(x or 60.0)` lo sostituisce con 60 (stesso schema di starting_balance) Valori lunghi (60, 300) sono confini: eseguibili ma fuori dai tempi dei test."
    },
    "source": "core/runtime_controller.py:521"
   },

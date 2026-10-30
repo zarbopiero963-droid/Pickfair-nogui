@@ -38,6 +38,27 @@ def test_netguard_blocks_non_local_connections():
     assert out.stdout.strip() == "BLOCKED", out.stdout + out.stderr
 
 
+def test_netguard_blocks_udp_sendto_and_connect_ex():
+    env = dict(os.environ)
+    env["PYTHONPATH"] = H.NETGUARD
+    code = ("import socket\n"
+            "out = []\n"
+            "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+            "try:\n"
+            "    s.sendto(b'x', ('8.8.8.8', 53)); out.append('UDP_OPEN')\n"
+            "except OSError as e:\n"
+            "    out.append('UDP_BLOCKED' if 'PF_NETGUARD' in str(e) else 'UDP_OTHER')\n"
+            "t = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+            "t.settimeout(1)\n"
+            "try:\n"
+            "    t.connect_ex(('93.184.216.34', 80)); out.append('EX_OPEN')\n"
+            "except OSError as e:\n"
+            "    out.append('EX_BLOCKED' if 'PF_NETGUARD' in str(e) else 'EX_OTHER:' + str(e))\n"
+            "print(' '.join(out))\n")
+    out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=30)
+    assert out.stdout.strip() == "UDP_BLOCKED EX_BLOCKED", out.stdout + out.stderr
+
+
 def test_external_sigkill_at_checkpoint_then_restart_keeps_db_and_exchange_state():
     home = tempfile.mkdtemp(prefix="pf_fullscope_kill_")
     first = H.run([{"op": "signal", "m": "1.901", "price": 2.0, "stake": 3.0},

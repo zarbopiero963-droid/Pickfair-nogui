@@ -191,6 +191,8 @@ MODULE_RULES = [
             # #525: il catalogo e i file che muta sono la fonte del mutation testing reale
             "guardrails/mutation_catalog.json",
             "scripts/run_mutation_guardrails.py",
+            "tools/combi/",  # F-33 (#586): il generatore combinatorio ha mutazioni cg_* nel catalogo
+
             "database.py",
             "dutching.py",
             "betfair_client.py",  # RECTIFICATION-01: mutazione del catalogo sulla riduzione parziale (Microstake LIVE)

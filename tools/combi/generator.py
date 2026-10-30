@@ -348,7 +348,8 @@ GROUPS: Dict[str, Dict[str, Any]] = {
     },
     "c_esecuzione_sim": {
         "strength": 2,
-        "keys": ["simulation.starting_balance", "simulation.commission_pct", "simulation.partial_fill_enabled",
+        # simulation.commission_pct esclusa: in SIM solo 4.5 e' eseguibile (COMMISSION_POLICY_VIOLATION altrimenti)
+        "keys": ["simulation.starting_balance", "simulation.partial_fill_enabled",
                  "simulation.consume_liquidity", "settlement.poll_enabled", "settlement.poll_sec"],
         "constraints": [],
     },

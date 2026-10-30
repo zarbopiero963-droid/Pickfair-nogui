@@ -143,3 +143,53 @@ def test_cli_writes_report_and_is_reproducible(tmp_path):
     assert G.main(["--group", "c_esecuzione_sim", "--seed", "5", "--out", str(out2)]) == 0
     d1, d2 = json.load(open(out1)), json.load(open(out2))
     assert d1 == d2 and d1["complete"] is True and d1["schema"] == "pf-combi-coverage/1"
+
+
+def test_verify_detects_constraint_violation_in_cases():
+    params = [G.Parameter("defense", (1.0, 5.0)), G.Parameter("lockdown", (20.0, 50.0)), G.Parameter("f", (True, False))]
+    lt = G._lt("defense", "lockdown")
+    rep = G.generate(params, strength=2, seed=0, constraints=[lt])
+    bad = copy.deepcopy(rep)
+    bad.cases.append({"defense": 50.0, "lockdown": 20.0, "f": True})
+    check = G.verify(bad, params, [lt])
+    assert check["ok"] is False and check["constraint_violations"], check
+
+
+def test_complete_flag_follows_counts_and_vacuous_is_flagged():
+    rep = G.generate(_sample_params(), strength=2, seed=0)
+    d = rep.to_dict()
+    assert d["complete"] is True and d["vacuous"] is False
+    rep.tuples_covered = rep.tuples_required - 1
+    assert rep.to_dict()["complete"] is False
+    empty = G.generate(_sample_params(), strength=2, seed=0, constraints=[lambda _x: False])
+    de = empty.to_dict()
+    assert de["tuples_required"] == 0 and de["n_cases"] == 0 and de["vacuous"] is True
+    assert de["coverage_pct"] == 100.0  # formalmente, ma marcato vuoto
+
+
+def test_seed_influences_tie_breaks_on_real_groups():
+    """Riproducibilita' effettiva: lo stesso seed da' gli stessi casi, seed diversi possono differire (osservato sui
+    gruppi reali: b_protezioni e d_liquidita_book hanno conteggi diversi fra seed 7 e 8)."""
+    inv = G.load_inventory()
+    r7a = G.build_group("d_liquidita_book", inv, seed=7)
+    r7b = G.build_group("d_liquidita_book", inv, seed=7)
+    r8 = G.build_group("d_liquidita_book", inv, seed=8)
+    assert r7a.cases == r7b.cases
+    assert r7a.cases != r8.cases, "il seed non influenza la costruzione: pareggi risolti in modo fisso"
+
+
+def test_mixed_type_domain_keeps_full_coverage():
+    """Rilievo A13: domini con 0/False o 1/1.0 devono essere confrontati per chiave, non con ==."""
+    params = [G.Parameter("a", (0, False, 1)), G.Parameter("b", (1, 1.0, 2)), G.Parameter("c", ("x", "y", "z")),
+              G.Parameter("d", (True, False))]
+    rep = G.generate(params, strength=2, seed=0)
+    assert rep.coverage_pct == 100.0 and G.verify(rep, params)["ok"] is True
+
+
+def test_horizontal_tie_breaks_use_the_seed():
+    """Primo caso, parametro c: entrambi i valori coprono lo stesso numero di tuple nuove (pareggio): la scelta deve
+    dipendere dal seed. Con seed fissi 0..24 si osservano entrambi i valori; se il pareggio fosse risolto in modo
+    fisso (es. sempre il primo valore) il generatore non sarebbe piu' guidato dal seed."""
+    params = [G.Parameter("a", (1, 2)), G.Parameter("b", (1, 2)), G.Parameter("c", (1, 2))]
+    first_c = {G.generate(params, strength=2, seed=s).cases[0]["c"] for s in range(25)}
+    assert first_c == {1, 2}, first_c

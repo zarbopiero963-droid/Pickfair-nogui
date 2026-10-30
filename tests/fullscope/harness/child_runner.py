@@ -161,8 +161,10 @@ try:
             runners.append({"selectionId": s, "status": st,
                             "ex": {"availableToBack": [{"price": back_px, "size": size}],
                                    "availableToLay": [{"price": lay_px, "size": size}]}})
-        brk.update_market_book({"marketId": m, "status": status, "inplay": False, "runners": runners,
-                                "event_name": info.get("event") or f"Ev{m} v X", "market_name": "Match Odds"})
+        esito = brk.update_market_book({"marketId": m, "status": status, "inplay": False, "runners": runners,
+                                        "event_name": info.get("event") or f"Ev{m} v X", "market_name": "Match Odds"})
+        if status != "OPEN":
+            R.setdefault("settle_results", []).append({"m": m, "esito": {k: str(v)[:200] for k, v in (esito or {}).items()}})
 
     def snap(tag):
         persist_exchange(app)
@@ -192,7 +194,20 @@ try:
                 for o in (brk.list_current_orders().get("currentOrders") or [])]
         settled = [{"market_id": x.get("market_id"), "settlement_id": x.get("settlement_id"),
                     "gross_pnl": x.get("gross_pnl"), "net_pnl": x.get("net_pnl")} for x in brk.list_settlements()]
+        cfg = {}
+        try:
+            import dataclasses
+            for f in dataclasses.fields(rt.config):
+                v = getattr(rt.config, f.name)
+                cfg[f.name] = getattr(v, "value", v)
+        except Exception:  # noqa: BLE001
+            cfg = {"_error": "config non leggibile"}
+        try:
+            simcfg = dict(app.settings_service.load_simulation_config())
+        except Exception:  # noqa: BLE001
+            simcfg = {}
         R["snaps"].append({"tag": tag, "mode": getattr(rt.mode, "value", str(rt.mode)),
+                           "config": cfg, "sim_config": simcfg, "table_count": len(rt.table_manager.snapshot()),
                            "exch_orders": exch, "exch_settlements": settled,
                            "emergency": bool(getattr(rt, "_emergency_stopped", False)), "funds": funds,
                            "bankroll": d.bankroll_current, "peak": d.equity_peak, "account": acct,
@@ -208,7 +223,11 @@ try:
         app.bus.subscribe(_name, lambda d, _n=_name: SUB.append((time.time(), _n, d if isinstance(d, dict) else {})))
 
     def bus_idle():
-        return getattr(app.bus._queue, "unfinished_tasks", 0) == 0
+        # API pubblica dell'EventBus: coda vuota e tutto il pubblicato consegnato (nessun attributo privato)
+        try:
+            return app.bus.queue_depth() == 0 and app.bus.delivered_total_count() >= app.bus.published_total_count()
+        except Exception:  # noqa: BLE001 - bus senza contatori => si considera fermo solo a coda vuota
+            return getattr(app.bus, "queue_depth", lambda: 0)() == 0
 
     def wait_for(tag, pred, deadline_s=30.0):
         t_start = time.time()
@@ -238,6 +257,14 @@ try:
         return rows
 
     pending_settle = []
+    _poll_cfg = (SPEC.get("settings") or {}).get("settlement.poll_enabled", True)
+    POLL_ENABLED = str(_poll_cfg).strip().lower() not in ("0", "false", "", "none")
+    R["poll_enabled"] = POLL_ENABLED
+    try:
+        _poll_sec = float((SPEC.get("settings") or {}).get("settlement.poll_sec", 1) or 60.0)
+    except (TypeError, ValueError):
+        _poll_sec = 60.0
+    SETTLE_DEADLINE = min(120.0, max(30.0, 2.0 * max(5.0, _poll_sec) + 5.0))   # il poller gira ogni max(5, poll_sec) s
     snap("start")
     for i, st in enumerate(steps):
         op = st["op"]
@@ -271,38 +298,53 @@ try:
         elif op == "book":
             BOOK.setdefault(m, {"price": 2.0, "side": "BACK", "sel": 11})["price"] = st.get("price", 2.0)
             book(m)
-            time.sleep(0.5)
             wait_for(f"{i}:book:{m}", lambda: True)
         elif op == "settle":
             t_settle = time.time()
             sel = int(BOOK.get(m, {}).get("sel") or 11)
+            # posizione abbinata sull'exchange PRIMA della chiusura: solo allora il runtime deve contabilizzare
+            has_position = any(str(o.get("marketId")) == str(m) and float(o.get("sizeMatched") or 0) > 0
+                               for o in (brk.list_current_orders().get("currentOrders") or []))
             book(m, status="CLOSED", winner=sel if st.get("win") else sel + 1)
-            pending_settle.append((m, t_settle))
+            last_settle = (R.get("settle_results") or [{}])[-1].get("esito", {})
+            if str(last_settle.get("settlement_status", "")) not in ("", "None", "SETTLED", "OK") \
+                    and "SETTLED" not in str(last_settle.get("settlement_status", "")).upper():
+                has_position = False        # l'exchange ha rifiutato/saltato il settlement: nessuna contabilizzazione attesa
+            if has_position:
+                pending_settle.append((m, t_settle))
             if st.get("nowait"):
+                continue
+            if not pending_settle:
+                wait_for(f"{i}:settle:{m}:no_position", lambda: True)
+                snap(f"{i}:{op}:{m}")
                 continue
             first_t = min(t for _m, t in pending_settle)
 
             def settled():
+                if not POLL_ENABLED or not pending_settle:
+                    return True                    # poller disattivato o nessuna posizione abbinata: nulla da attendere
                 if not all(since(t0, {"RUNTIME_CLOSE_POSITION"}, mm) for mm, t0 in pending_settle):
                     return False
                 closes = len(since(first_t, {"RUNTIME_CLOSE_POSITION"}))
                 done = len(since(first_t, {"AUTO_TRADE_MM_RESULT"}))
                 return closes > 0 and done >= closes
-            wait_for(f"{i}:settle:{','.join(mm for mm, _t in pending_settle)}", settled)
+            wait_for(f"{i}:settle:{','.join(mm for mm, _t in pending_settle)}", settled, deadline_s=SETTLE_DEADLINE)
             pending_settle = []
         elif op == "resettle":
             last = next((d for _, e, d in reversed(EV) if e == "RUNTIME_CLOSE_POSITION" and d.get("market_id") == m), {})
+            t_r = time.time()
             app.bus.publish("RUNTIME_CLOSE_POSITION", dict(last))
-            time.sleep(2)
-            wait_for(f"{i}:resettle", lambda: True)
+            wait_for(f"{i}:resettle", lambda: since(t_r, {"AUTO_TRADE_MM_RESULT", "SETTLEMENT_DUPLICATE", "SETTLEMENT_SKIPPED"})
+                     or time.time() >= t_r + 1.0)
         elif op == "withdraw":
             with brk._lock:
                 brk.state.balance -= float(st["amount"])
-            time.sleep(0.5)
+            wait_for(f"{i}:withdraw", lambda: True)
         elif op == "risk_stop":
+            t_r = time.time()
             R["risk_stop"] = str(rt.risk_stop("fullscope_test"))[:200]
-            time.sleep(4)
-            wait_for(f"{i}:risk_stop", lambda: True)
+            wait_for(f"{i}:risk_stop", lambda: since(t_r, {"RISK_STOP_DONE", "RISK_STOP_COMPLETED", "CASHOUT_SUCCESS", "CASHOUT_FAILED"})
+                     or time.time() >= t_r + 1.5)
         elif op == "cashout":
             ev = BOOK.get(m, {}).get("event") or f"Ev{m} v X"
             t_c = time.time()
@@ -313,21 +355,21 @@ try:
             wait_for(f"{i}:cashout:{m}",
                      lambda: since(t_c, {"CASHOUT_SUCCESS", "CASHOUT_FAILED", "CASHOUT_REQUEST_SUPPRESSED"})
                      or time.time() >= t_grace)
-            time.sleep(1.0)
         elif op == "cashout_all":
             t_c = time.time()
             app.bus.publish("SIGNAL_RECEIVED", {"signal_type": "CASHOUT_ALL", "source": "FULLSCOPE"})
-            time.sleep(4)
-            wait_for(f"{i}:cashout_all", lambda: True)
+            wait_for(f"{i}:cashout_all", lambda: since(t_c, {"CASHOUT_SUCCESS", "CASHOUT_FAILED", "CASHOUT_REQUEST_SUPPRESSED"})
+                     or time.time() >= t_c + 2.0)
         elif op == "replay_cmd":
             last = next((d for _, e, d in reversed(EV) if e == "CMD_QUICK_BET" and d.get("market_id") == m), None)
+            t_r = time.time()
             if last is not None:
                 app.bus.publish("CMD_QUICK_BET", dict(last))
-            time.sleep(2)
-            wait_for(f"{i}:replay_cmd", lambda: True)
+            wait_for(f"{i}:replay_cmd", lambda: since(t_r, OUTCOMES | {"QUICK_BET_DUPLICATE"}, m, SUB)
+                     or time.time() >= t_r + 1.0)
         elif op == "settings":
             app.settings_service.save_settings(dict(st.get("values") or {}))
-            time.sleep(0.3)
+            wait_for(f"{i}:settings", lambda: True)
         elif op == "checkpoint":
             persist_exchange(app)
             snap(f"{i}:checkpoint:{st['name']}")
@@ -344,13 +386,13 @@ try:
             os._exit(1)
         elif op == "lockdown":
             rt.force_lockdown("fullscope_test")
-            time.sleep(0.3)
+            wait_for(f"{i}:lockdown", lambda: True)
         elif op == "pause":
             rt.pause()
-            time.sleep(0.3)
+            wait_for(f"{i}:pause", lambda: True)
         elif op == "emergency":
             R["emergency"] = str(rt.emergency_stop("fullscope_test"))[:200]
-            time.sleep(0.5)
+            wait_for(f"{i}:emergency", lambda: True)
         elif op == "wait":
             time.sleep(float(st.get("s", 2)))
         else:
