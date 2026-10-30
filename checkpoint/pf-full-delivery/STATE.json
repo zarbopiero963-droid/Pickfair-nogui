@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 98,
- "updated_at": "2026-10-30T05:46:06Z",
+ "seq": 99,
+ "updated_at": "2026-10-30T09:33:09Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "#587 head b05a8cb: Sol/Grok VALID_PASS, Codex nessun finding. Fix: f822c11 (aux recuperato registrato, import test), 8ccda54 (journal per InvocationID), b05a8cb (F2 blocked_by: readiness self-block, fix vero in pr_flow_automation = PR owner-merge dedicata prima di F2). BK37-41 51/52 (solo w5-build-linux-appimage, appimagetool assente). Aggiornamento #562. Aperti owner: waiver Grok 6fa29b2..2c2d8fc, Grok VALID_INCONCLUSIVE e48b417..8ccda54, operatore VPS script, GO workflow opzione B, merge owner #587. Nessun merge, NO-GO LIVE.",
+ "next_atomic_action": "PF562_FINAL_UNBLOCK_STATUS pubblicato su #562 (c.6519558156). #587 head a1f60ab (workflow 1.9.1 ed4ce84f..., scope +3 dichiarato): Sol/Grok VALID_PASS, Codex nessun finding. Aperti: 1) operatore VPS esegue PF562_VPS_UNBLOCK.sh (comandi nel rapporto); 2) owner commenta '/pf-trusted-rerun a1f60ab...' poi verifica BK 52/52 con bk_observe; 3) deroghe Grok preparate per i 2 range (no altri tentativi: done marker); 4) merge owner #587; 5) PR self-block preparata (scratchpad PF562_SELF_BLOCK_PR_PLAN.md), solo dopo #587 con GO. NO merge, NO LIVE.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "5c367cc2d57e4a769899ee6e4cc30ee97913bff6",
+ "previous_checkpoint_sha": "789475fab4ec18dff177bad3ca5577434450e6fd",
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -606,12 +606,12 @@
  "mandate_id": "OWNER FINAL MANDATE — chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
  "code": {
   "branch": "pf562-pr4-c2-required-checks",
-  "sha": "b05a8cb81d2405b15602cb682777421a63969577",
+  "sha": "a1f60abe09ea316b601e23beeb8b7c5463d03738",
   "note": "#587 PR-C2 head remoto; locale e376f2d (code_patch/pr587); script VPS locale 715bb84 (code_patch/vps_unblock)",
   "patch": {
-   "head": "b05a8cb81d2405b15602cb682777421a63969577",
-   "tree": "537c305061a8771d2f70b705c0755dbc05ed6f49",
-   "captured_at": "2026-10-30T05:46:07+00:00",
+   "head": "a1f60abe09ea316b601e23beeb8b7c5463d03738",
+   "tree": "72ce1415661ca5282bf03353d9a3a15894e21523",
+   "captured_at": "2026-10-30T09:33:09+00:00",
    "modified": [],
    "untracked": [],
    "files": [
