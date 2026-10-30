@@ -7172,6 +7172,18 @@
       "rationale": "PF-562 PR-C2: retry di pr-auto-merge perso quando restano annullamenti pendenti (Codex su #587)."
     },
     {
+      "id": "td_c2_recovered_aux_delivery_not_recorded",
+      "module": "scripts.pr_trusted_dispatcher",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_trusted_dispatcher.py",
+      "original": "            self._set(job, aux_published=1)\n            return True\n",
+      "mutated": "            return True\n",
+      "tests": [
+        "tests/scripts/test_pr_trusted_dispatcher.py"
+      ],
+      "rationale": "PF-562 PR-C2: consegna di pr-auto-merge verificata ma non registrata: un annullamento doppio riconsegna e sovrascrive con error (Codex su #587)."
+    },
+    {
       "id": "bko_retried_attempt_counted",
       "module": "scripts.ci.bk_observe",
       "area": "trusted_dispatcher",

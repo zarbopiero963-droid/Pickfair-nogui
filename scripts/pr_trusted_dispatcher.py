@@ -2084,6 +2084,9 @@ class Dispatcher:
             return False
         latest = next((st for st in statuses if isinstance(st, dict) and st.get("context") == AUTO_MERGE_CONTEXT), None)
         if isinstance(latest, dict) and latest.get("state") in ("success", "failure", "error"):
+            # consegna verificata sugli status remoti: registrata, cosi' l'annullamento di una build doppia non
+            # rimanda il job in riconsegna sovrascrivendo gli status validi con `error` (Codex su #587)
+            self._set(job, aux_published=1)
             return True
         url = f"{BUILDKITE_WEB}/{self.cfg.organization}/{PIPELINES[job['guard']]['pipeline']}"
         if self.publish(job["pr"], job["head_sha"], "error", AUTO_MERGE_CONTEXT, url,

@@ -20,8 +20,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "ops" / "ci" / "PF562_VPS_UNBLOCK.sh"
 PY = "/usr/bin/python3.12"
-#: utente fittizio del job, sempre diverso da chi esegue i test (che possiede i file creati)
-AGENT = "daemon" if subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip() == "nobody" else "nobody"
+
+
+def _agent() -> str:
+    """Utente fittizio del job, sempre diverso da chi esegue i test (che possiede i file creati).
+
+    Calcolato nella fixture, dopo lo skip: all'import `id` puo' mancare (Windows) e rompere la raccolta (Sol su #587).
+    """
+    return "daemon" if subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip() == "nobody" else "nobody"
+
 
 pytestmark = pytest.mark.skipif(
     os.name != "posix" or shutil.which("bash") is None or shutil.which("git") is None or not Path(PY).exists()
@@ -111,7 +118,7 @@ def lane(tmp_path):
     env = {
         "PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path),
         "PF562_TOOLS_DIR": str(tools), "PF562_LANE_PYTHON": PY, "PF562_PY_MINOR": "12",
-        "PF562_AGENT_CFG": str(agent_cfg), "PF562_AGENT_USER": AGENT, "PF562_BACKUP_BASE": str(backups),
+        "PF562_AGENT_CFG": str(agent_cfg), "PF562_AGENT_USER": _agent(), "PF562_BACKUP_BASE": str(backups),
         # installazione col proprietario corrente: i test girano anche su runner non-root (Sol su #587)
         "PF562_INSTALL_OWNER": subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip(),
         "PF562_INSTALL_GROUP": subprocess.run(["id", "-gn"], capture_output=True, text=True).stdout.strip(),
@@ -246,7 +253,7 @@ def test_script_never_downloads_without_a_hash_and_never_runs_the_tool():
 def test_a_tools_directory_writable_by_the_job_stops_the_preflight(lane):
     lane["tools"].chmod(0o777)                                     # il job potrebbe rinominare appimagetool/
     res = _run(lane, *_base(lane), "--apply")
-    assert res.returncode == 1 and f"scrivibile da {AGENT}" in res.stdout and str(lane["tools"]) in res.stdout
+    assert res.returncode == 1 and f"scrivibile da {lane['env']['PF562_AGENT_USER']}" in res.stdout and str(lane["tools"]) in res.stdout
     assert not (lane["tools"] / "appimagetool").exists() and not list(lane["backups"].glob("pf562-unblock-*"))
 
 
@@ -286,3 +293,12 @@ def test_default_download_is_the_pinned_1_9_1_release_not_continuous():
     src = SCRIPT.read_text()
     assert 'APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/1.9.1/' in src
     assert "download/continuous/" not in src
+
+
+def test_module_import_needs_no_system_commands():
+    """Sol su #587: senza `id` nel PATH (es. Windows) l'import non deve fallire, cosi' lo skip resta possibile."""
+    import sys
+    code = ("import importlib.util as u; s = u.spec_from_file_location('m', r'%s'); m = u.module_from_spec(s); "
+            "s.loader.exec_module(m); print('IMPORT_OK')" % Path(__file__))
+    res = subprocess.run([sys.executable, "-c", code], env={"PATH": "/nonexistent"}, capture_output=True, text=True)
+    assert res.returncode == 0 and "IMPORT_OK" in res.stdout, res.stderr

@@ -5129,6 +5129,41 @@ def test_restored_readiness_with_a_delivered_auto_merge_status_publishes_nothing
     assert len(pub.aux) == aux_before
 
 
+def test_restored_readiness_with_both_statuses_and_a_duplicate_build_is_not_redelivered(env, tmp_path):
+    """Codex su #587 (75c7d30): ripristino con entrambi gli status gia' consegnati e una build doppia da annullare.
+    Confermato l'annullamento, il job non torna in riconsegna e non sovrascrive gli status validi con `error`."""
+    disp, bk, pub, clock = env
+    bk.clock = clock
+    snap = tmp_path / "snapshot.sqlite3"
+    _snapshot(disp, snap)
+    bk.gh.put(42, HEAD)
+    disp.poll()
+    disp.tick()
+    _finish_all(bk)
+    disp.tick()
+    bk.gh.statuses[HEAD] = [{"context": c[3], "state": c[2], "target_url": c[4], "description": c[5]}
+                            for c in reversed(pub.all_calls) if c[1] == HEAD]
+    first = bk.builds["pr-merge-readiness"][1]
+    bk.builds["pr-merge-readiness"][2] = dict(first, number=2, state="running",
+                                              web_url=first["web_url"].rsplit("/", 1)[0] + "/2")
+    calls_before = len(pub.all_calls)
+    clock.now += 600
+    _restore(disp, snap)
+    bk.fail_cancel = True
+    for _ in range(2):
+        disp.poll()
+        disp.tick()
+    bk.fail_cancel = False
+    for _ in range(3):
+        clock.now += td.REDELIVERY_SECONDS + 1
+        disp.poll()
+        disp.tick()
+    assert ("pr-merge-readiness", 2) in bk.canceled
+    assert pub.all_calls[calls_before:] == []
+    job = [j for j in disp.store.recent_jobs() if j["guard"] == "readiness"][0]
+    assert job["state"] == "done" and job["aux_published"] == 1
+
+
 def test_auto_merge_retry_survives_pending_cancels(env):
     """Codex P1/P2 su #587 (ae7c039): status tecnico consegnato, `pr-auto-merge` che fallisce oltre la finestra mentre
     resta una build da annullare. Confermato l'annullamento, il job non chiude `done` perdendo l'autorizzazione:
