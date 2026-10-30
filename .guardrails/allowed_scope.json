@@ -3100,7 +3100,7 @@
       "max_files": 14
     },
     "trusted-ci-562-c2-required-checks": {
-      "description": "PF-562 PR-C2, mandato owner 28/10/2026 'Preparazione parallela PR-A, PR-B e PR-C2' e punto 5 del mandato 'Dispatcher fix, runtime certification & CI completion': inventario reale di ruleset e emittenti, matrice GitHub Actions <-> Buildkite, piano dei required check in fasi senza finestre di bypass (contesto + integration_id), verifica/diff/payload/evaluate fail-closed, rollback e recovery, decisioni owner D-C2-1..3. Nessuna modifica operativa al ruleset. Test, mutazioni, docs, CHANGELOG. Opzione B approvata dall'owner (28/10/2026): la readiness della lane pubblica pr-merge-readiness (tecnica, required da F2) e pr-auto-merge (autorizzazione all'auto-merge, mai required); guard con due verdetti, dispatcher con secondo status, pending, ritentativi e self-check. File a merge owner (scripts/pr_*.py, scripts/ci/trusted_pr_guard.py). Estensione dichiarata: scripts/ci_changed_modules.py per attivare la lane mutation-guardrails su scripts/ci/required_checks_plan.py. ESTENSIONE DICHIARATA (29/10/2026, OWNER GO osservabilita' Buildkite read-only #562 c.6493837200): aggiunti scripts/ci/bk_observe.py, tests/scripts/test_bk_observe.py e docs/ci_buildkite_observability.md. ESTENSIONE DICHIARATA (29/10/2026, OWNER GO integrazione script VPS nella #587): aggiunti ops/ci/PF562_VPS_UNBLOCK.sh e tests/scripts/test_pf562_vps_unblock.py; documentazione in docs/trusted_dispatcher.md (gia' nello scope).",
+      "description": "PF-562 PR-C2, mandato owner 28/10/2026 'Preparazione parallela PR-A, PR-B e PR-C2' e punto 5 del mandato 'Dispatcher fix, runtime certification & CI completion': inventario reale di ruleset e emittenti, matrice GitHub Actions <-> Buildkite, piano dei required check in fasi senza finestre di bypass (contesto + integration_id), verifica/diff/payload/evaluate fail-closed, rollback e recovery, decisioni owner D-C2-1..3. Nessuna modifica operativa al ruleset. Test, mutazioni, docs, CHANGELOG. Opzione B approvata dall'owner (28/10/2026): la readiness della lane pubblica pr-merge-readiness (tecnica, required da F2) e pr-auto-merge (autorizzazione all'auto-merge, mai required); guard con due verdetti, dispatcher con secondo status, pending, ritentativi e self-check. File a merge owner (scripts/pr_*.py, scripts/ci/trusted_pr_guard.py). Estensione dichiarata: scripts/ci_changed_modules.py per attivare la lane mutation-guardrails su scripts/ci/required_checks_plan.py. ESTENSIONE DICHIARATA (29/10/2026, OWNER GO osservabilita' Buildkite read-only #562 c.6493837200): aggiunti scripts/ci/bk_observe.py, tests/scripts/test_bk_observe.py e docs/ci_buildkite_observability.md. ESTENSIONE DICHIARATA (29/10/2026, OWNER GO integrazione script VPS nella #587): aggiunti ops/ci/PF562_VPS_UNBLOCK.sh e tests/scripts/test_pf562_vps_unblock.py; documentazione in docs/trusted_dispatcher.md (gia' nello scope). Estensione dichiarata (GO owner PF562 FINAL UNBLOCK, HEAD b05a8cb): .github/workflows/build-linux.yml, ops/linux_appimage.md e tests/packaging/test_linux_appimage_assets.py per l'allineamento ad appimagetool 1.9.1 (sha256 ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0); il workflow rende la PR a merge owner.",
       "allow_tests": true,
       "files": [
         ".guardrails/allowed_scope.json",
@@ -3123,9 +3123,12 @@
         "tests/scripts/test_pf562_vps_unblock.py",
         "tests/scripts/test_pr_trusted_dispatcher.py",
         "tests/scripts/test_required_checks_plan.py",
-        "tests/scripts/test_trusted_pr_guard.py"
+        "tests/scripts/test_trusted_pr_guard.py",
+        ".github/workflows/build-linux.yml",
+        "ops/linux_appimage.md",
+        "tests/packaging/test_linux_appimage_assets.py"
       ],
-      "max_files": 21
+      "max_files": 24
     }
   }
 }
