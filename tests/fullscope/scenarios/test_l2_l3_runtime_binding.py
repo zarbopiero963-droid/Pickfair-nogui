@@ -30,7 +30,7 @@ def _params():
 # Finding noti di "configurazione ignorata" (fail-open del caricamento): il test li dichiara con riferimento alla
 # scheda che li corregge invece di mascherarli; qualunque altro problema di applicazione e' un FAIL.
 KNOWN_APPLIED_FINDINGS = [
-    ("simulation.starting_balance: configurato 0", "F-18/F-17 (NF-16): `float(cfg or 1000.0)` in BetfairService._connect_simulation: "
+    ("simulation.starting_balance: configurato 0.0, saldo exchange", "F-18/F-17 (NF-16): `float(cfg or 1000.0)` in BetfairService._connect_simulation: "
                                                    "starting_balance 0 ricade sul default 1000 in silenzio"),
 ]
 

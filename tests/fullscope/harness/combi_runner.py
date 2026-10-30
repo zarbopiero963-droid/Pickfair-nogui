@@ -123,7 +123,14 @@ def check_applied(case: Dict[str, Any], snap: Dict[str, Any]) -> List[str]:
     return problems
 
 
-def config_consistency(case: Dict[str, Any], snaps: List[Dict[str, Any]], result: Dict[str, Any], start: D) -> List[str]:
+def rejection_reasons(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Rifiuti espliciti osservati (SIGNAL_REJECTED / QUICK_BET_FAILED / QUICK_BET_DUPLICATE) con mercato e motivo.
+    Il runtime emette SIGNAL_REJECTED anche senza market_id (es. `max_single_bet_pct_non_configurato`)."""
+    return [{"event": e["e"], "market_id": e.get("market_id"), "reason": e.get("reason")}
+            for e in result.get("events", []) if e["e"] in ("SIGNAL_REJECTED", "QUICK_BET_FAILED", "QUICK_BET_DUPLICATE")]
+
+
+def config_consistency(case: Dict[str, Any], snaps: List[Dict[str, Any]], result: Dict[str, Any]) -> List[str]:
     """Controlli finanziari coerenti con la configurazione DEL CASO (nessun limite esterno)."""
     v: List[str] = []
     first = snaps[0]
@@ -149,14 +156,18 @@ def config_consistency(case: Dict[str, Any], snaps: List[Dict[str, Any]], result
         live_tables = len(last.get("tables", []))
         if live_tables > int(table_count):
             v.append(f"tavoli vivi {live_tables} > table_count {table_count}")
-    # ingresso negato => rifiuto esplicito osservato (fail-closed), mai silenzio
-    signal_markets = {s["m"] for s in result.get("_steps", []) if s.get("op") == "signal"}
+    # ingresso negato => rifiuto esplicito osservato (fail-closed), mai silenzio. Un rifiuto con market_id vale per
+    # quel mercato; i rifiuti senza market_id si contano: devono essere almeno quanti i segnali rimasti senza
+    # ordine ne' rifiuto mirato (rilievo A13: il match per mercato da solo era permissivo).
+    signal_markets = [s["m"] for s in result.get("_steps", []) if s.get("op") == "signal"]
     placed = {str(o.get("market_id")) for o in entries}
-    for m in signal_markets - placed:
-        rejected = any(e["e"] in ("SIGNAL_REJECTED", "QUICK_BET_FAILED", "QUICK_BET_DUPLICATE") and str(e.get("market_id") or m) == m
-                       for e in result.get("events", []))
-        if not rejected:
-            v.append(f"segnale {m} senza ordine e senza rifiuto esplicito")
+    rejections = rejection_reasons(result)
+    targeted = {str(r["market_id"]) for r in rejections if r.get("market_id")}
+    untargeted = sum(1 for r in rejections if not r.get("market_id"))
+    unexplained = [m for m in signal_markets if m not in placed and m not in targeted]
+    if len(unexplained) > untargeted:
+        v.append(f"segnali senza ordine e senza rifiuto esplicito sufficiente: {unexplained} "
+                 f"(rifiuti senza mercato: {untargeted})")
     return v
 
 
@@ -200,13 +211,14 @@ def run_case(group: str, case_id: str, case: Dict[str, Any], scenario: str, *, s
             fn()
         except AssertionError as exc:
             violations.append(f"{name}: {str(exc)[:300]}")
-    violations.extend(config_consistency(case, snaps, r, start_exchange))
+    violations.extend(config_consistency(case, snaps, r))
     unmet = [w for w in r.get("waits", []) if not w["met"]]
     rec = {
         "group": group, "case_id": case_id, "case": case, "scenario": scenario, "seed": seed,
         "repo_sha": trk.head_sha(), "home": home, "duration_s": r.get("_duration_s"),
         "applied_problems": applied, "oracle_violations": violations, "unmet_waits": unmet,
-        "orders": last.get("orders"), "funds": last.get("funds"), "realized": last.get("realized"),
+        "orders": last.get("orders"), "rejections": rejection_reasons(r),
+        "funds": last.get("funds"), "realized": last.get("realized"),
         "tables": last.get("tables"), "exch_settlements": last.get("exch_settlements"),
         "outcome": "PASS" if not (applied or violations or unmet) else "FAIL",
     }
