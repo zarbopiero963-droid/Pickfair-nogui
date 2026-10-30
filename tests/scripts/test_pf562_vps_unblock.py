@@ -54,7 +54,16 @@ f="${@: -1}"; op="${@: -2:1}"
 m=$(stat -c %a "$f"); o=${m: -1}
 case "$op" in -w) [ $((o & 2)) -ne 0 ];; -x) [ $((o & 1)) -ne 0 ];; *) exit 1;; esac
 """,
-    "journalctl": '#!/bin/bash\nprintf "%s" "${STUB_JOURNAL:-}"\n',
+    # STUB_JOURNAL: errori dopo il riavvio. STUB_JOURNAL_OLD: errori scritti PRIMA (epoch STUB_OLD_TS), visibili solo
+    # se la finestra `--since` li include (Grok su #587)
+    "journalctl": """#!/bin/bash
+since=""; prev=""
+for a in "$@"; do [ "$prev" = "--since" ] && since="$a"; prev="$a"; done
+printf "%s" "${STUB_JOURNAL:-}"
+if [ -n "${STUB_JOURNAL_OLD:-}" ]; then
+  case "$since" in @*) [ "${since#@}" -le "${STUB_OLD_TS:-0}" ] && printf "%s" "$STUB_JOURNAL_OLD";; *) printf "%s" "$STUB_JOURNAL_OLD";; esac
+fi
+""",
 }
 
 
@@ -302,3 +311,14 @@ def test_module_import_needs_no_system_commands():
             "s.loader.exec_module(m); print('IMPORT_OK')" % Path(__file__))
     res = subprocess.run([sys.executable, "-c", code], env={"PATH": "/nonexistent"}, capture_output=True, text=True)
     assert res.returncode == 0 and "IMPORT_OK" in res.stdout, res.stderr
+
+
+def test_journal_errors_written_before_the_restart_do_not_roll_back(lane):
+    """Grok su #587: la VPS da sbloccare ha gia' Traceback del dispatcher vecchio nel journal. Contano solo le righe
+    scritte dopo il riavvio, altrimenti lo sblocco si annulla da solo nel caso d'uso previsto."""
+    import time
+    old_ts = str(int(time.time()) - 30)
+    res = _run(lane, *_base(lane), "--apply", STUB_JOURNAL_OLD="Traceback (most recent call last)\nNOT CONFIGURED\n",
+               STUB_OLD_TS=old_ts)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert lane["disp"].read_text() == (ROOT / "scripts" / "pr_trusted_dispatcher.py").read_text()
