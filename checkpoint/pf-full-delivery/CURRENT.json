@@ -6,8 +6,8 @@
   "sha": "a1f60abe09ea316b601e23beeb8b7c5463d03738"
  },
  "mandate_id": "OWNER FINAL MANDATE \u2014 chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
- "next_atomic_action": "STANDBY (owner 31/10): #587 Draft, head a1f60ab invariato; label WAITING_VPS_GROK inesistente (non creata). Rapporto #562 c.6546403324. Eccezione owner: 2 PR aperte #587 + #589 (Claude B, F-33; non toccare). Riattivazione: Grok esegue PF562_VPS_UNBLOCK.sh -> appimagetool 1.9.1 + dispatcher -> #587 ready + owner /pf-trusted-rerun <head> -> BK 52/52 -> ricertificazione + deroghe Grok owner + merge owner. NO merge/bypass/LIVE.",
- "previous_checkpoint_sha": "f40c5f3cd7515ae6250f804f4dbf827bfff93a41",
+ "next_atomic_action": "#587 CHIUSA senza merge (OWNER GO-CLOSE-DEFERRED 31/10), DEFERRED_UNTIL_VPS_READY: branch pf562-pr4-c2-required-checks a1f60ab conservato; inventario + procedura riapertura + piano self-block in #562 c.6548924028. Fix #590 su branch remoto pf590-tg-guard-sigpipe aaea89a (da main), PR dedicata owner-merge dopo #589 (una PR alla volta). #589 = Claude B (non toccare). Riapertura #587 quando Grok esegue PF562_VPS_UNBLOCK.sh. NO bypass/LIVE.",
+ "previous_checkpoint_sha": "d102cb43834cb56b5f57750f62441e770db5c3b2",
  "schema": "pf-current/1",
- "seq": 101
+ "seq": 102
 }

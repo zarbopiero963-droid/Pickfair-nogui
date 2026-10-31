@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 101,
- "updated_at": "2026-10-31T16:58:06Z",
+ "seq": 102,
+ "updated_at": "2026-10-31T20:47:33Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "STANDBY (owner 31/10): #587 Draft, head a1f60ab invariato; label WAITING_VPS_GROK inesistente (non creata). Rapporto #562 c.6546403324. Eccezione owner: 2 PR aperte #587 + #589 (Claude B, F-33; non toccare). Riattivazione: Grok esegue PF562_VPS_UNBLOCK.sh -> appimagetool 1.9.1 + dispatcher -> #587 ready + owner /pf-trusted-rerun <head> -> BK 52/52 -> ricertificazione + deroghe Grok owner + merge owner. NO merge/bypass/LIVE.",
+ "next_atomic_action": "#587 CHIUSA senza merge (OWNER GO-CLOSE-DEFERRED 31/10), DEFERRED_UNTIL_VPS_READY: branch pf562-pr4-c2-required-checks a1f60ab conservato; inventario + procedura riapertura + piano self-block in #562 c.6548924028. Fix #590 su branch remoto pf590-tg-guard-sigpipe aaea89a (da main), PR dedicata owner-merge dopo #589 (una PR alla volta). #589 = Claude B (non toccare). Riapertura #587 quando Grok esegue PF562_VPS_UNBLOCK.sh. NO bypass/LIVE.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "f40c5f3cd7515ae6250f804f4dbf827bfff93a41",
+ "previous_checkpoint_sha": "d102cb43834cb56b5f57750f62441e770db5c3b2",
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -611,7 +611,7 @@
   "patch": {
    "head": "a1f60abe09ea316b601e23beeb8b7c5463d03738",
    "tree": "72ce1415661ca5282bf03353d9a3a15894e21523",
-   "captured_at": "2026-10-31T16:58:08+00:00",
+   "captured_at": "2026-10-31T20:47:33+00:00",
    "modified": [],
    "untracked": [],
    "files": [
