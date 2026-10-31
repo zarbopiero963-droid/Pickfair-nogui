@@ -1,0 +1,13 @@
+{
+ "certification_verdict": "NOT VERIFIED",
+ "checkpoint_commit": null,
+ "code": {
+  "branch": "f33-full-scope-harness",
+  "sha": "3873eaac10b30267414418ee6322a1f8ce50d6db"
+ },
+ "mandate_id": "Claude B \u2014 #586 roadmap: F-33 (#589) + F-05 Phase 0; owner 31/10/2026 SAFE CHECKPOINT, HANDOFF & AUTONOMOUS RESUME",
+ "next_atomic_action": "1) Leggere su #589 i check e le review Sol/Grok/Codex sul range d46e6da...3873eaa; correggere finding reali con un solo push; risolvere i 3 thread Codex quando i check sono settled. 2) overlap-check resta rosso (eccezione #587+#589): nessun bypass. 3) Poi F-05 in locale (worktree wt-f05 o nuovo da origin/main): scrivere i test RED di results/F05_PHASE0.md \u00a77.5; nessuna PR finche' #589 e' aperta.",
+ "previous_checkpoint_sha": "319c64f810d89d6d0490f4d107218d7ca42a1d64",
+ "schema": "pf-current/1",
+ "seq": 1
+}
