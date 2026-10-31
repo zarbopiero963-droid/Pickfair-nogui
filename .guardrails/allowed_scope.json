@@ -3100,7 +3100,7 @@
       "max_files": 14
     },
     "fix-590-tg-guard-sigpipe": {
-      "description": "#590 (sicurezza, fail-open): guard delle credenziali Telegram della lane w5-telegram-live-sim senza pipe (compgen -e TG_). File a merge owner (scripts/pr_full_suite_pipeline.py): merge manuale dell'owner. Nessun controllo disattivato.",
+      "description": "#590 (sicurezza, fail-open): guard delle credenziali Telegram della lane w5-telegram-live-sim senza pipe (compgen -e TG_). File a merge owner (scripts/pr_full_suite_pipeline.py): merge manuale dell'owner. Nessun controllo disattivato. ESTENSIONE DICHIARATA (GO owner 31/10/2026 «PR #591 FINALIZATION»): tests/unit/test_runtime_controller_direct_ttl_poller.py, helper del gate TTL indipendente dall'uptime del runner (flake di test-core-components), nessun codice di produzione.",
       "allow_tests": true,
       "files": [
         ".guardrails/allowed_scope.json",
@@ -3108,9 +3108,10 @@
         "docs/ci_m2_migration.md",
         "guardrails/mutation_catalog.json",
         "scripts/pr_full_suite_pipeline.py",
-        "tests/scripts/test_pr_full_suite_pipeline.py"
+        "tests/scripts/test_pr_full_suite_pipeline.py",
+        "tests/unit/test_runtime_controller_direct_ttl_poller.py"
       ],
-      "max_files": 6
+      "max_files": 7
     }
   }
 }
