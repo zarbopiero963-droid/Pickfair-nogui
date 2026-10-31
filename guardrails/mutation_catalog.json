@@ -318,6 +318,30 @@
       "rationale": "Esito ignoto dell'hedge riportato come fallimento (ritentabile)."
     },
     {
+      "id": "f05_hedge_not_written_ahead",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "                    ledger_id = self._ledger_write_ahead(place_payload, payload)",
+      "mutated": "                    ledger_id = None",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05 (CSH-06): hedge inviato senza riga nel ledger orders (esposizione reale non contabilizzata)."
+    },
+    {
+      "id": "f05_settlement_counts_hedge_as_entry",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                continue                                   # F-05: hedge di cashout, non un ingresso del tavolo",
+      "mutated": "                pass",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger.py"
+      ],
+      "rationale": "F-05: la riga hedge contata come secondo ordine del mercato blocca il rilascio SIM del tavolo regolato."
+    },
+    {
       "id": "cashout_unmatched_as_success",
       "module": "cashout_executor",
       "area": "cashout",

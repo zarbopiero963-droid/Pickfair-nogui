@@ -71,3 +71,23 @@ def test_persisted_hedge_creates_no_phantom_table_and_no_paused_start_after_rest
     assert not [t for t in s0["tables"] if t["market_id"] == "1.951" and "hedge" in str(t.get("event_key"))], s0
     assert len([t for t in s0["tables"] if t["market_id"]]) <= len([t for t in first["snaps"][-1]["tables"]
                                                                      if t["market_id"]]), "tavolo fantasma"
+
+
+def test_hedged_position_settles_once_releases_its_table_and_books_the_net_pnl():
+    """Con la riga hedge nel ledger il settlement del mercato libera il tavolo e contabilizza UNA volta il netto
+    ingresso + hedge (oracolo Decimal indipendente, come F026_12): la riga hedge non e' un secondo ingresso."""
+    from decimal import ROUND_HALF_UP
+    from decimal import Decimal as D
+
+    from tests.f026.test_f026_financial import COMM, q
+    r = run([{"op": "signal", "m": "1.951", "price": 2.0}, {"op": "cashout", "m": "1.951"},
+             {"op": "settle", "m": "1.951", "win": True}])
+    s = r["snaps"][-1]
+    assert any(str(o["ref"]).startswith("hedge:") for o in _orders(r["_home"])), "hedge non nel ledger"
+    back, lay, stake = D("2.00"), D("2.02"), D("3")
+    hedge = (stake * back / lay).quantize(D("0.01"), rounding=ROUND_HALF_UP)
+    net = stake * (back - 1) - hedge * (lay - 1)
+    exp = net * (1 - COMM) if net > 0 else net
+    assert [t for t in s["tables"] if t["market_id"] == "1.951"] == [], f"tavolo non liberato: {s['tables']}"
+    assert q(s["realized"]) == q(exp), f"realizzato {s['realized']} != oracolo {q(exp)} (doppio conteggio?)"
+    assert len([x for x in s["exch_settlements"] if x["market_id"] == "1.951"]) == 1
