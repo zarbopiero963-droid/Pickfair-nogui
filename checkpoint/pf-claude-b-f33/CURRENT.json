@@ -2,12 +2,12 @@
  "certification_verdict": "NOT VERIFIED",
  "checkpoint_commit": null,
  "code": {
-  "branch": "f33-full-scope-harness",
-  "sha": "0c2822e8faf7e83fe62769d29e52899d1d53a59f"
+  "branch": "gov-gha-primary-buildkite-deferred",
+  "sha": "990b99d2e872acda9661b9bba984c7969e619514"
  },
  "mandate_id": "Claude B \u2014 OWNER CONFIRMATION 31/10/2026 CI GOVERNANCE FIRST",
  "next_atomic_action": "1) Attendere decisione owner su #586 c.6549919101 (dipendenza mutation-lane #592 <- #590): opz.1 port fix minimo #590 in #592 (raccomandata), opz.2 merge owner #592 con lane rossa, opz.3 merge #591 prima. Nessun push su #592 fino alla decisione. 2) Certificare #592 e dichiarare READY_FOR_OWNER_MANUAL_MERGE. 3) Dopo merge: verifica main, riaprire #591, merge main, ricertificare, merge owner. 4) Riaprire #589, merge main, CI+review, GO-MERGE condizionato. 5) F-05 -> F-08 -> F-01 (patches/), merge owner.",
- "previous_checkpoint_sha": "1c3c1a974b720ba8d49eb7fdca3edf3e643b3500",
+ "previous_checkpoint_sha": "dfe3e1a0ca6290498ee038de880ac7738a11981a",
  "schema": "pf-current/1",
- "seq": 12
+ "seq": 13
 }

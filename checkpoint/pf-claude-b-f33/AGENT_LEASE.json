@@ -1,7 +1,7 @@
 {
- "acquired_at": "2026-10-31T22:32:48+00:00",
- "expires_at": "2026-11-01T00:32:48+00:00",
- "fencing_token": 12,
+ "acquired_at": "2026-10-31T22:33:36+00:00",
+ "expires_at": "2026-11-01T00:33:36+00:00",
+ "fencing_token": 13,
  "owner": "claude-b",
  "schema": "pf-lease/1"
 }

@@ -1,16 +1,16 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 12,
+ "seq": 13,
  "mandate_id": "Claude B — OWNER CONFIRMATION 31/10/2026 CI GOVERNANCE FIRST",
- "previous_checkpoint_sha": "1c3c1a974b720ba8d49eb7fdca3edf3e643b3500",
+ "previous_checkpoint_sha": "dfe3e1a0ca6290498ee038de880ac7738a11981a",
  "code": {
-  "branch": "f33-full-scope-harness",
-  "sha": "0c2822e8faf7e83fe62769d29e52899d1d53a59f",
+  "branch": "gov-gha-primary-buildkite-deferred",
+  "sha": "990b99d2e872acda9661b9bba984c7969e619514",
   "patch": {
    "head": "990b99d2e872acda9661b9bba984c7969e619514",
    "tree": "b0c5de57f9a97e431eed1e8ee49eefdfc4113ffa",
-   "captured_at": "2026-10-31T22:32:48+00:00",
+   "captured_at": "2026-10-31T22:33:36+00:00",
    "modified": [],
    "untracked": [],
    "files": [
