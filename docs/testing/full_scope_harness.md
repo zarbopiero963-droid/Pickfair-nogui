@@ -78,6 +78,14 @@ altre sono attese a evento o a bus fermo con grazia breve); **`bus_idle` sull'AP
 diretto di `_socket` (che Pickfair non fa) non è intercettato; i sottoprocessi Python ereditano il guard via
 PYTHONPATH, i binari esterni no.
 
+## Review su PR #589 (head `d46e6da`) e correzioni
+Sol, Grok e Codex: bloccanti reali, tutti corretti nello stesso push.
+- **Kill esterno su Windows:** `signal.SIGKILL` non esiste su Windows ⇒ `Popen.kill()` (SIGKILL su POSIX, TerminateProcess su Windows).
+- **xfail che mascherava l'oracolo:** nel binding gli invarianti finanziari e le attese si asseriscono PRIMA dell'xfail del finding noto `starting_balance 0`.
+- **Report sotto xdist:** ogni worker scrive solo i propri record (`requirements_records.<worker>.json`, `combi_runs.<worker>.json`); il controller aggrega in un unico `requirements_report.json` (i record «non eseguiti su quel worker» non sovrascrivono gli esiti reali; fra esiti reali vince il non coprente).
+- **Eventi della sonda stop-loss:** i prefissi conservati negli artifact stanno in `tests/fullscope/harness/events.py` (testato) e includono `SL_`, `TP_`, `STOP_LOSS`, `TAKE_PROFIT`, `TRAILING`.
+- **Hash dell'inventario:** con `--inventory` il report cita lo sha256 del file realmente usato.
+
 ## Limiti dichiarati (v1)
 - Scenari non ancora scritti: SIM-TRAIL-004 (dipende da F-03), SIM-FAULT-006, SIM-CFG-007 (parte GUI), SIM-GUI-008
   (Xvfb), SIM-SEC-009, SIM-PKG-010 (VPS/GO-4), SIM-MICRO-011 (Microstake owner-reserved: sola osservazione),

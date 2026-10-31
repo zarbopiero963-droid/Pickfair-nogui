@@ -46,8 +46,7 @@ R = {"tree": TREE, "first_run": first_run, "seed": SPEC.get("seed", 0), "require
 EV = []
 T0 = time.time()
 CRASH = {}
-INTERESTING = ("QUICK_BET", "SETTLEMENT_", "EMERGENCY", "RUNTIME_LOCK", "SIGNAL_REJ", "RUNTIME_CLOSE", "ROSERPINA",
-               "BANKROLL_SYNC", "RISK_STOP", "CASHOUT", "REQ_EXECUTE", "CMD_QUICK", "RUNTIME_START", "AUTO_TRADE")
+from tests.fullscope.harness.events import keep as _keep_event  # noqa: E402  (TREE gia' su sys.path)
 
 
 def dump():
@@ -55,7 +54,7 @@ def dump():
                     "reason": d.get("reason") or d.get("reason_code"), "pnl": d.get("pnl"),
                     "bankroll_after": d.get("bankroll_after"), "drawdown_pct": d.get("drawdown_pct"),
                     "customer_ref": d.get("customer_ref") or d.get("customerRef")}
-                   for t, e, d in EV if e.startswith(INTERESTING)]
+                   for t, e, d in EV if _keep_event(e)]
     with open(OUT, "w") as fh:
         json.dump(R, fh, indent=1, default=str)
     sys.stdout.flush()

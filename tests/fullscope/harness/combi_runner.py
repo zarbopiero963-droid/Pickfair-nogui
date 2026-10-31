@@ -226,16 +226,24 @@ def run_case(group: str, case_id: str, case: Dict[str, Any], scenario: str, *, s
     return rec
 
 
+def records_path() -> str:
+    """Un file per processo: ``combi_runs.json`` senza xdist, ``combi_runs.<worker>.json`` con xdist (nessun
+    read-modify-write concorrente sullo stesso file, rilievo Sol su d46e6da)."""
+    worker = trk.worker_id()
+    name = f"combi_runs.{worker}.json" if worker else "combi_runs.json"
+    return os.path.join(trk.artifact_dir(trk.head_sha()), name)
+
+
 def reset_records() -> str:
-    """Nuovo file di record per questa sessione (il precedente resta come .prev)."""
-    path = os.path.join(trk.artifact_dir(trk.head_sha()), "combi_runs.json")
+    """Nuovo file di record di questo processo per la sessione (il precedente resta come .prev)."""
+    path = records_path()
     if os.path.exists(path):
         os.replace(path, path + ".prev")
     return path
 
 
 def _append_record(rec: Dict[str, Any]) -> None:
-    path = os.path.join(trk.artifact_dir(trk.head_sha()), "combi_runs.json")
+    path = records_path()
     data: List[Dict[str, Any]] = []
     if os.path.exists(path):
         try:

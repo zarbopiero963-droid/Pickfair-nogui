@@ -72,3 +72,46 @@ def test_tracker_row_markdown():
     row = T.tracker_row(r, "A-1")
     assert row.startswith("| A-1 |") and "COVERED" in row and "abcdef1" in row
     assert "MISSING" in T.tracker_row(r, "B-2")
+
+
+def test_merge_records_from_workers_keeps_all_and_is_fail_closed():
+    """xdist: i record dei worker si uniscono; uno stesso nodeid passed su un worker e failed su un altro non copre."""
+    a, b = _t(), _t()
+    a.register("w0::t_a", ["A-1"])
+    a.record("w0::t_a", "call", "passed")
+    b.register("w1::t_b", ["B-2"])
+    b.record("w1::t_b", "call", "passed")
+    b.register("dup::t", ["C-3"])
+    b.record("dup::t", "call", "failed")
+    main = _t()
+    main.register("dup::t", ["C-3"])
+    main.record("dup::t", "call", "passed")
+    main.merge_records(a.records)
+    main.merge_records(b.records)
+    r = main.report("s", 0)
+    assert r["covered"] == ["A-1", "B-2"]
+    assert r["attempted_not_covered"] == ["C-3"]
+
+
+def test_worker_partial_path_and_id(monkeypatch, tmp_path):
+    monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw3")
+    assert T.worker_id() == "gw3"
+    assert T.partial_records_path(str(tmp_path), "gw3").endswith("requirements_records.gw3.json")
+    monkeypatch.delenv("PYTEST_XDIST_WORKER")
+    assert T.worker_id() == ""
+
+
+def test_merge_ignores_not_executed_records_from_other_workers():
+    """xdist reale: il worker gw1 raccoglie ma non esegue il test che gw0 ha eseguito e passato."""
+    gw0, gw1 = _t(), _t()
+    for t in (gw0, gw1):
+        t.register("s::t_rst", ["A-1"])
+    gw0.record("s::t_rst", "call", "passed")
+    main = _t()
+    main.merge_records(gw1.records)   # prima il worker che non l'ha eseguito
+    main.merge_records(gw0.records)
+    assert main.report("s", 0)["covered"] == ["A-1"]
+    main2 = _t()
+    main2.merge_records(gw0.records)  # ordine inverso
+    main2.merge_records(gw1.records)
+    assert main2.report("s", 0)["covered"] == ["A-1"]

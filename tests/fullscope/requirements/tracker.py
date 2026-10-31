@@ -92,6 +92,29 @@ class RequirementTracker:
         elif phase == "setup" and outcome == "skipped":
             rec["outcome"] = "skipped"
 
+    def merge_records(self, records: Dict[str, Dict[str, Any]]) -> None:
+        """Unisce i record di un altro processo (worker xdist).
+
+        Ogni worker raccoglie TUTTI i test marcati ma ne esegue solo una parte: un record con ``outcome`` None vuol
+        dire «non eseguito su quel worker» e non sovrascrive l'esito di chi l'ha eseguito. Fra due esiti REALI dello
+        stesso nodeid vince quello non coprente (fail-closed: un passed non cancella un fail)."""
+        for nodeid, rec in (records or {}).items():
+            mine = self.records.get(nodeid)
+            if rec.get("outcome") is None:
+                if mine is None:
+                    self.records[nodeid] = {"ids": list(rec.get("ids", [])), "outcome": None, "phases": {}}
+                continue
+            if mine is None or mine.get("outcome") is None:
+                ids = list(dict.fromkeys(list((mine or {}).get("ids", [])) + list(rec.get("ids", []))))
+                self.records[nodeid] = {"ids": ids, "outcome": rec.get("outcome"),
+                                        "phases": dict(rec.get("phases", {}))}
+                continue
+            for i in rec.get("ids", []):
+                if i not in mine["ids"]:
+                    mine["ids"].append(i)
+            if rec.get("outcome") not in COVERING_OUTCOMES:
+                mine["outcome"] = rec.get("outcome")
+
     def report(self, sha: str, seed_value: int) -> Dict[str, Any]:
         per_req: Dict[str, Dict[str, Any]] = {}
         unknown: Dict[str, List[str]] = {}
@@ -127,6 +150,15 @@ class RequirementTracker:
                                  "status_initial": self.known[i]["status_initial"]} for i in sorted(self.known)},
             "rule": "covered = almeno un test pf_requirement(id) con esito 'passed' su repo_sha; xfail/skip/fail non coprono",
         }
+
+
+def worker_id() -> str:
+    """Id del worker pytest-xdist ('' nel processo principale o senza xdist)."""
+    return os.environ.get("PYTEST_XDIST_WORKER", "")
+
+
+def partial_records_path(out_dir: str, worker: str) -> str:
+    return os.path.join(out_dir, f"requirements_records.{worker}.json")
 
 
 def tracker_row(report: Dict[str, Any], req_id: str) -> str:

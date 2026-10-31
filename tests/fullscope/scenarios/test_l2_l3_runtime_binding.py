@@ -43,13 +43,15 @@ def _fresh_records():
 @pytest.mark.parametrize("group,case_id,case,scenario", _params())
 def test_combination_runs_in_sim_and_respects_oracle(group, case_id, case, scenario):
     rec = C.run_case(group, case_id, case, scenario, seed=SEED)
+    # Prima gli invarianti finanziari e le attese: un finding noto di configurazione (xfail sotto) non deve mai
+    # mascherare una violazione di cassa/P&L o un blocco dello stesso caso (rilievo Grok su d46e6da).
+    assert rec["unmet_waits"] == [], f"attese non soddisfatte: {rec['unmet_waits']}"
+    assert rec["oracle_violations"] == [], "\n".join(rec["oracle_violations"])
     if rec["applied_problems"]:
         known = [why for pat, why in KNOWN_APPLIED_FINDINGS if any(p.startswith(pat) for p in rec["applied_problems"])]
         if known and all(any(p.startswith(pat) for pat, _w in KNOWN_APPLIED_FINDINGS) for p in rec["applied_problems"]):
             pytest.xfail("; ".join(known))
     assert rec["applied_problems"] == [], f"configurazione non applicata: {rec['applied_problems']}"
-    assert rec["unmet_waits"] == [], f"attese non soddisfatte: {rec['unmet_waits']}"
-    assert rec["oracle_violations"] == [], "\n".join(rec["oracle_violations"])
     assert rec["outcome"] == "PASS"
 
 
@@ -65,4 +67,5 @@ def test_sl_tp_trailing_group_is_executable():
                                        "simulation.starting_balance=0 ricade in silenzio sul default 1000 (configurazione ignorata)")
 def test_starting_balance_zero_is_applied_not_replaced_by_default():
     rec = C.run_case("c_esecuzione_sim", "boundary-start0", {"simulation.starting_balance": 0.0}, "entry_settle_win", seed=SEED)
+    assert rec["unmet_waits"] == [] and rec["oracle_violations"] == [], rec   # fuori dall'xfail: e' un FAIL vero
     assert rec["applied_problems"] == [], rec["applied_problems"]

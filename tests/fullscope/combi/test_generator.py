@@ -193,3 +193,18 @@ def test_horizontal_tie_breaks_use_the_seed():
     params = [G.Parameter("a", (1, 2)), G.Parameter("b", (1, 2)), G.Parameter("c", (1, 2))]
     first_c = {G.generate(params, strength=2, seed=s).cases[0]["c"] for s in range(25)}
     assert first_c == {1, 2}, first_c
+
+
+def test_custom_inventory_hash_is_the_one_used(tmp_path):
+    """Rilievo Codex: con --inventory il report deve citare lo sha256 dell'inventario usato, non quello di default."""
+    inv = G.load_inventory()
+    for p in inv["parameters"]:
+        if p["key"] == "simulation.starting_balance":
+            p["domain"]["valid"] = [777.0, 888.0]
+    custom = tmp_path / "inv.json"
+    custom.write_text(json.dumps(inv))
+    out = tmp_path / "r.json"
+    assert G.main(["--inventory", str(custom), "--group", "c_esecuzione_sim", "--seed", "1", "--out", str(out)]) == 0
+    d = json.load(open(out))
+    assert d["inventory_sha256"] == G.inventory_sha256(str(custom)) != G.inventory_sha256()
+    assert {c["simulation.starting_balance"] for c in d["cases"]} <= {777.0, 888.0}

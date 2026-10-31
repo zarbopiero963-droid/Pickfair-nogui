@@ -3,8 +3,8 @@
 - ``run(steps, home=..., settings=..., seed=..., kill_at_checkpoint=...)`` esegue il child in un HOME dedicato (DB
   SQLite e stato SIM del broker in quella directory); un secondo ``run`` sullo stesso ``home`` e' un RIAVVIO reale
   (stesso DB, stesso stato exchange persistito, nuovo processo).
-- ``kill_at_checkpoint="X"``: appena il child scrive ``HOME/.ckpt_X`` il padre lo uccide con SIGKILL: crash esterno
-  vero, non un ``os._exit`` cooperativo.
+- ``kill_at_checkpoint="X"``: appena il child scrive ``HOME/.ckpt_X`` il padre lo uccide (``Popen.kill``: SIGKILL su
+  POSIX, TerminateProcess su Windows): crash esterno vero, non un ``os._exit`` cooperativo.
 - Il sottoprocesso gira con il netguard (``PYTHONPATH`` -> sitecustomize): nessuna connessione non locale.
 - Ogni risultato viene salvato come artifact JSON in ``art/fullscope/<sha>/scenarios/`` (o ``$PF_FULLSCOPE_ART``).
 """
@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import sys
 import tempfile
@@ -61,7 +60,9 @@ def run(steps: List[Dict[str, Any]], *, home: Optional[str] = None, settings: Op
             if rc is not None:
                 break
             if marker and os.path.exists(marker):
-                os.kill(proc.pid, signal.SIGKILL)
+                # Crash esterno non cooperativo: SIGKILL su POSIX, TerminateProcess su Windows (rilievo Grok:
+                # `signal.SIGKILL` non esiste su Windows). In entrambi i casi il child non esegue nulla dopo.
+                proc.kill()
                 killed_at = kill_at_checkpoint
                 proc.wait(timeout=30)
                 break

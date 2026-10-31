@@ -375,13 +375,15 @@ GROUPS: Dict[str, Dict[str, Any]] = {
 }
 
 
-def build_group(name: str, inv: Dict[str, Any], *, seed: int = 0, strength: Optional[int] = None) -> CoverageReport:
+def build_group(name: str, inv: Dict[str, Any], *, seed: int = 0, strength: Optional[int] = None,
+                inventory_path: str = INVENTORY_PATH) -> CoverageReport:
     spec = GROUPS[name]
     params = [Parameter(k, _valid_values(inv, k)) for k in spec["keys"]]
     cons = [c for _n, c in spec["constraints"]]
     cnames = [n for n, _c in spec["constraints"]]
     rep = generate(params, strength=strength or spec["strength"], seed=seed, constraints=cons,
-                   constraint_names=cnames, group=name, repo_sha=repo_sha(), inventory_sha256=inventory_sha256())
+                   constraint_names=cnames, group=name, repo_sha=repo_sha(),
+                   inventory_sha256=inventory_sha256(inventory_path))  # l'inventario REALMENTE usato (rilievo Codex)
     check = verify(rep, params, cons)
     if not check["ok"]:
         raise RuntimeError(f"gruppo {name}: report non verificato: {check}")
@@ -406,7 +408,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = ap.parse_args(argv)
     inv = load_inventory(args.inventory)
     names = sorted(GROUPS) if args.group == "ALL" else [args.group]
-    reports = [build_group(n, inv, seed=args.seed, strength=args.strength).to_dict() for n in names]
+    reports = [build_group(n, inv, seed=args.seed, strength=args.strength, inventory_path=args.inventory).to_dict()
+               for n in names]
     payload: Any = reports[0] if len(reports) == 1 else {"schema": "pf-combi-coverage-set/1", "reports": reports}
     text = json.dumps(payload, indent=1, ensure_ascii=False)
     if args.out:
