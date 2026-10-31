@@ -94,10 +94,17 @@ class StateRecovery:
 
         recovered = []
         for order in remote_orders:
-            if self._is_missing_in_db(order):
-                self._persist_ghost_order(order)
-                self._seed_duplication_guard(order)
-                recovered.append(order)
+            try:
+                missing = self._is_missing_in_db(order)
+                if missing:
+                    self._persist_ghost_order(order)
+                    self._seed_duplication_guard(order)
+                    recovered.append(order)
+            except Exception:
+                # F-08: lookup o persistenza del ghost falliti => riconciliazione NON completata (fail-closed).
+                # Prima l'errore del DB valeva "gia' presente" e il ghost era perso con recover() ok=True.
+                logger.exception("Ordine attivo dell'exchange non riconciliabile con il DB locale")
+                return {"required": True, "completed": False, "ghost_orders_recovered": len(recovered)}
 
         return {
             "required": True,
@@ -111,11 +118,7 @@ class StateRecovery:
 
         exists = getattr(self.db, "startup_order_exists", None)
         if callable(exists):
-            try:
-                return not bool(exists(order))
-            except Exception:
-                logger.exception("startup_order_exists failed")
-                return False
+            return not bool(exists(order))      # F-08: un errore del DB si propaga (fail-closed nel chiamante)
 
         order_id = str(order.get("order_id") or order.get("bet_id") or "")
         if not order_id:
@@ -123,17 +126,13 @@ class StateRecovery:
 
         load = getattr(self.db, "load_startup_orders", None)
         if callable(load):
-            try:
-                current = load() or []
-                ids = {
-                    str(x.get("order_id") or x.get("bet_id") or "")
-                    for x in current
-                    if isinstance(x, dict)
-                }
-                return order_id not in ids
-            except Exception:
-                logger.exception("load_startup_orders failed")
-                return False
+            current = load() or []              # F-08: un errore del DB si propaga (fail-closed nel chiamante)
+            ids = {
+                str(x.get("order_id") or x.get("bet_id") or "")
+                for x in current
+                if isinstance(x, dict)
+            }
+            return order_id not in ids
 
         return True
 
