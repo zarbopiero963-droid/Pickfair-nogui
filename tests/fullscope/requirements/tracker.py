@@ -59,9 +59,10 @@ def seed() -> int:
         return 0
 
 
-def artifact_dir(sha: str) -> str:
+def artifact_dir(sha: str, create: bool = True) -> str:
     base = os.environ.get(REPORT_ENV) or os.path.join(repo_root(), "art", "fullscope", sha or "nosha")
-    os.makedirs(base, exist_ok=True)
+    if create:
+        os.makedirs(base, exist_ok=True)
     return base
 
 

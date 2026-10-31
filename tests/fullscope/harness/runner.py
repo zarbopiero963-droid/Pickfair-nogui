@@ -85,13 +85,24 @@ def run(steps: List[Dict[str, Any]], *, home: Optional[str] = None, settings: Op
     r["_killed_at"] = killed_at
     r["_duration_s"] = round(time.time() - t0, 3)
     r["_stderr_tail"] = stderr[-1500:]
-    art = _artifact_dir()
-    n = len([f for f in os.listdir(art) if f.startswith(scenario + "_")])
-    with open(os.path.join(art, f"{scenario}_{n:02d}.json"), "w") as fh:
+    with _open_new_artifact(_artifact_dir(), scenario) as fh:
         json.dump(r, fh, indent=1, default=str)
     if killed_at is None:
         assert "error" not in r, r.get("error")
     return r
+
+
+def _open_new_artifact(art: str, scenario: str, limit: int = 100000):
+    """Apre in creazione ESCLUSIVA il primo ``<scenario>_NN.json`` libero: due worker xdist con lo stesso scenario non
+    possono scegliere lo stesso nome e sovrascriversi (rilievo Codex su a721e09: conteggio + open non atomici)."""
+    for n in range(limit):
+        path = os.path.join(art, f"{scenario}_{n:02d}.json")
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            continue
+        return os.fdopen(fd, "w")
+    raise RuntimeError(f"nessun nome di artifact libero per lo scenario {scenario} in {art}")
 
 
 def events(r: Dict[str, Any], name: str, market: Optional[str] = None) -> List[Dict[str, Any]]:

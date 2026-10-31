@@ -11,7 +11,7 @@ toccato; nessuna logica finanziaria cambia. I test che rivelano difetti producon
 |---|---|---|
 | Inventario | `tools/combi/inventory.json` | 190 chiavi censite (139 ATTIVE, 51 LEGACY; 42 Roserpina), dominio, valori validi/di confine/invalidi, modalità L1 (`settings_roundtrip` 79, `load_only` 51, `static_or_manual` 60) |
 | Generatore | `tools/combi/generator.py` | pairwise / three-way greedy (famiglia IPOG) con `random.Random(seed)`, vincoli, tuple non estendibili escluse, report di copertura verificato da un controllo indipendente (`verify`), CLI |
-| Tracciatore requisiti | `tests/fullscope/requirements/tracker.py`, `catalog.json`, `tests/fullscope/conftest.py` | marker `@pytest.mark.pf_requirement("ID")`; report `art/fullscope/<sha>/requirements_report.json` (coperti / tentati non coperti / senza test / ID sconosciuti); riga pronta per il tracker #586 |
+| Tracciatore requisiti | `tests/fullscope/requirements/tracker.py`, `catalog.json`, `tests/fullscope/requirements/pytest_plugin.py` (registrato dal `conftest.py` di root) | marker `@pytest.mark.pf_requirement("ID")`; report `art/fullscope/<sha>/requirements_report.json` (coperti / tentati non coperti / senza test / ID sconosciuti); riga pronta per il tracker #586 |
 | Child runner | `tests/fullscope/harness/child_runner.py` | HeadlessApp REALE in SIM, SQLite su disco, passi di scenario, snapshot per passo, crash cooperativi (`os._exit`) e checkpoint per crash esterno |
 | Driver | `tests/fullscope/harness/runner.py` | sottoprocesso isolato per HOME, **SIGKILL esterno al checkpoint**, riavvio sullo stesso HOME, netguard, artifact JSON per scenario |
 | Netguard | `tests/fullscope/harness/netguard/sitecustomize.py` | ogni connessione non locale nel sottoprocesso è un errore (invariante 11: nessun ordine reale da SIM) |
@@ -85,6 +85,11 @@ Sol, Grok e Codex: bloccanti reali, tutti corretti nello stesso push.
 - **Report sotto xdist:** ogni worker scrive solo i propri record (`requirements_records.<worker>.json`, `combi_runs.<worker>.json`); il controller aggrega in un unico `requirements_report.json` (i record «non eseguiti su quel worker» non sovrascrivono gli esiti reali; fra esiti reali vince il non coprente).
 - **Eventi della sonda stop-loss:** i prefissi conservati negli artifact stanno in `tests/fullscope/harness/events.py` (testato) e includono `SL_`, `TP_`, `STOP_LOSS`, `TAKE_PROFIT`, `TRAILING`.
 - **Hash dell'inventario:** con `--inventory` il report cita lo sha256 del file realmente usato.
+
+## Review su PR #589 (head `a721e09`) e correzioni
+Codex, due P2 reali, corretti nello stesso push.
+- **Hook del tracciatore nel controller xdist:** con `pytest -n auto ... tests` (come `pr-check.yml`) il controller carica solo i conftest dei path passati e dei genitori, quindi gli hook nel conftest di `tests/fullscope` non giravano e il report non veniva scritto. Gli hook stanno ora in `tests/fullscope/requirements/pytest_plugin.py`, registrato dal `conftest.py` di root (`pytest_plugins`); il conftest annidato tiene solo le fixture. Registrazione dopo la deselezione (`pytest_collection_finish`); nessun report se nessun test `pf_requirement` è stato eseguito (la passata `-m serial` non sovrascrive il report); pulizia dei parziali solo nel controller xdist. Prova: `test_pytest_plugin.py` lancia un pytest reale con `-n 2` su un progetto il cui conftest di root è il testo di quello del repository (PASS) e senza registrazione (BLOCK: nessun report).
+- **Nomi degli artifact di scenario:** allocati con creazione esclusiva (`O_CREAT|O_EXCL`) del primo `<scenario>_NN.json` libero: due worker con lo stesso scenario non si sovrascrivono più (`test_artifact_alloc.py`).
 
 ## Limiti dichiarati (v1)
 - Scenari non ancora scritti: SIM-TRAIL-004 (dipende da F-03), SIM-FAULT-006, SIM-CFG-007 (parte GUI), SIM-GUI-008

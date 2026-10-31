@@ -23,7 +23,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Finding tracciati come xfail con riferimento: hedge del cashout assente dal ledger (CSH-06 → F-05), monitor SL/TP
   inerte (→ F-01/F-02), loader fail-open su valori illeggibili/infiniti (NF-16 → F-18), `starting_balance 0` /
   `commission_pct 0` sostituiti dal default (→ F-18/F-17). Marker nuovi in `pytest.ini`; `art/` ignorato;
-  `docs/testing/full_scope_harness.md`.
+  `docs/testing/full_scope_harness.md`. Hook del tracciatore in `tests/fullscope/requirements/pytest_plugin.py`,
+  registrato dal `conftest.py` di root perché anche il controller pytest-xdist lo carichi (report aggregato con
+  `pytest -n auto ... tests`); artifact di scenario con nome allocato in creazione esclusiva (review Codex su #589).
 
 ### Changed
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**

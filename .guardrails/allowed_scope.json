@@ -3100,12 +3100,13 @@
       "max_files": 14
     },
     "audit_f33_fullscope_harness": {
-      "description": "F-33 (#586, GO-IMPLEMENT-LOCAL owner 29/10/2026): harness full-scope di collaudo — generatore combinatorio pairwise/three-way riproducibile con seed e report di copertura (tools/combi), inventario delle 190 chiavi censite, tracciatore pytest dei requisiti UNVERIFIED (marker pf_requirement, report per requisito con SHA e seed), child runner HeadlessApp reale in SIM con SIGKILL esterno e riavvio, netguard, oracolo Decimal indipendente, test L1 delle configurazioni persistite, scenari E2E SIM-COMBO-001/CASH-002/DUP-005/RESTART-003 (sonda RST-03). Solo test e tooling: nessun file applicativo di produzione; i difetti trovati sono xfail strict con riferimento alla scheda F-xx (F-05 CSH-06, F-01/F-02 SL, F-18 NF-16). Marker pytest nuovi in pytest.ini; art/ in .gitignore; docs/testing/full_scope_harness.md; CHANGELOG. ESTENSIONE DICHIARATA (hardening finale, GO owner 30/10/2026): aggiunti tests/fullscope/harness/combi_runner.py e test_oracle_negative.py, tests/fullscope/scenarios/test_l2_l3_runtime_binding.py, tests/fullscope/requirements/reconciliation.json e test_reconciliation.py, guardrails/mutation_catalog.json (13 mutazioni cg_* del generatore, area fullscope_tooling). ESTENSIONE DICHIARATA (30/10/2026): scripts/ci_changed_modules.py, regola mutation-guardrails: aggiunto il path tools/combi/ (richiesto dal guardrail tests/scripts/test_run_mutation_guardrails_reale.py: ogni file del catalogo deve attivare la lane). ESTENSIONE DICHIARATA (31/10/2026, review Sol/Grok/Codex su #589 d46e6da): aggiunti tests/fullscope/harness/events.py e tests/fullscope/harness/test_events_filter.py.",
+      "description": "F-33 (#586, GO-IMPLEMENT-LOCAL owner 29/10/2026): harness full-scope di collaudo — generatore combinatorio pairwise/three-way riproducibile con seed e report di copertura (tools/combi), inventario delle 190 chiavi censite, tracciatore pytest dei requisiti UNVERIFIED (marker pf_requirement, report per requisito con SHA e seed), child runner HeadlessApp reale in SIM con SIGKILL esterno e riavvio, netguard, oracolo Decimal indipendente, test L1 delle configurazioni persistite, scenari E2E SIM-COMBO-001/CASH-002/DUP-005/RESTART-003 (sonda RST-03). Solo test e tooling: nessun file applicativo di produzione; i difetti trovati sono xfail strict con riferimento alla scheda F-xx (F-05 CSH-06, F-01/F-02 SL, F-18 NF-16). Marker pytest nuovi in pytest.ini; art/ in .gitignore; docs/testing/full_scope_harness.md; CHANGELOG. ESTENSIONE DICHIARATA (hardening finale, GO owner 30/10/2026): aggiunti tests/fullscope/harness/combi_runner.py e test_oracle_negative.py, tests/fullscope/scenarios/test_l2_l3_runtime_binding.py, tests/fullscope/requirements/reconciliation.json e test_reconciliation.py, guardrails/mutation_catalog.json (13 mutazioni cg_* del generatore, area fullscope_tooling). ESTENSIONE DICHIARATA (30/10/2026): scripts/ci_changed_modules.py, regola mutation-guardrails: aggiunto il path tools/combi/ (richiesto dal guardrail tests/scripts/test_run_mutation_guardrails_reale.py: ogni file del catalogo deve attivare la lane). ESTENSIONE DICHIARATA (31/10/2026, review Sol/Grok/Codex su #589 d46e6da): aggiunti tests/fullscope/harness/events.py e tests/fullscope/harness/test_events_filter.py. ESTENSIONE DICHIARATA (31/10/2026, review Codex su #589 a721e09): aggiunti conftest.py (root: registra il plugin del tracciatore con pytest_plugins, cosi' anche il controller xdist lo carica), tests/fullscope/requirements/pytest_plugin.py, tests/fullscope/requirements/test_pytest_plugin.py, tests/fullscope/harness/test_artifact_alloc.py.",
       "allow_tests": true,
       "files": [
         ".gitignore",
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
+        "conftest.py",
         "docs/testing/full_scope_harness.md",
         "guardrails/mutation_catalog.json",
         "pytest.ini",
@@ -3124,12 +3125,15 @@
         "tests/fullscope/harness/netguard/sitecustomize.py",
         "tests/fullscope/harness/oracle.py",
         "tests/fullscope/harness/runner.py",
+        "tests/fullscope/harness/test_artifact_alloc.py",
         "tests/fullscope/harness/test_events_filter.py",
         "tests/fullscope/harness/test_harness_selfcheck.py",
         "tests/fullscope/harness/test_oracle_negative.py",
         "tests/fullscope/requirements/__init__.py",
         "tests/fullscope/requirements/catalog.json",
+        "tests/fullscope/requirements/pytest_plugin.py",
         "tests/fullscope/requirements/reconciliation.json",
+        "tests/fullscope/requirements/test_pytest_plugin.py",
         "tests/fullscope/requirements/test_reconciliation.py",
         "tests/fullscope/requirements/test_tracker.py",
         "tests/fullscope/requirements/tracker.py",
@@ -3143,7 +3147,7 @@
         "tools/combi/generator.py",
         "tools/combi/inventory.json"
       ],
-      "max_files": 39
+      "max_files": 43
     }
   }
 }
