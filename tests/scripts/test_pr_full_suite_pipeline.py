@@ -331,6 +331,18 @@ def test_telegram_sim_job_refuses_telegram_credentials_in_the_lane(tmp_path):
     assert "tests/integration/test_telegram_live_sim.py" in _commands("w5-telegram-live-sim")
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash assente")
+def test_telegram_guard_is_deterministic_with_a_large_environment(tmp_path):
+    """Claude B su #589: con `set -o pipefail`, `env | grep -q` puo' chiudere la pipe prima che `env` finisca;
+    `env` muore di SIGPIPE, la pipeline fallisce e il guard NON scatta con TG_* presenti (fail-open). Con un ambiente
+    grande la corsa si vede: ogni esecuzione deve rifiutare."""
+    guard = _job("w5-telegram-live-sim").commands[0]
+    big = {"PATH": "/usr/bin:/bin", **{f"PF_PAD_{i}": "0" * 200 for i in range(400)}}
+    tg_variable = "TG_BOT_" + "TOKEN"
+    misses = sum(_bash(guard, tmp_path, {**big, tg_variable: "x"}).returncode != 1 for _ in range(60))
+    assert misses == 0, f"guard Telegram mancato {misses}/60 volte"
+
+
 @pytest.mark.skipif(shutil.which("bash") is None or shutil.which("sha256sum") is None, reason="bash assente")
 @pytest.mark.parametrize("assets,ok", [((), False), (("bin",), False), (("app",), False), (("bin", "app"), True),
                                        (("bin", "bin2", "app"), False)])

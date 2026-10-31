@@ -6552,12 +6552,24 @@
       "module": "scripts.pr_full_suite_pipeline",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_full_suite_pipeline.py",
-      "original": "            'if env | grep -q \"^TG_\"; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
-      "mutated": "            'true',",
+      "original": "            'if [ -n \"$(compgen -e | grep \"^TG_\" || true)\" ]; then '\n",
+      "mutated": "            'if false; then '\n",
       "tests": [
         "tests/scripts/test_pr_full_suite_pipeline.py"
       ],
       "rationale": "PF-562 PR-B (M2): credenziali Telegram nella lane non fidata non fermano il job."
+    },
+    {
+      "id": "fsp_m2_telegram_guard_sigpipe",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            'if [ -n \"$(compgen -e | grep \"^TG_\" || true)\" ]; then '\n",
+      "mutated": "            'if env | grep -q \"^TG_\"; then '\n",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "Guard Telegram con `env | grep -q` sotto pipefail: SIGPIPE su env, guard non scatta con TG_* presenti (fail-open, Claude B su #589)."
     },
     {
       "id": "fsp_m2_lock_deletion_unchecked",

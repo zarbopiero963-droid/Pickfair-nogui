@@ -316,7 +316,10 @@ def _jobs() -> tuple:
             'echo "OK: il lock combacia con la rigenerazione"; '
             'else echo "NOTE: nessun requirements-build-linux.lock committato"; fi')),
         Job("w5-telegram-live-sim", "W5 telegram-live-integration in simulazione (nessun messaggio reale)", 15, 1, (
-            'if env | grep -q "^TG_"; then echo "credenziali Telegram nella lane non fidata: fermo"; exit 1; fi',
+            # nessuna pipe: con `pipefail`, `env | grep -q` puo' far morire `env` di SIGPIPE e il guard non scatta
+            # anche con TG_* presenti (fail-open, Claude B su #589). `compgen -e` e' un builtin di bash
+            'if [ -n "$(compgen -e | grep "^TG_" || true)" ]; then '
+            'echo "credenziali Telegram nella lane non fidata: fermo"; exit 1; fi',
             RUNTIME_DEPS,
             "pytest -q tests/integration/test_telegram_live_sim.py --junitxml=bk-out/telegram-live-sim.xml")),
     ]
