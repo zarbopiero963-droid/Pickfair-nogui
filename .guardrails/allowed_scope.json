@@ -3098,6 +3098,21 @@
         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
       ],
       "max_files": 14
+    },
+    "f01_sl_tp_liquidable_pnl": {
+      "description": "F-01 (#586, CSH-01/CSH-10/NF-06 P0 latente, roadmap V2 owner 31/10/2026): P&L liquidabile del monitor SL/TP = green-up del cashout (dutching.dynamic_cashout_single) al prezzo di chiusura del book, stake reale, commissione di policy sul netto, Decimal, fail-closed. Solo la funzione di calcolo e i suoi test: nessun cablaggio (F-02). Finanziaria critica: merge owner.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/runtime_controller.py",
+        "core/sl_tp_pnl.py",
+        "docs/cashout_overview.md",
+        "guardrails/mutation_catalog.json",
+        "hard_verify_issue_320.py",
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "max_files": 8
     }
   }
 }

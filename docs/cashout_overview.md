@@ -407,6 +407,22 @@ ripiazzata. Limite noto: il broker SIM non verifica i fondi su nessuna corsia
 del `MASTER_CASHOUT` ai follower reali (il flag `sim` è catturato al piazzamento,
 non riletto dopo, per evitare uno switch SIM/LIVE in volo).
 
+### 7.3 P&L del monitor SL/TP (F-01, CSH-01/CSH-10)
+
+`RuntimeController._monitor_sl_tp_trailing` (inerte fino a F-02: nessuna sorgente SL/TP nei meta dei tavoli)
+confronta SL/TP con il **netto liquidabile** della posizione (decisione owner #426 c.6112703848), calcolato da
+`core/sl_tp_pnl.py` in Decimal con la stessa funzione del cashout (`dutching.dynamic_cashout_single`):
+
+- prezzo di chiusura dal book, al lato opposto della posizione (BACK => miglior `availableToLay`, LAY => miglior
+  `availableToBack`); mai `lastPriceTraded`;
+- stake reale della gamba: `meta["stake"]`, altrimenti BACK = esposizione e LAY = liability/(prezzo-1);
+- commissione di policy del cashout (`BETFAIR_ITALY_COMMISSION_PCT`), solo sul netto positivo;
+- input non validi (NaN/inf/non numerici, book vuoto) o calcolo che solleva => nessuna decisione (fail-closed).
+
+Esempi (stake 10, ingresso 2.0, commissione 4.5 %): BACK chiuso in LAY a 2.5 => -2.00, a 1.6 => +2.39;
+LAY chiuso in BACK a 2.5 => +1.91, a 1.6 => -2.50; LAY con liability 10 a 3.0 (stake 5) chiuso a 4.0 => +1.19.
+Prima il BACK aveva il segno invertito (una perdita sembrava profitto). Test: `tests/core/test_sl_tp_pnl_sign.py`.
+
 ---
 
 ## 8. Limiti noti & possibili aggiunte (follow-up)
