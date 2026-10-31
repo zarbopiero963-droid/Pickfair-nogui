@@ -192,6 +192,7 @@ MODULE_RULES = [
             "guardrails/mutation_catalog.json",
             "scripts/run_mutation_guardrails.py",
             "database.py",
+            "database_schema.py",  # F-08: mutazione del catalogo sulla DDL di startup_orders
             "dutching.py",
             "betfair_client.py",  # RECTIFICATION-01: mutazione del catalogo sulla riduzione parziale (Microstake LIVE)
             "controllers/dutching_controller.py",  # #523: mutazioni del catalogo su Dutching e bet manuale

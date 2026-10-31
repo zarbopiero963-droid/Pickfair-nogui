@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **F-08 (#586, RST-02/NF-10/DB-04 P0) — ordini ghost all'avvio su DB reale:** tabelle `startup_orders` e `outbox`
+  create (DDL additiva e idempotente, nessuna migrazione di dati); un errore del DB sul ghost rende `recover()`
+  `ok=False` / `STARTUP_RECONCILIATION_REQUIRED` invece di `ok=True` con l'ordine perso. Gating del runtime: F-09.
+  `docs/startup_recovery.md`; test `tests/f08/`; mutazioni `f08_*`.
+
 ### Changed
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
   - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
