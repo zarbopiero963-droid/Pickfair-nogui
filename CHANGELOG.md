@@ -26,6 +26,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `docs/testing/full_scope_harness.md`. Hook del tracciatore in `tests/fullscope/requirements/pytest_plugin.py`,
   registrato dal `conftest.py` di root perché anche il controller pytest-xdist lo carichi (report aggregato con
   `pytest -n auto ... tests`); artifact di scenario con nome allocato in creazione esclusiva (review Codex su #589).
+  Child runner: quiete del bus a callback terminati (`events.bus_drained`), metadati di book durevoli per il
+  settlement dopo il riavvio, output del child su file invece che su pipe non lette (review Codex su #589 `de1c980`).
 
 ### Changed
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**

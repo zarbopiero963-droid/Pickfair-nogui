@@ -46,7 +46,8 @@ R = {"tree": TREE, "first_run": first_run, "seed": SPEC.get("seed", 0), "require
 EV = []
 T0 = time.time()
 CRASH = {}
-from tests.fullscope.harness.events import keep as _keep_event  # noqa: E402  (TREE gia' su sys.path)
+from tests.fullscope.harness.events import bus_drained  # noqa: E402  (TREE gia' su sys.path)
+from tests.fullscope.harness.events import keep as _keep_event  # noqa: E402
 
 
 def dump():
@@ -115,7 +116,29 @@ try:
         app.betfair_service.list_current_orders = _lco
     brk = app.betfair_service.get_simulation_broker()
     MODE = {}
-    BOOK = {}
+    # metadati di book per mercato (prezzo, lato, selezione, evento): durevoli in HOME come lo stato SIM, cosi' un
+    # riavvio sullo stesso HOME regola la selezione REALE della posizione (rilievo Codex su de1c980: dopo il riavvio
+    # BOOK ripartiva vuoto e il settlement cadeva sulla selezione 11)
+    BOOK_PATH = os.path.join(HOME, ".fullscope_book.json")
+    try:
+        with open(BOOK_PATH, "r") as _fh:
+            BOOK = {str(k): dict(v) for k, v in (json.load(_fh) or {}).items()}
+    except (OSError, ValueError, AttributeError):
+        BOOK = {}
+
+    def save_book():
+        tmp = BOOK_PATH + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(BOOK, fh)
+        os.replace(tmp, BOOK_PATH)
+
+    def book_info(m):
+        """Metadati del mercato: dal BOOK durevole, altrimenti dalla selezione degli ordini sull'exchange SIM."""
+        if m not in BOOK:
+            sels = sorted({int(o["selectionId"]) for o in (brk.list_current_orders().get("currentOrders") or [])
+                           if str(o.get("marketId")) == str(m) and o.get("selectionId") is not None})
+            BOOK[m] = {"price": 2.0, "side": "BACK", "sel": sels[0] if sels else 11}
+        return BOOK[m]
     real_place = brk.place_bet
     real_orders = brk.place_orders
 
@@ -143,7 +166,8 @@ try:
     brk.place_orders = place_orders
 
     def book(m, status="OPEN", winner=None):
-        info = BOOK.setdefault(m, {"price": 2.0, "side": "BACK", "sel": 11})
+        info = book_info(m)
+        save_book()
         price = float(info["price"])
         side = str(info.get("side") or "BACK").upper()
         if MODE.get(m) == "nomatch":
@@ -222,11 +246,13 @@ try:
         app.bus.subscribe(_name, lambda d, _n=_name: SUB.append((time.time(), _n, d if isinstance(d, dict) else {})))
 
     def bus_idle():
-        # API pubblica dell'EventBus: coda vuota e tutto il pubblicato consegnato (nessun attributo privato)
-        try:
-            return app.bus.queue_depth() == 0 and app.bus.delivered_total_count() >= app.bus.published_total_count()
-        except Exception:  # noqa: BLE001 - bus senza contatori => si considera fermo solo a coda vuota
-            return getattr(app.bus, "queue_depth", lambda: 0)() == 0
+        """Bus fermo = coda vuota E ogni callback accodato e' terminato (API pubblica ``pressure_snapshot``).
+
+        ``enqueued_total`` conta i callback accodati (uno per subscriber), ``dequeued_total`` sale solo DOPO che il
+        callback e' tornato (anche in errore): sono contatori dello stesso livello. Il confronto precedente
+        (eventi pubblicati vs callback consegnati) dichiarava fermo il bus con un handler ancora in corso (rilievo
+        Codex su de1c980). Bus senza snapshot => mai fermo: l'attesa scade e il wait risulta non soddisfatto."""
+        return bus_drained(app.bus)
 
     def wait_for(tag, pred, deadline_s=30.0):
         t_start = time.time()
@@ -295,12 +321,12 @@ try:
                      or since(t_sig, OUTCOMES, m, SUB) or since(t_sig, {"SIGNAL_REJECTED"}, None, SUB)
                      or since(t_sig, {"SIGNAL_REJECTED"}))
         elif op == "book":
-            BOOK.setdefault(m, {"price": 2.0, "side": "BACK", "sel": 11})["price"] = st.get("price", 2.0)
+            book_info(m)["price"] = st.get("price", 2.0)
             book(m)
             wait_for(f"{i}:book:{m}", lambda: True)
         elif op == "settle":
             t_settle = time.time()
-            sel = int(BOOK.get(m, {}).get("sel") or 11)
+            sel = int(book_info(m).get("sel") or 11)
             # posizione abbinata sull'exchange PRIMA della chiusura: solo allora il runtime deve contabilizzare
             has_position = any(str(o.get("marketId")) == str(m) and float(o.get("sizeMatched") or 0) > 0
                                for o in (brk.list_current_orders().get("currentOrders") or []))

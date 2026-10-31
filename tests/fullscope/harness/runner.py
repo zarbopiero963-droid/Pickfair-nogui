@@ -50,8 +50,13 @@ def run(steps: List[Dict[str, Any]], *, home: Optional[str] = None, settings: Op
     env["PYTHONPATH"] = NETGUARD + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     t0 = time.time()
+    # stdout/stderr su file e non su PIPE: il padre non legge le pipe durante il polling, e un child che scrive piu'
+    # del buffer di una pipe si bloccava fino al timeout (rilievo Codex su de1c980)
+    out_dir = os.path.dirname(out)
+    stdout_f = open(os.path.join(out_dir, "child.stdout"), "w+")
+    stderr_f = open(os.path.join(out_dir, "child.stderr"), "w+")
     proc = subprocess.Popen([PY, CHILD, TREE, out, json.dumps(spec), home], env=env,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                            stdout=stdout_f, stderr=stderr_f, text=True)
     killed_at: Optional[str] = None
     marker = os.path.join(home, f".ckpt_{kill_at_checkpoint}") if kill_at_checkpoint else None
     try:
@@ -73,9 +78,11 @@ def run(steps: List[Dict[str, Any]], *, home: Optional[str] = None, settings: Op
             time.sleep(0.05)
     finally:
         try:
-            _stdout, stderr = proc.communicate(timeout=10)
+            proc.wait(timeout=10)
         except Exception:  # noqa: BLE001
-            _stdout, stderr = "", ""
+            pass
+        stderr = _read_and_close(stderr_f)
+        _read_and_close(stdout_f)
     if not os.path.exists(out):
         raise RuntimeError(f"nessun risultato dal child (rc={proc.returncode}, killed_at={killed_at}):\n{stderr[-3000:]}")
     with open(out, "r") as fh:
@@ -90,6 +97,18 @@ def run(steps: List[Dict[str, Any]], *, home: Optional[str] = None, settings: Op
     if killed_at is None:
         assert "error" not in r, r.get("error")
     return r
+
+
+def _read_and_close(fh) -> str:
+    try:
+        fh.flush()
+        size = fh.seek(0, os.SEEK_END)
+        fh.seek(max(0, size - 8000))       # basta la coda: il risultato cita al massimo gli ultimi 3000 caratteri
+        return fh.read()
+    except Exception:  # noqa: BLE001
+        return ""
+    finally:
+        fh.close()
 
 
 def _open_new_artifact(art: str, scenario: str, limit: int = 100000):

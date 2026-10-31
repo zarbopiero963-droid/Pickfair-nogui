@@ -91,6 +91,12 @@ Codex, due P2 reali, corretti nello stesso push.
 - **Hook del tracciatore nel controller xdist:** con `pytest -n auto ... tests` (come `pr-check.yml`) il controller carica solo i conftest dei path passati e dei genitori, quindi gli hook nel conftest di `tests/fullscope` non giravano e il report non veniva scritto. Gli hook stanno ora in `tests/fullscope/requirements/pytest_plugin.py`, registrato dal `conftest.py` di root (`pytest_plugins`); il conftest annidato tiene solo le fixture. Registrazione dopo la deselezione (`pytest_collection_finish`); nessun report se nessun test `pf_requirement` è stato eseguito (la passata `-m serial` non sovrascrive il report); pulizia dei parziali solo nel controller xdist. Prova: `test_pytest_plugin.py` lancia un pytest reale con `-n 2` su un progetto il cui conftest di root è il testo di quello del repository (PASS) e senza registrazione (BLOCK: nessun report).
 - **Nomi degli artifact di scenario:** allocati con creazione esclusiva (`O_CREAT|O_EXCL`) del primo `<scenario>_NN.json` libero: due worker con lo stesso scenario non si sovrascrivono più (`test_artifact_alloc.py`).
 
+## Review su PR #589 (head `de1c980`) e correzioni
+Codex, tre P2 reali nell'harness, riprodotti e corretti (`tests/fullscope/harness/test_harness_review_fixes.py`, PASS sul codice nuovo, FAIL sul vecchio).
+- **Quiete del bus:** le attese del child dichiaravano fermo il bus confrontando eventi pubblicati e callback consegnati (contatori di livello diverso) con un handler ancora in esecuzione. Ora `events.bus_drained` usa `pressure_snapshot()`: coda vuota e `dequeued_total >= enqueued_total` (il secondo sale solo a callback terminato). Senza snapshot il bus non è mai dichiarato fermo (fail-closed: l'attesa risulta non soddisfatta).
+- **Selezione dopo il riavvio:** i metadati di book (prezzo, lato, selezione, evento) sono durevoli in `HOME/.fullscope_book.json`; in assenza si ricava la selezione dagli ordini dell'exchange SIM. Prima il settlement dopo il riavvio cadeva sulla selezione 11 (`UNSUPPORTED_RUNNER_STATUS`, esposizione aperta).
+- **Output del child:** stdout/stderr vanno su file nella directory del risultato invece che su PIPE non lette durante il polling: un child con più output del buffer di una pipe non si blocca più fino al timeout.
+
 ## Limiti dichiarati (v1)
 - Scenari non ancora scritti: SIM-TRAIL-004 (dipende da F-03), SIM-FAULT-006, SIM-CFG-007 (parte GUI), SIM-GUI-008
   (Xvfb), SIM-SEC-009, SIM-PKG-010 (VPS/GO-4), SIM-MICRO-011 (Microstake owner-reserved: sola osservazione),
