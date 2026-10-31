@@ -318,6 +318,18 @@
       "rationale": "Esito ignoto dell'hedge riportato come fallimento (ritentabile)."
     },
     {
+      "id": "gov_buildkite_deferred_any_type",
+      "module": "scripts.pr_automation_controller",
+      "area": "trusted_gate",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "    if typename != \"StatusContext\":",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_buildkite_deferred.py"
+      ],
+      "rationale": "OWNER DECISION 31/10/2026: l'esenzione Buildkite si estende ai CheckRun, quindi anche all'overlap-check di GitHub Actions (fail-open sul required)."
+    },
+    {
       "id": "cashout_unmatched_as_success",
       "module": "cashout_executor",
       "area": "cashout",
