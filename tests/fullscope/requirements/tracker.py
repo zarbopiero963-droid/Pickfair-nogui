@@ -42,6 +42,16 @@ def head_sha(root: Optional[str] = None) -> str:
         return ""
 
 
+def runtime_tree() -> str:
+    """Checkout ESEGUITO dal child runner: ``PF_TREE`` se impostata, altrimenti questo stesso checkout (come
+    ``tests/fullscope/harness/runner.py``)."""
+    return os.environ.get("PF_TREE") or repo_root()
+
+
+def runtime_sha() -> str:
+    return head_sha(runtime_tree())
+
+
 def tree_dirty(root: Optional[str] = None) -> bool:
     """True se il working tree ha modifiche non committate: un report su albero sporco non e' riferibile allo SHA."""
     try:
@@ -136,7 +146,7 @@ class RequirementTracker:
             "schema": "pf-requirements-report/1",
             "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
             "repo_sha": sha,
-            "tree_dirty": tree_dirty(),
+            "tree_dirty": tree_dirty(runtime_tree()),
             "seed": seed_value,
             "catalog": self.catalog.get("source", ""),
             "counts": {"catalog": len(self.known), "covered": len(covered),

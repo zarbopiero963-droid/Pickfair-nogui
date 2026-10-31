@@ -46,8 +46,23 @@ R = {"tree": TREE, "first_run": first_run, "seed": SPEC.get("seed", 0), "require
 EV = []
 T0 = time.time()
 CRASH = {}
-from tests.fullscope.harness.events import bus_drained  # noqa: E402  (TREE gia' su sys.path)
-from tests.fullscope.harness.events import keep as _keep_event  # noqa: E402
+
+
+def _load_harness_events():
+    """``events.py`` dell'HARNESS (accanto a questo file), non del checkout selezionato da ``PF_TREE``: un runtime
+    senza l'harness F-33 (es. il main) non ha ``tests.fullscope`` e il child moriva prima di partire (rilievo
+    Codex su 31d5364). Gli import di produzione restano puntati su ``TREE``."""
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "events.py")
+    spec = importlib.util.spec_from_file_location("_pf_fullscope_harness_events", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_events = _load_harness_events()
+bus_drained = _events.bus_drained
+_keep_event = _events.keep
 
 
 def dump():

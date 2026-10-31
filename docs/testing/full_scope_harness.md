@@ -44,7 +44,7 @@ python -m pytest tests/fullscope/combi -q
 python -m tools.combi.generator --group ALL --seed 7 --out art/fullscope/coverage_seed7.json
 ```
 
-Variabili: `PF_SEED` (seed riproducibile, default 0), `PF_FULLSCOPE_ART` (directory artifact), `PF_TREE`, `PF_PY`.
+Variabili: `PF_SEED` (seed riproducibile, default 0), `PF_FULLSCOPE_ART` (directory artifact), `PF_TREE` (checkout del runtime da collaudare: report e record citano il suo SHA), `PF_PY`.
 `art/` è ignorato da git: gli artifact si allegano alla PR/#586, non si committano.
 
 ## Regole di copertura e di chiusura
@@ -102,6 +102,11 @@ Codex, tre P2 reali, riprodotti e corretti (stesso file di test, PASS sul codice
 - **Marker di checkpoint stantio:** `run()` rimuove `HOME/.ckpt_<nome>` prima di avviare il child; prima un secondo run con lo stesso checkpoint sullo stesso HOME veniva ucciso subito, senza risultato.
 - **SHA del runtime:** i record di `combi_runner` citano in `repo_sha` lo SHA del checkout ESEGUITO (`PF_TREE` → `H.TREE`, `combi_runner.runtime_sha()`) e in `harness_sha` quello dell'harness.
 - **Oracolo e fill successivi:** una gamba dell'exchange con lo stesso customer ref di una riga del ledger aggiorna quella riga con il fill cumulativo e il prezzo medio eseguito (l'exchange è autorevole; la riga SQLite conserva la risposta del piazzamento). Lo snapshot del child riporta `avg_price` dallo stato dell'exchange SIM (`listCurrentOrders` non lo espone). Prova end-to-end: BACK 3 a 2.0 abbinato per 1, completato a 3.0, vincente: oracolo = realizzato del runtime (4.775).
+
+## Review su PR #589 (head `31d5364`) e correzioni
+Codex, due P2 reali su `PF_TREE`, riprodotti e corretti (PASS sul codice nuovo, FAIL sul vecchio).
+- **Helper dell'harness indipendenti dal runtime selezionato:** il child carica `events.py` dal file accanto a sé (`importlib`), non da `tests.fullscope` del checkout `PF_TREE`; gli import di produzione restano su `PF_TREE`. Prima un runtime senza l'harness F-33 (es. il main) faceva morire il child con `ModuleNotFoundError`. Prova: checkout detached dello stesso HEAD senza `tests/fullscope`.
+- **Report dei requisiti attribuito al runtime eseguito:** `requirements_report.json` riporta in `repo_sha` lo SHA del checkout eseguito (`tracker.runtime_sha()`, `PF_TREE` o questo checkout), in `harness_sha` quello dell'harness, in `runtime_tree` il percorso; `tree_dirty` si riferisce al runtime.
 
 ## Limiti dichiarati (v1)
 - Scenari non ancora scritti: SIM-TRAIL-004 (dipende da F-03), SIM-FAULT-006, SIM-CFG-007 (parte GUI), SIM-GUI-008

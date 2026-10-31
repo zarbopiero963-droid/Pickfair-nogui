@@ -40,7 +40,7 @@ markers =
 """
 
 
-def _project(tmp_path, root_conftest: str):
+def _project(tmp_path, root_conftest: str, extra_env=None):
     (tmp_path / "pytest.ini").write_text(INI)
     (tmp_path / "conftest.py").write_text(root_conftest)
     nested = tmp_path / "probe" / "deep"
@@ -50,6 +50,8 @@ def _project(tmp_path, root_conftest: str):
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "PF_FULLSCOPE_ART"))}
     env["PYTHONPATH"] = REPO + os.pathsep + env.get("PYTHONPATH", "")
     env["PF_FULLSCOPE_ART"] = str(art)
+    env.pop("PF_TREE", None)
+    env.update(extra_env or {})
     proc = subprocess.run([sys.executable, "-m", "pytest", "-q", "-n", "2", "-k", "not deselected", "probe"],
                           cwd=str(tmp_path), env=env, capture_output=True, text=True, timeout=300, check=False)
     return proc, art
@@ -93,3 +95,26 @@ def test_block_without_root_registration_no_report_is_written(tmp_path):
     # senza plugin il marker e' comunque registrato in pytest.ini: la sessione passa ma nessuno aggrega
     assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-3000:]
     assert not (art / "requirements_report.json").exists()
+
+
+def test_report_attributes_coverage_to_the_runtime_selected_by_pf_tree(tmp_path):
+    """Rilievo Codex su 31d5364: con ``PF_TREE`` su un altro checkout il report citava lo SHA dell'harness come
+    commit su cui il requisito e' coperto. Atteso: ``repo_sha`` = runtime selezionato, ``harness_sha`` separato."""
+    pytest.importorskip("xdist")
+    other = tmp_path / "runtime"
+    other.mkdir()
+    git = ["git", "-C", str(other), "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run(git[:3] + ["init", "-q"], check=True)
+    (other / "f.txt").write_text("x")
+    subprocess.run(git + ["add", "f.txt"], check=True)
+    subprocess.run(git + ["commit", "-qm", "c"], check=True)
+    other_sha = subprocess.run(git[:3] + ["rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    proc, art = _project(proj, _root_conftest_text(), {"PF_TREE": str(other)})
+    assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-3000:]
+    report = json.loads((art / "requirements_report.json").read_text())
+    harness = subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    assert report["repo_sha"] == other_sha
+    assert report["harness_sha"] == harness
+    assert report["runtime_tree"] == str(other)

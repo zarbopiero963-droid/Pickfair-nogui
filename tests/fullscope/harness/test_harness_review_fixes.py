@@ -1,5 +1,6 @@
 """F-33 — rilievi Codex nell'harness. Su de1c980: quiete del bus, selezione dopo il riavvio, pipe del child.
 Su 0d9e091: marker di checkpoint stantio, SHA del runtime con PF_TREE, oracolo e fill successivi dell'exchange.
+Su 31d5364: child con PF_TREE su un runtime senza l'harness F-33.
 
 Ogni test riproduce il difetto con il codice reale (EventBus, child runner, driver) e fallisce se torna.
 """
@@ -174,3 +175,21 @@ def test_partial_then_filled_order_end_to_end_matches_runtime_realized():
     comm = D(str(last["sim_config"].get("commission_pct", 4.5))) / 100
     o = O.Oracle(last, {"1.961": True}, start=D("1000"), commission=comm, extra_legs=O.exchange_legs(pre))
     assert abs(D(str(last["realized"])) - o.pnl_market("1.961")) <= D("0.01"), (last["realized"], o.pnl_market("1.961"))
+
+
+def test_child_runs_against_a_runtime_tree_without_the_fullscope_harness(tmp_path, monkeypatch):
+    """Riproduzione Codex: con ``PF_TREE`` su un checkout senza ``tests/fullscope`` (es. il main prima di F-33) il
+    child importava gli helper dal TREE e moriva con ModuleNotFoundError prima di partire. Runtime = checkout
+    detached dello stesso HEAD con ``tests/fullscope`` rimosso."""
+    repo = H.TREE
+    rt = tmp_path / "runtime_without_harness"
+    subprocess.run(["git", "-C", repo, "worktree", "add", "--detach", "-q", str(rt), "HEAD"], check=True)
+    try:
+        subprocess.run(["git", "-C", str(rt), "rm", "-rq", "tests/fullscope"], check=True)
+        assert not (rt / "tests" / "fullscope").exists()
+        monkeypatch.setattr(H, "TREE", str(rt))
+        r = H.run([{"op": "wait", "s": 0.2}], scenario="review_runtime_without_harness")
+        assert r["_rc"] == 0 and r["tree"] == str(rt), r.get("_stderr_tail")
+        assert r["snaps"], "nessuno snapshot: il runtime selezionato non e' partito"
+    finally:
+        subprocess.run(["git", "-C", repo, "worktree", "remove", "--force", str(rt)], check=False)

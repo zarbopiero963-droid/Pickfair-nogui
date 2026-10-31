@@ -97,7 +97,11 @@ def pytest_sessionfinish(session, exitstatus):
     if not _executed(t.records):
         return
     out_dir = _trk.artifact_dir(sha)
-    report = t.report(sha, _trk.seed())
+    # repo_sha = runtime ESEGUITO (PF_TREE), harness_sha = questo checkout: un PASS copre il requisito sul codice
+    # che ha girato davvero, non sull'harness (rilievo Codex su 31d5364)
+    report = t.report(_trk.runtime_sha(), _trk.seed())
+    report["harness_sha"] = sha
+    report["runtime_tree"] = _trk.runtime_tree()
     report["workers_merged"] = [os.path.basename(p) for p in partials]
     path = os.path.join(out_dir, "requirements_report.json")
     with open(path, "w", encoding="utf-8") as fh:

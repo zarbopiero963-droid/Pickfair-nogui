@@ -31,6 +31,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Marker di checkpoint stantio rimosso prima del child; `repo_sha` del checkout eseguito (`PF_TREE`) e
   `harness_sha` separato; oracolo riconciliato con il fill cumulativo e il prezzo medio dell'exchange per customer ref
   (review Codex su #589 `0d9e091`).
+  Con `PF_TREE`: helper dell'harness caricati dal file accanto al child (runtime senza harness avviabile) e
+  report dei requisiti con `repo_sha` del runtime eseguito e `harness_sha` separato (review Codex su #589 `31d5364`).
 
 ### Changed
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
