@@ -9,3 +9,4 @@ Ripristino: `git am patches/<area>/*` su main 6fa29b2.
 - `212d299` — F-05 tests/guardrails + tests/scripts -n 4: **PASS** — 3758 passed
 - `ce06aac` — F-08 suite completa -n 4 (wt-f08): **PASS** — 10640 passed
 - `889b9a9` — F-08 scripts+guardrails+f08+recovery -n 4: **PASS** — 3801 passed; mutation core.state_recovery+database_schema GATE PASS (f08_* killed)
+- `dde85a5` — F-01 suite completa -n 4 (wt-f01): **PASS** — 10647 passed; mutation core.sl_tp_pnl+core.runtime_controller GATE PASS (113 killed, 3 equivalent, f01_* killed)

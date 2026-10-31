@@ -6,8 +6,8 @@
   "sha": "0c2822e8faf7e83fe62769d29e52899d1d53a59f"
  },
  "mandate_id": "Claude B \u2014 #586 V2: F-33 conditional merge (#589), CONTINUE F-05 LOCAL, #590 prepared; owner 31/10/2026",
- "next_atomic_action": "1) #589: merge (GO condizionato) solo con overlap-check, full-suite e mutation verdi sullo stesso head. 2) F-05 poi F-08: PR una alla volta dopo il merge di F-33 (`git am patches/<f05|f08>/*` su main; conflitti attesi su CHANGELOG, mutation_catalog, allowed_scope), merge owner. 3) #590: PR owner-merge su autorizzazione. 4) F-01 Phase 0 locale (formula P&L, P0 latente).",
- "previous_checkpoint_sha": "44c1ba8d126e38f7059cc16c3ea19e79f3760f01",
+ "next_atomic_action": "1) #589: merge solo con overlap-check, full-suite e mutation verdi sullo stesso head. 2) PR una alla volta dopo F-33, in ordine F-05 -> F-08 -> F-01 (`git am patches/<x>/*` su main aggiornato; conflitti attesi su CHANGELOG, mutation_catalog, allowed_scope, docs/cashout_overview), merge owner per tutte e tre. 3) #590 owner-merge su autorizzazione. 4) Prossima scheda locale: F-10 richiede F-08+F-09 => preparare F-09 (gating recover()) dopo F-08, oppure F-06.",
+ "previous_checkpoint_sha": "9bf95c068c02be900e80a71c0199fb242efe6a3a",
  "schema": "pf-current/1",
- "seq": 6
+ "seq": 7
 }

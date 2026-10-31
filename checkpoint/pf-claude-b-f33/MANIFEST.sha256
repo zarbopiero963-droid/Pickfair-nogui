@@ -1,11 +1,15 @@
-6de9841d7a6d06631afa421a15de7fb97150423a631efec091cfdcf87e142ef6  ./AGENT_LEASE.json
-1f672b962ef19c0cf1d31c034a559423743f2ec89a6d5a9bfac19d33ddb8e29d  ./CURRENT.json
+f3ac6922f534a2f0e1561a4df240c19c6175bd7ee2a8393b03d3f63fa8ff1e21  ./AGENT_LEASE.json
+2a41a02842ad44831aba27afe455e41299cacd6da3ad6b3f4aa8b230ea650cb7  ./CURRENT.json
 5d4de0d5923c9573fcca90ebec7c3291fb397fec512c7a4798274d3a0ca2dbaf  ./HANDOFF.md
 5acd27728f3ccf454af2f125927c2232e783d6307f095ce49b7f08d7dfd8672f  ./RUNBOOK.md
-d80bcb109e4f56e749ec659f7da947519b117da9112439dd322bf69d5996e581  ./STATE.json
-d6b912ce9c65a417ce9eb7d9e73f9bfcbc80b8baeca423c3ded17126b3abb9d5  ./TASK_STATE.json
-8fe2f545e3013681a04de7df967c93984f22d50bd80aa80f9b20bbea80e4d342  ./code_patch/BASELINE.json
+e92e8f953902488709088a4d48599284bd91e4d9c17b0228fb3f56c0c3b6ec57  ./STATE.json
+b717241fbb537ea4d88a0b7c766026ca6b4a56f78773c609fc4731d75a6614bc  ./TASK_STATE.json
+6c36e7347239d7fa14e3ebbca95563b2a07e2525ae996649b6d041f3a7d7c249  ./code_patch/BASELINE.json
 ddc90262071e06e92d1bf3befa4bd6c0a499192b4638bf095ee7e4d2a14f681b  ./patches/590/0001-590-guard-credenziali-Telegram-della-lane-w5-telegra.patch
+da554a65a22f6af0791db197cc35530161dc7e39ff5df97eb49561ee1e3a4232  ./patches/f01/0001-F-01-RED-P-L-del-monitor-SL-TP-con-segno-invertito-l.patch
+4dcd889e915e965d6d6f53f065827d7b2c5bcbb5dcc41eae5af311fa9bb12e71  ./patches/f01/0002-F-01-locale-P-L-liquidabile-del-monitor-SL-TP-green-.patch
+00fb04bdb9834386e6e998420a639b0cb2155c92189b7066c0e5f5a0324ad03a  ./patches/f01/0003-F-01-locale-docs-cashout-7.3-CHANGELOG-task-key-f01_.patch
+5ddaed783d2b4356f8fea67e9c900eaff00226de6415e4ba628d5ed91c8def42  ./patches/f01/0004-F-01-locale-sezione-docs-7.4-7.3-e-di-F-05.patch
 5e78a731706fe7899dc45bb242416eaceb5a89d25b180203cf4df907e5e0b170  ./patches/f05/0001-F-05-RED-l-hedge-del-cashout-non-e-scritto-nel-ledge.patch
 3572d988af972e6a033b3b2b52b9d4df0e15adf6882e66e52e413b802a0590cd  ./patches/f05/0002-F-05-WIP-locale-hedge-del-cashout-nel-ledger-orders-.patch
 9a1b9109bec3d19495bccd7c37dac50db05ca5f71d131bc11d4c6d81fe389016  ./patches/f05/0003-F-05-WIP-locale-mutazioni-f05_-e-test-di-settlement-.patch
@@ -15,4 +19,4 @@ ddc90262071e06e92d1bf3befa4bd6c0a499192b4638bf095ee7e4d2a14f681b  ./patches/590/
 4da126b3ef9a68fdc6f0bc3564ecbf0eeb630760e3201ba4f9ff50e7460e7d00  ./patches/f08/0003-F-08-locale-docs-startup_recovery.md-con-nota-di-mig.patch
 a568b5ea6acb65398820d4a2beac542ea483d322725b41038b4fa1fb0d0cec9d  ./results/F05_CONSUMERS.md
 6b2c720666178cba4e49a0bafecce78f4e089942968445e9e667e6136343a931  ./results/F05_PHASE0.md
-7b67f5fbefc08ccece03c8a8ae06d690ed5d4b10ae0a88251012c12ec43ba122  ./results/LOCAL_TESTS.md
+d5b31054d849836b8cbba6fca5d2c84d5aab830538b409ae255c5086f5075030  ./results/LOCAL_TESTS.md

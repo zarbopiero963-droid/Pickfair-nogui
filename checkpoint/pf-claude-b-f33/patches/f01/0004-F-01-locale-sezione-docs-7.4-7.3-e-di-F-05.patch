@@ -1,0 +1,45 @@
+From 3cf7e2bcf3fda75ffcb2da884ae0d0b1c20b2dad Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 19:53:56 +0000
+Subject: [PATCH 4/4] =?UTF-8?q?F-01=20(locale):=20sezione=20docs=20=C2=A77?=
+ =?UTF-8?q?.4=20(=C2=A77.3=20e'=20di=20F-05)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ CHANGELOG.md             | 2 +-
+ docs/cashout_overview.md | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index c9c27f5..e5e3a30 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -12,7 +12,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+ - **F-01 (#586, CSH-01/CSH-10/NF-06 P0 latente) — P&L del monitor SL/TP:** netto liquidabile in Decimal con la
+   funzione del cashout (`core/sl_tp_pnl.py`): prezzo di chiusura dal book, stake reale del LAY (non la
+   liability), commissione sul netto. Prima il BACK aveva il segno invertito e si usava `lastPriceTraded`. Il monitor
+-  resta inerte fino a F-02. `docs/cashout_overview.md` §7.3; test `tests/core/test_sl_tp_pnl_sign.py`;
++  resta inerte fino a F-02. `docs/cashout_overview.md` §7.4; test `tests/core/test_sl_tp_pnl_sign.py`;
+   mutazioni `f01_*`; `hard_verify_issue_320.py` (C1) allineato al book.
+ 
+ ### Changed
+diff --git a/docs/cashout_overview.md b/docs/cashout_overview.md
+index e76e732..7b704dd 100644
+--- a/docs/cashout_overview.md
++++ b/docs/cashout_overview.md
+@@ -407,7 +407,7 @@ ripiazzata. Limite noto: il broker SIM non verifica i fondi su nessuna corsia
+ del `MASTER_CASHOUT` ai follower reali (il flag `sim` è catturato al piazzamento,
+ non riletto dopo, per evitare uno switch SIM/LIVE in volo).
+ 
+-### 7.3 P&L del monitor SL/TP (F-01, CSH-01/CSH-10)
++### 7.4 P&L del monitor SL/TP (F-01, CSH-01/CSH-10)
+ 
+ `RuntimeController._monitor_sl_tp_trailing` (inerte fino a F-02: nessuna sorgente SL/TP nei meta dei tavoli)
+ confronta SL/TP con il **netto liquidabile** della posizione (decisione owner #426 c.6112703848), calcolato da
+-- 
+2.43.0
+

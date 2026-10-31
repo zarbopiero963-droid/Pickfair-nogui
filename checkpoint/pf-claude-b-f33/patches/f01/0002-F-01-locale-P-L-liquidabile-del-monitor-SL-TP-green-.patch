@@ -1,0 +1,251 @@
+From dde85a5e096dc6891f82c53fa8d9776bf83b7868 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 19:47:09 +0000
+Subject: [PATCH 2/4] F-01 (locale): P&L liquidabile del monitor SL/TP =
+ green-up del cashout dal book, Decimal, commissione sul netto
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ core/runtime_controller.py        | 49 ++++++++++-----------
+ core/sl_tp_pnl.py                 | 71 +++++++++++++++++++++++++++++++
+ guardrails/mutation_catalog.json  | 36 ++++++++++++++++
+ hard_verify_issue_320.py          |  7 ++-
+ tests/core/test_sl_tp_pnl_sign.py |  9 ++++
+ 5 files changed, 143 insertions(+), 29 deletions(-)
+ create mode 100644 core/sl_tp_pnl.py
+
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index c426217..f49bfb9 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -25,6 +25,7 @@ from core.reconciliation_engine import ReconciliationEngine
+ from core.runtime_authority import RuntimeAuthority, RuntimeAuthorityLost
+ from core.state_recovery import StateRecovery
+ from core.risk_desk import RiskDesk
++from core import sl_tp_pnl
+ from core.safety_layer import assert_live_gate_or_refuse
+ from core.system_state import DeskMode, RuntimeMode
+ from core.table_manager import TableManager
+@@ -6810,36 +6811,30 @@ class RuntimeController:
+             if sl is None and tp is None:
+                 continue
+                 
+-            # Calcolo PnL approssimativo per il monitoraggio (unrealized)
+-            # In una versione completa useremmo il SimulationBroker/PositionLedger
+-            # Qui implementiamo il gate richiesto dalla Issue #320
++            # F-01 (#586, CSH-01): P&L NETTO LIQUIDABILE = green-up del cashout al prezzo di chiusura del book
++            # (stessa funzione del cashout), stake reale della gamba, commissione sul netto, confronto in Decimal.
++            # Prima: segno invertito, lastPriceTraded, liability come stake del LAY, nessuna commissione.
+             runner = next((r for r in market_book.get("runners", []) if str(r.get("selectionId")) == str(table.selection_id)), None)
+             if not runner:
+                 continue
+-                
+-            current_price = float(runner.get("lastPriceTraded") or 0.0)
+-            if current_price <= 1.0:
+-                continue
+-                
+-            entry_price = float(meta.get("price", 0.0))
+-            stake = float(table.current_exposure)
+-            if entry_price <= 1.0 or stake <= 0.0:
+-                continue
+-                
+-            # PnL stimato (Back)
+-            side = meta.get("bet_type", "BACK")
+-            if side == "BACK":
+-                unrealized_pnl = stake * (current_price - entry_price) / entry_price # Semplificato
+-            else:
+-                unrealized_pnl = stake * (entry_price - current_price) / entry_price # Semplificato
+-                
+-            # Enforcement SL
+-            if sl is not None and unrealized_pnl <= -abs(float(sl)):
+-                self._trigger_auto_close_table(table, "STOP_LOSS_REACHED", unrealized_pnl)
+-            
+-            # Enforcement TP
+-            elif tp is not None and unrealized_pnl >= abs(float(tp)):
+-                self._trigger_auto_close_table(table, "TAKE_PROFIT_REACHED", unrealized_pnl)
++            side = str(meta.get("bet_type") or "BACK").upper()
++            close = sl_tp_pnl.closing_price(runner, side)
++            stake = sl_tp_pnl.position_stake(side, meta, table.current_exposure)
++            # Commissione di policy del cashout (la stessa che `dynamic_cashout_single` applica all'hedge reale):
++            # una commissione di configurazione diversa farebbe sollevare la funzione del cashout nell'handler.
++            try:
++                pnl = sl_tp_pnl.liquidable_pnl(side, stake, meta.get("price"), close, BETFAIR_ITALY_COMMISSION_PCT)
++            except Exception:  # noqa: BLE001 - calcolo non dimostrabile => nessuna decisione (fail-closed)
++                logger.exception("SL/TP: P&L liquidabile del tavolo %s non calcolabile", table.table_id)
++                pnl = None
++            if pnl is None:
++                continue                        # dati non validi: nessuna decisione (fail-closed)
++            sl_d = sl_tp_pnl.to_decimal(sl) if sl is not None else None
++            tp_d = sl_tp_pnl.to_decimal(tp) if tp is not None else None
++            if sl_d is not None and pnl <= -abs(sl_d):
++                self._trigger_auto_close_table(table, "STOP_LOSS_REACHED", float(pnl))
++            elif tp_d is not None and pnl >= abs(tp_d):
++                self._trigger_auto_close_table(table, "TAKE_PROFIT_REACHED", float(pnl))
+ 
+     def _trigger_auto_close_table(self, table, reason: str, pnl: float) -> None:
+         logger.info(f"[RuntimeController] Auto-closing table {table.table_id} reason={reason} pnl={pnl:.2f}")
+diff --git a/core/sl_tp_pnl.py b/core/sl_tp_pnl.py
+new file mode 100644
+index 0000000..b6de3bc
+--- /dev/null
++++ b/core/sl_tp_pnl.py
+@@ -0,0 +1,71 @@
++"""F-01 (#586, CSH-01/CSH-10/NF-06) — P&L liquidabile di una posizione per il monitor SL/TP.
++
++Decisione owner #426 c.6112703848: lo SL/TP si confronta con la perdita/il profitto NETTO LIQUIDABILE, commissioni
++incluse; c.6141450045 Q7: Decimal. Il valore e' il green-up del cashout a quel prezzo, calcolato con la STESSA
++funzione del cashout (``dutching.dynamic_cashout_single``): stake reale della gamba, prezzo al lato di chiusura del
++book (BACK chiude in LAY, LAY chiude in BACK), commissione solo sul netto positivo. Valori non validi => ``None``
++(il monitor non decide nulla: fail-closed).
++"""
++from __future__ import annotations
++
++import math
++from decimal import Decimal, InvalidOperation
++from typing import Any, Optional
++
++CENT = Decimal("0.01")
++
++
++def to_decimal(value: Any) -> Optional[Decimal]:
++    try:
++        f = float(value)
++    except (TypeError, ValueError):
++        return None
++    if not math.isfinite(f):
++        return None
++    try:
++        return Decimal(str(f))
++    except InvalidOperation:
++        return None
++
++
++def closing_price(runner: dict, side: str) -> Optional[Decimal]:
++    """Prezzo a cui la posizione si chiude ORA: BACK => miglior availableToLay, LAY => miglior availableToBack.
++    Mai ``lastPriceTraded`` (prezzo storico, non eseguibile)."""
++    ex = (runner or {}).get("ex") or {}
++    ladder = ex.get("availableToLay") if str(side).upper() == "BACK" else ex.get("availableToBack")
++    if not ladder or not isinstance(ladder[0], dict):
++        return None
++    price = to_decimal(ladder[0].get("price"))
++    return price if price is not None and price > Decimal("1.01") else None
++
++
++def position_stake(side: str, meta: dict, exposure: Any) -> Optional[Decimal]:
++    """Stake reale della gamba: ``meta['stake']`` se presente; altrimenti BACK = esposizione, LAY = liability/(p-1)."""
++    stake = to_decimal((meta or {}).get("stake"))
++    if stake is not None and stake > 0:
++        return stake
++    exp = to_decimal(exposure)
++    price = to_decimal((meta or {}).get("price"))
++    if exp is None or exp <= 0:
++        return None
++    if str(side).upper() == "BACK":
++        return exp
++    if price is None or price <= Decimal("1"):
++        return None
++    return (exp / (price - Decimal("1"))).quantize(CENT)
++
++
++def liquidable_pnl(side: str, stake: Any, entry_price: Any, close_price: Any, commission_pct: Any) -> Optional[Decimal]:
++    """Netto liquidabile (2 decimali) chiudendo ora la posizione; ``None`` se un input non e' valido."""
++    side_u = str(side or "").upper()
++    s, entry, close, comm = to_decimal(stake), to_decimal(entry_price), to_decimal(close_price), to_decimal(commission_pct)
++    if side_u not in ("BACK", "LAY") or None in (s, entry, close, comm):
++        return None
++    if s <= 0 or entry <= Decimal("1.01") or close <= Decimal("1.01") or comm < 0:
++        return None
++    from dutching import (
++        dynamic_cashout_single,  # import tardivo: core non dipende da dutching all'import
++    )
++    calc = dynamic_cashout_single(matched_stake=float(s), matched_price=float(entry), current_price=float(close),
++                                  commission=float(comm), side=side_u)
++    return to_decimal(calc.get("net_profit")).quantize(CENT)
+diff --git a/guardrails/mutation_catalog.json b/guardrails/mutation_catalog.json
+index 912e27e..dfe6529 100644
+--- a/guardrails/mutation_catalog.json
++++ b/guardrails/mutation_catalog.json
+@@ -317,6 +317,42 @@
+       ],
+       "rationale": "Esito ignoto dell'hedge riportato come fallimento (ritentabile)."
+     },
++    {
++      "id": "f01_sl_sign_inverted",
++      "module": "core.runtime_controller",
++      "area": "money_management",
++      "file": "core/runtime_controller.py",
++      "original": "            if sl_d is not None and pnl <= -abs(sl_d):",
++      "mutated": "            if sl_d is not None and pnl >= abs(sl_d):",
++      "tests": [
++        "tests/core/test_sl_tp_pnl_sign.py"
++      ],
++      "rationale": "F-01 (CSH-01): SL valutato con il segno invertito (una perdita non lo fa scattare)."
++    },
++    {
++      "id": "f01_closing_side_swapped",
++      "module": "core.sl_tp_pnl",
++      "area": "money_management",
++      "file": "core/sl_tp_pnl.py",
++      "original": "    ladder = ex.get(\"availableToLay\") if str(side).upper() == \"BACK\" else ex.get(\"availableToBack\")",
++      "mutated": "    ladder = ex.get(\"availableToBack\") if str(side).upper() == \"BACK\" else ex.get(\"availableToLay\")",
++      "tests": [
++        "tests/core/test_sl_tp_pnl_sign.py"
++      ],
++      "rationale": "F-01: prezzo di chiusura preso dal lato sbagliato del book (P&L non liquidabile)."
++    },
++    {
++      "id": "f01_lay_stake_is_liability",
++      "module": "core.sl_tp_pnl",
++      "area": "money_management",
++      "file": "core/sl_tp_pnl.py",
++      "original": "    if str(side).upper() == \"BACK\":",
++      "mutated": "    if True:",
++      "tests": [
++        "tests/core/test_sl_tp_pnl_sign.py"
++      ],
++      "rationale": "F-01 (CSH-10): stake del LAY = liability (P&L sovrastimato di (p-1) volte)."
++    },
+     {
+       "id": "cashout_unmatched_as_success",
+       "module": "cashout_executor",
+diff --git a/hard_verify_issue_320.py b/hard_verify_issue_320.py
+index d6ac3a8..3a3a9c6 100644
+--- a/hard_verify_issue_320.py
++++ b/hard_verify_issue_320.py
+@@ -149,10 +149,13 @@ class TestIssue320Hard(unittest.TestCase):
+         # Iniettiamo il tavolo nel table_manager
+         self.controller.table_manager._tables = {1: table}
+         
+-        # Simula snapshot di mercato con prezzo crollato (PnL negativo)
++        # Snapshot con il mercato salito contro il BACK (F-01: P&L liquidabile dal book, non lastPriceTraded):
++        # BACK 10 a 2.0 chiuso in LAY a 4.0 => hedge 5.00, netto -5.00 (sfonda lo SL di 5)
+         market_book = {
+             "marketId": "M1",
+-            "runners": [{"selectionId": "S1", "lastPriceTraded": 0.5}] # PnL = 10 * (0.5-2)/2 = -7.5€ (sfonda SL 5€)
++            "runners": [{"selectionId": "S1", "lastPriceTraded": 4.0,
++                         "ex": {"availableToBack": [{"price": 3.9, "size": 100}],
++                                "availableToLay": [{"price": 4.0, "size": 100}]}}]
+         }
+         
+         # Mock _cashout_chain_wired per ritornare True
+diff --git a/tests/core/test_sl_tp_pnl_sign.py b/tests/core/test_sl_tp_pnl_sign.py
+index 1a3d3f1..e7c1679 100644
+--- a/tests/core/test_sl_tp_pnl_sign.py
++++ b/tests/core/test_sl_tp_pnl_sign.py
+@@ -115,3 +115,12 @@ def test_invalid_book_price_never_triggers(bad):
+     rc = _controller(_table("BACK", 2.0, 10.0, sl=0.01, tp=0.01))
+     rc._monitor_sl_tp_trailing(_book(back=bad, lay=bad, last=bad))
+     assert _closes(rc) == []
++
++
++def test_config_commission_other_than_policy_neither_raises_nor_changes_the_decision():
++    """La funzione del cashout applica la policy commissione Italia (4.5) e solleva per altri valori: il monitor usa
++    la stessa commissione dell'hedge reale e non solleva nell'handler con una configurazione SIM diversa."""
++    rc = _controller(_table("BACK", 2.0, 10.0, sl=1.5))
++    rc.config = SimpleNamespace(commission_pct=1.0)
++    rc._monitor_sl_tp_trailing(_book(back=2.48, lay=2.5))
++    assert [c["reason"] for c in _closes(rc)] == ["STOP_LOSS_REACHED"]
+-- 
+2.43.0
+

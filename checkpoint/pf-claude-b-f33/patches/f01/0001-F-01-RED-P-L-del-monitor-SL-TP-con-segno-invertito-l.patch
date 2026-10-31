@@ -1,0 +1,139 @@
+From 04f54f7fdfa7280d73a4c47df103a11381f68d1e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 19:45:45 +0000
+Subject: [PATCH 1/4] F-01 (RED): P&L del monitor SL/TP con segno invertito,
+ lastPriceTraded, liability come stake, senza commissione
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ tests/core/test_sl_tp_pnl_sign.py | 117 ++++++++++++++++++++++++++++++
+ 1 file changed, 117 insertions(+)
+ create mode 100644 tests/core/test_sl_tp_pnl_sign.py
+
+diff --git a/tests/core/test_sl_tp_pnl_sign.py b/tests/core/test_sl_tp_pnl_sign.py
+new file mode 100644
+index 0000000..1a3d3f1
+--- /dev/null
++++ b/tests/core/test_sl_tp_pnl_sign.py
+@@ -0,0 +1,117 @@
++"""F-01 (#586, CSH-01/CSH-10/NF-06, P0 latente) — P&L liquidabile del monitor SL/TP (RED prima della patch).
++
++Il monitor (`RuntimeController._monitor_sl_tp_trailing`, inerte fino a F-02) stimava il P&L con
++`stake*(prezzo_corrente - ingresso)/ingresso` per il BACK: segno INVERTITO (un BACK a 2.0 che passa a 2.5 e' in
++perdita), `lastPriceTraded` al posto del prezzo di chiusura dal book, esposizione al posto dello stake per il LAY,
++nessuna commissione. Atteso (decisione owner #426 c.6112703848, Decimal c.6141450045 Q7): P&L liquidabile = green-up
++del cashout a quel prezzo (stessa funzione del cashout), commissione sul netto positivo, confronto SL/TP in Decimal.
++
++Oracolo indipendente (stake 10, ingresso 2.0, commissione 4.5 %), chiusura al lato opposto del book:
++- BACK, chiusura LAY a 2.5: hedge 8.00, netto -2.00 (perdita)   | a 1.6: hedge 12.50, lordo +2.50, netto +2.39
++- LAY,  chiusura BACK a 2.5: hedge 8.00, lordo +2.00, netto +1.91 | a 1.6: hedge 12.50, netto -2.50
++- LAY con liability 10 a 3.0 = stake 5 (non 10): chiusura BACK a 4.0 => netto +1.19 (con stake 10: +2.39).
++"""
++from __future__ import annotations
++
++from decimal import Decimal as D
++from types import SimpleNamespace
++
++import pytest
++
++from core.runtime_controller import RuntimeController
++from core.system_state import RuntimeMode
++
++pytestmark = [pytest.mark.unit, pytest.mark.safety]
++
++
++class _Bus:
++    def __init__(self):
++        self.published = []
++
++    def publish(self, topic, payload):
++        self.published.append((topic, payload))
++
++
++def _controller(table):
++    rc = RuntimeController.__new__(RuntimeController)
++    rc.mode = RuntimeMode.ACTIVE
++    rc.bus = _Bus()
++    rc.table_manager = SimpleNamespace(_tables={table.table_id: table})
++    return rc
++
++
++def _table(side, entry, exposure, sl=None, tp=None, stake=None):
++    meta = {"price": entry, "bet_type": side, "stop_loss": sl, "take_profit": tp}
++    if stake is not None:
++        meta["stake"] = stake
++    return SimpleNamespace(table_id=1, status="ACTIVE", market_id="1.5", selection_id=11, meta=meta,
++                           current_exposure=exposure)
++
++
++def _book(back, lay, last=None):
++    """back = miglior prezzo availableToBack, lay = miglior availableToLay; `last` = lastPriceTraded (ingannevole)."""
++    return {"marketId": "1.5", "runners": [{"selectionId": 11, "lastPriceTraded": last if last is not None else back,
++                                            "ex": {"availableToBack": [{"price": back, "size": 100}],
++                                                   "availableToLay": [{"price": lay, "size": 100}]}}]}
++
++
++def _closes(rc):
++    return [p for t, p in rc.bus.published if t == "REQ_EXECUTE_CASHOUT"]
++
++
++def test_back_price_up_is_loss():
++    # BACK 10 a 2.0, il mercato sale: chiusura LAY a 2.5 => -2.00. SL 1.5 deve scattare, TP 1.0 no.
++    rc = _controller(_table("BACK", 2.0, 10.0, sl=1.5, tp=1.0))
++    rc._monitor_sl_tp_trailing(_book(back=2.48, lay=2.5))
++    closes = _closes(rc)
++    assert len(closes) == 1 and closes[0]["reason"] == "STOP_LOSS_REACHED", closes
++
++
++def test_back_price_down_is_profit_net_of_commission():
++    # BACK 10 a 2.0, chiusura LAY a 1.6 => lordo +2.50, netto +2.39: TP 2.39 scatta, TP 2.40 no.
++    rc = _controller(_table("BACK", 2.0, 10.0, tp=2.39))
++    rc._monitor_sl_tp_trailing(_book(back=1.58, lay=1.6))
++    assert [c["reason"] for c in _closes(rc)] == ["TAKE_PROFIT_REACHED"]
++    rc = _controller(_table("BACK", 2.0, 10.0, tp=2.40))
++    rc._monitor_sl_tp_trailing(_book(back=1.58, lay=1.6))
++    assert _closes(rc) == [], "TP valutato sul lordo: la commissione va applicata al netto"
++
++
++def test_lay_price_up_is_profit():
++    # LAY 10 a 2.0 (liability 10), chiusura BACK a 2.5 => netto +1.91: TP 1.9 scatta, nessuno SL.
++    rc = _controller(_table("LAY", 2.0, 10.0, sl=1.0, tp=1.9, stake=10.0))
++    rc._monitor_sl_tp_trailing(_book(back=2.5, lay=2.52))
++    assert [c["reason"] for c in _closes(rc)] == ["TAKE_PROFIT_REACHED"]
++
++
++def test_lay_uses_stake_not_liability():
++    # LAY a 3.0 con liability 10 => stake 5 (nessuno stake in meta: ricostruito da exposure/(price-1)).
++    # Chiusura BACK a 4.0: hedge 3.75, lordo +1.25, netto +1.19. Con stake = liability (10, errato): netto +2.39.
++    rc = _controller(_table("LAY", 3.0, 10.0, tp=1.19))
++    rc._monitor_sl_tp_trailing(_book(back=4.0, lay=4.1))
++    assert [c["reason"] for c in _closes(rc)] == ["TAKE_PROFIT_REACHED"]
++    rc = _controller(_table("LAY", 3.0, 10.0, tp=1.20))
++    rc._monitor_sl_tp_trailing(_book(back=4.0, lay=4.1))
++    assert _closes(rc) == [], "LAY valutato con la liability come stake"
++
++
++def test_commission_applied_on_net_and_not_on_losses():
++    from core.sl_tp_pnl import liquidable_pnl
++    assert liquidable_pnl("BACK", D("10"), D("2.0"), D("1.6"), D("4.5")) == D("2.39")
++    assert liquidable_pnl("BACK", D("10"), D("2.0"), D("2.5"), D("4.5")) == D("-2.00")
++    assert liquidable_pnl("LAY", D("10"), D("2.0"), D("2.5"), D("4.5")) == D("1.91")
++    assert liquidable_pnl("LAY", D("10"), D("2.0"), D("1.6"), D("4.5")) == D("-2.50")
++
++
++def test_last_price_traded_is_not_used():
++    # lastPriceTraded lontano dal book (2.9) ma la chiusura reale e' il LAY a 2.5 (-2.00): decide il book, SL.
++    rc = _controller(_table("BACK", 2.0, 10.0, sl=1.5, tp=1.0))
++    rc._monitor_sl_tp_trailing(_book(back=2.48, lay=2.5, last=2.9))
++    assert [c["reason"] for c in _closes(rc)] == ["STOP_LOSS_REACHED"]
++
++
++@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1.0, "abc"])
++def test_invalid_book_price_never_triggers(bad):
++    rc = _controller(_table("BACK", 2.0, 10.0, sl=0.01, tp=0.01))
++    rc._monitor_sl_tp_trailing(_book(back=bad, lay=bad, last=bad))
++    assert _closes(rc) == []
+-- 
+2.43.0
+

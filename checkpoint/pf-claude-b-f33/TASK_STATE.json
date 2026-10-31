@@ -23,11 +23,12 @@
   "#586 rapporto PICKFAIR_V2_AUTONOMOUS_EXECUTION_OWNER_GO c.6547651160",
   "#589 CLAUDE_PR_FINAL_CERTIFICATION c.6548104640; 13 thread risolti; full-suite BK 51 52/53 (appimagetool VPS, c.6548092593)",
   "F-05 docs \u00a77.3 + CHANGELOG + task key f05_cashout_hedge_ledger (212d299)",
-  "F-08 locale: RED b416efb, fix ce06aac, docs/scope 889b9a9 (patches/f08)"
+  "F-08 locale: RED b416efb, fix ce06aac, docs/scope 889b9a9 (patches/f08)",
+  "F-01 locale: RED 04f54f7, fix dde85a5, docs/scope 3eadf2e+3cf7e2b (patches/f01)"
  ],
- "lotto_corrente": "#589 0c2822e certificata, MERGE_BLOCKED_GOVERNANCE. F-05 locale 212d299. F-08 locale 889b9a9 (RED->GREEN, mutation, docs/migrazione). Prossimo: F-01 Phase 0.",
+ "lotto_corrente": "#589 certificata MERGE_BLOCKED_GOVERNANCE. Locali pronti: F-05 212d299, F-08 889b9a9, F-01 3cf7e2b. Prossimo: F-10 dipende da F-08+F-09 => F-06 o F-09 Phase 0.",
  "mandate_id": "Claude B \u2014 #586 V2: F-33 conditional merge (#589), CONTINUE F-05 LOCAL, #590 prepared; owner 31/10/2026",
- "next_atomic_action": "1) #589: merge (GO condizionato) solo con overlap-check, full-suite e mutation verdi sullo stesso head. 2) F-05 poi F-08: PR una alla volta dopo il merge di F-33 (`git am patches/<f05|f08>/*` su main; conflitti attesi su CHANGELOG, mutation_catalog, allowed_scope), merge owner. 3) #590: PR owner-merge su autorizzazione. 4) F-01 Phase 0 locale (formula P&L, P0 latente).",
+ "next_atomic_action": "1) #589: merge solo con overlap-check, full-suite e mutation verdi sullo stesso head. 2) PR una alla volta dopo F-33, in ordine F-05 -> F-08 -> F-01 (`git am patches/<x>/*` su main aggiornato; conflitti attesi su CHANGELOG, mutation_catalog, allowed_scope, docs/cashout_overview), merge owner per tutte e tre. 3) #590 owner-merge su autorizzazione. 4) Prossima scheda locale: F-10 richiede F-08+F-09 => preparare F-09 (gating recover()) dopo F-08, oppure F-06.",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
