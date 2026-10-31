@@ -115,3 +115,12 @@ def test_invalid_book_price_never_triggers(bad):
     rc = _controller(_table("BACK", 2.0, 10.0, sl=0.01, tp=0.01))
     rc._monitor_sl_tp_trailing(_book(back=bad, lay=bad, last=bad))
     assert _closes(rc) == []
+
+
+def test_config_commission_other_than_policy_neither_raises_nor_changes_the_decision():
+    """La funzione del cashout applica la policy commissione Italia (4.5) e solleva per altri valori: il monitor usa
+    la stessa commissione dell'hedge reale e non solleva nell'handler con una configurazione SIM diversa."""
+    rc = _controller(_table("BACK", 2.0, 10.0, sl=1.5))
+    rc.config = SimpleNamespace(commission_pct=1.0)
+    rc._monitor_sl_tp_trailing(_book(back=2.48, lay=2.5))
+    assert [c["reason"] for c in _closes(rc)] == ["STOP_LOSS_REACHED"]

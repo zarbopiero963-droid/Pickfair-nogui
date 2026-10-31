@@ -149,10 +149,13 @@ class TestIssue320Hard(unittest.TestCase):
         # Iniettiamo il tavolo nel table_manager
         self.controller.table_manager._tables = {1: table}
         
-        # Simula snapshot di mercato con prezzo crollato (PnL negativo)
+        # Snapshot con il mercato salito contro il BACK (F-01: P&L liquidabile dal book, non lastPriceTraded):
+        # BACK 10 a 2.0 chiuso in LAY a 4.0 => hedge 5.00, netto -5.00 (sfonda lo SL di 5)
         market_book = {
             "marketId": "M1",
-            "runners": [{"selectionId": "S1", "lastPriceTraded": 0.5}] # PnL = 10 * (0.5-2)/2 = -7.5€ (sfonda SL 5€)
+            "runners": [{"selectionId": "S1", "lastPriceTraded": 4.0,
+                         "ex": {"availableToBack": [{"price": 3.9, "size": 100}],
+                                "availableToLay": [{"price": 4.0, "size": 100}]}}]
         }
         
         # Mock _cashout_chain_wired per ritornare True

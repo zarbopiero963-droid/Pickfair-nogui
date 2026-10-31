@@ -25,6 +25,7 @@ from core.reconciliation_engine import ReconciliationEngine
 from core.runtime_authority import RuntimeAuthority, RuntimeAuthorityLost
 from core.state_recovery import StateRecovery
 from core.risk_desk import RiskDesk
+from core import sl_tp_pnl
 from core.safety_layer import assert_live_gate_or_refuse
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
@@ -6810,36 +6811,30 @@ class RuntimeController:
             if sl is None and tp is None:
                 continue
                 
-            # Calcolo PnL approssimativo per il monitoraggio (unrealized)
-            # In una versione completa useremmo il SimulationBroker/PositionLedger
-            # Qui implementiamo il gate richiesto dalla Issue #320
+            # F-01 (#586, CSH-01): P&L NETTO LIQUIDABILE = green-up del cashout al prezzo di chiusura del book
+            # (stessa funzione del cashout), stake reale della gamba, commissione sul netto, confronto in Decimal.
+            # Prima: segno invertito, lastPriceTraded, liability come stake del LAY, nessuna commissione.
             runner = next((r for r in market_book.get("runners", []) if str(r.get("selectionId")) == str(table.selection_id)), None)
             if not runner:
                 continue
-                
-            current_price = float(runner.get("lastPriceTraded") or 0.0)
-            if current_price <= 1.0:
-                continue
-                
-            entry_price = float(meta.get("price", 0.0))
-            stake = float(table.current_exposure)
-            if entry_price <= 1.0 or stake <= 0.0:
-                continue
-                
-            # PnL stimato (Back)
-            side = meta.get("bet_type", "BACK")
-            if side == "BACK":
-                unrealized_pnl = stake * (current_price - entry_price) / entry_price # Semplificato
-            else:
-                unrealized_pnl = stake * (entry_price - current_price) / entry_price # Semplificato
-                
-            # Enforcement SL
-            if sl is not None and unrealized_pnl <= -abs(float(sl)):
-                self._trigger_auto_close_table(table, "STOP_LOSS_REACHED", unrealized_pnl)
-            
-            # Enforcement TP
-            elif tp is not None and unrealized_pnl >= abs(float(tp)):
-                self._trigger_auto_close_table(table, "TAKE_PROFIT_REACHED", unrealized_pnl)
+            side = str(meta.get("bet_type") or "BACK").upper()
+            close = sl_tp_pnl.closing_price(runner, side)
+            stake = sl_tp_pnl.position_stake(side, meta, table.current_exposure)
+            # Commissione di policy del cashout (la stessa che `dynamic_cashout_single` applica all'hedge reale):
+            # una commissione di configurazione diversa farebbe sollevare la funzione del cashout nell'handler.
+            try:
+                pnl = sl_tp_pnl.liquidable_pnl(side, stake, meta.get("price"), close, BETFAIR_ITALY_COMMISSION_PCT)
+            except Exception:  # noqa: BLE001 - calcolo non dimostrabile => nessuna decisione (fail-closed)
+                logger.exception("SL/TP: P&L liquidabile del tavolo %s non calcolabile", table.table_id)
+                pnl = None
+            if pnl is None:
+                continue                        # dati non validi: nessuna decisione (fail-closed)
+            sl_d = sl_tp_pnl.to_decimal(sl) if sl is not None else None
+            tp_d = sl_tp_pnl.to_decimal(tp) if tp is not None else None
+            if sl_d is not None and pnl <= -abs(sl_d):
+                self._trigger_auto_close_table(table, "STOP_LOSS_REACHED", float(pnl))
+            elif tp_d is not None and pnl >= abs(tp_d):
+                self._trigger_auto_close_table(table, "TAKE_PROFIT_REACHED", float(pnl))
 
     def _trigger_auto_close_table(self, table, reason: str, pnl: float) -> None:
         logger.info(f"[RuntimeController] Auto-closing table {table.table_id} reason={reason} pnl={pnl:.2f}")

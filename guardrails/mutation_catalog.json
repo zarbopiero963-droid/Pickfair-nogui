@@ -318,6 +318,42 @@
       "rationale": "Esito ignoto dell'hedge riportato come fallimento (ritentabile)."
     },
     {
+      "id": "f01_sl_sign_inverted",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if sl_d is not None and pnl <= -abs(sl_d):",
+      "mutated": "            if sl_d is not None and pnl >= abs(sl_d):",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01 (CSH-01): SL valutato con il segno invertito (una perdita non lo fa scattare)."
+    },
+    {
+      "id": "f01_closing_side_swapped",
+      "module": "core.sl_tp_pnl",
+      "area": "money_management",
+      "file": "core/sl_tp_pnl.py",
+      "original": "    ladder = ex.get(\"availableToLay\") if str(side).upper() == \"BACK\" else ex.get(\"availableToBack\")",
+      "mutated": "    ladder = ex.get(\"availableToBack\") if str(side).upper() == \"BACK\" else ex.get(\"availableToLay\")",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01: prezzo di chiusura preso dal lato sbagliato del book (P&L non liquidabile)."
+    },
+    {
+      "id": "f01_lay_stake_is_liability",
+      "module": "core.sl_tp_pnl",
+      "area": "money_management",
+      "file": "core/sl_tp_pnl.py",
+      "original": "    if str(side).upper() == \"BACK\":",
+      "mutated": "    if True:",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01 (CSH-10): stake del LAY = liability (P&L sovrastimato di (p-1) volte)."
+    },
+    {
       "id": "cashout_unmatched_as_success",
       "module": "cashout_executor",
       "area": "cashout",
