@@ -1,0 +1,147 @@
+From ce06aacdc27178676d963e1c17a89213a0a4be76 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 19:39:32 +0000
+Subject: [PATCH 2/3] F-08 (locale): DDL startup_orders/outbox additiva e
+ idempotente; ghost non riconciliabile => recover() ok=False
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ core/state_recovery.py           | 39 ++++++++++++++++----------------
+ database_schema.py               | 20 ++++++++++++++++
+ guardrails/mutation_catalog.json | 24 ++++++++++++++++++++
+ 3 files changed, 63 insertions(+), 20 deletions(-)
+
+diff --git a/core/state_recovery.py b/core/state_recovery.py
+index 0bb83d8..44b0d18 100644
+--- a/core/state_recovery.py
++++ b/core/state_recovery.py
+@@ -94,10 +94,17 @@ class StateRecovery:
+ 
+         recovered = []
+         for order in remote_orders:
+-            if self._is_missing_in_db(order):
+-                self._persist_ghost_order(order)
+-                self._seed_duplication_guard(order)
+-                recovered.append(order)
++            try:
++                missing = self._is_missing_in_db(order)
++                if missing:
++                    self._persist_ghost_order(order)
++                    self._seed_duplication_guard(order)
++                    recovered.append(order)
++            except Exception:
++                # F-08: lookup o persistenza del ghost falliti => riconciliazione NON completata (fail-closed).
++                # Prima l'errore del DB valeva "gia' presente" e il ghost era perso con recover() ok=True.
++                logger.exception("Ordine attivo dell'exchange non riconciliabile con il DB locale")
++                return {"required": True, "completed": False, "ghost_orders_recovered": len(recovered)}
+ 
+         return {
+             "required": True,
+@@ -111,11 +118,7 @@ class StateRecovery:
+ 
+         exists = getattr(self.db, "startup_order_exists", None)
+         if callable(exists):
+-            try:
+-                return not bool(exists(order))
+-            except Exception:
+-                logger.exception("startup_order_exists failed")
+-                return False
++            return not bool(exists(order))      # F-08: un errore del DB si propaga (fail-closed nel chiamante)
+ 
+         order_id = str(order.get("order_id") or order.get("bet_id") or "")
+         if not order_id:
+@@ -123,17 +126,13 @@ class StateRecovery:
+ 
+         load = getattr(self.db, "load_startup_orders", None)
+         if callable(load):
+-            try:
+-                current = load() or []
+-                ids = {
+-                    str(x.get("order_id") or x.get("bet_id") or "")
+-                    for x in current
+-                    if isinstance(x, dict)
+-                }
+-                return order_id not in ids
+-            except Exception:
+-                logger.exception("load_startup_orders failed")
+-                return False
++            current = load() or []              # F-08: un errore del DB si propaga (fail-closed nel chiamante)
++            ids = {
++                str(x.get("order_id") or x.get("bet_id") or "")
++                for x in current
++                if isinstance(x, dict)
++            }
++            return order_id not in ids
+ 
+         return True
+ 
+diff --git a/database_schema.py b/database_schema.py
+index 812a002..383fcc1 100644
+--- a/database_schema.py
++++ b/database_schema.py
+@@ -296,6 +296,26 @@ SCHEMA_DDL: tuple[str, ...] = (
+         consumed_at REAL NOT NULL
+     )
+     """,
++    # F-08 (#586, RST-02/DB-04): ordini attivi sull'exchange trovati all'avvio senza riga locale ("ghost") e
++    # outbox degli eventi di riconciliazione. Tabelle ADDITIVE e idempotenti (CREATE IF NOT EXISTS): i metodi
++    # `startup_order_exists`/`load_startup_orders`/`upsert_startup_order`/`write_outbox` le usavano da sempre
++    # ma non erano mai state create, quindi ogni ghost veniva perso in silenzio. Nessuna colonna esistente cambia.
++    """
++    CREATE TABLE IF NOT EXISTS startup_orders (
++        order_id TEXT PRIMARY KEY,
++        payload TEXT NOT NULL DEFAULT '{}',
++        created_at TEXT NOT NULL
++    )
++    """,
++    """
++    CREATE TABLE IF NOT EXISTS outbox (
++        id INTEGER PRIMARY KEY AUTOINCREMENT,
++        batch_id TEXT,
++        event_name TEXT,
++        payload TEXT NOT NULL DEFAULT '{}',
++        created_at TEXT NOT NULL
++    )
++    """,
+     """
+     CREATE TABLE IF NOT EXISTS audit_events (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+diff --git a/guardrails/mutation_catalog.json b/guardrails/mutation_catalog.json
+index 912e27e..39c7f20 100644
+--- a/guardrails/mutation_catalog.json
++++ b/guardrails/mutation_catalog.json
+@@ -317,6 +317,30 @@
+       ],
+       "rationale": "Esito ignoto dell'hedge riportato come fallimento (ritentabile)."
+     },
++    {
++      "id": "f08_ghost_lookup_error_swallowed",
++      "module": "core.state_recovery",
++      "area": "recovery",
++      "file": "core/state_recovery.py",
++      "original": "                return {\"required\": True, \"completed\": False, \"ghost_orders_recovered\": len(recovered)}",
++      "mutated": "                continue",
++      "tests": [
++        "tests/f08/test_f08_startup_orders_real_db.py"
++      ],
++      "rationale": "F-08 (RST-02): errore del DB sul ghost ignorato => recover() ok=True con ordine attivo non riconciliato (fail-open)."
++    },
++    {
++      "id": "f08_startup_orders_table_missing",
++      "module": "database_schema",
++      "area": "recovery",
++      "file": "database_schema.py",
++      "original": "    CREATE TABLE IF NOT EXISTS startup_orders (",
++      "mutated": "    CREATE TABLE IF NOT EXISTS startup_orders_disabled (",
++      "tests": [
++        "tests/f08/test_f08_startup_orders_real_db.py"
++      ],
++      "rationale": "F-08 (DB-04): tabella startup_orders non creata => ogni ghost perso in silenzio."
++    },
+     {
+       "id": "cashout_unmatched_as_success",
+       "module": "cashout_executor",
+-- 
+2.43.0
+

@@ -1,0 +1,106 @@
+From 889b9a97207c4de2ae5dbcfd6ef5927dee4bc6ee Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 19:43:08 +0000
+Subject: [PATCH 3/3] F-08 (locale): docs/startup_recovery.md con nota di
+ migrazione, CHANGELOG, task key, lane mutation per database_schema.py
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ .guardrails/allowed_scope.json | 16 ++++++++++++++++
+ CHANGELOG.md                   |  6 ++++++
+ docs/startup_recovery.md       | 25 +++++++++++++++++++++++++
+ scripts/ci_changed_modules.py  |  1 +
+ 4 files changed, 48 insertions(+)
+ create mode 100644 docs/startup_recovery.md
+
+diff --git a/.guardrails/allowed_scope.json b/.guardrails/allowed_scope.json
+index ee10df8..435f596 100644
+--- a/.guardrails/allowed_scope.json
++++ b/.guardrails/allowed_scope.json
+@@ -3098,6 +3098,22 @@
+         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+       ],
+       "max_files": 14
++    },
++    "f08_startup_orders_ghost": {
++      "description": "F-08 (#586, RST-02/NF-10/DB-04 P0, ordine roadmap V2 owner 31/10/2026): tabelle startup_orders/outbox (DDL additiva idempotente) e riconciliazione dei ghost all'avvio fail-closed (errore DB => recover() ok=False). Modifica database_schema: merge owner. scripts/ci_changed_modules.py: database_schema.py attiva la lane mutation (guardrail del catalogo).",
++      "allow_tests": true,
++      "files": [
++        ".guardrails/allowed_scope.json",
++        "CHANGELOG.md",
++        "core/state_recovery.py",
++        "database_schema.py",
++        "docs/startup_recovery.md",
++        "guardrails/mutation_catalog.json",
++        "scripts/ci_changed_modules.py",
++        "tests/f08/__init__.py",
++        "tests/f08/test_f08_startup_orders_real_db.py"
++      ],
++      "max_files": 9
+     }
+   }
+ }
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 0431004..6a3ce3a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+ 
+ ## [Unreleased]
+ 
++### Fixed
++- **F-08 (#586, RST-02/NF-10/DB-04 P0) — ordini ghost all'avvio su DB reale:** tabelle `startup_orders` e `outbox`
++  create (DDL additiva e idempotente, nessuna migrazione di dati); un errore del DB sul ghost rende `recover()`
++  `ok=False` / `STARTUP_RECONCILIATION_REQUIRED` invece di `ok=True` con l'ordine perso. Gating del runtime: F-09.
++  `docs/startup_recovery.md`; test `tests/f08/`; mutazioni `f08_*`.
++
+ ### Changed
+ - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
+   - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
+diff --git a/docs/startup_recovery.md b/docs/startup_recovery.md
+new file mode 100644
+index 0000000..ef250df
+--- /dev/null
++++ b/docs/startup_recovery.md
+@@ -0,0 +1,25 @@
++# Recupero all'avvio: ordini "ghost" e outbox (F-08, #586 RST-02/NF-10/DB-04)
++
++All'avvio `StateRecovery.recover()` chiede all'exchange gli ordini attivi (`fetch_startup_active_orders`) e cerca
++quelli senza riga locale ("ghost"): ogni ghost va **persistito** in `startup_orders`, **seminato** nel
++`DuplicationGuard` (nessun secondo ordine sullo stesso intento) e annunciato con `STARTUP_GHOST_ORDER_RECOVERED`.
++
++## Cosa cambia con F-08
++
++- **Schema.** `startup_orders(order_id PK, payload, created_at)` e `outbox(id, batch_id, event_name, payload,
++  created_at)` sono in `database_schema.SCHEMA_DDL`. Prima non venivano mai create: `startup_order_exists`
++  sollevava `OperationalError` e ogni ghost era perso.
++- **Fail-closed.** Un errore del DB nel lookup o nella persistenza di un ghost NON vale piu' "gia' presente":
++  `recover()` restituisce `ok=False`, `reason=STARTUP_RECONCILIATION_REQUIRED`, `startup_mode=BLOCKED`.
++  Prima restituiva `ok=True` (`LIVE_FLAT`) con l'ordine attivo non riconciliato.
++- **Fuori scope (F-09).** Il gating del runtime sull'esito di `recover()` (PAUSED + RECONCILIATION_REQUIRED) e'
++  la scheda F-09: F-08 rende l'esito veritiero, F-09 lo applica.
++
++## Nota di migrazione e compatibilita'
++
++- DDL **additiva** e **idempotente** (`CREATE TABLE IF NOT EXISTS`): un DB esistente acquisisce le due tabelle alla
++  prima apertura, senza toccare tabelle o colonne esistenti; nessun drop, nessun riuso di colonne. Rollback: le
++  tabelle nuove si possono ignorare (il codice precedente non le legge con successo).
++- Nessun dato da migrare: le tabelle partono vuote; i ghost vengono scritti al primo avvio con ordini attivi.
++- Test: `tests/f08/test_f08_startup_orders_real_db.py` (DB SQLite reale, migrazione di un DB senza tabelle senza
++  perdita di ordini); mutazioni `f08_*` in `guardrails/mutation_catalog.json`.
+diff --git a/scripts/ci_changed_modules.py b/scripts/ci_changed_modules.py
+index 6ff4838..c6b895c 100644
+--- a/scripts/ci_changed_modules.py
++++ b/scripts/ci_changed_modules.py
+@@ -192,6 +192,7 @@ MODULE_RULES = [
+             "guardrails/mutation_catalog.json",
+             "scripts/run_mutation_guardrails.py",
+             "database.py",
++            "database_schema.py",  # F-08: mutazione del catalogo sulla DDL di startup_orders
+             "dutching.py",
+             "betfair_client.py",  # RECTIFICATION-01: mutazione del catalogo sulla riduzione parziale (Microstake LIVE)
+             "controllers/dutching_controller.py",  # #523: mutazioni del catalogo su Dutching e bet manuale
+-- 
+2.43.0
+

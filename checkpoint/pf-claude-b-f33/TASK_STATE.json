@@ -22,11 +22,12 @@
   "F-05 RED b7adb5c + implementazione 59b05ae + mutazioni/test 7876d64 (patches/f05, results/F05_CONSUMERS.md)",
   "#586 rapporto PICKFAIR_V2_AUTONOMOUS_EXECUTION_OWNER_GO c.6547651160",
   "#589 CLAUDE_PR_FINAL_CERTIFICATION c.6548104640; 13 thread risolti; full-suite BK 51 52/53 (appimagetool VPS, c.6548092593)",
-  "F-05 docs \u00a77.3 + CHANGELOG + task key f05_cashout_hedge_ledger (212d299)"
+  "F-05 docs \u00a77.3 + CHANGELOG + task key f05_cashout_hedge_ledger (212d299)",
+  "F-08 locale: RED b416efb, fix ce06aac, docs/scope 889b9a9 (patches/f08)"
  ],
- "lotto_corrente": "F-33 #589 0c2822e: certificazione pubblicata (c.6548104640), 13 thread risolti, MERGE_BLOCKED_GOVERNANCE (overlap #587, full-suite appimagetool VPS, mutation fsp #590). F-05 locale completo con docs/CHANGELOG/scope (212d299).",
+ "lotto_corrente": "#589 0c2822e certificata, MERGE_BLOCKED_GOVERNANCE. F-05 locale 212d299. F-08 locale 889b9a9 (RED->GREEN, mutation, docs/migrazione). Prossimo: F-01 Phase 0.",
  "mandate_id": "Claude B \u2014 #586 V2: F-33 conditional merge (#589), CONTINUE F-05 LOCAL, #590 prepared; owner 31/10/2026",
- "next_atomic_action": "1) #589: merge (GO condizionato) solo quando overlap-check, full-suite e mutation sono verdi sullo stesso head; altrimenti attendere #587/VPS/#590. 2) F-05: PR solo dopo il merge di F-33 (`git am patches/f05/*` su main), merge owner. 3) #590: PR owner-merge su autorizzazione. 4) F-08 -> F-01: Phase 0 locale.",
+ "next_atomic_action": "1) #589: merge (GO condizionato) solo con overlap-check, full-suite e mutation verdi sullo stesso head. 2) F-05 poi F-08: PR una alla volta dopo il merge di F-33 (`git am patches/<f05|f08>/*` su main; conflitti attesi su CHANGELOG, mutation_catalog, allowed_scope), merge owner. 3) #590: PR owner-merge su autorizzazione. 4) F-01 Phase 0 locale (formula P&L, P0 latente).",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
