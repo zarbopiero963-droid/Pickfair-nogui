@@ -181,11 +181,12 @@ def test_child_runs_against_a_runtime_tree_without_the_fullscope_harness(tmp_pat
     """Riproduzione Codex: con ``PF_TREE`` su un checkout senza ``tests/fullscope`` (es. il main prima di F-33) il
     child importava gli helper dal TREE e moriva con ModuleNotFoundError prima di partire. Runtime = checkout
     detached dello stesso HEAD con ``tests/fullscope`` rimosso."""
-    repo = H.TREE
+    # checkout dell'HARNESS, non H.TREE: con PF_TREE gia' impostato H.TREE e' il runtime (rilievo Sol su e655a5b)
+    repo = trk.repo_root()
     rt = tmp_path / "runtime_without_harness"
     subprocess.run(["git", "-C", repo, "worktree", "add", "--detach", "-q", str(rt), "HEAD"], check=True)
     try:
-        subprocess.run(["git", "-C", str(rt), "rm", "-rq", "tests/fullscope"], check=True)
+        subprocess.run(["git", "-C", str(rt), "rm", "-rq", "--ignore-unmatch", "tests/fullscope"], check=True)
         assert not (rt / "tests" / "fullscope").exists()
         monkeypatch.setattr(H, "TREE", str(rt))
         r = H.run([{"op": "wait", "s": 0.2}], scenario="review_runtime_without_harness")
