@@ -5,9 +5,9 @@
   "branch": "f33-full-scope-harness",
   "sha": "0c2822e8faf7e83fe62769d29e52899d1d53a59f"
  },
- "mandate_id": "Claude B \u2014 #586 V2: F-33 conditional merge (#589), CONTINUE F-05 LOCAL, #590 prepared; owner 31/10/2026",
+ "mandate_id": "Claude B \u2014 #586 V2: F-33 conditional merge, CONTINUE F-05 LOCAL (idempotenza + crash/restart), #590 owner-merge; owner 31/10/2026",
  "next_atomic_action": "1) #589: merge solo con overlap-check, full-suite e mutation verdi sullo stesso head. 2) PR una alla volta dopo F-33, in ordine F-05 -> F-08 -> F-01 (`git am patches/<x>/*` su main aggiornato; conflitti attesi su CHANGELOG, mutation_catalog, allowed_scope, docs/cashout_overview), merge owner per tutte e tre. 3) #590 owner-merge su autorizzazione. 4) Prossima scheda locale: F-10 richiede F-08+F-09 => preparare F-09 (gating recover()) dopo F-08, oppure F-06.",
- "previous_checkpoint_sha": "9bf95c068c02be900e80a71c0199fb242efe6a3a",
+ "previous_checkpoint_sha": "a7c3b73bf927d4754aaa9d18157e88cf9c689d6a",
  "schema": "pf-current/1",
- "seq": 7
+ "seq": 8
 }

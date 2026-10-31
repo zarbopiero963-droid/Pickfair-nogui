@@ -10,3 +10,4 @@ Ripristino: `git am patches/<area>/*` su main 6fa29b2.
 - `ce06aac` — F-08 suite completa -n 4 (wt-f08): **PASS** — 10640 passed
 - `889b9a9` — F-08 scripts+guardrails+f08+recovery -n 4: **PASS** — 3801 passed; mutation core.state_recovery+database_schema GATE PASS (f08_* killed)
 - `dde85a5` — F-01 suite completa -n 4 (wt-f01): **PASS** — 10647 passed; mutation core.sl_tp_pnl+core.runtime_controller GATE PASS (113 killed, 3 equivalent, f01_* killed)
+- `e1da865` — F-05 suite completa -n 4: **PASS** — 10655 passed; mutation cashout_executor GATE PASS (f05_duplicate_request_hedged_twice, f05_pending_hedge_not_recovered, f05_hedge_not_written_ahead killed); 16 test unita' F-05 (BLOCK: 5 FAIL su 212d299)

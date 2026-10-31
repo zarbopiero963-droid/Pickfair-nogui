@@ -1,0 +1,55 @@
+From 1dc265b62ae70543179abeb60e87fd1429ae036a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 20:06:20 +0000
+Subject: [PATCH 6/6] =?UTF-8?q?F-05=20(locale):=20docs=20=C2=A77.3=20e=20C?=
+ =?UTF-8?q?HANGELOG=20per=20idempotenza=20e=20riavvio?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ CHANGELOG.md             |  3 ++-
+ docs/cashout_overview.md | 11 +++++++++--
+ 2 files changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 5fde7a0..b4340da 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -14,7 +14,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+   e la aggiorna con l'esito (`HEDGE_PLACED/UNMATCHED/FAILED/AMBIGUOUS`); ledger non scrivibile => nessun hedge.
+   Gli stati `HEDGE_*` restano fuori dagli ordini aperti (nessun tavolo fantasma, nessun PAUSED); settlement e
+   posizione singola escludono i ref `hedge:` (nessun doppio P&L); l'identita' I1 include la bet dell'hedge
+-  (daily-loss LIVE, nessun secondo hedge della stessa posizione). `core/hedge_ref.py`; test `tests/f05/`;
++  (daily-loss LIVE, nessun secondo hedge della stessa posizione). Hedge idempotente (stessa richiesta o esito
++  incerto sulla selezione => rifiuto) e riavvio dopo crash (`HEDGE_PENDING` => `HEDGE_AMBIGUOUS`). `core/hedge_ref.py`; test `tests/f05/`;
+   mutazioni `f05_*`; `docs/cashout_overview.md` §7.3.
+ 
+ ### Changed
+diff --git a/docs/cashout_overview.md b/docs/cashout_overview.md
+index 5e41f1d..5801476 100644
+--- a/docs/cashout_overview.md
++++ b/docs/cashout_overview.md
+@@ -430,8 +430,15 @@ un ordine a un tavolo (`_resolve_market_settlement`, `_single_bet_position`) esc
+ volta. L'identita' I1 (`Database.get_bot_active_orders`) invece include la bet dell'hedge: il daily-loss LIVE la
+ vede, e ingresso + hedge sulla stessa selezione formano una posizione MISTA che il router non ricopre.
+ 
+-Limite noto: dopo un crash fra la riga write-ahead e l'invio resta una riga `HEDGE_PENDING` senza betId (prima non
+-restava nulla); la riconciliazione automatica di queste righe contro `listCurrentOrders` e' un follow-up.
++**Idempotenza.** Prima del write-ahead, sotto un lock (i worker del bus sono concorrenti), l'executor rifiuta con
++`REJECTED`: `duplicate_cashout_request` se la stessa `cashout_request_id` ha gia' un hedge non `HEDGE_FAILED`;
++`hedge_outcome_uncertain` se sulla stessa selezione c'e' un hedge `HEDGE_PENDING`/`HEDGE_AMBIGUOUS` (esito ignoto:
++mai retry); `ledger_read_failed` se il ledger non si legge. Un hedge `HEDGE_FAILED` (mai piazzato) non blocca.
++
++**Riavvio dopo un crash.** `CashoutExecutor.wire()` marca `HEDGE_AMBIGUOUS` (`ambiguity_reason=restart_before_outcome`)
++ogni riga `HEDGE_PENDING` del processo precedente: l'hedge puo' essere sull'exchange, quindi riconciliazione manuale,
++nessun nuovo hedge sulla selezione e nessun ingresso aperto fantasma. Limite residuo: la riconciliazione AUTOMATICA
++di queste righe contro `listCurrentOrders` (LIVE non riporta il `customerOrderRef`) e' un follow-up.
+ Test: `tests/f05/` (unita' e HeadlessApp reale in SIM), mutazioni `f05_*` in `guardrails/mutation_catalog.json`.
+ 
+ ---
+-- 
+2.43.0
+

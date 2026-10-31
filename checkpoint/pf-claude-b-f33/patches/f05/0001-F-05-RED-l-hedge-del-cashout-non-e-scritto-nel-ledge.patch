@@ -1,7 +1,7 @@
 From b7adb5c534eeba78c8b5c8e4a1f8d0ac89d88a22 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 31 Oct 2026 18:05:39 +0000
-Subject: [PATCH 1/4] F-05 (RED): l'hedge del cashout non e' scritto nel ledger
+Subject: [PATCH 1/6] F-05 (RED): l'hedge del cashout non e' scritto nel ledger
  orders (CSH-06)
 
 Test RED con HeadlessApp reale in SIM (child tests/f026): posizione BACK abbinata, cashout del mercato ->

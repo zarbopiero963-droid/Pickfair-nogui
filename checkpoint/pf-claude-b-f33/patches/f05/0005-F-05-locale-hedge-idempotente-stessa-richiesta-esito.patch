@@ -1,0 +1,273 @@
+From e1da8650ce5205c92829408f68ac5b8c66b7be7b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 20:01:30 +0000
+Subject: [PATCH 5/6] F-05 (locale): hedge idempotente (stessa richiesta /
+ esito incerto sulla selezione => nessun secondo hedge) e riavvio dopo crash
+ (HEDGE_PENDING => HEDGE_AMBIGUOUS)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ cashout_executor.py                      | 89 +++++++++++++++++++++---
+ guardrails/mutation_catalog.json         | 28 +++++++-
+ tests/f05/test_f05_hedge_ledger_units.py | 78 +++++++++++++++++++++
+ 3 files changed, 185 insertions(+), 10 deletions(-)
+
+diff --git a/cashout_executor.py b/cashout_executor.py
+index f22185a..95eab78 100644
+--- a/cashout_executor.py
++++ b/cashout_executor.py
+@@ -43,8 +43,10 @@ già nel payload ``CASHOUT_FAILED``).
+ from __future__ import annotations
+ 
+ import contextlib
++import json
+ import logging
+ import math
++import threading
+ import time
+ import uuid
+ from typing import Any, Callable, Dict, Optional
+@@ -72,6 +74,8 @@ class CashoutExecutor:
+         # F-05 (CSH-06): ledger `orders` del bot (Database). Con il ledger l'hedge e' scritto PRIMA dell'invio
+         # (write-ahead) e aggiornato con l'esito; senza (doppi di test) il comportamento resta quello di prima.
+         self.ledger = ledger
++        # controllo d'idempotenza + write-ahead atomici rispetto ai worker concorrenti del bus
++        self._ledger_lock = threading.Lock()
+         self.order_router = order_router
+         self.safety_layer = safety_layer
+         self.authority_check = authority_check
+@@ -90,9 +94,73 @@ class CashoutExecutor:
+             return "runtime_authority_check_failed"
+ 
+     def wire(self) -> None:
+-        """Sottoscrive il consumer di ``CMD_EXECUTE_CASHOUT`` al bus."""
++        """Sottoscrive il consumer di ``CMD_EXECUTE_CASHOUT`` al bus (dopo il recupero delle righe hedge in volo)."""
++        self.recover_pending_hedges()
+         self.bus.subscribe(CMD_EXECUTE_CASHOUT, self.on_cmd_execute_cashout)
+ 
++    def recover_pending_hedges(self) -> int:
++        """F-05: righe ``HEDGE_PENDING`` di un processo precedente (crash fra il write-ahead e l'esito) => l'hedge
++        PUO' essere sull'exchange: ``HEDGE_AMBIGUOUS`` (esito ignoto, mai retry, riconciliazione manuale). Da quel
++        momento nessun nuovo hedge sulla stessa selezione (vedi ``_hedge_block``). Ritorna quante righe ha marcato."""
++        if self.ledger is None:
++            return 0
++        try:
++            rows = self._hedge_rows()
++        except Exception:  # noqa: BLE001 - ledger illeggibile: i comandi successivi saranno rifiutati comunque
++            logger.critical("[CashoutExecutor] righe hedge non leggibili all'avvio", exc_info=True)
++            return 0
++        marked = 0
++        for row in rows:
++            if row["status"] != _hedge.HEDGE_PENDING:
++                continue
++            try:
++                self.ledger.update_order(row["id"], {"status": _hedge.HEDGE_AMBIGUOUS, "updated_at": time.time(),
++                                                     "ambiguity_reason": "restart_before_outcome"})
++                marked += 1
++            except Exception:  # noqa: BLE001 - resta PENDING: per _hedge_block e' comunque un esito incerto
++                logger.critical("[CashoutExecutor] hedge %s non marcabile AMBIGUOUS", row["customer_ref"], exc_info=True)
++        if marked:
++            logger.critical("[CashoutExecutor] %d hedge con esito ignoto dopo il riavvio: riconciliazione richiesta",
++                            marked)
++        return marked
++
++    def _hedge_rows(self) -> list:
++        rows = self.ledger._execute(
++            "SELECT id, customer_ref, status, payload_json FROM orders WHERE customer_ref LIKE 'hedge:%'",
++            fetch=True, commit=False) or []
++        out = []
++        for raw in rows:
++            row = dict(raw)
++            try:
++                payload = json.loads(row.get("payload_json") or "{}")
++            except (TypeError, ValueError):
++                payload = {}
++            out.append({"id": str(row.get("id")), "customer_ref": str(row.get("customer_ref") or ""),
++                        "status": str(row.get("status") or ""), "payload": payload if isinstance(payload, dict) else {}})
++        return out
++
++    def _hedge_block(self, payload: Dict[str, Any]) -> str:
++        """Idempotenza dell'hedge (F-05). '' se si puo' procedere, altrimenti il motivo del rifiuto:
++        - stessa ``cashout_request_id`` gia' con un hedge non fallito => duplicato, mai un secondo hedge;
++        - un hedge con esito incerto (PENDING/AMBIGUOUS) sulla stessa selezione => nessun nuovo hedge finche' non e'
++          riconciliato (esito ignoto: mai retry);
++        - ledger illeggibile => rifiuto (fail-closed)."""
++        try:
++            rows = self._hedge_rows()
++        except Exception:  # noqa: BLE001
++            logger.exception("[CashoutExecutor] ledger hedge illeggibile: nessun hedge")
++            return "ledger_read_failed"
++        request_id = self._request_identity(payload).get("cashout_request_id")
++        market, selection = str(payload.get("market_id", "")), str(payload.get("selection_id", ""))
++        for row in rows:
++            p, status = row["payload"], row["status"]
++            if request_id and p.get("cashout_request_id") == request_id and status != _hedge.HEDGE_FAILED:
++                return "duplicate_cashout_request"
++            if (status in (_hedge.HEDGE_PENDING, _hedge.HEDGE_AMBIGUOUS)
++                    and str(p.get("market_id", "")) == market and str(p.get("selection_id", "")) == selection):
++                return "hedge_outcome_uncertain"
++        return ""
++
+     def on_cmd_execute_cashout(self, payload: Dict[str, Any]) -> None:
+         """Esegue un singolo comando di cashout, fail-closed end-to-end."""
+         if not isinstance(payload, dict):
+@@ -140,13 +208,18 @@ class CashoutExecutor:
+                 return
+             ledger_id = None
+             if self.ledger is not None:
+-                place_payload["customer_ref"] = _hedge.new_hedge_ref()
+-                try:
+-                    ledger_id = self._ledger_write_ahead(place_payload, payload)
+-                except Exception as exc:  # noqa: BLE001 - hedge non registrabile => nessun hedge (fail-closed)
+-                    logger.exception("[CashoutExecutor] hedge non registrabile nel ledger: nessun invio")
+-                    self._fail(f"ledger_write_failed:{exc}", status="REJECTED", payload=payload)
+-                    return
++                with self._ledger_lock:
++                    block = self._hedge_block(payload)
++                    if block:
++                        self._fail(block, status="REJECTED", payload=payload)
++                        return
++                    place_payload["customer_ref"] = _hedge.new_hedge_ref()
++                    try:
++                        ledger_id = self._ledger_write_ahead(place_payload, payload)
++                    except Exception as exc:  # noqa: BLE001 - hedge non registrabile => nessun hedge (fail-closed)
++                        logger.exception("[CashoutExecutor] hedge non registrabile nel ledger: nessun invio")
++                        self._fail(f"ledger_write_failed:{exc}", status="REJECTED", payload=payload)
++                        return
+             try:
+                 result = self.order_router.place(place_payload)
+             except Exception as exc:  # noqa: BLE001 - esito ignoto => fail-closed
+diff --git a/guardrails/mutation_catalog.json b/guardrails/mutation_catalog.json
+index f77f765..0c30fdc 100644
+--- a/guardrails/mutation_catalog.json
++++ b/guardrails/mutation_catalog.json
+@@ -317,13 +317,37 @@
+       ],
+       "rationale": "Esito ignoto dell'hedge riportato come fallimento (ritentabile)."
+     },
++    {
++      "id": "f05_duplicate_request_hedged_twice",
++      "module": "cashout_executor",
++      "area": "cashout",
++      "file": "cashout_executor.py",
++      "original": "                return \"duplicate_cashout_request\"",
++      "mutated": "                return \"\"",
++      "tests": [
++        "tests/f05/test_f05_hedge_ledger_units.py"
++      ],
++      "rationale": "F-05: lo stesso comando di cashout ripetuto piazza un secondo hedge (esposizione opposta raddoppiata)."
++    },
++    {
++      "id": "f05_pending_hedge_not_recovered",
++      "module": "cashout_executor",
++      "area": "cashout",
++      "file": "cashout_executor.py",
++      "original": "            if row[\"status\"] != _hedge.HEDGE_PENDING:",
++      "mutated": "            if True:",
++      "tests": [
++        "tests/f05/test_f05_hedge_ledger_units.py"
++      ],
++      "rationale": "F-05: hedge in volo al crash resta PENDING senza riconciliazione dopo il riavvio."
++    },
+     {
+       "id": "f05_hedge_not_written_ahead",
+       "module": "cashout_executor",
+       "area": "cashout",
+       "file": "cashout_executor.py",
+-      "original": "                    ledger_id = self._ledger_write_ahead(place_payload, payload)",
+-      "mutated": "                    ledger_id = None",
++      "original": "                        ledger_id = self._ledger_write_ahead(place_payload, payload)",
++      "mutated": "                        ledger_id = None",
+       "tests": [
+         "tests/f05/test_f05_hedge_ledger_units.py"
+       ],
+diff --git a/tests/f05/test_f05_hedge_ledger_units.py b/tests/f05/test_f05_hedge_ledger_units.py
+index 029b264..1826bd3 100644
+--- a/tests/f05/test_f05_hedge_ledger_units.py
++++ b/tests/f05/test_f05_hedge_ledger_units.py
+@@ -144,3 +144,81 @@ def test_hedge_bet_is_part_of_the_bot_identity_and_makes_the_position_mixed(db):
+                 "averagePriceMatched": 1.8, "sizeRemaining": 0.0, "priceSize": {"price": 1.8, "size": 3.33}}]
+     positions = reconstruct_open_positions(current, is_bot_order=lambda r: r.get("betId") in bot)
+     assert positions == [], f"posizione hedgiata riaperta al cashout: {positions}"
++
++
++# ------------------------------------------------------------------ idempotenza e riavvio (F-05, owner 31/10/2026)
++
++def test_same_cashout_request_never_hedges_twice(db):
++    bus, router = _run(db, _ok())
++    bus2, router2 = _Bus(), _Router(db, _ok(bet_id="CB2"))
++    CashoutExecutor(bus2, router2, ledger=db).on_cmd_execute_cashout(_cmd())
++    assert router2.calls == [], "secondo hedge per lo stesso comando"
++    failed = [p for t, p in bus2.published if t == CASHOUT_FAILED]
++    assert failed[0]["reason"] == "duplicate_cashout_request" and failed[0]["status"] == "REJECTED"
++    assert len(_rows(db)) == 1
++
++
++def test_failed_hedge_can_be_retried_with_the_same_request(db):
++    _run(db, {"placed": False, "error": "MARKET_SUSPENDED"})
++    bus, router = _run(db, _ok())
++    assert len(router.calls) == 1 and CASHOUT_SUCCESS in bus.topics(), "un hedge mai piazzato non blocca"
++
++
++def test_uncertain_hedge_blocks_a_new_hedge_on_the_same_selection(db):
++    _run(db, {"placed": True, "order_unknown": True, "matched": 0.0})        # HEDGE_AMBIGUOUS
++    bus, router = _run(db, _ok(), cashout_request_id="req-2")
++    assert router.calls == [] and [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == [
++        "hedge_outcome_uncertain"]
++    bus3, router3 = _run(db, _ok(), cashout_request_id="req-3", selection_id=77)   # altra selezione: consentito
++    assert len(router3.calls) == 1
++
++
++def test_unreadable_ledger_means_no_hedge(db, monkeypatch):
++    def boom(*_a, **_k):
++        raise RuntimeError("database is locked")
++    monkeypatch.setattr(db, "_execute", boom)
++    bus, router = _run(db, _ok())
++    assert router.calls == [] and [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == [
++        "ledger_read_failed"]
++
++
++def test_crash_between_write_ahead_and_outcome_is_ambiguous_after_restart(db):
++    """Crash simulato: la riga write-ahead resta HEDGE_PENDING (l'hedge PUO' essere sull'exchange). Al riavvio
++    l'executor la marca HEDGE_AMBIGUOUS; un nuovo cashout della stessa selezione e' rifiutato (mai retry)."""
++    class _CrashRouter(_Router):
++        def place(self, payload):
++            raise SystemExit("processo ucciso durante l'invio")
++
++    with pytest.raises(SystemExit):
++        CashoutExecutor(_Bus(), _CrashRouter(db), ledger=db).on_cmd_execute_cashout(_cmd())
++    assert [r["status"] for r in _rows(db)] == [H.HEDGE_PENDING]
++    restarted = CashoutExecutor(_Bus(), _Router(db, _ok()), ledger=db)
++    restarted.wire()
++    rows = _rows(db)
++    assert [r["status"] for r in rows] == [H.HEDGE_AMBIGUOUS]
++    assert db.load_pending_customer_refs() == [], "l'hedge ambiguo non diventa un ingresso aperto"
++    bus = _Bus()
++    router = _Router(db, _ok())
++    CashoutExecutor(bus, router, ledger=db).on_cmd_execute_cashout(_cmd(cashout_request_id="req-after-restart"))
++    assert router.calls == [] and [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == [
++        "hedge_outcome_uncertain"]
++
++
++def test_concurrent_duplicate_commands_place_exactly_one_hedge(db):
++    import threading
++    bus = _Bus()
++    router = _Router(db, _ok())
++    ex = CashoutExecutor(bus, router, ledger=db)
++    barrier = threading.Barrier(8)
++
++    def go():
++        barrier.wait()
++        ex.on_cmd_execute_cashout(_cmd())
++
++    threads = [threading.Thread(target=go) for _ in range(8)]
++    for t in threads:
++        t.start()
++    for t in threads:
++        t.join()
++    assert len(router.calls) == 1, f"{len(router.calls)} hedge per lo stesso comando"
++    assert len(_rows(db)) == 1
+-- 
+2.43.0
+

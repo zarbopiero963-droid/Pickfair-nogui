@@ -1,7 +1,7 @@
 From 212d29960d903a5ec456143d6681453af0a361b5 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 31 Oct 2026 19:30:08 +0000
-Subject: [PATCH 4/4] =?UTF-8?q?F-05=20(locale):=20docs=20cashout=20=C2=A77?=
+Subject: [PATCH 4/6] =?UTF-8?q?F-05=20(locale):=20docs=20cashout=20=C2=A77?=
  =?UTF-8?q?.3,=20CHANGELOG,=20task=20key=20f05=5Fcashout=5Fhedge=5Fledger?=
  =?UTF-8?q?=20in=20allowed=5Fscope?=
 MIME-Version: 1.0

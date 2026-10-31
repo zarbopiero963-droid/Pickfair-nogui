@@ -1,16 +1,16 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 7,
- "mandate_id": "Claude B — #586 V2: F-33 conditional merge (#589), CONTINUE F-05 LOCAL, #590 prepared; owner 31/10/2026",
- "previous_checkpoint_sha": "9bf95c068c02be900e80a71c0199fb242efe6a3a",
+ "seq": 8,
+ "mandate_id": "Claude B — #586 V2: F-33 conditional merge, CONTINUE F-05 LOCAL (idempotenza + crash/restart), #590 owner-merge; owner 31/10/2026",
+ "previous_checkpoint_sha": "a7c3b73bf927d4754aaa9d18157e88cf9c689d6a",
  "code": {
   "branch": "f33-full-scope-harness",
   "sha": "0c2822e8faf7e83fe62769d29e52899d1d53a59f",
   "patch": {
    "head": "0c2822e8faf7e83fe62769d29e52899d1d53a59f",
    "tree": "cfaee1ad9aa86d6bdee3fec3568af0085e701c67",
-   "captured_at": "2026-10-31T19:54:14+00:00",
+   "captured_at": "2026-10-31T20:06:36+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -19,7 +19,7 @@
    "skipped_symlinks": {}
   }
  },
- "lotto_corrente": "#589 certificata MERGE_BLOCKED_GOVERNANCE. Locali pronti: F-05 212d299, F-08 889b9a9, F-01 3cf7e2b. Prossimo: F-10 dipende da F-08+F-09 => F-06 o F-09 Phase 0.",
+ "lotto_corrente": "#589 0c2822e certificata MERGE_BLOCKED_GOVERNANCE (invariata). F-05 locale 1dc265b: + idempotenza hedge e riavvio dopo crash. F-08 889b9a9, F-01 3cf7e2b locali.",
  "lotti_completati": [
   "F-33 implementazione locale + hardening (6 commit)",
   "PR #589 aperta (d46e6da)",
@@ -33,7 +33,8 @@
   "#589 CLAUDE_PR_FINAL_CERTIFICATION c.6548104640; 13 thread risolti; full-suite BK 51 52/53 (appimagetool VPS, c.6548092593)",
   "F-05 docs §7.3 + CHANGELOG + task key f05_cashout_hedge_ledger (212d299)",
   "F-08 locale: RED b416efb, fix ce06aac, docs/scope 889b9a9 (patches/f08)",
-  "F-01 locale: RED 04f54f7, fix dde85a5, docs/scope 3eadf2e+3cf7e2b (patches/f01)"
+  "F-01 locale: RED 04f54f7, fix dde85a5, docs/scope 3eadf2e+3cf7e2b (patches/f01)",
+  "F-05 idempotenza (duplicate_cashout_request, hedge_outcome_uncertain, lock) + riavvio HEDGE_PENDING->HEDGE_AMBIGUOUS (e1da865, docs 1dc265b)"
  ],
  "next_atomic_action": "1) #589: merge solo con overlap-check, full-suite e mutation verdi sullo stesso head. 2) PR una alla volta dopo F-33, in ordine F-05 -> F-08 -> F-01 (`git am patches/<x>/*` su main aggiornato; conflitti attesi su CHANGELOG, mutation_catalog, allowed_scope, docs/cashout_overview), merge owner per tutte e tre. 3) #590 owner-merge su autorizzazione. 4) Prossima scheda locale: F-10 richiede F-08+F-09 => preparare F-09 (gating recover()) dopo F-08, oppure F-06.",
  "dependencies": {
@@ -158,7 +159,9 @@
     "b7adb5c",
     "59b05ae",
     "7876d64",
-    "212d299"
+    "212d299",
+    "e1da865",
+    "1dc265b"
    ],
    "patches": "patches/f05"
   },
