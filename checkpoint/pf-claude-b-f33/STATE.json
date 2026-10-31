@@ -1,21 +1,22 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 1,
+ "seq": 2,
  "mandate_id": "Claude B — #586 roadmap: F-33 (#589) + F-05 Phase 0; owner 31/10/2026 SAFE CHECKPOINT, HANDOFF & AUTONOMOUS RESUME",
- "previous_checkpoint_sha": "319c64f810d89d6d0490f4d107218d7ca42a1d64",
+ "previous_checkpoint_sha": "2bde7fd6207415f2cbba463a696ba308f07f6538",
  "code": {
   "branch": "f33-full-scope-harness",
-  "sha": "3873eaac10b30267414418ee6322a1f8ce50d6db"
+  "sha": "a721e0979a433870e6d6dc217e41b8b3c5832afa"
  },
- "lotto_corrente": "F-33 PR #589: attesa CI/review sul push 3873eaa; F-05 Phase 0 completata (solo analisi)",
+ "lotto_corrente": "F-33 PR #589: head a721e09 (fix boundary xfail Sol/Grok); attesa CI, review Sol/Grok/Codex su 3873eaa...a721e09",
  "lotti_completati": [
   "F-33 implementazione locale + hardening (6 commit)",
   "PR #589 aperta (d46e6da)",
   "fix review Sol/Grok/Codex (3873eaa, pushato)",
-  "F-05 Phase 0 (results/F05_PHASE0.md)"
+  "F-05 Phase 0 (results/F05_PHASE0.md)",
+  "fix review Sol/Grok su 3873eaa: boundary starting_balance=0 senza xfail statico (a721e09, pushato)"
  ],
- "next_atomic_action": "1) Leggere su #589 i check e le review Sol/Grok/Codex sul range d46e6da...3873eaa; correggere finding reali con un solo push; risolvere i 3 thread Codex quando i check sono settled. 2) overlap-check resta rosso (eccezione #587+#589): nessun bypass. 3) Poi F-05 in locale (worktree wt-f05 o nuovo da origin/main): scrivere i test RED di results/F05_PHASE0.md §7.5; nessuna PR finche' #589 e' aperta.",
+ "next_atomic_action": "1) #589 head a721e09: leggere check (mutation, merge-simulation, tests, readiness) e review Sol/Grok sul range 3873eaa...a721e09 e Codex su 3873eaa/a721e09; correggere solo finding reali con un push unico; risolvere i 3 thread Codex (P2: xdist, eventi SL, hash inventario: corretti in 3873eaa) a check settled. 2) overlap-check rosso finche' #587 e' aperta: blocco di governance, nessun bypass, nessun merge. 3) Poi F-05 in locale: test RED di results/F05_PHASE0.md §7.5, nessuna PR.",
  "dependencies": {
   "overlap_check_589": "#587 chiusa o mergiata (eccezione due PR, nessun bypass)",
   "betfair_tests": "runner trusted BETFAIR_VPS_TRUSTED_TEST_RUNNER (non installato)"
@@ -70,7 +71,25 @@
    "result": "smoke/unit/integration/e2e/core-invariants/recovery/net/failure/guardrails success; overlap-check FAIL atteso"
   },
   {
-   "name": "GitHub Actions e review su 3873eaa",
+   "name": "GitHub Actions su 3873eaa",
+   "status": "PASS",
+   "sha": "3873eaac10b30267414418ee6322a1f8ce50d6db",
+   "result": "guard, unit, integration, e2e, smoke, net, failure, core-invariants, recovery, live-sim-parity, live-gate, chaos, stateful, moduli: success; overlap-check FAIL atteso; mutation/merge-sim/tests/readiness in corso al checkpoint"
+  },
+  {
+   "name": "review Sol e Grok su d46e6da...3873eaa",
+   "status": "FAIL",
+   "sha": "3873eaac10b30267414418ee6322a1f8ce50d6db",
+   "result": "VALID_BLOCKERS: un solo bloccante comune (xfail statico sul test di confine), corretto in a721e09"
+  },
+  {
+   "name": "test di confine starting_balance=0 su a721e09",
+   "status": "PASS",
+   "sha": "a721e0979a433870e6d6dc217e41b8b3c5832afa",
+   "result": "invarianti e attese asseriti fuori da xfail; finding F-18/F-17 xfail imperativo"
+  },
+  {
+   "name": "CI e review su a721e09",
    "status": "NOT VERIFIED"
   }
  ],
@@ -87,18 +106,19 @@
  "certification_verdict": "NOT VERIFIED",
  "pr": {
   "589": {
-   "head": "3873eaac10b30267414418ee6322a1f8ce50d6db",
+   "head": "a721e0979a433870e6d6dc217e41b8b3c5832afa",
    "state": "open",
    "overlap_check": "failure atteso",
    "exception": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6546223763"
   }
  },
  "worktrees": {
-  "wt-f33": "f33-full-scope-harness @ 3873eaa (pubblicato)",
+  "wt-f33": "f33-full-scope-harness @ a721e09 (pubblicato)",
   "wt-f05": "f05-hedge-ledger @ 6fa29b2, nessuna modifica, solo locale (effimero: ricrearlo da origin/main)"
  },
  "agent": {
   "last_writer": "claude-b",
   "lease_status_at_write": "FREE"
- }
+ },
+ "checkpoint_location_note": "Checkpoint di Claude B su agent-state/pf-claude-b (directory checkpoint/pf-claude-b-f33). Il seq 1 era stato scritto per errore anche su agent-state/pf-full-delivery (2bde7fd), riparato con f40c5f3 (seq 100 di Claude A, contenuto invariato)."
 }

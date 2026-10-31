@@ -3,7 +3,7 @@
 ```bash
 git clone https://github.com/zarbopiero963-droid/Pickfair-nogui && cd Pickfair-nogui
 python3 tools/agent_checkpoint/pfckpt.py bootstrap --url https://github.com/zarbopiero963-droid/Pickfair-nogui \
-  --branch agent-state/pf-full-delivery --dir checkpoint/pf-claude-b-f33 --dest /tmp/ckpt-b \
+  --branch agent-state/pf-claude-b --dir checkpoint/pf-claude-b-f33 --dest /tmp/ckpt-b \
   --code-branch f33-full-scope-harness --agent claude-b
 git fetch origin f33-full-scope-harness main
 git worktree add ../wt-f33 origin/f33-full-scope-harness

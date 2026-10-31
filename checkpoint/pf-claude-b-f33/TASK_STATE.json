@@ -14,11 +14,12 @@
   "F-33 implementazione locale + hardening (6 commit)",
   "PR #589 aperta (d46e6da)",
   "fix review Sol/Grok/Codex (3873eaa, pushato)",
-  "F-05 Phase 0 (results/F05_PHASE0.md)"
+  "F-05 Phase 0 (results/F05_PHASE0.md)",
+  "fix review Sol/Grok su 3873eaa: boundary starting_balance=0 senza xfail statico (a721e09, pushato)"
  ],
- "lotto_corrente": "F-33 PR #589: attesa CI/review sul push 3873eaa; F-05 Phase 0 completata (solo analisi)",
+ "lotto_corrente": "F-33 PR #589: head a721e09 (fix boundary xfail Sol/Grok); attesa CI, review Sol/Grok/Codex su 3873eaa...a721e09",
  "mandate_id": "Claude B \u2014 #586 roadmap: F-33 (#589) + F-05 Phase 0; owner 31/10/2026 SAFE CHECKPOINT, HANDOFF & AUTONOMOUS RESUME",
- "next_atomic_action": "1) Leggere su #589 i check e le review Sol/Grok/Codex sul range d46e6da...3873eaa; correggere finding reali con un solo push; risolvere i 3 thread Codex quando i check sono settled. 2) overlap-check resta rosso (eccezione #587+#589): nessun bypass. 3) Poi F-05 in locale (worktree wt-f05 o nuovo da origin/main): scrivere i test RED di results/F05_PHASE0.md \u00a77.5; nessuna PR finche' #589 e' aperta.",
+ "next_atomic_action": "1) #589 head a721e09: leggere check (mutation, merge-simulation, tests, readiness) e review Sol/Grok sul range 3873eaa...a721e09 e Codex su 3873eaa/a721e09; correggere solo finding reali con un push unico; risolvere i 3 thread Codex (P2: xdist, eventi SL, hash inventario: corretti in 3873eaa) a check settled. 2) overlap-check rosso finche' #587 e' aperta: blocco di governance, nessun bypass, nessun merge. 3) Poi F-05 in locale: test RED di results/F05_PHASE0.md \u00a77.5, nessuna PR.",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
