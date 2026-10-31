@@ -97,6 +97,12 @@ Codex, tre P2 reali nell'harness, riprodotti e corretti (`tests/fullscope/harnes
 - **Selezione dopo il riavvio:** i metadati di book (prezzo, lato, selezione, evento) sono durevoli in `HOME/.fullscope_book.json`; in assenza si ricava la selezione dagli ordini dell'exchange SIM. Prima il settlement dopo il riavvio cadeva sulla selezione 11 (`UNSUPPORTED_RUNNER_STATUS`, esposizione aperta).
 - **Output del child:** stdout/stderr vanno su file nella directory del risultato invece che su PIPE non lette durante il polling: un child con più output del buffer di una pipe non si blocca più fino al timeout.
 
+## Review su PR #589 (head `0d9e091`) e correzioni
+Codex, tre P2 reali, riprodotti e corretti (stesso file di test, PASS sul codice nuovo e FAIL sul vecchio).
+- **Marker di checkpoint stantio:** `run()` rimuove `HOME/.ckpt_<nome>` prima di avviare il child; prima un secondo run con lo stesso checkpoint sullo stesso HOME veniva ucciso subito, senza risultato.
+- **SHA del runtime:** i record di `combi_runner` citano in `repo_sha` lo SHA del checkout ESEGUITO (`PF_TREE` → `H.TREE`, `combi_runner.runtime_sha()`) e in `harness_sha` quello dell'harness.
+- **Oracolo e fill successivi:** una gamba dell'exchange con lo stesso customer ref di una riga del ledger aggiorna quella riga con il fill cumulativo e il prezzo medio eseguito (l'exchange è autorevole; la riga SQLite conserva la risposta del piazzamento). Lo snapshot del child riporta `avg_price` dallo stato dell'exchange SIM (`listCurrentOrders` non lo espone). Prova end-to-end: BACK 3 a 2.0 abbinato per 1, completato a 3.0, vincente: oracolo = realizzato del runtime (4.775).
+
 ## Limiti dichiarati (v1)
 - Scenari non ancora scritti: SIM-TRAIL-004 (dipende da F-03), SIM-FAULT-006, SIM-CFG-007 (parte GUI), SIM-GUI-008
   (Xvfb), SIM-SEC-009, SIM-PKG-010 (VPS/GO-4), SIM-MICRO-011 (Microstake owner-reserved: sola osservazione),

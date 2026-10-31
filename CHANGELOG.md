@@ -28,6 +28,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `pytest -n auto ... tests`); artifact di scenario con nome allocato in creazione esclusiva (review Codex su #589).
   Child runner: quiete del bus a callback terminati (`events.bus_drained`), metadati di book durevoli per il
   settlement dopo il riavvio, output del child su file invece che su pipe non lette (review Codex su #589 `de1c980`).
+  Marker di checkpoint stantio rimosso prima del child; `repo_sha` del checkout eseguito (`PF_TREE`) e
+  `harness_sha` separato; oracolo riconciliato con il fill cumulativo e il prezzo medio dell'exchange per customer ref
+  (review Codex su #589 `0d9e091`).
 
 ### Changed
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**

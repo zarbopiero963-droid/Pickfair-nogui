@@ -171,6 +171,12 @@ def config_consistency(case: Dict[str, Any], snaps: List[Dict[str, Any]], result
     return v
 
 
+def runtime_sha() -> str:
+    """SHA del checkout ESEGUITO dal child (``PF_TREE`` -> ``H.TREE``), non quello dell'harness: l'evidenza
+    finanziaria va attribuita al codice che ha girato davvero (rilievo Codex su 0d9e091)."""
+    return trk.head_sha(H.TREE)
+
+
 def run_case(group: str, case_id: str, case: Dict[str, Any], scenario: str, *, seed: int) -> Dict[str, Any]:
     steps = SCENARIOS[scenario]
     home = tempfile.mkdtemp(prefix=f"pf_combi_{group}_")
@@ -215,7 +221,7 @@ def run_case(group: str, case_id: str, case: Dict[str, Any], scenario: str, *, s
     unmet = [w for w in r.get("waits", []) if not w["met"]]
     rec = {
         "group": group, "case_id": case_id, "case": case, "scenario": scenario, "seed": seed,
-        "repo_sha": trk.head_sha(), "home": home, "duration_s": r.get("_duration_s"),
+        "repo_sha": runtime_sha(), "harness_sha": trk.head_sha(), "home": home, "duration_s": r.get("_duration_s"),
         "applied_problems": applied, "oracle_violations": violations, "unmet_waits": unmet,
         "orders": last.get("orders"), "rejections": rejection_reasons(r),
         "funds": last.get("funds"), "realized": last.get("realized"),

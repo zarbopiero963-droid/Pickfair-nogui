@@ -210,10 +210,17 @@ try:
                            "matched": rep.get("sizeMatched"), "customer_ref": r.get("customer_ref")})
         d = rt.risk_desk
         acct = dict(getattr(rt, "_account_snapshot", None) or {})
+        # prezzo medio eseguito: listCurrentOrders della SIM non lo riporta, lo stato dell'exchange simulato si'
+        # (l'exchange e' esterno al bot: osservarlo non tocca il codice sotto test). Serve all'oracolo per i fill
+        # successivi a prezzo migliore del richiesto (rilievo Codex su 0d9e091)
+        try:
+            avg_by_bet = {str(b): getattr(x, "avg_price_matched", None) for b, x in brk.state.orders.items()}
+        except Exception:  # noqa: BLE001
+            avg_by_bet = {}
         exch = [{"bet_id": o.get("betId"), "ref": o.get("customerOrderRef"), "market_id": o.get("marketId"),
                  "selection_id": o.get("selectionId"), "side": o.get("side"),
                  "price": (o.get("priceSize") or {}).get("price"), "size": (o.get("priceSize") or {}).get("size"),
-                 "matched": o.get("sizeMatched"), "status": o.get("status")}
+                 "matched": o.get("sizeMatched"), "avg_price": o.get("averagePriceMatched") or avg_by_bet.get(str(o.get("betId"))), "status": o.get("status")}
                 for o in (brk.list_current_orders().get("currentOrders") or [])]
         settled = [{"market_id": x.get("market_id"), "settlement_id": x.get("settlement_id"),
                     "gross_pnl": x.get("gross_pnl"), "net_pnl": x.get("net_pnl")} for x in brk.list_settlements()]

@@ -46,10 +46,24 @@ class Oracle:
         self.start = D(str(start))
         self.commission = D(str(commission))
         self.external = D(str(external))
-        self.orders: List[Dict[str, Any]] = [o for o in snap.get("orders", []) if o.get("status") not in ("DUPLICATE_BLOCKED", "FAILED", "DENIED")]
-        # Gambe presenti sull'EXCHANGE ma assenti dal ledger SQLite (oggi: l'hedge del cashout, CSH-06 -> F-05).
-        # L'oracolo le conta perche' il denaro e' stato mosso davvero; la loro assenza dal ledger e' un finding a parte.
+        # copie: la riconciliazione con l'exchange non deve modificare lo snapshot
+        self.orders: List[Dict[str, Any]] = [dict(o) for o in snap.get("orders", [])
+                                             if o.get("status") not in ("DUPLICATE_BLOCKED", "FAILED", "DENIED")]
+        # Gambe dell'EXCHANGE. Stessa identita' (customer ref) di una riga del ledger: l'exchange e' autorevole sul
+        # fill CUMULATIVO e sul prezzo medio eseguito (la riga SQLite conserva la risposta del piazzamento: un
+        # parziale poi completato restava a matched iniziale, rilievo Codex su 0d9e091). Gamba senza riga nel ledger
+        # (oggi: l'hedge del cashout, CSH-06 -> F-05): l'oracolo la conta perche' il denaro e' stato mosso davvero;
+        # la sua assenza dal ledger e' un finding a parte.
         for leg in extra_legs or []:
+            ref = leg.get("ref")
+            same = [o for o in self.orders if ref and o.get("customer_ref") == ref
+                    and str(o.get("market_id")) == str(leg["market_id"])]
+            if same:
+                for o in same:
+                    o["matched"] = leg["matched"]
+                    o["price"] = leg["price"]
+                    o["_reconciled_with_exchange"] = True
+                continue
             if not any(str(o.get("market_id")) == str(leg["market_id"]) and (o.get("side") or "BACK").upper() == leg["side"]
                        and D(str(o.get("price") or 0)) == D(str(leg["price"])) for o in self.orders):
                 self.orders.append({"market_id": str(leg["market_id"]), "side": leg["side"], "stake": leg["matched"],
@@ -95,14 +109,17 @@ class Oracle:
 
 
 def exchange_legs(snap: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Gambe abbinate viste dall'exchange SIM (currentOrders): market, side, matched, price, ref."""
+    """Gambe abbinate viste dall'exchange SIM (currentOrders): market, side, matched cumulativo, prezzo medio eseguito
+    (``avg_price``, se l'exchange lo riporta; altrimenti il prezzo richiesto), ref."""
     legs = []
     for o in snap.get("exch_orders", []):
         matched = o.get("matched")
         if matched is None or float(matched) <= 0:
             continue
+        avg = o.get("avg_price")
+        price = avg if avg is not None and float(avg) > 1 else o.get("price")
         legs.append({"market_id": str(o.get("market_id")), "side": str(o.get("side") or "BACK").upper(),
-                     "matched": matched, "price": o.get("price"), "ref": o.get("ref")})
+                     "matched": matched, "price": price, "ref": o.get("ref")})
     return legs
 
 

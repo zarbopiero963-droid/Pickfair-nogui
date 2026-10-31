@@ -50,6 +50,12 @@ def run(steps: List[Dict[str, Any]], *, home: Optional[str] = None, settings: Op
     env["PYTHONPATH"] = NETGUARD + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     t0 = time.time()
+    killed_at: Optional[str] = None
+    marker = os.path.join(home, f".ckpt_{kill_at_checkpoint}") if kill_at_checkpoint else None
+    if marker and os.path.exists(marker):
+        # marker di un run precedente sullo stesso HOME: va tolto PRIMA di avviare il child, altrimenti il nuovo
+        # processo verrebbe ucciso subito invece che al checkpoint (rilievo Codex su 0d9e091)
+        os.remove(marker)
     # stdout/stderr su file e non su PIPE: il padre non legge le pipe durante il polling, e un child che scrive piu'
     # del buffer di una pipe si bloccava fino al timeout (rilievo Codex su de1c980)
     out_dir = os.path.dirname(out)
@@ -57,8 +63,6 @@ def run(steps: List[Dict[str, Any]], *, home: Optional[str] = None, settings: Op
     stderr_f = open(os.path.join(out_dir, "child.stderr"), "w+")
     proc = subprocess.Popen([PY, CHILD, TREE, out, json.dumps(spec), home], env=env,
                             stdout=stdout_f, stderr=stderr_f, text=True)
-    killed_at: Optional[str] = None
-    marker = os.path.join(home, f".ckpt_{kill_at_checkpoint}") if kill_at_checkpoint else None
     try:
         while True:
             rc = proc.poll()
