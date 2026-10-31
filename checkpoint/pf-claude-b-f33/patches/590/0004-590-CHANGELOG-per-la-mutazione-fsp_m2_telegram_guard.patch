@@ -1,0 +1,28 @@
+From 641d04b7c4e2c51fcb28573d24dde66b8d902424 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 20:56:36 +0000
+Subject: [PATCH 4/4] #590: CHANGELOG per la mutazione
+ fsp_m2_telegram_guard_sigpipe
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ CHANGELOG.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index f2152a1..5c468a7 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -12,7 +12,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+ - **#590 — guard credenziali Telegram della lane `w5-telegram-live-sim` fail-open:** `env | grep -q "^TG_"` sotto
+   `pipefail` non fermava la lane con credenziali `TG_*` presenti (SIGPIPE, 141). Ora `if compgen -e TG_ >/dev/null`
+   (builtin, nessuna pipe); test con 2000 variabili d'ambiente (0 mancati su 40, FAIL su main); mutazione
+-  `fsp_m2_telegram_creds_allowed` allineata.
++  `fsp_m2_telegram_creds_allowed` allineata; nuova `fsp_m2_telegram_guard_sigpipe` (reintroduce la pipe: uccisa).
+ 
+ ### Changed
+ - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
+-- 
+2.43.0
+

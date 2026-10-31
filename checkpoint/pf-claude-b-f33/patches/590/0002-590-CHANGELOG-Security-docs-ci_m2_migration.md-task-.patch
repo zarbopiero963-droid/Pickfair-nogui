@@ -1,7 +1,7 @@
 From f73a7901e6f3de3abfd790ec22ec802f2803eb17 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 31 Oct 2026 20:46:01 +0000
-Subject: [PATCH 2/2] #590: CHANGELOG (Security), docs/ci_m2_migration.md, task
+Subject: [PATCH 2/4] #590: CHANGELOG (Security), docs/ci_m2_migration.md, task
  key fix-590-tg-guard-sigpipe
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

@@ -1,16 +1,16 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 9,
+ "seq": 10,
  "mandate_id": "Claude B — #586 V2: OWNER GO-CLOSE-DEFERRED #587 (Claude A, fatto), RECHECK #589 + conditional merge; 31/10/2026",
- "previous_checkpoint_sha": "d95fb4147ad3a5ed0dcde4c44ed2e8d731fdee50",
+ "previous_checkpoint_sha": "a799d7b3db26f190659d8103e8c267c681c866a6",
  "code": {
   "branch": "f33-full-scope-harness",
   "sha": "0c2822e8faf7e83fe62769d29e52899d1d53a59f",
   "patch": {
    "head": "0c2822e8faf7e83fe62769d29e52899d1d53a59f",
    "tree": "cfaee1ad9aa86d6bdee3fec3568af0085e701c67",
-   "captured_at": "2026-10-31T20:49:49+00:00",
+   "captured_at": "2026-10-31T20:56:54+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -36,7 +36,8 @@
   "F-01 locale: RED 04f54f7, fix dde85a5, docs/scope 3eadf2e+3cf7e2b (patches/f01)",
   "F-05 idempotenza (duplicate_cashout_request, hedge_outcome_uncertain, lock) + riavvio HEDGE_PENDING->HEDGE_AMBIGUOUS (e1da865, docs 1dc265b)",
   "#589 overlap-check rerun verde dopo chiusura #587 (c.6548949811)",
-  "#590 branch remoto fix-590-tg-guard-sigpipe f73a790 (docs, CHANGELOG, task key), nessuna PR"
+  "#590 branch remoto fix-590-tg-guard-sigpipe f73a790 (docs, CHANGELOG, task key), nessuna PR",
+  "#590 mutazione fsp_m2_telegram_guard_sigpipe (proposta Claude A), 9/9 killed; branch remoto 641d04b; Claude A concorda: PR dalla variante Claude B"
  ],
  "next_atomic_action": "1) Attendere la decisione owner sulla sequenza (#586 c.6548951892): opzione 1 = #589 DEFERRED temporanea, PR #590 sola (owner-merge), riapertura #589 + merge di main. 2) #589: merge condizionato solo con mutation, full-suite e Merge readiness verdi. 3) Poi F-05 -> F-08 -> F-01 (patches/), merge owner.",
  "dependencies": {
@@ -173,7 +174,9 @@
    "base": "6fa29b2",
    "commits": [
     "73c3da7",
-    "f73a790"
+    "f73a790",
+    "d8c512b",
+    "641d04b"
    ],
    "patches": "patches/590"
   },

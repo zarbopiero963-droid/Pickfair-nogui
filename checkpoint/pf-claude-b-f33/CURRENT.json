@@ -7,7 +7,7 @@
  },
  "mandate_id": "Claude B \u2014 #586 V2: OWNER GO-CLOSE-DEFERRED #587 (Claude A, fatto), RECHECK #589 + conditional merge; 31/10/2026",
  "next_atomic_action": "1) Attendere la decisione owner sulla sequenza (#586 c.6548951892): opzione 1 = #589 DEFERRED temporanea, PR #590 sola (owner-merge), riapertura #589 + merge di main. 2) #589: merge condizionato solo con mutation, full-suite e Merge readiness verdi. 3) Poi F-05 -> F-08 -> F-01 (patches/), merge owner.",
- "previous_checkpoint_sha": "d95fb4147ad3a5ed0dcde4c44ed2e8d731fdee50",
+ "previous_checkpoint_sha": "a799d7b3db26f190659d8103e8c267c681c866a6",
  "schema": "pf-current/1",
- "seq": 9
+ "seq": 10
 }

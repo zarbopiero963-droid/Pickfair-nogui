@@ -1,0 +1,38 @@
+From d8c512bca90a1ec1f66e708cb7a0346f559e6424 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 20:55:30 +0000
+Subject: [PATCH 3/4] #590: mutazione fsp_m2_telegram_guard_sigpipe
+ (reintroduce env | grep -q; proposta di Claude A)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ guardrails/mutation_catalog.json | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/guardrails/mutation_catalog.json b/guardrails/mutation_catalog.json
+index 729012c..e77e3b8 100644
+--- a/guardrails/mutation_catalog.json
++++ b/guardrails/mutation_catalog.json
+@@ -6547,6 +6547,18 @@
+       ],
+       "rationale": "PF-562 PR-A (Sol su #584): build superata riletta comunque; un errore di lettura copre con pending l'esito della suite successiva."
+     },
++    {
++      "id": "fsp_m2_telegram_guard_sigpipe",
++      "module": "scripts.pr_full_suite_pipeline",
++      "area": "trusted_dispatcher",
++      "file": "scripts/pr_full_suite_pipeline.py",
++      "original": "            'if compgen -e TG_ >/dev/null; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
++      "mutated": "            'if env | grep -q \"^TG_\"; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
++      "tests": [
++        "tests/scripts/test_pr_full_suite_pipeline.py"
++      ],
++      "rationale": "#590: reintroduce la pipe `env | grep -q` (SIGPIPE sotto pipefail => guard fail-open con le credenziali presenti). Suggerita da Claude A."
++    },
+     {
+       "id": "fsp_m2_telegram_creds_allowed",
+       "module": "scripts.pr_full_suite_pipeline",
+-- 
+2.43.0
+
