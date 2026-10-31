@@ -6600,7 +6600,7 @@
       "module": "scripts.pr_full_suite_pipeline",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_full_suite_pipeline.py",
-      "original": "            'if env | grep -q \"^TG_\"; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
+      "original": "            'if compgen -e TG_ >/dev/null; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
       "mutated": "            'true',",
       "tests": [
         "tests/scripts/test_pr_full_suite_pipeline.py"
