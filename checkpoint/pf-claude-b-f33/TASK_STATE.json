@@ -1,8 +1,9 @@
 {
  "blocks": [
-  "overlap-check rosso (#587 aperta): MERGE_BLOCKED_GOVERNANCE",
-  "full-suite: appimagetool non installato sulla VPS (W5 build-linux)",
-  "mutation fsp_* INCONCLUSIVE per #590 (fix pronto, merge owner)",
+  "#589 mutation INCONCLUSIVE fino a #590 su main",
+  "#589 full-suite: appimagetool mancante sulla VPS",
+  "status Buildkite overlap-check stale (build 78), rebuild non consentito al token",
+  "sequenza #590/#589: decisione owner (opzioni su #586 c.6548951892)",
   "test Betfair: BLOCKED_EXTERNAL_DEPENDENCY",
   "LIVE NO-GO"
  ],
@@ -25,11 +26,13 @@
   "F-05 docs \u00a77.3 + CHANGELOG + task key f05_cashout_hedge_ledger (212d299)",
   "F-08 locale: RED b416efb, fix ce06aac, docs/scope 889b9a9 (patches/f08)",
   "F-01 locale: RED 04f54f7, fix dde85a5, docs/scope 3eadf2e+3cf7e2b (patches/f01)",
-  "F-05 idempotenza (duplicate_cashout_request, hedge_outcome_uncertain, lock) + riavvio HEDGE_PENDING->HEDGE_AMBIGUOUS (e1da865, docs 1dc265b)"
+  "F-05 idempotenza (duplicate_cashout_request, hedge_outcome_uncertain, lock) + riavvio HEDGE_PENDING->HEDGE_AMBIGUOUS (e1da865, docs 1dc265b)",
+  "#589 overlap-check rerun verde dopo chiusura #587 (c.6548949811)",
+  "#590 branch remoto fix-590-tg-guard-sigpipe f73a790 (docs, CHANGELOG, task key), nessuna PR"
  ],
- "lotto_corrente": "#589 0c2822e certificata MERGE_BLOCKED_GOVERNANCE (invariata). F-05 locale 1dc265b: + idempotenza hedge e riavvio dopo crash. F-08 889b9a9, F-01 3cf7e2b locali.",
- "mandate_id": "Claude B \u2014 #586 V2: F-33 conditional merge, CONTINUE F-05 LOCAL (idempotenza + crash/restart), #590 owner-merge; owner 31/10/2026",
- "next_atomic_action": "1) #589: merge solo con overlap-check, full-suite e mutation verdi sullo stesso head. 2) PR una alla volta dopo F-33, in ordine F-05 -> F-08 -> F-01 (`git am patches/<x>/*` su main aggiornato; conflitti attesi su CHANGELOG, mutation_catalog, allowed_scope, docs/cashout_overview), merge owner per tutte e tre. 3) #590 owner-merge su autorizzazione. 4) Prossima scheda locale: F-10 richiede F-08+F-09 => preparare F-09 (gating recover()) dopo F-08, oppure F-06.",
+ "lotto_corrente": "#587 chiusa DEFERRED (20:47Z). #589 0c2822e: overlap-check GH Actions VERDE (rerun 20:47:53Z); restano rossi mutation (#590), full-suite (appimagetool VPS), status Buildkite overlap stale (no write_builds). Decisione owner di sequenza richiesta (#586 c.6548951892).",
+ "mandate_id": "Claude B \u2014 #586 V2: OWNER GO-CLOSE-DEFERRED #587 (Claude A, fatto), RECHECK #589 + conditional merge; 31/10/2026",
+ "next_atomic_action": "1) Attendere la decisione owner sulla sequenza (#586 c.6548951892): opzione 1 = #589 DEFERRED temporanea, PR #590 sola (owner-merge), riapertura #589 + merge di main. 2) #589: merge condizionato solo con mutation, full-suite e Merge readiness verdi. 3) Poi F-05 -> F-08 -> F-01 (patches/), merge owner.",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [

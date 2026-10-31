@@ -1,0 +1,72 @@
+From f73a7901e6f3de3abfd790ec22ec802f2803eb17 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 20:46:01 +0000
+Subject: [PATCH 2/2] #590: CHANGELOG (Security), docs/ci_m2_migration.md, task
+ key fix-590-tg-guard-sigpipe
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ .guardrails/allowed_scope.json | 13 +++++++++++++
+ CHANGELOG.md                   |  6 ++++++
+ docs/ci_m2_migration.md        |  3 +++
+ 3 files changed, 22 insertions(+)
+
+diff --git a/.guardrails/allowed_scope.json b/.guardrails/allowed_scope.json
+index ee10df8..e740d24 100644
+--- a/.guardrails/allowed_scope.json
++++ b/.guardrails/allowed_scope.json
+@@ -3098,6 +3098,19 @@
+         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+       ],
+       "max_files": 14
++    },
++    "fix-590-tg-guard-sigpipe": {
++      "description": "#590 (sicurezza, fail-open): guard delle credenziali Telegram della lane w5-telegram-live-sim senza pipe (compgen -e TG_). File a merge owner (scripts/pr_full_suite_pipeline.py): merge manuale dell'owner. Nessun controllo disattivato.",
++      "allow_tests": true,
++      "files": [
++        ".guardrails/allowed_scope.json",
++        "CHANGELOG.md",
++        "docs/ci_m2_migration.md",
++        "guardrails/mutation_catalog.json",
++        "scripts/pr_full_suite_pipeline.py",
++        "tests/scripts/test_pr_full_suite_pipeline.py"
++      ],
++      "max_files": 6
+     }
+   }
+ }
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 0431004..f2152a1 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+ 
+ ## [Unreleased]
+ 
++### Security
++- **#590 — guard credenziali Telegram della lane `w5-telegram-live-sim` fail-open:** `env | grep -q "^TG_"` sotto
++  `pipefail` non fermava la lane con credenziali `TG_*` presenti (SIGPIPE, 141). Ora `if compgen -e TG_ >/dev/null`
++  (builtin, nessuna pipe); test con 2000 variabili d'ambiente (0 mancati su 40, FAIL su main); mutazione
++  `fsp_m2_telegram_creds_allowed` allineata.
++
+ ### Changed
+ - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
+   - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
+diff --git a/docs/ci_m2_migration.md b/docs/ci_m2_migration.md
+index 370d59c..07e253b 100644
+--- a/docs/ci_m2_migration.md
++++ b/docs/ci_m2_migration.md
+@@ -60,6 +60,9 @@ Sulla coda `pickfair-dedicated` (lane non fidata, nessun segreto):
+ 3. Uscita di rete verso **PyPI** (lock e build) e verso GitHub (`git fetch origin main`), come per gli altri step.
+ 4. **Artifact:** un'AppImage e un tar.gz per push, nell'ordine delle decine di MB. Va fissata una retention.
+ 5. Nessuna variabile `TG_*`, Betfair o token nell'ambiente dei job: `w5-telegram-live-sim` lo verifica e si ferma.
++   Il controllo usa il builtin `compgen -e TG_`, senza pipe (#590): la forma precedente `env | grep -q "^TG_"`
++   sotto `set -o pipefail` usciva 141 per SIGPIPE quando grep trovava la riga e la lane NON si fermava proprio con le
++   credenziali presenti (fail-open; deterministico con un ambiente grande).
+ 6. Il dispatcher installato deve conoscere i tre step nuovi (`FULL_SUITE_STEP_KEYS`): finché non è aggiornato, la
+    full-suite dà `error` (step attesi mancanti o in più: fail-closed).
+ 
+-- 
+2.43.0
+
