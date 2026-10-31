@@ -3098,6 +3098,18 @@
         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
       ],
       "max_files": 14
+    },
+    "pf590-tg-guard-sigpipe": {
+      "description": "Issue #590 (P1 security), GO owner 31/10/2026 'SBLOCCO OPERATIVO' punto 3: il guard credenziali Telegram di w5-telegram-live-sim (`env | grep -q` sotto pipefail) era fail-open per SIGPIPE; ora `compgen -e | grep`. Test con ambiente grande, mutazioni fsp aggiornate. PR a merge owner (scripts/pr_*).",
+      "files": [
+        "scripts/pr_full_suite_pipeline.py",
+        "tests/scripts/test_pr_full_suite_pipeline.py",
+        "guardrails/mutation_catalog.json",
+        "docs/ci_m2_migration.md",
+        "CHANGELOG.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }

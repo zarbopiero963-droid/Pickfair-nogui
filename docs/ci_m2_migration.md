@@ -60,6 +60,8 @@ Sulla coda `pickfair-dedicated` (lane non fidata, nessun segreto):
 3. Uscita di rete verso **PyPI** (lock e build) e verso GitHub (`git fetch origin main`), come per gli altri step.
 4. **Artifact:** un'AppImage e un tar.gz per push, nell'ordine delle decine di MB. Va fissata una retention.
 5. Nessuna variabile `TG_*`, Betfair o token nell'ambiente dei job: `w5-telegram-live-sim` lo verifica e si ferma.
+   Il controllo non usa una pipe con `grep -q`: sotto `pipefail` `env` poteva morire di SIGPIPE e il guard non scattava
+   (fail-open, #590). Ora legge `compgen -e` per intero.
 6. Il dispatcher installato deve conoscere i tre step nuovi (`FULL_SUITE_STEP_KEYS`): finché non è aggiornato, la
    full-suite dà `error` (step attesi mancanti o in più: fail-closed).
 

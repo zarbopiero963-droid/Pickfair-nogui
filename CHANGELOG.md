@@ -8,6 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **#590 — guard credenziali Telegram di `w5-telegram-live-sim` fail-open:** con `set -o pipefail`, `env | grep -q "^TG_"`
+  poteva far morire `env` di SIGPIPE e lasciar passare un job con `TG_*` presenti (27/200 nella riproduzione). Ora
+  `compgen -e | grep "^TG_"`; test deterministico con ambiente grande e mutazione `fsp_m2_telegram_guard_sigpipe`.
+
 ### Changed
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
   - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
