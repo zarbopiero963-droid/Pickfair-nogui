@@ -319,6 +319,54 @@
       "rationale": "Esito ignoto dell'hedge riportato come fallimento (ritentabile)."
     },
     {
+      "id": "gov_buildkite_deferred_any_type",
+      "module": "scripts.pr_automation_controller",
+      "area": "trusted_gate",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "    if typename != \"StatusContext\":",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_buildkite_deferred.py"
+      ],
+      "rationale": "OWNER DECISION 31/10/2026: l'esenzione Buildkite si estende ai CheckRun, quindi anche all'overlap-check di GitHub Actions (fail-open sul required)."
+    },
+    {
+      "id": "gov_buildkite_deferred_any_host",
+      "module": "scripts.pr_automation_controller",
+      "area": "trusted_gate",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "    return host == \"buildkite.com\" or host.endswith(\".buildkite.com\")\n",
+      "mutated": "    return True\n",
+      "tests": [
+        "tests/scripts/test_buildkite_deferred.py"
+      ],
+      "rationale": "OWNER DECISION 31/10/2026 Buildkite differito: Status omonimo con target non Buildkite escluso dalla readiness: un blocker reale sparirebbe."
+    },
+    {
+      "id": "gov_buildkite_deferred_controller_waits",
+      "module": "scripts.pr_automation_controller",
+      "area": "trusted_gate",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "            if is_pending(check) and not is_self_check(check) and not is_deferred_buildkite_status(check)]\n",
+      "mutated": "            if is_pending(check) and not is_self_check(check)]\n",
+      "tests": [
+        "tests/scripts/test_buildkite_deferred.py"
+      ],
+      "rationale": "OWNER DECISION 31/10/2026 Buildkite differito: Il controller resta in attesa della lane Buildkite sospesa (review Claude A su 2cdfe8a)."
+    },
+    {
+      "id": "gov_buildkite_deferred_flow_branch",
+      "module": "scripts.pr_flow_automation",
+      "area": "trusted_gate",
+      "file": "scripts/pr_flow_automation.py",
+      "original": "        if is_deferred_buildkite_status(raw):\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/scripts/test_buildkite_deferred.py"
+      ],
+      "rationale": "OWNER DECISION 31/10/2026 Buildkite differito: Il gate di readiness torna a trattare gli status Buildkite differiti come blocker/pending."
+    },
+    {
       "id": "cashout_unmatched_as_success",
       "module": "cashout_executor",
       "area": "cashout",
@@ -6549,11 +6597,23 @@
       "rationale": "PF-562 PR-A (Sol su #584): build superata riletta comunque; un errore di lettura copre con pending l'esito della suite successiva."
     },
     {
+      "id": "fsp_m2_telegram_guard_sigpipe",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            'if compgen -e TG_ >/dev/null; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
+      "mutated": "            'if env | grep -q \"^TG_\"; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "#590: reintroduce la pipe `env | grep -q` (SIGPIPE sotto pipefail => guard fail-open con le credenziali presenti). Suggerita da Claude A."
+    },
+    {
       "id": "fsp_m2_telegram_creds_allowed",
       "module": "scripts.pr_full_suite_pipeline",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_full_suite_pipeline.py",
-      "original": "            'if env | grep -q \"^TG_\"; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
+      "original": "            'if compgen -e TG_ >/dev/null; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
       "mutated": "            'true',",
       "tests": [
         "tests/scripts/test_pr_full_suite_pipeline.py"

@@ -3099,6 +3099,35 @@
       ],
       "max_files": 14
     },
+    "gov-gha-primary-buildkite-deferred": {
+      "description": "OWNER DECISION 31/10/2026 «GITHUB ACTIONS PRIMARY / BUILDKITE DEFERRED» (#586): la merge readiness non conta come gate gli status della lane Buildkite sospesa (identita' esatta StatusContext + context + buildkite.com); il CheckRun overlap-check di GitHub Actions resta bloccante. File di governance (scripts/pr_*, CLAUDE.md, spec): merge owner. Estensione dichiarata (review Claude A su 2cdfe8a): scripts/ci_changed_modules.py, perche' pr_flow_automation.py ora ha una mutazione e deve attivare la lane mutation. Estensione dichiarata (OWNER DECISION 31/10/2026 «PR #592 OPZIONE 1 CONDIZIONATA»): la mutation lane della #592 era rossa per la baseline di test_telegram_sim_job_refuses_telegram_credentials_in_the_lane (#590, guard `env | grep -q` fail-open per SIGPIPE, confermato dai log dei job 124673065347/124673927524/124673843325). Cherry-pick testuale del fix gia' verificato della #591 (73c3da7, d8c512b) + docs/CHANGELOG di 641d04b/f73a790: +3 file (scripts/pr_full_suite_pipeline.py, tests/scripts/test_pr_full_suite_pipeline.py, docs/ci_m2_migration.md).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "CLAUDE.md",
+        "docs/auto_pr_flow_spec.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/pr_automation_controller.py",
+        "scripts/pr_flow_automation.py",
+        "tests/scripts/test_buildkite_deferred.py",
+        "scripts/ci_changed_modules.py",
+        "scripts/pr_full_suite_pipeline.py",
+        "tests/scripts/test_pr_full_suite_pipeline.py",
+        "docs/ci_m2_migration.md"
+      ],
+      "max_files": 12
+    },
+    "fix-590-tg-guard-sigpipe": {
+      "description": "#590 (sicurezza, fail-open) / #591: il fix del guard credenziali Telegram (compgen -e TG_), il suo test, la mutazione e le docs sono stati assorbiti dalla #592 (cherry-pick testuale di 73c3da7/d8c512b, merge owner 986bebd). Residuo di questa PR, ESTENSIONE DICHIARATA (GO owner 31/10/2026 «PR #591 FINALIZATION», riallineamento owner «FINALIZE #592 AND RESUME ROADMAP V2»): tests/unit/test_runtime_controller_direct_ttl_poller.py, helper del gate TTL indipendente dall'uptime del runner (flake di test-core-components), nessun codice di produzione; voce CHANGELOG.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "tests/unit/test_runtime_controller_direct_ttl_poller.py"
+      ],
+      "max_files": 3
+    },
     "audit_f33_fullscope_harness": {
       "description": "F-33 (#586, GO-IMPLEMENT-LOCAL owner 29/10/2026): harness full-scope di collaudo — generatore combinatorio pairwise/three-way riproducibile con seed e report di copertura (tools/combi), inventario delle 190 chiavi censite, tracciatore pytest dei requisiti UNVERIFIED (marker pf_requirement, report per requisito con SHA e seed), child runner HeadlessApp reale in SIM con SIGKILL esterno e riavvio, netguard, oracolo Decimal indipendente, test L1 delle configurazioni persistite, scenari E2E SIM-COMBO-001/CASH-002/DUP-005/RESTART-003 (sonda RST-03). Solo test e tooling: nessun file applicativo di produzione; i difetti trovati sono xfail strict con riferimento alla scheda F-xx (F-05 CSH-06, F-01/F-02 SL, F-18 NF-16). Marker pytest nuovi in pytest.ini; art/ in .gitignore; docs/testing/full_scope_harness.md; CHANGELOG. ESTENSIONE DICHIARATA (hardening finale, GO owner 30/10/2026): aggiunti tests/fullscope/harness/combi_runner.py e test_oracle_negative.py, tests/fullscope/scenarios/test_l2_l3_runtime_binding.py, tests/fullscope/requirements/reconciliation.json e test_reconciliation.py, guardrails/mutation_catalog.json (13 mutazioni cg_* del generatore, area fullscope_tooling). ESTENSIONE DICHIARATA (30/10/2026): scripts/ci_changed_modules.py, regola mutation-guardrails: aggiunto il path tools/combi/ (richiesto dal guardrail tests/scripts/test_run_mutation_guardrails_reale.py: ogni file del catalogo deve attivare la lane). ESTENSIONE DICHIARATA (31/10/2026, review Sol/Grok/Codex su #589 d46e6da): aggiunti tests/fullscope/harness/events.py e tests/fullscope/harness/test_events_filter.py. ESTENSIONE DICHIARATA (31/10/2026, review Codex su #589 a721e09): aggiunti conftest.py (root: registra il plugin del tracciatore con pytest_plugins, cosi' anche il controller xdist lo carica), tests/fullscope/requirements/pytest_plugin.py, tests/fullscope/requirements/test_pytest_plugin.py, tests/fullscope/harness/test_artifact_alloc.py. ESTENSIONE DICHIARATA (31/10/2026, review Codex su #589 de1c980): aggiunto tests/fullscope/harness/test_harness_review_fixes.py.",
       "allow_tests": true,

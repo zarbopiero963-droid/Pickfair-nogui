@@ -316,7 +316,9 @@ def _jobs() -> tuple:
             'echo "OK: il lock combacia con la rigenerazione"; '
             'else echo "NOTE: nessun requirements-build-linux.lock committato"; fi')),
         Job("w5-telegram-live-sim", "W5 telegram-live-integration in simulazione (nessun messaggio reale)", 15, 1, (
-            'if env | grep -q "^TG_"; then echo "credenziali Telegram nella lane non fidata: fermo"; exit 1; fi',
+            # builtin di bash, nessuna pipe: `env | grep -q` sotto pipefail usciva 141 (SIGPIPE su env quando grep
+            # trova la riga e chiude) e l'`if` risultava falso proprio CON le credenziali presenti (fail-open, #590)
+            'if compgen -e TG_ >/dev/null; then echo "credenziali Telegram nella lane non fidata: fermo"; exit 1; fi',
             RUNTIME_DEPS,
             "pytest -q tests/integration/test_telegram_live_sim.py --junitxml=bk-out/telegram-live-sim.xml")),
     ]
