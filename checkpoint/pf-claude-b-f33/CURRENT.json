@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "f33-full-scope-harness",
-  "sha": "a721e0979a433870e6d6dc217e41b8b3c5832afa"
+  "sha": "0c2822e8faf7e83fe62769d29e52899d1d53a59f"
  },
- "mandate_id": "Claude B \u2014 #586 roadmap: F-33 (#589) + F-05 Phase 0; owner 31/10/2026 SAFE CHECKPOINT, HANDOFF & AUTONOMOUS RESUME",
- "next_atomic_action": "1) #589 head a721e09: leggere check (mutation, merge-simulation, tests, readiness) e review Sol/Grok sul range 3873eaa...a721e09 e Codex su 3873eaa/a721e09; correggere solo finding reali con un push unico; risolvere i 3 thread Codex (P2: xdist, eventi SL, hash inventario: corretti in 3873eaa) a check settled. 2) overlap-check rosso finche' #587 e' aperta: blocco di governance, nessun bypass, nessun merge. 3) Poi F-05 in locale: test RED di results/F05_PHASE0.md \u00a77.5, nessuna PR.",
- "previous_checkpoint_sha": "2bde7fd6207415f2cbba463a696ba308f07f6538",
+ "mandate_id": "Claude B \u2014 #586 V2: F-33 conditional merge (#589), CONTINUE F-05 LOCAL, #590 prepared; owner 31/10/2026",
+ "next_atomic_action": "1) #589: a full-suite (Buildkite build 51) e Merge readiness conclusi, risolvere i 13 thread Codex (tutti corretti) e pubblicare CLAUDE_PR_FINAL_CERTIFICATION; merge solo se overlap-check verde (dipende da #587). 2) F-05 locale (wt-f05 o `git am patches/f05/*` su main 6fa29b2): docs (docs/ dominio cashout), CHANGELOG, allowed_scope task key; nessun push/PR finche' F-33 non e' mergiata. 3) #590: PR owner-merge quando autorizzata (`git am patches/590/*`). 4) Poi F-08 -> F-01.",
+ "previous_checkpoint_sha": "53ce5770f53b3e1dc56662a8415333265a5f1f6f",
  "schema": "pf-current/1",
- "seq": 2
+ "seq": 3
 }

@@ -1,0 +1,106 @@
+From b7adb5c534eeba78c8b5c8e4a1f8d0ac89d88a22 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 18:05:39 +0000
+Subject: [PATCH 1/3] F-05 (RED): l'hedge del cashout non e' scritto nel ledger
+ orders (CSH-06)
+
+Test RED con HeadlessApp reale in SIM (child tests/f026): posizione BACK abbinata, cashout del mercato ->
+CASHOUT_SUCCESS e gamba LAY abbinata sull'exchange, ma nessuna riga `orders` per l'hedge. Secondo test: con l'hedge
+persistito, il riavvio non deve creare tavoli fantasma ne' partire in PAUSED (F018). Entrambi FAIL su main 6fa29b2.
+Solo test, nessuna modifica di produzione. Preparazione locale: nessuna PR finche' #589 e' aperta; F-05 e'
+finanziaria critica (merge owner).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ tests/f05/__init__.py              |  0
+ tests/f05/test_f05_hedge_ledger.py | 73 ++++++++++++++++++++++++++++++
+ 2 files changed, 73 insertions(+)
+ create mode 100644 tests/f05/__init__.py
+ create mode 100644 tests/f05/test_f05_hedge_ledger.py
+
+diff --git a/tests/f05/__init__.py b/tests/f05/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tests/f05/test_f05_hedge_ledger.py b/tests/f05/test_f05_hedge_ledger.py
+new file mode 100644
+index 0000000..f61a7e8
+--- /dev/null
++++ b/tests/f05/test_f05_hedge_ledger.py
+@@ -0,0 +1,73 @@
++"""F-05 (#586, CSH-06 P0) — l'hedge del cashout deve essere scritto nel ledger `orders` (RED prima della patch).
++
++Riproduzione con HeadlessApp REALE in SIM (child di tests/f026, SQLite su disco): una posizione BACK abbinata, poi
++cashout parziale di quel mercato. Oggi l'hedge LAY e' eseguito sull'exchange (CASHOUT_SUCCESS, gamba LAY abbinata in
++`currentOrders`) ma NESSUNA riga `orders` lo rappresenta: daily-loss LIVE, riconciliazione e storico non lo vedono.
++
++Contratto atteso (F05_PHASE0 §7):
++- una riga `orders` per l'hedge, `customer_ref` con prefisso ``hedge:``, payload con ``role == "HEDGE"`` e
++  ``order_origin == "CASHOUT_HEDGE"``, mercato/selezione/lato/prezzo/stake dell'hedge, senza ``event_key``/``table_id``;
++- la riga NON crea un tavolo fantasma al riavvio (F018 rebuild) e non fa partire il runtime in PAUSED;
++- le invarianti finanziarie F026_10/F026_12 restano verdi (eseguite dalla loro suite).
++"""
++from __future__ import annotations
++
++import glob
++import json
++import os
++import sqlite3
++
++import pytest
++
++from tests.f026.test_f026_financial import run
++
++pytestmark = [pytest.mark.integration, pytest.mark.safety]
++
++
++def _orders(home):
++    dbs = [p for p in glob.glob(os.path.join(home, "**", "*.db"), recursive=True) if os.path.getsize(p) > 0]
++    rows = []
++    for path in dbs:
++        con = sqlite3.connect(path)
++        try:
++            tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
++            if "orders" not in tables:
++                continue
++            for ref, status, payload in con.execute("SELECT customer_ref, status, payload_json FROM orders"):
++                rows.append({"ref": ref, "status": status, "payload": json.loads(payload or "{}")})
++        finally:
++            con.close()
++    return rows
++
++
++def _position_then_partial_cashout(home=None):
++    return run([{"op": "signal", "m": "1.951", "price": 2.0}, {"op": "cashout", "m": "1.951"}], home=home)
++
++
++def test_cashout_hedge_is_persisted_in_the_orders_ledger():
++    r = _position_then_partial_cashout()
++    s = r["snaps"][-1]
++    assert sum(1 for e in r["events"] if e["e"] == "CASHOUT_SUCCESS") == 1, "precondizione: cashout eseguito"
++    lay_legs = [o for o in s["exch_orders"] if o["market_id"] == "1.951" and o["side"] == "LAY"
++                and float(o.get("matched") or 0) > 0]
++    assert lay_legs, "precondizione: hedge LAY abbinato sull'exchange"
++    hedges = [o for o in _orders(r["_home"]) if str(o["ref"]).startswith("hedge:")]
++    assert len(hedges) == 1, f"hedge eseguito sull'exchange ma assente dal ledger orders: {_orders(r['_home'])}"
++    p = hedges[0]["payload"]
++    assert p.get("role") == "HEDGE" and p.get("order_origin") == "CASHOUT_HEDGE", p
++    assert str(p.get("market_id")) == "1.951" and str(p.get("bet_type")).upper() == "LAY", p
++    assert not p.get("event_key") and not p.get("table_id"), "l'hedge non e' un ingresso: niente tavolo/evento"
++    assert float(p.get("stake")) == pytest.approx(float(lay_legs[0]["size"])), (p, lay_legs)
++
++
++def test_persisted_hedge_creates_no_phantom_table_and_no_paused_start_after_restart():
++    import tempfile
++    home = tempfile.mkdtemp(prefix="f05_restart_")
++    first = _position_then_partial_cashout(home)
++    assert any(str(o["ref"]).startswith("hedge:") for o in _orders(home)), "RED: hedge non persistito"
++    second = run([{"op": "wait", "s": 2}], home=home)
++    s0 = second["snaps"][0]
++    assert str(s0["mode"]).upper() != "PAUSED", f"avvio in PAUSED con la riga hedge nel ledger: {s0['mode']}"
++    assert not [t for t in s0["tables"] if t["market_id"] == "1.951" and "hedge" in str(t.get("event_key"))], s0
++    assert len([t for t in s0["tables"] if t["market_id"]]) <= len([t for t in first["snaps"][-1]["tables"]
++                                                                     if t["market_id"]]), "tavolo fantasma"
+-- 
+2.43.0
+

@@ -1,7 +1,13 @@
-e377f539d6a26e7d8af39e6c98ed1ba260990a1c8057b00c0c0bc207af7fc870  ./AGENT_LEASE.json
-8f067fe08c8a53e68dd2092c87454edcac2e5722a32cd3c7f0a526142b7667eb  ./CURRENT.json
+d402725f82275df5140c7b51183db554552380663b4a97ef55218287c23d46fc  ./AGENT_LEASE.json
+5727f1e345dffec351b4a0735b3916b3b1718c75300bec05715cc64e2aaf76cb  ./CURRENT.json
 5d4de0d5923c9573fcca90ebec7c3291fb397fec512c7a4798274d3a0ca2dbaf  ./HANDOFF.md
 5acd27728f3ccf454af2f125927c2232e783d6307f095ce49b7f08d7dfd8672f  ./RUNBOOK.md
-aca45e1e78abe0285fc94717c1f56cfa010270ffacd3d435a58253f509961e06  ./STATE.json
-bad7cb1b2a961b81bacd6b447f43f67f9ccd5a51e0f77553138f56f533ab7306  ./TASK_STATE.json
+25a9e82c2403a34d04237e9faa7a6780e9a216439e7d4214986c34b0dcc0022b  ./STATE.json
+44da614b5bcea028c8436565fcde8cccda6bded66f7c2f37a26736222d7d0f07  ./TASK_STATE.json
+dab6fe9be24073422fde1b7a28922cb22ea5ca05d1ce991f033bf9b24857f487  ./code_patch/BASELINE.json
+ddc90262071e06e92d1bf3befa4bd6c0a499192b4638bf095ee7e4d2a14f681b  ./patches/590/0001-590-guard-credenziali-Telegram-della-lane-w5-telegra.patch
+961795d0e5c8e709320d8c74994b29f81c064be30e61c6fee7a6a0b1913f3e3a  ./patches/f05/0001-F-05-RED-l-hedge-del-cashout-non-e-scritto-nel-ledge.patch
+3aedcd6d201cd281537d81c0b82d52135d6a8653ea3d6fd5d25ec13770622365  ./patches/f05/0002-F-05-WIP-locale-hedge-del-cashout-nel-ledger-orders-.patch
+18c8ef8edf2bb81b8876dcaba66e360bf2a2740480303d8d95a58d3de56b1d38  ./patches/f05/0003-F-05-WIP-locale-mutazioni-f05_-e-test-di-settlement-.patch
+a568b5ea6acb65398820d4a2beac542ea483d322725b41038b4fa1fb0d0cec9d  ./results/F05_CONSUMERS.md
 6b2c720666178cba4e49a0bafecce78f4e089942968445e9e667e6136343a931  ./results/F05_PHASE0.md

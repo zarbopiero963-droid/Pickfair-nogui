@@ -1,0 +1,414 @@
+From 59b05ae425ea3c0a94a186e9d6fefcadb1cd9b7e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 18:36:14 +0000
+Subject: [PATCH 2/3] =?UTF-8?q?F-05=20(WIP=20locale):=20hedge=20del=20cash?=
+ =?UTF-8?q?out=20nel=20ledger=20orders=20=E2=80=94=20write-ahead,=20esiti,?=
+ =?UTF-8?q?=20consumer=20filtrati?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ cashout_executor.py                      |  62 +++++++++-
+ cashout_wiring.py                        |   4 +-
+ core/hedge_ref.py                        |  38 ++++++
+ core/runtime_controller.py               |   8 +-
+ headless_main.py                         |   2 +
+ mini_gui.py                              |   2 +
+ tests/f05/test_f05_hedge_ledger_units.py | 146 +++++++++++++++++++++++
+ 7 files changed, 258 insertions(+), 4 deletions(-)
+ create mode 100644 core/hedge_ref.py
+ create mode 100644 tests/f05/test_f05_hedge_ledger_units.py
+
+diff --git a/cashout_executor.py b/cashout_executor.py
+index a3c0052..f22185a 100644
+--- a/cashout_executor.py
++++ b/cashout_executor.py
+@@ -45,8 +45,11 @@ from __future__ import annotations
+ import contextlib
+ import logging
+ import math
++import time
++import uuid
+ from typing import Any, Callable, Dict, Optional
+ 
++from core import hedge_ref as _hedge
+ from core.trading_constants import (
+     CASHOUT_FAILED,
+     CASHOUT_SUCCESS,
+@@ -63,8 +66,12 @@ class CashoutExecutor:
+ 
+     def __init__(self, bus: Any, order_router: Any, safety_layer: Optional[Any] = None,
+                  authority_check: Optional[Callable[[], str]] = None,
+-                 authority_operation: Optional[Callable[[], Any]] = None) -> None:
++                 authority_operation: Optional[Callable[[], Any]] = None,
++                 ledger: Optional[Any] = None) -> None:
+         self.bus = bus
++        # F-05 (CSH-06): ledger `orders` del bot (Database). Con il ledger l'hedge e' scritto PRIMA dell'invio
++        # (write-ahead) e aggiornato con l'esito; senza (doppi di test) il comportamento resta quello di prima.
++        self.ledger = ledger
+         self.order_router = order_router
+         self.safety_layer = safety_layer
+         self.authority_check = authority_check
+@@ -131,13 +138,25 @@ class CashoutExecutor:
+             if authority_block:
+                 self._fail(authority_block, status="REJECTED", payload=payload)
+                 return
++            ledger_id = None
++            if self.ledger is not None:
++                place_payload["customer_ref"] = _hedge.new_hedge_ref()
++                try:
++                    ledger_id = self._ledger_write_ahead(place_payload, payload)
++                except Exception as exc:  # noqa: BLE001 - hedge non registrabile => nessun hedge (fail-closed)
++                    logger.exception("[CashoutExecutor] hedge non registrabile nel ledger: nessun invio")
++                    self._fail(f"ledger_write_failed:{exc}", status="REJECTED", payload=payload)
++                    return
+             try:
+                 result = self.order_router.place(place_payload)
+             except Exception as exc:  # noqa: BLE001 - esito ignoto => fail-closed
++                self._ledger_outcome(ledger_id, _hedge.HEDGE_AMBIGUOUS, None, f"place_exception:{exc}")
+                 self._fail(f"place_exception:{exc}", status="ERROR", payload=payload)
+                 return
+ 
+-            self._handle_result(result if isinstance(result, dict) else {}, payload, sim)
++            result = result if isinstance(result, dict) else {}
++            self._ledger_outcome(ledger_id, self._ledger_status(result), result, None)
++            self._handle_result(result, payload, sim)
+ 
+     @classmethod
+     def _enforce_hard_invariants(cls, payload: Dict[str, Any]) -> None:
+@@ -187,6 +206,45 @@ class CashoutExecutor:
+             "runner_name": str(payload.get("runner_name", "")),
+         }
+ 
++    def _ledger_write_ahead(self, place_payload: Dict[str, Any], payload: Dict[str, Any]) -> str:
++        """Riga `orders` dell'hedge PRIMA dell'invio. Nessun ``event_key``/``table_id``/``batch_id``: l'hedge non e'
++        un ingresso e non occupa tavoli. Stato ``HEDGE_PENDING``, fuori dalle letture degli ordini aperti."""
++        request = {k: v for k, v in place_payload.items() if k not in ("event_key", "table_id", "batch_id")}
++        request.update({"role": _hedge.HEDGE_ROLE, "order_origin": _hedge.HEDGE_ORIGIN,
++                        "green_up": self._as_float(payload.get("green_up")),
++                        **self._request_identity(payload)})
++        now = time.time()
++        return self.ledger.insert_order({"customer_ref": place_payload["customer_ref"],
++                                         "correlation_id": str(uuid.uuid4()), "status": _hedge.HEDGE_PENDING,
++                                         "payload": request, "created_at": now, "updated_at": now})
++
++    def _ledger_outcome(self, ledger_id: Optional[str], status: str, result: Optional[Dict[str, Any]],
++                        error: Optional[str]) -> None:
++        """Esito dell'hedge sulla sua riga. Un aggiornamento fallito NON annulla l'esito (l'hedge e' gia' sull'exchange):
++        la riga resta ``HEDGE_PENDING`` e lo si segnala come CRITICAL."""
++        if ledger_id is None:
++            return
++        update: Dict[str, Any] = {"status": status, "updated_at": time.time()}
++        if result is not None:
++            update["response"] = result
++        if error:
++            update["last_error"] = error
++        if status == _hedge.HEDGE_AMBIGUOUS:
++            update["ambiguity_reason"] = error or "order_unknown"
++        try:
++            self.ledger.update_order(ledger_id, update)
++        except Exception:  # noqa: BLE001 - l'esito resta valido; la riga write-ahead resta come traccia
++            logger.critical("[CashoutExecutor] esito dell'hedge non scritto nel ledger (riga %s resta %s)",
++                            ledger_id, _hedge.HEDGE_PENDING, exc_info=True)
++
++    def _ledger_status(self, result: Dict[str, Any]) -> str:
++        # stessa classificazione di _handle_result (ignoto => ambiguo, mai fallito)
++        if bool(result.get("order_unknown")):
++            return _hedge.HEDGE_AMBIGUOUS
++        if not result.get("placed"):
++            return _hedge.HEDGE_FAILED
++        return _hedge.HEDGE_PLACED if self._as_float(result.get("matched")) > 0.0 else _hedge.HEDGE_UNMATCHED
++
+     def _handle_result(self, result: Dict[str, Any], payload: Dict[str, Any],
+                        sim: bool = False) -> None:
+         """Interpreta l'esito normalizzato del router e pubblica success/failed.
+diff --git a/cashout_wiring.py b/cashout_wiring.py
+index 7c7c67b..154ac35 100644
+--- a/cashout_wiring.py
++++ b/cashout_wiring.py
+@@ -55,6 +55,7 @@ def cabla_catena_cashout(
+     microstake_executor_provider: Callable[[], Any] | None = None,
+     runtime_authority_check: Callable[[], str] | None = None,
+     runtime_authority_operation: Callable[[], Any] | None = None,
++    ledger: Any = None,
+ ) -> CatenaCashout:
+     """Sottoscrive al ``bus`` la catena di esecuzione + residuo del cashout.
+ 
+@@ -88,7 +89,8 @@ def cabla_catena_cashout(
+     order_router = OrderRouter(betfair_service, microstake_executor_provider=microstake_executor_provider)
+     cashout_executor = CashoutExecutor(bus, order_router, safety_layer=SafetyLayer(),
+                                        authority_check=runtime_authority_check,
+-                                       authority_operation=runtime_authority_operation)
++                                       authority_operation=runtime_authority_operation,
++                                       ledger=ledger)            # F-05: hedge scritto nel ledger `orders`
+     cashout_executor.wire()
+ 
+     cashout_request_bridge = CashoutRequestBridge(bus)
+diff --git a/core/hedge_ref.py b/core/hedge_ref.py
+new file mode 100644
+index 0000000..e71101e
+--- /dev/null
++++ b/core/hedge_ref.py
+@@ -0,0 +1,38 @@
++"""F-05 (CSH-06) — identita' delle righe `orders` che rappresentano l'hedge di un cashout.
++
++L'hedge del cashout passa da ``OrderRouter`` e muove denaro reale, ma non e' un ingresso: non ha tavolo, evento,
++riserva ne' batch. Da F-05 viene scritto nel ledger ``orders`` (write-ahead, poi esito) con:
++
++- ``customer_ref`` = ``hedge:`` + 26 esadecimali (32 caratteri: il limite del ``customerOrderRef`` Betfair);
++- payload con ``role = "HEDGE"``, ``order_origin = "CASHOUT_HEDGE"``, senza ``event_key``/``table_id``/``batch_id``;
++- stati propri (``HEDGE_*``), mai ``INFLIGHT``/``SUBMITTED``/``AMBIGUOUS``: le letture degli ordini APERTI del bot
++  (de-dup dell'engine, riconciliazione all'avvio, rebuild F018) non li vedono e non creano tavoli fantasma.
++
++I consumer che attribuiscono un ordine a un tavolo (``_resolve_market_settlement``, ``_single_bet_position``) li
++escludono con :func:`is_hedge_order_ref`. L'identita' I1 del bot (``Database.get_bot_active_orders``) li INCLUDE:
++il daily-loss LIVE vede la bet dell'hedge e il router del cashout vede la posizione come mista (nessun secondo
++hedge della stessa posizione).
++"""
++from __future__ import annotations
++
++import uuid
++
++HEDGE_REF_PREFIX = "hedge:"
++HEDGE_ROLE = "HEDGE"
++HEDGE_ORIGIN = "CASHOUT_HEDGE"
++
++HEDGE_PENDING = "HEDGE_PENDING"          # write-ahead: scritto PRIMA dell'invio (crash dopo l'invio => traccia)
++HEDGE_PLACED = "HEDGE_PLACED"            # abbinato (in tutto o in parte)
++HEDGE_UNMATCHED = "HEDGE_UNMATCHED"      # accettato ma a riposo
++HEDGE_FAILED = "HEDGE_FAILED"            # rifiutato dall'exchange / non piazzato
++HEDGE_AMBIGUOUS = "HEDGE_AMBIGUOUS"      # esito ignoto dopo l'invio: mai retry, riconciliazione
++
++HEDGE_STATUSES = frozenset({HEDGE_PENDING, HEDGE_PLACED, HEDGE_UNMATCHED, HEDGE_FAILED, HEDGE_AMBIGUOUS})
++
++
++def new_hedge_ref() -> str:
++    return HEDGE_REF_PREFIX + uuid.uuid4().hex[:26]
++
++
++def is_hedge_order_ref(ref: object) -> bool:
++    return str(ref or "").startswith(HEDGE_REF_PREFIX)
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index c426217..37e1237 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -17,6 +17,7 @@ from typing import Any, Optional
+ from core import liquidity, loss_limits, validators
+ from core import risk_stop as stop_rules
+ from core.duplication_guard import DuplicationGuard
++from core.hedge_ref import is_hedge_order_ref
+ from core.dutching_batch_manager import DutchingBatchManager
+ from core.market_tracker import MarketTracker
+ from core.money_management import RoserpinaMoneyManagement
+@@ -5751,6 +5752,8 @@ class RuntimeController:
+             row = dict(raw)
+             if str(row.get("status") or "").upper() in ("FAILED", "DENIED", "DUPLICATE_BLOCKED"):
+                 continue                                   # mai piazzati (anche se il filtro SQL non e' applicato)
++            if is_hedge_order_ref(row.get("customer_ref")):
++                continue                                   # F-05: hedge di cashout, non un ingresso del tavolo
+             try:
+                 request = json.loads(row.get("payload_json") or "{}")
+             except (TypeError, ValueError, AttributeError):
+@@ -5924,7 +5927,8 @@ class RuntimeController:
+         event_key = str(table.get("current_event_key") or "")
+         try:
+             rows = self.db._execute(
+-                "SELECT payload_json, status FROM orders WHERE status NOT IN ('FAILED', 'DENIED', 'DUPLICATE_BLOCKED')",
++                "SELECT customer_ref, payload_json, status FROM orders "
++                "WHERE status NOT IN ('FAILED', 'DENIED', 'DUPLICATE_BLOCKED')",
+                 fetch=True, commit=False) or []
+         except Exception:
+             logger.exception("Settlement: ordini del bot illeggibili, nessun rilascio per mercato")
+@@ -5935,6 +5939,8 @@ class RuntimeController:
+             row = dict(raw)
+             if str(row.get("status") or "").upper() in ("FAILED", "DENIED", "DUPLICATE_BLOCKED"):
+                 continue
++            if is_hedge_order_ref(row.get("customer_ref")):
++                continue        # F-05: l'hedge ha la sua riga; il mercato hedgiato resta escluso dal registro hedge
+             try:
+                 p = json.loads(row.get("payload_json") or "{}")
+             except (TypeError, ValueError, AttributeError):
+diff --git a/headless_main.py b/headless_main.py
+index d86c7bc..66cae88 100644
+--- a/headless_main.py
++++ b/headless_main.py
+@@ -531,6 +531,8 @@ class HeadlessApp:
+             runtime_authority_operation=lambda: (
+                 self.runtime.authority_operation()
+                 if getattr(self, "runtime", None) is not None else contextlib.nullcontext()),
++            # F-05 (CSH-06): l'hedge del cashout e' scritto nel ledger `orders` (write-ahead + esito)
++            ledger=self.db,
+         )
+         self.order_router = catena.order_router
+         self.cashout_executor = catena.cashout_executor
+diff --git a/mini_gui.py b/mini_gui.py
+index ac616e0..b03b873 100644
+--- a/mini_gui.py
++++ b/mini_gui.py
+@@ -507,6 +507,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+             runtime_authority_operation=lambda: (
+                 self.runtime.authority_operation()
+                 if getattr(self, "runtime", None) is not None else contextlib.nullcontext()),
++            # F-05 (CSH-06): l'hedge del cashout e' scritto nel ledger `orders` (write-ahead + esito)
++            ledger=self.db,
+         )
+         self.order_router = catena_cashout.order_router
+         self.cashout_executor = catena_cashout.cashout_executor
+diff --git a/tests/f05/test_f05_hedge_ledger_units.py b/tests/f05/test_f05_hedge_ledger_units.py
+new file mode 100644
+index 0000000..029b264
+--- /dev/null
++++ b/tests/f05/test_f05_hedge_ledger_units.py
+@@ -0,0 +1,146 @@
++"""F-05 (CSH-06) — unita': write-ahead dell'hedge, esiti, fail-closed, identita' I1 e nessun secondo hedge.
++
++PASS + BLOCK: ogni test fallisce se l'hedge torna invisibile al ledger o se la riga viene scambiata per un ingresso.
++"""
++from __future__ import annotations
++
++import json
++
++import pytest
++
++from cashout_executor import CASHOUT_FAILED, CASHOUT_SUCCESS, CashoutExecutor
++from cashout_resolver import reconstruct_open_positions
++from core import hedge_ref as H
++from database import Database
++
++pytestmark = [pytest.mark.unit, pytest.mark.safety]
++
++
++class _Bus:
++    def __init__(self):
++        self.published = []
++
++    def subscribe(self, *_a):
++        pass
++
++    def publish(self, topic, payload):
++        self.published.append((topic, payload))
++
++    def topics(self):
++        return [t for t, _ in self.published]
++
++
++class _Router:
++    """Registra lo stato del ledger AL MOMENTO dell'invio: la riga deve esistere prima."""
++
++    def __init__(self, db, result=None, raises=None):
++        self.db, self.result, self.raises, self.calls, self.rows_at_place = db, result, raises, [], None
++
++    def place(self, payload):
++        self.calls.append(dict(payload))
++        self.rows_at_place = _rows(self.db) if self.db is not None else None
++        if self.raises:
++            raise self.raises
++        return self.result
++
++
++def _rows(db):
++    return [dict(r) for r in db._execute("SELECT customer_ref, status, payload_json, response_json FROM orders",
++                                         fetch=True, commit=False) or []]
++
++
++def _cmd(**over):
++    p = {"market_id": "1.222", "selection_id": 55, "side": "LAY", "stake": 4.0, "price": 1.8, "green_up": 2.5,
++         "event_key": "1.222:55:BACK:x", "source": "UI", "cashout_request_id": "req-1"}
++    p.update(over)
++    return p
++
++
++def _ok(matched=4.0, bet_id="CB1"):
++    return {"ok": True, "placed": True, "order_unknown": False, "status": "SUCCESS", "matched": matched,
++            "bet_id": bet_id, "error": None}
++
++
++@pytest.fixture()
++def db(tmp_path):
++    return Database(str(tmp_path / "f05.db"))
++
++
++def _run(db, result=None, raises=None, **cmd):
++    bus, router = _Bus(), _Router(db, result, raises)
++    CashoutExecutor(bus, router, ledger=db).on_cmd_execute_cashout(_cmd(**cmd))
++    return bus, router
++
++
++def test_hedge_row_is_written_before_the_order_is_sent(db):
++    bus, router = _run(db, _ok())
++    assert len(router.rows_at_place) == 1 and router.rows_at_place[0]["status"] == H.HEDGE_PENDING
++    ref = router.rows_at_place[0]["customer_ref"]
++    assert H.is_hedge_order_ref(ref) and len(ref) <= 32 and router.calls[0]["customer_ref"] == ref
++    row = _rows(db)[0]
++    p = json.loads(row["payload_json"])
++    assert row["status"] == H.HEDGE_PLACED
++    assert p["role"] == H.HEDGE_ROLE and p["order_origin"] == H.HEDGE_ORIGIN and p["cashout_request_id"] == "req-1"
++    assert "event_key" not in p and "table_id" not in p and "batch_id" not in p
++    assert (p["market_id"], p["selection_id"], p["bet_type"], p["price"], p["stake"]) == ("1.222", 55, "LAY", 1.8, 4.0)
++    assert json.loads(row["response_json"])["bet_id"] == "CB1"
++    assert CASHOUT_SUCCESS in bus.topics()
++
++
++@pytest.mark.parametrize("result,raises,status,event", [
++    ({"placed": True, "matched": 0.0, "bet_id": "R1"}, None, H.HEDGE_UNMATCHED, CASHOUT_FAILED),
++    ({"placed": False, "error": "INSUFFICIENT_FUNDS"}, None, H.HEDGE_FAILED, CASHOUT_FAILED),
++    ({"placed": True, "order_unknown": True, "matched": 0.0}, None, H.HEDGE_AMBIGUOUS, CASHOUT_FAILED),
++    (None, TimeoutError("lost"), H.HEDGE_AMBIGUOUS, CASHOUT_FAILED),
++    (_ok(matched=1.5), None, H.HEDGE_PLACED, CASHOUT_SUCCESS),
++])
++def test_every_outcome_is_recorded_on_the_same_row(db, result, raises, status, event):
++    bus, router = _run(db, result, raises)
++    rows = _rows(db)
++    assert len(rows) == 1 and rows[0]["status"] == status, rows
++    assert len(router.calls) == 1, "mai retry"
++    assert event in bus.topics()
++
++
++def test_ledger_not_writable_means_no_hedge_is_sent(db, monkeypatch):
++    def boom(_payload):
++        raise RuntimeError("disk full")
++    monkeypatch.setattr(db, "insert_order", boom)
++    bus, router = _run(db, _ok())
++    assert router.calls == [], "hedge inviato senza traccia nel ledger"
++    failed = [p for t, p in bus.published if t == CASHOUT_FAILED]
++    assert failed and failed[0]["status"] == "REJECTED" and "ledger_write_failed" in failed[0]["reason"]
++
++
++def test_outcome_update_failure_keeps_the_write_ahead_row_and_the_real_outcome(db, monkeypatch):
++    def boom(*_a, **_k):
++        raise RuntimeError("locked")
++    monkeypatch.setattr(db, "update_order", boom)
++    bus, _router = _run(db, _ok())
++    assert [r["status"] for r in _rows(db)] == [H.HEDGE_PENDING], "la traccia write-ahead deve restare"
++    assert CASHOUT_SUCCESS in bus.topics(), "l'hedge e' sull'exchange: l'esito non si nasconde"
++
++
++def test_hedge_rows_are_not_open_orders_of_the_bot(db):
++    _run(db, _ok())
++    assert db.load_pending_customer_refs() == [] and db.load_pending_correlation_ids() == []
++    ref = _rows(db)[0]["customer_ref"]
++    assert not db.order_exists_inflight(customer_ref=ref)
++
++
++def test_hedge_bet_is_part_of_the_bot_identity_and_makes_the_position_mixed(db):
++    """LIVE: la bet dell'hedge entra nell'identita' I1 (daily-loss e settlement la vedono). Con l'ingresso BACK e
++    l'hedge LAY sulla stessa selezione la posizione e' MISTA: il router non piazza un secondo hedge."""
++    db.insert_order({"customer_ref": "sig-entry", "correlation_id": "c-entry", "status": "SUBMITTED",
++                     "payload": {"market_id": "1.222", "selection_id": 55, "bet_type": "BACK", "price": 2.0,
++                                 "stake": 3.0, "event_name": "A v B", "event_key": "1.222:55:BACK:x"},
++                     "response": {"bet_id": "E1"}})
++    _run(db, _ok(matched=3.33, bet_id="CB1"))
++    bot = {o["bet_id"] for o in db.get_bot_active_orders()}
++    assert {"E1", "CB1"} <= bot
++    current = [{"betId": "E1", "marketId": "1.222", "selectionId": 55, "side": "BACK", "sizeMatched": 3.0,
++                "averagePriceMatched": 2.0, "sizeRemaining": 0.0, "priceSize": {"price": 2.0, "size": 3.0}},
++               {"betId": "CB1", "marketId": "1.222", "selectionId": 55, "side": "LAY", "sizeMatched": 3.33,
++                "averagePriceMatched": 1.8, "sizeRemaining": 0.0, "priceSize": {"price": 1.8, "size": 3.33}}]
++    positions = reconstruct_open_positions(current, is_bot_order=lambda r: r.get("betId") in bot)
++    assert positions == [], f"posizione hedgiata riaperta al cashout: {positions}"
+-- 
+2.43.0
+

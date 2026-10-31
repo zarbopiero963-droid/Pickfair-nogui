@@ -1,43 +1,60 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 2,
- "mandate_id": "Claude B — #586 roadmap: F-33 (#589) + F-05 Phase 0; owner 31/10/2026 SAFE CHECKPOINT, HANDOFF & AUTONOMOUS RESUME",
- "previous_checkpoint_sha": "2bde7fd6207415f2cbba463a696ba308f07f6538",
+ "seq": 3,
+ "mandate_id": "Claude B — #586 V2: F-33 conditional merge (#589), CONTINUE F-05 LOCAL, #590 prepared; owner 31/10/2026",
+ "previous_checkpoint_sha": "53ce5770f53b3e1dc56662a8415333265a5f1f6f",
  "code": {
   "branch": "f33-full-scope-harness",
-  "sha": "a721e0979a433870e6d6dc217e41b8b3c5832afa"
+  "sha": "0c2822e8faf7e83fe62769d29e52899d1d53a59f",
+  "patch": {
+   "head": "0c2822e8faf7e83fe62769d29e52899d1d53a59f",
+   "tree": "cfaee1ad9aa86d6bdee3fec3568af0085e701c67",
+   "captured_at": "2026-10-31T18:50:13+00:00",
+   "modified": [],
+   "untracked": [],
+   "files": [
+    "code_patch/BASELINE.json"
+   ],
+   "skipped_symlinks": {}
+  }
  },
- "lotto_corrente": "F-33 PR #589: head a721e09 (fix boundary xfail Sol/Grok); attesa CI, review Sol/Grok/Codex su 3873eaa...a721e09",
+ "lotto_corrente": "F-33 #589 head 0c2822e: MERGE_BLOCKED_GOVERNANCE (overlap #587+#589); attesa full-suite Buildkite build 51 e Merge readiness; poi resolve 13 thread + CLAUDE_PR_FINAL_CERTIFICATION. F-05 implementato in locale (f05-hedge-ledger 7876d64).",
  "lotti_completati": [
   "F-33 implementazione locale + hardening (6 commit)",
   "PR #589 aperta (d46e6da)",
   "fix review Sol/Grok/Codex (3873eaa, pushato)",
   "F-05 Phase 0 (results/F05_PHASE0.md)",
-  "fix review Sol/Grok su 3873eaa: boundary starting_balance=0 senza xfail statico (a721e09, pushato)"
+  "fix review Sol/Grok su 3873eaa: boundary starting_balance=0 senza xfail statico (a721e09, pushato)",
+  "#589 fix Codex/Sol: de1c980, 0d9e091, 31d5364, e655a5b, 0c2822e (7/10 cicli); Sol/Grok/Codex puliti su 0c2822e",
+  "#590 fix locale fix-590-tg-guard-sigpipe 73c3da7 (patches/590), mutation fsp 8/8 killed",
+  "F-05 RED b7adb5c + implementazione 59b05ae + mutazioni/test 7876d64 (patches/f05, results/F05_CONSUMERS.md)",
+  "#586 rapporto PICKFAIR_V2_AUTONOMOUS_EXECUTION_OWNER_GO c.6547651160"
  ],
- "next_atomic_action": "1) #589 head a721e09: leggere check (mutation, merge-simulation, tests, readiness) e review Sol/Grok sul range 3873eaa...a721e09 e Codex su 3873eaa/a721e09; correggere solo finding reali con un push unico; risolvere i 3 thread Codex (P2: xdist, eventi SL, hash inventario: corretti in 3873eaa) a check settled. 2) overlap-check rosso finche' #587 e' aperta: blocco di governance, nessun bypass, nessun merge. 3) Poi F-05 in locale: test RED di results/F05_PHASE0.md §7.5, nessuna PR.",
+ "next_atomic_action": "1) #589: a full-suite (Buildkite build 51) e Merge readiness conclusi, risolvere i 13 thread Codex (tutti corretti) e pubblicare CLAUDE_PR_FINAL_CERTIFICATION; merge solo se overlap-check verde (dipende da #587). 2) F-05 locale (wt-f05 o `git am patches/f05/*` su main 6fa29b2): docs (docs/ dominio cashout), CHANGELOG, allowed_scope task key; nessun push/PR finche' F-33 non e' mergiata. 3) #590: PR owner-merge quando autorizzata (`git am patches/590/*`). 4) Poi F-08 -> F-01.",
  "dependencies": {
   "overlap_check_589": "#587 chiusa o mergiata (eccezione due PR, nessun bypass)",
   "betfair_tests": "runner trusted BETFAIR_VPS_TRUSTED_TEST_RUNNER (non installato)"
  },
  "blocks": [
-  "overlap-check rosso su #589 per due PR aperte (#587, #589): blocco di governance, non aggirabile",
-  "#587 in standby VPS/Grok (Claude A)",
+  "overlap-check rosso su #589 (#587 aperta in standby): MERGE_BLOCKED_GOVERNANCE",
+  "mutation fsp_* INCONCLUSIVE su #589 per #590 (fix pronto, merge owner)",
   "test Betfair: BLOCKED_EXTERNAL_DEPENDENCY",
   "LIVE NO-GO"
  ],
  "owner_authorizations": {
   "push_code_branch": "f33-full-scope-harness",
-  "push_state_branch": "agent-state/pf-full-delivery, directory checkpoint/pf-claude-b-f33, senza force",
+  "push_state_branch": "agent-state/pf-claude-b, directory checkpoint/pf-claude-b-f33, senza force",
   "pr": "solo #589 (eccezione massimo due PR: #587 + #589)",
-  "merge": "automatico solo per PR non critiche/non owner-merge con tutti i gate verdi; #589 non mergiabile finche' overlap-check e' rosso; F-05 merge manuale owner",
+  "merge": "GO-MERGE condizionato F-33 solo con tutti i gate verdi (overlap compreso); F-05/F-08/F-01 merge owner; NO bypass",
   "live": false,
   "betfair": false,
   "vps": false,
   "modify_587": false,
   "ruleset": false,
-  "source": "#586 mandati owner 31/10/2026"
+  "source": "#586 mandati owner 31/10/2026",
+  "f05": "implementazione locale autorizzata; NO push/PR prima del merge di F-33",
+  "pr_590": "non aperta: decisione owner"
  },
  "tests_executed": [
   {
@@ -91,6 +108,36 @@
   {
    "name": "CI e review su a721e09",
    "status": "NOT VERIFIED"
+  },
+  {
+   "name": "F-33 suite locale tests/fullscope+f026+scripts+guardrails -n 4",
+   "status": "PASS",
+   "sha": "e655a5b1d94d6584161d46e35777b284ed54b237",
+   "result": "4249 passed"
+  },
+  {
+   "name": "F-05 suite completa -n 4 (wt-f05)",
+   "status": "FAIL",
+   "sha": "59b05ae",
+   "result": "10647 passed, 1 failed (guardrail catalogo mutation, riga ambigua) su 59b05ae; corretto in 7876d64"
+  },
+  {
+   "name": "F-05 mutation cashout_executor+core.runtime_controller",
+   "status": "PASS",
+   "sha": "7876d64",
+   "result": "GATE PASS, f05_* killed"
+  },
+  {
+   "name": "#590 mutation scripts.pr_full_suite_pipeline",
+   "status": "PASS",
+   "sha": "73c3da7",
+   "result": "8/8 killed"
+  },
+  {
+   "name": "F-05 regressione mirata dopo il fix (catalogo, f05, f026, cashout, guardrails, acceptance) -n 4",
+   "status": "PASS",
+   "sha": "7876d64",
+   "result": "2510 passed"
   }
  ],
  "tests_missing": [

@@ -1,0 +1,79 @@
+From 7876d647e0d2e0670bc71962d1093d486e53c476 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 18:37:54 +0000
+Subject: [PATCH 3/3] F-05 (WIP locale): mutazioni f05_* e test di settlement
+ del mercato hedgiato
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ guardrails/mutation_catalog.json   | 24 ++++++++++++++++++++++++
+ tests/f05/test_f05_hedge_ledger.py | 20 ++++++++++++++++++++
+ 2 files changed, 44 insertions(+)
+
+diff --git a/guardrails/mutation_catalog.json b/guardrails/mutation_catalog.json
+index 912e27e..f77f765 100644
+--- a/guardrails/mutation_catalog.json
++++ b/guardrails/mutation_catalog.json
+@@ -317,6 +317,30 @@
+       ],
+       "rationale": "Esito ignoto dell'hedge riportato come fallimento (ritentabile)."
+     },
++    {
++      "id": "f05_hedge_not_written_ahead",
++      "module": "cashout_executor",
++      "area": "cashout",
++      "file": "cashout_executor.py",
++      "original": "                    ledger_id = self._ledger_write_ahead(place_payload, payload)",
++      "mutated": "                    ledger_id = None",
++      "tests": [
++        "tests/f05/test_f05_hedge_ledger_units.py"
++      ],
++      "rationale": "F-05 (CSH-06): hedge inviato senza riga nel ledger orders (esposizione reale non contabilizzata)."
++    },
++    {
++      "id": "f05_settlement_counts_hedge_as_entry",
++      "module": "core.runtime_controller",
++      "area": "cashout",
++      "file": "core/runtime_controller.py",
++      "original": "                continue                                   # F-05: hedge di cashout, non un ingresso del tavolo",
++      "mutated": "                pass",
++      "tests": [
++        "tests/f05/test_f05_hedge_ledger.py"
++      ],
++      "rationale": "F-05: la riga hedge contata come secondo ordine del mercato blocca il rilascio SIM del tavolo regolato."
++    },
+     {
+       "id": "cashout_unmatched_as_success",
+       "module": "cashout_executor",
+diff --git a/tests/f05/test_f05_hedge_ledger.py b/tests/f05/test_f05_hedge_ledger.py
+index f61a7e8..40ae1d4 100644
+--- a/tests/f05/test_f05_hedge_ledger.py
++++ b/tests/f05/test_f05_hedge_ledger.py
+@@ -71,3 +71,23 @@ def test_persisted_hedge_creates_no_phantom_table_and_no_paused_start_after_rest
+     assert not [t for t in s0["tables"] if t["market_id"] == "1.951" and "hedge" in str(t.get("event_key"))], s0
+     assert len([t for t in s0["tables"] if t["market_id"]]) <= len([t for t in first["snaps"][-1]["tables"]
+                                                                      if t["market_id"]]), "tavolo fantasma"
++
++
++def test_hedged_position_settles_once_releases_its_table_and_books_the_net_pnl():
++    """Con la riga hedge nel ledger il settlement del mercato libera il tavolo e contabilizza UNA volta il netto
++    ingresso + hedge (oracolo Decimal indipendente, come F026_12): la riga hedge non e' un secondo ingresso."""
++    from decimal import ROUND_HALF_UP
++    from decimal import Decimal as D
++
++    from tests.f026.test_f026_financial import COMM, q
++    r = run([{"op": "signal", "m": "1.951", "price": 2.0}, {"op": "cashout", "m": "1.951"},
++             {"op": "settle", "m": "1.951", "win": True}])
++    s = r["snaps"][-1]
++    assert any(str(o["ref"]).startswith("hedge:") for o in _orders(r["_home"])), "hedge non nel ledger"
++    back, lay, stake = D("2.00"), D("2.02"), D("3")
++    hedge = (stake * back / lay).quantize(D("0.01"), rounding=ROUND_HALF_UP)
++    net = stake * (back - 1) - hedge * (lay - 1)
++    exp = net * (1 - COMM) if net > 0 else net
++    assert [t for t in s["tables"] if t["market_id"] == "1.951"] == [], f"tavolo non liberato: {s['tables']}"
++    assert q(s["realized"]) == q(exp), f"realizzato {s['realized']} != oracolo {q(exp)} (doppio conteggio?)"
++    assert len([x for x in s["exch_settlements"] if x["market_id"] == "1.951"]) == 1
+-- 
+2.43.0
+

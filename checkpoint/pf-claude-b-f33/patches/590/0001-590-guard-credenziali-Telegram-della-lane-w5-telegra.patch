@@ -1,0 +1,84 @@
+From 73c3da7215c98957b53c96e95613467f9af08ffe Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 18:03:44 +0000
+Subject: [PATCH] #590: guard credenziali Telegram della lane
+ w5-telegram-live-sim senza pipe (fail-open SIGPIPE)
+
+`env | grep -q "^TG_"` sotto `set -euo pipefail`: grep trova la riga ed esce, env prende SIGPIPE (141) e la
+pipeline risulta falsa, quindi l'`if` NON scatta proprio con le credenziali presenti (fail-open). Con un ambiente
+grande il guard vecchio manca 200/200; in CI e' apparso come fallimento intermittente di
+test_telegram_sim_job_refuses_telegram_credentials_in_the_lane e come INCONCLUSIVE delle mutazioni fsp_*.
+
+- scripts/pr_full_suite_pipeline.py: `if compgen -e TG_ >/dev/null; then ... exit 1; fi` (builtin di bash, nessuna
+  pipe); semantica invariata (variabili esportate con prefisso TG_).
+- guardrails/mutation_catalog.json: `original` di fsp_m2_telegram_creds_allowed allineato.
+- tests/scripts/test_pr_full_suite_pipeline.py: guard senza pipe e 0 mancati su 40 con 2000 variabili d'ambiente
+  (FAIL sul codice di main).
+- run_mutation_guardrails --module scripts.pr_full_suite_pipeline: 8/8 killed, GATE PASS.
+
+File a merge owner (scripts/pr_*): branch preparato localmente, nessuna PR aperta (limite PR owner).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ guardrails/mutation_catalog.json             |  2 +-
+ scripts/pr_full_suite_pipeline.py            |  4 +++-
+ tests/scripts/test_pr_full_suite_pipeline.py | 14 ++++++++++++++
+ 3 files changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/guardrails/mutation_catalog.json b/guardrails/mutation_catalog.json
+index 912e27e..729012c 100644
+--- a/guardrails/mutation_catalog.json
++++ b/guardrails/mutation_catalog.json
+@@ -6552,7 +6552,7 @@
+       "module": "scripts.pr_full_suite_pipeline",
+       "area": "trusted_dispatcher",
+       "file": "scripts/pr_full_suite_pipeline.py",
+-      "original": "            'if env | grep -q \"^TG_\"; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
++      "original": "            'if compgen -e TG_ >/dev/null; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
+       "mutated": "            'true',",
+       "tests": [
+         "tests/scripts/test_pr_full_suite_pipeline.py"
+diff --git a/scripts/pr_full_suite_pipeline.py b/scripts/pr_full_suite_pipeline.py
+index 825cdf9..55e9e6c 100644
+--- a/scripts/pr_full_suite_pipeline.py
++++ b/scripts/pr_full_suite_pipeline.py
+@@ -316,7 +316,9 @@ def _jobs() -> tuple:
+             'echo "OK: il lock combacia con la rigenerazione"; '
+             'else echo "NOTE: nessun requirements-build-linux.lock committato"; fi')),
+         Job("w5-telegram-live-sim", "W5 telegram-live-integration in simulazione (nessun messaggio reale)", 15, 1, (
+-            'if env | grep -q "^TG_"; then echo "credenziali Telegram nella lane non fidata: fermo"; exit 1; fi',
++            # builtin di bash, nessuna pipe: `env | grep -q` sotto pipefail usciva 141 (SIGPIPE su env quando grep
++            # trova la riga e chiude) e l'`if` risultava falso proprio CON le credenziali presenti (fail-open, #590)
++            'if compgen -e TG_ >/dev/null; then echo "credenziali Telegram nella lane non fidata: fermo"; exit 1; fi',
+             RUNTIME_DEPS,
+             "pytest -q tests/integration/test_telegram_live_sim.py --junitxml=bk-out/telegram-live-sim.xml")),
+     ]
+diff --git a/tests/scripts/test_pr_full_suite_pipeline.py b/tests/scripts/test_pr_full_suite_pipeline.py
+index 5fef010..0f73836 100644
+--- a/tests/scripts/test_pr_full_suite_pipeline.py
++++ b/tests/scripts/test_pr_full_suite_pipeline.py
+@@ -331,6 +331,20 @@ def test_telegram_sim_job_refuses_telegram_credentials_in_the_lane(tmp_path):
+     assert "tests/integration/test_telegram_live_sim.py" in _commands("w5-telegram-live-sim")
+ 
+ 
++@pytest.mark.skipif(shutil.which("bash") is None, reason="bash assente")
++def test_telegram_guard_has_no_pipeline_and_never_misses_with_a_large_environment(tmp_path):
++    """#590: `env | grep -q "^TG_"` sotto `set -o pipefail` falliva in modo intermittente PROPRIO con le credenziali
++    presenti: grep trova la riga ed esce, env prende SIGPIPE (141) e la pipeline risulta falsa (fail-open,
++    riprodotto ~1 su 10 con un ambiente grande). Il guard non deve avere pipe e non deve mai mancare."""
++    guard = _job("w5-telegram-live-sim").commands[0]
++    assert "|" not in guard.split(";")[0], "il controllo delle credenziali non deve passare da una pipe"
++    tg_variable = "TG_BOT_" + "TOKEN"
++    big = {"PATH": "/usr/bin:/bin", tg_variable: "x"}
++    big.update({f"PF_FILLER_{i:04d}": "y" * 200 for i in range(2000)})   # output di env >> buffer di una pipe
++    misses = sum(_bash(guard, tmp_path, big).returncode != 1 for _ in range(40))
++    assert misses == 0, f"guard mancato {misses}/40 con credenziali presenti"
++
++
+ @pytest.mark.skipif(shutil.which("bash") is None or shutil.which("sha256sum") is None, reason="bash assente")
+ @pytest.mark.parametrize("assets,ok", [((), False), (("bin",), False), (("app",), False), (("bin", "app"), True),
+                                        (("bin", "bin2", "app"), False)])
+-- 
+2.43.0
+
