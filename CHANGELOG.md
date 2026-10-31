@@ -20,6 +20,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   asserzione sul TTL cambiata, nessun codice di produzione toccato.
 
 ### Changed
+- **Governance CI — GitHub Actions primario, Buildkite differito (OWNER DECISION 31/10/2026, #586):** la merge
+  readiness non conta piu' come gate gli status della lane Buildkite sospesa (`full-suite`, `overlap-check`,
+  `pr-merge-readiness` su `buildkite.com`), che restano visibili fra gli ignorati. Il check run `overlap-check`
+  di GitHub Actions resta bloccante. `pr_automation_controller.is_deferred_buildkite_status` (fonte unica);
+  spec §0.11; test `tests/scripts/test_buildkite_deferred.py`.
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
   - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
     database SQLite) su `/dev/shm` solo se è davvero un tmpfs (`/proc/mounts`), scrivibile e con almeno 512 MiB

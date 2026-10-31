@@ -1553,6 +1553,39 @@ def is_codacy_check(check: dict[str, Any]) -> bool:
     return str(name_of(check) or "").strip().lower() in DECOMMISSIONED_CODACY_CHECK_NAMES
 
 
+#: OWNER DECISION 31/10/2026 «GITHUB ACTIONS PRIMARY / BUILDKITE DEFERRED» (#586): GitHub Actions e' la CI di
+#: riferimento; gli status pubblicati dalla lane Buildkite (sospesa con la VPS, #587 DEFERRED) non sono gate
+#: ordinari di merge. FONTE UNICA anche per `pr_flow_automation` (gate CI). Identita' ESATTA e conservativa,
+#: come per Codacy (un predicato largo sarebbe fail-open sul gate):
+#:   - commit status (`StatusContext`), MAI un check run: l'`overlap-check` di GitHub Actions (CheckRun, required
+#:     del ruleset) resta un gate bloccante;
+#:   - `context` in questo insieme ESATTO;
+#:   - target su `buildkite.com` (o un suo sottodominio).
+#: Gli status esclusi restano visibili come ignorati/warning: non spariscono, non diventano PASS.
+DEFERRED_BUILDKITE_STATUS_CONTEXTS = frozenset({
+    "full-suite",
+    "overlap-check",
+    "pr-merge-readiness",
+})
+
+
+def is_deferred_buildkite_status(check: dict[str, Any]) -> bool:
+    """True solo per uno status Buildkite differito (vedi DEFERRED_BUILDKITE_STATUS_CONTEXTS)."""
+    if not isinstance(check, dict):
+        return False
+    typename = str(check.get("__typename") or check.get("rollup_typename") or "").strip()
+    if typename != "StatusContext":
+        return False
+    if str(name_of(check) or "").strip().lower() not in DEFERRED_BUILDKITE_STATUS_CONTEXTS:
+        return False
+    url = str(url_of(check) or "")
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return host == "buildkite.com" or host.endswith(".buildkite.com")
+
+
 def extract_run_id(url: str) -> str:
     m = re.search(r"/actions/runs/(\d+)", str(url or ""))
     return m.group(1) if m else ""
@@ -3236,7 +3269,9 @@ def write_decision(output_path: str, decision: dict[str, Any]) -> int:
 
 def pending_checks_from_pr(pr: dict[str, Any]) -> list[dict[str, Any]]:
     checks = pr.get("statusCheckRollup") or []
-    return [compact_check(check) for check in checks if is_pending(check) and not is_self_check(check)]
+    # la lane Buildkite sospesa non e' un gate: il controller non la aspetta (OWNER DECISION 31/10/2026)
+    return [compact_check(check) for check in checks
+            if is_pending(check) and not is_self_check(check) and not is_deferred_buildkite_status(check)]
 
 
 def store_pending_report(decision: dict[str, Any], pending: list[dict[str, Any]]) -> None:
@@ -5920,7 +5955,7 @@ def filter_ignored_codacy_checks(
     non ha piu' un verdetto significativo. Ogni altro check continua a bloccare.
     """
     _ = codacy
-    return [check for check in checks if not is_codacy_check(check)]
+    return [check for check in checks if not is_codacy_check(check) and not is_deferred_buildkite_status(check)]
 
 
 def is_reportable_self_check(check: dict[str, Any]) -> bool:
