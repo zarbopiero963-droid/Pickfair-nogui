@@ -1,16 +1,16 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 10,
- "mandate_id": "Claude B — #586 V2: OWNER GO-CLOSE-DEFERRED #587 (Claude A, fatto), RECHECK #589 + conditional merge; 31/10/2026",
- "previous_checkpoint_sha": "a799d7b3db26f190659d8103e8c267c681c866a6",
+ "seq": 11,
+ "mandate_id": "Claude B — OWNER DECISION 31/10/2026 GITHUB ACTIONS PRIMARY / BUILDKITE DEFERRED; PREPARE #590 AND RESTORE F-33; AUTONOMOUS ROADMAP",
+ "previous_checkpoint_sha": "c39d045fe2b630c32d54855cc098e88ee0cf32dd",
  "code": {
   "branch": "f33-full-scope-harness",
   "sha": "0c2822e8faf7e83fe62769d29e52899d1d53a59f",
   "patch": {
    "head": "0c2822e8faf7e83fe62769d29e52899d1d53a59f",
    "tree": "cfaee1ad9aa86d6bdee3fec3568af0085e701c67",
-   "captured_at": "2026-10-31T20:56:54+00:00",
+   "captured_at": "2026-10-31T21:20:45+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -19,7 +19,7 @@
    "skipped_symlinks": {}
   }
  },
- "lotto_corrente": "#587 chiusa DEFERRED (20:47Z). #589 0c2822e: overlap-check GH Actions VERDE (rerun 20:47:53Z); restano rossi mutation (#590), full-suite (appimagetool VPS), status Buildkite overlap stale (no write_builds). Decisione owner di sequenza richiesta (#586 c.6548951892).",
+ "lotto_corrente": "PR #591 (#590, owner-merge) aperta, unica PR; #589 chiusa DEFERRED (branch f33-full-scope-harness 0c2822e); governance gov-gha-primary-buildkite-deferred 2cdfe8a pushata senza PR.",
  "lotti_completati": [
   "F-33 implementazione locale + hardening (6 commit)",
   "PR #589 aperta (d46e6da)",
@@ -37,19 +37,23 @@
   "F-05 idempotenza (duplicate_cashout_request, hedge_outcome_uncertain, lock) + riavvio HEDGE_PENDING->HEDGE_AMBIGUOUS (e1da865, docs 1dc265b)",
   "#589 overlap-check rerun verde dopo chiusura #587 (c.6548949811)",
   "#590 branch remoto fix-590-tg-guard-sigpipe f73a790 (docs, CHANGELOG, task key), nessuna PR",
-  "#590 mutazione fsp_m2_telegram_guard_sigpipe (proposta Claude A), 9/9 killed; branch remoto 641d04b; Claude A concorda: PR dalla variante Claude B"
+  "#590 mutazione fsp_m2_telegram_guard_sigpipe (proposta Claude A), 9/9 killed; branch remoto 641d04b; Claude A concorda: PR dalla variante Claude B",
+  "#589 chiusa DEFERRED (c.6549214225)",
+  "PR #591 aperta per #590",
+  "governance Buildkite deferred 2cdfe8a (branch remoto)",
+  "#591 test-core-components: flake preesistente test TTL poller (uptime<30s) riprodotto, patch proposta c.6549279913, rerun",
+  "#586 OWNER_DECISION_GITHUB_ACTIONS_PRIMARY_BUILDKITE_DEFERRED c.6549283349"
  ],
- "next_atomic_action": "1) Attendere la decisione owner sulla sequenza (#586 c.6548951892): opzione 1 = #589 DEFERRED temporanea, PR #590 sola (owner-merge), riapertura #589 + merge di main. 2) #589: merge condizionato solo con mutation, full-suite e Merge readiness verdi. 3) Poi F-05 -> F-08 -> F-01 (patches/), merge owner.",
+ "next_atomic_action": "1) #591: seguire CI GitHub Actions e review Sol/Grok/Codex; correggere solo finding reali; dichiarare READY_FOR_OWNER_MANUAL_MERGE. 2) Dopo il merge owner di #591: aprire la PR di governance (gov-gha-primary-buildkite-deferred), merge owner. 3) Riaprire #589, merge commit di main, rerun, review; GO-MERGE condizionato solo con tutti i gate verdi. 4) Poi F-05 -> F-08 -> F-01 (patches/).",
  "dependencies": {
   "overlap_check_589": "#587 chiusa o mergiata (eccezione due PR, nessun bypass)",
   "betfair_tests": "runner trusted BETFAIR_VPS_TRUSTED_TEST_RUNNER (non installato)"
  },
  "blocks": [
-  "#589 mutation INCONCLUSIVE fino a #590 su main",
-  "#589 full-suite: appimagetool mancante sulla VPS",
-  "status Buildkite overlap-check stale (build 78), rebuild non consentito al token",
-  "sequenza #590/#589: decisione owner (opzioni su #586 c.6548951892)",
+  "#591: merge owner",
+  "governance PR: dopo #591, merge owner",
   "test Betfair: BLOCKED_EXTERNAL_DEPENDENCY",
+  "Buildkite/VPS differiti",
   "LIVE NO-GO"
  ],
  "owner_authorizations": {
@@ -200,6 +204,14 @@
     "3cf7e2b"
    ],
    "patches": "patches/f01"
+  },
+  "gov": {
+   "branch": "gov-gha-primary-buildkite-deferred (remoto)",
+   "base": "6fa29b2",
+   "commits": [
+    "2cdfe8a"
+   ],
+   "patches": "patches/gov"
   }
  }
 }

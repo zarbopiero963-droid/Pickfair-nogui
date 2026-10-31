@@ -1,0 +1,297 @@
+From 2cdfe8a8c8095dc028c4400dd28f068bb5fe2c6e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 21:17:51 +0000
+Subject: [PATCH] [TASK: gov-gha-primary-buildkite-deferred] Governance CI:
+ GitHub Actions primario, status Buildkite differiti non sono gate di merge
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+OWNER DECISION 31/10/2026 (#586). La merge readiness (gate CI pr_flow_automation e controller, fonte unica
+pr_automation_controller.is_deferred_buildkite_status) esclude dai blocker/pending i soli commit status della lane
+Buildkite sospesa: StatusContext + context in {full-suite, overlap-check, pr-merge-readiness} + target buildkite.com.
+Restano fra gli ignorati (warning se rossi). Il CheckRun overlap-check di GitHub Actions (required del ruleset)
+resta bloccante; host contraffatti, CheckRun omonimi, context diversi o tipo sconosciuto bloccano (fail-closed).
+Spec §0.11 e CLAUDE.md aggiornati; test PASS (18) e BLOCK (12 FAIL sul codice di main); mutazione
+gov_buildkite_deferred_any_type. Ruleset, workflow e required check invariati. File di governance: merge owner.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ .guardrails/allowed_scope.json           | 15 ++++++
+ CHANGELOG.md                             |  5 ++
+ CLAUDE.md                                |  2 +
+ docs/auto_pr_flow_spec.md                |  9 ++++
+ guardrails/mutation_catalog.json         | 12 +++++
+ scripts/pr_automation_controller.py      | 35 +++++++++++-
+ scripts/pr_flow_automation.py            | 19 +++++++
+ tests/scripts/test_buildkite_deferred.py | 69 ++++++++++++++++++++++++
+ 8 files changed, 165 insertions(+), 1 deletion(-)
+ create mode 100644 tests/scripts/test_buildkite_deferred.py
+
+diff --git a/.guardrails/allowed_scope.json b/.guardrails/allowed_scope.json
+index ee10df8..c38cf94 100644
+--- a/.guardrails/allowed_scope.json
++++ b/.guardrails/allowed_scope.json
+@@ -3098,6 +3098,21 @@
+         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+       ],
+       "max_files": 14
++    },
++    "gov-gha-primary-buildkite-deferred": {
++      "description": "OWNER DECISION 31/10/2026 «GITHUB ACTIONS PRIMARY / BUILDKITE DEFERRED» (#586): la merge readiness non conta come gate gli status della lane Buildkite sospesa (identita' esatta StatusContext + context + buildkite.com); il CheckRun overlap-check di GitHub Actions resta bloccante. File di governance (scripts/pr_*, CLAUDE.md, spec): merge owner.",
++      "allow_tests": true,
++      "files": [
++        ".guardrails/allowed_scope.json",
++        "CHANGELOG.md",
++        "CLAUDE.md",
++        "docs/auto_pr_flow_spec.md",
++        "guardrails/mutation_catalog.json",
++        "scripts/pr_automation_controller.py",
++        "scripts/pr_flow_automation.py",
++        "tests/scripts/test_buildkite_deferred.py"
++      ],
++      "max_files": 8
+     }
+   }
+ }
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 0431004..2754deb 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+ ## [Unreleased]
+ 
+ ### Changed
++- **Governance CI — GitHub Actions primario, Buildkite differito (OWNER DECISION 31/10/2026, #586):** la merge
++  readiness non conta piu' come gate gli status della lane Buildkite sospesa (`full-suite`, `overlap-check`,
++  `pr-merge-readiness` su `buildkite.com`), che restano visibili fra gli ignorati. Il check run `overlap-check`
++  di GitHub Actions resta bloccante. `pr_automation_controller.is_deferred_buildkite_status` (fonte unica);
++  spec §0.11; test `tests/scripts/test_buildkite_deferred.py`.
+ - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
+   - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
+     database SQLite) su `/dev/shm` solo se è davvero un tmpfs (`/proc/mounts`), scrivibile e con almeno 512 MiB
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 04e06ce..a75a32d 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -431,6 +431,8 @@ l'esclusione safety-critical che valeva fino alla #468.
+ 1. Head stabile; scope valido; accettazione completa; suite richiesta PASS;
+    hard verify PASS (test hard PASS+BLOCK realmente eseguiti).
+ 2. Tutti i check current-head SETTLED e verdi (check-completion gate passato);
++   CI di riferimento GitHub Actions: gli status Buildkite differiti non sono gate (OWNER DECISION
++   31/10/2026, spec §0.11); il check run `overlap-check` di GitHub Actions resta obbligatorio;
+    Merge Readiness PASS, letta fail-closed (§0.11).
+ 3. GPT-6.1 Sol e Grok 4.7 settled sul head corrente senza bloccanti (§0.7);
+    Codex triagiato; zero thread irrisolti; nessun rilievo
+diff --git a/docs/auto_pr_flow_spec.md b/docs/auto_pr_flow_spec.md
+index 50d1472..7dea91c 100644
+--- a/docs/auto_pr_flow_spec.md
++++ b/docs/auto_pr_flow_spec.md
+@@ -339,6 +339,15 @@ UNKNOWN/NEEDS_MANUAL, mai PASS. `fetch_all_review_threads` solleva su
+ `hasNextPage` senza `endCursor` o cursore ripetuto; readiness e report
+ riportano `review_threads_api_unavailable` e `can_merge=false`.
+ 
++**CI di riferimento (OWNER DECISION 31/10/2026, «GITHUB ACTIONS PRIMARY / BUILDKITE DEFERRED», #586).** GitHub
++Actions e' la CI di riferimento della certificazione ordinaria. Gli status della lane Buildkite sospesa (commit
++status `full-suite`, `overlap-check`, `pr-merge-readiness` con target su `buildkite.com`) non sono gate di merge:
++la readiness li riporta fra gli ignorati (warning se rossi), mai come blocker o pending
++(`pr_automation_controller.is_deferred_buildkite_status`, fonte unica). Non cambia nient'altro: il check run
++`overlap-check` di GitHub Actions resta il required del ruleset e un gate bloccante; test, mutation, review,
++thread, scope e protezioni finanziarie restano obbligatori; nessuno status rosso diventa PASS. Buildkite non e'
++eliminato: si riattiva con la VPS (#587 DEFERRED), con una nuova decisione owner che toglie questa esenzione.
++
+ ### 0.12 Roadmap, #495, Control API, MCP, #497
+ 
+ - Vale la roadmap autoritativa corrente (PR26 → … → MCP-07) nella catena
+diff --git a/guardrails/mutation_catalog.json b/guardrails/mutation_catalog.json
+index 912e27e..47eb751 100644
+--- a/guardrails/mutation_catalog.json
++++ b/guardrails/mutation_catalog.json
+@@ -317,6 +317,18 @@
+       ],
+       "rationale": "Esito ignoto dell'hedge riportato come fallimento (ritentabile)."
+     },
++    {
++      "id": "gov_buildkite_deferred_any_type",
++      "module": "scripts.pr_automation_controller",
++      "area": "trusted_gate",
++      "file": "scripts/pr_automation_controller.py",
++      "original": "    if typename != \"StatusContext\":",
++      "mutated": "    if False:",
++      "tests": [
++        "tests/scripts/test_buildkite_deferred.py"
++      ],
++      "rationale": "OWNER DECISION 31/10/2026: l'esenzione Buildkite si estende ai CheckRun, quindi anche all'overlap-check di GitHub Actions (fail-open sul required)."
++    },
+     {
+       "id": "cashout_unmatched_as_success",
+       "module": "cashout_executor",
+diff --git a/scripts/pr_automation_controller.py b/scripts/pr_automation_controller.py
+index 99e064e..ab089fd 100755
+--- a/scripts/pr_automation_controller.py
++++ b/scripts/pr_automation_controller.py
+@@ -1553,6 +1553,39 @@ def is_codacy_check(check: dict[str, Any]) -> bool:
+     return str(name_of(check) or "").strip().lower() in DECOMMISSIONED_CODACY_CHECK_NAMES
+ 
+ 
++#: OWNER DECISION 31/10/2026 «GITHUB ACTIONS PRIMARY / BUILDKITE DEFERRED» (#586): GitHub Actions e' la CI di
++#: riferimento; gli status pubblicati dalla lane Buildkite (sospesa con la VPS, #587 DEFERRED) non sono gate
++#: ordinari di merge. FONTE UNICA anche per `pr_flow_automation` (gate CI). Identita' ESATTA e conservativa,
++#: come per Codacy (un predicato largo sarebbe fail-open sul gate):
++#:   - commit status (`StatusContext`), MAI un check run: l'`overlap-check` di GitHub Actions (CheckRun, required
++#:     del ruleset) resta un gate bloccante;
++#:   - `context` in questo insieme ESATTO;
++#:   - target su `buildkite.com` (o un suo sottodominio).
++#: Gli status esclusi restano visibili come ignorati/warning: non spariscono, non diventano PASS.
++DEFERRED_BUILDKITE_STATUS_CONTEXTS = frozenset({
++    "full-suite",
++    "overlap-check",
++    "pr-merge-readiness",
++})
++
++
++def is_deferred_buildkite_status(check: dict[str, Any]) -> bool:
++    """True solo per uno status Buildkite differito (vedi DEFERRED_BUILDKITE_STATUS_CONTEXTS)."""
++    if not isinstance(check, dict):
++        return False
++    typename = str(check.get("__typename") or check.get("rollup_typename") or "").strip()
++    if typename != "StatusContext":
++        return False
++    if str(name_of(check) or "").strip().lower() not in DEFERRED_BUILDKITE_STATUS_CONTEXTS:
++        return False
++    url = str(url_of(check) or "")
++    try:
++        host = (urllib.parse.urlparse(url).hostname or "").lower()
++    except ValueError:
++        return False
++    return host == "buildkite.com" or host.endswith(".buildkite.com")
++
++
+ def extract_run_id(url: str) -> str:
+     m = re.search(r"/actions/runs/(\d+)", str(url or ""))
+     return m.group(1) if m else ""
+@@ -5920,7 +5953,7 @@ def filter_ignored_codacy_checks(
+     non ha piu' un verdetto significativo. Ogni altro check continua a bloccare.
+     """
+     _ = codacy
+-    return [check for check in checks if not is_codacy_check(check)]
++    return [check for check in checks if not is_codacy_check(check) and not is_deferred_buildkite_status(check)]
+ 
+ 
+ def is_reportable_self_check(check: dict[str, Any]) -> bool:
+diff --git a/scripts/pr_flow_automation.py b/scripts/pr_flow_automation.py
+index db0abcf..0902bc1 100755
+--- a/scripts/pr_flow_automation.py
++++ b/scripts/pr_flow_automation.py
+@@ -147,6 +147,16 @@ def is_decommissioned_codacy_check(check: dict[str, Any]) -> bool:
+     return check_name(check).strip().lower() in DECOMMISSIONED_CODACY_CHECK_NAMES
+ 
+ 
++#: Status Buildkite differiti (OWNER DECISION 31/10/2026): FONTE UNICA nel controller.
++DEFERRED_BUILDKITE_STATUS_CONTEXTS = controller.DEFERRED_BUILDKITE_STATUS_CONTEXTS
++
++
++def is_deferred_buildkite_status(check: dict[str, Any]) -> bool:
++    """Status della lane Buildkite sospesa: ne' blocker ne' pending, ma riportato fra gli ignorati
++    (vedi ``pr_automation_controller.is_deferred_buildkite_status``)."""
++    return controller.is_deferred_buildkite_status(check)
++
++
+ def pr_view(repo: str, pr: str) -> dict[str, Any]:
+     return gh_json([
+         "gh", "pr", "view", str(pr),
+@@ -199,6 +209,15 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
+             ignored.append(item)
+             continue
+ 
++        # Buildkite e' DIFFERITO (OWNER DECISION 31/10/2026, GitHub Actions primario): i suoi status non sono gate
++        # ordinari. Restano negli ignorati (il riepilogo li dichiara se rossi), mai blocker ne' pending. Il CheckRun
++        # `overlap-check` di GitHub Actions NON rientra (identita' esatta: StatusContext + buildkite.com).
++        if is_deferred_buildkite_status(raw):
++            item["ignored"] = True
++            item["deferred"] = "buildkite"
++            ignored.append(item)
++            continue
++
+         item["ignored"] = False
+         # I check gia' VERDI non finiscono in nessuna lista: vanno contati qui,
+         # o "tutto verde" e "nessun check ancora registrato" diventano
+diff --git a/tests/scripts/test_buildkite_deferred.py b/tests/scripts/test_buildkite_deferred.py
+new file mode 100644
+index 0000000..a08839a
+--- /dev/null
++++ b/tests/scripts/test_buildkite_deferred.py
+@@ -0,0 +1,69 @@
++"""OWNER DECISION 31/10/2026 — GitHub Actions primario, Buildkite differito (#586).
++
++Gli status della lane Buildkite sospesa (`full-suite`, `overlap-check`, `pr-merge-readiness` come StatusContext
++su buildkite.com) non sono gate ordinari: ne' blocker ne' pending, ma restano fra gli ignorati. BLOCK: il CheckRun
++`overlap-check` di GitHub Actions (required del ruleset) e ogni altro check continuano a bloccare; un'identita'
++anche solo parzialmente diversa (tipo, nome, host) NON viene esclusa (fail-closed).
++"""
++from __future__ import annotations
++
++import pytest
++
++from scripts import pr_automation_controller as controller
++from scripts import pr_flow_automation as flow
++
++pytestmark = pytest.mark.unit
++
++BK = "https://buildkite.com/zarbopiero963-droid/pf-dedicated-ci/builds/51"
++
++
++def _status(context, state="FAILURE", url=BK):
++    return {"__typename": "StatusContext", "context": context, "state": state, "targetUrl": url}
++
++
++def _run(name, conclusion="FAILURE", url="https://github.com/o/r/actions/runs/1/job/2"):
++    return {"__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": conclusion,
++            "detailsUrl": url}
++
++
++def _split(*checks):
++    return flow.split_checks({"statusCheckRollup": list(checks)})
++
++
++@pytest.mark.parametrize("context", ["full-suite", "overlap-check", "pr-merge-readiness"])
++@pytest.mark.parametrize("state", ["FAILURE", "PENDING", "ERROR"])
++def test_deferred_buildkite_statuses_neither_block_nor_wait(context, state):
++    out = _split(_status(context, state))
++    assert out["blockers"] == [] and out["pending"] == []
++    assert [i["name"] for i in out["ignored"]] == [context]
++
++
++def test_github_actions_overlap_check_still_blocks():
++    out = _split(_run("overlap-check"), _status("overlap-check"))
++    assert [b["name"] for b in out["blockers"]] == ["overlap-check"]
++    assert out["blockers"][0]["rollup_typename"] == "CheckRun"
++
++
++@pytest.mark.parametrize("check", [
++    _status("full-suite", url="https://github.com/o/r/actions/runs/9"),          # non Buildkite
++    _status("full-suite", url="https://buildkite.com.evil.example/x"),          # host contraffatto
++    _status("full-suite", url=""),                                               # nessun target
++    _status("tests"),                                                            # context non differito
++    _run("full-suite", url=BK),                                                  # CheckRun, non status
++    {"context": "full-suite", "state": "FAILURE", "targetUrl": BK},              # tipo sconosciuto
++])
++def test_anything_not_exactly_a_deferred_buildkite_status_still_blocks(check):
++    assert len(_split(check)["blockers"]) == 1
++
++
++def test_buildkite_subdomain_is_recognised():
++    assert controller.is_deferred_buildkite_status(_status("full-suite", url="https://api.buildkite.com/v2/x"))
++
++
++def test_single_source_and_controller_path_agree():
++    assert flow.DEFERRED_BUILDKITE_STATUS_CONTEXTS is controller.DEFERRED_BUILDKITE_STATUS_CONTEXTS
++    checks = [_status("full-suite"), _run("overlap-check"), _status("tests")]
++    kept = controller.filter_ignored_codacy_checks(checks, {})
++    assert [c.get("context") or c.get("name") for c in kept] == ["overlap-check", "tests"]
++    for c in checks:
++        assert flow.is_deferred_buildkite_status(c) == controller.is_deferred_buildkite_status(c)
+-- 
+2.43.0
+

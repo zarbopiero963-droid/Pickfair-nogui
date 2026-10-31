@@ -5,9 +5,9 @@
   "branch": "f33-full-scope-harness",
   "sha": "0c2822e8faf7e83fe62769d29e52899d1d53a59f"
  },
- "mandate_id": "Claude B \u2014 #586 V2: OWNER GO-CLOSE-DEFERRED #587 (Claude A, fatto), RECHECK #589 + conditional merge; 31/10/2026",
- "next_atomic_action": "1) Attendere la decisione owner sulla sequenza (#586 c.6548951892): opzione 1 = #589 DEFERRED temporanea, PR #590 sola (owner-merge), riapertura #589 + merge di main. 2) #589: merge condizionato solo con mutation, full-suite e Merge readiness verdi. 3) Poi F-05 -> F-08 -> F-01 (patches/), merge owner.",
- "previous_checkpoint_sha": "a799d7b3db26f190659d8103e8c267c681c866a6",
+ "mandate_id": "Claude B \u2014 OWNER DECISION 31/10/2026 GITHUB ACTIONS PRIMARY / BUILDKITE DEFERRED; PREPARE #590 AND RESTORE F-33; AUTONOMOUS ROADMAP",
+ "next_atomic_action": "1) #591: seguire CI GitHub Actions e review Sol/Grok/Codex; correggere solo finding reali; dichiarare READY_FOR_OWNER_MANUAL_MERGE. 2) Dopo il merge owner di #591: aprire la PR di governance (gov-gha-primary-buildkite-deferred), merge owner. 3) Riaprire #589, merge commit di main, rerun, review; GO-MERGE condizionato solo con tutti i gate verdi. 4) Poi F-05 -> F-08 -> F-01 (patches/).",
+ "previous_checkpoint_sha": "c39d045fe2b630c32d54855cc098e88ee0cf32dd",
  "schema": "pf-current/1",
- "seq": 10
+ "seq": 11
 }
