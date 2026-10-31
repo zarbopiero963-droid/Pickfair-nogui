@@ -63,9 +63,17 @@ def test_sl_tp_trailing_group_is_executable():
     assert {"roserpina.stop_loss_pct", "roserpina.take_profit_pct", "roserpina.trailing_stop_pct"} <= keys
 
 
-@pytest.mark.xfail(strict=True, reason="F-18/F-17 (NF-16): `float(cfg or 1000.0)` in BetfairService._connect_simulation: "
-                                       "simulation.starting_balance=0 ricade in silenzio sul default 1000 (configurazione ignorata)")
 def test_starting_balance_zero_is_applied_not_replaced_by_default():
+    """Confine `starting_balance = 0`. Gli invarianti finanziari e le attese sono asseriti per primi e FUORI da
+    qualunque xfail: una loro violazione fa fallire la CI. Solo dopo, il finding noto di configurazione (F-18/F-17,
+    NF-16: `float(cfg or 1000.0)` in BetfairService._connect_simulation sostituisce 0 con 1000) e' dichiarato con
+    un xfail imperativo; quando F-18 lo corregge il ramo non e' piu' raggiunto e il test diventa verde (rilievo
+    Sol/Grok su 3873eaa: il decorator statico copriva anche le assert finanziarie)."""
     rec = C.run_case("c_esecuzione_sim", "boundary-start0", {"simulation.starting_balance": 0.0}, "entry_settle_win", seed=SEED)
-    assert rec["unmet_waits"] == [] and rec["oracle_violations"] == [], rec   # fuori dall'xfail: e' un FAIL vero
+    assert rec["unmet_waits"] == [], rec["unmet_waits"]
+    assert rec["oracle_violations"] == [], "\n".join(rec["oracle_violations"])
+    known = "simulation.starting_balance: configurato 0.0, saldo exchange"
+    if rec["applied_problems"] and all(p.startswith(known) for p in rec["applied_problems"]):
+        pytest.xfail("F-18/F-17 (NF-16): `float(cfg or 1000.0)` in BetfairService._connect_simulation: "
+                     "simulation.starting_balance=0 ricade in silenzio sul default 1000 (configurazione ignorata)")
     assert rec["applied_problems"] == [], rec["applied_problems"]
