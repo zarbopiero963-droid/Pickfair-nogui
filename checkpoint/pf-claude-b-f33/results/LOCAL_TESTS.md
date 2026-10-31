@@ -6,3 +6,4 @@ Ripristino: `git am patches/<area>/*` su main 6fa29b2.
 - `7876d64` — F-05 mutation cashout_executor+core.runtime_controller: **PASS** — GATE PASS, f05_* killed
 - `73c3da7` — #590 mutation scripts.pr_full_suite_pipeline: **PASS** — 8/8 killed
 - `7876d64` — F-05 regressione mirata dopo il fix (catalogo, f05, f026, cashout, guardrails, acceptance) -n 4: **PASS** — 2510 passed
+- `212d299` — F-05 tests/guardrails + tests/scripts -n 4: **PASS** — 3758 passed

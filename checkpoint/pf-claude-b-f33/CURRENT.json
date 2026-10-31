@@ -6,8 +6,8 @@
   "sha": "0c2822e8faf7e83fe62769d29e52899d1d53a59f"
  },
  "mandate_id": "Claude B \u2014 #586 V2: F-33 conditional merge (#589), CONTINUE F-05 LOCAL, #590 prepared; owner 31/10/2026",
- "next_atomic_action": "1) #589: a full-suite (Buildkite build 51) e Merge readiness conclusi, risolvere i 13 thread Codex (tutti corretti) e pubblicare CLAUDE_PR_FINAL_CERTIFICATION; merge solo se overlap-check verde (dipende da #587). 2) F-05 locale (wt-f05 o `git am patches/f05/*` su main 6fa29b2): docs (docs/ dominio cashout), CHANGELOG, allowed_scope task key; nessun push/PR finche' F-33 non e' mergiata. 3) #590: PR owner-merge quando autorizzata (`git am patches/590/*`). 4) Poi F-08 -> F-01.",
- "previous_checkpoint_sha": "da7e531123fa4590e4ec70ccc51e91151f230b76",
+ "next_atomic_action": "1) #589: merge (GO condizionato) solo quando overlap-check, full-suite e mutation sono verdi sullo stesso head; altrimenti attendere #587/VPS/#590. 2) F-05: PR solo dopo il merge di F-33 (`git am patches/f05/*` su main), merge owner. 3) #590: PR owner-merge su autorizzazione. 4) F-08 -> F-01: Phase 0 locale.",
+ "previous_checkpoint_sha": "5430d1a642447163a7f6ceed8ab4f0e4bf957630",
  "schema": "pf-current/1",
- "seq": 4
+ "seq": 5
 }

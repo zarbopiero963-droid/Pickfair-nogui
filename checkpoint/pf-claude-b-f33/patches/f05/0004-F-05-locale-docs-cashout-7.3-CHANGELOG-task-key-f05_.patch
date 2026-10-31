@@ -1,0 +1,110 @@
+From 212d29960d903a5ec456143d6681453af0a361b5 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 31 Oct 2026 19:30:08 +0000
+Subject: [PATCH 4/4] =?UTF-8?q?F-05=20(locale):=20docs=20cashout=20=C2=A77?=
+ =?UTF-8?q?.3,=20CHANGELOG,=20task=20key=20f05=5Fcashout=5Fhedge=5Fledger?=
+ =?UTF-8?q?=20in=20allowed=5Fscope?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013X2mCWMDdw1fWuS8vQ5yep
+---
+ .guardrails/allowed_scope.json | 20 ++++++++++++++++++++
+ CHANGELOG.md                   |  9 +++++++++
+ docs/cashout_overview.md       | 27 +++++++++++++++++++++++++++
+ 3 files changed, 56 insertions(+)
+
+diff --git a/.guardrails/allowed_scope.json b/.guardrails/allowed_scope.json
+index ee10df8..b93076b 100644
+--- a/.guardrails/allowed_scope.json
++++ b/.guardrails/allowed_scope.json
+@@ -3098,6 +3098,26 @@
+         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
+       ],
+       "max_files": 14
++    },
++    "f05_cashout_hedge_ledger": {
++      "description": "F-05 (#586, CSH-06 P0, GO owner 31/10/2026 CONTINUE F-05 LOCAL): l'hedge del cashout e' scritto nel ledger orders (write-ahead HEDGE_PENDING + esito HEDGE_*, ref hedge:), consumer di attribuzione al tavolo che escludono i ref hedge:, identita' I1 che include la bet dell'hedge. Finanziaria critica: merge owner.",
++      "allow_tests": true,
++      "files": [
++        ".guardrails/allowed_scope.json",
++        "CHANGELOG.md",
++        "cashout_executor.py",
++        "cashout_wiring.py",
++        "core/hedge_ref.py",
++        "core/runtime_controller.py",
++        "docs/cashout_overview.md",
++        "guardrails/mutation_catalog.json",
++        "headless_main.py",
++        "mini_gui.py",
++        "tests/f05/__init__.py",
++        "tests/f05/test_f05_hedge_ledger.py",
++        "tests/f05/test_f05_hedge_ledger_units.py"
++      ],
++      "max_files": 13
+     }
+   }
+ }
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 0431004..5fde7a0 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+ 
+ ## [Unreleased]
+ 
++### Fixed
++- **F-05 (#586, CSH-06 P0) — l'hedge del cashout e' scritto nel ledger `orders`:** `CashoutExecutor` (con
++  `ledger=db` da `cabla_catena_cashout`) scrive la riga dell'hedge PRIMA dell'invio (`HEDGE_PENDING`, ref `hedge:`)
++  e la aggiorna con l'esito (`HEDGE_PLACED/UNMATCHED/FAILED/AMBIGUOUS`); ledger non scrivibile => nessun hedge.
++  Gli stati `HEDGE_*` restano fuori dagli ordini aperti (nessun tavolo fantasma, nessun PAUSED); settlement e
++  posizione singola escludono i ref `hedge:` (nessun doppio P&L); l'identita' I1 include la bet dell'hedge
++  (daily-loss LIVE, nessun secondo hedge della stessa posizione). `core/hedge_ref.py`; test `tests/f05/`;
++  mutazioni `f05_*`; `docs/cashout_overview.md` §7.3.
++
+ ### Changed
+ - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
+   - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
+diff --git a/docs/cashout_overview.md b/docs/cashout_overview.md
+index bfe0c52..5e41f1d 100644
+--- a/docs/cashout_overview.md
++++ b/docs/cashout_overview.md
+@@ -407,6 +407,33 @@ ripiazzata. Limite noto: il broker SIM non verifica i fondi su nessuna corsia
+ del `MASTER_CASHOUT` ai follower reali (il flag `sim` è catturato al piazzamento,
+ non riletto dopo, per evitare uno switch SIM/LIVE in volo).
+ 
++### 7.3 L'hedge nel ledger `orders` (F-05, CSH-06)
++
++Prima di F-05 l'hedge del cashout passava da `OrderRouter` senza alcuna riga nel ledger `orders`: il denaro si
++muoveva sull'exchange ma il bot non lo contabilizzava (daily-loss LIVE cieco sull'hedge, secondo cashout LIVE che
++poteva ricoprire la stessa posizione). Da F-05 `CashoutExecutor`, costruito con `ledger=db` da
++`cabla_catena_cashout` (headless e GUI):
++
++1. assegna all'hedge un `customer_ref` proprio, `hedge:` + 26 esadecimali (32 caratteri), inviato al broker;
++2. **prima dell'invio** scrive la riga `orders` in stato `HEDGE_PENDING` (write-ahead), con payload
++   `role="HEDGE"`, `order_origin="CASHOUT_HEDGE"`, mercato/selezione/lato/prezzo/stake, `green_up`,
++   `cashout_request_id`, **senza** `event_key`/`table_id`/`batch_id`. Se la riga non si scrive, l'hedge NON parte
++   (`CASHOUT_FAILED` `REJECTED`, `ledger_write_failed`);
++3. aggiorna la stessa riga con l'esito: `HEDGE_PLACED` (abbinato), `HEDGE_UNMATCHED` (a riposo), `HEDGE_FAILED`
++   (rifiutato), `HEDGE_AMBIGUOUS` (esito ignoto: mai retry). Un aggiornamento fallito lascia la riga
++   `HEDGE_PENDING` e un log CRITICAL; l'esito pubblicato resta quello reale.
++
++Gli stati `HEDGE_*` non sono mai `INFLIGHT/SUBMITTED/AMBIGUOUS`: de-dup dell'engine, riconciliazione all'avvio e
++rebuild dei tavoli (F018) non li vedono (nessun tavolo fantasma, nessun avvio in PAUSED). I consumer che attribuiscono
++un ordine a un tavolo (`_resolve_market_settlement`, `_single_bet_position`) escludono i ref `hedge:`
++(`core.hedge_ref.is_hedge_order_ref`): l'hedge non e' un secondo ingresso e il P&L del mercato si contabilizza una
++volta. L'identita' I1 (`Database.get_bot_active_orders`) invece include la bet dell'hedge: il daily-loss LIVE la
++vede, e ingresso + hedge sulla stessa selezione formano una posizione MISTA che il router non ricopre.
++
++Limite noto: dopo un crash fra la riga write-ahead e l'invio resta una riga `HEDGE_PENDING` senza betId (prima non
++restava nulla); la riconciliazione automatica di queste righe contro `listCurrentOrders` e' un follow-up.
++Test: `tests/f05/` (unita' e HeadlessApp reale in SIM), mutazioni `f05_*` in `guardrails/mutation_catalog.json`.
++
+ ---
+ 
+ ## 8. Limiti noti & possibili aggiunte (follow-up)
+-- 
+2.43.0
+

@@ -1,7 +1,7 @@
 From 59b05ae425ea3c0a94a186e9d6fefcadb1cd9b7e Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 31 Oct 2026 18:36:14 +0000
-Subject: [PATCH 2/3] =?UTF-8?q?F-05=20(WIP=20locale):=20hedge=20del=20cash?=
+Subject: [PATCH 2/4] =?UTF-8?q?F-05=20(WIP=20locale):=20hedge=20del=20cash?=
  =?UTF-8?q?out=20nel=20ledger=20orders=20=E2=80=94=20write-ahead,=20esiti,?=
  =?UTF-8?q?=20consumer=20filtrati?=
 MIME-Version: 1.0

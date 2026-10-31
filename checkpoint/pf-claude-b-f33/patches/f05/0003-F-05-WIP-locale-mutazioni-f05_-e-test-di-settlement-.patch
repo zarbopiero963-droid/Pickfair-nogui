@@ -1,7 +1,7 @@
 From 7876d647e0d2e0670bc71962d1093d486e53c476 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 31 Oct 2026 18:37:54 +0000
-Subject: [PATCH 3/3] F-05 (WIP locale): mutazioni f05_* e test di settlement
+Subject: [PATCH 3/4] F-05 (WIP locale): mutazioni f05_* e test di settlement
  del mercato hedgiato
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
