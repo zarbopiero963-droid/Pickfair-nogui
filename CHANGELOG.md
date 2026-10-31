@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **F-05 (#586, CSH-06 P0) — l'hedge del cashout e' scritto nel ledger `orders`:** `CashoutExecutor` (con
+  `ledger=db` da `cabla_catena_cashout`) scrive la riga dell'hedge PRIMA dell'invio (`HEDGE_PENDING`, ref `hedge:`)
+  e la aggiorna con l'esito (`HEDGE_PLACED/UNMATCHED/FAILED/AMBIGUOUS`); ledger non scrivibile => nessun hedge.
+  Gli stati `HEDGE_*` restano fuori dagli ordini aperti (nessun tavolo fantasma, nessun PAUSED); settlement e
+  posizione singola escludono i ref `hedge:` (nessun doppio P&L); l'identita' I1 include la bet dell'hedge
+  (daily-loss LIVE, nessun secondo hedge della stessa posizione). `core/hedge_ref.py`; test `tests/f05/`;
+  mutazioni `f05_*`; `docs/cashout_overview.md` §7.3.
+
 ### Changed
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
   - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
