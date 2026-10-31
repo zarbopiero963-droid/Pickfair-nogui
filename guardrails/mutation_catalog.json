@@ -318,12 +318,36 @@
       "rationale": "Esito ignoto dell'hedge riportato come fallimento (ritentabile)."
     },
     {
+      "id": "f05_duplicate_request_hedged_twice",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "                return \"duplicate_cashout_request\"",
+      "mutated": "                return \"\"",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05: lo stesso comando di cashout ripetuto piazza un secondo hedge (esposizione opposta raddoppiata)."
+    },
+    {
+      "id": "f05_pending_hedge_not_recovered",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            if row[\"status\"] != _hedge.HEDGE_PENDING:",
+      "mutated": "            if True:",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05: hedge in volo al crash resta PENDING senza riconciliazione dopo il riavvio."
+    },
+    {
       "id": "f05_hedge_not_written_ahead",
       "module": "cashout_executor",
       "area": "cashout",
       "file": "cashout_executor.py",
-      "original": "                    ledger_id = self._ledger_write_ahead(place_payload, payload)",
-      "mutated": "                    ledger_id = None",
+      "original": "                        ledger_id = self._ledger_write_ahead(place_payload, payload)",
+      "mutated": "                        ledger_id = None",
       "tests": [
         "tests/f05/test_f05_hedge_ledger_units.py"
       ],

@@ -144,3 +144,81 @@ def test_hedge_bet_is_part_of_the_bot_identity_and_makes_the_position_mixed(db):
                 "averagePriceMatched": 1.8, "sizeRemaining": 0.0, "priceSize": {"price": 1.8, "size": 3.33}}]
     positions = reconstruct_open_positions(current, is_bot_order=lambda r: r.get("betId") in bot)
     assert positions == [], f"posizione hedgiata riaperta al cashout: {positions}"
+
+
+# ------------------------------------------------------------------ idempotenza e riavvio (F-05, owner 31/10/2026)
+
+def test_same_cashout_request_never_hedges_twice(db):
+    bus, router = _run(db, _ok())
+    bus2, router2 = _Bus(), _Router(db, _ok(bet_id="CB2"))
+    CashoutExecutor(bus2, router2, ledger=db).on_cmd_execute_cashout(_cmd())
+    assert router2.calls == [], "secondo hedge per lo stesso comando"
+    failed = [p for t, p in bus2.published if t == CASHOUT_FAILED]
+    assert failed[0]["reason"] == "duplicate_cashout_request" and failed[0]["status"] == "REJECTED"
+    assert len(_rows(db)) == 1
+
+
+def test_failed_hedge_can_be_retried_with_the_same_request(db):
+    _run(db, {"placed": False, "error": "MARKET_SUSPENDED"})
+    bus, router = _run(db, _ok())
+    assert len(router.calls) == 1 and CASHOUT_SUCCESS in bus.topics(), "un hedge mai piazzato non blocca"
+
+
+def test_uncertain_hedge_blocks_a_new_hedge_on_the_same_selection(db):
+    _run(db, {"placed": True, "order_unknown": True, "matched": 0.0})        # HEDGE_AMBIGUOUS
+    bus, router = _run(db, _ok(), cashout_request_id="req-2")
+    assert router.calls == [] and [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == [
+        "hedge_outcome_uncertain"]
+    bus3, router3 = _run(db, _ok(), cashout_request_id="req-3", selection_id=77)   # altra selezione: consentito
+    assert len(router3.calls) == 1
+
+
+def test_unreadable_ledger_means_no_hedge(db, monkeypatch):
+    def boom(*_a, **_k):
+        raise RuntimeError("database is locked")
+    monkeypatch.setattr(db, "_execute", boom)
+    bus, router = _run(db, _ok())
+    assert router.calls == [] and [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == [
+        "ledger_read_failed"]
+
+
+def test_crash_between_write_ahead_and_outcome_is_ambiguous_after_restart(db):
+    """Crash simulato: la riga write-ahead resta HEDGE_PENDING (l'hedge PUO' essere sull'exchange). Al riavvio
+    l'executor la marca HEDGE_AMBIGUOUS; un nuovo cashout della stessa selezione e' rifiutato (mai retry)."""
+    class _CrashRouter(_Router):
+        def place(self, payload):
+            raise SystemExit("processo ucciso durante l'invio")
+
+    with pytest.raises(SystemExit):
+        CashoutExecutor(_Bus(), _CrashRouter(db), ledger=db).on_cmd_execute_cashout(_cmd())
+    assert [r["status"] for r in _rows(db)] == [H.HEDGE_PENDING]
+    restarted = CashoutExecutor(_Bus(), _Router(db, _ok()), ledger=db)
+    restarted.wire()
+    rows = _rows(db)
+    assert [r["status"] for r in rows] == [H.HEDGE_AMBIGUOUS]
+    assert db.load_pending_customer_refs() == [], "l'hedge ambiguo non diventa un ingresso aperto"
+    bus = _Bus()
+    router = _Router(db, _ok())
+    CashoutExecutor(bus, router, ledger=db).on_cmd_execute_cashout(_cmd(cashout_request_id="req-after-restart"))
+    assert router.calls == [] and [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == [
+        "hedge_outcome_uncertain"]
+
+
+def test_concurrent_duplicate_commands_place_exactly_one_hedge(db):
+    import threading
+    bus = _Bus()
+    router = _Router(db, _ok())
+    ex = CashoutExecutor(bus, router, ledger=db)
+    barrier = threading.Barrier(8)
+
+    def go():
+        barrier.wait()
+        ex.on_cmd_execute_cashout(_cmd())
+
+    threads = [threading.Thread(target=go) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(router.calls) == 1, f"{len(router.calls)} hedge per lo stesso comando"
+    assert len(_rows(db)) == 1

@@ -43,8 +43,10 @@ già nel payload ``CASHOUT_FAILED``).
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import math
+import threading
 import time
 import uuid
 from typing import Any, Callable, Dict, Optional
@@ -72,6 +74,8 @@ class CashoutExecutor:
         # F-05 (CSH-06): ledger `orders` del bot (Database). Con il ledger l'hedge e' scritto PRIMA dell'invio
         # (write-ahead) e aggiornato con l'esito; senza (doppi di test) il comportamento resta quello di prima.
         self.ledger = ledger
+        # controllo d'idempotenza + write-ahead atomici rispetto ai worker concorrenti del bus
+        self._ledger_lock = threading.Lock()
         self.order_router = order_router
         self.safety_layer = safety_layer
         self.authority_check = authority_check
@@ -90,8 +94,72 @@ class CashoutExecutor:
             return "runtime_authority_check_failed"
 
     def wire(self) -> None:
-        """Sottoscrive il consumer di ``CMD_EXECUTE_CASHOUT`` al bus."""
+        """Sottoscrive il consumer di ``CMD_EXECUTE_CASHOUT`` al bus (dopo il recupero delle righe hedge in volo)."""
+        self.recover_pending_hedges()
         self.bus.subscribe(CMD_EXECUTE_CASHOUT, self.on_cmd_execute_cashout)
+
+    def recover_pending_hedges(self) -> int:
+        """F-05: righe ``HEDGE_PENDING`` di un processo precedente (crash fra il write-ahead e l'esito) => l'hedge
+        PUO' essere sull'exchange: ``HEDGE_AMBIGUOUS`` (esito ignoto, mai retry, riconciliazione manuale). Da quel
+        momento nessun nuovo hedge sulla stessa selezione (vedi ``_hedge_block``). Ritorna quante righe ha marcato."""
+        if self.ledger is None:
+            return 0
+        try:
+            rows = self._hedge_rows()
+        except Exception:  # noqa: BLE001 - ledger illeggibile: i comandi successivi saranno rifiutati comunque
+            logger.critical("[CashoutExecutor] righe hedge non leggibili all'avvio", exc_info=True)
+            return 0
+        marked = 0
+        for row in rows:
+            if row["status"] != _hedge.HEDGE_PENDING:
+                continue
+            try:
+                self.ledger.update_order(row["id"], {"status": _hedge.HEDGE_AMBIGUOUS, "updated_at": time.time(),
+                                                     "ambiguity_reason": "restart_before_outcome"})
+                marked += 1
+            except Exception:  # noqa: BLE001 - resta PENDING: per _hedge_block e' comunque un esito incerto
+                logger.critical("[CashoutExecutor] hedge %s non marcabile AMBIGUOUS", row["customer_ref"], exc_info=True)
+        if marked:
+            logger.critical("[CashoutExecutor] %d hedge con esito ignoto dopo il riavvio: riconciliazione richiesta",
+                            marked)
+        return marked
+
+    def _hedge_rows(self) -> list:
+        rows = self.ledger._execute(
+            "SELECT id, customer_ref, status, payload_json FROM orders WHERE customer_ref LIKE 'hedge:%'",
+            fetch=True, commit=False) or []
+        out = []
+        for raw in rows:
+            row = dict(raw)
+            try:
+                payload = json.loads(row.get("payload_json") or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            out.append({"id": str(row.get("id")), "customer_ref": str(row.get("customer_ref") or ""),
+                        "status": str(row.get("status") or ""), "payload": payload if isinstance(payload, dict) else {}})
+        return out
+
+    def _hedge_block(self, payload: Dict[str, Any]) -> str:
+        """Idempotenza dell'hedge (F-05). '' se si puo' procedere, altrimenti il motivo del rifiuto:
+        - stessa ``cashout_request_id`` gia' con un hedge non fallito => duplicato, mai un secondo hedge;
+        - un hedge con esito incerto (PENDING/AMBIGUOUS) sulla stessa selezione => nessun nuovo hedge finche' non e'
+          riconciliato (esito ignoto: mai retry);
+        - ledger illeggibile => rifiuto (fail-closed)."""
+        try:
+            rows = self._hedge_rows()
+        except Exception:  # noqa: BLE001
+            logger.exception("[CashoutExecutor] ledger hedge illeggibile: nessun hedge")
+            return "ledger_read_failed"
+        request_id = self._request_identity(payload).get("cashout_request_id")
+        market, selection = str(payload.get("market_id", "")), str(payload.get("selection_id", ""))
+        for row in rows:
+            p, status = row["payload"], row["status"]
+            if request_id and p.get("cashout_request_id") == request_id and status != _hedge.HEDGE_FAILED:
+                return "duplicate_cashout_request"
+            if (status in (_hedge.HEDGE_PENDING, _hedge.HEDGE_AMBIGUOUS)
+                    and str(p.get("market_id", "")) == market and str(p.get("selection_id", "")) == selection):
+                return "hedge_outcome_uncertain"
+        return ""
 
     def on_cmd_execute_cashout(self, payload: Dict[str, Any]) -> None:
         """Esegue un singolo comando di cashout, fail-closed end-to-end."""
@@ -140,13 +208,18 @@ class CashoutExecutor:
                 return
             ledger_id = None
             if self.ledger is not None:
-                place_payload["customer_ref"] = _hedge.new_hedge_ref()
-                try:
-                    ledger_id = self._ledger_write_ahead(place_payload, payload)
-                except Exception as exc:  # noqa: BLE001 - hedge non registrabile => nessun hedge (fail-closed)
-                    logger.exception("[CashoutExecutor] hedge non registrabile nel ledger: nessun invio")
-                    self._fail(f"ledger_write_failed:{exc}", status="REJECTED", payload=payload)
-                    return
+                with self._ledger_lock:
+                    block = self._hedge_block(payload)
+                    if block:
+                        self._fail(block, status="REJECTED", payload=payload)
+                        return
+                    place_payload["customer_ref"] = _hedge.new_hedge_ref()
+                    try:
+                        ledger_id = self._ledger_write_ahead(place_payload, payload)
+                    except Exception as exc:  # noqa: BLE001 - hedge non registrabile => nessun hedge (fail-closed)
+                        logger.exception("[CashoutExecutor] hedge non registrabile nel ledger: nessun invio")
+                        self._fail(f"ledger_write_failed:{exc}", status="REJECTED", payload=payload)
+                        return
             try:
                 result = self.order_router.place(place_payload)
             except Exception as exc:  # noqa: BLE001 - esito ignoto => fail-closed
