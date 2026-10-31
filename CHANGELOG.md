@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+- **#590 — guard credenziali Telegram della lane `w5-telegram-live-sim` fail-open:** `env | grep -q "^TG_"` sotto
+  `pipefail` non fermava la lane con credenziali `TG_*` presenti (SIGPIPE, 141). Ora `if compgen -e TG_ >/dev/null`
+  (builtin, nessuna pipe); test con 2000 variabili d'ambiente (0 mancati su 40, FAIL su main); mutazione
+  `fsp_m2_telegram_creds_allowed` allineata.
+
 ### Changed
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
   - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
