@@ -45,8 +45,11 @@ from __future__ import annotations
 import contextlib
 import logging
 import math
+import time
+import uuid
 from typing import Any, Callable, Dict, Optional
 
+from core import hedge_ref as _hedge
 from core.trading_constants import (
     CASHOUT_FAILED,
     CASHOUT_SUCCESS,
@@ -63,8 +66,12 @@ class CashoutExecutor:
 
     def __init__(self, bus: Any, order_router: Any, safety_layer: Optional[Any] = None,
                  authority_check: Optional[Callable[[], str]] = None,
-                 authority_operation: Optional[Callable[[], Any]] = None) -> None:
+                 authority_operation: Optional[Callable[[], Any]] = None,
+                 ledger: Optional[Any] = None) -> None:
         self.bus = bus
+        # F-05 (CSH-06): ledger `orders` del bot (Database). Con il ledger l'hedge e' scritto PRIMA dell'invio
+        # (write-ahead) e aggiornato con l'esito; senza (doppi di test) il comportamento resta quello di prima.
+        self.ledger = ledger
         self.order_router = order_router
         self.safety_layer = safety_layer
         self.authority_check = authority_check
@@ -131,13 +138,25 @@ class CashoutExecutor:
             if authority_block:
                 self._fail(authority_block, status="REJECTED", payload=payload)
                 return
+            ledger_id = None
+            if self.ledger is not None:
+                place_payload["customer_ref"] = _hedge.new_hedge_ref()
+                try:
+                    ledger_id = self._ledger_write_ahead(place_payload, payload)
+                except Exception as exc:  # noqa: BLE001 - hedge non registrabile => nessun hedge (fail-closed)
+                    logger.exception("[CashoutExecutor] hedge non registrabile nel ledger: nessun invio")
+                    self._fail(f"ledger_write_failed:{exc}", status="REJECTED", payload=payload)
+                    return
             try:
                 result = self.order_router.place(place_payload)
             except Exception as exc:  # noqa: BLE001 - esito ignoto => fail-closed
+                self._ledger_outcome(ledger_id, _hedge.HEDGE_AMBIGUOUS, None, f"place_exception:{exc}")
                 self._fail(f"place_exception:{exc}", status="ERROR", payload=payload)
                 return
 
-            self._handle_result(result if isinstance(result, dict) else {}, payload, sim)
+            result = result if isinstance(result, dict) else {}
+            self._ledger_outcome(ledger_id, self._ledger_status(result), result, None)
+            self._handle_result(result, payload, sim)
 
     @classmethod
     def _enforce_hard_invariants(cls, payload: Dict[str, Any]) -> None:
@@ -186,6 +205,45 @@ class CashoutExecutor:
             "market_name": str(payload.get("market_name", "")),
             "runner_name": str(payload.get("runner_name", "")),
         }
+
+    def _ledger_write_ahead(self, place_payload: Dict[str, Any], payload: Dict[str, Any]) -> str:
+        """Riga `orders` dell'hedge PRIMA dell'invio. Nessun ``event_key``/``table_id``/``batch_id``: l'hedge non e'
+        un ingresso e non occupa tavoli. Stato ``HEDGE_PENDING``, fuori dalle letture degli ordini aperti."""
+        request = {k: v for k, v in place_payload.items() if k not in ("event_key", "table_id", "batch_id")}
+        request.update({"role": _hedge.HEDGE_ROLE, "order_origin": _hedge.HEDGE_ORIGIN,
+                        "green_up": self._as_float(payload.get("green_up")),
+                        **self._request_identity(payload)})
+        now = time.time()
+        return self.ledger.insert_order({"customer_ref": place_payload["customer_ref"],
+                                         "correlation_id": str(uuid.uuid4()), "status": _hedge.HEDGE_PENDING,
+                                         "payload": request, "created_at": now, "updated_at": now})
+
+    def _ledger_outcome(self, ledger_id: Optional[str], status: str, result: Optional[Dict[str, Any]],
+                        error: Optional[str]) -> None:
+        """Esito dell'hedge sulla sua riga. Un aggiornamento fallito NON annulla l'esito (l'hedge e' gia' sull'exchange):
+        la riga resta ``HEDGE_PENDING`` e lo si segnala come CRITICAL."""
+        if ledger_id is None:
+            return
+        update: Dict[str, Any] = {"status": status, "updated_at": time.time()}
+        if result is not None:
+            update["response"] = result
+        if error:
+            update["last_error"] = error
+        if status == _hedge.HEDGE_AMBIGUOUS:
+            update["ambiguity_reason"] = error or "order_unknown"
+        try:
+            self.ledger.update_order(ledger_id, update)
+        except Exception:  # noqa: BLE001 - l'esito resta valido; la riga write-ahead resta come traccia
+            logger.critical("[CashoutExecutor] esito dell'hedge non scritto nel ledger (riga %s resta %s)",
+                            ledger_id, _hedge.HEDGE_PENDING, exc_info=True)
+
+    def _ledger_status(self, result: Dict[str, Any]) -> str:
+        # stessa classificazione di _handle_result (ignoto => ambiguo, mai fallito)
+        if bool(result.get("order_unknown")):
+            return _hedge.HEDGE_AMBIGUOUS
+        if not result.get("placed"):
+            return _hedge.HEDGE_FAILED
+        return _hedge.HEDGE_PLACED if self._as_float(result.get("matched")) > 0.0 else _hedge.HEDGE_UNMATCHED
 
     def _handle_result(self, result: Dict[str, Any], payload: Dict[str, Any],
                        sim: bool = False) -> None:

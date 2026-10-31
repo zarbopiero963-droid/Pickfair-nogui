@@ -55,6 +55,7 @@ def cabla_catena_cashout(
     microstake_executor_provider: Callable[[], Any] | None = None,
     runtime_authority_check: Callable[[], str] | None = None,
     runtime_authority_operation: Callable[[], Any] | None = None,
+    ledger: Any = None,
 ) -> CatenaCashout:
     """Sottoscrive al ``bus`` la catena di esecuzione + residuo del cashout.
 
@@ -88,7 +89,8 @@ def cabla_catena_cashout(
     order_router = OrderRouter(betfair_service, microstake_executor_provider=microstake_executor_provider)
     cashout_executor = CashoutExecutor(bus, order_router, safety_layer=SafetyLayer(),
                                        authority_check=runtime_authority_check,
-                                       authority_operation=runtime_authority_operation)
+                                       authority_operation=runtime_authority_operation,
+                                       ledger=ledger)            # F-05: hedge scritto nel ledger `orders`
     cashout_executor.wire()
 
     cashout_request_bridge = CashoutRequestBridge(bus)
