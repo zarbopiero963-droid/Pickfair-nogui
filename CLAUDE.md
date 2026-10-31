@@ -431,6 +431,8 @@ l'esclusione safety-critical che valeva fino alla #468.
 1. Head stabile; scope valido; accettazione completa; suite richiesta PASS;
    hard verify PASS (test hard PASS+BLOCK realmente eseguiti).
 2. Tutti i check current-head SETTLED e verdi (check-completion gate passato);
+   CI di riferimento GitHub Actions: gli status Buildkite differiti non sono gate (OWNER DECISION
+   31/10/2026, spec §0.11); il check run `overlap-check` di GitHub Actions resta obbligatorio;
    Merge Readiness PASS, letta fail-closed (§0.11).
 3. GPT-6.1 Sol e Grok 4.7 settled sul head corrente senza bloccanti (§0.7);
    Codex triagiato; zero thread irrisolti; nessun rilievo
