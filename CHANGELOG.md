@@ -12,7 +12,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **F-01 (#586, CSH-01/CSH-10/NF-06 P0 latente) — P&L del monitor SL/TP:** netto liquidabile in Decimal con la
   funzione del cashout (`core/sl_tp_pnl.py`): prezzo di chiusura dal book, stake reale del LAY (non la
   liability), commissione sul netto. Prima il BACK aveva il segno invertito e si usava `lastPriceTraded`. Il monitor
-  resta inerte fino a F-02. `docs/cashout_overview.md` §7.3; test `tests/core/test_sl_tp_pnl_sign.py`;
+  resta inerte fino a F-02. `docs/cashout_overview.md` §7.4; test `tests/core/test_sl_tp_pnl_sign.py`;
   mutazioni `f01_*`; `hard_verify_issue_320.py` (C1) allineato al book.
 
 ### Changed

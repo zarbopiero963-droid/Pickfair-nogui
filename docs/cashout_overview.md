@@ -407,7 +407,7 @@ ripiazzata. Limite noto: il broker SIM non verifica i fondi su nessuna corsia
 del `MASTER_CASHOUT` ai follower reali (il flag `sim` è catturato al piazzamento,
 non riletto dopo, per evitare uno switch SIM/LIVE in volo).
 
-### 7.3 P&L del monitor SL/TP (F-01, CSH-01/CSH-10)
+### 7.4 P&L del monitor SL/TP (F-01, CSH-01/CSH-10)
 
 `RuntimeController._monitor_sl_tp_trailing` (inerte fino a F-02: nessuna sorgente SL/TP nei meta dei tavoli)
 confronta SL/TP con il **netto liquidabile** della posizione (decisione owner #426 c.6112703848), calcolato da
