@@ -1,6 +1,6 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 99,
+ "seq": 100,
  "updated_at": "2026-10-30T09:33:09Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "789475fab4ec18dff177bad3ca5577434450e6fd",
+ "previous_checkpoint_sha": "2bde7fd6207415f2cbba463a696ba308f07f6538",
  "lotto_corrente": "PF-TRUSTED-DISPATCHER-IMPLEMENTATION-01 (#562): una sola PR, configurazione obbligatoria fail-closed, nessun merge prima dei gate e del merge owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -1529,5 +1529,6 @@
    "equivalent": 5,
    "tmp": "tmpfs /dev/shm 3970 MiB"
   }
- }
+ },
+ "checkpoint_repair_note_20261031": "Commit di riconciliazione di claude-b (31/10/2026): il commit 2bde7fd aveva aggiunto per errore la directory checkpoint/pf-claude-b-f33 su questo branch, rendendo non valida la verifica parent/seq di questa directory sul HEAD. Rimossa la directory (spostata su agent-state/pf-claude-b); qui cambiano SOLO seq 99->100 e previous_checkpoint_sha. Contenuto, next_atomic_action, blocchi e autorizzazioni di Claude A invariati."
 }
