@@ -14,7 +14,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   e la aggiorna con l'esito (`HEDGE_PLACED/UNMATCHED/FAILED/AMBIGUOUS`); ledger non scrivibile => nessun hedge.
   Gli stati `HEDGE_*` restano fuori dagli ordini aperti (nessun tavolo fantasma, nessun PAUSED); settlement e
   posizione singola escludono i ref `hedge:` (nessun doppio P&L); l'identita' I1 include la bet dell'hedge
-  (daily-loss LIVE, nessun secondo hedge della stessa posizione). `core/hedge_ref.py`; test `tests/f05/`;
+  (daily-loss LIVE, nessun secondo hedge della stessa posizione). Hedge idempotente (stessa richiesta o esito
+  incerto sulla selezione => rifiuto) e riavvio dopo crash (`HEDGE_PENDING` => `HEDGE_AMBIGUOUS`). `core/hedge_ref.py`; test `tests/f05/`;
   mutazioni `f05_*`; `docs/cashout_overview.md` §7.3.
 
 ### Changed

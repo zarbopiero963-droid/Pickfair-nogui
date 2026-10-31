@@ -430,8 +430,15 @@ un ordine a un tavolo (`_resolve_market_settlement`, `_single_bet_position`) esc
 volta. L'identita' I1 (`Database.get_bot_active_orders`) invece include la bet dell'hedge: il daily-loss LIVE la
 vede, e ingresso + hedge sulla stessa selezione formano una posizione MISTA che il router non ricopre.
 
-Limite noto: dopo un crash fra la riga write-ahead e l'invio resta una riga `HEDGE_PENDING` senza betId (prima non
-restava nulla); la riconciliazione automatica di queste righe contro `listCurrentOrders` e' un follow-up.
+**Idempotenza.** Prima del write-ahead, sotto un lock (i worker del bus sono concorrenti), l'executor rifiuta con
+`REJECTED`: `duplicate_cashout_request` se la stessa `cashout_request_id` ha gia' un hedge non `HEDGE_FAILED`;
+`hedge_outcome_uncertain` se sulla stessa selezione c'e' un hedge `HEDGE_PENDING`/`HEDGE_AMBIGUOUS` (esito ignoto:
+mai retry); `ledger_read_failed` se il ledger non si legge. Un hedge `HEDGE_FAILED` (mai piazzato) non blocca.
+
+**Riavvio dopo un crash.** `CashoutExecutor.wire()` marca `HEDGE_AMBIGUOUS` (`ambiguity_reason=restart_before_outcome`)
+ogni riga `HEDGE_PENDING` del processo precedente: l'hedge puo' essere sull'exchange, quindi riconciliazione manuale,
+nessun nuovo hedge sulla selezione e nessun ingresso aperto fantasma. Limite residuo: la riconciliazione AUTOMATICA
+di queste righe contro `listCurrentOrders` (LIVE non riporta il `customerOrderRef`) e' un follow-up.
 Test: `tests/f05/` (unita' e HeadlessApp reale in SIM), mutazioni `f05_*` in `guardrails/mutation_catalog.json`.
 
 ---
