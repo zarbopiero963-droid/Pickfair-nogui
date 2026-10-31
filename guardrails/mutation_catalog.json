@@ -330,6 +330,42 @@
       "rationale": "OWNER DECISION 31/10/2026: l'esenzione Buildkite si estende ai CheckRun, quindi anche all'overlap-check di GitHub Actions (fail-open sul required)."
     },
     {
+      "id": "gov_buildkite_deferred_any_host",
+      "module": "scripts.pr_automation_controller",
+      "area": "trusted_gate",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "    return host == \"buildkite.com\" or host.endswith(\".buildkite.com\")\n",
+      "mutated": "    return True\n",
+      "tests": [
+        "tests/scripts/test_buildkite_deferred.py"
+      ],
+      "rationale": "OWNER DECISION 31/10/2026 Buildkite differito: Status omonimo con target non Buildkite escluso dalla readiness: un blocker reale sparirebbe."
+    },
+    {
+      "id": "gov_buildkite_deferred_controller_waits",
+      "module": "scripts.pr_automation_controller",
+      "area": "trusted_gate",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "            if is_pending(check) and not is_self_check(check) and not is_deferred_buildkite_status(check)]\n",
+      "mutated": "            if is_pending(check) and not is_self_check(check)]\n",
+      "tests": [
+        "tests/scripts/test_buildkite_deferred.py"
+      ],
+      "rationale": "OWNER DECISION 31/10/2026 Buildkite differito: Il controller resta in attesa della lane Buildkite sospesa (review Claude A su 2cdfe8a)."
+    },
+    {
+      "id": "gov_buildkite_deferred_flow_branch",
+      "module": "scripts.pr_flow_automation",
+      "area": "trusted_gate",
+      "file": "scripts/pr_flow_automation.py",
+      "original": "        if is_deferred_buildkite_status(raw):\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/scripts/test_buildkite_deferred.py"
+      ],
+      "rationale": "OWNER DECISION 31/10/2026 Buildkite differito: Il gate di readiness torna a trattare gli status Buildkite differiti come blocker/pending."
+    },
+    {
       "id": "cashout_unmatched_as_success",
       "module": "cashout_executor",
       "area": "cashout",

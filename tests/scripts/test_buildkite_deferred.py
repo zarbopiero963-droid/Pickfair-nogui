@@ -67,3 +67,12 @@ def test_single_source_and_controller_path_agree():
     assert [c.get("context") or c.get("name") for c in kept] == ["overlap-check", "tests"]
     for c in checks:
         assert flow.is_deferred_buildkite_status(c) == controller.is_deferred_buildkite_status(c)
+
+
+def test_controller_pending_wait_ignores_deferred_buildkite_statuses():
+    """Review Claude A su 2cdfe8a: anche l'attesa del controller (`wait_for_pending_checks`) non deve aspettare la
+    lane sospesa; un pending reale (CheckRun di Actions) resta in attesa."""
+    pr = {"statusCheckRollup": [_status("full-suite", "PENDING"), _status("pr-merge-readiness", "PENDING"),
+                                _run("tests", conclusion=None) | {"status": "IN_PROGRESS"}]}
+    names = [c.get("name") or c.get("context") for c in controller.pending_checks_from_pr(pr)]
+    assert names == ["tests"]

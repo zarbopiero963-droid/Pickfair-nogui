@@ -3269,7 +3269,9 @@ def write_decision(output_path: str, decision: dict[str, Any]) -> int:
 
 def pending_checks_from_pr(pr: dict[str, Any]) -> list[dict[str, Any]]:
     checks = pr.get("statusCheckRollup") or []
-    return [compact_check(check) for check in checks if is_pending(check) and not is_self_check(check)]
+    # la lane Buildkite sospesa non e' un gate: il controller non la aspetta (OWNER DECISION 31/10/2026)
+    return [compact_check(check) for check in checks
+            if is_pending(check) and not is_self_check(check) and not is_deferred_buildkite_status(check)]
 
 
 def store_pending_report(decision: dict[str, Any], pending: list[dict[str, Any]]) -> None:
