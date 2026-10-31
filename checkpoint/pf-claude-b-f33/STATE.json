@@ -1,16 +1,16 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 3,
+ "seq": 4,
  "mandate_id": "Claude B — #586 V2: F-33 conditional merge (#589), CONTINUE F-05 LOCAL, #590 prepared; owner 31/10/2026",
- "previous_checkpoint_sha": "53ce5770f53b3e1dc56662a8415333265a5f1f6f",
+ "previous_checkpoint_sha": "da7e531123fa4590e4ec70ccc51e91151f230b76",
  "code": {
   "branch": "f33-full-scope-harness",
   "sha": "0c2822e8faf7e83fe62769d29e52899d1d53a59f",
   "patch": {
    "head": "0c2822e8faf7e83fe62769d29e52899d1d53a59f",
    "tree": "cfaee1ad9aa86d6bdee3fec3568af0085e701c67",
-   "captured_at": "2026-10-31T18:50:13+00:00",
+   "captured_at": "2026-10-31T18:50:48+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -114,30 +114,6 @@
    "status": "PASS",
    "sha": "e655a5b1d94d6584161d46e35777b284ed54b237",
    "result": "4249 passed"
-  },
-  {
-   "name": "F-05 suite completa -n 4 (wt-f05)",
-   "status": "FAIL",
-   "sha": "59b05ae",
-   "result": "10647 passed, 1 failed (guardrail catalogo mutation, riga ambigua) su 59b05ae; corretto in 7876d64"
-  },
-  {
-   "name": "F-05 mutation cashout_executor+core.runtime_controller",
-   "status": "PASS",
-   "sha": "7876d64",
-   "result": "GATE PASS, f05_* killed"
-  },
-  {
-   "name": "#590 mutation scripts.pr_full_suite_pipeline",
-   "status": "PASS",
-   "sha": "73c3da7",
-   "result": "8/8 killed"
-  },
-  {
-   "name": "F-05 regressione mirata dopo il fix (catalogo, f05, f026, cashout, guardrails, acceptance) -n 4",
-   "status": "PASS",
-   "sha": "7876d64",
-   "result": "2510 passed"
   }
  ],
  "tests_missing": [
@@ -165,7 +141,28 @@
  },
  "agent": {
   "last_writer": "claude-b",
-  "lease_status_at_write": "FREE"
+  "lease_status_at_write": "MINE"
  },
- "checkpoint_location_note": "Checkpoint di Claude B su agent-state/pf-claude-b (directory checkpoint/pf-claude-b-f33). Il seq 1 era stato scritto per errore anche su agent-state/pf-full-delivery (2bde7fd), riparato con f40c5f3 (seq 100 di Claude A, contenuto invariato)."
+ "checkpoint_location_note": "Checkpoint di Claude B su agent-state/pf-claude-b (directory checkpoint/pf-claude-b-f33). Il seq 1 era stato scritto per errore anche su agent-state/pf-full-delivery (2bde7fd), riparato con f40c5f3 (seq 100 di Claude A, contenuto invariato).",
+ "local_work": {
+  "note": "commit solo locali (push/PR F-05 vietati fino al merge di F-33; #590 PR in attesa dell'owner): codice in patches/, esiti in results/LOCAL_TESTS.md. Non verificabili sul remoto finche' non pubblicati.",
+  "f05": {
+   "branch": "f05-hedge-ledger",
+   "base": "6fa29b2",
+   "commits": [
+    "b7adb5c",
+    "59b05ae",
+    "7876d64"
+   ],
+   "patches": "patches/f05"
+  },
+  "590": {
+   "branch": "fix-590-tg-guard-sigpipe",
+   "base": "6fa29b2",
+   "commits": [
+    "73c3da7"
+   ],
+   "patches": "patches/590"
+  }
+ }
 }
