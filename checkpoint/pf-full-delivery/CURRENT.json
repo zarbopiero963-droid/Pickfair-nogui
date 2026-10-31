@@ -6,8 +6,8 @@
   "sha": "a1f60abe09ea316b601e23beeb8b7c5463d03738"
  },
  "mandate_id": "OWNER FINAL MANDATE \u2014 chiusura Buildkite/CI/recovery #562/#578 (P0 replay, P0 readiness prematura, P1, PR-A/B/C2)",
- "next_atomic_action": "PF562_FINAL_UNBLOCK_STATUS pubblicato su #562 (c.6519558156). #587 head a1f60ab (workflow 1.9.1 ed4ce84f..., scope +3 dichiarato): Sol/Grok VALID_PASS, Codex nessun finding. Aperti: 1) operatore VPS esegue PF562_VPS_UNBLOCK.sh (comandi nel rapporto); 2) owner commenta '/pf-trusted-rerun a1f60ab...' poi verifica BK 52/52 con bk_observe; 3) deroghe Grok preparate per i 2 range (no altri tentativi: done marker); 4) merge owner #587; 5) PR self-block preparata (scratchpad PF562_SELF_BLOCK_PR_PLAN.md), solo dopo #587 con GO. NO merge, NO LIVE.",
- "previous_checkpoint_sha": "2bde7fd6207415f2cbba463a696ba308f07f6538",
+ "next_atomic_action": "STANDBY (owner 31/10): #587 Draft, head a1f60ab invariato; label WAITING_VPS_GROK inesistente (non creata). Rapporto #562 c.6546403324. Eccezione owner: 2 PR aperte #587 + #589 (Claude B, F-33; non toccare). Riattivazione: Grok esegue PF562_VPS_UNBLOCK.sh -> appimagetool 1.9.1 + dispatcher -> #587 ready + owner /pf-trusted-rerun <head> -> BK 52/52 -> ricertificazione + deroghe Grok owner + merge owner. NO merge/bypass/LIVE.",
+ "previous_checkpoint_sha": "f40c5f3cd7515ae6250f804f4dbf827bfff93a41",
  "schema": "pf-current/1",
- "seq": 100
+ "seq": 101
 }
