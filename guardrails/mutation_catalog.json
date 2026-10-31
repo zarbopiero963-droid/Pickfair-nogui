@@ -6596,6 +6596,18 @@
       "rationale": "PF-562 PR-A (Sol su #584): build superata riletta comunque; un errore di lettura copre con pending l'esito della suite successiva."
     },
     {
+      "id": "fsp_m2_telegram_guard_sigpipe",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            'if compgen -e TG_ >/dev/null; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
+      "mutated": "            'if env | grep -q \"^TG_\"; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "#590: reintroduce la pipe `env | grep -q` (SIGPIPE sotto pipefail => guard fail-open con le credenziali presenti). Suggerita da Claude A."
+    },
+    {
       "id": "fsp_m2_telegram_creds_allowed",
       "module": "scripts.pr_full_suite_pipeline",
       "area": "trusted_dispatcher",
