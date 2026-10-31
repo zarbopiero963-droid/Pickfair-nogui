@@ -3117,6 +3117,16 @@
         "docs/ci_m2_migration.md"
       ],
       "max_files": 12
+    },
+    "fix-590-tg-guard-sigpipe": {
+      "description": "#590 (sicurezza, fail-open) / #591: il fix del guard credenziali Telegram (compgen -e TG_), il suo test, la mutazione e le docs sono stati assorbiti dalla #592 (cherry-pick testuale di 73c3da7/d8c512b, merge owner 986bebd). Residuo di questa PR, ESTENSIONE DICHIARATA (GO owner 31/10/2026 «PR #591 FINALIZATION», riallineamento owner «FINALIZE #592 AND RESUME ROADMAP V2»): tests/unit/test_runtime_controller_direct_ttl_poller.py, helper del gate TTL indipendente dall'uptime del runner (flake di test-core-components), nessun codice di produzione; voce CHANGELOG.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "tests/unit/test_runtime_controller_direct_ttl_poller.py"
+      ],
+      "max_files": 3
     }
   }
 }

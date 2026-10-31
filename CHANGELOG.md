@@ -13,6 +13,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `pipefail` non fermava la lane con credenziali `TG_*` presenti (SIGPIPE, 141). Ora `if compgen -e TG_ >/dev/null`
   (builtin, nessuna pipe); test con 2000 variabili d'ambiente (0 mancati su 40, FAIL su main); mutazione
   `fsp_m2_telegram_creds_allowed` allineata; nuova `fsp_m2_telegram_guard_sigpipe` (reintroduce la pipe: uccisa).
+- **Test TTL poller indipendente dall'uptime del runner (#591, GO owner):** l'helper di
+  `tests/unit/test_runtime_controller_direct_ttl_poller.py` azzerava il gate con `0.0`, ma `time.monotonic()` e'
+  l'uptime: su un runner acceso da meno di 30 s il poll non partiva e 6 test fallivano in modo intermittente
+  (`test-core-components`). Ora `float("-inf")`; nuovo `test_poll_runs_on_a_freshly_booted_runner`. Nessuna
+  asserzione sul TTL cambiata, nessun codice di produzione toccato.
 
 ### Changed
 - **Governance CI — GitHub Actions primario, Buildkite differito (OWNER DECISION 31/10/2026, #586):** la merge
