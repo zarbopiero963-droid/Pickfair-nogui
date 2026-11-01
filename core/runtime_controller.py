@@ -2676,8 +2676,8 @@ class RuntimeController:
 
             # 2. Riconciliazione batch aperti
             batches = self.reconciliation_engine.reconcile_all_open_batches()
-            if not self._startup_recovery_failure and (not isinstance(batches, dict) or batches.get("ok") is not True):
-                failed = batches.get("failed_count") if isinstance(batches, dict) else type(batches).__name__
+            failed = self._startup_batch_failures(batches)
+            if not self._startup_recovery_failure and failed:
                 self._startup_recovery_failure = f"OPEN_BATCH_RECONCILIATION_FAILED:{failed}"
         except Exception as exc:
             logger.exception("Errore durante la fase di recovery/reconcile")
@@ -6440,6 +6440,24 @@ class RuntimeController:
             return rebuild
         return dict(rebuild, ok=False, recovery_state_unreadable=True,
                     reason="RECOVERY_STATE_UNREADABLE" if rebuild.get("ok") else rebuild.get("reason"))
+
+    @staticmethod
+    def _startup_batch_failures(summary: Any) -> Any:
+        """F-09 (REC-08): batch aperti NON riconciliati all'avvio (0 = tutti riconciliati).
+
+        Codex P1 su f21943f: `reconcile_all_open_batches` conta in ``failed`` solo le eccezioni; un
+        `reconcile_batch` che restituisce ``ok=False`` senza sollevare (fetch fallito, RECONCILE_ALREADY_RUNNING,
+        BATCH_NOT_FOUND, audit non persistito) finisce in ``reconciled`` con il riepilogo ``ok=True``. Si contano
+        quindi anche i singoli esiti: ogni voce di ``reconciled`` che non e' un dict con ``ok is True``. Riepilogo
+        illeggibile => il nome del tipo (fail-closed)."""
+        if not isinstance(summary, dict) or not isinstance(summary.get("reconciled", []), list):
+            return type(summary).__name__
+        failed = summary.get("failed_count")
+        failed = failed if isinstance(failed, int) and not isinstance(failed, bool) and failed >= 0 else 1
+        not_ok = sum(1 for r in summary.get("reconciled", []) if not (isinstance(r, dict) and r.get("ok") is True))
+        if summary.get("ok") is not True and not (failed or not_ok):
+            return 1
+        return failed + not_ok
 
     def _gate_rebuild_on_startup_recovery(self, rebuild: dict) -> dict:
         """F-09 (RST-01/REC-08): fase recovery/reconcile dell'avvio non riuscita = riconciliazione incompleta. Stesso

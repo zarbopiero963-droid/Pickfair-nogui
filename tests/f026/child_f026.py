@@ -119,6 +119,15 @@ try:
             def _boom(self):
                 raise RuntimeError("STATE_RECOVERY_DOWN_TEST")
             StateRecovery.recover = _boom
+        elif fault == "batch_result_not_ok":
+            # Codex P1 su f21943f: forma di ritorno di produzione, reconcile_all_open_batches REALE; il singolo
+            # reconcile_batch restituisce ok=False senza sollevare (il riepilogo resta ok=True, failed_count=0)
+            from core.dutching_batch_manager import DutchingBatchManager
+            _open_batches, _one = DutchingBatchManager.get_open_batches, ReconciliationEngine.reconcile_batch
+            DutchingBatchManager.get_open_batches = lambda self: [{"batch_id": "F09-B1", "status": "OPEN"}]
+            ReconciliationEngine.reconcile_batch = lambda self, batch_id: {
+                "ok": False, "batch_id": batch_id, "reason_code": "FETCH_PERMANENT_FAILURE",
+                "error": "FETCH_PERMANENT_FAILURE"}
         elif fault == "batches_failed":
             ReconciliationEngine.reconcile_all_open_batches = lambda self: {
                 "ok": False, "reconciled_count": 0, "failed_count": 1, "reconciled": [],
@@ -126,6 +135,8 @@ try:
     R["start"] = str(rt.start(simulation_mode=True, execution_mode="SIM"))[:200]
     if fault:
         StateRecovery.recover, ReconciliationEngine.reconcile_all_open_batches = _rec, _batches
+        if fault == "batch_result_not_ok":
+            DutchingBatchManager.get_open_batches, ReconciliationEngine.reconcile_batch = _open_batches, _one
     R["mode_after_start"] = getattr(rt.mode, "value", str(rt.mode))
     R["rebuild"] = dict(getattr(rt, "_last_position_rebuild", None) or {})
     if json.loads(SCEN).get("exchange_down_at_start"):

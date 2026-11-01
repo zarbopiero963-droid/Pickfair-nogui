@@ -455,12 +455,24 @@
       "module": "core.runtime_controller",
       "area": "recovery",
       "file": "core/runtime_controller.py",
-      "original": "            if not self._startup_recovery_failure and (not isinstance(batches, dict) or batches.get(\"ok\") is not True):",
+      "original": "            if not self._startup_recovery_failure and failed:",
       "mutated": "            if False:",
       "tests": [
         "tests/f09/test_f09_recover_gating.py"
       ],
       "rationale": "F-09 (REC-08): batch aperti non riconciliati all'avvio, runtime ACTIVE."
+    },
+    {
+      "id": "f09_batch_result_not_ok_ignored",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "        not_ok = sum(1 for r in summary.get(\"reconciled\", []) if not (isinstance(r, dict) and r.get(\"ok\") is True))",
+      "mutated": "        not_ok = 0",
+      "tests": [
+        "tests/f09/test_f09_recover_gating.py"
+      ],
+      "rationale": "F-09 (Codex P1 su f21943f): reconcile_batch ok=False senza eccezione non conta come batch non riconciliato."
     },
     {
       "id": "f09_recovery_exception_swallowed",

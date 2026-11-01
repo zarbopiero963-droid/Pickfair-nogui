@@ -28,7 +28,7 @@ stessa semantica della ricostruzione F018 (`_gate_rebuild_on_startup_recovery`).
 |---|---|
 | `recover()` restituisce `ok` diverso da `True` (o non un dict) | `STATE_RECOVERY_NOT_OK:<reason>` |
 | `recover()` o la riconciliazione dei batch sollevano | `STATE_RECOVERY_ERROR:<tipo eccezione>` |
-| `reconcile_all_open_batches()` con `ok` diverso da `True` | `OPEN_BATCH_RECONCILIATION_FAILED:<failed_count>` |
+| batch aperti non riconciliati: eccezioni (`failed_count`) **piu'** singoli esiti `ok` diverso da `True` in `reconciled` (`reconcile_batch` non solleva su fetch fallito, `RECONCILE_ALREADY_RUNNING`, `BATCH_NOT_FOUND`...) | `OPEN_BATCH_RECONCILIATION_FAILED:<numero>` |
 
 Il payload riporta sempre `startup_mode` di `recover()` (`LIVE_FLAT`, `LIVE_WITH_RECOVERED_GHOSTS`, `BLOCKED`).
 `resume()` **non** scavalca il blocco: `recover()` ripubblica le saghe pendenti (`RECOVER_ORDER`), quindi non viene
