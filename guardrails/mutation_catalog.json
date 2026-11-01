@@ -7742,8 +7742,8 @@
       "module": "cashout_executor",
       "area": "cashout",
       "file": "cashout_executor.py",
-      "original": "                    or _hedge.is_hedge_order_ref(order.get(\"customerOrderRef\") or order.get(\"customer_ref\"))):",
-      "mutated": "                    or False):",
+      "original": "            if side == pos_side and is_hedge:\n                continue",
+      "mutated": "            if False:\n                continue",
       "tests": [
         "tests/f06/test_f06_hedge_guard.py"
       ],
@@ -7796,6 +7796,42 @@
         "tests/f06/test_f06_hedge_guard.py"
       ],
       "rationale": "F-06: risposta ordini malformata letta come esposizione misurata (fail-open o crash)."
+    },
+    {
+      "id": "f06_opposite_matched_ignored",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            net += matched * price if side == pos_side else -matched * price",
+      "mutated": "            net += matched * price if side == pos_side else 0.0",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06 (Sol su a16f0d3): abbinato sul lato opposto ignorato, coppia neutra o hedge abbinato allargano l'hedge."
+    },
+    {
+      "id": "f06_exchange_widens_identified_position",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            notional = min(identified, net)",
+      "mutated": "            notional = net",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06 (Sol su a16f0d3): altri ingressi dello stesso lato allargano l'hedge oltre la posizione identificata."
+    },
+    {
+      "id": "f06_identified_size_unchecked",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "        if not math.isfinite(identified) or identified <= 0.0:\n            return \"hedge_non_coerente:posizione_assente\"",
+      "mutated": "        if False:\n            return \"hedge_non_coerente:posizione_assente\"",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06: posizione del comando senza stake/prezzo leggibili accettata."
     }
   ]
 }

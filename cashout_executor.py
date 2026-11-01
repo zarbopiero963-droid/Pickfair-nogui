@@ -302,31 +302,35 @@ class CashoutExecutor:
     def _hedge_coherence_block(self, payload: Dict[str, Any]) -> str:
         """F-06 (#586 CSH-05, MM-02): '' se l'hedge chiude la posizione, altrimenti ``hedge_non_coerente:<motivo>``.
 
-        La posizione e' ``original_pos`` (lato) e la sua esposizione ABBINATA sull'exchange
-        (``fetch_current_orders``: ordini non-hedge sulla stessa selezione e sullo stesso lato, ``sizeMatched`` per
-        prezzo medio abbinato): l'exchange, non il payload, misura cio' che va chiuso. Ordini illeggibili o in errore
-        => ``posizione_non_verificabile`` (nessun hedge). Senza sorgente (doppi di test) l'esposizione e' quella
-        dichiarata in ``original_pos``: la coerenza si verifica comunque, mai saltata. Il verdetto e'
-        `RiskGate.protective_hedge` (nessun cap di stake, solo lato e size)."""
+        La posizione da chiudere e' quella IDENTIFICATA dal comando, ``original_pos`` (lato, stake, prezzo:
+        ``cashout_resolver`` la ricava dagli ordini del bot). L'exchange la limita dall'alto: esposizione NETTA della
+        selezione (``fetch_current_orders``): ordini non-hedge del lato della posizione meno TUTTO l'abbinato sul lato
+        opposto, hedge compresi, ``sizeMatched`` per prezzo medio abbinato. Il tetto e' il minore dei due: altri
+        ingressi dello stesso lato (manuali, altri tavoli) non allargano mai l'hedge e una chiusura gia' abbinata lo
+        riduce (Sol su a16f0d3). Ordini illeggibili o in errore => ``posizione_non_verificabile`` (nessun hedge).
+        Senza sorgente (doppi di test) vale ``original_pos``: la coerenza si verifica comunque, mai saltata. Il
+        verdetto e' `RiskGate.protective_hedge` (nessun cap di stake, solo lato e size)."""
         from core.risk_gate import RiskGate
         orig = payload.get("original_pos")
         pos_side = str(orig.get("side") or "").strip().upper() if isinstance(orig, dict) else ""
         if pos_side not in self._VALID_SIDES:
             return "hedge_non_coerente:posizione_assente"
-        if self.fetch_current_orders is None:
-            notional = self._as_float(orig.get("stake")) * self._as_float(orig.get("price"))
-            notional = notional if math.isfinite(notional) else float("nan")
-        else:
-            notional = self._matched_notional(payload, pos_side)
-            if notional is None:
+        identified = self._as_float(orig.get("stake")) * self._as_float(orig.get("price"))
+        if not math.isfinite(identified) or identified <= 0.0:
+            return "hedge_non_coerente:posizione_assente"
+        notional = identified
+        if self.fetch_current_orders is not None:
+            net = self._matched_notional(payload, pos_side)
+            if net is None:
                 return "hedge_non_coerente:posizione_non_verificabile"
+            notional = min(identified, net)
         verdict = RiskGate.protective_hedge(position_side=pos_side, hedge_side=payload.get("side"),
                                             hedge_stake=payload.get("stake"), hedge_price=payload.get("price"),
                                             matched_notional=notional)
         return "" if verdict.get("allowed") is True else str(verdict.get("reason") or "hedge_non_coerente")
 
     def _matched_notional(self, payload: Dict[str, Any], pos_side: str) -> Optional[float]:
-        """Somma ``sizeMatched * prezzo medio abbinato`` degli ordini non-hedge della posizione; None se non leggibile."""
+        """Esposizione netta abbinata della selezione sul lato ``pos_side``; None se gli ordini non sono leggibili."""
         try:
             current = self.fetch_current_orders()
         except Exception:  # noqa: BLE001 - ordini correnti illeggibili => posizione non verificabile
@@ -335,13 +339,16 @@ class CashoutExecutor:
         if not isinstance(current, (list, tuple)) or any(not isinstance(order, dict) for order in current):
             return None                                 # risposta malformata: esposizione non misurabile
         market, selection = str(payload.get("market_id", "")), str(payload.get("selection_id", ""))
-        notional = 0.0
+        net = 0.0
         for order in current:
+            side = str(order.get("side") or "").upper()
             if (str(order.get("marketId") or order.get("market_id") or "") != market
                     or str(order.get("selectionId") or order.get("selection_id") or "") != selection
-                    or str(order.get("side") or "").upper() != pos_side
-                    or _hedge.is_hedge_order_ref(order.get("customerOrderRef") or order.get("customer_ref"))):
+                    or side not in self._VALID_SIDES):
                 continue
+            is_hedge = _hedge.is_hedge_order_ref(order.get("customerOrderRef") or order.get("customer_ref"))
+            if side == pos_side and is_hedge:
+                continue                                # un hedge non e' mai esposizione da chiudere
             matched = self._as_float(order.get("sizeMatched", order.get("size_matched")))
             if not math.isfinite(matched) or matched < 0.0:
                 return None
@@ -355,8 +362,8 @@ class CashoutExecutor:
                 price = self._as_float(price_size.get("price"))
             if not math.isfinite(price) or price <= 1.0:
                 return None
-            notional += matched * price
-        return notional
+            net += matched * price if side == pos_side else -matched * price
+        return net
 
     @classmethod
     def _enforce_hard_invariants(cls, payload: Dict[str, Any]) -> None:

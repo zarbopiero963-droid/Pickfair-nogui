@@ -490,11 +490,14 @@ BACK la raddoppia; un LAY 50 su una posizione da 0.23 apre una nuova esposizione
   - lato della posizione da `original_pos` (`cashout_resolver` lo mette sempre); assente/invalido =>
     `hedge_non_coerente:posizione_assente`;
   - lato dell'hedge = opposto della posizione, altrimenti `hedge_non_coerente:lato`;
-  - esposizione ABBINATA misurata sull'exchange (`BetfairService.list_current_orders`, che in LIVE riporta anche gli
-    ordini `EXECUTION_COMPLETE`): somma di `sizeMatched * averagePriceMatched` (se <= 1: `priceSize.price`, come
-    `cashout_resolver._row_matched_price`) degli
-    ordini non-hedge sulla stessa selezione e sullo stesso lato; esposizione nulla => `posizione_assente`; ordini
-    illeggibili, malformati o in errore => `hedge_non_coerente:posizione_non_verificabile`;
+  - posizione da chiudere = quella IDENTIFICATA dal comando (`original_pos`: stake x prezzo, illeggibile =>
+    `posizione_assente`), limitata dall'alto dall'esposizione NETTA della selezione sull'exchange
+    (`BetfairService.list_current_orders`, che in LIVE riporta anche gli ordini `EXECUTION_COMPLETE`): ordini non-hedge
+    del lato della posizione meno tutto l'abbinato del lato opposto (hedge compresi), `sizeMatched * averagePriceMatched`
+    (se <= 1: `priceSize.price`, come `cashout_resolver._row_matched_price`). Vale il minore dei due: altri ingressi
+    dello stesso lato (manuali, altri tavoli) non allargano mai l'hedge, una coppia gia' neutra non conta e una chiusura
+    gia' abbinata lo riduce (Sol su `a16f0d3`). Esposizione nulla => `posizione_assente`; ordini illeggibili,
+    malformati o in errore => `hedge_non_coerente:posizione_non_verificabile`;
   - stake dell'hedge <= `esposizione / prezzo_hedge + 0.005` (confronto esatto in Decimal: il mezzo centesimo e'
     il massimo che l'arrotondamento ROUND_HALF_UP del resolver aggiunge), altrimenti `hedge_non_coerente:size`. Un
     secondo arrotondamento su un float rifiutava green-up legittimi al confine (0.35 x 11.0 / 4.4 = 0.875 => 0.88
@@ -504,8 +507,8 @@ BACK la raddoppia; un LAY 50 su una posizione da 0.23 apre una nuova esposizione
     si salta mai.
 
 Esempio: BACK 0.23 abbinato a 2.0 (esposizione 0.46), chiusura a 1.8 => hedge LAY massimo 0.26; LAY 50 => rifiuto.
-Limite: l'esposizione somma tutti gli ordini non-hedge della selezione sullo stesso lato (anche di piu' tavoli o
-manuali): e' un tetto superiore, non l'esposizione del singolo tavolo. Test: `tests/f06/`; mutazioni `f06_*`.
+Limite: ordini manuali del lato opposto sulla stessa selezione riducono il netto e possono far rifiutare il green-up
+del bot (fail-closed: mai un hedge oltre l'esposizione reale). Test: `tests/f06/`; mutazioni `f06_*`.
 
 ---
 

@@ -22,7 +22,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **F-06 (#586, CSH-05/MM-02/NF-01) — hedge del cashout coerente con la posizione:** l'executor piazzava qualunque
   lato/size del comando (hedge dello stesso lato o oltre l'esposizione = nuova esposizione) e il middleware defaultava
   il lato a LAY. Ora lato mancante => rifiuto; hedge dello stesso lato o con stake oltre la chiusura dell'esposizione
-  ABBINATA sull'exchange => `CASHOUT_FAILED` `REJECTED` `hedge_non_coerente:*` (`RiskGate.protective_hedge`, nessun
+  NETTA della selezione sull'exchange (mai oltre la posizione del comando) => `CASHOUT_FAILED` `REJECTED` `hedge_non_coerente:*` (`RiskGate.protective_hedge`, nessun
   cap di stake). `docs/cashout_overview.md` §7.5; test `tests/f06/`; mutazioni `f06_*`.
 - **F-10 (#586, RST-03 P0) — debito di recovery dopo un crash:** crash con il mercato gia' CLOSED (LOSS) nel broker
   e prima di `RUNTIME_CLOSE_POSITION`: al riavvio il settlement SIM non trovava il tavolo e restava `held`, la perdita
