@@ -2,12 +2,12 @@
  "certification_verdict": "NOT VERIFIED",
  "checkpoint_commit": null,
  "code": {
-  "branch": "f05-hedge-ledger",
-  "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05"
+  "branch": "f01-sltp-pnl",
+  "sha": "aa184a2886201c3113d229410e19b5ea436aa6b3"
  },
  "mandate_id": "Claude B \u2014 OWNER DIRECTIVE GOVERNANCE AUTO-MERGE CERTIFICATO + ROADMAP V2",
  "next_atomic_action": "1) #596 F-01 READY_FOR_OWNER_MANUAL_MERGE @aa184a2 (GHA verde, Sol/Grok/Codex puliti, 0 thread, fix loop 3/10): attendere merge owner. 2) Dopo il merge: verificare CI post-merge su main. 3) Poi F-10, quindi F-06, una PR alla volta (auto-merge certificato #595 solo se idonea). Debito: max_files 43->44 della task key F-33 alla prossima PR che tocca il registro.",
- "previous_checkpoint_sha": "1a193ace1314264f62954a98eac45783f309ad57",
+ "previous_checkpoint_sha": "51d5352e828e78026603bd171ff283d7c0249103",
  "schema": "pf-current/1",
- "seq": 16
+ "seq": 17
 }

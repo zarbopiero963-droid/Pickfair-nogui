@@ -36,7 +36,8 @@
   "#586 OWNER_DECISION_GITHUB_ACTIONS_PRIMARY_BUILDKITE_DEFERRED c.6549283349",
   "seq 12: #591 chiusa DEFERRED_GOVERNANCE_DEPENDENCY (branch fix-590-tg-guard-sigpipe 0d1f466 preservato); #592 governance aperta head 990b99d con audit Claude A integrato (pending_checks_from_pr); readiness su 990b99d: Buildkite full-suite/overlap-check ignored deferred, pending vuoto; thread Codex PRRT_kwDORumVCM6yVDZ0 risolto con evidenza; blocco residuo: mutation-lanes rosse per fsp_* INCONCLUSIVE (#590 non su main) -> decisione owner #586 c.6549919101",
   "seq 14: #592 merged owner 986bebd; #591 riallineata e merged owner b2c0947; F-33 #589 GO-MERGE condizionato 8de659b; F-05 PR #593 READY_FOR_OWNER_MANUAL_MERGE @84fd4f7 (fix loop 3/10, 11027 passed, mutation 15/15)",
-  "seq 16: #593 F-05 merged 71ff2ab, #594 F-08 merged 1eed2fd, #595 governance merged bb8d028; #596 F-01 aperta, fix loop 3/10 (abfd2ed 1.01+profondita', f1de646 livelli al proprio prezzo, e52018c/aa184a2 TP su profitto garantito), READY_FOR_OWNER_MANUAL_MERGE c.6558690366; #586 c.6558691367"
+  "seq 16: #593 F-05 merged 71ff2ab, #594 F-08 merged 1eed2fd, #595 governance merged bb8d028; #596 F-01 aperta, fix loop 3/10 (abfd2ed 1.01+profondita', f1de646 livelli al proprio prezzo, e52018c/aa184a2 TP su profitto garantito), READY_FOR_OWNER_MANUAL_MERGE c.6558690366; #586 c.6558691367",
+  "seq 17: rettifica del seq 16 (51d5352, readback fallito: code.sha del branch F-05 cancellato); code = f01-sltp-pnl @aa184a2"
  ],
  "lotto_corrente": "PR #596 F-01 (f01-sltp-pnl @aa184a2) unica PR aperta, READY_FOR_OWNER_MANUAL_MERGE; #593 F-05, #594 F-08, #595 governance mergiate.",
  "mandate_id": "Claude B \u2014 OWNER DIRECTIVE GOVERNANCE AUTO-MERGE CERTIFICATO + ROADMAP V2",
