@@ -407,6 +407,49 @@ ripiazzata. Limite noto: il broker SIM non verifica i fondi su nessuna corsia
 del `MASTER_CASHOUT` ai follower reali (il flag `sim` è catturato al piazzamento,
 non riletto dopo, per evitare uno switch SIM/LIVE in volo).
 
+### 7.3 L'hedge nel ledger `orders` (F-05, CSH-06)
+
+Prima di F-05 l'hedge del cashout passava da `OrderRouter` senza alcuna riga nel ledger `orders`: il denaro si
+muoveva sull'exchange ma il bot non lo contabilizzava (daily-loss LIVE cieco sull'hedge, secondo cashout LIVE che
+poteva ricoprire la stessa posizione). Da F-05 `CashoutExecutor`, costruito con `ledger=db` da
+`cabla_catena_cashout` (headless e GUI):
+
+1. assegna all'hedge un `customer_ref` proprio, `hedge:` + 26 esadecimali (32 caratteri), inviato al broker;
+2. **prima dell'invio** scrive la riga `orders` in stato `HEDGE_PENDING` (write-ahead), con payload
+   `role="HEDGE"`, `order_origin="CASHOUT_HEDGE"`, mercato/selezione/lato/prezzo/stake, `green_up`,
+   `cashout_request_id`, **senza** `event_key`/`table_id`/`batch_id`. Se la riga non si scrive, l'hedge NON parte
+   (`CASHOUT_FAILED` `REJECTED`, `ledger_write_failed`);
+3. aggiorna la stessa riga con l'esito: `HEDGE_PLACED` (abbinato), `HEDGE_UNMATCHED` (a riposo), `HEDGE_FAILED`
+   (rifiutato), `HEDGE_AMBIGUOUS` (esito ignoto: mai retry). Un aggiornamento fallito lascia la riga
+   `HEDGE_PENDING` e un log CRITICAL; l'esito pubblicato resta quello reale.
+
+Gli stati `HEDGE_*` non sono mai `INFLIGHT/SUBMITTED/AMBIGUOUS`: de-dup dell'engine, riconciliazione all'avvio e
+rebuild dei tavoli (F018) non li vedono (nessun tavolo fantasma, nessun avvio in PAUSED). I consumer che attribuiscono
+un ordine a un tavolo (`_resolve_market_settlement`, `_single_bet_position`) escludono i ref `hedge:`
+(`core.hedge_ref.is_hedge_order_ref`): l'hedge non e' un secondo ingresso e il P&L del mercato si contabilizza una
+volta. L'identita' I1 (`Database.get_bot_active_orders`) invece include la bet dell'hedge: il daily-loss LIVE la
+vede, e ingresso + hedge sulla stessa selezione formano una posizione MISTA che il router non ricopre.
+
+**Idempotenza.** Prima del write-ahead, sotto un lock (i worker del bus sono concorrenti), l'executor rifiuta con
+`REJECTED`: `duplicate_cashout_request` se la stessa `cashout_request_id` ha gia' un hedge non `HEDGE_FAILED`;
+`hedge_outcome_uncertain` se sulla stessa selezione c'e' un hedge `HEDGE_PENDING`/`HEDGE_AMBIGUOUS` (esito ignoto:
+mai retry); `previous_hedge_still_live` se sulla stessa selezione un hedge `HEDGE_UNMATCHED`/`HEDGE_PLACED` e' ancora
+abbinabile sull'exchange (`sizeRemaining > 0` negli ordini correnti di `BetfairService.list_current_orders`, residuo
+illeggibile o non finito = vivo): si ripunta solo dopo la cancellazione confermata del precedente (PF-EXEC-01; il
+router pubblica il nuovo hedge prima del flatten best-effort del resting); `previous_hedge_matched` se il precedente
+risulta gia' abbinato (`sizeMatched > 0` con residuo 0: `listCurrentOrders` riporta l'hedge eseguito fino al
+settlement, quindi la posizione e' gia' coperta). Si ripunta solo se l'hedge precedente e' sparito dagli ordini
+correnti o e' chiuso con abbinato 0 e residuo 0; `hedge_liveness_unverifiable` se gli ordini
+correnti non si leggono, non sono una lista di ordini ben formati (`None`, envelope, elemento non-dict, ordine senza `betId`), la fonte manca
+o l'hedge precedente non ha `bet_id`; `ledger_read_failed` se il ledger non si
+legge. Un hedge `HEDGE_FAILED` (mai piazzato) non blocca.
+
+**Riavvio dopo un crash.** `CashoutExecutor.wire()` marca `HEDGE_AMBIGUOUS` (`ambiguity_reason=restart_before_outcome`)
+ogni riga `HEDGE_PENDING` del processo precedente: l'hedge puo' essere sull'exchange, quindi riconciliazione manuale,
+nessun nuovo hedge sulla selezione e nessun ingresso aperto fantasma. Limite residuo: la riconciliazione AUTOMATICA
+di queste righe contro `listCurrentOrders` (LIVE non riporta il `customerOrderRef`) e' un follow-up.
+Test: `tests/f05/` (unita' e HeadlessApp reale in SIM), mutazioni `f05_*` in `guardrails/mutation_catalog.json`.
+
 ### 7.4 P&L del monitor SL/TP (F-01, CSH-01/CSH-10)
 
 `RuntimeController._monitor_sl_tp_trailing` (inerte fino a F-02: nessuna sorgente SL/TP nei meta dei tavoli)

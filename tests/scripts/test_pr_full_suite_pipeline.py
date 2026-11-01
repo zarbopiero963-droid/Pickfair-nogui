@@ -331,6 +331,20 @@ def test_telegram_sim_job_refuses_telegram_credentials_in_the_lane(tmp_path):
     assert "tests/integration/test_telegram_live_sim.py" in _commands("w5-telegram-live-sim")
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash assente")
+def test_telegram_guard_has_no_pipeline_and_never_misses_with_a_large_environment(tmp_path):
+    """#590: `env | grep -q "^TG_"` sotto `set -o pipefail` falliva in modo intermittente PROPRIO con le credenziali
+    presenti: grep trova la riga ed esce, env prende SIGPIPE (141) e la pipeline risulta falsa (fail-open,
+    riprodotto ~1 su 10 con un ambiente grande). Il guard non deve avere pipe e non deve mai mancare."""
+    guard = _job("w5-telegram-live-sim").commands[0]
+    assert "|" not in guard.split(";")[0], "il controllo delle credenziali non deve passare da una pipe"
+    tg_variable = "TG_BOT_" + "TOKEN"
+    big = {"PATH": "/usr/bin:/bin", tg_variable: "x"}
+    big.update({f"PF_FILLER_{i:04d}": "y" * 200 for i in range(2000)})   # output di env >> buffer di una pipe
+    misses = sum(_bash(guard, tmp_path, big).returncode != 1 for _ in range(40))
+    assert misses == 0, f"guard mancato {misses}/40 con credenziali presenti"
+
+
 @pytest.mark.skipif(shutil.which("bash") is None or shutil.which("sha256sum") is None, reason="bash assente")
 @pytest.mark.parametrize("assets,ok", [((), False), (("bin",), False), (("app",), False), (("bin", "app"), True),
                                        (("bin", "bin2", "app"), False)])

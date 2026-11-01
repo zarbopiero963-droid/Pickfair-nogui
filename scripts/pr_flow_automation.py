@@ -147,6 +147,16 @@ def is_decommissioned_codacy_check(check: dict[str, Any]) -> bool:
     return check_name(check).strip().lower() in DECOMMISSIONED_CODACY_CHECK_NAMES
 
 
+#: Status Buildkite differiti (OWNER DECISION 31/10/2026): FONTE UNICA nel controller.
+DEFERRED_BUILDKITE_STATUS_CONTEXTS = controller.DEFERRED_BUILDKITE_STATUS_CONTEXTS
+
+
+def is_deferred_buildkite_status(check: dict[str, Any]) -> bool:
+    """Status della lane Buildkite sospesa: ne' blocker ne' pending, ma riportato fra gli ignorati
+    (vedi ``pr_automation_controller.is_deferred_buildkite_status``)."""
+    return controller.is_deferred_buildkite_status(check)
+
+
 def pr_view(repo: str, pr: str) -> dict[str, Any]:
     return gh_json([
         "gh", "pr", "view", str(pr),
@@ -196,6 +206,15 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
         if is_decommissioned_codacy_check(raw):
             item["ignored"] = True
             item["decommissioned"] = True
+            ignored.append(item)
+            continue
+
+        # Buildkite e' DIFFERITO (OWNER DECISION 31/10/2026, GitHub Actions primario): i suoi status non sono gate
+        # ordinari. Restano negli ignorati (il riepilogo li dichiara se rossi), mai blocker ne' pending. Il CheckRun
+        # `overlap-check` di GitHub Actions NON rientra (identita' esatta: StatusContext + buildkite.com).
+        if is_deferred_buildkite_status(raw):
+            item["ignored"] = True
+            item["deferred"] = "buildkite"
             ignored.append(item)
             continue
 

@@ -118,3 +118,6 @@ ehthumbs.db
 # un `config.json` dentro una sottocartella di test deve restare versionabile.
 # Il modello senza segreti e' `config.example.json`.
 /config.json
+
+# F-33: artifact locali dell'harness full-scope (report requisiti, copertura combinatoria, log scenari)
+art/

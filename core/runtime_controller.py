@@ -17,6 +17,7 @@ from typing import Any, Optional
 from core import liquidity, loss_limits, validators
 from core import risk_stop as stop_rules
 from core.duplication_guard import DuplicationGuard
+from core.hedge_ref import is_hedge_order_ref
 from core.dutching_batch_manager import DutchingBatchManager
 from core.market_tracker import MarketTracker
 from core.money_management import RoserpinaMoneyManagement
@@ -5752,6 +5753,8 @@ class RuntimeController:
             row = dict(raw)
             if str(row.get("status") or "").upper() in ("FAILED", "DENIED", "DUPLICATE_BLOCKED"):
                 continue                                   # mai piazzati (anche se il filtro SQL non e' applicato)
+            if is_hedge_order_ref(row.get("customer_ref")):
+                continue                                   # F-05: hedge di cashout, non un ingresso del tavolo
             try:
                 request = json.loads(row.get("payload_json") or "{}")
             except (TypeError, ValueError, AttributeError):
@@ -5925,7 +5928,8 @@ class RuntimeController:
         event_key = str(table.get("current_event_key") or "")
         try:
             rows = self.db._execute(
-                "SELECT payload_json, status FROM orders WHERE status NOT IN ('FAILED', 'DENIED', 'DUPLICATE_BLOCKED')",
+                "SELECT customer_ref, payload_json, status FROM orders "
+                "WHERE status NOT IN ('FAILED', 'DENIED', 'DUPLICATE_BLOCKED')",
                 fetch=True, commit=False) or []
         except Exception:
             logger.exception("Settlement: ordini del bot illeggibili, nessun rilascio per mercato")
@@ -5936,6 +5940,8 @@ class RuntimeController:
             row = dict(raw)
             if str(row.get("status") or "").upper() in ("FAILED", "DENIED", "DUPLICATE_BLOCKED"):
                 continue
+            if is_hedge_order_ref(row.get("customer_ref")):
+                continue        # F-05: l'hedge ha la sua riga; il mercato hedgiato resta escluso dal registro hedge
             try:
                 p = json.loads(row.get("payload_json") or "{}")
             except (TypeError, ValueError, AttributeError):

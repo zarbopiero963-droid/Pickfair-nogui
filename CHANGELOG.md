@@ -14,8 +14,61 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   liability), commissione sul netto. Prima il BACK aveva il segno invertito e si usava `lastPriceTraded`. Il monitor
   resta inerte fino a F-02. `docs/cashout_overview.md` §7.4; test `tests/core/test_sl_tp_pnl_sign.py`;
   mutazioni `f01_*`; `hard_verify_issue_320.py` (C1) allineato al book.
+- **F-05 (#586, CSH-06 P0) — l'hedge del cashout e' scritto nel ledger `orders`:** `CashoutExecutor` (con
+  `ledger=db` da `cabla_catena_cashout`) scrive la riga dell'hedge PRIMA dell'invio (`HEDGE_PENDING`, ref `hedge:`)
+  e la aggiorna con l'esito (`HEDGE_PLACED/UNMATCHED/FAILED/AMBIGUOUS`); ledger non scrivibile => nessun hedge.
+  Gli stati `HEDGE_*` restano fuori dagli ordini aperti (nessun tavolo fantasma, nessun PAUSED); settlement e
+  posizione singola escludono i ref `hedge:` (nessun doppio P&L); l'identita' I1 include la bet dell'hedge
+  (daily-loss LIVE, nessun secondo hedge della stessa posizione). Hedge idempotente (stessa richiesta o esito
+  incerto sulla selezione => rifiuto), nessun nuovo hedge finche' il precedente sulla stessa selezione e' ancora
+  abbinabile sull'exchange (`previous_hedge_still_live`) o gia' abbinato (`previous_hedge_matched`); vivacita' non
+  verificabile o ordini correnti malformati (anche senza `betId`) = rifiuto (Sol e Grok su #593); il flag `sim` del
+  `CASHOUT_SUCCESS` e' catturato subito prima dell'invio, dopo il preflight del ledger (Codex P1 su #593) e riavvio
+  dopo crash (`HEDGE_PENDING` => `HEDGE_AMBIGUOUS`). `core/hedge_ref.py`; test `tests/f05/`;
+  mutazioni `f05_*`; `docs/cashout_overview.md` §7.3.
+### Added
+- **F-33 (#586) — harness full-scope di collaudo (solo test e tooling, GO-IMPLEMENT-LOCAL owner 29/10/2026):**
+  `tools/combi/` (inventario delle 190 chiavi censite con dominio e classe ATTIVA/LEGACY; generatore pairwise /
+  three-way greedy riproducibile con seed, vincoli, tuple non estendibili escluse, report di copertura verificato);
+  `tests/fullscope/` (tracciatore pytest dei requisiti UNVERIFIED con marker `pf_requirement` e
+  `requirements_report.json` per SHA/seed; child runner HeadlessApp reale in SIM con SIGKILL esterno al checkpoint e
+  riavvio sullo stesso HOME; netguard; oracolo Decimal indipendente; livello 1 sulle 79 chiavi persistite; scenari
+  SIM-COMBO-001, SIM-CASH-002, SIM-DUP-005, SIM-RESTART-003 con sonda RST-03). Nessun file applicativo toccato.
+  Hardening finale (owner 30/10): binding L2/L3 → runtime SIM (`combi_runner.py`: caso → settings → istanza →
+  scenario → oracolo → `combi_runs.json`), 13 mutazioni del generatore nel catalogo (area `fullscope_tooling`, 12
+  uccise + 1 equivalente documentata), riconciliazione 47→43 requisiti, test negativi dell'oracolo, nessuna attesa
+  fissa, `bus_idle` su API pubblica, netguard TCP+UDP.
+  Finding tracciati come xfail con riferimento: hedge del cashout assente dal ledger (CSH-06 → F-05), monitor SL/TP
+  inerte (→ F-01/F-02), loader fail-open su valori illeggibili/infiniti (NF-16 → F-18), `starting_balance 0` /
+  `commission_pct 0` sostituiti dal default (→ F-18/F-17). Marker nuovi in `pytest.ini`; `art/` ignorato;
+  `docs/testing/full_scope_harness.md`. Hook del tracciatore in `tests/fullscope/requirements/pytest_plugin.py`,
+  registrato dal `conftest.py` di root perché anche il controller pytest-xdist lo carichi (report aggregato con
+  `pytest -n auto ... tests`); artifact di scenario con nome allocato in creazione esclusiva (review Codex su #589).
+  Child runner: quiete del bus a callback terminati (`events.bus_drained`), metadati di book durevoli per il
+  settlement dopo il riavvio, output del child su file invece che su pipe non lette (review Codex su #589 `de1c980`).
+  Marker di checkpoint stantio rimosso prima del child; `repo_sha` del checkout eseguito (`PF_TREE`) e
+  `harness_sha` separato; oracolo riconciliato con il fill cumulativo e il prezzo medio dell'exchange per customer ref
+  (review Codex su #589 `0d9e091`).
+  Con `PF_TREE`: helper dell'harness caricati dal file accanto al child (runtime senza harness avviabile) e
+  report dei requisiti con `repo_sha` del runtime eseguito e `harness_sha` separato (review Codex su #589 `31d5364`).
+
+### Security
+- **#590 — guard credenziali Telegram della lane `w5-telegram-live-sim` fail-open:** `env | grep -q "^TG_"` sotto
+  `pipefail` non fermava la lane con credenziali `TG_*` presenti (SIGPIPE, 141). Ora `if compgen -e TG_ >/dev/null`
+  (builtin, nessuna pipe); test con 2000 variabili d'ambiente (0 mancati su 40, FAIL su main); mutazione
+  `fsp_m2_telegram_creds_allowed` allineata; nuova `fsp_m2_telegram_guard_sigpipe` (reintroduce la pipe: uccisa).
+- **Test TTL poller indipendente dall'uptime del runner (#591, GO owner):** l'helper di
+  `tests/unit/test_runtime_controller_direct_ttl_poller.py` azzerava il gate con `0.0`, ma `time.monotonic()` e'
+  l'uptime: su un runner acceso da meno di 30 s il poll non partiva e 6 test fallivano in modo intermittente
+  (`test-core-components`). Ora `float("-inf")`; nuovo `test_poll_runs_on_a_freshly_booted_runner`. Nessuna
+  asserzione sul TTL cambiata, nessun codice di produzione toccato.
 
 ### Changed
+- **Governance CI — GitHub Actions primario, Buildkite differito (OWNER DECISION 31/10/2026, #586):** la merge
+  readiness non conta piu' come gate gli status della lane Buildkite sospesa (`full-suite`, `overlap-check`,
+  `pr-merge-readiness` su `buildkite.com`), che restano visibili fra gli ignorati. Il check run `overlap-check`
+  di GitHub Actions resta bloccante. `pr_automation_controller.is_deferred_buildkite_status` (fonte unica);
+  spec §0.11; test `tests/scripts/test_buildkite_deferred.py`.
 - **#562 PR-B — FULL_SUITE_PERFORMANCE_REMEDIATION (BK #31: `w1-mutation` in timeout a 45 minuti, 457/552):**
   - `scripts/run_mutation_guardrails.py`: sandbox e file temporanei dei test (`TMPDIR`, quindi `tmp_path` e i
     database SQLite) su `/dev/shm` solo se è davvero un tmpfs (`/proc/mounts`), scrivibile e con almeno 512 MiB

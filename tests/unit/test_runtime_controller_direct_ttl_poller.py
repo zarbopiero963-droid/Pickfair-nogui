@@ -142,7 +142,9 @@ def _make_rc(*, orders=None, orders_raises=False, cancel_client=None, enabled=Tr
     )
     rc.simulation_mode = True
     rc.config.direct_unmatched_ttl_enabled = enabled
-    rc._last_direct_ttl_poll_at = 0.0
+    # nessun poll precedente: -inf, non 0.0 (time.monotonic() e' l'uptime: su un runner appena avviato
+    # `monotonic() - 0.0 < poll_sec` e il gate saltava il giro, #591)
+    rc._last_direct_ttl_poll_at = float("-inf")
     return rc  # bus/betfair accessibili via rc.bus / rc.betfair_service
 
 
@@ -288,7 +290,7 @@ def test_no_auto_retry_after_one_attempt():
     rc = _make_rc(orders=[_order("B1")], cancel_client=cc)
     _track(rc, "C1", "B1")
     rc._poll_direct_unmatched_ttl()
-    rc._last_direct_ttl_poll_at = 0.0  # bypassa il gate per un secondo giro
+    rc._last_direct_ttl_poll_at = float("-inf")  # bypassa il gate per un secondo giro (indipendente dall'uptime)
     rc._poll_direct_unmatched_ttl()
     assert len(cc.calls) == 1  # nessun ri-tentativo automatico
 
@@ -304,3 +306,17 @@ def test_interval_gate_blocks_rapid_second_poll():
                                "best_price_source": "LIVE_BOOK_DIRECT"})
     rc._poll_direct_unmatched_ttl()       # subito dopo: bloccato dal gate
     assert "B3" in rc.direct_unmatched_bet_ids  # B3 non ancora processato
+
+
+
+def test_poll_runs_on_a_freshly_booted_runner(monkeypatch):
+    """#591: `time.monotonic()` e' l'uptime della macchina. Su un runner CI avviato da meno di
+    `direct_unmatched_ttl_poll_sec` (30 s) l'helper che azzerava il gate a 0.0 saltava il giro e i test del TTL
+    fallivano in modo intermittente. Il gate "nessun poll precedente" non deve dipendere dall'uptime."""
+    import core.runtime_controller as rc_mod
+    monkeypatch.setattr(rc_mod.time, "monotonic", lambda: 5.0)       # runner acceso da 5 s
+    cc = _CancelClient()
+    rc = _make_rc(orders=[_order("B1", market_id="1.5")], cancel_client=cc)
+    _track(rc, "C1", "B1")
+    rc._poll_direct_unmatched_ttl()
+    assert cc.calls == [("1.5", ("B1",))]

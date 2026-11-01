@@ -16,7 +16,8 @@
   "optional_areas": [
     "check_dedupe",
     "trusted_gate",
-    "trusted_dispatcher"
+    "trusted_dispatcher",
+    "fullscope_tooling"
   ],
   "mutations": [
     {
@@ -352,6 +353,162 @@
         "tests/core/test_sl_tp_pnl_sign.py"
       ],
       "rationale": "F-01 (CSH-10): stake del LAY = liability (P&L sovrastimato di (p-1) volte)."
+    },
+    {
+      "id": "f05_duplicate_request_hedged_twice",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "                return \"duplicate_cashout_request\"",
+      "mutated": "                return \"\"",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05: lo stesso comando di cashout ripetuto piazza un secondo hedge (esposizione opposta raddoppiata)."
+    },
+    {
+      "id": "f05_pending_hedge_not_recovered",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            if row[\"status\"] != _hedge.HEDGE_PENDING:",
+      "mutated": "            if True:",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05: hedge in volo al crash resta PENDING senza riconciliazione dopo il riavvio."
+    },
+    {
+      "id": "f05_resting_hedge_not_checked",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "        return self._previous_hedge_block(accepted) if accepted else \"\"",
+      "mutated": "        return \"\"",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05 (Sol su #593): un hedge precedente ancora abbinabile sulla stessa selezione non blocca un nuovo hedge (sovracopertura)."
+    },
+    {
+      "id": "f05_unreadable_remaining_counts_as_closed",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            if not math.isfinite(remaining) or remaining > 0.0:",
+      "mutated": "            if remaining > 0.0:",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05: residuo NaN/inf dell'hedge precedente letto come chiuso (fail-open) => secondo hedge."
+    },
+    {
+      "id": "f05_malformed_current_orders_read_as_empty",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "        if not isinstance(current, (list, tuple)) or not all(isinstance(order, dict) for order in current):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05 (Sol su f5a7982): ordini correnti None/envelope/non-dict letti come 'nessun hedge vivo' => secondo hedge (fail-open)."
+    },
+    {
+      "id": "f05_matched_hedge_read_as_cancelled",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            if matched > 0.0:\n                return \"previous_hedge_matched\"",
+      "mutated": "            if False:\n                return \"previous_hedge_matched\"",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05 (Grok su f5a7982): hedge precedente gia' abbinato (residuo 0) letto come cancellato => secondo hedge, sovracopertura."
+    },
+    {
+      "id": "f05_current_order_without_bet_id_ignored",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "        if any(not str(order.get(\"betId\") or order.get(\"bet_id\") or \"\").strip() for order in current):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05 (Sol su 4a6a843): ordine corrente senza betId ignorato => hedge precedente letto come chiuso (fail-open)."
+    },
+    {
+      "id": "f05_hedge_not_written_ahead",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "                        ledger_id = self._ledger_write_ahead(place_payload, payload)",
+      "mutated": "                        ledger_id = None",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05 (CSH-06): hedge inviato senza riga nel ledger orders (esposizione reale non contabilizzata)."
+    },
+    {
+      "id": "f05_settlement_counts_hedge_as_entry",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                continue                                   # F-05: hedge di cashout, non un ingresso del tavolo",
+      "mutated": "                pass",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger.py"
+      ],
+      "rationale": "F-05: la riga hedge contata come secondo ordine del mercato blocca il rilascio SIM del tavolo regolato."
+    },
+    {
+      "id": "gov_buildkite_deferred_any_type",
+      "module": "scripts.pr_automation_controller",
+      "area": "trusted_gate",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "    if typename != \"StatusContext\":",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_buildkite_deferred.py"
+      ],
+      "rationale": "OWNER DECISION 31/10/2026: l'esenzione Buildkite si estende ai CheckRun, quindi anche all'overlap-check di GitHub Actions (fail-open sul required)."
+    },
+    {
+      "id": "gov_buildkite_deferred_any_host",
+      "module": "scripts.pr_automation_controller",
+      "area": "trusted_gate",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "    return host == \"buildkite.com\" or host.endswith(\".buildkite.com\")\n",
+      "mutated": "    return True\n",
+      "tests": [
+        "tests/scripts/test_buildkite_deferred.py"
+      ],
+      "rationale": "OWNER DECISION 31/10/2026 Buildkite differito: Status omonimo con target non Buildkite escluso dalla readiness: un blocker reale sparirebbe."
+    },
+    {
+      "id": "gov_buildkite_deferred_controller_waits",
+      "module": "scripts.pr_automation_controller",
+      "area": "trusted_gate",
+      "file": "scripts/pr_automation_controller.py",
+      "original": "            if is_pending(check) and not is_self_check(check) and not is_deferred_buildkite_status(check)]\n",
+      "mutated": "            if is_pending(check) and not is_self_check(check)]\n",
+      "tests": [
+        "tests/scripts/test_buildkite_deferred.py"
+      ],
+      "rationale": "OWNER DECISION 31/10/2026 Buildkite differito: Il controller resta in attesa della lane Buildkite sospesa (review Claude A su 2cdfe8a)."
+    },
+    {
+      "id": "gov_buildkite_deferred_flow_branch",
+      "module": "scripts.pr_flow_automation",
+      "area": "trusted_gate",
+      "file": "scripts/pr_flow_automation.py",
+      "original": "        if is_deferred_buildkite_status(raw):\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/scripts/test_buildkite_deferred.py"
+      ],
+      "rationale": "OWNER DECISION 31/10/2026 Buildkite differito: Il gate di readiness torna a trattare gli status Buildkite differiti come blocker/pending."
     },
     {
       "id": "cashout_unmatched_as_success",
@@ -6584,11 +6741,23 @@
       "rationale": "PF-562 PR-A (Sol su #584): build superata riletta comunque; un errore di lettura copre con pending l'esito della suite successiva."
     },
     {
+      "id": "fsp_m2_telegram_guard_sigpipe",
+      "module": "scripts.pr_full_suite_pipeline",
+      "area": "trusted_dispatcher",
+      "file": "scripts/pr_full_suite_pipeline.py",
+      "original": "            'if compgen -e TG_ >/dev/null; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
+      "mutated": "            'if env | grep -q \"^TG_\"; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
+      "tests": [
+        "tests/scripts/test_pr_full_suite_pipeline.py"
+      ],
+      "rationale": "#590: reintroduce la pipe `env | grep -q` (SIGPIPE sotto pipefail => guard fail-open con le credenziali presenti). Suggerita da Claude A."
+    },
+    {
       "id": "fsp_m2_telegram_creds_allowed",
       "module": "scripts.pr_full_suite_pipeline",
       "area": "trusted_dispatcher",
       "file": "scripts/pr_full_suite_pipeline.py",
-      "original": "            'if env | grep -q \"^TG_\"; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
+      "original": "            'if compgen -e TG_ >/dev/null; then echo \"credenziali Telegram nella lane non fidata: fermo\"; exit 1; fi',",
       "mutated": "            'true',",
       "tests": [
         "tests/scripts/test_pr_full_suite_pipeline.py"
@@ -6942,6 +7111,163 @@
         "tests/scripts/test_run_mutation_guardrails_tmpfs.py"
       ],
       "rationale": "PF-562 PR-B (owner su #585): un'esecuzione negata viene presa per riuscita."
+    },
+    {
+      "id": "cg_required_ignores_extendability",
+      "module": "tools.combi.generator",
+      "area": "fullscope_tooling",
+      "file": "tools/combi/generator.py",
+      "original": "            if _allowed(partial, constraints) and _complete(partial, params, constraints) is not None:\n                bucket.add(tuple(_key(v) for v in values))\n",
+      "mutated": "            if _allowed(partial, constraints):\n                bucket.add(tuple(_key(v) for v in values))\n",
+      "tests": [
+        "tests/fullscope/combi/test_generator.py"
+      ],
+      "rationale": "F-33 (#586) harness full-scope: una tupla impossibile (vincolo visibile solo a caso completo) viene contata come richiesta: la copertura non puo' piu' essere 100%."
+    },
+    {
+      "id": "cg_excluded_not_counted",
+      "module": "tools.combi.generator",
+      "area": "fullscope_tooling",
+      "file": "tools/combi/generator.py",
+      "original": "            else:\n                excluded += 1\n        required[idx] = bucket\n",
+      "mutated": "            else:\n                excluded += 0\n        required[idx] = bucket\n",
+      "tests": [
+        "tests/fullscope/combi/test_generator.py"
+      ],
+      "rationale": "F-33 (#586) harness full-scope: le tuple escluse dai vincoli non vengono contate: il report nasconde l'esclusione."
+    },
+    {
+      "id": "cg_mark_never_records_coverage",
+      "module": "tools.combi.generator",
+      "area": "fullscope_tooling",
+      "file": "tools/combi/generator.py",
+      "original": "                if k in bucket and k not in covered[idx]:\n                    covered[idx].add(k)\n                    new += 1\n        return new\n",
+      "mutated": "                if k in bucket and k not in covered[idx]:\n                    new += 1\n        return new\n",
+      "tests": [
+        "tests/fullscope/combi/test_generator.py"
+      ],
+      "rationale": "F-33 (#586) harness full-scope: la copertura non viene mai registrata: tuples_covered=0 e il report dichiara incompleto."
+    },
+    {
+      "id": "cg_skip_vertical_phase",
+      "module": "tools.combi.generator",
+      "area": "fullscope_tooling",
+      "file": "tools/combi/generator.py",
+      "original": "            if pi not in idx or any(i > pi for i in idx):\n                continue\n            for k in sorted(bucket - covered[idx]):\n",
+      "mutated": "            if True:\n                continue\n            for k in sorted(bucket - covered[idx]):\n",
+      "tests": [
+        "tests/fullscope/combi/test_generator.py"
+      ],
+      "rationale": "F-33 (#586) harness full-scope: senza la fase verticale restano tuple scoperte: il report non puo' essere completo."
+    },
+    {
+      "id": "cg_completion_appends_none",
+      "module": "tools.combi.generator",
+      "area": "fullscope_tooling",
+      "file": "tools/combi/generator.py",
+      "original": "        full = _complete(case, params, constraints, rng)\n        if full is not None:\n            completed.append(full)\n",
+      "mutated": "        full = _complete(case, params, constraints, rng)\n        if True:\n            completed.append(full)\n",
+      "tests": [
+        "tests/fullscope/combi/test_generator.py"
+      ],
+      "rationale": "F-33 (#586) harness full-scope: un caso non completabile viene accodato come None: il report si corrompe."
+    },
+    {
+      "id": "cg_complete_ignores_constraints",
+      "module": "tools.combi.generator",
+      "area": "fullscope_tooling",
+      "file": "tools/combi/generator.py",
+      "original": "        if i == len(missing):\n            return _allowed(case, constraints)\n",
+      "mutated": "        if i == len(missing):\n            return True\n",
+      "tests": [
+        "tests/fullscope/combi/test_generator.py"
+      ],
+      "rationale": "F-33 (#586) harness full-scope: il completamento ignora i vincoli: casi che li violano entrano nel report. EQUIVALENTE (documentato): ogni passo di `rec` accetta un valore solo se `_allowed(case)` e ogni chiamante invoca `_complete` su un parziale gia' ammesso, quindi il controllo finale e' ridondante; un caso completo che viola i vincoli non puo' arrivare al `return`.",
+      "equivalent": true
+    },
+    {
+      "id": "cg_strength_bound_removed",
+      "module": "tools.combi.generator",
+      "area": "fullscope_tooling",
+      "file": "tools/combi/generator.py",
+      "original": "    if strength > len(params):\n        raise ValueError(f\"strength {strength} > numero di parametri {len(params)}\")\n",
+      "mutated": "    if False:\n        raise ValueError(f\"strength {strength} > numero di parametri {len(params)}\")\n",
+      "tests": [
+        "tests/fullscope/combi/test_generator.py"
+      ],
+      "rationale": "F-33 (#586) harness full-scope: una forza oltre il numero di parametri produce un report vuoto invece di un errore."
+    },
+    {
+      "id": "cg_verify_counts_unsatisfiable_as_missing",
+      "module": "tools.combi.generator",
+      "area": "fullscope_tooling",
+      "file": "tools/combi/generator.py",
+      "original": "            if not _allowed(partial, constraints) or _complete(partial, params, constraints) is None:\n                continue\n            if not any(",
+      "mutated": "            if not _allowed(partial, constraints):\n                continue\n            if not any(",
+      "tests": [
+        "tests/fullscope/combi/test_generator.py"
+      ],
+      "rationale": "F-33 (#586) harness full-scope: il ricontrollo indipendente segnala come scoperte tuple impossibili: falso negativo sui gruppi con vincoli."
+    },
+    {
+      "id": "cg_verify_never_reports_missing",
+      "module": "tools.combi.generator",
+      "area": "fullscope_tooling",
+      "file": "tools/combi/generator.py",
+      "original": "            if not any(all(_key(c[n]) == _key(partial[n]) for n in idx) for c in report.cases):\n                missing.append(partial)\n",
+      "mutated": "            if False:\n                missing.append(partial)\n",
+      "tests": [
+        "tests/fullscope/combi/test_generator.py"
+      ],
+      "rationale": "F-33 (#586) harness full-scope: il ricontrollo non vede mai tuple scoperte: un report manomesso passa."
+    },
+    {
+      "id": "cg_verify_ignores_violations",
+      "module": "tools.combi.generator",
+      "area": "fullscope_tooling",
+      "file": "tools/combi/generator.py",
+      "original": "    violations = [c for c in report.cases if not _allowed(c, constraints)]\n",
+      "mutated": "    violations = []\n",
+      "tests": [
+        "tests/fullscope/combi/test_generator.py"
+      ],
+      "rationale": "F-33 (#586) harness full-scope: il ricontrollo non vede casi che violano i vincoli."
+    },
+    {
+      "id": "cg_complete_flag_always_true",
+      "module": "tools.combi.generator",
+      "area": "fullscope_tooling",
+      "file": "tools/combi/generator.py",
+      "original": "            \"complete\": self.tuples_covered == self.tuples_required,\n",
+      "mutated": "            \"complete\": True,\n",
+      "tests": [
+        "tests/fullscope/combi/test_generator.py"
+      ],
+      "rationale": "F-33 (#586) harness full-scope: il report dichiara completo anche con tuple scoperte."
+    },
+    {
+      "id": "cg_vacuous_coverage_not_flagged",
+      "module": "tools.combi.generator",
+      "area": "fullscope_tooling",
+      "file": "tools/combi/generator.py",
+      "original": "            \"vacuous\": self.tuples_required == 0,\n",
+      "mutated": "            \"vacuous\": False,\n",
+      "tests": [
+        "tests/fullscope/combi/test_generator.py"
+      ],
+      "rationale": "F-33 (#586) harness full-scope: un report senza tuple richieste (vincoli contraddittori) non viene segnalato come vuoto."
+    },
+    {
+      "id": "cg_seed_ignored_in_tie_breaks",
+      "module": "tools.combi.generator",
+      "area": "fullscope_tooling",
+      "file": "tools/combi/generator.py",
+      "original": "                case[p.name] = rng.choice(best_vals)\n                mark(case)\n",
+      "mutated": "                case[p.name] = best_vals[0]\n                mark(case)\n",
+      "tests": [
+        "tests/fullscope/combi/test_generator.py"
+      ],
+      "rationale": "F-33 (#586) harness full-scope: il seed non influenza piu' i pareggi: seed diversi danno sempre gli stessi casi (riproducibilita' dichiarata ma non effettiva)."
     }
   ]
 }
