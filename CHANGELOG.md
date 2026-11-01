@@ -13,8 +13,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   temporanea di merge per le 33 schede della roadmap V2, registrata in `OWNER_MERGE_DELEGATIONS` di
   `scripts/pr_autonomy_policy.py` (il merge owner di questa PR ne e' la prova). Copre solo le protezioni finanziarie
   fondamentali; credenziali, segreti, config, LIVE e governance restano sempre a merge owner; nessun gate in meno
-  (certificazione rafforzata §0.9-bis obbligatoria). Test `tests/scripts/test_roadmap_merge_delegation.py`;
-  mutazioni `pap_delegation_*`.
+  (certificazione rafforzata §0.9-bis obbligatoria); moduli misti (`core/system_state.py`, `core/safety_layer.py`) e
+  righe aggiunte o rimosse che toccano credenziali o LIVE mai delegabili. Anche fuori dalla delega, RIMUOVERE una
+  riga di prodotto con un interruttore LIVE porta a merge owner (§0.9-bis). Test
+  `tests/scripts/test_roadmap_merge_delegation.py`; mutazioni `pap_delegation_*`, `pap_live_removed_lines_ignored`.
 
 ### Fixed
 - **F-09 (#586, RST-01/REC-08) — esito del recovery all'avvio gating:** `recover()` non ok, eccezione nella fase

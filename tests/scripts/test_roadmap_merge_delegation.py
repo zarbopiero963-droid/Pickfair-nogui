@@ -48,6 +48,7 @@ def test_senza_delega_la_protezione_resta_owner(path):
     "scripts/live_gate.py",                                                        # attivazione LIVE / config
     "services/setting_service.py", "core/live_risk_guard.py",                      # rete per parola chiave
     "core/system_state.py",                    # Codex P1 su ebdd11e: modulo misto (BetfairConfig, TelegramRuntimeConfig)
+    "core/safety_layer.py",                    # Codex P1 su 665ecb6: ospita il gate LIVE (assert_live_gate_or_refuse)
 ])
 def test_credenziali_segreti_config_e_live_non_sono_mai_delegabili(path):
     diff = _diff([path, SCOPE])
@@ -101,6 +102,37 @@ def test_righe_rimosse_di_un_file_cancellato_contano():
     patch = ("diff --git a/core/risk_gate.py b/core/risk_gate.py\ndeleted file mode 100644\n--- a/core/risk_gate.py\n"
              "+++ /dev/null\n@@ -1,1 +0,0 @@\n-    return redact(token)\n")
     assert policy._changed_lines_by_file(patch) == {"core/risk_gate.py": ["    return redact(token)"]}
+
+
+def _patch2(path, removed, added):
+    return (f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,1 +1,1 @@\n"
+            f"-{removed}\n+{added}\n")
+
+
+def test_gate_live_rimosso_in_un_modulo_delegabile_non_e_delegabile():
+    # Codex P1 su 665ecb6: `if not bool(live_readiness_ok):` -> `if False:` bypassa la readiness LIVE
+    patch = _patch2("core/risk_gate.py", "        if not bool(live_readiness_ok):", "        if False:")
+    diff = _diff(["core/risk_gate.py", SCOPE], patch)
+    assert diff["classification"]["delegation_live_content"] == ["core/risk_gate.py"], diff["classification"]
+    assert diff["financial_owner_delegation_eligible"] is False
+    res = policy.merge_decision(_state(diff, owner_delegation=_deleg()))
+    assert res["status"] == "READY_FOR_OWNER_MANUAL_MERGE" and "owner_delegation:area_not_delegable" in res["reasons"]
+
+
+def test_interruttore_live_rimosso_va_a_merge_owner_anche_senza_delega():
+    # stessa falla nella regola 0.9-bis: rimuovere un interruttore LIVE e' come attivarlo
+    patch = _patch2("core/runtime_controller.py", "        if not self._live_enabled:", "        if False:")
+    diff = _diff(["core/runtime_controller.py", SCOPE], patch)
+    assert diff["classification"]["live_activation"] == ["core/runtime_controller.py"]
+    assert diff["financial_owner_merge_required"] is True
+    res = policy.merge_decision(_state(diff))
+    assert res["status"] == "READY_FOR_OWNER_MANUAL_MERGE" and res["reasons"] == ["financial_owner_only_area"]
+
+
+def test_commento_live_rimosso_non_conta_per_la_regola_generale():
+    patch = _patch2("core/runtime_controller.py", "    # vecchio commento su live_enabled", "    # commento")
+    diff = _diff(["core/runtime_controller.py", SCOPE], patch)
+    assert diff["classification"]["live_activation"] == []
 
 
 def test_caso_codex_system_state_app_key_non_va_in_auto_merge():

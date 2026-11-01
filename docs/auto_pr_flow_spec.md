@@ -373,8 +373,14 @@ attivazione LIVE e configurazione di esecuzione, comprese le righe che menzionan
 configurazione con credenziali (`core/system_state.py`: `BetfairConfig`, `TelegramRuntimeConfig` — Codex su #598); e
 ogni riga **aggiunta o rimossa** di codice di prodotto che tocca un identificatore di credenziale o segreto
 (`DELEGATION_CREDENTIAL_CONTENT_RE`: app key, api key, password, token, private key, session string, auth, cipher,
-redact...), qualunque sia il nome del file (`classification.delegation_credential_content`). Basta UN file non
-delegabile perche' tutta la PR resti owner. Le modifiche di governance e sicurezza (§0.9: `CLAUDE.md`, `AGENTS.md`, spec, workflow, `scripts/pr_*`)
+redact...), qualunque sia il nome del file (`classification.delegation_credential_content`); ogni riga aggiunta o
+rimossa che nomina il LIVE (`DELEGATION_LIVE_CONTENT_RE`: `live`, `real_money`, `simulation`, `execution_mode` —
+`classification.delegation_live_content`); il modulo misto `core/safety_layer.py`, che ospita il gate LIVE (Codex su
+#598). Il controllo usa lo stesso parser robusto del full diff (header quotati, conteggi degli hunk): patch non
+interpretabile → non delegabile. Basta UN file non delegabile perche' tutta la PR resti owner.
+
+Vale anche fuori dalla delega (§0.9-bis): **rimuovere** una riga di prodotto che menziona un interruttore LIVE
+(`LIVE_ACTIVATION_CONTENT_RE`) equivale ad attivarlo e porta a merge owner (`classification.live_activation`). Le modifiche di governance e sicurezza (§0.9: `CLAUDE.md`, `AGENTS.md`, spec, workflow, `scripts/pr_*`)
 restano sempre a merge owner: quel ramo di `merge_decision` precede la delega.
 
 **Come si applica.** Lo stato di `merge-decision` porta `owner_delegation = {id, card, head_sha}`:

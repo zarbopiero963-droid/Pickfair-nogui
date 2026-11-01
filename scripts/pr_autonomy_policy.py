@@ -246,6 +246,9 @@ FINANCIAL_NON_DELEGABLE_PATTERNS = (
     # (`core/system_state.py`: `BetfairConfig` con app key e chiave privata, `TelegramRuntimeConfig` con session
     # string e bot token). Il nome non lo dice, quindi va elencato: un modulo misto resta a merge owner.
     r"^core/system_state\.py$",
+    # Codex P1 su 665ecb6: `core/safety_layer.py` ospita il gate LIVE (`assert_live_gate_or_refuse`) accanto alle
+    # protezioni: modulo misto LIVE/protezione, resta a merge owner.
+    r"^core/safety_layer\.py$",
     r"(?i)(^|/)[^/]*(secret|token|credential|auth|passw|certlogin|cipher|sanitiz|redact|setting|config|live"
     r"|runtime_authority|bridge_mode)[^/]*$",
 )
@@ -257,6 +260,12 @@ DELEGATION_CREDENTIAL_CONTENT_RE = re.compile(
     r"(?i)(app_?key|api_?key|passw|secret|token|private_?key|cert_?(file|path|login|pem)|certlogin|credential"
     r"|session_?string|auth|cipher|redact|sanitiz)"
 )
+
+
+# §0.9-ter, contenuto LIVE (Codex P1 su 665ecb6): rete PIU' larga di LIVE_ACTIVATION_CONTENT_RE, solo per la delega.
+# Una riga aggiunta o rimossa che nomina il LIVE (`live_readiness_ok`, `assert_live_gate_or_refuse`, `real_money`,
+# modalita' di simulazione...) rende la PR non delegabile. Un falso positivo costa solo un merge owner.
+DELEGATION_LIVE_CONTENT_RE = re.compile(r"(?i)(live|real_?money|simulation|execution_?mode)")
 
 
 def _changed_lines_by_file(patch_text: str) -> dict[str, list[str]] | None:
@@ -274,6 +283,16 @@ def _changed_lines_by_file(patch_text: str) -> dict[str, list[str]] | None:
     for path, lines in removed.items():
         out.setdefault(path, []).extend(lines)
     return out
+
+
+def _removed_lines_by_file(patch_text: str) -> dict[str, list[str]] | None:
+    """Solo le righe RIMOSSE per file (stesso parser robusto); ``None`` se il patch non e' interpretabile."""
+    removed: dict[str, list[str]] = {}
+    try:
+        _parse_patch_numbered(patch_text or "", removed=removed)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return removed
 
 # Registro delle deleghe owner. Sta in questo file (a merge MANUALE dell'owner, §0.9): il merge dell'owner E' la
 # prova della delega, perche' un commento su una issue non e' autenticabile (gli account agente pubblicano come
@@ -1651,12 +1670,22 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
         problems.append("import_statement_unverifiable")
     if not stdlib:
         problems.append("stdlib_list_unavailable")
-    classification["live_activation"] = sorted(live_activation)
-    # §0.9-ter: codice di prodotto con righe (aggiunte o rimosse) che toccano credenziali => non delegabile
+    # §0.9-ter: codice di prodotto con righe (aggiunte o rimosse) che toccano credenziali o LIVE => non delegabile
     changed = _changed_lines_by_file(patch_text if isinstance(patch_text, str) else "")
+    # Codex P1 su 665ecb6: RIMUOVERE un interruttore/gate LIVE e' come attivarlo. La regola §0.9-bis guardava solo
+    # le righe aggiunte: una riga rimossa di prodotto che menziona un interruttore LIVE porta a merge owner.
+    removed_only = _removed_lines_by_file(patch_text if isinstance(patch_text, str) else "")
+    for path, lines in (removed_only or {}).items():
+        if _is_product_path(path) and any(LIVE_ACTIVATION_CONTENT_RE.search(x)
+                                          and not x.lstrip().startswith("#") for x in lines):
+            live_activation.add(path)
+    classification["live_activation"] = sorted(live_activation)
     classification["delegation_credential_content"] = (["<patch-unparsable>"] if changed is None else sorted(
         path for path, lines in changed.items()
         if _is_product_path(path) and any(DELEGATION_CREDENTIAL_CONTENT_RE.search(x) for x in lines)))
+    classification["delegation_live_content"] = (["<patch-unparsable>"] if changed is None else sorted(
+        path for path, lines in changed.items()
+        if _is_product_path(path) and any(DELEGATION_LIVE_CONTENT_RE.search(x) for x in lines)))
     status = "BLOCK" if problems else "PASS"
     if problems and set(problems) <= {"base_or_head_unknown", "patch_unreadable",
                                      "declared_scope_unknown", "stdlib_list_unavailable",
@@ -1684,6 +1713,7 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
         "financial_owner_delegation_eligible": bool(classification["financial_owner_only"]
                                                     and not classification["financial_owner_non_delegable"]
                                                     and not classification["delegation_credential_content"]
+                                                    and not classification["delegation_live_content"]
                                                     and not live_activation
                                                     and not classification["secret_material"]
                                                     and not secret_content and not secret_content_tests),

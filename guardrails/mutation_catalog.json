@@ -7570,6 +7570,42 @@
       "rationale": "§0.9-ter (Sol su 665ecb6): patch non interpretabile trattato come privo di credenziali (fail-open)."
     },
     {
+      "id": "pap_live_removed_lines_ignored",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "        if _is_product_path(path) and any(LIVE_ACTIVATION_CONTENT_RE.search(x)",
+      "mutated": "        if False and any(LIVE_ACTIVATION_CONTENT_RE.search(x)",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-bis/ter (Codex P1 su 665ecb6): la rimozione di un interruttore/gate LIVE non porta a merge owner."
+    },
+    {
+      "id": "pap_delegation_live_content_ignored",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "                                                    and not classification[\"delegation_live_content\"]",
+      "mutated": "                                                    and True",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter (Codex P1 su 665ecb6): una riga LIVE aggiunta o rimossa resta delegabile."
+    },
+    {
+      "id": "pap_delegation_live_module_delegable",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    r\"^core/safety_layer\\.py$\",",
+      "mutated": "    r\"^core/safety_layer_never\\.py$\",",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter (Codex P1 su 665ecb6): core/safety_layer.py (gate LIVE) delegabile."
+    },
+    {
       "id": "pap_delegation_mixed_module_delegable",
       "module": "scripts.pr_autonomy_policy",
       "area": "trusted_gate",
