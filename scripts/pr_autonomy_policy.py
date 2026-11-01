@@ -196,6 +196,55 @@ SAFETY_CRITICAL_PATTERNS = (
 )
 _SAFETY_RE = tuple(re.compile(p) for p in SAFETY_CRITICAL_PATTERNS)
 
+# §0.9-bis — PR finanziarie critiche (owner 01/11/2026 «GOVERNANCE AUTO-MERGE CERTIFICATO», #586).
+# Le aree qui sotto restano SEMPRE a merge owner, anche con certificazione completa: credenziali,
+# autenticazione e segreti; attivazione LIVE / ordini reali; protezioni finanziarie fondamentali.
+# Valgono per il codice di prodotto (tests/ e docs non contano: vedi `_is_product_path`).
+FINANCIAL_OWNER_ONLY_PATTERNS = (
+    # credenziali, autenticazione, segreti
+    r"^core/(secret_cipher|token_store|redaction)\.py$",
+    r"^telegram_sanitizer\.py$",
+    r"^betfair_client\.py$",
+    r"(?i)(^|/)[^/]*(auth|credential|certlogin|session_manager)[^/]*\.py$",
+    # attivazione LIVE / ordini reali, configurazione di esecuzione
+    r"^core/(runtime_authority|execution_guard|microstake_live_port|bridge_mode|config_store)\.py$",
+    r"^(trading_config|config_registry)\.py$",
+    r"^scripts/live_gate\.py$",
+    r"^config\.example\.json$",
+    # protezioni finanziarie fondamentali
+    r"^core/(safety_layer|safety_guard|risk_gate|risk_middleware|risk_stop|risk_desk|loss_limits"
+    r"|daily_loss_store|duplication_guard|signal_dedupe|stake_precision)\.py$",
+    r"^(circuit_breaker|auto_throttle|safe_mode|safe_mode_manager|market_validator)\.py$",
+    r"^ai/ai_guardrail\.py$",
+    r"(?i)(stop_?loss|take_?profit|sl_tp)",
+)
+_FIN_OWNER_RE = tuple(re.compile(p) for p in FINANCIAL_OWNER_ONLY_PATTERNS)
+
+# PR finanziarie critiche: auto-merge SOLO con la certificazione rafforzata (§0.9-bis) provata sull'head.
+FINANCIAL_CRITICAL_PATTERNS = (
+    r"(?i)(cashout|dutching|stake_mode|order_manager|order_router|trading_engine|money_management"
+    r"|position_ledger|pnl_engine|reconcil|state_recovery|database|table_manager|hedge_ref"
+    r"|simulation_broker|simulation_(matching_engine|order_book|state)|direct_best_price|direct_unmatched_ttl"
+    r"|betfair_service|betfair_market_api|microstake|runtime_controller|executor_manager|order_identity"
+    r"|liquidity|exposure|batch_lock_manager)",
+)
+_FIN_RE = tuple(re.compile(p) for p in FINANCIAL_CRITICAL_PATTERNS)
+
+# Righe aggiunte che attivano il LIVE o il denaro reale: sempre merge owner (codice di prodotto, non test).
+_KEY_ASSIGN = r"\b[\"']?\]?\s*[:=]\s*"     # chiave, eventuale apice/parentesi di subscript, `:` o `=`
+LIVE_ACTIVATION_CONTENT_RE = re.compile(
+    r"(?i)\b(live_enabled|enable_live|allow_live|live_armed|real_money_enabled)" + _KEY_ASSIGN
+    + r"(true|1\b|[\"']?on\b)"
+    r"|\bsimulation(_mode)?" + _KEY_ASSIGN + r"false\b"
+    r"|\bexecution_mode" + _KEY_ASSIGN + r"[\"']live[\"']"
+)
+
+# Certificazione rafforzata richiesta per l'auto-merge di una PR finanziaria critica (§0.9-bis).
+FINANCIAL_CERTIFICATION_TRUE = ("full_suite_pass", "mutation_gate_pass", "financial_tests_pass",
+                                "codex_no_blockers", "reviews_complete", "scope_verified")
+FINANCIAL_CERTIFICATION_FALSE = ("known_financial_regression_unmanaged", "tests_skipped_or_disabled",
+                                 "branch_protection_override")
+
 # Nuovi chiamanti di ingressi del percorso denaro: riportati dal full diff.
 # Solo forme di chiamata (`nome(`) o l'evento citato fra apici: la semplice
 # menzione del nome (docstring, una regex come questa) non è un chiamante.
@@ -1050,9 +1099,21 @@ def is_secret_material_path(path: str) -> bool:
     return not _is_template(path) and any(r.search(path) for r in _SECRET_RE)
 
 
+def _is_product_path(path: str) -> bool:
+    """Codice o configurazione di prodotto: esclusi test, documentazione e tooling del repository."""
+    return not (path.startswith(("tests/", "docs/", "scripts/", "tools/", "guardrails/", ".guardrails/", ".github/"))
+                or path.endswith(".md") or _is_template(path))
+
+
 def classify_paths(paths: Iterable[str]) -> dict[str, list[str]]:
     paths = [p for p in paths if isinstance(p, str)]
+    product = [p for p in paths if _is_product_path(p)]
     return {
+        # le aree sempre-owner valgono anche per gli script (es. scripts/live_gate.py), non per test e docs
+        "financial_owner_only": sorted(p for p in paths if not p.startswith(("tests/", "docs/"))
+                                       and not p.endswith(".md") and not _is_template(p)
+                                       and any(r.search(p) for r in _FIN_OWNER_RE)),
+        "financial_critical": sorted(p for p in product if any(r.search(p) for r in _FIN_RE)),
         "owner_manual": sorted(p for p in paths if is_owner_manual_path(p)),
         "secret_material": sorted(p for p in paths if is_secret_material_path(p)),
         "guard_generated": sorted(p for p in paths if p in GUARD_GENERATED_FILES),
@@ -1444,6 +1505,7 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
     mcp_violations: list[str] = []
     secret_content: set[str] = set()
     secret_content_tests: set[str] = set()
+    live_activation: set[str] = set()
     try:
         numbered, binary_files = _parse_patch_numbered(patch_text)
     except (ValueError, UnicodeDecodeError):
@@ -1481,6 +1543,9 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
                     secret_content_tests.add(path)
                 else:
                     secret_content.add(path)
+            if (_is_product_path(path) and LIVE_ACTIVATION_CONTENT_RE.search(line)
+                    and not line[1:].lstrip().startswith("#")):
+                live_activation.add(path)       # §0.9-bis: attivazione LIVE => merge owner
             if is_py:
                 if (MONEY_PATH_CALL_RE.search(line) and not path.startswith("tests/")
                         and not line[1:].lstrip().startswith("#")):
@@ -1498,6 +1563,7 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
         problems.append("import_statement_unverifiable")
     if not stdlib:
         problems.append("stdlib_list_unavailable")
+    classification["live_activation"] = sorted(live_activation)
     status = "BLOCK" if problems else "PASS"
     if problems and set(problems) <= {"base_or_head_unknown", "patch_unreadable",
                                      "declared_scope_unknown", "stdlib_list_unavailable",
@@ -1518,6 +1584,8 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
         "owner_manual_merge_required": bool(classification["owner_manual"]
                                             or classification["dependency_manifest"]
                                             or secret_content_tests),
+        # §0.9-bis: aree finanziarie sempre a merge owner (credenziali, LIVE, protezioni fondamentali).
+        "financial_owner_merge_required": bool(classification["financial_owner_only"] or live_activation),
     }
 
 
@@ -1647,7 +1715,37 @@ def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
         problem = _safety_declaration_problem(state.get("safety_critical_declaration"), current, safety)
         if problem:
             return {"status": "NEEDS_MANUAL", "reasons": [problem], "safety_critical": safety}
-    return {"status": "READY_FOR_AUTO_MERGE", "reasons": [], "safety_critical": safety, "owner_waivers": waivers_used}
+    # §0.9-bis: aree finanziarie sempre a merge owner. Campo assente = non provato => owner (fail-closed).
+    if full.get("financial_owner_merge_required") is not False:
+        return {"status": "READY_FOR_OWNER_MANUAL_MERGE", "reasons": ["financial_owner_only_area"],
+                "safety_critical": safety, "owner_waivers": waivers_used}
+    financial = cls.get("financial_critical") if isinstance(cls, Mapping) else None
+    if not isinstance(financial, list) or not all(_nonempty_str(p) for p in financial):
+        return {"status": "NEEDS_MANUAL", "reasons": ["financial_classification_unknown"], "safety_critical": safety}
+    if financial:
+        # PR finanziaria critica: auto-merge solo con la certificazione rafforzata provata sull'head corrente.
+        # Una deroga di review o una certificazione assente/vecchia/incompleta = merge owner, mai auto-merge.
+        problems = _financial_certification_problems(state.get("financial_certification"), current)
+        if waivers_used:
+            problems.append("financial_review_waiver")
+        if problems:
+            return {"status": "READY_FOR_OWNER_MANUAL_MERGE",
+                    "reasons": [f"financial_certification:{p}" for p in problems],
+                    "safety_critical": safety, "financial_critical": sorted(set(financial)),
+                    "owner_waivers": waivers_used}
+    return {"status": "READY_FOR_AUTO_MERGE", "reasons": [], "safety_critical": safety,
+            "financial_critical": sorted(set(financial)), "owner_waivers": waivers_used}
+
+
+def _financial_certification_problems(cert: Any, current_head: str) -> list[str]:
+    """§0.9-bis: elenco dei motivi per cui la certificazione finanziaria NON e' provata (vuoto = provata)."""
+    if not isinstance(cert, Mapping):
+        return ["missing"]
+    if cert.get("head_sha") != current_head:
+        return ["stale_or_missing_head"]
+    problems = [f"{k}_not_proven" for k in FINANCIAL_CERTIFICATION_TRUE if cert.get(k) is not True]
+    problems += [f"{k}_not_excluded" for k in FINANCIAL_CERTIFICATION_FALSE if cert.get(k) is not False]
+    return problems
 
 
 def _safety_declaration_problem(declaration: Any, current_head: str, safety: Sequence[str]) -> str | None:
@@ -1676,6 +1774,12 @@ def next_pr_decision(state: Mapping[str, Any]) -> dict[str, Any]:
         return {"status": "WAIT_MERGE_NOT_VERIFIED", "reason": "merge/SHA non verificati sul main"}
     if not _is_true(state.get("main_reread")) or not _is_true(state.get("roadmap_reread")):
         return {"status": "STOP_OWNER", "reason": "AUTHORIZATION_OR_GATE_NOT_VERIFIABLE"}
+    # §0.14 (owner 01/11/2026): la CI post-merge su main va verificata PRIMA della PR successiva.
+    main_ci = state.get("main_post_merge_ci")
+    if main_ci == "RED":
+        return {"status": "STOP_MAIN_CI_RED", "reason": "CI post-merge rossa su main: va sistemata prima"}
+    if main_ci != "GREEN":
+        return {"status": "WAIT_MAIN_CI_NOT_VERIFIED", "reason": "CI post-merge su main non ancora verificata verde"}
     open_prs = state.get("open_prs_same_repo")
     if not isinstance(open_prs, int) or isinstance(open_prs, bool):
         return {"status": "STOP_OWNER", "reason": "AUTHORIZATION_OR_GATE_NOT_VERIFIABLE"}

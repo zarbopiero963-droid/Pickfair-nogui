@@ -432,8 +432,8 @@ def _merge_state(**over):
              "unresolved_threads": 0, "manual_label_present": False, "reviewer_gate": "PASS_WITH_OWNER_WAIVER",
              "reviewer_waivers": [{"valid": True, "reviewer": "grok", "head": HEAD, "reason": "x"}],
              "merge_readiness": "PASS", "fix_loop_exhausted": False,
-             "full_diff": {"status": "PASS", "owner_manual_merge_required": False,
-                           "classification": {"safety_critical": []}}}
+             "full_diff": {"status": "PASS", "owner_manual_merge_required": False, "financial_owner_merge_required": False,
+                           "classification": {"safety_critical": [], "financial_critical": []}}}
     for key in policy._MERGE_BOOL_TRUE:
         state.setdefault(key, True)
     for key in policy._MERGE_BOOL_FALSE:

@@ -453,6 +453,15 @@ un file a merge owner: `READY_FOR_OWNER_MANUAL_MERGE` e mergia l'owner. Un head
 cambiato invalida la valutazione. `scripts/pr_autonomy_policy.py
 merge-decision` codifica queste condizioni.
 
+**PR finanziarie critiche: auto-merge solo certificato (owner 01/11/2026, spec §0.9-bis).** Una PR
+che tocca codice finanziario critico va in auto-merge solo con la certificazione rafforzata provata
+sull'head (suite completa, mutation, controlli finanziari, Codex senza bloccanti, review complete, scope
+verificato, nessuna regressione finanziaria nota, nessun test saltato, nessun override di branch
+protection, nessuna deroga di review); altrimenti `READY_FOR_OWNER_MANUAL_MERGE`. Restano SEMPRE a merge
+owner credenziali/autenticazione/segreti, attivazione LIVE o ordini reali e le protezioni finanziarie
+fondamentali (`FINANCIAL_OWNER_ONLY_PATTERNS`). Prima della PR successiva la CI post-merge su main deve
+essere verde (§0.14).
+
 **Le PR safety-critical non sono escluse, ma restano riconoscibili.** Una
 PR è safety-critical se tocca `core/`, aree safety di `services/`, money
 management, `betfair_client`/`betfair_market_api`, `dutching*`,
