@@ -454,7 +454,7 @@ cambiato invalida la valutazione. `scripts/pr_autonomy_policy.py
 merge-decision` codifica queste condizioni.
 
 **PR finanziarie critiche: auto-merge solo certificato (owner 01/11/2026, spec §0.9-bis).** Una PR
-che tocca codice finanziario critico va in auto-merge solo con la certificazione rafforzata provata
+che tocca codice di prodotto (fail-closed: tutto il prodotto è finanziario critico) va in auto-merge solo con la certificazione rafforzata provata
 sull'head (suite completa, mutation, controlli finanziari, Codex senza bloccanti, review complete, scope
 verificato, nessuna regressione finanziaria nota, nessun test saltato, nessun override di branch
 protection, nessuna deroga di review); altrimenti `READY_FOR_OWNER_MANUAL_MERGE`. Restano SEMPRE a merge

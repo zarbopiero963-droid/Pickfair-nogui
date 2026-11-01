@@ -99,6 +99,8 @@ def test_deroga_di_review_su_pr_finanziaria_va_a_merge_owner():
     "services/betfair_auth.py",                                                     # credenziali e auth
     "core/runtime_authority.py", "core/microstake_live_port.py", "core/execution_guard.py",
     "trading_config.py", "config_registry.py", "config.example.json", "scripts/live_gate.py",  # LIVE / config
+    # Codex su 4fb12ff: credenziali e limiti di rischio fuori dall'elenco esplicito
+    "services/setting_service.py", "services/settings_service.py", "core/system_state.py", "core/validators.py",
 ])
 def test_aree_sempre_owner_anche_con_certificazione_completa(path):
     diff = _diff([path, SCOPE])
@@ -110,6 +112,12 @@ def test_aree_sempre_owner_anche_con_certificazione_completa(path):
 @pytest.mark.parametrize("line", [
     '+    "live_enabled": true,', "+LIVE_ARMED = True", "+    simulation_mode = False",
     "+cfg['execution_mode'] = 'live'", "+    allow_live: 1",
+    # Sol su 4fb12ff: il valore non conta, conta toccare l'interruttore (parentesi, piu' righe, indirezione)
+    "+allow_live = (True)", "+allow_live = (", "+setattr(cfg, 'simulation_mode', flag)",
+    "+cfg.update(live_enabled=x)", "+    broker.connect(simulation=False)", "+GO_LIVE = env_flag",
+    # Codex su 4fb12ff: assegnazioni annotate e default di parametro annotati
+    "+    live_enabled: bool = True", "+    simulation_mode: bool = False", '+    execution_mode: str = "LIVE"',
+    "+def start(self, *, simulation_mode: bool = False) -> None:",
 ])
 def test_riga_che_attiva_il_live_va_a_merge_owner(line):
     patch = f"diff --git a/order_manager.py b/order_manager.py\n--- a/order_manager.py\n+++ b/order_manager.py\n@@ -1,0 +1,1 @@\n{line}\n"
@@ -123,7 +131,8 @@ def test_attivazione_live_in_test_o_commento_non_conta():
     patch = ("diff --git a/tests/x/test_live.py b/tests/x/test_live.py\n--- a/tests/x/test_live.py\n"
              "+++ b/tests/x/test_live.py\n@@ -1,0 +1,1 @@\n+simulation_mode = False\n"
              "diff --git a/order_manager.py b/order_manager.py\n--- a/order_manager.py\n+++ b/order_manager.py\n"
-             "@@ -1,0 +1,1 @@\n+    # simulation_mode = False non va mai scritto qui\n")
+             "@@ -1,0 +1,2 @@\n+    # simulation_mode = False non va mai scritto qui\n"
+             "+    sim = self.service.is_simulation_mode()   # leggere la modalita' non la cambia\n")
     diff = _diff(["tests/x/test_live.py", "order_manager.py", SCOPE], patch)
     assert diff["classification"]["live_activation"] == []
     assert policy.merge_decision(_state(diff))["status"] == "READY_FOR_AUTO_MERGE"
@@ -136,8 +145,19 @@ def test_solo_test_e_docs_finanziari_non_sono_pr_finanziaria():
     assert res["status"] == "READY_FOR_AUTO_MERGE"
 
 
-def test_pr_non_finanziaria_non_richiede_certificazione():
-    diff = _diff(["services/telegram_service.py", SCOPE])
+@pytest.mark.parametrize("path", ["core/async_db_writer.py", "services/telegram_service.py", "tick_dispatcher.py",
+                                  "ui_panels/dashboard.py", "parsers/v2.py"])
+def test_tutto_il_codice_di_prodotto_richiede_la_certificazione(path):
+    # Codex su 4fb12ff: un elenco di moduli finanziari lascia fuori il writer del DB; fail-closed su tutto il prodotto
+    diff = _diff([path, SCOPE])
+    assert diff["classification"]["financial_critical"] == [path] and diff["financial_owner_merge_required"] is False
+    res = policy.merge_decision(_state(diff, financial_certification=None))
+    assert res["status"] == "READY_FOR_OWNER_MANUAL_MERGE" and res["reasons"] == ["financial_certification:missing"]
+    assert policy.merge_decision(_state(diff))["status"] == "READY_FOR_AUTO_MERGE"
+
+
+def test_pr_solo_tooling_non_richiede_certificazione():
+    diff = _diff(["scripts/ci_changed_modules.py", "tests/scripts/test_x.py", SCOPE])
     assert diff["classification"]["financial_critical"] == []
     res = policy.merge_decision(_state(diff, financial_certification=None))
     assert res["status"] == "READY_FOR_AUTO_MERGE"
@@ -179,3 +199,9 @@ def test_pr_successiva_solo_con_ci_post_merge_verde_su_main():
 def test_test_e_docs_delle_aree_owner_non_le_rendono_owner():
     diff = _diff(["tests/core/test_safety_layer.py", "docs/sl_tp.md", SCOPE])
     assert diff["classification"]["financial_owner_only"] == [] and diff["financial_owner_merge_required"] is False
+
+
+@pytest.mark.parametrize("path", ["guardrails/mutation_catalog.json", "scripts/run_mutation_guardrails.py",
+                                  ".github/workflows/x.yml", "tools/combi/generator.py"])
+def test_tooling_con_parole_chiave_non_diventa_area_owner_finanziaria(path):
+    assert policy.classify_paths([path])["financial_owner_only"] == []

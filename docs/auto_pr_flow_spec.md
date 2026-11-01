@@ -306,10 +306,11 @@ applicata dalla procedura e dalla label, non da un'identità separata.
 Decisione owner «GOVERNANCE AUTO-MERGE CERTIFICATO» (#586): ridurre gli interventi manuali sulle schede
 della roadmap senza abbassare i gate. Codificata in `scripts/pr_autonomy_policy.merge_decision`.
 
-**PR finanziaria critica**: tocca codice di prodotto in `FINANCIAL_CRITICAL_PATTERNS` (cashout, dutching,
-stake, ordini e router, trading engine, money management, P&L, ledger e riconciliazione, recovery, database,
-broker e matching SIM, microstake, `runtime_controller`, `betfair_service`/`betfair_market_api`...). Test e
-documentazione da soli non la rendono tale. Va in `READY_FOR_AUTO_MERGE` solo se, oltre a TUTTI i gate di
+**PR finanziaria critica**: tocca codice di prodotto, cioè qualunque file fuori da `tests/`, `docs/`,
+`scripts/`, `tools/`, `guardrails/`, `.guardrails/`, `.github/` e dai `.md` (`_is_product_path`). La scelta è
+fail-closed: in questo bot ogni modulo di prodotto può toccare segnali, ordini, denaro o il loro storico, e un
+elenco esplicito di moduli lasciava fuori file reali (`core/async_db_writer.py`, Codex su #595). Test,
+documentazione e tooling da soli non la rendono tale. Va in `READY_FOR_AUTO_MERGE` solo se, oltre a TUTTI i gate di
 §0.9 (CI e Merge readiness verdi, Sol e Grok senza bloccanti, thread zero, scope, dichiarazione
 safety-critical...), la **certificazione rafforzata** `financial_certification` è provata sull'head corrente:
 
@@ -329,10 +330,15 @@ Prova assente, vecchia, incompleta o di tipo sbagliato → `READY_FOR_OWNER_MANU
 `core/secret_cipher`, `core/token_store`, `core/redaction`, `telegram_sanitizer`, file `*auth*`/`*credential*`);
 attivazione LIVE e configurazione di esecuzione (`core/runtime_authority`, `core/execution_guard`,
 `core/microstake_live_port`, `core/bridge_mode`, `core/config_store`, `trading_config`, `config_registry`,
-`config.example.json`, `scripts/live_gate.py`, e ogni riga aggiunta di prodotto che attiva il LIVE:
-`LIVE_ACTIVATION_CONTENT_RE`); protezioni finanziarie fondamentali (`core/safety_layer`, `safety_guard`,
+`config.example.json`, `scripts/live_gate.py`, e ogni riga aggiunta di prodotto che **menziona** un
+interruttore LIVE o di modalita', qualunque sia il valore (`LIVE_ACTIVATION_CONTENT_RE`: `allow_live`, `live_enabled`,
+`execution_mode`, `simulation_mode`, `simulation=`...; leggere `is_simulation_mode()` non conta); protezioni finanziarie fondamentali (`core/safety_layer`, `safety_guard`,
 `risk_*`, `loss_limits`, `daily_loss_store`, `duplication_guard`, `signal_dedupe`, `stake_precision`,
 `circuit_breaker`, `auto_throttle`, `safe_mode*`, `market_validator`, `ai/ai_guardrail`, stop-loss/take-profit).
+Oltre ai file nominati vale una rete per parola chiave nel nome del file di prodotto (`secret`, `token`,
+`credential`, `auth`, `setting`, `config`, `risk`, `safety`, `guard`, `validator`, `live`, `system_state`,
+`dedupe`...): un elenco esplicito lasciava fuori `services/setting_service.py` (password e app key) e
+`core/system_state.py` (limiti di esposizione) — Codex su #595. Un falso positivo costa un merge owner.
 Restano owner anche le modifiche di governance e sicurezza (§0.9) e ogni PR con ambiguità finanziaria
 aperta, test inconcludenti o review incomplete. Campo di classificazione assente → owner o `NEEDS_MANUAL`
 (fail-closed).

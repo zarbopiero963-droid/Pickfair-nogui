@@ -217,26 +217,32 @@ FINANCIAL_OWNER_ONLY_PATTERNS = (
     r"^(circuit_breaker|auto_throttle|safe_mode|safe_mode_manager|market_validator)\.py$",
     r"^ai/ai_guardrail\.py$",
     r"(?i)(stop_?loss|take_?profit|sl_tp)",
+    # Rete larga per parola chiave nel NOME del file (Codex su 4fb12ff: un elenco esplicito lascia sempre fuori
+    # qualcosa, es. services/setting_service.py con password e app key, core/system_state.py con i limiti di
+    # esposizione Roserpina). Un falso positivo costa un merge owner, un falso negativo un auto-merge non dovuto.
+    r"(?i)(^|/)[^/]*(secret|token|credential|auth|passw|certlogin|cipher|sanitiz|redact|setting|config"
+    r"|risk|loss_limit|safety|safe_mode|guard|throttle|circuit_breaker|validator|live|system_state"
+    r"|stake_precision|dedupe|duplication|runtime_authority|bridge_mode)[^/]*$",
 )
 _FIN_OWNER_RE = tuple(re.compile(p) for p in FINANCIAL_OWNER_ONLY_PATTERNS)
+# Script di prodotto che attivano il LIVE: fuori dal codice di prodotto ma sempre merge owner.
+FINANCIAL_OWNER_ONLY_SCRIPTS = frozenset({"scripts/live_gate.py"})
 
 # PR finanziarie critiche: auto-merge SOLO con la certificazione rafforzata (§0.9-bis) provata sull'head.
-FINANCIAL_CRITICAL_PATTERNS = (
-    r"(?i)(cashout|dutching|stake_mode|order_manager|order_router|trading_engine|money_management"
-    r"|position_ledger|pnl_engine|reconcil|state_recovery|database|table_manager|hedge_ref"
-    r"|simulation_broker|simulation_(matching_engine|order_book|state)|direct_best_price|direct_unmatched_ttl"
-    r"|betfair_service|betfair_market_api|microstake|runtime_controller|executor_manager|order_identity"
-    r"|liquidity|exposure|batch_lock_manager)",
-)
+# Fail-closed (Codex su 4fb12ff, `core/async_db_writer.py` sfuggiva all'elenco): e' finanziario critico TUTTO il
+# codice di prodotto (vedi `_is_product_path`). In questo bot ogni modulo di prodotto puo' toccare segnali,
+# ordini, denaro o il loro storico; la certificazione la produce comunque l'agente sull'head finale.
+FINANCIAL_CRITICAL_PATTERNS = (r".",)
 _FIN_RE = tuple(re.compile(p) for p in FINANCIAL_CRITICAL_PATTERNS)
 
-# Righe aggiunte che attivano il LIVE o il denaro reale: sempre merge owner (codice di prodotto, non test).
-_KEY_ASSIGN = r"\b[\"']?\]?\s*[:=]\s*"     # chiave, eventuale apice/parentesi di subscript, `:` o `=`
+# Righe aggiunte di prodotto che TOCCANO l'attivazione LIVE o il denaro reale: sempre merge owner.
+# Si guarda la MENZIONE dell'identificatore, non il valore assegnato (Sol su 4fb12ff: `allow_live = (True)`,
+# assegnazioni su piu' righe, indirezioni via variabile o setattr sfuggono a qualunque regex sul valore).
+# `is_simulation_mode(` non conta (`\b` non separa `_` da `s`): leggere la modalita' non la cambia.
 LIVE_ACTIVATION_CONTENT_RE = re.compile(
-    r"(?i)\b(live_enabled|enable_live|allow_live|live_armed|real_money_enabled)" + _KEY_ASSIGN
-    + r"(true|1\b|[\"']?on\b)"
-    r"|\bsimulation(_mode)?" + _KEY_ASSIGN + r"false\b"
-    r"|\bexecution_mode" + _KEY_ASSIGN + r"[\"']live[\"']"
+    r"(?i)\b(live_enabled|enable_live|allow_live|live_armed|real_money(_enabled)?|go_live|execution_mode|live_gate"
+    r"|simulation_mode|set_simulation)\b"
+    r"|\bsimulation\b\s*=(?!=)"
 )
 
 # Certificazione rafforzata richiesta per l'auto-merge di una PR finanziaria critica (§0.9-bis).
@@ -1109,9 +1115,10 @@ def classify_paths(paths: Iterable[str]) -> dict[str, list[str]]:
     paths = [p for p in paths if isinstance(p, str)]
     product = [p for p in paths if _is_product_path(p)]
     return {
-        # le aree sempre-owner valgono anche per gli script (es. scripts/live_gate.py), non per test e docs
-        "financial_owner_only": sorted(p for p in paths if not p.startswith(("tests/", "docs/"))
-                                       and not p.endswith(".md") and not _is_template(p)
+        # aree sempre-owner: codice di prodotto, piu' gli script che attivano il LIVE (scripts/live_gate.py).
+        # Il tooling (guardrails/, scripts/ di CI, test, docs) non conta: `guardrail` non e' una protezione.
+        "financial_owner_only": sorted(p for p in paths
+                                       if (_is_product_path(p) or p in FINANCIAL_OWNER_ONLY_SCRIPTS)
                                        and any(r.search(p) for r in _FIN_OWNER_RE)),
         "financial_critical": sorted(p for p in product if any(r.search(p) for r in _FIN_RE)),
         "owner_manual": sorted(p for p in paths if is_owner_manual_path(p)),
