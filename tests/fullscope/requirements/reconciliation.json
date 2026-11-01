@@ -297,7 +297,7 @@
    "harness_id": "H7-CL19",
    "primary_pr": "F-05",
    "state": "UNVERIFIED",
-   "note": "l'harness osserva l'hedge sull'exchange ma il ledger non lo registra (CSH-06 xfail F-05): il ref non e' verificabile dal ledger"
+   "note": "dopo F-05 l'hedge ha la sua riga nel ledger (test_cashout_hedge_is_written_to_ledger PASS, ref hedge: di 32 caratteri); resta UNVERIFIED finche' un test con marker pf_requirement non verifica il formato del ref CL19"
   },
   {
    "tracker_id": "NEW-01 (#506)",
