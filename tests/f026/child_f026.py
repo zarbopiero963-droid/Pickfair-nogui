@@ -105,7 +105,27 @@ try:
         def _down(*a, **k):
             raise RuntimeError("EXCHANGE_DOWN_TEST")
         app.betfair_service.list_current_orders = _down
+    fault = json.loads(SCEN).get("startup_recovery_fault")
+    if fault:
+        # F-09: guasto della fase recovery/reconcile durante start() (solo per start, a livello di classe perche'
+        # start() crea StateRecovery): esito non ok, eccezione o batch aperti non riconciliati. Il resto e' reale.
+        from core.state_recovery import StateRecovery
+        from core.reconciliation_engine import ReconciliationEngine
+        _rec, _batches = StateRecovery.recover, ReconciliationEngine.reconcile_all_open_batches
+        if fault == "not_ok":
+            StateRecovery.recover = lambda self: {"ok": False, "reason": "STARTUP_RECONCILIATION_REQUIRED",
+                                                  "startup_mode": "BLOCKED"}
+        elif fault == "raise":
+            def _boom(self):
+                raise RuntimeError("STATE_RECOVERY_DOWN_TEST")
+            StateRecovery.recover = _boom
+        elif fault == "batches_failed":
+            ReconciliationEngine.reconcile_all_open_batches = lambda self: {
+                "ok": False, "reconciled_count": 0, "failed_count": 1, "reconciled": [],
+                "failed": [{"batch_id": "B1", "error": "TEST"}]}
     R["start"] = str(rt.start(simulation_mode=True, execution_mode="SIM"))[:200]
+    if fault:
+        StateRecovery.recover, ReconciliationEngine.reconcile_all_open_batches = _rec, _batches
     R["mode_after_start"] = getattr(rt.mode, "value", str(rt.mode))
     R["rebuild"] = dict(getattr(rt, "_last_position_rebuild", None) or {})
     if json.loads(SCEN).get("exchange_down_at_start"):
