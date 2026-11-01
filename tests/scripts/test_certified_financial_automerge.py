@@ -101,6 +101,8 @@ def test_deroga_di_review_su_pr_finanziaria_va_a_merge_owner():
     "trading_config.py", "config_registry.py", "config.example.json", "scripts/live_gate.py",  # LIVE / config
     # Codex su 4fb12ff: credenziali e limiti di rischio fuori dall'elenco esplicito
     "services/setting_service.py", "services/settings_service.py", "core/system_state.py", "core/validators.py",
+    # Codex su 0c050e6: money management (cap dello stake, esposizione, kill switch del daily-loss)
+    "core/money_management.py", "stake_mode.py",
 ])
 def test_aree_sempre_owner_anche_con_certificazione_completa(path):
     diff = _diff([path, SCOPE])
@@ -118,6 +120,9 @@ def test_aree_sempre_owner_anche_con_certificazione_completa(path):
     # Codex su 4fb12ff: assegnazioni annotate e default di parametro annotati
     "+    live_enabled: bool = True", "+    simulation_mode: bool = False", '+    execution_mode: str = "LIVE"',
     "+def start(self, *, simulation_mode: bool = False) -> None:",
+    # Sol su 0c050e6: chiavi e sottoscrizioni con `simulation` da solo
+    '+    broker.connect(**{"simulation": False})', '+cfg["simulation"] = False', "+    'simulation': flag,",
+    "+    simulation: bool = False",
 ])
 def test_riga_che_attiva_il_live_va_a_merge_owner(line):
     patch = f"diff --git a/order_manager.py b/order_manager.py\n--- a/order_manager.py\n+++ b/order_manager.py\n@@ -1,0 +1,1 @@\n{line}\n"

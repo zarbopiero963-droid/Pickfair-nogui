@@ -334,7 +334,8 @@ attivazione LIVE e configurazione di esecuzione (`core/runtime_authority`, `core
 interruttore LIVE o di modalita', qualunque sia il valore (`LIVE_ACTIVATION_CONTENT_RE`: `allow_live`, `live_enabled`,
 `execution_mode`, `simulation_mode`, `simulation=`...; leggere `is_simulation_mode()` non conta); protezioni finanziarie fondamentali (`core/safety_layer`, `safety_guard`,
 `risk_*`, `loss_limits`, `daily_loss_store`, `duplication_guard`, `signal_dedupe`, `stake_precision`,
-`circuit_breaker`, `auto_throttle`, `safe_mode*`, `market_validator`, `ai/ai_guardrail`, stop-loss/take-profit).
+`circuit_breaker`, `auto_throttle`, `safe_mode*`, `market_validator`, `ai/ai_guardrail`, `core/money_management` e
+`stake_mode` (cap dello stake, esposizione, kill switch del daily-loss), stop-loss/take-profit).
 Oltre ai file nominati vale una rete per parola chiave nel nome del file di prodotto (`secret`, `token`,
 `credential`, `auth`, `setting`, `config`, `risk`, `safety`, `guard`, `validator`, `live`, `system_state`,
 `dedupe`...): un elenco esplicito lasciava fuori `services/setting_service.py` (password e app key) e

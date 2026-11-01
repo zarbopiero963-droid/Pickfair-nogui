@@ -216,7 +216,10 @@ FINANCIAL_OWNER_ONLY_PATTERNS = (
     r"|daily_loss_store|duplication_guard|signal_dedupe|stake_precision)\.py$",
     r"^(circuit_breaker|auto_throttle|safe_mode|safe_mode_manager|market_validator)\.py$",
     r"^ai/ai_guardrail\.py$",
-    r"(?i)(stop_?loss|take_?profit|sl_tp)",
+    # Codex su 0c050e6: cap dello stake, limiti di esposizione e kill switch del daily-loss (AGENTS.md: i limiti
+    # di denaro sono decisione owner)
+    r"^(core/money_management|stake_mode)\.py$",
+    r"(?i)(stop_?loss|take_?profit|sl_tp|kill_?switch|exposure)",
     # Rete larga per parola chiave nel NOME del file (Codex su 4fb12ff: un elenco esplicito lascia sempre fuori
     # qualcosa, es. services/setting_service.py con password e app key, core/system_state.py con i limiti di
     # esposizione Roserpina). Un falso positivo costa un merge owner, un falso negativo un auto-merge non dovuto.
@@ -242,7 +245,10 @@ _FIN_RE = tuple(re.compile(p) for p in FINANCIAL_CRITICAL_PATTERNS)
 LIVE_ACTIVATION_CONTENT_RE = re.compile(
     r"(?i)\b(live_enabled|enable_live|allow_live|live_armed|real_money(_enabled)?|go_live|execution_mode|live_gate"
     r"|simulation_mode|set_simulation)\b"
-    r"|\bsimulation\b\s*=(?!=)"
+    # `simulation` da solo: come chiave fra apici (dict, subscript, getattr) o come parametro/assegnazione
+    # (`simulation=`, `simulation:`). Sol su 0c050e6: `{"simulation": False}` e `cfg["simulation"] = False`.
+    r"|[\"']simulation[\"']"
+    r"|\bsimulation\b\s*(:|=(?!=))"
 )
 
 # Certificazione rafforzata richiesta per l'auto-merge di una PR finanziaria critica (§0.9-bis).
