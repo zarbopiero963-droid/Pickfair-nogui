@@ -332,7 +332,8 @@ attivazione LIVE e configurazione di esecuzione (`core/runtime_authority`, `core
 `core/microstake_live_port`, `core/bridge_mode`, `core/config_store`, `trading_config`, `config_registry`,
 `config.example.json`, `scripts/live_gate.py`, e ogni riga aggiunta di prodotto che **menziona** un
 interruttore LIVE o di modalita', qualunque sia il valore (`LIVE_ACTIVATION_CONTENT_RE`: `allow_live`, `live_enabled`,
-`execution_mode`, `simulation_mode`, `simulation=`...; leggere `is_simulation_mode()` non conta); protezioni finanziarie fondamentali (`core/safety_layer`, `safety_guard`,
+`execution_mode`, `simulation_mode`/`set_simulation_mode`, `"simulation"`, `simulation=`..., anche dentro
+identificatori composti come `_live_enabled`; leggere `is_simulation_mode()` non conta); protezioni finanziarie fondamentali (`core/safety_layer`, `safety_guard`,
 `risk_*`, `loss_limits`, `daily_loss_store`, `duplication_guard`, `signal_dedupe`, `stake_precision`,
 `circuit_breaker`, `auto_throttle`, `safe_mode*`, `market_validator`, `ai/ai_guardrail`, `core/money_management` e
 `stake_mode` (cap dello stake, esposizione, kill switch del daily-loss), stop-loss/take-profit).

@@ -123,6 +123,9 @@ def test_aree_sempre_owner_anche_con_certificazione_completa(path):
     # Sol su 0c050e6: chiavi e sottoscrizioni con `simulation` da solo
     '+    broker.connect(**{"simulation": False})', '+cfg["simulation"] = False', "+    'simulation': flag,",
     "+    simulation: bool = False",
+    # Codex su 0923d3d: mutatori e identificatori composti reali (core/runtime_controller, services/betfair_service)
+    "+        self.set_simulation_mode(False)", "+    svc.set_simulation_mode(flag)", "+    self._live_enabled = True",
+    "+        self._execution_mode = mode",
 ])
 def test_riga_che_attiva_il_live_va_a_merge_owner(line):
     patch = f"diff --git a/order_manager.py b/order_manager.py\n--- a/order_manager.py\n+++ b/order_manager.py\n@@ -1,0 +1,1 @@\n{line}\n"
@@ -210,3 +213,10 @@ def test_test_e_docs_delle_aree_owner_non_le_rendono_owner():
                                   ".github/workflows/x.yml", "tools/combi/generator.py"])
 def test_tooling_con_parole_chiave_non_diventa_area_owner_finanziaria(path):
     assert policy.classify_paths([path])["financial_owner_only"] == []
+
+
+@pytest.mark.parametrize("line", ["+    sim = self.service.is_simulation_mode()", "+    if svc.is_simulation_mode():",
+                                  "+    broker = svc.get_simulation_broker()"])
+def test_leggere_la_modalita_non_e_attivazione_live(line):
+    patch = f"diff --git a/order_manager.py b/order_manager.py\n--- a/order_manager.py\n+++ b/order_manager.py\n@@ -1,0 +1,1 @@\n{line}\n"
+    assert _diff(["order_manager.py", SCOPE], patch)["classification"]["live_activation"] == []

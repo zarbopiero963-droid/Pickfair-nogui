@@ -241,10 +241,12 @@ _FIN_RE = tuple(re.compile(p) for p in FINANCIAL_CRITICAL_PATTERNS)
 # Righe aggiunte di prodotto che TOCCANO l'attivazione LIVE o il denaro reale: sempre merge owner.
 # Si guarda la MENZIONE dell'identificatore, non il valore assegnato (Sol su 4fb12ff: `allow_live = (True)`,
 # assegnazioni su piu' righe, indirezioni via variabile o setattr sfuggono a qualunque regex sul valore).
-# `is_simulation_mode(` non conta (`\b` non separa `_` da `s`): leggere la modalita' non la cambia.
 LIVE_ACTIVATION_CONTENT_RE = re.compile(
-    r"(?i)\b(live_enabled|enable_live|allow_live|live_armed|real_money(_enabled)?|go_live|execution_mode|live_gate"
-    r"|simulation_mode|set_simulation)\b"
+    # Nessun `\b` intorno agli interruttori (Codex su 0923d3d): `set_simulation_mode(False)`, `_live_enabled`,
+    # `self._execution_mode` sono identificatori composti che i confini di parola non vedevano. Unica eccezione:
+    # la LETTURA `is_simulation_mode` (lookbehind), che non cambia la modalita'.
+    r"(?i)(live_enabled|enable_live|allow_live|live_armed|real_money|go_live|execution_mode|live_gate"
+    r"|(?<!is_)simulation_mode|set_simulation)"
     # `simulation` da solo: come chiave fra apici (dict, subscript, getattr) o come parametro/assegnazione
     # (`simulation=`, `simulation:`). Sol su 0c050e6: `{"simulation": False}` e `cfg["simulation"] = False`.
     r"|[\"']simulation[\"']"
