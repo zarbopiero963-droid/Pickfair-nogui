@@ -44,3 +44,21 @@ Test: `tests/f09/test_f09_recover_gating.py` (HeadlessApp reale in SIM tramite l
 - Nessun dato da migrare: le tabelle partono vuote; i ghost vengono scritti al primo avvio con ordini attivi.
 - Test: `tests/f08/test_f08_startup_orders_real_db.py` (DB SQLite reale, migrazione di un DB senza tabelle senza
   perdita di ordini); mutazioni `f08_*` in `guardrails/mutation_catalog.json`.
+
+## Crash fra il settlement nel broker e la sua contabilizzazione (F-10, #586 RST-03)
+
+Scenario provato sul runtime vero (`tests/recovery/test_f10_rst03_crash_debt.py`, HeadlessApp in SIM con SQLite
+reale): il mercato e' gia' CLOSED (LOSS) nel broker quando il processo muore, prima che il runtime riceva
+`RUNTIME_CLOSE_POSITION`. Al riavvio la ricostruzione F018 vede l'ordine chiuso (assente dagli ordini correnti) e non
+ricrea il tavolo; il settlement SIM per mercato, riemesso dal poller, non trovava piu' alcun tavolo sul mercato e
+restava `held` per sempre: **la perdita usciva dal ciclo di recovery** (debito 0 invece della stake persa).
+
+Ora `_resolve_market_settlement`, se nessun tavolo porta il mercato, ricava l'identita' dall'**unica** riga `orders`
+del bot su quel mercato (`_resolve_market_settlement_from_order`): `customer_ref`, `event_key` e il tavolo della
+riserva persistiti. Il rilascio passa da `release_identified_reservation` come nel settlement per bet LIVE: tavolo
+libero => il P&L entra nel suo recovery; tavolo con un'altra riserva => la riserva resta e il P&L entra nel recovery.
+Resta `held` (nessun effetto) se il mercato ha hedge/cashout o il registro hedge e' inaffidabile, piu' righe del
+bot sul mercato, una gamba di lotto Dutching, identita' o tavolo non persistiti, tavolo inesistente o ordini
+illeggibili (questi ultimi due sono transitori, riconciliabili). Il registro `settlement_effects` garantisce un solo
+effetto anche per un secondo settlement dello stesso mercato. Mutazioni `f10_*`.
+

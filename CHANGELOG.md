@@ -19,6 +19,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `tests/scripts/test_roadmap_merge_delegation.py`; mutazioni `pap_delegation_*`, `pap_live_removed_lines_ignored`.
 
 ### Fixed
+- **F-10 (#586, RST-03 P0) — debito di recovery dopo un crash:** crash con il mercato gia' CLOSED (LOSS) nel broker
+  e prima di `RUNTIME_CLOSE_POSITION`: al riavvio il settlement SIM non trovava il tavolo e restava `held`, la perdita
+  usciva dal recovery. Ora l'identita' si ricava dall'unica riga ordine del bot sul mercato (tavolo persistito), come
+  nel settlement LIVE; nessun doppio conteggio. `docs/startup_recovery.md`; test `tests/recovery/`; mutazioni `f10_*`.
 - **F-09 (#586, RST-01/REC-08) — esito del recovery all'avvio gating:** `recover()` non ok, eccezione nella fase
   recovery/reconcile o batch aperti non riconciliati => avvio in PAUSED + RECONCILIATION_REQUIRED (stessa semantica di
   F018), `startup_mode` nel payload `STARTUP_POSITIONS_REBUILT`, `resume()` non lo scavalca. Prima l'esito era solo

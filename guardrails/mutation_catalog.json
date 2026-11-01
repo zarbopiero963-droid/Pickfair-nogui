@@ -499,6 +499,54 @@
       "rationale": "F-09: gate dell'esito di recover() assente (avvio e resume)."
     },
     {
+      "id": "f10_settlement_without_table_dropped",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            return self._resolve_market_settlement_from_order(market_id, why=why)",
+      "mutated": "            return None",
+      "tests": [
+        "tests/recovery/test_f10_rst03_crash_debt.py"
+      ],
+      "rationale": "F-10 (RST-03): settlement SIM senza tavolo trattenuto per sempre, debito di recovery perso dopo un crash."
+    },
+    {
+      "id": "f10_hedged_market_attributed_from_order",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "        if getattr(self, \"_hedged_markets_unreliable\", False) or market_id in hedged_markets:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/recovery/test_f10_rst03_crash_debt.py"
+      ],
+      "rationale": "F-10: mercato con hedge attribuito dal solo ordine (P&L non e' il netto del tavolo)."
+    },
+    {
+      "id": "f10_batch_leg_attributed_from_order",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "        if not ref or not ev or request.get(\"batch_id\"):",
+      "mutated": "        if not ref or not ev:",
+      "tests": [
+        "tests/recovery/test_f10_rst03_crash_debt.py"
+      ],
+      "rationale": "F-10: gamba di un lotto Dutching attribuita come singolo ordine."
+    },
+    {
+      "id": "f10_ambiguous_market_attributed_from_order",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "        if len(on_market) != 1:",
+      "mutated": "        if not on_market:",
+      "tests": [
+        "tests/recovery/test_f10_rst03_crash_debt.py"
+      ],
+      "rationale": "F-10: mercato con piu' ordini del bot attribuito al primo."
+    },
+    {
       "id": "f08_startup_orders_table_missing",
       "module": "database_schema",
       "area": "recovery",

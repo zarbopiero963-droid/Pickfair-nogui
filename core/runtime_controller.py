@@ -5747,6 +5747,12 @@ class RuntimeController:
     def _resolve_market_settlement(self, market_id: str, why: Optional[list] = None) -> Optional[dict]:
         matches = [t for t in self.table_manager.snapshot()
                    if str(t.get("market_id") or "") == market_id and str(t.get("current_event_key") or "")]
+        if not matches:
+            # F-10 (#586 RST-03): nessun tavolo porta piu' il mercato (crash fra il CLOSED nel broker e
+            # RUNTIME_CLOSE_POSITION: F018 lo vede chiuso e non ricostruisce il tavolo). Come nel settlement per bet
+            # LIVE (`release_identified_reservation` -> "free"), il P&L va nel recovery del tavolo persistito
+            # dell'unica riga ordine del bot sul mercato, mai perso in un ``held`` che nessuno riconcilia.
+            return self._resolve_market_settlement_from_order(market_id, why=why)
         if len(matches) != 1:
             if matches:
                 logger.warning("Settlement %s: %d tavoli sul mercato, nessun rilascio automatico", market_id, len(matches))
@@ -5785,6 +5791,60 @@ class RuntimeController:
             return None
         return {"table_id": int(table["table_id"]), "event_key": str(table["current_event_key"]), "customer_ref": ref,
                 "reservation_id": str(on_market[0][1].get("reservation_id") or ""), "bet_id": ""}
+
+    def _resolve_market_settlement_from_order(self, market_id: str, why: Optional[list] = None) -> Optional[dict]:
+        """F-10 (RST-03): identita' del settlement SIM per mercato quando nessun tavolo porta piu' il mercato.
+
+        Attribuibile solo con prova durevole e univoca: mercato senza hedge/cashout (registro affidabile), una sola
+        riga ordine del bot sul mercato (hedge esclusi), non gamba di un lotto Dutching, con ``customer_ref``,
+        ``event_key`` e il tavolo della riserva persistiti, e quel tavolo esistente. Il rilascio passa poi da
+        `release_identified_reservation`: tavolo libero => il P&L entra nel suo recovery ("free"); tavolo con un'altra
+        riserva => la riserva resta e il P&L entra nel recovery ("foreign"). Qualunque dubbio => None (held)."""
+        hedged_markets = getattr(self, "_hedged_markets", {}) or {}
+        if getattr(self, "_hedged_markets_unreliable", False) or market_id in hedged_markets:
+            return None                                    # P&L del mercato con hedge: non e' il netto del tavolo
+        try:
+            rows = self.db._execute(
+                "SELECT customer_ref, payload_json, status FROM orders "
+                "WHERE status NOT IN ('FAILED', 'DENIED', 'DUPLICATE_BLOCKED')", fetch=True, commit=False) or []
+        except Exception:
+            logger.exception("Settlement %s: ordini del bot illeggibili, nessun rilascio", market_id)
+            if why is not None:
+                why.append("transient")
+            return None
+        on_market = []
+        for raw in rows:
+            row = dict(raw)
+            if str(row.get("status") or "").upper() in ("FAILED", "DENIED", "DUPLICATE_BLOCKED"):
+                continue
+            if is_hedge_order_ref(row.get("customer_ref")):
+                continue
+            try:
+                request = json.loads(row.get("payload_json") or "{}")
+            except (TypeError, ValueError, AttributeError):
+                return None                                # riga illeggibile: attribuzione non dimostrabile
+            if not isinstance(request, dict):
+                return None
+            if str(request.get("market_id") or "") == market_id:
+                on_market.append((str(row.get("customer_ref") or ""), request))
+        if len(on_market) != 1:
+            return None
+        ref, request = on_market[0]
+        ev = str(request.get("event_key") or "")
+        if not ref or not ev or request.get("batch_id"):
+            return None
+        tid = request.get("table_id") if request.get("table_id") is not None else request.get("reservation_table_id")
+        try:
+            tid = int(tid)
+        except (TypeError, ValueError):
+            return None
+        if self.table_manager.get_table(tid) is None:
+            logger.error("Settlement %s: tavolo %s della riserva %s assente, trattenuto", market_id, tid, ref)
+            if why is not None:
+                why.append("transient")
+            return None
+        return {"table_id": tid, "event_key": ev, "customer_ref": ref,
+                "reservation_id": str(request.get("reservation_id") or ""), "bet_id": ""}
 
     _HEDGED_MARKETS_KEY = "roserpina.hedged_markets"
     _HEDGED_MARKETS_RETENTION_DAYS = 365          # oltre la durata di qualunque mercato (antepost compresi)
