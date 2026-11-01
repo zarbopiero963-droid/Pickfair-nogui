@@ -359,8 +359,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "            elif tp_d is not None and covered and pnl >= abs(tp_d):",
-      "mutated": "            elif tp_d is not None and pnl >= abs(tp_d):",
+      "original": "            elif tp_d is not None and covered:",
+      "mutated": "            elif tp_d is not None:",
       "tests": [
         "tests/core/test_sl_tp_pnl_sign.py"
       ],
