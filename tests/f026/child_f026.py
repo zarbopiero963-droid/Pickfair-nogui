@@ -15,6 +15,8 @@ SCENARIO_JSON: {"steps": [...]} con passi:
   {"op": "book_down"}                                               snapshot del book assente da qui in poi
   {"op": "crash_now"}                                               os._exit(1) subito (stato SIM persistito)
   {"op": "crash_after_settlement"}                                  os._exit(1) appena il settlement e' contabilizzato
+  {"op": "crash_before_close_position"}                             os._exit(1) col mercato gia' CLOSED nel broker, PRIMA
+                                                                    che il runtime riceva RUNTIME_CLOSE_POSITION (F-10)
   {"op": "lockdown"} / {"op": "pause"} / {"op": "emergency"}         LOCKDOWN, PAUSED, emergency stop (PF-ALL-F027)
   {"op": "wait", "s": 3}
   {"op": "replay_cmd", "m": "1.701"}                                ripubblica l'ultimo CMD_QUICK_BET del mercato (PR29-a)
@@ -56,6 +58,10 @@ try:
             res = orig(e, d)        # il consumer ha gia' contabilizzato e persistito il checkpoint del settlement
             app.betfair_service._persist_simulation_state_if_needed(force=True)
             R["crashed_at"] = "BANKROLL_SYNC_RESULT"; dump(); os._exit(1)
+        if e == "RUNTIME_CLOSE_POSITION" and CRASH.get("before_close"):
+            # F-10 (RST-03): l'exchange (SIM) ha gia' regolato il mercato; il bot muore prima di consumare la chiusura
+            app.betfair_service._persist_simulation_state_if_needed(force=True)
+            R["crashed_at"] = "BEFORE_RUNTIME_CLOSE_POSITION"; dump(); os._exit(1)
         if e == "ROSERPINA_AUTO_RESET" and CRASH["armed"]:
             # l'exchange (SIM) ha gia' regolato: il suo stato sopravvive al crash del bot
             app.betfair_service._persist_simulation_state_if_needed(force=True)
@@ -343,6 +349,8 @@ try:
             R["crashed_at"] = "NOW"; snap("crash"); dump(); os._exit(1)
         elif op == "crash_after_settlement":
             CRASH["after_settlement"] = True; continue
+        elif op == "crash_before_close_position":
+            CRASH["before_close"] = True; continue
         elif op == "lockdown":
             rt.force_lockdown("f027_test"); time.sleep(0.3)
         elif op == "pause":
