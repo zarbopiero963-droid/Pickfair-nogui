@@ -64,6 +64,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   asserzione sul TTL cambiata, nessun codice di produzione toccato.
 
 ### Changed
+- **Governance — auto-merge certificato delle PR finanziarie critiche (OWNER DIRECTIVE 01/11/2026, #586):**
+  `pr_autonomy_policy.merge_decision` porta in auto-merge una PR finanziaria critica solo con la certificazione
+  rafforzata `financial_certification` provata sull'head (suite, mutation, controlli finanziari, Codex senza
+  bloccanti, review complete, scope, nessuna regressione nota, nessun test saltato, nessun override, nessuna
+  deroga); credenziali, attivazione LIVE e protezioni finanziarie fondamentali restano sempre a merge owner
+  (`FINANCIAL_OWNER_ONLY_PATTERNS`, `LIVE_ACTIVATION_CONTENT_RE`); `next_pr_decision` richiede la CI post-merge
+  verde su main. Spec §0.9-bis e §0.14, CLAUDE.md; test `tests/scripts/test_certified_financial_automerge.py`;
+  mutazioni `pap_*`.
 - **Governance CI — GitHub Actions primario, Buildkite differito (OWNER DECISION 31/10/2026, #586):** la merge
   readiness non conta piu' come gate gli status della lane Buildkite sospesa (`full-suite`, `overlap-check`,
   `pr-merge-readiness` su `buildkite.com`), che restano visibili fra gli ignorati. Il check run `overlap-check`

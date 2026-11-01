@@ -7268,6 +7268,54 @@
         "tests/fullscope/combi/test_generator.py"
       ],
       "rationale": "F-33 (#586) harness full-scope: il seed non influenza piu' i pareggi: seed diversi danno sempre gli stessi casi (riproducibilita' dichiarata ma non effettiva)."
+    },
+    {
+      "id": "pap_financial_certification_skipped",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "        problems = _financial_certification_problems(state.get(\"financial_certification\"), current)",
+      "mutated": "        problems = []",
+      "tests": [
+        "tests/scripts/test_certified_financial_automerge.py"
+      ],
+      "rationale": "§0.9-bis: PR finanziaria critica in auto-merge senza la certificazione rafforzata provata sull'head."
+    },
+    {
+      "id": "pap_financial_owner_only_ignored",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if full.get(\"financial_owner_merge_required\") is not False:",
+      "mutated": "    if full.get(\"financial_owner_merge_required\") is True and False:",
+      "tests": [
+        "tests/scripts/test_certified_financial_automerge.py"
+      ],
+      "rationale": "§0.9-bis: credenziali, LIVE o protezioni finanziarie fondamentali in auto-merge invece che a merge owner."
+    },
+    {
+      "id": "pap_live_activation_not_detected",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "                live_activation.add(path)       # §0.9-bis: attivazione LIVE => merge owner",
+      "mutated": "                pass",
+      "tests": [
+        "tests/scripts/test_certified_financial_automerge.py"
+      ],
+      "rationale": "§0.9-bis: una riga che attiva il LIVE non instrada la PR al merge owner."
+    },
+    {
+      "id": "pap_next_pr_without_main_ci",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if main_ci != \"GREEN\":",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_certified_financial_automerge.py"
+      ],
+      "rationale": "§0.14: PR successiva aperta senza CI post-merge verde verificata su main."
     }
   ]
 }

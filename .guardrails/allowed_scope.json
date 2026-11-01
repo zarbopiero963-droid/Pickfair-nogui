@@ -3218,6 +3218,26 @@
         "tests/f08/test_f08_startup_orders_real_db.py"
       ],
       "max_files": 9
+    },
+    "gov_certified_financial_automerge": {
+      "description": "OWNER DIRECTIVE 01/11/2026 «GOVERNANCE AUTO-MERGE CERTIFICATO» (#586): auto-merge delle PR finanziarie critiche solo con certificazione rafforzata provata sull'head (pr_autonomy_policy.merge_decision, §0.9-bis); credenziali, attivazione LIVE e protezioni finanziarie fondamentali sempre a merge owner; PR successiva solo con CI post-merge verde su main (§0.14). File di governance (scripts/pr_*, CLAUDE.md, spec): merge owner. Non modifica la governance in vigore fino al merge owner.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "CLAUDE.md",
+        "docs/auto_pr_flow_spec.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/ci_changed_modules.py",
+        "scripts/pr_autonomy_policy.py",
+        "tests/scripts/test_certified_financial_automerge.py",
+        "tests/scripts/test_codacy_decommissioned.py",
+        "tests/scripts/test_pr_automation_controller.py",
+        "tests/scripts/test_pr_autonomy_policy.py",
+        "tests/scripts/test_pr_fix_loop_policy.py",
+        "tests/scripts/test_pr_review_recovery.py"
+      ],
+      "max_files": 13
     }
   }
 }
