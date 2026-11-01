@@ -89,7 +89,7 @@ def test_size_is_measured_on_the_exchange_not_on_the_payload():
     assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:size"
 
 
-def test_previous_hedges_and_other_selections_do_not_count_as_position():
+def test_neutral_pairs_and_other_selections_or_markets_are_no_position():
     from core.hedge_ref import new_hedge_ref
     orders = [_order(side="BACK", matched=40.0, ref=new_hedge_ref()), _order(matched=40.0, selection=99),
               _order(matched=40.0, market="1.999"), _order(side="LAY", matched=40.0)]

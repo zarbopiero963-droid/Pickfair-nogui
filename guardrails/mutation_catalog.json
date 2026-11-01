@@ -7738,18 +7738,6 @@
       "rationale": "F-06: executor senza ledger senza controllo di coerenza."
     },
     {
-      "id": "f06_previous_hedges_count_as_position",
-      "module": "cashout_executor",
-      "area": "cashout",
-      "file": "cashout_executor.py",
-      "original": "            if side == pos_side and is_hedge:\n                continue",
-      "mutated": "            if False:\n                continue",
-      "tests": [
-        "tests/f06/test_f06_hedge_guard.py"
-      ],
-      "rationale": "F-06: hedge precedenti contati come posizione da chiudere."
-    },
-    {
       "id": "f06_requested_price_instead_of_matched",
       "module": "cashout_executor",
       "area": "cashout",

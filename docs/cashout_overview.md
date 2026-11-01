@@ -492,8 +492,9 @@ BACK la raddoppia; un LAY 50 su una posizione da 0.23 apre una nuova esposizione
   - lato dell'hedge = opposto della posizione, altrimenti `hedge_non_coerente:lato`;
   - posizione da chiudere = quella IDENTIFICATA dal comando (`original_pos`: stake x prezzo, illeggibile =>
     `posizione_assente`), limitata dall'alto dall'esposizione NETTA della selezione sull'exchange
-    (`BetfairService.list_current_orders`, che in LIVE riporta anche gli ordini `EXECUTION_COMPLETE`): ordini non-hedge
-    del lato della posizione meno tutto l'abbinato del lato opposto (hedge compresi), `sizeMatched * averagePriceMatched`
+    (`BetfairService.list_current_orders`, che in LIVE riporta anche gli ordini `EXECUTION_COMPLETE`): tutto l'abbinato
+    del lato della posizione meno tutto l'abbinato del lato opposto, hedge compresi (una coppia gia' chiusa dal suo
+    hedge si annulla, Sol su `73296a3`), `sizeMatched * averagePriceMatched`
     (se <= 1: `priceSize.price`, come `cashout_resolver._row_matched_price`). Vale il minore dei due: altri ingressi
     dello stesso lato (manuali, altri tavoli) non allargano mai l'hedge, una coppia gia' neutra non conta e una chiusura
     gia' abbinata lo riduce (Sol su `a16f0d3`). Esposizione nulla => `posizione_assente`; ordini illeggibili,

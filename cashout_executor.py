@@ -304,10 +304,10 @@ class CashoutExecutor:
 
         La posizione da chiudere e' quella IDENTIFICATA dal comando, ``original_pos`` (lato, stake, prezzo:
         ``cashout_resolver`` la ricava dagli ordini del bot). L'exchange la limita dall'alto: esposizione NETTA della
-        selezione (``fetch_current_orders``): ordini non-hedge del lato della posizione meno TUTTO l'abbinato sul lato
-        opposto, hedge compresi, ``sizeMatched`` per prezzo medio abbinato. Il tetto e' il minore dei due: altri
-        ingressi dello stesso lato (manuali, altri tavoli) non allargano mai l'hedge e una chiusura gia' abbinata lo
-        riduce (Sol su a16f0d3). Ordini illeggibili o in errore => ``posizione_non_verificabile`` (nessun hedge).
+        selezione (``fetch_current_orders``): TUTTO l'abbinato del lato della posizione meno TUTTO l'abbinato del lato
+        opposto, hedge compresi, ``sizeMatched`` per prezzo medio abbinato (l'esposizione reale: una coppia gia' chiusa
+        dal suo hedge si annulla, Sol su 73296a3). Il tetto e' il minore dei due: altri ingressi dello stesso lato
+        (manuali, altri tavoli) non allargano mai l'hedge e una chiusura gia' abbinata lo riduce (Sol su a16f0d3). Ordini illeggibili o in errore => ``posizione_non_verificabile`` (nessun hedge).
         Senza sorgente (doppi di test) vale ``original_pos``: la coerenza si verifica comunque, mai saltata. Il
         verdetto e' `RiskGate.protective_hedge` (nessun cap di stake, solo lato e size)."""
         from core.risk_gate import RiskGate
@@ -346,9 +346,6 @@ class CashoutExecutor:
                     or str(order.get("selectionId") or order.get("selection_id") or "") != selection
                     or side not in self._VALID_SIDES):
                 continue
-            is_hedge = _hedge.is_hedge_order_ref(order.get("customerOrderRef") or order.get("customer_ref"))
-            if side == pos_side and is_hedge:
-                continue                                # un hedge non e' mai esposizione da chiudere
             matched = self._as_float(order.get("sizeMatched", order.get("size_matched")))
             if not math.isfinite(matched) or matched < 0.0:
                 return None
