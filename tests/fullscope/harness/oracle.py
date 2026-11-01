@@ -52,7 +52,7 @@ class Oracle:
         # Gambe dell'EXCHANGE. Stessa identita' (customer ref) di una riga del ledger: l'exchange e' autorevole sul
         # fill CUMULATIVO e sul prezzo medio eseguito (la riga SQLite conserva la risposta del piazzamento: un
         # parziale poi completato restava a matched iniziale, rilievo Codex su 0d9e091). Gamba senza riga nel ledger
-        # (oggi: l'hedge del cashout, CSH-06 -> F-05): l'oracolo la conta perche' il denaro e' stato mosso davvero;
+        # (fino a F-05: l'hedge del cashout, CSH-06): l'oracolo la conta perche' il denaro e' stato mosso davvero;
         # la sua assenza dal ledger e' un finding a parte.
         for leg in extra_legs or []:
             ref = leg.get("ref")

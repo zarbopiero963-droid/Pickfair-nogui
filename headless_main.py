@@ -531,6 +531,8 @@ class HeadlessApp:
             runtime_authority_operation=lambda: (
                 self.runtime.authority_operation()
                 if getattr(self, "runtime", None) is not None else contextlib.nullcontext()),
+            # F-05 (CSH-06): l'hedge del cashout e' scritto nel ledger `orders` (write-ahead + esito)
+            ledger=self.db,
         )
         self.order_router = catena.order_router
         self.cashout_executor = catena.cashout_executor
