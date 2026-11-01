@@ -78,9 +78,9 @@ def test_phase1_positions_and_partial_cashout(combo):
     O.check_conservation(s, o)
 
 
-@pytest.mark.xfail(strict=True, reason="F-05 (CSH-06, P0): l'hedge del cashout e' eseguito sull'exchange ma NON e' scritto "
-                                       "nel ledger `orders` (OrderRouter.place non persiste) — finding confermato dall'harness")
 def test_cashout_hedge_is_written_to_ledger(combo):
+    # F-05 (CSH-06): era xfail strict su main 6fa29b2; con il ledger write-ahead dell'hedge ogni gamba
+    # dell'exchange ha la sua riga in `orders` (chiusura verificata dall'XPASS strict).
     first, _ = combo
     s = first["snaps"][-1]
     assert O.ledger_missing_exchange_legs(s) == [], "gambe exchange assenti dal ledger: " + O.describe(s)

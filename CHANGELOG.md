@@ -8,6 +8,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **F-05 (#586, CSH-06 P0) — l'hedge del cashout e' scritto nel ledger `orders`:** `CashoutExecutor` (con
+  `ledger=db` da `cabla_catena_cashout`) scrive la riga dell'hedge PRIMA dell'invio (`HEDGE_PENDING`, ref `hedge:`)
+  e la aggiorna con l'esito (`HEDGE_PLACED/UNMATCHED/FAILED/AMBIGUOUS`); ledger non scrivibile => nessun hedge.
+  Gli stati `HEDGE_*` restano fuori dagli ordini aperti (nessun tavolo fantasma, nessun PAUSED); settlement e
+  posizione singola escludono i ref `hedge:` (nessun doppio P&L); l'identita' I1 include la bet dell'hedge
+  (daily-loss LIVE, nessun secondo hedge della stessa posizione). Hedge idempotente (stessa richiesta o esito
+  incerto sulla selezione => rifiuto), nessun nuovo hedge finche' il precedente sulla stessa selezione e' ancora
+  abbinabile sull'exchange (`previous_hedge_still_live`) o gia' abbinato (`previous_hedge_matched`); vivacita' non
+  verificabile o ordini correnti malformati (anche senza `betId`) = rifiuto (Sol e Grok su #593); il flag `sim` del
+  `CASHOUT_SUCCESS` e' catturato subito prima dell'invio, dopo il preflight del ledger (Codex P1 su #593) e riavvio
+  dopo crash (`HEDGE_PENDING` => `HEDGE_AMBIGUOUS`). `core/hedge_ref.py`; test `tests/f05/`;
+  mutazioni `f05_*`; `docs/cashout_overview.md` §7.3.
 ### Added
 - **F-33 (#586) — harness full-scope di collaudo (solo test e tooling, GO-IMPLEMENT-LOCAL owner 29/10/2026):**
   `tools/combi/` (inventario delle 190 chiavi censite con dominio e classe ATTIVA/LEGACY; generatore pairwise /

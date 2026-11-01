@@ -58,7 +58,7 @@ Variabili: `PF_SEED` (seed riproducibile, default 0), `PF_FULLSCOPE_ART` (direct
 ## Finding prodotti dalla prima esecuzione su `main` 6fa29b2 (SIM, seed 0)
 | Finding | Test | Stato | Scheda |
 |---|---|---|---|
-| Hedge del cashout eseguito sull'exchange ma assente dal ledger `orders` | `test_sim_combo_001.py::test_cashout_hedge_is_written_to_ledger` | xfail strict (CSH-06 confermato) | F-05 |
+| Hedge del cashout eseguito sull'exchange ma assente dal ledger `orders` | `test_sim_combo_001.py::test_cashout_hedge_is_written_to_ledger` | xfail strict (CSH-06 confermato) → **PASS** dopo F-05 (marker rimosso) | F-05 |
 | Monitor SL/TP inerte: nessun trigger osservabile | `test_sim_combo_001.py::test_stop_loss_leg_triggers_on_adverse_price` | xfail strict | F-01/F-02 |
 | Loader: valore illeggibile ⇒ default silenzioso (`_f`) o `inf` accettato | `test_l1_settings_roundtrip.py::test_invalid_numeric_value_is_not_silently_replaced_by_a_default` (51 casi) | xfail imperativo (NF-16): il ramo fail-open non sara' piu' raggiunto quando F-18 chiude | F-18 |
 | RST-03: perdita regolata dall'exchange prima del crash, contabilizzata una sola volta dopo il riavvio | `test_sim_restart_003.py::test_rst03_...` | **PASS** (prova positiva riproducibile) | F-10 (tracker: COVERED su 6fa29b2, SIM) |
