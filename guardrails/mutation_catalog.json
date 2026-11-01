@@ -439,6 +439,54 @@
       "rationale": "F-08 (Codex P1 su 1b22a4e): ghost gia' persistito e ancora vivo non seminato nella guardia nuova al secondo avvio => duplicato accettato."
     },
     {
+      "id": "f09_recover_not_ok_ignored",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            if not isinstance(recovery_result, dict) or recovery_result.get(\"ok\") is not True:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/f09/test_f09_recover_gating.py"
+      ],
+      "rationale": "F-09 (RST-01): recover() ok=False solo loggato, runtime ACTIVE."
+    },
+    {
+      "id": "f09_open_batch_failure_ignored",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            if not self._startup_recovery_failure and (not isinstance(batches, dict) or batches.get(\"ok\") is not True):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/f09/test_f09_recover_gating.py"
+      ],
+      "rationale": "F-09 (REC-08): batch aperti non riconciliati all'avvio, runtime ACTIVE."
+    },
+    {
+      "id": "f09_recovery_exception_swallowed",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            self._startup_recovery_failure = self._startup_recovery_failure or f\"STATE_RECOVERY_ERROR:{type(exc).__name__}\"",
+      "mutated": "            pass",
+      "tests": [
+        "tests/f09/test_f09_recover_gating.py"
+      ],
+      "rationale": "F-09 (RST-01): eccezione nella fase recovery/reconcile ingoiata, runtime ACTIVE."
+    },
+    {
+      "id": "f09_startup_gate_bypassed",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "        failure = getattr(self, \"_startup_recovery_failure\", \"\")",
+      "mutated": "        failure = \"\"",
+      "tests": [
+        "tests/f09/test_f09_recover_gating.py"
+      ],
+      "rationale": "F-09: gate dell'esito di recover() assente (avvio e resume)."
+    },
+    {
       "id": "f08_startup_orders_table_missing",
       "module": "database_schema",
       "area": "recovery",
