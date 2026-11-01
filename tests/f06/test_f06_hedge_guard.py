@@ -220,3 +220,37 @@ def test_invalid_average_price_falls_back_to_the_order_price_like_the_resolver()
     cmd = _resolver_cmd(orders, 1.8)
     bus, router = _run(cmd, orders=orders)
     assert len(router.calls) == 1, bus.last(CASHOUT_FAILED)
+
+
+def test_neutral_manual_pair_on_the_selection_never_widens_the_hedge():
+    # Sol su a16f0d3: BACK 0.23@2 da chiudere + coppia manuale BACK 10@2 / LAY 10@2 gia' neutra. Sommando solo il lato
+    # della posizione il tetto diventava 20.46/2 e passava un LAY 10@2: nuova esposizione invece della chiusura
+    orders = [_order(), dict(_order(matched=10.0, ref="manual-1"), betId="M1"),
+              dict(_order(side="LAY", matched=10.0, ref="manual-2"), betId="M2")]
+    bus, router = _run(_cmd(stake=10.0, price=2.0), orders=orders)
+    assert router.calls == [], "hedge oltre la posizione identificata piazzato"
+    assert bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:size"
+    bus, router = _run(_cmd(stake=0.23, price=2.0), orders=orders)
+    assert len(router.calls) == 1, bus.last(CASHOUT_FAILED)
+
+
+def test_exchange_position_larger_than_the_identified_one_never_widens_the_hedge():
+    # altri ingressi dello stesso lato (manuali o di altri tavoli): il tetto resta la posizione del comando
+    orders = [_order(), dict(_order(matched=10.0, ref="other-table"), betId="O1")]
+    bus, router = _run(_cmd(stake=5.0, price=2.0), orders=orders)
+    assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:size"
+
+
+def test_matched_opposite_side_orders_reduce_the_exposure():
+    # un hedge precedente gia' abbinato (anche fuori dal ledger) riduce l'esposizione: niente sovracopertura
+    from core.hedge_ref import new_hedge_ref
+    orders = [_order(), dict(_order(side="LAY", matched=0.2, ref=new_hedge_ref()), betId="H0")]
+    bus, router = _run(_cmd(stake=0.26), orders=orders)
+    assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:size"
+
+
+@pytest.mark.parametrize("orig", [{"side": "BACK"}, {"side": "BACK", "stake": "x", "price": 2.0},
+                                  {"side": "BACK", "stake": 0.23, "price": float("nan")}])
+def test_unreadable_identified_position_size_rejected(orig):
+    bus, router = _run(_cmd(original_pos=orig), orders=[_order()])
+    assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_assente"
