@@ -1,16 +1,16 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 14,
+ "seq": 15,
  "mandate_id": "Claude B — OWNER DIRECTIVE FINALIZE #592 AND RESUME PICKFAIR ROADMAP V2",
- "previous_checkpoint_sha": "717b486c74ce198bb736ffa24a9ccb465cd0fa94",
+ "previous_checkpoint_sha": "60b997d75a88083fc6b4693680021760c8668059",
  "code": {
   "branch": "f05-hedge-ledger",
   "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
   "patch": {
    "head": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
    "tree": "c1d5a911e1f154cd7fb4d43a8cce9fbc9cf74e28",
-   "captured_at": "2026-11-01T01:34:30+00:00",
+   "captured_at": "2026-11-01T01:35:29+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -74,62 +74,22 @@
  },
  "tests_executed": [
   {
-   "name": "pytest tests/fullscope -n 3 (PF_COMBI_CASES=1)",
+   "name": "tests/f05 44/44 PASS (RED->GREEN di ogni fix)",
    "status": "PASS",
-   "sha": "3873eaac10b30267414418ee6322a1f8ce50d6db",
-   "result": "292 passed, 56 xfailed, 0 XPASS; requisiti coperti 1 (RST-03)"
+   "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
+   "result": "44 passed"
   },
   {
-   "name": "pytest tests/fullscope seriale (PF_SEED=7, PF_COMBI_CASES=3)",
+   "name": "mutation --module cashout_executor 15/15 KILLED GATE PASS",
    "status": "PASS",
-   "sha": "1d7ec7c44448ab7633c0e6fbb0dc936062be522d",
-   "result": "294 passed, 56 xfailed, 0 XPASS"
+   "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
+   "result": "15/15 KILLED, GATE PASS"
   },
   {
-   "name": "suite di regressione tests/ esclusa fullscope (-n 3)",
+   "name": "suite completa -n 4 tests: 11027 passed, 0 failed",
    "status": "PASS",
-   "sha": "1d7ec7c44448ab7633c0e6fbb0dc936062be522d",
-   "result": "10637 passed, 16 skipped, 1 xfailed"
-  },
-  {
-   "name": "mutation tools.combi.generator --fail-under 100",
-   "status": "PASS",
-   "sha": "1d7ec7c44448ab7633c0e6fbb0dc936062be522d",
-   "result": "12/12 killed, 1 equivalente documentata"
-  },
-  {
-   "name": "GitHub Actions su d46e6da (prima ondata)",
-   "status": "PASS",
-   "sha": "d46e6daae32d6d7dea24129327a3a87f2b3bbf42",
-   "result": "smoke/unit/integration/e2e/core-invariants/recovery/net/failure/guardrails success; overlap-check FAIL atteso"
-  },
-  {
-   "name": "GitHub Actions su 3873eaa",
-   "status": "PASS",
-   "sha": "3873eaac10b30267414418ee6322a1f8ce50d6db",
-   "result": "guard, unit, integration, e2e, smoke, net, failure, core-invariants, recovery, live-sim-parity, live-gate, chaos, stateful, moduli: success; overlap-check FAIL atteso; mutation/merge-sim/tests/readiness in corso al checkpoint"
-  },
-  {
-   "name": "review Sol e Grok su d46e6da...3873eaa",
-   "status": "FAIL",
-   "sha": "3873eaac10b30267414418ee6322a1f8ce50d6db",
-   "result": "VALID_BLOCKERS: un solo bloccante comune (xfail statico sul test di confine), corretto in a721e09"
-  },
-  {
-   "name": "test di confine starting_balance=0 su a721e09",
-   "status": "PASS",
-   "sha": "a721e0979a433870e6d6dc217e41b8b3c5832afa",
-   "result": "invarianti e attese asseriti fuori da xfail; finding F-18/F-17 xfail imperativo"
-  },
-  {
-   "name": "CI e review su a721e09",
-   "status": "NOT VERIFIED"
-  },
-  {
-   "name": "F-33 suite locale tests/fullscope+f026+scripts+guardrails -n 4",
-   "status": "PASS",
-   "sha": "e655a5b1d94d6584161d46e35777b284ed54b237",
-   "result": "4249 passed"
+   "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
+   "result": "11027 passed, 16 skipped, 56 xfailed, 0 failed"
   }
  ],
  "tests_missing": [
@@ -226,5 +186,68 @@
    ],
    "patches": "patches/gov"
   }
+ },
+ "tests_historical_merged": {
+  "note": "SHA di branch cancellati dopo il merge (F-33 #589 -> 8de659b, #590/#591 -> b2c0947, #592 -> 986bebd): non piu' raggiungibili dal remoto, conservati come storico",
+  "entries": [
+   {
+    "name": "pytest tests/fullscope -n 3 (PF_COMBI_CASES=1)",
+    "status": "PASS",
+    "sha": "3873eaac10b30267414418ee6322a1f8ce50d6db",
+    "result": "292 passed, 56 xfailed, 0 XPASS; requisiti coperti 1 (RST-03)"
+   },
+   {
+    "name": "pytest tests/fullscope seriale (PF_SEED=7, PF_COMBI_CASES=3)",
+    "status": "PASS",
+    "sha": "1d7ec7c44448ab7633c0e6fbb0dc936062be522d",
+    "result": "294 passed, 56 xfailed, 0 XPASS"
+   },
+   {
+    "name": "suite di regressione tests/ esclusa fullscope (-n 3)",
+    "status": "PASS",
+    "sha": "1d7ec7c44448ab7633c0e6fbb0dc936062be522d",
+    "result": "10637 passed, 16 skipped, 1 xfailed"
+   },
+   {
+    "name": "mutation tools.combi.generator --fail-under 100",
+    "status": "PASS",
+    "sha": "1d7ec7c44448ab7633c0e6fbb0dc936062be522d",
+    "result": "12/12 killed, 1 equivalente documentata"
+   },
+   {
+    "name": "GitHub Actions su d46e6da (prima ondata)",
+    "status": "PASS",
+    "sha": "d46e6daae32d6d7dea24129327a3a87f2b3bbf42",
+    "result": "smoke/unit/integration/e2e/core-invariants/recovery/net/failure/guardrails success; overlap-check FAIL atteso"
+   },
+   {
+    "name": "GitHub Actions su 3873eaa",
+    "status": "PASS",
+    "sha": "3873eaac10b30267414418ee6322a1f8ce50d6db",
+    "result": "guard, unit, integration, e2e, smoke, net, failure, core-invariants, recovery, live-sim-parity, live-gate, chaos, stateful, moduli: success; overlap-check FAIL atteso; mutation/merge-sim/tests/readiness in corso al checkpoint"
+   },
+   {
+    "name": "review Sol e Grok su d46e6da...3873eaa",
+    "status": "FAIL",
+    "sha": "3873eaac10b30267414418ee6322a1f8ce50d6db",
+    "result": "VALID_BLOCKERS: un solo bloccante comune (xfail statico sul test di confine), corretto in a721e09"
+   },
+   {
+    "name": "test di confine starting_balance=0 su a721e09",
+    "status": "PASS",
+    "sha": "a721e0979a433870e6d6dc217e41b8b3c5832afa",
+    "result": "invarianti e attese asseriti fuori da xfail; finding F-18/F-17 xfail imperativo"
+   },
+   {
+    "name": "CI e review su a721e09",
+    "status": "NOT VERIFIED"
+   },
+   {
+    "name": "F-33 suite locale tests/fullscope+f026+scripts+guardrails -n 4",
+    "status": "PASS",
+    "sha": "e655a5b1d94d6584161d46e35777b284ed54b237",
+    "result": "4249 passed"
+   }
+  ]
  }
 }

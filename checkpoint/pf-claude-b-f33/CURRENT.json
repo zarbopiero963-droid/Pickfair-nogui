@@ -7,7 +7,7 @@
  },
  "mandate_id": "Claude B \u2014 OWNER DIRECTIVE FINALIZE #592 AND RESUME PICKFAIR ROADMAP V2",
  "next_atomic_action": "1) #593 F-05 READY_FOR_OWNER_MANUAL_MERGE @84fd4f7 (gate verdi, fix loop 3/10): attendere merge owner. 2) Dopo il merge: F-08 (wt-f08) merge di main, test, PR, CI/review, merge owner. 3) Poi F-01 (wt-f01). Debito: max_files 43->44 della task key F-33 alla prossima PR che tocca il registro.",
- "previous_checkpoint_sha": "717b486c74ce198bb736ffa24a9ccb465cd0fa94",
+ "previous_checkpoint_sha": "60b997d75a88083fc6b4693680021760c8668059",
  "schema": "pf-current/1",
- "seq": 14
+ "seq": 15
 }
