@@ -7472,6 +7472,174 @@
         "tests/scripts/test_certified_financial_automerge.py"
       ],
       "rationale": "§0.14: PR successiva aperta senza CI post-merge verde verificata su main."
+    },
+    {
+      "id": "pap_delegation_area_not_checked",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if full.get(\"financial_owner_delegation_eligible\") is not True:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter: la delega copre anche credenziali, segreti, config o LIVE."
+    },
+    {
+      "id": "pap_delegation_non_delegable_net_removed",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "                                                    and not classification[\"financial_owner_non_delegable\"]",
+      "mutated": "                                                    and True",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter: un file di credenziali/config/LIVE rende la PR delegabile."
+    },
+    {
+      "id": "pap_delegation_card_not_checked",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if not isinstance(card, str) or not _ROADMAP_CARD_RE.match(card) or card not in record.get(\"cards\", ()):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter: la delega vale per una PR fuori dalle 33 schede della roadmap V2."
+    },
+    {
+      "id": "pap_delegation_inactive_accepted",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if record.get(\"active\") is not True:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter: una delega chiusa dall'owner continua a valere."
+    },
+    {
+      "id": "pap_delegation_stale_head_accepted",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if requested.get(\"head_sha\") != current_head:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter: delega dichiarata per un head diverso da quello valutato."
+    },
+    {
+      "id": "pap_delegation_credential_content_ignored",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "                                                    and not classification[\"delegation_credential_content\"]",
+      "mutated": "                                                    and True",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter (Codex P1 su ebdd11e): una riga che tocca credenziali in un modulo misto resta delegabile."
+    },
+    {
+      "id": "pap_delegation_removed_lines_ignored",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "                    removed.setdefault(owner_file, []).append(line[1:])",
+      "mutated": "                    pass",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter: la rimozione di una protezione di credenziale non conta per la delega."
+    },
+    {
+      "id": "pap_removed_lines_attributed_to_destination",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "                owner_file = old_path or current",
+      "mutated": "                owner_file = current or old_path",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter (Sol su 860a8b1): righe rimosse attribuite al file di destinazione: un rename core/ -> tests/ nasconde la rimozione di un gate LIVE."
+    },
+    {
+      "id": "pap_removed_lines_unreadable_accepted",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if removed_only is None:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-bis (Grok su 860a8b1): righe rimosse non verificabili non rendono il full diff UNKNOWN."
+    },
+    {
+      "id": "pap_delegation_unparsable_patch_delegable",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    classification[\"delegation_credential_content\"] = ([\"<patch-unparsable>\"] if changed is None else sorted(",
+      "mutated": "    classification[\"delegation_credential_content\"] = ([] if changed is None else sorted(",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter (Sol su 665ecb6): patch non interpretabile trattato come privo di credenziali (fail-open)."
+    },
+    {
+      "id": "pap_live_removed_lines_ignored",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "        if _is_product_path(path) and any(LIVE_ACTIVATION_CONTENT_RE.search(x)",
+      "mutated": "        if False and any(LIVE_ACTIVATION_CONTENT_RE.search(x)",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-bis/ter (Codex P1 su 665ecb6): la rimozione di un interruttore/gate LIVE non porta a merge owner."
+    },
+    {
+      "id": "pap_delegation_live_content_ignored",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "                                                    and not classification[\"delegation_live_content\"]",
+      "mutated": "                                                    and True",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter (Codex P1 su 665ecb6): una riga LIVE aggiunta o rimossa resta delegabile."
+    },
+    {
+      "id": "pap_delegation_live_module_delegable",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    r\"^core/safety_layer\\.py$\",",
+      "mutated": "    r\"^core/safety_layer_never\\.py$\",",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter (Codex P1 su 665ecb6): core/safety_layer.py (gate LIVE) delegabile."
+    },
+    {
+      "id": "pap_delegation_mixed_module_delegable",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    r\"^core/system_state\\.py$\",",
+      "mutated": "    r\"^core/system_state_never\\.py$\",",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter (Codex P1 su ebdd11e): core/system_state.py (BetfairConfig, TelegramRuntimeConfig) delegabile."
     }
   ]
 }

@@ -228,6 +228,85 @@ FINANCIAL_OWNER_ONLY_PATTERNS = (
     r"|stake_precision|dedupe|duplication|runtime_authority|bridge_mode)[^/]*$",
 )
 _FIN_OWNER_RE = tuple(re.compile(p) for p in FINANCIAL_OWNER_ONLY_PATTERNS)
+
+# §0.9-ter — delega owner temporanea (owner 01/11/2026 «TEMPORARY MERGE DELEGATION — ROADMAP V2», #586).
+# Dentro FINANCIAL_OWNER_ONLY, la delega copre SOLO le protezioni finanziarie fondamentali. Credenziali,
+# autenticazione, segreti, impostazioni/configurazione e attivazione LIVE NON sono mai delegabili: un file che
+# corrisponde anche a uno solo di questi pattern resta a merge owner (rete larga, come quella di sopra).
+FINANCIAL_NON_DELEGABLE_PATTERNS = (
+    r"^core/(secret_cipher|token_store|redaction)\.py$",
+    r"^telegram_sanitizer\.py$",
+    r"^betfair_client\.py$",
+    r"(?i)(^|/)[^/]*(auth|credential|certlogin|session_manager)[^/]*\.py$",
+    r"^core/(runtime_authority|execution_guard|microstake_live_port|bridge_mode|config_store)\.py$",
+    r"^(trading_config|config_registry)\.py$",
+    r"^scripts/live_gate\.py$",
+    r"^config\.example\.json$",
+    # Codex P1 su ebdd11e: moduli MISTI, protezioni finanziarie insieme a configurazione con credenziali
+    # (`core/system_state.py`: `BetfairConfig` con app key e chiave privata, `TelegramRuntimeConfig` con session
+    # string e bot token). Il nome non lo dice, quindi va elencato: un modulo misto resta a merge owner.
+    r"^core/system_state\.py$",
+    # Codex P1 su 665ecb6: `core/safety_layer.py` ospita il gate LIVE (`assert_live_gate_or_refuse`) accanto alle
+    # protezioni: modulo misto LIVE/protezione, resta a merge owner.
+    r"^core/safety_layer\.py$",
+    r"(?i)(^|/)[^/]*(secret|token|credential|auth|passw|certlogin|cipher|sanitiz|redact|setting|config|live"
+    r"|runtime_authority|bridge_mode)[^/]*$",
+)
+_FIN_NON_DELEGABLE_RE = tuple(re.compile(p) for p in FINANCIAL_NON_DELEGABLE_PATTERNS)
+# §0.9-ter, contenuto (Codex P1 su ebdd11e): una riga AGGIUNTA o RIMOSSA in codice di prodotto che tocca un
+# identificatore di credenziale/segreto rende la PR non delegabile, qualunque sia il nome del file (un elenco di
+# file lascia sempre fuori un modulo misto). Rete larga: un falso positivo costa solo un merge owner.
+DELEGATION_CREDENTIAL_CONTENT_RE = re.compile(
+    r"(?i)(app_?key|api_?key|passw|secret|token|private_?key|cert_?(file|path|login|pem)|certlogin|credential"
+    r"|session_?string|auth|cipher|redact|sanitiz)"
+)
+
+
+# §0.9-ter, contenuto LIVE (Codex P1 su 665ecb6): rete PIU' larga di LIVE_ACTIVATION_CONTENT_RE, solo per la delega.
+# Una riga aggiunta o rimossa che nomina il LIVE (`live_readiness_ok`, `assert_live_gate_or_refuse`, `real_money`,
+# modalita' di simulazione...) rende la PR non delegabile. Un falso positivo costa solo un merge owner.
+DELEGATION_LIVE_CONTENT_RE = re.compile(r"(?i)(live|real_?money|simulation|execution_?mode)")
+
+
+def _changed_lines_by_file(patch_text: str) -> dict[str, list[str]] | None:
+    """Righe aggiunte E rimosse per file, per il controllo di contenuto della delega (§0.9-ter).
+
+    Sol su 665ecb6: un parser semplice saltava gli header git tra virgolette (path Unicode) e il controllo falliva
+    aperto. Si riusa `_parse_patch_numbered` (header quotati decodificati, conteggi degli hunk): patch non
+    interpretabile => ``None``, che il chiamante tratta come NON delegabile (fail-closed)."""
+    removed: dict[str, list[str]] = {}
+    try:
+        added, _binary = _parse_patch_numbered(patch_text or "", removed=removed)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    out: dict[str, list[str]] = {path: [line[1:] for _, line in rows] for path, rows in added.items()}
+    for path, lines in removed.items():
+        out.setdefault(path, []).extend(lines)
+    return out
+
+
+def _removed_lines_by_file(patch_text: str) -> dict[str, list[str]] | None:
+    """Solo le righe RIMOSSE per file (stesso parser robusto); ``None`` se il patch non e' interpretabile."""
+    removed: dict[str, list[str]] = {}
+    try:
+        _parse_patch_numbered(patch_text or "", removed=removed)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return removed
+
+# Registro delle deleghe owner. Sta in questo file (a merge MANUALE dell'owner, §0.9): il merge dell'owner E' la
+# prova della delega, perche' un commento su una issue non e' autenticabile (gli account agente pubblicano come
+# owner, #472). L'agente non puo' crearla, allargarla o prolungarla: ogni modifica qui torna al merge owner.
+# Per chiuderla l'owner mette `active: False` o rimuove la voce (al completamento della roadmap V2).
+OWNER_MERGE_DELEGATIONS: dict[str, dict[str, Any]] = {
+    "PF-ROADMAP-V2-MERGE-DELEGATION": {
+        "issue": 586,
+        "granted": "2026-11-01",
+        "active": True,
+        "cards": tuple(f"F-{n:02d}" for n in range(1, 34)),       # le 33 schede funzionali della roadmap V2
+    },
+}
+_ROADMAP_CARD_RE = re.compile(r"^F-[0-9]{2}$")
 # Script di prodotto che attivano il LIVE: fuori dal codice di prodotto ma sempre merge owner.
 FINANCIAL_OWNER_ONLY_SCRIPTS = frozenset({"scripts/live_gate.py"})
 
@@ -1128,6 +1207,11 @@ def classify_paths(paths: Iterable[str]) -> dict[str, list[str]]:
         "financial_owner_only": sorted(p for p in paths
                                        if (_is_product_path(p) or p in FINANCIAL_OWNER_ONLY_SCRIPTS)
                                        and any(r.search(p) for r in _FIN_OWNER_RE)),
+        # §0.9-ter: parte NON delegabile delle aree sempre-owner (credenziali, segreti, config, LIVE)
+        "financial_owner_non_delegable": sorted(p for p in paths
+                                                if (_is_product_path(p) or p in FINANCIAL_OWNER_ONLY_SCRIPTS)
+                                                and any(r.search(p) for r in _FIN_OWNER_RE)
+                                                and any(r.search(p) for r in _FIN_NON_DELEGABLE_RE)),
         "financial_critical": sorted(p for p in product if any(r.search(p) for r in _FIN_RE)),
         "owner_manual": sorted(p for p in paths if is_owner_manual_path(p)),
         "secret_material": sorted(p for p in paths if is_secret_material_path(p)),
@@ -1272,7 +1356,8 @@ def _parse_patch(patch_text: str) -> tuple[dict[str, list[str]], set[str]]:
     return {path: [line for _, line in rows] for path, rows in numbered.items()}, binary
 
 
-def _parse_patch_numbered(patch_text: str) -> tuple[dict[str, list[tuple[int, str]]], set[str]]:
+def _parse_patch_numbered(patch_text: str, removed: dict[str, list[str]] | None = None
+                          ) -> tuple[dict[str, list[tuple[int, str]]], set[str]]:
     """Righe aggiunte per file, col numero di riga nel file NUOVO, + file binari.
 
     Parser a stati sui conteggi degli hunk (rilievo Codex #499): una riga
@@ -1283,6 +1368,7 @@ def _parse_patch_numbered(patch_text: str) -> tuple[dict[str, list[tuple[int, st
     out: dict[str, list[tuple[int, str]]] = {}
     binary: set[str] = set()
     current: str | None = None
+    old_path: str | None = None     # §0.9-ter: file delle righe RIMOSSE (anche se cancellato, `+++ /dev/null`)
     old_left = new_left = 0
     new_no = 0
     # split("\n") e non splitlines(): \r, \x0c, \x1c… dentro una riga di
@@ -1296,6 +1382,11 @@ def _parse_patch_numbered(patch_text: str) -> tuple[dict[str, list[tuple[int, st
                 new_no += 1
             elif line.startswith("-"):
                 old_left -= 1
+                # Sol su 860a8b1: una riga RIMOSSA appartiene al file di ORIGINE (`--- a/`), non a quello di
+                # destinazione: un rename `core/x.py` -> `tests/x.py` che toglie un gate LIVE resta codice di prodotto.
+                owner_file = old_path or current
+                if removed is not None and owner_file is not None:
+                    removed.setdefault(owner_file, []).append(line[1:])
             elif line.startswith(" "):
                 old_left -= 1
                 new_left -= 1
@@ -1308,7 +1399,11 @@ def _parse_patch_numbered(patch_text: str) -> tuple[dict[str, list[tuple[int, st
                 raise ValueError("hunk con più righe del dichiarato")
             continue
         if line.startswith("diff --git "):
-            current = None
+            current = old_path = None
+            continue
+        if line.startswith("--- "):
+            source = _unquote_git_path(line[4:].rstrip("\t").strip())
+            old_path = source[2:] if source.startswith("a/") else None
             continue
         if line.startswith("+++ "):
             target = _unquote_git_path(line[4:].rstrip("\t").strip())
@@ -1578,7 +1673,25 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
         problems.append("import_statement_unverifiable")
     if not stdlib:
         problems.append("stdlib_list_unavailable")
+    # §0.9-ter: codice di prodotto con righe (aggiunte o rimosse) che toccano credenziali o LIVE => non delegabile
+    changed = _changed_lines_by_file(patch_text if isinstance(patch_text, str) else "")
+    # Codex P1 su 665ecb6: RIMUOVERE un interruttore/gate LIVE e' come attivarlo. La regola §0.9-bis guardava solo
+    # le righe aggiunte: una riga rimossa di prodotto che menziona un interruttore LIVE porta a merge owner.
+    removed_only = _removed_lines_by_file(patch_text if isinstance(patch_text, str) else "")
+    if removed_only is None:
+        # Grok su 860a8b1: righe rimosse non verificabili => mai un esito PASS (full diff UNKNOWN, fail-closed)
+        problems.append("patch_unreadable")
+    for path, lines in (removed_only or {}).items():
+        if _is_product_path(path) and any(LIVE_ACTIVATION_CONTENT_RE.search(x)
+                                          and not x.lstrip().startswith("#") for x in lines):
+            live_activation.add(path)
     classification["live_activation"] = sorted(live_activation)
+    classification["delegation_credential_content"] = (["<patch-unparsable>"] if changed is None else sorted(
+        path for path, lines in changed.items()
+        if _is_product_path(path) and any(DELEGATION_CREDENTIAL_CONTENT_RE.search(x) for x in lines)))
+    classification["delegation_live_content"] = (["<patch-unparsable>"] if changed is None else sorted(
+        path for path, lines in changed.items()
+        if _is_product_path(path) and any(DELEGATION_LIVE_CONTENT_RE.search(x) for x in lines)))
     status = "BLOCK" if problems else "PASS"
     if problems and set(problems) <= {"base_or_head_unknown", "patch_unreadable",
                                      "declared_scope_unknown", "stdlib_list_unavailable",
@@ -1601,6 +1714,15 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
                                             or secret_content_tests),
         # §0.9-bis: aree finanziarie sempre a merge owner (credenziali, LIVE, protezioni fondamentali).
         "financial_owner_merge_required": bool(classification["financial_owner_only"] or live_activation),
+        # §0.9-ter: la delega owner puo' coprire la PR solo se le sue aree sempre-owner sono TUTTE protezioni
+        # fondamentali: nessuna credenziale/segreto/config/LIVE, nessuna riga che attiva il LIVE, nessun segreto.
+        "financial_owner_delegation_eligible": bool(classification["financial_owner_only"]
+                                                    and not classification["financial_owner_non_delegable"]
+                                                    and not classification["delegation_credential_content"]
+                                                    and not classification["delegation_live_content"]
+                                                    and not live_activation
+                                                    and not classification["secret_material"]
+                                                    and not secret_content and not secret_content_tests),
     }
 
 
@@ -1731,12 +1853,28 @@ def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
         if problem:
             return {"status": "NEEDS_MANUAL", "reasons": [problem], "safety_critical": safety}
     # §0.9-bis: aree finanziarie sempre a merge owner. Campo assente = non provato => owner (fail-closed).
+    # §0.9-ter: unica eccezione, una delega owner registrata in OWNER_MERGE_DELEGATIONS che copre la PR; anche
+    # allora resta obbligatoria la certificazione rafforzata qui sotto (nessun gate in meno).
+    delegation: dict[str, Any] | None = None
     if full.get("financial_owner_merge_required") is not False:
-        return {"status": "READY_FOR_OWNER_MANUAL_MERGE", "reasons": ["financial_owner_only_area"],
-                "safety_critical": safety, "owner_waivers": waivers_used}
+        requested = state.get("owner_delegation")
+        if requested is None:
+            return {"status": "READY_FOR_OWNER_MANUAL_MERGE", "reasons": ["financial_owner_only_area"],
+                    "safety_critical": safety, "owner_waivers": waivers_used}
+        problems = _owner_delegation_problems(requested, current, full)
+        if problems:
+            return {"status": "READY_FOR_OWNER_MANUAL_MERGE",
+                    "reasons": ["financial_owner_only_area"] + [f"owner_delegation:{p}" for p in problems],
+                    "safety_critical": safety, "owner_waivers": waivers_used}
+        delegation = {"id": requested["id"], "card": requested["card"]}
     financial = cls.get("financial_critical") if isinstance(cls, Mapping) else None
     if not isinstance(financial, list) or not all(_nonempty_str(p) for p in financial):
         return {"status": "NEEDS_MANUAL", "reasons": ["financial_classification_unknown"], "safety_critical": safety}
+    if delegation is not None and not financial:
+        # un'area sempre-owner e' codice di prodotto, quindi finanziaria critica: lista vuota = classificazione
+        # incoerente, mai un auto-merge delegato senza certificazione rafforzata
+        return {"status": "NEEDS_MANUAL", "reasons": ["owner_delegation:financial_classification_inconsistent"],
+                "safety_critical": safety}
     if financial:
         # PR finanziaria critica: auto-merge solo con la certificazione rafforzata provata sull'head corrente.
         # Una deroga di review o una certificazione assente/vecchia/incompleta = merge owner, mai auto-merge.
@@ -1745,11 +1883,35 @@ def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
             problems.append("financial_review_waiver")
         if problems:
             return {"status": "READY_FOR_OWNER_MANUAL_MERGE",
-                    "reasons": [f"financial_certification:{p}" for p in problems],
+                    "reasons": ([] if delegation is None else ["financial_owner_only_area"])
+                    + [f"financial_certification:{p}" for p in problems],
                     "safety_critical": safety, "financial_critical": sorted(set(financial)),
                     "owner_waivers": waivers_used}
-    return {"status": "READY_FOR_AUTO_MERGE", "reasons": [], "safety_critical": safety,
-            "financial_critical": sorted(set(financial)), "owner_waivers": waivers_used}
+    result = {"status": "READY_FOR_AUTO_MERGE", "reasons": [], "safety_critical": safety,
+              "financial_critical": sorted(set(financial)), "owner_waivers": waivers_used}
+    if delegation is not None:
+        result["owner_delegation"] = delegation      # tracciabile: il verdetto dichiara la delega usata
+    return result
+
+
+def _owner_delegation_problems(requested: Any, current_head: str, full: Mapping[str, Any]) -> list[str]:
+    """§0.9-ter: motivi per cui la delega owner richiesta NON copre la PR (vuoto = copre)."""
+    if not isinstance(requested, Mapping):
+        return ["malformed"]
+    problems: list[str] = []
+    record = OWNER_MERGE_DELEGATIONS.get(requested.get("id")) if isinstance(requested.get("id"), str) else None
+    if not isinstance(record, Mapping):
+        return ["unknown_delegation"]
+    if record.get("active") is not True:
+        problems.append("inactive")
+    card = requested.get("card")
+    if not isinstance(card, str) or not _ROADMAP_CARD_RE.match(card) or card not in record.get("cards", ()):
+        problems.append("card_not_covered")
+    if requested.get("head_sha") != current_head:
+        problems.append("stale_or_missing_head")
+    if full.get("financial_owner_delegation_eligible") is not True:
+        problems.append("area_not_delegable")
+    return problems
 
 
 def _financial_certification_problems(cert: Any, current_head: str) -> list[str]:

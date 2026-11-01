@@ -3268,6 +3268,19 @@
         "tests/f09/test_f09_recover_gating.py"
       ],
       "max_files": 8
+    },
+    "gov_roadmap_merge_delegation": {
+      "description": "OWNER MANDATE 01/11/2026 «TEMPORARY MERGE DELEGATION — ROADMAP V2» (#586): delega owner temporanea di merge per le 33 schede della roadmap V2 (§0.9-ter), registrata in OWNER_MERGE_DELEGATIONS di scripts/pr_autonomy_policy.py; solo protezioni finanziarie fondamentali, mai credenziali/segreti/config/LIVE/governance; certificazione rafforzata §0.9-bis obbligatoria. File di governance: merge owner. CLAUDE.md e AGENTS.md non toccati (owner).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/auto_pr_flow_spec.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/pr_autonomy_policy.py",
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "max_files": 6
     }
   }
 }
