@@ -61,13 +61,17 @@ class StateRecovery:
             }
 
         ghost_count = int(startup.get("ghost_orders_recovered", 0))
-        startup_mode = "LIVE_WITH_RECOVERED_GHOSTS" if ghost_count else "LIVE_FLAT"
+        # F-08 (Codex P1 su 1b22a4e): un ghost gia' persistito a un avvio precedente e ancora vivo sull'exchange non
+        # e' "recuperato" di nuovo, ma l'avvio NON e' piatto: la modalita' segue gli ordini ghost ancora attivi.
+        ghost_active = int(startup.get("ghost_orders_active", ghost_count))
+        startup_mode = "LIVE_WITH_RECOVERED_GHOSTS" if (ghost_count or ghost_active) else "LIVE_FLAT"
 
         return {
             "ok": True,
             "reason": "RECOVERED",
             "pending_sagas": len(recovered_sagas),
             "ghost_orders_recovered": ghost_count,
+            "ghost_orders_active": ghost_active,
             "startup_mode": startup_mode,
         }
 
@@ -93,23 +97,30 @@ class StateRecovery:
                 return {"required": True, "completed": False, "ghost_orders_recovered": 0}
 
         recovered = []
+        active = 0
         for order in remote_orders:
             try:
                 missing = self._is_missing_in_db(order)
                 if missing:
                     self._persist_ghost_order(order)
-                    self._seed_duplication_guard(order)
                     recovered.append(order)
+                # F-08 (Codex P1 su 1b22a4e): l'ordine e' ancora vivo sull'exchange, quindi va seminato nella guardia
+                # a OGNI avvio (il runtime ne crea una nuova a ogni START), non solo quando la riga e' nuova:
+                # altrimenti al secondo avvio il duplicato dello stesso intento verrebbe accettato.
+                self._seed_duplication_guard(order)
+                active += 1
             except Exception:
                 # F-08: lookup o persistenza del ghost falliti => riconciliazione NON completata (fail-closed).
                 # Prima l'errore del DB valeva "gia' presente" e il ghost era perso con recover() ok=True.
                 logger.exception("Ordine attivo dell'exchange non riconciliabile con il DB locale")
-                return {"required": True, "completed": False, "ghost_orders_recovered": len(recovered)}
+                return {"required": True, "completed": False, "ghost_orders_recovered": len(recovered),
+                        "ghost_orders_active": active}
 
         return {
             "required": True,
             "completed": True,
             "ghost_orders_recovered": len(recovered),
+            "ghost_orders_active": active,
         }
 
     def _is_missing_in_db(self, order: Dict[str, Any]) -> bool:

@@ -331,6 +331,18 @@
       "rationale": "F-08 (RST-02): errore del DB sul ghost ignorato => recover() ok=True con ordine attivo non riconciliato (fail-open)."
     },
     {
+      "id": "f08_ghost_not_reseeded_on_restart",
+      "module": "core.state_recovery",
+      "area": "recovery",
+      "file": "core/state_recovery.py",
+      "original": "                self._seed_duplication_guard(order)\n                active += 1",
+      "mutated": "                active += 1",
+      "tests": [
+        "tests/f08/test_f08_startup_orders_real_db.py"
+      ],
+      "rationale": "F-08 (Codex P1 su 1b22a4e): ghost gia' persistito e ancora vivo non seminato nella guardia nuova al secondo avvio => duplicato accettato."
+    },
+    {
       "id": "f08_startup_orders_table_missing",
       "module": "database_schema",
       "area": "recovery",

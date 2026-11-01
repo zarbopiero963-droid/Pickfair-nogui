@@ -59,10 +59,11 @@ def test_ghost_is_persisted_and_seeded_on_real_db(tmp_path):
     assert [o["order_id"] for o in db.load_startup_orders()] == ["BET-GHOST-1"]
     assert db.startup_order_exists(GHOST)
     assert any(name == "STARTUP_GHOST_ORDER_RECOVERED" for name, _ in bus.events)
-    # al secondo avvio lo stesso ghost e' gia' noto: nessun doppio recupero
+    # al secondo avvio lo stesso ghost e' gia' noto: nessun doppio recupero (ma resta attivo, vedi sotto)
     again = StateRecovery(db=db, bus=_Bus(), reconciliation_engine=_Reconcile([GHOST]),
                           duplication_guard=DuplicationGuard()).recover()
     assert again["ok"] is True and again["ghost_orders_recovered"] == 0, again
+    assert len(db.load_startup_orders()) == 1, "riga del ghost duplicata al secondo avvio"
 
 
 def test_db_error_on_ghost_lookup_makes_recovery_not_ok(tmp_path, monkeypatch):
@@ -90,3 +91,20 @@ def test_existing_db_without_the_tables_is_migrated_without_data_loss(tmp_path):
     db2 = Database(path)                                  # riapertura = migrazione idempotente
     assert {"startup_orders", "outbox"} <= _tables(path)
     assert db2.find_duplicate_order(customer_ref="sig-1") is not None, "ordine esistente perso nella migrazione"
+
+
+def test_second_start_reseeds_the_fresh_guard_with_the_still_active_ghost(tmp_path):
+    # Codex P1 su 1b22a4e: al secondo avvio la riga startup_orders esiste gia' e il nuovo DuplicationGuard (il
+    # runtime ne crea uno a ogni START) non veniva seminato => duplicato accettato e LIVE_FLAT con un ordine vivo.
+    db = Database(str(tmp_path / "pf.db"))
+    first_guard = DuplicationGuard()
+    StateRecovery(db=db, bus=_Bus(), reconciliation_engine=_Reconcile([GHOST]),
+                  duplication_guard=first_guard).recover()
+    assert first_guard.acquire(GHOST["event_key"]) is False
+    guard, bus = DuplicationGuard(), _Bus()
+    again = StateRecovery(db=db, bus=bus, reconciliation_engine=_Reconcile([GHOST]),
+                          duplication_guard=guard).recover()
+    assert guard.acquire(GHOST["event_key"]) is False, "duplicato accettato al secondo avvio con il ghost ancora vivo"
+    assert again["ok"] is True and again["startup_mode"] == "LIVE_WITH_RECOVERED_GHOSTS", again
+    assert again["ghost_orders_active"] == 1 and again["ghost_orders_recovered"] == 0, again
+    assert not any(name == "STARTUP_GHOST_ORDER_RECOVERED" for name, _ in bus.events), "ghost noto ri-annunciato"

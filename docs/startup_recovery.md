@@ -12,6 +12,10 @@ quelli senza riga locale ("ghost"): ogni ghost va **persistito** in `startup_ord
 - **Fail-closed.** Un errore del DB nel lookup o nella persistenza di un ghost NON vale piu' "gia' presente":
   `recover()` restituisce `ok=False`, `reason=STARTUP_RECONCILIATION_REQUIRED`, `startup_mode=BLOCKED`.
   Prima restituiva `ok=True` (`LIVE_FLAT`) con l'ordine attivo non riconciliato.
+- **Riavvio.** Un ghost gia' persistito a un avvio precedente e ancora attivo sull'exchange viene **riseminato**
+  nel `DuplicationGuard` a ogni avvio (il runtime ne crea uno nuovo a ogni START), senza un secondo evento
+  `STARTUP_GHOST_ORDER_RECOVERED` ne' una seconda riga: `ghost_orders_recovered` conta i ghost nuovi,
+  `ghost_orders_active` quelli ancora vivi, e `startup_mode` resta `LIVE_WITH_RECOVERED_GHOSTS` finche' ce ne sono.
 - **Fuori scope (F-09).** Il gating del runtime sull'esito di `recover()` (PAUSED + RECONCILIATION_REQUIRED) e'
   la scheda F-09: F-08 rende l'esito veritiero, F-09 lo applica.
 
