@@ -242,10 +242,38 @@ FINANCIAL_NON_DELEGABLE_PATTERNS = (
     r"^(trading_config|config_registry)\.py$",
     r"^scripts/live_gate\.py$",
     r"^config\.example\.json$",
+    # Codex P1 su ebdd11e: moduli MISTI, protezioni finanziarie insieme a configurazione con credenziali
+    # (`core/system_state.py`: `BetfairConfig` con app key e chiave privata, `TelegramRuntimeConfig` con session
+    # string e bot token). Il nome non lo dice, quindi va elencato: un modulo misto resta a merge owner.
+    r"^core/system_state\.py$",
     r"(?i)(^|/)[^/]*(secret|token|credential|auth|passw|certlogin|cipher|sanitiz|redact|setting|config|live"
     r"|runtime_authority|bridge_mode)[^/]*$",
 )
 _FIN_NON_DELEGABLE_RE = tuple(re.compile(p) for p in FINANCIAL_NON_DELEGABLE_PATTERNS)
+# §0.9-ter, contenuto (Codex P1 su ebdd11e): una riga AGGIUNTA o RIMOSSA in codice di prodotto che tocca un
+# identificatore di credenziale/segreto rende la PR non delegabile, qualunque sia il nome del file (un elenco di
+# file lascia sempre fuori un modulo misto). Rete larga: un falso positivo costa solo un merge owner.
+DELEGATION_CREDENTIAL_CONTENT_RE = re.compile(
+    r"(?i)(app_?key|api_?key|passw|secret|token|private_?key|cert_?(file|path|login|pem)|certlogin|credential"
+    r"|session_?string|auth|cipher|redact|sanitiz)"
+)
+
+
+def _changed_lines_by_file(patch_text: str) -> dict[str, list[str]]:
+    """Righe aggiunte E rimosse per file (path `b/`), per il controllo di contenuto della delega (§0.9-ter).
+    Parser volutamente semplice: ogni dubbio rende la PR non delegabile, mai il contrario."""
+    out: dict[str, list[str]] = {}
+    current = None
+    for line in (patch_text or "").splitlines():
+        if line.startswith("diff --git "):
+            parts = line.split(" b/", 1)
+            current = parts[1] if len(parts) == 2 else None
+            continue
+        if current is None or line.startswith(("+++ ", "--- ")):
+            continue
+        if line.startswith(("+", "-")):
+            out.setdefault(current, []).append(line[1:])
+    return out
 
 # Registro delle deleghe owner. Sta in questo file (a merge MANUALE dell'owner, §0.9): il merge dell'owner E' la
 # prova della delega, perche' un commento su una issue non e' autenticabile (gli account agente pubblicano come
@@ -1616,6 +1644,10 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
     if not stdlib:
         problems.append("stdlib_list_unavailable")
     classification["live_activation"] = sorted(live_activation)
+    # §0.9-ter: codice di prodotto con righe (aggiunte o rimosse) che toccano credenziali => non delegabile
+    classification["delegation_credential_content"] = sorted(
+        path for path, lines in _changed_lines_by_file(patch_text if isinstance(patch_text, str) else "").items()
+        if _is_product_path(path) and any(DELEGATION_CREDENTIAL_CONTENT_RE.search(x) for x in lines))
     status = "BLOCK" if problems else "PASS"
     if problems and set(problems) <= {"base_or_head_unknown", "patch_unreadable",
                                      "declared_scope_unknown", "stdlib_list_unavailable",
@@ -1642,6 +1674,7 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
         # fondamentali: nessuna credenziale/segreto/config/LIVE, nessuna riga che attiva il LIVE, nessun segreto.
         "financial_owner_delegation_eligible": bool(classification["financial_owner_only"]
                                                     and not classification["financial_owner_non_delegable"]
+                                                    and not classification["delegation_credential_content"]
                                                     and not live_activation
                                                     and not classification["secret_material"]
                                                     and not secret_content and not secret_content_tests),

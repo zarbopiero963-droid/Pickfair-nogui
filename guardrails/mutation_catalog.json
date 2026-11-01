@@ -7532,6 +7532,42 @@
         "tests/scripts/test_roadmap_merge_delegation.py"
       ],
       "rationale": "§0.9-ter: delega dichiarata per un head diverso da quello valutato."
+    },
+    {
+      "id": "pap_delegation_credential_content_ignored",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "                                                    and not classification[\"delegation_credential_content\"]",
+      "mutated": "                                                    and True",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter (Codex P1 su ebdd11e): una riga che tocca credenziali in un modulo misto resta delegabile."
+    },
+    {
+      "id": "pap_delegation_removed_lines_ignored",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "        if line.startswith((\"+\", \"-\")):",
+      "mutated": "        if line.startswith(\"+\"):",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter: la rimozione di una protezione di credenziale non conta per la delega."
+    },
+    {
+      "id": "pap_delegation_mixed_module_delegable",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    r\"^core/system_state\\.py$\",",
+      "mutated": "    r\"^core/system_state_never\\.py$\",",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter (Codex P1 su ebdd11e): core/system_state.py (BetfairConfig, TelegramRuntimeConfig) delegabile."
     }
   ]
 }

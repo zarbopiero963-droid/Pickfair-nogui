@@ -22,7 +22,7 @@ def _deleg(**extra):
 
 
 PROTECTION = ["core/sl_tp_pnl.py", "core/risk_gate.py", "core/duplication_guard.py", "core/money_management.py",
-              "core/system_state.py", "stake_mode.py", "market_validator.py", "ai/ai_guardrail.py"]
+              "stake_mode.py", "market_validator.py", "ai/ai_guardrail.py"]
 
 
 @pytest.mark.parametrize("path", PROTECTION)
@@ -47,6 +47,7 @@ def test_senza_delega_la_protezione_resta_owner(path):
     "core/config_store.py", "trading_config.py", "config_registry.py", "config.example.json",
     "scripts/live_gate.py",                                                        # attivazione LIVE / config
     "services/setting_service.py", "core/live_risk_guard.py",                      # rete per parola chiave
+    "core/system_state.py",                    # Codex P1 su ebdd11e: modulo misto (BetfairConfig, TelegramRuntimeConfig)
 ])
 def test_credenziali_segreti_config_e_live_non_sono_mai_delegabili(path):
     diff = _diff([path, SCOPE])
@@ -55,6 +56,45 @@ def test_credenziali_segreti_config_e_live_non_sono_mai_delegabili(path):
     res = policy.merge_decision(_state(diff, owner_delegation=_deleg()))
     assert res["status"] == "READY_FOR_OWNER_MANUAL_MERGE"
     assert "owner_delegation:area_not_delegable" in res["reasons"]
+
+
+def _patch(path, line):
+    hunk = "@@ -1,0 +1,1 @@" if line.startswith("+") else "@@ -1,1 +1,0 @@"
+    return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n{hunk}\n{line}\n"
+
+
+@pytest.mark.parametrize("line", [
+    "+    app_key_live: str = field(default=\"\", repr=True)",       # Codex P1 su ebdd11e: credenziale esposta
+    "-    app_key_live: str = field(default=\"\", repr=False)",      # anche una riga RIMOSSA conta
+    "+    bot_token: str = ''", "+    session_string = cfg.get('telegram')", "+    private_key_path = p",
+    "+    password = x", "+    api_key = os.environ['K']", "-        return redact(value)",
+])
+def test_riga_che_tocca_credenziali_non_e_delegabile_anche_in_una_protezione(line):
+    diff = _diff(["core/risk_gate.py", SCOPE], _patch("core/risk_gate.py", line))
+    assert diff["classification"]["delegation_credential_content"] == ["core/risk_gate.py"], diff["classification"]
+    assert diff["financial_owner_delegation_eligible"] is False
+    res = policy.merge_decision(_state(diff, owner_delegation=_deleg()))
+    assert res["status"] == "READY_FOR_OWNER_MANUAL_MERGE" and "owner_delegation:area_not_delegable" in res["reasons"]
+
+
+def test_caso_codex_system_state_app_key_non_va_in_auto_merge():
+    line = "+    app_key_live: str = field(default=\"\", repr=True)"
+    diff = _diff(["core/system_state.py", SCOPE], _patch("core/system_state.py", line))
+    res = policy.merge_decision(_state(diff, owner_delegation=_deleg()))
+    assert res["status"] == "READY_FOR_OWNER_MANUAL_MERGE", res
+
+
+def test_riga_di_protezione_senza_credenziali_resta_delegabile():
+    diff = _diff(["core/risk_gate.py", SCOPE], _patch("core/risk_gate.py", "+    if exposure > cap: return BLOCK"))
+    assert diff["classification"]["delegation_credential_content"] == []
+    res = policy.merge_decision(_state(diff, owner_delegation=_deleg()))
+    assert res["status"] == "READY_FOR_AUTO_MERGE", res
+
+
+def test_credenziali_in_test_o_docs_non_contano_per_la_delega():
+    patch = _patch("tests/x/test_r.py", "+password = 'SYNTHETIC'") + _patch("docs/x.md", "+api_key")
+    diff = _diff(["core/risk_gate.py", "tests/x/test_r.py", "docs/x.md", SCOPE], patch)
+    assert diff["classification"]["delegation_credential_content"] == []
 
 
 def test_una_sola_area_non_delegabile_blocca_tutta_la_pr():

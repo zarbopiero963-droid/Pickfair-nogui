@@ -369,8 +369,12 @@ prolungare una delega. L'owner la chiude mettendo `active: False` o rimuovendo l
 money management, SL/TP, validatori...). Mai, nemmeno con la delega (`FINANCIAL_NON_DELEGABLE_PATTERNS`, rete larga
 per parola chiave): credenziali, autenticazione e segreti; impostazioni e configurazione (`setting`, `config`);
 attivazione LIVE e configurazione di esecuzione, comprese le righe che menzionano un interruttore LIVE
-(`LIVE_ACTIVATION_CONTENT_RE`); materiale con forma di segreto. Basta UN file non delegabile perche' tutta la PR
-resti owner. Le modifiche di governance e sicurezza (§0.9: `CLAUDE.md`, `AGENTS.md`, spec, workflow, `scripts/pr_*`)
+(`LIVE_ACTIVATION_CONTENT_RE`); materiale con forma di segreto; i **moduli misti**, che uniscono protezioni e
+configurazione con credenziali (`core/system_state.py`: `BetfairConfig`, `TelegramRuntimeConfig` — Codex su #598); e
+ogni riga **aggiunta o rimossa** di codice di prodotto che tocca un identificatore di credenziale o segreto
+(`DELEGATION_CREDENTIAL_CONTENT_RE`: app key, api key, password, token, private key, session string, auth, cipher,
+redact...), qualunque sia il nome del file (`classification.delegation_credential_content`). Basta UN file non
+delegabile perche' tutta la PR resti owner. Le modifiche di governance e sicurezza (§0.9: `CLAUDE.md`, `AGENTS.md`, spec, workflow, `scripts/pr_*`)
 restano sempre a merge owner: quel ramo di `merge_decision` precede la delega.
 
 **Come si applica.** Lo stato di `merge-decision` porta `owner_delegation = {id, card, head_sha}`:
