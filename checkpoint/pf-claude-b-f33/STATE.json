@@ -1,16 +1,16 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 15,
- "mandate_id": "Claude B — OWNER DIRECTIVE FINALIZE #592 AND RESUME PICKFAIR ROADMAP V2",
- "previous_checkpoint_sha": "60b997d75a88083fc6b4693680021760c8668059",
+ "seq": 16,
+ "mandate_id": "Claude B — OWNER DIRECTIVE GOVERNANCE AUTO-MERGE CERTIFICATO + ROADMAP V2",
+ "previous_checkpoint_sha": "1a193ace1314264f62954a98eac45783f309ad57",
  "code": {
   "branch": "f05-hedge-ledger",
   "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
   "patch": {
-   "head": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
-   "tree": "c1d5a911e1f154cd7fb4d43a8cce9fbc9cf74e28",
-   "captured_at": "2026-11-01T01:35:29+00:00",
+   "head": "aa184a2886201c3113d229410e19b5ea436aa6b3",
+   "tree": "1c12b186b4eb98af5f3ec46b0f7cb80a1f2cdc5d",
+   "captured_at": "2026-11-01T13:38:08+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -19,7 +19,7 @@
    "skipped_symlinks": {}
   }
  },
- "lotto_corrente": "PR #591 (#590, owner-merge) aperta, unica PR; #589 chiusa DEFERRED (branch f33-full-scope-harness 0c2822e); governance gov-gha-primary-buildkite-deferred 2cdfe8a pushata senza PR.",
+ "lotto_corrente": "PR #596 F-01 (f01-sltp-pnl @aa184a2) unica PR aperta, READY_FOR_OWNER_MANUAL_MERGE; #593 F-05, #594 F-08, #595 governance mergiate.",
  "lotti_completati": [
   "F-33 implementazione locale + hardening (6 commit)",
   "PR #589 aperta (d46e6da)",
@@ -44,9 +44,10 @@
   "#591 test-core-components: flake preesistente test TTL poller (uptime<30s) riprodotto, patch proposta c.6549279913, rerun",
   "#586 OWNER_DECISION_GITHUB_ACTIONS_PRIMARY_BUILDKITE_DEFERRED c.6549283349",
   "seq 12: #591 chiusa DEFERRED_GOVERNANCE_DEPENDENCY (branch fix-590-tg-guard-sigpipe 0d1f466 preservato); #592 governance aperta head 990b99d con audit Claude A integrato (pending_checks_from_pr); readiness su 990b99d: Buildkite full-suite/overlap-check ignored deferred, pending vuoto; thread Codex PRRT_kwDORumVCM6yVDZ0 risolto con evidenza; blocco residuo: mutation-lanes rosse per fsp_* INCONCLUSIVE (#590 non su main) -> decisione owner #586 c.6549919101",
-  "seq 14: #592 merged owner 986bebd; #591 riallineata e merged owner b2c0947; F-33 #589 GO-MERGE condizionato 8de659b; F-05 PR #593 READY_FOR_OWNER_MANUAL_MERGE @84fd4f7 (fix loop 3/10, 11027 passed, mutation 15/15)"
+  "seq 14: #592 merged owner 986bebd; #591 riallineata e merged owner b2c0947; F-33 #589 GO-MERGE condizionato 8de659b; F-05 PR #593 READY_FOR_OWNER_MANUAL_MERGE @84fd4f7 (fix loop 3/10, 11027 passed, mutation 15/15)",
+  "seq 16: #593 F-05 merged 71ff2ab, #594 F-08 merged 1eed2fd, #595 governance merged bb8d028; #596 F-01 aperta, fix loop 3/10 (abfd2ed 1.01+profondita', f1de646 livelli al proprio prezzo, e52018c/aa184a2 TP su profitto garantito), READY_FOR_OWNER_MANUAL_MERGE c.6558690366; #586 c.6558691367"
  ],
- "next_atomic_action": "1) #593 F-05 READY_FOR_OWNER_MANUAL_MERGE @84fd4f7 (gate verdi, fix loop 3/10): attendere merge owner. 2) Dopo il merge: F-08 (wt-f08) merge di main, test, PR, CI/review, merge owner. 3) Poi F-01 (wt-f01). Debito: max_files 43->44 della task key F-33 alla prossima PR che tocca il registro.",
+ "next_atomic_action": "1) #596 F-01 READY_FOR_OWNER_MANUAL_MERGE @aa184a2 (GHA verde, Sol/Grok/Codex puliti, 0 thread, fix loop 3/10): attendere merge owner. 2) Dopo il merge: verificare CI post-merge su main. 3) Poi F-10, quindi F-06, una PR alla volta (auto-merge certificato #595 solo se idonea). Debito: max_files 43->44 della task key F-33 alla prossima PR che tocca il registro.",
  "dependencies": {
   "overlap_check_589": "#587 chiusa o mergiata (eccezione due PR, nessun bypass)",
   "betfair_tests": "runner trusted BETFAIR_VPS_TRUSTED_TEST_RUNNER (non installato)"
@@ -74,22 +75,22 @@
  },
  "tests_executed": [
   {
-   "name": "tests/f05 44/44 PASS (RED->GREEN di ogni fix)",
+   "name": "tests/core/test_sl_tp_pnl_sign.py 67/67 PASS (RED->GREEN di ogni fix)",
    "status": "PASS",
-   "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
-   "result": "44 passed"
+   "sha": "aa184a2886201c3113d229410e19b5ea436aa6b3",
+   "result": "67 passed"
   },
   {
-   "name": "mutation --module cashout_executor 15/15 KILLED GATE PASS",
+   "name": "mutation core.sl_tp_pnl + core.runtime_controller, f01_* 8/8 KILLED",
    "status": "PASS",
-   "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
-   "result": "15/15 KILLED, GATE PASS"
+   "sha": "aa184a2886201c3113d229410e19b5ea436aa6b3",
+   "result": "GATE PASS entrambi"
   },
   {
-   "name": "suite completa -n 4 tests: 11027 passed, 0 failed",
+   "name": "suite completa -n 4 tests",
    "status": "PASS",
-   "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
-   "result": "11027 passed, 16 skipped, 56 xfailed, 0 failed"
+   "sha": "aa184a2886201c3113d229410e19b5ea436aa6b3",
+   "result": "11211 passed, 16 skipped, 56 xfailed, 0 failed"
   }
  ],
  "tests_missing": [
@@ -104,10 +105,22 @@
  "pr_505": "non toccata",
  "certification_verdict": "NOT VERIFIED",
  "pr": {
-  "593": {
+  "596": {
    "state": "open",
-   "head": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
+   "head": "aa184a2886201c3113d229410e19b5ea436aa6b3",
    "status": "READY_FOR_OWNER_MANUAL_MERGE"
+  },
+  "595": {
+   "state": "merged",
+   "sha": "bb8d028"
+  },
+  "594": {
+   "state": "merged",
+   "sha": "1eed2fd"
+  },
+  "593": {
+   "state": "merged",
+   "sha": "71ff2ab"
   },
   "592": {
    "state": "merged",
@@ -123,8 +136,7 @@
   }
  },
  "worktrees": {
-  "wt-f33": "f33-full-scope-harness @ a721e09 (pubblicato)",
-  "wt-f05": "f05-hedge-ledger @ 6fa29b2, nessuna modifica, solo locale (effimero: ricrearlo da origin/main)"
+  "wt-f01": "f01-sltp-pnl @ aa184a2 (pubblicato, PR #596)"
  },
  "agent": {
   "last_writer": "claude-b",
@@ -188,7 +200,7 @@
   }
  },
  "tests_historical_merged": {
-  "note": "SHA di branch cancellati dopo il merge (F-33 #589 -> 8de659b, #590/#591 -> b2c0947, #592 -> 986bebd): non piu' raggiungibili dal remoto, conservati come storico",
+  "note": "SHA di branch cancellati dopo il merge (F-33 #589 -> 8de659b, #590/#591 -> b2c0947, #592 -> 986bebd): non piu' raggiungibili dal remoto, conservati come storico; F-05 #593 -> 71ff2ab",
   "entries": [
    {
     "name": "pytest tests/fullscope -n 3 (PF_COMBI_CASES=1)",
@@ -247,6 +259,24 @@
     "status": "PASS",
     "sha": "e655a5b1d94d6584161d46e35777b284ed54b237",
     "result": "4249 passed"
+   },
+   {
+    "name": "tests/f05 44/44 PASS (RED->GREEN di ogni fix)",
+    "status": "PASS",
+    "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
+    "result": "44 passed"
+   },
+   {
+    "name": "mutation --module cashout_executor 15/15 KILLED GATE PASS",
+    "status": "PASS",
+    "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
+    "result": "15/15 KILLED, GATE PASS"
+   },
+   {
+    "name": "suite completa -n 4 tests: 11027 passed, 0 failed",
+    "status": "PASS",
+    "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
+    "result": "11027 passed, 16 skipped, 56 xfailed, 0 failed"
    }
   ]
  }

@@ -35,11 +35,12 @@
   "#591 test-core-components: flake preesistente test TTL poller (uptime<30s) riprodotto, patch proposta c.6549279913, rerun",
   "#586 OWNER_DECISION_GITHUB_ACTIONS_PRIMARY_BUILDKITE_DEFERRED c.6549283349",
   "seq 12: #591 chiusa DEFERRED_GOVERNANCE_DEPENDENCY (branch fix-590-tg-guard-sigpipe 0d1f466 preservato); #592 governance aperta head 990b99d con audit Claude A integrato (pending_checks_from_pr); readiness su 990b99d: Buildkite full-suite/overlap-check ignored deferred, pending vuoto; thread Codex PRRT_kwDORumVCM6yVDZ0 risolto con evidenza; blocco residuo: mutation-lanes rosse per fsp_* INCONCLUSIVE (#590 non su main) -> decisione owner #586 c.6549919101",
-  "seq 14: #592 merged owner 986bebd; #591 riallineata e merged owner b2c0947; F-33 #589 GO-MERGE condizionato 8de659b; F-05 PR #593 READY_FOR_OWNER_MANUAL_MERGE @84fd4f7 (fix loop 3/10, 11027 passed, mutation 15/15)"
+  "seq 14: #592 merged owner 986bebd; #591 riallineata e merged owner b2c0947; F-33 #589 GO-MERGE condizionato 8de659b; F-05 PR #593 READY_FOR_OWNER_MANUAL_MERGE @84fd4f7 (fix loop 3/10, 11027 passed, mutation 15/15)",
+  "seq 16: #593 F-05 merged 71ff2ab, #594 F-08 merged 1eed2fd, #595 governance merged bb8d028; #596 F-01 aperta, fix loop 3/10 (abfd2ed 1.01+profondita', f1de646 livelli al proprio prezzo, e52018c/aa184a2 TP su profitto garantito), READY_FOR_OWNER_MANUAL_MERGE c.6558690366; #586 c.6558691367"
  ],
- "lotto_corrente": "PR #591 (#590, owner-merge) aperta, unica PR; #589 chiusa DEFERRED (branch f33-full-scope-harness 0c2822e); governance gov-gha-primary-buildkite-deferred 2cdfe8a pushata senza PR.",
- "mandate_id": "Claude B \u2014 OWNER DIRECTIVE FINALIZE #592 AND RESUME PICKFAIR ROADMAP V2",
- "next_atomic_action": "1) #593 F-05 READY_FOR_OWNER_MANUAL_MERGE @84fd4f7 (gate verdi, fix loop 3/10): attendere merge owner. 2) Dopo il merge: F-08 (wt-f08) merge di main, test, PR, CI/review, merge owner. 3) Poi F-01 (wt-f01). Debito: max_files 43->44 della task key F-33 alla prossima PR che tocca il registro.",
+ "lotto_corrente": "PR #596 F-01 (f01-sltp-pnl @aa184a2) unica PR aperta, READY_FOR_OWNER_MANUAL_MERGE; #593 F-05, #594 F-08, #595 governance mergiate.",
+ "mandate_id": "Claude B \u2014 OWNER DIRECTIVE GOVERNANCE AUTO-MERGE CERTIFICATO + ROADMAP V2",
+ "next_atomic_action": "1) #596 F-01 READY_FOR_OWNER_MANUAL_MERGE @aa184a2 (GHA verde, Sol/Grok/Codex puliti, 0 thread, fix loop 3/10): attendere merge owner. 2) Dopo il merge: verificare CI post-merge su main. 3) Poi F-10, quindi F-06, una PR alla volta (auto-merge certificato #595 solo se idonea). Debito: max_files 43->44 della task key F-33 alla prossima PR che tocca il registro.",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
