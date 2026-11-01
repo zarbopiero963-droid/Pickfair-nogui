@@ -10,8 +10,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 - **F-01 (#586, CSH-01/CSH-10/NF-06 P0 latente) — P&L del monitor SL/TP:** netto liquidabile in Decimal con la
-  funzione del cashout (`core/sl_tp_pnl.py`): prezzo di chiusura dal book, stake reale del LAY (non la
-  liability), commissione sul netto. Prima il BACK aveva il segno invertito e si usava `lastPriceTraded`. Il monitor
+  formula del cashout (`core/sl_tp_pnl.py`): hedge dal book consumato livello per livello al proprio prezzo, TP
+  solo se il book copre l'intera posizione, quota 1.01 valida, stake reale del LAY (non la liability), commissione
+  sul netto. Prima il BACK aveva il segno invertito e si usava `lastPriceTraded`. Il monitor
   resta inerte fino a F-02. `docs/cashout_overview.md` §7.4; test `tests/core/test_sl_tp_pnl_sign.py`;
   mutazioni `f01_*`; `hard_verify_issue_320.py` (C1) allineato al book.
 - **F-08 (#586, RST-02/NF-10/DB-04 P0) — ordini ghost all'avvio su DB reale:** tabelle `startup_orders` e `outbox`

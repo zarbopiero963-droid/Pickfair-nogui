@@ -151,13 +151,15 @@ def test_take_profit_requires_enough_depth_to_close():
     assert _closes(rc) == [], "TP su profitto non liquidabile (profondita' ignorata)"
 
 
-def test_take_profit_uses_the_deepest_level_needed():
-    # 1.60 x 5 + 1.70 x 100: hedge a 1.70 = 11.77 coperto solo arrivando al secondo livello => prezzo 1.70,
-    # netto +1.69 (non +2.39 del miglior prezzo). TP 2.0 non scatta, TP 1.6 si'.
-    from core.sl_tp_pnl import closing_quote, liquidable_pnl
+def test_each_depth_level_counts_at_its_own_price():
+    # BACK 10 a 2.0 (nozionale 20): 1.60 x 5 + 1.70 x 100 => 5 a 1.60 (copre 8) + 7.06 a 1.70 (copre 12).
+    # Esiti: vince 10 - (5*0.60 + 7.06*0.70) = 2.06, perde 12.06 - 10 = 2.06 => lordo 2.06, netto 1.97.
+    # TP 2.0 non scatta, TP 1.6 si'.
+    from core.sl_tp_pnl import closing_legs, liquidable_pnl_legs
     runner = _ladder_book([(1.58, 100)], [(1.60, 5), (1.70, 100)])["runners"][0]
-    assert closing_quote(runner, "BACK", D("10"), D("2.0")) == (D("1.7"), True)
-    assert liquidable_pnl("BACK", D("10"), D("2.0"), D("1.7"), D("4.5")) == D("1.69")
+    legs, covered = closing_legs(runner, "BACK", D("10"), D("2.0"))
+    assert covered and legs == [(D("1.6"), D("5")), (D("1.7"), D("7.06"))]
+    assert liquidable_pnl_legs("BACK", D("10"), D("2.0"), legs, D("4.5")) == D("1.97")
     rc = _controller(_table("BACK", 2.0, 10.0, tp=2.0))
     rc._monitor_sl_tp_trailing(_ladder_book([(1.58, 100)], [(1.60, 5), (1.70, 100)]))
     assert _closes(rc) == []
@@ -166,12 +168,48 @@ def test_take_profit_uses_the_deepest_level_needed():
     assert [c["reason"] for c in _closes(rc)] == ["TAKE_PROFIT_REACHED"]
 
 
+def test_earlier_levels_are_not_repriced_at_the_deepest_one():
+    # Codex P2 su abfd2ed: 1.60 x 5 + 1.70 x 6.77 copre solo 5*1.60 + 6.77*1.70 = 19.51 dei 20 necessari.
+    # Prima: tutta la size a 1.70 => "coperto" e TP 1.6 scattava su un book che non chiude la posizione.
+    from core.sl_tp_pnl import closing_legs
+    runner = _ladder_book([(1.58, 100)], [(1.60, 5), (1.70, 6.77)])["runners"][0]
+    assert closing_legs(runner, "BACK", D("10"), D("2.0"))[1] is False
+    rc = _controller(_table("BACK", 2.0, 10.0, tp=1.6))
+    rc._monitor_sl_tp_trailing(_ladder_book([(1.58, 100)], [(1.60, 5), (1.70, 6.77)]))
+    assert _closes(rc) == [], "TP su un book che non copre il nozionale"
+
+
+def test_no_spurious_stop_loss_from_a_thin_deeper_level():
+    # Sol su abfd2ed: BACK 10 a 2.0, LAY 12 a 1.60 + 1 a 2.50. Reale: 12 a 1.60 (19.20) + 0.32 a 2.50 (0.80)
+    # => esiti +2.32 / +2.32, netto +2.22. Prima: tutto a 2.50 => -2.00 e SL 1.5 spurio su una posizione in profitto.
+    from core.sl_tp_pnl import closing_legs, liquidable_pnl_legs
+    runner = _ladder_book([(1.58, 100)], [(1.60, 12), (2.50, 1)])["runners"][0]
+    legs, covered = closing_legs(runner, "BACK", D("10"), D("2.0"))
+    assert covered and legs == [(D("1.6"), D("12")), (D("2.5"), D("0.32"))]
+    assert liquidable_pnl_legs("BACK", D("10"), D("2.0"), legs, D("4.5")) == D("2.22")
+    rc = _controller(_table("BACK", 2.0, 10.0, sl=1.5))
+    rc._monitor_sl_tp_trailing(_ladder_book([(1.58, 100)], [(1.60, 12), (2.50, 1)]))
+    assert _closes(rc) == [], "stop-loss spurio su posizione liquidabile in profitto"
+
+
+def test_lay_closes_level_by_level_on_the_back_side():
+    # LAY 10 a 3.0 (nozionale 30) chiuso in BACK: 2.0 x 10 (copre 20) + 2.5 x 100 (4.00 copre 10).
+    # Esiti: vince 10*1.0 + 4*1.5 - 10*2 = -4.00, perde 10 - 14 = -4.00 => -4.00.
+    from core.sl_tp_pnl import closing_legs, liquidable_pnl_legs
+    runner = _ladder_book([(2.0, 10), (2.5, 100)], [(2.02, 100)])["runners"][0]
+    legs, covered = closing_legs(runner, "LAY", D("10"), D("3.0"))
+    assert covered and legs == [(D("2.0"), D("10")), (D("2.5"), D("4"))]
+    assert liquidable_pnl_legs("LAY", D("10"), D("3.0"), legs, D("4.5")) == D("-4.00")
+
+
 def test_stop_loss_still_triggers_with_insufficient_depth():
     # Chiusura protettiva (PF-EXEC-03): BACK 10 a 2.0, il book LAY offre solo 1.00 a 2.5 (servono 8.00).
-    # La perdita sull'ultimo livello (-2.00) e' un limite inferiore di quella reale: lo SL scatta comunque.
-    from core.sl_tp_pnl import closing_quote
+    # Il residuo non coperto e' valutato all'ultimo livello (-2.00): lo SL scatta comunque.
+    from core.sl_tp_pnl import closing_legs, liquidable_pnl_legs
     runner = _ladder_book([(2.48, 100)], [(2.5, 1)])["runners"][0]
-    assert closing_quote(runner, "BACK", D("10"), D("2.0")) == (D("2.5"), False)
+    legs, covered = closing_legs(runner, "BACK", D("10"), D("2.0"))
+    assert not covered and legs == [(D("2.5"), D("1")), (D("2.5"), D("7"))]
+    assert liquidable_pnl_legs("BACK", D("10"), D("2.0"), legs, D("4.5")) == D("-2.00")
     rc = _controller(_table("BACK", 2.0, 10.0, sl=1.5))
     rc._monitor_sl_tp_trailing(_ladder_book([(2.48, 100)], [(2.5, 1)]))
     assert [c["reason"] for c in _closes(rc)] == ["STOP_LOSS_REACHED"]
@@ -179,9 +217,9 @@ def test_stop_loss_still_triggers_with_insufficient_depth():
 
 @pytest.mark.parametrize("size", [float("nan"), -1, "x", None])
 def test_unreadable_depth_never_counts_as_covered(size):
-    from core.sl_tp_pnl import closing_quote
+    from core.sl_tp_pnl import closing_legs
     runner = {"ex": {"availableToLay": [{"price": 1.6, "size": size}]}}
-    assert closing_quote(runner, "BACK", D("10"), D("2.0")) is None
+    assert closing_legs(runner, "BACK", D("10"), D("2.0")) is None
     rc = _controller(_table("BACK", 2.0, 10.0, tp=0.01))
     rc._monitor_sl_tp_trailing({"runners": [{"selectionId": 11, "ex": {"availableToLay": [{"price": 1.6, "size": size}]}}]})
     assert _closes(rc) == []

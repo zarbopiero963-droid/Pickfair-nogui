@@ -6825,15 +6825,16 @@ class RuntimeController:
                 continue
             side = str(meta.get("bet_type") or "BACK").upper()
             stake = sl_tp_pnl.position_stake(side, meta, table.current_exposure)
-            quote = sl_tp_pnl.closing_quote(runner, side, stake, meta.get("price"))
+            quote = sl_tp_pnl.closing_legs(runner, side, stake, meta.get("price"))
             if quote is None:
                 continue                        # book illeggibile o vuoto: nessuna decisione (fail-closed)
-            # covered=False: il book non basta a chiudere tutta la posizione a quel prezzo (Sol su 6d232f4)
-            close, covered = quote
+            # gambe di hedge livello per livello, ognuna al proprio prezzo; covered=False: il book non basta a
+            # chiudere tutta la posizione (Sol su 6d232f4, Codex P2 e Sol su abfd2ed)
+            legs, covered = quote
             # Commissione di policy del cashout (la stessa che `dynamic_cashout_single` applica all'hedge reale):
             # una commissione di configurazione diversa farebbe sollevare la funzione del cashout nell'handler.
             try:
-                pnl = sl_tp_pnl.liquidable_pnl(side, stake, meta.get("price"), close, BETFAIR_ITALY_COMMISSION_PCT)
+                pnl = sl_tp_pnl.liquidable_pnl_legs(side, stake, meta.get("price"), legs, BETFAIR_ITALY_COMMISSION_PCT)
             except Exception:  # noqa: BLE001 - calcolo non dimostrabile => nessuna decisione (fail-closed)
                 logger.exception("SL/TP: P&L liquidabile del tavolo %s non calcolabile", table.table_id)
                 pnl = None
@@ -6844,7 +6845,7 @@ class RuntimeController:
             if sl_d is not None and pnl <= -abs(sl_d):
                 self._trigger_auto_close_table(table, "STOP_LOSS_REACHED", float(pnl))
             # TP solo su profitto LIQUIDABILE per intero; lo SL (chiusura protettiva, PF-EXEC-03) scatta anche con book
-            # insufficiente: la perdita calcolata sull'ultimo livello disponibile e' un limite inferiore di quella reale.
+            # insufficiente: il residuo non coperto e' valutato all'ultimo livello disponibile.
             elif tp_d is not None and covered and pnl >= abs(tp_d):
                 self._trigger_auto_close_table(table, "TAKE_PROFIT_REACHED", float(pnl))
 

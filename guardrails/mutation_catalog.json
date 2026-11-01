@@ -371,7 +371,7 @@
       "module": "core.sl_tp_pnl",
       "area": "money_management",
       "file": "core/sl_tp_pnl.py",
-      "original": "        if covered_size >= (s * entry / price).quantize(CENT):",
+      "original": "        if size >= need:",
       "mutated": "        if True:",
       "tests": [
         "tests/core/test_sl_tp_pnl_sign.py"
@@ -383,12 +383,24 @@
       "module": "core.sl_tp_pnl",
       "area": "money_management",
       "file": "core/sl_tp_pnl.py",
-      "original": "    if s <= 0 or entry < MIN_PRICE or close < MIN_PRICE or comm < 0:",
-      "mutated": "    if s <= 0 or entry <= MIN_PRICE or close <= MIN_PRICE or comm < 0:",
+      "original": "        if price is None or price < MIN_PRICE or size is None or size < 0:",
+      "mutated": "        if price is None or price <= MIN_PRICE or size is None or size < 0:",
       "tests": [
         "tests/core/test_sl_tp_pnl_sign.py"
       ],
       "rationale": "F-01 (Sol su 6d232f4): quota 1.01 scartata => SL di un LAY in forte perdita saltato."
+    },
+    {
+      "id": "f01_levels_not_weighted_by_price",
+      "module": "core.sl_tp_pnl",
+      "area": "money_management",
+      "file": "core/sl_tp_pnl.py",
+      "original": "            residual -= size * price            # ogni livello copre size * il PROPRIO prezzo",
+      "mutated": "            residual -= size",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01 (Codex P2 e Sol su abfd2ed): livelli del book non pesati al proprio prezzo => copertura e P&L falsi (TP/SL spuri)."
     },
     {
       "id": "f08_ghost_lookup_error_swallowed",
