@@ -129,6 +129,28 @@ def test_interruttore_live_rimosso_va_a_merge_owner_anche_senza_delega():
     assert res["status"] == "READY_FOR_OWNER_MANUAL_MERGE" and res["reasons"] == ["financial_owner_only_area"]
 
 
+def test_rename_da_prodotto_a_test_non_nasconde_la_rimozione_di_un_gate_live():
+    # Sol su 860a8b1: le righe rimosse appartengono al file di ORIGINE (core/), non alla destinazione (tests/)
+    patch = ("diff --git a/core/runtime_controller.py b/tests/x/runtime_controller.py\n"
+             "similarity index 90%\nrename from core/runtime_controller.py\nrename to tests/x/runtime_controller.py\n"
+             "--- a/core/runtime_controller.py\n+++ b/tests/x/runtime_controller.py\n"
+             "@@ -1,1 +1,1 @@\n-        if not self._live_enabled:\n+        if False:\n")
+    assert policy._changed_lines_by_file(patch) == {"tests/x/runtime_controller.py": ["        if False:"],
+                                                    "core/runtime_controller.py": ["        if not self._live_enabled:"]}
+    diff = _diff(["tests/x/runtime_controller.py", SCOPE], patch)
+    assert diff["classification"]["live_activation"] == ["core/runtime_controller.py"], diff["classification"]
+    assert diff["financial_owner_merge_required"] is True
+
+
+def test_righe_rimosse_non_verificabili_non_danno_mai_un_full_diff_pass(monkeypatch):
+    # Grok su 860a8b1: se le righe rimosse non si possono leggere il full diff non e' PASS (fail-closed)
+    monkeypatch.setattr(policy, "_removed_lines_by_file", lambda _patch: None)
+    diff = _diff(["core/runtime_controller.py", SCOPE], _patch2("core/runtime_controller.py", "    a = 1", "    a = 2"))
+    assert diff["status"] == "UNKNOWN" and "patch_unreadable" in diff["problems"], diff["problems"]
+    res = policy.merge_decision(_state(diff))
+    assert res["status"] == "NEEDS_MANUAL" and "full_diff_UNKNOWN" in res["reasons"], res
+
+
 def test_commento_live_rimosso_non_conta_per_la_regola_generale():
     patch = _patch2("core/runtime_controller.py", "    # vecchio commento su live_enabled", "    # commento")
     diff = _diff(["core/runtime_controller.py", SCOPE], patch)

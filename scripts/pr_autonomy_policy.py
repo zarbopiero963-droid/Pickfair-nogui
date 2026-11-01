@@ -1382,8 +1382,11 @@ def _parse_patch_numbered(patch_text: str, removed: dict[str, list[str]] | None 
                 new_no += 1
             elif line.startswith("-"):
                 old_left -= 1
-                if removed is not None and (current or old_path) is not None:
-                    removed.setdefault(current or old_path, []).append(line[1:])
+                # Sol su 860a8b1: una riga RIMOSSA appartiene al file di ORIGINE (`--- a/`), non a quello di
+                # destinazione: un rename `core/x.py` -> `tests/x.py` che toglie un gate LIVE resta codice di prodotto.
+                owner_file = old_path or current
+                if removed is not None and owner_file is not None:
+                    removed.setdefault(owner_file, []).append(line[1:])
             elif line.startswith(" "):
                 old_left -= 1
                 new_left -= 1
@@ -1675,6 +1678,9 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
     # Codex P1 su 665ecb6: RIMUOVERE un interruttore/gate LIVE e' come attivarlo. La regola §0.9-bis guardava solo
     # le righe aggiunte: una riga rimossa di prodotto che menziona un interruttore LIVE porta a merge owner.
     removed_only = _removed_lines_by_file(patch_text if isinstance(patch_text, str) else "")
+    if removed_only is None:
+        # Grok su 860a8b1: righe rimosse non verificabili => mai un esito PASS (full diff UNKNOWN, fail-closed)
+        problems.append("patch_unreadable")
     for path, lines in (removed_only or {}).items():
         if _is_product_path(path) and any(LIVE_ACTIVATION_CONTENT_RE.search(x)
                                           and not x.lstrip().startswith("#") for x in lines):

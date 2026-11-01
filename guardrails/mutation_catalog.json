@@ -7550,12 +7550,36 @@
       "module": "scripts.pr_autonomy_policy",
       "area": "trusted_gate",
       "file": "scripts/pr_autonomy_policy.py",
-      "original": "                    removed.setdefault(current or old_path, []).append(line[1:])",
+      "original": "                    removed.setdefault(owner_file, []).append(line[1:])",
       "mutated": "                    pass",
       "tests": [
         "tests/scripts/test_roadmap_merge_delegation.py"
       ],
       "rationale": "§0.9-ter: la rimozione di una protezione di credenziale non conta per la delega."
+    },
+    {
+      "id": "pap_removed_lines_attributed_to_destination",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "                owner_file = old_path or current",
+      "mutated": "                owner_file = current or old_path",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter (Sol su 860a8b1): righe rimosse attribuite al file di destinazione: un rename core/ -> tests/ nasconde la rimozione di un gate LIVE."
+    },
+    {
+      "id": "pap_removed_lines_unreadable_accepted",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if removed_only is None:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-bis (Grok su 860a8b1): righe rimosse non verificabili non rendono il full diff UNKNOWN."
     },
     {
       "id": "pap_delegation_unparsable_patch_delegable",
