@@ -51,7 +51,9 @@ def _rows(db):
 
 def _cmd(**over):
     p = {"market_id": "1.222", "selection_id": 55, "side": "LAY", "stake": 4.0, "price": 1.8, "green_up": 2.5,
-         "event_key": "1.222:55:BACK:x", "source": "UI", "cashout_request_id": "req-1"}
+         "event_key": "1.222:55:BACK:x", "source": "UI", "cashout_request_id": "req-1",
+         # F-06: l'hedge LAY 4@1.8 chiude una posizione BACK reale (3.6@2.0 => 7.2 abbinati)
+         "original_pos": {"side": "BACK", "stake": 3.6, "price": 2.0}}
     p.update(over)
     return p
 
@@ -235,9 +237,26 @@ def _live(bet_id, remaining=4.0, market="1.222", selection=55):
             "sizeMatched": 0.0, "sizeRemaining": remaining}
 
 
+def _entry(market="1.222", selection=55):
+    """F-06: l'ordine d'ingresso abbinato (BACK 3.6@2.0) della posizione che l'hedge chiude."""
+    return {"betId": "E1", "marketId": market, "selectionId": selection, "side": "BACK", "sizeMatched": 3.6,
+            "sizeRemaining": 0.0, "priceSize": {"price": 2.0}, "customerOrderRef": "ENTRY1"}
+
+
+def _with_entry(fetch):
+    """La fonte ordini dei test F-05 piu' la posizione d'ingresso, solo sulle risposte ben formate (lista)."""
+    if fetch is None:
+        return None
+
+    def wrapped():
+        reply = fetch()
+        return [_entry(), *reply] if isinstance(reply, list) else reply
+    return wrapped
+
+
 def _executor(db, result, fetch):
     bus, router = _Bus(), _Router(db, result)
-    return bus, router, CashoutExecutor(bus, router, ledger=db, fetch_current_orders=fetch)
+    return bus, router, CashoutExecutor(bus, router, ledger=db, fetch_current_orders=_with_entry(fetch))
 
 
 def _first_hedge_resting(db):
@@ -365,7 +384,7 @@ def test_sim_flag_is_captured_after_the_ledger_preflight(db):
 
     bus, router = _Bus(), _Router(db, _ok(bet_id="CB2"))
     router.service = svc
-    CashoutExecutor(bus, router, ledger=db, fetch_current_orders=fetch_and_switch).on_cmd_execute_cashout(
+    CashoutExecutor(bus, router, ledger=db, fetch_current_orders=_with_entry(fetch_and_switch)).on_cmd_execute_cashout(
         _cmd(cashout_request_id="req-2"))
     success = [p for t, p in bus.published if t == CASHOUT_SUCCESS]
     assert len(router.calls) == 1 and len(success) == 1

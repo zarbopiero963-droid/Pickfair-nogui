@@ -50,7 +50,7 @@ def _cmd_payload(**over):
         "stake": 4.0,
         "price": 1.8,
         "green_up": 2.5,
-        "original_pos": {"side": "BACK", "price": 2.0, "stake": 3.0},
+        "original_pos": {"side": "BACK", "price": 2.0, "stake": 3.6},  # F-06: 7.2 abbinati => hedge 4@1.8
         "source": "UI",
     }
     payload.update(over)
@@ -238,6 +238,8 @@ def test_invalid_side_rejected_even_with_safety_layer():
     assert router.calls == []
     assert CASHOUT_SUCCESS not in bus.topics()
     assert bus.last(CASHOUT_FAILED)["status"] == "REJECTED"
+    # F-06: lo respinge l'invariante hard, non solo (piu' avanti) la coerenza dell'hedge con la posizione
+    assert bus.last(CASHOUT_FAILED)["reason"].startswith("validation:")
 
 
 def test_missing_green_up_rejected_before_placement():
