@@ -17,6 +17,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   mutazioni `pap_delegation_*`.
 
 ### Fixed
+- **F-09 (#586, RST-01/REC-08) — esito del recovery all'avvio gating:** `recover()` non ok, eccezione nella fase
+  recovery/reconcile o batch aperti non riconciliati => avvio in PAUSED + RECONCILIATION_REQUIRED (stessa semantica di
+  F018), `startup_mode` nel payload `STARTUP_POSITIONS_REBUILT`, `resume()` non lo scavalca. Prima l'esito era solo
+  loggato e il runtime partiva ACTIVE. `docs/startup_recovery.md`; test `tests/f09/`; mutazioni `f09_*`.
 - **F-01 (#586, CSH-01/CSH-10/NF-06 P0 latente) — P&L del monitor SL/TP:** netto liquidabile in Decimal con la
   formula del cashout (`core/sl_tp_pnl.py`): hedge dal book consumato livello per livello al proprio prezzo, TP
   solo se il book copre l'intera posizione, quota 1.01 valida, stake reale del LAY (non la liability), commissione

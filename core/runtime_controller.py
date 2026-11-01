@@ -2658,15 +2658,30 @@ class RuntimeController:
             self._record_runtime_io(operation="market_data_feed_start", started_at=start_market_data, ok=False, error=str(exc))
             logger.exception("Errore start market data feed: %s", exc)
 
+        # F-09 (#586, RST-01/REC-08): l'esito della fase recovery/reconcile e' GATING, non solo loggato. Esito non ok,
+        # eccezione o batch aperti non riconciliati => stessa semantica di F018 (PAUSED + RECONCILIATION_REQUIRED, via
+        # `_gate_rebuild_on_startup_recovery`); resume() non lo scavalca (recover() ripubblica le saghe pendenti, non
+        # si ritenta: serve un riavvio con recovery riuscito, come RECOVERY_STATE_UNREADABLE).
+        self._startup_recovery_failure = ""
+        self._startup_mode = None
         try:
             # 1. Recupero stato post-crash (ordini fantasma e saghe pendenti)
             recovery_result = self.state_recovery.recover()
             logger.info("State recovery completato: %s", recovery_result)
-            
+            if isinstance(recovery_result, dict):
+                self._startup_mode = recovery_result.get("startup_mode")
+            if not isinstance(recovery_result, dict) or recovery_result.get("ok") is not True:
+                reason = recovery_result.get("reason") if isinstance(recovery_result, dict) else type(recovery_result).__name__
+                self._startup_recovery_failure = f"STATE_RECOVERY_NOT_OK:{reason}"
+
             # 2. Riconciliazione batch aperti
-            self.reconciliation_engine.reconcile_all_open_batches()
-        except Exception:
+            batches = self.reconciliation_engine.reconcile_all_open_batches()
+            failed = self._startup_batch_failures(batches)
+            if not self._startup_recovery_failure and failed:
+                self._startup_recovery_failure = f"OPEN_BATCH_RECONCILIATION_FAILED:{failed}"
+        except Exception as exc:
             logger.exception("Errore durante la fase di recovery/reconcile")
+            self._startup_recovery_failure = self._startup_recovery_failure or f"STATE_RECOVERY_ERROR:{type(exc).__name__}"
 
         # PF-ALL-F018: ricostruzione delle posizioni aperte (DB + ordini correnti dell'exchange) PRIMA
         # di accettare nuovi ingressi. Riconciliazione incompleta => runtime in PAUSED, mai ACTIVE
@@ -2681,6 +2696,7 @@ class RuntimeController:
             rebuild = dict(rebuild, ok=False, reason=(
                 f"MICROSTAKE_SAGA_PENDING:{microstake.get('status')}:{','.join(microstake.get('pending') or [])}"
                 if rebuild.get("ok") else rebuild.get("reason")), microstake=microstake)
+        rebuild = self._gate_rebuild_on_startup_recovery(rebuild)     # F-09: recover()/batch non ok => PAUSED
         rebuild = self._gate_rebuild_on_recovery_state(rebuild)       # RSR-12 illeggibile => PAUSED
         rebuild = self._reconcile_held_after_rebuild(rebuild)         # #461 PR29-c: held in attesa => PAUSED
         self._last_position_rebuild = dict(rebuild)
@@ -3047,7 +3063,8 @@ class RuntimeController:
                                   f"{microstake.get('status')}:{','.join(microstake.get('pending') or [])}",
                         "microstake": microstake, "status": self._safe_status_snapshot()}
             rebuild = self._reconcile_held_after_rebuild(
-                self._gate_rebuild_on_recovery_state(self._rebuild_open_positions()))
+                self._gate_rebuild_on_recovery_state(self._gate_rebuild_on_startup_recovery(
+                    self._rebuild_open_positions())))                       # F-09: recover() non ok => resta PAUSED
             self._last_position_rebuild = dict(rebuild)
             if not rebuild["ok"]:
                 return {"resumed": False, "reason": f"reconciliation_required:{rebuild['reason']}",
@@ -6423,6 +6440,35 @@ class RuntimeController:
             return rebuild
         return dict(rebuild, ok=False, recovery_state_unreadable=True,
                     reason="RECOVERY_STATE_UNREADABLE" if rebuild.get("ok") else rebuild.get("reason"))
+
+    @staticmethod
+    def _startup_batch_failures(summary: Any) -> Any:
+        """F-09 (REC-08): batch aperti NON riconciliati all'avvio (0 = tutti riconciliati).
+
+        Codex P1 su f21943f: `reconcile_all_open_batches` conta in ``failed`` solo le eccezioni; un
+        `reconcile_batch` che restituisce ``ok=False`` senza sollevare (fetch fallito, RECONCILE_ALREADY_RUNNING,
+        BATCH_NOT_FOUND, audit non persistito) finisce in ``reconciled`` con il riepilogo ``ok=True``. Si contano
+        quindi anche i singoli esiti: ogni voce di ``reconciled`` che non e' un dict con ``ok is True``. Riepilogo
+        illeggibile => il nome del tipo (fail-closed)."""
+        if not isinstance(summary, dict) or not isinstance(summary.get("reconciled", []), list):
+            return type(summary).__name__
+        failed = summary.get("failed_count")
+        failed = failed if isinstance(failed, int) and not isinstance(failed, bool) and failed >= 0 else 1
+        not_ok = sum(1 for r in summary.get("reconciled", []) if not (isinstance(r, dict) and r.get("ok") is True))
+        if summary.get("ok") is not True and not (failed or not_ok):
+            return 1
+        return failed + not_ok
+
+    def _gate_rebuild_on_startup_recovery(self, rebuild: dict) -> dict:
+        """F-09 (RST-01/REC-08): fase recovery/reconcile dell'avvio non riuscita = riconciliazione incompleta. Stesso
+        percorso di F018: ok=False => PAUSED + RECONCILIATION_REQUIRED; ``startup_mode`` di ``recover()`` nel
+        payload. Il flag vive fino al prossimo start(): resume() non lo scavalca (serve un riavvio riuscito)."""
+        out = dict(rebuild, startup_mode=getattr(self, "_startup_mode", None))
+        failure = getattr(self, "_startup_recovery_failure", "")
+        if not failure:
+            return out
+        return dict(out, ok=False, startup_recovery_failure=failure,
+                    reason=failure if rebuild.get("ok") else rebuild.get("reason"))
 
     def _declare_recovery_persist_failure(self, source: str) -> None:
         """Stato di recovery NON durevole dopo un reset (rilievo Codex #512 su 034af59): dopo un crash le

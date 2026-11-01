@@ -16,8 +16,25 @@ quelli senza riga locale ("ghost"): ogni ghost va **persistito** in `startup_ord
   nel `DuplicationGuard` a ogni avvio (il runtime ne crea uno nuovo a ogni START), senza un secondo evento
   `STARTUP_GHOST_ORDER_RECOVERED` ne' una seconda riga: `ghost_orders_recovered` conta i ghost nuovi,
   `ghost_orders_active` quelli ancora vivi, e `startup_mode` resta `LIVE_WITH_RECOVERED_GHOSTS` finche' ce ne sono.
-- **Fuori scope (F-09).** Il gating del runtime sull'esito di `recover()` (PAUSED + RECONCILIATION_REQUIRED) e'
-  la scheda F-09: F-08 rende l'esito veritiero, F-09 lo applica.
+- **Gating (F-09).** F-08 rende l'esito veritiero, F-09 lo applica: vedi sotto.
+
+## Esito della fase recovery/reconcile e avvio (F-09, #586 RST-01/REC-08)
+
+`RuntimeController.start()` non si limita piu' a loggare l'esito della fase recovery/reconcile: lo applica con la
+stessa semantica della ricostruzione F018 (`_gate_rebuild_on_startup_recovery`). Il runtime parte in **PAUSED** con
+`last_error = RECONCILIATION_REQUIRED:<motivo>` e nessun nuovo ingresso se:
+
+| Caso | Motivo nel payload `STARTUP_POSITIONS_REBUILT` |
+|---|---|
+| `recover()` restituisce `ok` diverso da `True` (o non un dict) | `STATE_RECOVERY_NOT_OK:<reason>` |
+| `recover()` o la riconciliazione dei batch sollevano | `STATE_RECOVERY_ERROR:<tipo eccezione>` |
+| batch aperti non riconciliati: eccezioni (`failed_count`) **piu'** singoli esiti `ok` diverso da `True` in `reconciled` (`reconcile_batch` non solleva su fetch fallito, `RECONCILE_ALREADY_RUNNING`, `BATCH_NOT_FOUND`...) | `OPEN_BATCH_RECONCILIATION_FAILED:<numero>` |
+
+Il payload riporta sempre `startup_mode` di `recover()` (`LIVE_FLAT`, `LIVE_WITH_RECOVERED_GHOSTS`, `BLOCKED`).
+`resume()` **non** scavalca il blocco: `recover()` ripubblica le saghe pendenti (`RECOVER_ORDER`), quindi non viene
+ritentato in un resume; serve un nuovo avvio con recovery riuscito (come `RECOVERY_STATE_UNREADABLE`). Se piu' gate
+falliscono, il motivo e' quello del primo nella catena (F018/microstake, poi F-09, poi RSR-12, poi held).
+Test: `tests/f09/test_f09_recover_gating.py` (HeadlessApp reale in SIM tramite l'harness F026); mutazioni `f09_*`.
 
 ## Nota di migrazione e compatibilita'
 

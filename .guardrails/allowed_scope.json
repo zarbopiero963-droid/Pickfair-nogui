@@ -3254,6 +3254,21 @@
       ],
       "max_files": 8
     },
+    "f09_recover_gating": {
+      "description": "F-09 (#586, RST-01/REC-08, ordine roadmap V2 owner 31/10/2026 e 01/11/2026: dopo F-08): l'esito della fase recovery/reconcile all'avvio (recover() non ok, eccezione, batch aperti non riconciliati) porta a PAUSED + RECONCILIATION_REQUIRED come F018; resume() non lo scavalca. tests/f026/child_f026.py: flag di guasto startup_recovery_fault dell'harness.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/runtime_controller.py",
+        "docs/startup_recovery.md",
+        "guardrails/mutation_catalog.json",
+        "tests/f026/child_f026.py",
+        "tests/f09/__init__.py",
+        "tests/f09/test_f09_recover_gating.py"
+      ],
+      "max_files": 8
+    },
     "gov_roadmap_merge_delegation": {
       "description": "OWNER MANDATE 01/11/2026 «TEMPORARY MERGE DELEGATION — ROADMAP V2» (#586): delega owner temporanea di merge per le 33 schede della roadmap V2 (§0.9-ter), registrata in OWNER_MERGE_DELEGATIONS di scripts/pr_autonomy_policy.py; solo protezioni finanziarie fondamentali, mai credenziali/segreti/config/LIVE/governance; certificazione rafforzata §0.9-bis obbligatoria. File di governance: merge owner. CLAUDE.md e AGENTS.md non toccati (owner).",
       "allow_tests": true,
