@@ -323,7 +323,7 @@
       "module": "core.state_recovery",
       "area": "recovery",
       "file": "core/state_recovery.py",
-      "original": "                return {\"required\": True, \"completed\": False, \"ghost_orders_recovered\": len(recovered)}",
+      "original": "                return {\"required\": True, \"completed\": False, \"ghost_orders_recovered\": len(recovered),\n                        \"ghost_orders_active\": active}",
       "mutated": "                continue",
       "tests": [
         "tests/f08/test_f08_startup_orders_real_db.py"
