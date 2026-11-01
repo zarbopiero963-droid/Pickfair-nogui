@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **F-08 (#586, RST-02/NF-10/DB-04 P0) — ordini ghost all'avvio su DB reale:** tabelle `startup_orders` e `outbox`
+  create (DDL additiva e idempotente, nessuna migrazione di dati); un errore del DB sul ghost rende `recover()`
+  `ok=False` / `STARTUP_RECONCILIATION_REQUIRED` invece di `ok=True` con l'ordine perso; un ghost ancora vivo e'
+  riseminato nel `DuplicationGuard` a ogni avvio (Codex P1 su #594). Gating del runtime: F-09.
+  `docs/startup_recovery.md`; test `tests/f08/`; mutazioni `f08_*`.
 - **F-05 (#586, CSH-06 P0) — l'hedge del cashout e' scritto nel ledger `orders`:** `CashoutExecutor` (con
   `ledger=db` da `cabla_catena_cashout`) scrive la riga dell'hedge PRIMA dell'invio (`HEDGE_PENDING`, ref `hedge:`)
   e la aggiorna con l'esito (`HEDGE_PLACED/UNMATCHED/FAILED/AMBIGUOUS`); ledger non scrivibile => nessun hedge.
