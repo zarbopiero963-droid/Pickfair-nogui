@@ -339,6 +339,15 @@ UNKNOWN/NEEDS_MANUAL, mai PASS. `fetch_all_review_threads` solleva su
 `hasNextPage` senza `endCursor` o cursore ripetuto; readiness e report
 riportano `review_threads_api_unavailable` e `can_merge=false`.
 
+**CI di riferimento (OWNER DECISION 31/10/2026, «GITHUB ACTIONS PRIMARY / BUILDKITE DEFERRED», #586).** GitHub
+Actions e' la CI di riferimento della certificazione ordinaria. Gli status della lane Buildkite sospesa (commit
+status `full-suite`, `overlap-check`, `pr-merge-readiness` con target su `buildkite.com`) non sono gate di merge:
+la readiness li riporta fra gli ignorati (warning se rossi), mai come blocker o pending
+(`pr_automation_controller.is_deferred_buildkite_status`, fonte unica). Non cambia nient'altro: il check run
+`overlap-check` di GitHub Actions resta il required del ruleset e un gate bloccante; test, mutation, review,
+thread, scope e protezioni finanziarie restano obbligatori; nessuno status rosso diventa PASS. Buildkite non e'
+eliminato: si riattiva con la VPS (#587 DEFERRED), con una nuova decisione owner che toglie questa esenzione.
+
 ### 0.12 Roadmap, #495, Control API, MCP, #497
 
 - Vale la roadmap autoritativa corrente (PR26 → … → MCP-07) nella catena

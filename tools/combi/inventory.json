@@ -1,0 +1,4896 @@
+{
+ "schema": "pf-combi-inventory/1",
+ "baseline": "main 5f2fef7 (census 29/10/2026) / 6fa29b2",
+ "count": 190,
+ "classes": {
+  "ATTIVA": 139,
+  "LEGACY": 51
+ },
+ "l1_modes": {
+  "settings_roundtrip": 79,
+  "load_only": 51,
+  "static_or_manual": 60
+ },
+ "note": "Dominio e valori rappresentativi per i test L1 e per il generatore combinatorio. 'invalid' usa le stringhe 'nan'/'inf'/'-inf' per i float non finiti (JSON non li rappresenta).",
+ "parameters": [
+  {
+   "key": "roserpina.target_profit_cycle_pct",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (OBBLIGATORIA) (core/system_state.py:64; loader services/setting_…",
+   "gui": true,
+   "read_by": "core/money_management.py:70,321; core/validators.py:296-312 risk_pct_r…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py:64 (RoserpinaConfig.target_profit_cycle_pct)"
+  },
+  {
+   "key": "roserpina.max_single_bet_pct",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (OBBLIGATORIA) (core/system_state.py:65; loader services/setting_…",
+   "gui": true,
+   "read_by": "core/money_management.py:75,111; controllers/dutching_controller.py:13…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py:65 (RoserpinaConfig.max_single_bet_pct)"
+  },
+  {
+   "key": "roserpina.max_total_exposure_pct",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (OBBLIGATORIA) (core/system_state.py:66; loader services/setting_…",
+   "gui": true,
+   "read_by": "core/money_management.py:95,111; controllers/dutching_controller.py:13…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py:66 (RoserpinaConfig.max_total_exposure_pct)"
+  },
+  {
+   "key": "roserpina.max_event_exposure_pct",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (OBBLIGATORIA) (core/system_state.py:67; loader services/setting_…",
+   "gui": true,
+   "read_by": "core/money_management.py:102,111; controllers/dutching_controller.py:1…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py:67 (RoserpinaConfig.max_event_exposure_pct)"
+  },
+  {
+   "key": "roserpina.max_daily_loss",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (core/system_state.py:68; loader services/setting_service.py:316-…",
+   "gui": true,
+   "read_by": "core/money_management.py:145 (LOCKDOWN); core/runtime_controller.py:11…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "money_optional",
+    "min": 0.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     10.0,
+     250.0,
+     1000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:68 (RoserpinaConfig.max_daily_loss)"
+  },
+  {
+   "key": "roserpina.max_drawdown_hard_stop_pct",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (core/system_state.py:69; loader services/setting_service.py:321-…",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:1599,1633 (readiness LIVE); core/runtime_co…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py:69 (RoserpinaConfig.max_drawdown_hard_stop_pct)"
+  },
+  {
+   "key": "roserpina.max_open_exposure",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (core/system_state.py:70; loader services/setting_service.py:326-…",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:1600; core/runtime_controller.py:4600,4608;…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "money_optional",
+    "min": 0.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     10.0,
+     250.0,
+     1000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:70 (RoserpinaConfig.max_open_exposure)"
+  },
+  {
+   "key": "roserpina.max_order_exposure",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (core/system_state.py:76; loader services/setting_service.py:336-…",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:3910,3928 (_configured_optional + validator…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "money_optional",
+    "min": 0.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     10.0,
+     250.0,
+     1000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:76 (RoserpinaConfig.max_order_exposure)"
+  },
+  {
+   "key": "roserpina.max_market_exposure",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (core/system_state.py:77; loader services/setting_service.py:341-…",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:3911,3940; core/runtime_controller.py:4597;…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "money_optional",
+    "min": 0.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     10.0,
+     250.0,
+     1000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:77 (RoserpinaConfig.max_market_exposure)"
+  },
+  {
+   "key": "roserpina.max_event_exposure_abs",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (core/system_state.py:78; loader services/setting_service.py:346-…",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:3912,3945; core/runtime_controller.py:4598;…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "money_optional",
+    "min": 0.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     10.0,
+     250.0,
+     1000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:78 (RoserpinaConfig.max_event_exposure_abs)"
+  },
+  {
+   "key": "roserpina.max_drawdown_abs",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (core/system_state.py:79; loader services/setting_service.py:351-…",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:3913; core/runtime_controller.py:4554; core…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "money_optional",
+    "min": 0.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     10.0,
+     250.0,
+     1000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:79 (RoserpinaConfig.max_drawdown_abs)"
+  },
+  {
+   "key": "roserpina.max_session_loss",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (core/system_state.py:82; loader services/setting_service.py:356-…",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:1300 _session_loss_block_reason (core/loss_…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "money_optional",
+    "min": 0.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     10.0,
+     250.0,
+     1000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:82 (RoserpinaConfig.max_session_loss)"
+  },
+  {
+   "key": "roserpina.max_exposure_stop",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (core/system_state.py:86; loader services/setting_service.py:361-…",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:1375 (stop_rules.exposure_stop_reason => RI…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "money_optional",
+    "min": 0.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     10.0,
+     250.0,
+     1000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:86 (RoserpinaConfig.max_exposure_stop)"
+  },
+  {
+   "key": "roserpina.max_recovery_chase_abs",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (OFF) (core/system_state.py:98; loader services/setting_service.p…",
+   "gui": false,
+   "read_by": "core/money_management.py:291-300 _recovery_chase (NaN => chase 0 fail-…",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "money_optional",
+    "min": 0.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     10.0,
+     250.0,
+     1000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:98 (RoserpinaConfig.max_recovery_chase_abs)"
+  },
+  {
+   "key": "roserpina.auto_reset_drawdown_pct",
+   "group": "roserpina",
+   "type": "float",
+   "default": "15.0 (core/system_state.py:100; loader services/setting_service.py:371…",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:6582 (auto-reset baseline espansione)",
+   "conformity": "DEFAULT_NASCOSTO",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": false,
+    "valid": [
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py:100 (RoserpinaConfig.auto_reset_drawdown_pct)"
+  },
+  {
+   "key": "roserpina.defense_drawdown_pct",
+   "group": "roserpina",
+   "type": "float",
+   "default": "7.5 (core/system_state.py:101; loader services/setting_service.py:372)",
+   "gui": true,
+   "read_by": "core/money_management.py:158 (DEFENSE; fallback 7.5 anche nel consumer…",
+   "conformity": "DEFAULT_NASCOSTO",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": false,
+    "valid": [
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py:101 (RoserpinaConfig.defense_drawdown_pct)"
+  },
+  {
+   "key": "roserpina.lockdown_drawdown_pct",
+   "group": "roserpina",
+   "type": "float",
+   "default": "20.0 (core/system_state.py:102; loader services/setting_service.py:373…",
+   "gui": true,
+   "read_by": "core/money_management.py:155 (LOCKDOWN; fallback 20.0 nel consumer); c…",
+   "conformity": "DEFAULT_NASCOSTO",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": false,
+    "valid": [
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py:102 (RoserpinaConfig.lockdown_drawdown_pct)"
+  },
+  {
+   "key": "roserpina.expansion_profit_pct",
+   "group": "roserpina",
+   "type": "float",
+   "default": "5.0 (core/system_state.py:103; loader services/setting_service.py:374)",
+   "gui": true,
+   "read_by": "core/money_management.py:177 (EXPANSION; fallback 5.0)",
+   "conformity": "DEFAULT_NASCOSTO",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": false,
+    "valid": [
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py:103 (RoserpinaConfig.expansion_profit_pct)"
+  },
+  {
+   "key": "roserpina.expansion_multiplier",
+   "group": "roserpina",
+   "type": "float",
+   "default": "1.10 (core/system_state.py:105; loader services/setting_service.py:375…",
+   "gui": true,
+   "read_by": "core/money_management.py:192 (fallback 1.10)",
+   "conformity": "DEFAULT_NASCOSTO",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "multiplier",
+    "min": 0.0,
+    "valid": [
+     0.5,
+     0.8,
+     1.0,
+     1.1,
+     3.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:105 (RoserpinaConfig.expansion_multiplier)"
+  },
+  {
+   "key": "roserpina.defense_multiplier",
+   "group": "roserpina",
+   "type": "float",
+   "default": "0.80 (core/system_state.py:106; loader services/setting_service.py:376…",
+   "gui": true,
+   "read_by": "core/money_management.py:194 (fallback 0.80)",
+   "conformity": "DEFAULT_NASCOSTO",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "multiplier",
+    "min": 0.0,
+    "valid": [
+     0.5,
+     0.8,
+     1.0,
+     1.1,
+     3.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:106 (RoserpinaConfig.defense_multiplier)"
+  },
+  {
+   "key": "roserpina.risk_profile",
+   "group": "roserpina",
+   "type": "enum RiskProfile",
+   "default": "BALANCED (core/system_state.py:107; loader services/setting_service.py…",
+   "gui": true,
+   "read_by": "core/money_management.py:183-188 moltiplicatori hardcoded 0.80/1.00/1.…",
+   "conformity": "DEFAULT_NASCOSTO",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "enum",
+    "values": [
+     "CONSERVATIVE",
+     "BALANCED",
+     "AGGRESSIVE"
+    ],
+    "valid": [
+     "CONSERVATIVE",
+     "BALANCED",
+     "AGGRESSIVE"
+    ],
+    "boundary": [],
+    "invalid": [
+     "",
+     "WILD",
+     3
+    ]
+   },
+   "source": "core/system_state.py:107 (RoserpinaConfig.risk_profile)"
+  },
+  {
+   "key": "roserpina.table_count",
+   "group": "roserpina",
+   "type": "int",
+   "default": "5 (core/system_state.py:109; loader services/setting_service.py:378)",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:120,2059,2063 TableManager; core/table_mana…",
+   "conformity": "DEFAULT_NASCOSTO",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "int",
+    "min": 1,
+    "max": 50,
+    "valid": [
+     1,
+     3,
+     5,
+     10
+    ],
+    "boundary": [
+     0,
+     1,
+     50,
+     51
+    ],
+    "invalid": [
+     "nan",
+     -1,
+     2.5,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:109 (RoserpinaConfig.table_count)"
+  },
+  {
+   "key": "roserpina.max_recovery_tables",
+   "group": "roserpina",
+   "type": "int",
+   "default": "0 (core/system_state.py:111; loader services/setting_service.py:380)",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:4514 getattr(...,2) (fallback 2 se attribut…",
+   "conformity": "DEFAULT_NASCOSTO",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "int",
+    "min": 0,
+    "max": 50,
+    "valid": [
+     0,
+     1,
+     2,
+     5
+    ],
+    "boundary": [
+     0,
+     1,
+     50,
+     51
+    ],
+    "invalid": [
+     "nan",
+     -1,
+     2.5,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:111 (RoserpinaConfig.max_recovery_tables)"
+  },
+  {
+   "key": "roserpina.allow_recovery",
+   "group": "roserpina",
+   "type": "bool",
+   "default": "False (core/system_state.py:112; loader services/setting_service.py:38…",
+   "gui": true,
+   "read_by": "core/money_management.py:459; core/runtime_controller.py:4516,7638; co…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "core/system_state.py:112 (RoserpinaConfig.allow_recovery)"
+  },
+  {
+   "key": "roserpina.anti_duplication_enabled",
+   "group": "roserpina",
+   "type": "bool",
+   "default": "True (core/system_state.py:113; loader services/setting_service.py:382…",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:4490,4506,4530,4560,4567,4623",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "core/system_state.py:113 (RoserpinaConfig.anti_duplication_enabled)"
+  },
+  {
+   "key": "roserpina.commission_pct",
+   "group": "roserpina",
+   "type": "float",
+   "default": "4.5 (core/system_state.py:115; loader services/setting_service.py:383)",
+   "gui": true,
+   "read_by": "NESSUN consumer di RoserpinaConfig.commission_pct (grep \\.commission_p…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": true,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": false,
+    "valid": [
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py:115 (RoserpinaConfig.commission_pct)"
+  },
+  {
+   "key": "roserpina.min_stake",
+   "group": "roserpina",
+   "type": "float",
+   "default": "trading_config.MIN_STAKE=0.10 (trading_config.py:13) (core/system_stat…",
+   "gui": true,
+   "read_by": "core/money_management.py:512 (fallback MIN_STAKE); core/risk_gate.py:7…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "float",
+    "min": 0.0,
+    "valid": [
+     0.01,
+     0.1,
+     2.0,
+     50.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:116 (RoserpinaConfig.min_stake)"
+  },
+  {
+   "key": "roserpina.max_stake_abs",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (core/system_state.py:120; loader services/setting_service.py:385…",
+   "gui": true,
+   "read_by": "core/money_management.py:76-80 (NaN => stake 0 fail-closed)",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "money_optional",
+    "min": 0.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     10.0,
+     250.0,
+     1000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:120 (RoserpinaConfig.max_stake_abs)"
+  },
+  {
+   "key": "roserpina.book_warning",
+   "group": "roserpina",
+   "type": "float",
+   "default": "105.0 (= trading_config.py:9) (core/system_state.py:127; loader servic…",
+   "gui": true,
+   "read_by": "controllers/dutching_controller.py:299 _book_threshold (fallback costa…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": false,
+    "valid": [
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py:127 (RoserpinaConfig.book_warning)"
+  },
+  {
+   "key": "roserpina.book_block",
+   "group": "roserpina",
+   "type": "float",
+   "default": "110.0 (= trading_config.py:10) (core/system_state.py:128; loader servi…",
+   "gui": true,
+   "read_by": "controllers/dutching_controller.py:296; core/risk_gate.py:77 BOOK_BLOC…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": false,
+    "valid": [
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py:128 (RoserpinaConfig.book_block)"
+  },
+  {
+   "key": "roserpina.liquidity_guard_enabled",
+   "group": "roserpina",
+   "type": "bool",
+   "default": "True (core/system_state.py:138; loader services/setting_service.py:388…",
+   "gui": true,
+   "read_by": "controllers/dutching_controller.py:653; core/runtime_controller.py:486…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "core/system_state.py:138 (RoserpinaConfig.liquidity_guard_enabled)"
+  },
+  {
+   "key": "roserpina.liquidity_multiplier",
+   "group": "roserpina",
+   "type": "float",
+   "default": "3.0 (core/system_state.py:139; loader services/setting_service.py:389)",
+   "gui": true,
+   "read_by": "controllers/dutching_controller.py:655; core/risk_gate.py:78",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "multiplier",
+    "min": 0.0,
+    "valid": [
+     0.5,
+     0.8,
+     1.0,
+     1.1,
+     3.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:139 (RoserpinaConfig.liquidity_multiplier)"
+  },
+  {
+   "key": "roserpina.min_liquidity_absolute",
+   "group": "roserpina",
+   "type": "float",
+   "default": "50.0 (core/system_state.py:140; loader services/setting_service.py:390…",
+   "gui": true,
+   "read_by": "controllers/dutching_controller.py:310; core/risk_gate.py:79",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "float",
+    "min": 0.0,
+    "valid": [
+     0.01,
+     0.1,
+     2.0,
+     50.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:140 (RoserpinaConfig.min_liquidity_absolute)"
+  },
+  {
+   "key": "roserpina.liquidity_warning_only",
+   "group": "roserpina",
+   "type": "bool",
+   "default": "True (solo avviso) (core/system_state.py:143; loader services/setting_…",
+   "gui": true,
+   "read_by": "controllers/dutching_controller.py:329; core/risk_gate.py:81",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "core/system_state.py:143 (RoserpinaConfig.liquidity_warning_only)"
+  },
+  {
+   "key": "roserpina.min_price",
+   "group": "roserpina",
+   "type": "float",
+   "default": "1.02 (= trading_config.py:35) (core/system_state.py:148; loader servic…",
+   "gui": true,
+   "read_by": "controllers/dutching_controller.py:347; core/risk_gate.py:75,315",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "float",
+    "min": 1.01,
+    "valid": [
+     1.02,
+     1.5,
+     2.0,
+     50.0
+    ],
+    "boundary": [
+     1.01,
+     1.02
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:148 (RoserpinaConfig.min_price)"
+  },
+  {
+   "key": "roserpina.max_win",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None (core/system_state.py:161; loader services/setting_service.py:393…",
+   "gui": true,
+   "read_by": "controllers/dutching_controller.py:382,474; core/risk_gate.py:76,326-3…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "money_optional",
+    "min": 0.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     10.0,
+     250.0,
+     1000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:161 (RoserpinaConfig.max_win)"
+  },
+  {
+   "key": "roserpina.max_win_warning_only",
+   "group": "roserpina",
+   "type": "bool",
+   "default": "True (core/system_state.py:162; loader services/setting_service.py:394…",
+   "gui": true,
+   "read_by": "controllers/dutching_controller.py:465",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "core/system_state.py:162 (RoserpinaConfig.max_win_warning_only)"
+  },
+  {
+   "key": "roserpina.max_stake_pct",
+   "group": "roserpina",
+   "type": "float",
+   "default": "30.0 (= trading_config.py:34 *100) (core/system_state.py:170; loader s…",
+   "gui": true,
+   "read_by": "controllers/dutching_controller.py:541,551,559,1295 (solo WARNING)",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": false,
+    "valid": [
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py:170 (RoserpinaConfig.max_stake_pct)"
+  },
+  {
+   "key": "roserpina.profit_epsilon",
+   "group": "roserpina",
+   "type": "float",
+   "default": "0.50 (= trading_config.py:27) (core/system_state.py:178; loader servic…",
+   "gui": true,
+   "read_by": "controllers/dutching_controller.py:402-405,1306-1313 (WARNING)",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "float",
+    "min": 0.0,
+    "valid": [
+     0.01,
+     0.1,
+     2.0,
+     50.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:178 (RoserpinaConfig.profit_epsilon)"
+  },
+  {
+   "key": "roserpina.profit_epsilon_enabled",
+   "group": "roserpina",
+   "type": "bool",
+   "default": "True (core/system_state.py:181; loader services/setting_service.py:399…",
+   "gui": true,
+   "read_by": "controllers/dutching_controller.py:417",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "core/system_state.py:181 (RoserpinaConfig.profit_epsilon_enabled)"
+  },
+  {
+   "key": "roserpina.auto_green_delay_enabled",
+   "group": "roserpina",
+   "type": "bool",
+   "default": "False (core/system_state.py:192; loader services/setting_service.py:40…",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:3467",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "core/system_state.py:192 (RoserpinaConfig.auto_green_delay_enabled)"
+  },
+  {
+   "key": "roserpina.auto_green_delay_sec",
+   "group": "roserpina",
+   "type": "float",
+   "default": "2.5 (= trading_config.py:30) (core/system_state.py:193; loader service…",
+   "gui": true,
+   "read_by": "core/runtime_controller.py:3469-3480 (clamp 0-30, fallback costante)",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": true,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "float",
+    "min": 0.0,
+    "valid": [
+     0.01,
+     0.1,
+     2.0,
+     50.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:193 (RoserpinaConfig.auto_green_delay_sec)"
+  },
+  {
+   "key": "username",
+   "group": "betfair",
+   "type": "str",
+   "default": "\"\" (core/system_state.py:34)",
+   "gui": true,
+   "read_by": "services/betfair_service.py:465,483",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "core/system_state.py:34 (BetfairConfig)"
+  },
+  {
+   "key": "app_key_delayed",
+   "group": "betfair",
+   "type": "str (segreto cifrato)",
+   "default": "\"\" (core/system_state.py:39)",
+   "gui": true,
+   "read_by": "services/betfair_service.py:445 (load_betfair_config); config_registry…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "core/system_state.py:39 (BetfairConfig) / database.py:22-36 _SECRET_FIELDS"
+  },
+  {
+   "key": "app_key_live",
+   "group": "betfair",
+   "type": "str (segreto cifrato)",
+   "default": "\"\" (core/system_state.py:40)",
+   "gui": true,
+   "read_by": "core/runtime_controller.py evaluate_live_readiness (LIVE_APP_KEY_MISSI…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "core/system_state.py:40 (BetfairConfig) / database.py:22-36 _SECRET_FIELDS"
+  },
+  {
+   "key": "certificate",
+   "group": "betfair",
+   "type": "str (path PEM)",
+   "default": "\"\" (core/system_state.py:37)",
+   "gui": true,
+   "read_by": "services/betfair_service.py:466,485",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "core/system_state.py:37 (BetfairConfig)"
+  },
+  {
+   "key": "private_key",
+   "group": "betfair",
+   "type": "str (path PEM)",
+   "default": "\"\" (core/system_state.py:38)",
+   "gui": true,
+   "read_by": "services/betfair_service.py:467,486",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "core/system_state.py:38 (BetfairConfig)"
+  },
+  {
+   "key": "password",
+   "group": "betfair",
+   "type": "str (segreto cifrato)",
+   "default": "\"\"",
+   "gui": true,
+   "read_by": "services/betfair_service.py:161,475",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "services/setting_service.py:190-196 load/save_password; database.py:655-656"
+  },
+  {
+   "key": "app_key",
+   "group": "betfair",
+   "type": "str (segreto cifrato)",
+   "default": "\"\"",
+   "gui": false,
+   "read_by": "services/betfair_service.py:236,500 (session_token)",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "database.py:638-653 save_credentials (legacy)"
+  },
+  {
+   "key": "session_token",
+   "group": "betfair",
+   "type": "str (segreto cifrato)",
+   "default": "\"\"",
+   "gui": false,
+   "read_by": "services/betfair_service.py:236,500 (session_token)",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "database.py:658-672"
+  },
+  {
+   "key": "session_expiry",
+   "group": "betfair",
+   "type": "str (segreto cifrato)",
+   "default": "\"\"",
+   "gui": false,
+   "read_by": "services/betfair_service.py:236,500 (session_token)",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "database.py:658-672"
+  },
+  {
+   "key": "telegram.api_id",
+   "group": "telegram",
+   "type": "int (cifrato)",
+   "default": "0 (core/system_state.py:48)",
+   "gui": true,
+   "read_by": "telegram_module.py:812 int(settings[\"api_id\"]); headless_main.py:1013-…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "int",
+    "min": 0,
+    "valid": [
+     0,
+     1,
+     5,
+     100
+    ],
+    "boundary": [
+     0,
+     -1
+    ],
+    "invalid": [
+     "nan",
+     "abc",
+     2.5
+    ]
+   },
+   "source": "core/system_state.py:48 (TelegramRuntimeConfig.api_id); database.py:677-698 get_telegram_s…"
+  },
+  {
+   "key": "telegram.api_hash",
+   "group": "telegram",
+   "type": "str (cifrato)",
+   "default": "\"\"",
+   "gui": true,
+   "read_by": "telegram_module.py:813",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "core/system_state.py:49 (TelegramRuntimeConfig.api_hash); database.py:677-698 get_telegram…"
+  },
+  {
+   "key": "telegram.session_string",
+   "group": "telegram",
+   "type": "str (cifrato)",
+   "default": "\"\"",
+   "gui": false,
+   "read_by": "telegram_module.py:814; services/telegram_service.py",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "core/system_state.py:50 (TelegramRuntimeConfig.session_string); database.py:677-698 get_te…"
+  },
+  {
+   "key": "telegram.bot_token",
+   "group": "telegram",
+   "type": "str (cifrato)",
+   "default": "\"\"",
+   "gui": false,
+   "read_by": "services/telegram_service.py (gate Bot API)",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "core/system_state.py:51 (TelegramRuntimeConfig.bot_token); database.py:677-698 get_telegra…"
+  },
+  {
+   "key": "telegram.phone_number",
+   "group": "telegram",
+   "type": "str",
+   "default": "\"\"",
+   "gui": true,
+   "read_by": "controllers/telegram_controller.py:113+ send_code",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "core/system_state.py:52 (TelegramRuntimeConfig.phone_number); database.py:677-698 get_tele…"
+  },
+  {
+   "key": "telegram.enabled",
+   "group": "telegram",
+   "type": "bool",
+   "default": "False (core/system_state.py:53; database.py:685 default \"0\")",
+   "gui": false,
+   "read_by": "services/telegram_service.py:334-336 (telegram_disabled)",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "core/system_state.py:53 (TelegramRuntimeConfig.enabled); database.py:677-698 get_telegram_…"
+  },
+  {
+   "key": "telegram.auto_bet",
+   "group": "telegram",
+   "type": "bool",
+   "default": "False (core/system_state.py:54)",
+   "gui": true,
+   "read_by": "NESSUNO (grep auto_bet in core/services/telegram_*: 0 consumer)",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "core/system_state.py:54 (TelegramRuntimeConfig.auto_bet); database.py:677-698 get_telegram…"
+  },
+  {
+   "key": "telegram.require_confirmation",
+   "group": "telegram",
+   "type": "bool",
+   "default": "True (core/system_state.py:55)",
+   "gui": true,
+   "read_by": "NESSUNO (0 consumer)",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "core/system_state.py:55 (TelegramRuntimeConfig.require_confirmation); database.py:677-698 …"
+  },
+  {
+   "key": "telegram.auto_stake",
+   "group": "telegram",
+   "type": "float",
+   "default": "1.0 (core/system_state.py:56; loader services/setting_service.py:222 `…",
+   "gui": true,
+   "read_by": "NESSUNO (0 consumer: lo stake reale lo calcola core/money_management)",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "float",
+    "min": 0.0,
+    "valid": [
+     0.0,
+     4.5,
+     100.0,
+     1000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/system_state.py:56 (TelegramRuntimeConfig.auto_stake); database.py:677-698 get_telegr…"
+  },
+  {
+   "key": "telegram_chats (tabella) = monitored_chat_ids",
+   "group": "telegram",
+   "type": "lista chat_id",
+   "default": "[]",
+   "gui": true,
+   "read_by": "services/telegram_service.py:326 set_monitored_chats",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "list",
+    "valid": [
+     [],
+     [
+      "-1001"
+     ]
+    ],
+    "boundary": [],
+    "invalid": [
+     "abc",
+     1
+    ]
+   },
+   "source": "database_schema.py:28-33; core/system_state.py:57; database.py:772-797"
+  },
+  {
+   "key": "telegram.alerts_enabled",
+   "group": "telegram_alert",
+   "type": "vari",
+   "default": "False (services/setting_service.py:264; database.py:689)",
+   "gui": true,
+   "read_by": "services/telegram_alerts_service.py:178,229; services/settings_service…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/setting_service.py:264-271 load_telegram_config_row; database.py:689-697"
+  },
+  {
+   "key": "telegram.alerts_chat_id",
+   "group": "telegram_alert",
+   "type": "vari",
+   "default": "\"\"",
+   "gui": true,
+   "read_by": "services/telegram_alerts_service.py:70,180,230",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "services/setting_service.py:264-271 load_telegram_config_row; database.py:689-697"
+  },
+  {
+   "key": "telegram.alerts_chat_name",
+   "group": "telegram_alert",
+   "type": "vari",
+   "default": "\"\"",
+   "gui": true,
+   "read_by": "services/telegram_alerts_service.py:262",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "str",
+    "valid": [
+     "",
+     "x"
+    ],
+    "boundary": [],
+    "invalid": [
+     null,
+     1
+    ]
+   },
+   "source": "services/setting_service.py:264-271 load_telegram_config_row; database.py:689-697"
+  },
+  {
+   "key": "telegram.min_alert_severity",
+   "group": "telegram_alert",
+   "type": "vari",
+   "default": "WARNING",
+   "gui": true,
+   "read_by": "services/telegram_alerts_service.py:77",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "enum",
+    "values": [
+     "INFO",
+     "WARNING",
+     "ERROR",
+     "CRITICAL"
+    ],
+    "valid": [
+     "INFO",
+     "WARNING",
+     "ERROR",
+     "CRITICAL"
+    ],
+    "boundary": [],
+    "invalid": [
+     "",
+     "LOUD"
+    ]
+   },
+   "source": "services/setting_service.py:264-271 load_telegram_config_row; database.py:689-697"
+  },
+  {
+   "key": "telegram.alert_cooldown_sec",
+   "group": "telegram_alert",
+   "type": "vari",
+   "default": "300 (services/setting_service.py:268; ma database.py:693 default 0 => …",
+   "gui": true,
+   "read_by": "services/telegram_alerts_service.py:88",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "int",
+    "min": 0,
+    "valid": [
+     0,
+     100,
+     300,
+     301,
+     600
+    ],
+    "boundary": [
+     0,
+     -1
+    ],
+    "invalid": [
+     "nan",
+     "abc",
+     2.5
+    ]
+   },
+   "source": "services/setting_service.py:264-271 load_telegram_config_row; database.py:689-697"
+  },
+  {
+   "key": "telegram.alert_dedup_enabled",
+   "group": "telegram_alert",
+   "type": "vari",
+   "default": "True dichiarato (services/setting_service.py:269) ma EFFETTIVO False s…",
+   "gui": true,
+   "read_by": "services/telegram_alerts_service.py:87,239",
+   "conformity": "DEFAULT_NASCOSTO",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/setting_service.py:264-271 load_telegram_config_row; database.py:689-697"
+  },
+  {
+   "key": "telegram.alert_format_rich",
+   "group": "telegram_alert",
+   "type": "vari",
+   "default": "True dichiarato (services/setting_service.py:270) ma EFFETTIVO False s…",
+   "gui": true,
+   "read_by": "services/telegram_alerts_service.py:305,240",
+   "conformity": "DEFAULT_NASCOSTO",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/setting_service.py:264-271 load_telegram_config_row; database.py:689-697"
+  },
+  {
+   "key": "alert_aggregation_enabled",
+   "group": "telegram_alert",
+   "type": "bool/int",
+   "default": "True (services/telegram_alerts_service.py:131,241)",
+   "gui": false,
+   "read_by": "services/telegram_alerts_service.py:131,241",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/telegram_alerts_service.py:131,241"
+  },
+  {
+   "key": "alert_aggregation_threshold",
+   "group": "telegram_alert",
+   "type": "bool/int",
+   "default": "5 (services/telegram_alerts_service.py:135,242)",
+   "gui": false,
+   "read_by": "services/telegram_alerts_service.py:135,242",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "int",
+    "min": 0,
+    "valid": [
+     0,
+     5,
+     6,
+     10,
+     100
+    ],
+    "boundary": [
+     0,
+     -1
+    ],
+    "invalid": [
+     "nan",
+     "abc",
+     2.5
+    ]
+   },
+   "source": "services/telegram_alerts_service.py:135,242"
+  },
+  {
+   "key": "alert_aggregation_window_sec",
+   "group": "telegram_alert",
+   "type": "bool/int",
+   "default": "10 (services/telegram_alerts_service.py:136,243)",
+   "gui": false,
+   "read_by": "services/telegram_alerts_service.py:136,243",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "int",
+    "min": 0,
+    "valid": [
+     0,
+     10,
+     11,
+     20,
+     100
+    ],
+    "boundary": [
+     0,
+     -1
+    ],
+    "invalid": [
+     "nan",
+     "abc",
+     2.5
+    ]
+   },
+   "source": "services/telegram_alerts_service.py:136,243"
+  },
+  {
+   "key": "execution_mode",
+   "group": "execution",
+   "type": "str SIMULATION|LIVE",
+   "default": "SIMULATION (services/settings_service.py:11)",
+   "gui": true,
+   "read_by": "headless_main.py:705; core/runtime_controller.py set_simulation_mode v…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "enum",
+    "values": [
+     "SIMULATION",
+     "LIVE"
+    ],
+    "valid": [
+     "SIMULATION",
+     "LIVE"
+    ],
+    "boundary": [],
+    "invalid": [
+     "",
+     "live",
+     "PAPER"
+    ]
+   },
+   "source": "services/settings_service.py:11-12"
+  },
+  {
+   "key": "live_enabled",
+   "group": "execution",
+   "type": "bool",
+   "default": "False",
+   "gui": true,
+   "read_by": "headless_main.py:712,732-734 (--live-enabled/--live-disabled); core/ru…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/settings_service.py:15"
+  },
+  {
+   "key": "kill_switch",
+   "group": "execution",
+   "type": "bool",
+   "default": "False",
+   "gui": true,
+   "read_by": "headless_main.py:719,736-742 (kill => live_enabled False); mini_gui.py…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/settings_service.py:16"
+  },
+  {
+   "key": "live_readiness_ok",
+   "group": "execution",
+   "type": "bool",
+   "default": "False",
+   "gui": false,
+   "read_by": "headless_main.py:728; core/runtime_controller.py:8381; config_registry…",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/settings_service.py:39-41"
+  },
+  {
+   "key": "live_readiness_level",
+   "group": "execution",
+   "type": "str READY|DEGRADED|NOT_READY|UNKNOWN",
+   "default": "UNKNOWN",
+   "gui": false,
+   "read_by": "config_registry.py:315",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "enum",
+    "values": [
+     "READY",
+     "DEGRADED",
+     "NOT_READY",
+     "UNKNOWN"
+    ],
+    "valid": [
+     "READY",
+     "DEGRADED",
+     "NOT_READY",
+     "UNKNOWN"
+    ],
+    "boundary": [],
+    "invalid": [
+     "",
+     "ok"
+    ]
+   },
+   "source": "services/settings_service.py:43-48"
+  },
+  {
+   "key": "anomaly_enabled",
+   "group": "watchdog",
+   "type": "bool",
+   "default": "None => default ON (tri-stato) (services/settings_service.py:50-70)",
+   "gui": true,
+   "read_by": "observability/watchdog_service.py:393-402; headless_main.py:395-411",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/settings_service.py:50-70"
+  },
+  {
+   "key": "anomaly_alerts_enabled",
+   "group": "watchdog",
+   "type": "bool",
+   "default": "False (services/settings_service.py:72-81)",
+   "gui": true,
+   "read_by": "observability/watchdog_service.py:396,1080; headless_main.py:414",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/settings_service.py:72-81"
+  },
+  {
+   "key": "anomaly_actions_enabled",
+   "group": "watchdog",
+   "type": "bool",
+   "default": "False (services/settings_service.py:83-92)",
+   "gui": true,
+   "read_by": "observability/watchdog_service.py:399,1106; headless_main.py:418",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/settings_service.py:83-92"
+  },
+  {
+   "key": "simulation.enabled",
+   "group": "simulation",
+   "type": "bool",
+   "default": "True (services/setting_service.py:555)",
+   "gui": false,
+   "read_by": "NESSUNO (grep simulation.enabled/sim_cfg.get(\"enabled\") = 0 consumer)",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/setting_service.py:555"
+  },
+  {
+   "key": "simulation.starting_balance",
+   "group": "simulation",
+   "type": "float",
+   "default": "1000.0 (services/setting_service.py:556)",
+   "gui": true,
+   "read_by": "services/betfair_service.py:541-544 SimulationBroker",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "float",
+    "min": 0.01,
+    "valid": [
+     50.0,
+     100.0,
+     1000.0,
+     5000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     -1,
+     "abc"
+    ],
+    "note": "0.0 e' un confine, non un valore rappresentativo: oggi ricade sul default 1000 (finding F-18/F-17, test dedicato)"
+   },
+   "source": "services/setting_service.py:556"
+  },
+  {
+   "key": "simulation.commission_pct",
+   "group": "simulation",
+   "type": "float",
+   "default": "4.5 (services/setting_service.py:557 fallback roserpina.commission_pct…",
+   "gui": false,
+   "read_by": "services/betfair_service.py:545; core/simulation_state.py:228 enforce_…",
+   "conformity": "DA_VERIFICARE",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "valid": [
+     2.0,
+     4.5,
+     6.5
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     100.0
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     -1,
+     "abc"
+    ],
+    "note": "SIM: il broker rifiuta il settlement se la commissione differisce dalla policy Betfair Italia 4.5 (COMMISSION_POLICY_VIOLATION, fail-closed): valori diversi da 4.5 non sono eseguibili nel runtime; round-trip di storage soltanto. Esclusa dai gruppi combinatori eseguiti."
+   },
+   "source": "services/setting_service.py:557"
+  },
+  {
+   "key": "simulation.partial_fill_enabled",
+   "group": "simulation",
+   "type": "bool",
+   "default": "True (services/setting_service.py:558)",
+   "gui": true,
+   "read_by": "services/betfair_service.py:546-547",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/setting_service.py:558"
+  },
+  {
+   "key": "simulation.consume_liquidity",
+   "group": "simulation",
+   "type": "bool",
+   "default": "True (services/setting_service.py:559)",
+   "gui": true,
+   "read_by": "services/betfair_service.py:546-547",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/setting_service.py:559"
+  },
+  {
+   "key": "simulation.persist_state",
+   "group": "simulation",
+   "type": "bool",
+   "default": "True (services/setting_service.py:560)",
+   "gui": true,
+   "read_by": "services/betfair_service.py:551,1101",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/setting_service.py:560"
+  },
+  {
+   "key": "market_data.mode",
+   "group": "market_data",
+   "type": "vari",
+   "default": "\"poll\" (services/setting_service.py:571)",
+   "gui": false,
+   "read_by": "core/runtime_controller.py:467",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "enum",
+    "values": [
+     "poll",
+     "stream"
+    ],
+    "valid": [
+     "poll",
+     "stream"
+    ],
+    "boundary": [],
+    "invalid": [
+     "",
+     "push"
+    ]
+   },
+   "source": "services/setting_service.py:571 load_market_data_config"
+  },
+  {
+   "key": "streaming.enabled",
+   "group": "market_data",
+   "type": "vari",
+   "default": "False (services/setting_service.py:572)",
+   "gui": false,
+   "read_by": "core/runtime_controller.py:468",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/setting_service.py:572 load_market_data_config"
+  },
+  {
+   "key": "streaming.reconnect_backoff_sec",
+   "group": "market_data",
+   "type": "vari",
+   "default": "1 (services/setting_service.py:573)",
+   "gui": false,
+   "read_by": "services/streaming_feed.py:151-156",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "int",
+    "min": 0,
+    "valid": [
+     0,
+     1,
+     2,
+     100
+    ],
+    "boundary": [
+     0,
+     -1
+    ],
+    "invalid": [
+     "nan",
+     "abc",
+     2.5
+    ]
+   },
+   "source": "services/setting_service.py:573 load_market_data_config"
+  },
+  {
+   "key": "streaming.heartbeat_timeout_sec",
+   "group": "market_data",
+   "type": "vari",
+   "default": "2 (services/setting_service.py:574)",
+   "gui": false,
+   "read_by": "services/streaming_feed.py:205,803",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "int",
+    "min": 0,
+    "valid": [
+     0,
+     2,
+     3,
+     4,
+     100
+    ],
+    "boundary": [
+     0,
+     -1
+    ],
+    "invalid": [
+     "nan",
+     "abc",
+     2.5
+    ]
+   },
+   "source": "services/setting_service.py:574 load_market_data_config"
+  },
+  {
+   "key": "streaming.snapshot_fallback_enabled",
+   "group": "market_data",
+   "type": "vari",
+   "default": "True (services/setting_service.py:575)",
+   "gui": false,
+   "read_by": "core/runtime_controller.py:1117",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/setting_service.py:575 load_market_data_config"
+  },
+  {
+   "key": "streaming.snapshot_fallback_interval_sec",
+   "group": "market_data",
+   "type": "vari",
+   "default": "5 (services/setting_service.py:576)",
+   "gui": false,
+   "read_by": "core/runtime_controller.py:1130",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "int",
+    "min": 0,
+    "valid": [
+     0,
+     5,
+     6,
+     10,
+     100
+    ],
+    "boundary": [
+     0,
+     -1
+    ],
+    "invalid": [
+     "nan",
+     "abc",
+     2.5
+    ]
+   },
+   "source": "services/setting_service.py:576 load_market_data_config"
+  },
+  {
+   "key": "streaming.max_markets",
+   "group": "market_data",
+   "type": "vari",
+   "default": "25 (services/setting_service.py:577)",
+   "gui": false,
+   "read_by": "services/streaming_feed.py:811",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "int",
+    "min": 0,
+    "valid": [
+     0,
+     25,
+     26,
+     50,
+     100
+    ],
+    "boundary": [
+     0,
+     -1
+    ],
+    "invalid": [
+     "nan",
+     "abc",
+     2.5
+    ]
+   },
+   "source": "services/setting_service.py:577 load_market_data_config"
+  },
+  {
+   "key": "streaming.market_ids",
+   "group": "market_data",
+   "type": "vari",
+   "default": "[] (services/setting_service.py:578)",
+   "gui": false,
+   "read_by": "core/runtime_controller.py:1134; streaming_feed.py:810",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "list",
+    "valid": [
+     [],
+     [
+      "1.234"
+     ]
+    ],
+    "boundary": [],
+    "invalid": [
+     "abc",
+     1
+    ]
+   },
+   "source": "services/setting_service.py:578 load_market_data_config"
+  },
+  {
+   "key": "streaming.event_type_ids",
+   "group": "market_data",
+   "type": "vari",
+   "default": "[] (services/setting_service.py:579)",
+   "gui": false,
+   "read_by": "services/streaming_feed.py:812",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "list",
+    "valid": [
+     [],
+     [
+      "1.234"
+     ]
+    ],
+    "boundary": [],
+    "invalid": [
+     "abc",
+     1
+    ]
+   },
+   "source": "services/setting_service.py:579 load_market_data_config"
+  },
+  {
+   "key": "streaming.country_codes",
+   "group": "market_data",
+   "type": "vari",
+   "default": "[] (services/setting_service.py:580)",
+   "gui": false,
+   "read_by": "services/streaming_feed.py:814",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "list",
+    "valid": [
+     [],
+     [
+      "1.234"
+     ]
+    ],
+    "boundary": [],
+    "invalid": [
+     "abc",
+     1
+    ]
+   },
+   "source": "services/setting_service.py:580 load_market_data_config"
+  },
+  {
+   "key": "streaming.market_types",
+   "group": "market_data",
+   "type": "vari",
+   "default": "[] (services/setting_service.py:581)",
+   "gui": false,
+   "read_by": "services/streaming_feed.py:816",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "list",
+    "valid": [
+     [],
+     [
+      "1.234"
+     ]
+    ],
+    "boundary": [],
+    "invalid": [
+     "abc",
+     1
+    ]
+   },
+   "source": "services/setting_service.py:581 load_market_data_config"
+  },
+  {
+   "key": "streaming.use_full_ladder",
+   "group": "market_data",
+   "type": "vari",
+   "default": "False (services/setting_service.py:566)",
+   "gui": false,
+   "read_by": "services/streaming_feed.py:820",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/setting_service.py:566 load_market_data_config"
+  },
+  {
+   "key": "streaming.fields",
+   "group": "market_data",
+   "type": "vari",
+   "default": "[EX_BEST_OFFERS,EX_MARKET_DEF,EX_LTP] (services/setting_service.py:567…",
+   "gui": false,
+   "read_by": "services/streaming_feed.py:819",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "list",
+    "valid": [
+     [],
+     [
+      "1.234"
+     ]
+    ],
+    "boundary": [],
+    "invalid": [
+     "abc",
+     1
+    ]
+   },
+   "source": "services/setting_service.py:567 load_market_data_config"
+  },
+  {
+   "key": "streaming.ladder_levels",
+   "group": "market_data",
+   "type": "vari",
+   "default": "3 (services/setting_service.py:584)",
+   "gui": false,
+   "read_by": "services/streaming_feed.py:830",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "int",
+    "min": 0,
+    "valid": [
+     0,
+     3,
+     4,
+     6,
+     100
+    ],
+    "boundary": [
+     0,
+     -1
+    ],
+    "invalid": [
+     "nan",
+     "abc",
+     2.5
+    ]
+   },
+   "source": "services/setting_service.py:584 load_market_data_config"
+  },
+  {
+   "key": "streaming.conflate_ms",
+   "group": "market_data",
+   "type": "vari",
+   "default": "0 (services/setting_service.py:585)",
+   "gui": false,
+   "read_by": "services/streaming_feed.py:831,834",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "int",
+    "min": 0,
+    "valid": [
+     0,
+     1,
+     100
+    ],
+    "boundary": [
+     0,
+     -1
+    ],
+    "invalid": [
+     "nan",
+     "abc",
+     2.5
+    ]
+   },
+   "source": "services/setting_service.py:585 load_market_data_config"
+  },
+  {
+   "key": "streaming.heartbeat_ms",
+   "group": "market_data",
+   "type": "vari",
+   "default": "1000 (services/setting_service.py:586)",
+   "gui": false,
+   "read_by": "services/streaming_feed.py (StreamingFeedConfig:37)",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "int",
+    "min": 0,
+    "valid": [
+     0,
+     100,
+     1000,
+     1001,
+     2000
+    ],
+    "boundary": [
+     0,
+     -1
+    ],
+    "invalid": [
+     "nan",
+     "abc",
+     2.5
+    ]
+   },
+   "source": "services/setting_service.py:586 load_market_data_config"
+  },
+  {
+   "key": "streaming.segmentation_enabled",
+   "group": "market_data",
+   "type": "vari",
+   "default": "True (services/setting_service.py:587)",
+   "gui": false,
+   "read_by": "services/streaming_feed.py:832",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "services/setting_service.py:587 load_market_data_config"
+  },
+  {
+   "key": "settlement.poll_enabled",
+   "group": "settlement",
+   "type": "bool/float",
+   "default": "False (core/runtime_controller.py:508)",
+   "gui": false,
+   "read_by": "core/runtime_controller.py:505-530",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "bool",
+    "valid": [
+     true,
+     false
+    ],
+    "boundary": [],
+    "invalid": [
+     "maybe",
+     2,
+     ""
+    ]
+   },
+   "source": "core/runtime_controller.py:518"
+  },
+  {
+   "key": "settlement.poll_sec",
+   "group": "settlement",
+   "type": "bool/float",
+   "default": "60.0 (min 5) (core/runtime_controller.py:508)",
+   "gui": false,
+   "read_by": "core/runtime_controller.py:505-530",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "float",
+    "min": 5.0,
+    "valid": [
+     5.0,
+     10.0,
+     20.0
+    ],
+    "boundary": [
+     0.0,
+     4.99,
+     5.0,
+     60.0,
+     300.0
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     -1,
+     "abc"
+    ],
+    "note": "0.0 e' un confine: oggi `float(x or 60.0)` lo sostituisce con 60 (stesso schema di starting_balance) Valori lunghi (60, 300) sono confini: eseguibili ma fuori dai tempi dei test."
+   },
+   "source": "core/runtime_controller.py:521"
+  },
+  {
+   "key": "settlement.lookback_hours",
+   "group": "settlement",
+   "type": "bool/float",
+   "default": "24.0 (clamp 1..168) (core/runtime_controller.py:508)",
+   "gui": false,
+   "read_by": "core/runtime_controller.py:505-530",
+   "conformity": "NON_ESPOSTA",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "float",
+    "min": 0.0,
+    "valid": [
+     0.0,
+     24.0,
+     48.0,
+     1000.0
+    ],
+    "boundary": [
+     0.0,
+     0.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     -1,
+     "abc"
+    ]
+   },
+   "source": "core/runtime_controller.py:525"
+  },
+  {
+   "key": "trading_config.BOOK_WARNING",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "105.0 (trading_config.py:9)",
+   "gui": false,
+   "read_by": "core/system_state.py:125 default; controllers/dutching_controller.py:2…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:9"
+  },
+  {
+   "key": "trading_config.BOOK_BLOCK",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "110.0 (trading_config.py:10)",
+   "gui": false,
+   "read_by": "core/system_state.py:127; controllers/dutching_controller.py:296",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:10"
+  },
+  {
+   "key": "trading_config.MIN_STAKE",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "0.10 (trading_config.py:13)",
+   "gui": false,
+   "read_by": "core/system_state.py:116; core/money_management.py:512; config_registr…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:13"
+  },
+  {
+   "key": "trading_config.MAX_WIN",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "None (trading_config.py:16)",
+   "gui": false,
+   "read_by": "core/risk_gate.py:59,76; controllers/dutching_controller.py:474; confi…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:16"
+  },
+  {
+   "key": "trading_config.BETFAIR_ITALY_COMMISSION_PCT",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "4.5 (trading_config.py:23)",
+   "gui": false,
+   "read_by": "core/runtime_controller.py:54,168; trading_config.py:57-68 enforce; co…",
+   "conformity": "DA_VERIFICARE",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:23"
+  },
+  {
+   "key": "trading_config.BETFAIR_ITALY_COMMISSION_TOLERANCE",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "1e-9 (trading_config.py:24)",
+   "gui": false,
+   "read_by": "trading_config.py:63",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:24"
+  },
+  {
+   "key": "trading_config.PROFIT_EPSILON",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "0.50 (trading_config.py:27)",
+   "gui": false,
+   "read_by": "controllers/dutching_controller.py:402-405",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:27"
+  },
+  {
+   "key": "trading_config.AUTO_GREEN_DELAY_SEC",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "2.5 (trading_config.py:30)",
+   "gui": false,
+   "read_by": "core/runtime_controller.py:53,3476-3478",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:30"
+  },
+  {
+   "key": "trading_config.MIN_LIQUIDITY",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "50.0 (trading_config.py:33)",
+   "gui": false,
+   "read_by": "NESSUN consumer (grep \\bMIN_LIQUIDITY\\b fuori trading_config: 0) => co…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:33"
+  },
+  {
+   "key": "trading_config.MAX_STAKE_PCT",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "0.30 (trading_config.py:34)",
+   "gui": false,
+   "read_by": "controllers/dutching_controller.py:541,559,1295; config_registry.py:42…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:34"
+  },
+  {
+   "key": "trading_config.MIN_PRICE",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "1.02 (trading_config.py:35)",
+   "gui": false,
+   "read_by": "core/risk_gate.py:53,75,315; controllers/dutching_controller.py:343,35…",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:35"
+  },
+  {
+   "key": "trading_config.LIQUIDITY_GUARD_ENABLED",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "True (trading_config.py:38)",
+   "gui": false,
+   "read_by": "core/system_state.py:138 default",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:38"
+  },
+  {
+   "key": "trading_config.LIQUIDITY_MULTIPLIER",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "3.0 (trading_config.py:42)",
+   "gui": false,
+   "read_by": "controllers/dutching_controller.py:655",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:42"
+  },
+  {
+   "key": "trading_config.MIN_LIQUIDITY_ABSOLUTE",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "50.0 (trading_config.py:45)",
+   "gui": false,
+   "read_by": "controllers/dutching_controller.py:310 fallback",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:45"
+  },
+  {
+   "key": "trading_config.LIQUIDITY_WARNING_ONLY",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "True (trading_config.py:50)",
+   "gui": false,
+   "read_by": "core/system_state.py:143",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:50"
+  },
+  {
+   "key": "trading_config.STRICT_LIVE_KEY_SOURCE_REQUIRED",
+   "group": "trading_config",
+   "type": "costante",
+   "default": "False (trading_config.py:54)",
+   "gui": false,
+   "read_by": "core/runtime_controller.py:55,1577-1580",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "trading_config.py:54"
+  },
+  {
+   "key": "config.example.json:betfair.username",
+   "group": "config_json",
+   "type": "json",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "NESSUNO: nessun modulo legge le sezioni betfair/telegram del file (gre…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:2-18"
+  },
+  {
+   "key": "config.example.json:betfair.password",
+   "group": "config_json",
+   "type": "json",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "NESSUNO: nessun modulo legge le sezioni betfair/telegram del file (gre…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:2-18"
+  },
+  {
+   "key": "config.example.json:betfair.app_key",
+   "group": "config_json",
+   "type": "json",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "NESSUNO: nessun modulo legge le sezioni betfair/telegram del file (gre…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:2-18"
+  },
+  {
+   "key": "config.example.json:betfair.certificate",
+   "group": "config_json",
+   "type": "json",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "NESSUNO: nessun modulo legge le sezioni betfair/telegram del file (gre…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:2-18"
+  },
+  {
+   "key": "config.example.json:betfair.private_key",
+   "group": "config_json",
+   "type": "json",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "NESSUNO: nessun modulo legge le sezioni betfair/telegram del file (gre…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:2-18"
+  },
+  {
+   "key": "config.example.json:telegram.api_id",
+   "group": "config_json",
+   "type": "json",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "NESSUNO: nessun modulo legge le sezioni betfair/telegram del file (gre…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:2-18"
+  },
+  {
+   "key": "config.example.json:telegram.api_hash",
+   "group": "config_json",
+   "type": "json",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "NESSUNO: nessun modulo legge le sezioni betfair/telegram del file (gre…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:2-18"
+  },
+  {
+   "key": "config.example.json:telegram.session_string",
+   "group": "config_json",
+   "type": "json",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "NESSUNO: nessun modulo legge le sezioni betfair/telegram del file (gre…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:2-18"
+  },
+  {
+   "key": "config.example.json:telegram.enabled",
+   "group": "config_json",
+   "type": "json",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "NESSUNO: nessun modulo legge le sezioni betfair/telegram del file (gre…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:2-18"
+  },
+  {
+   "key": "config.example.json:telegram.auto_bet",
+   "group": "config_json",
+   "type": "json",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "NESSUNO: nessun modulo legge le sezioni betfair/telegram del file (gre…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:2-18"
+  },
+  {
+   "key": "config.example.json:telegram.require_confirmation",
+   "group": "config_json",
+   "type": "json",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "NESSUNO: nessun modulo legge le sezioni betfair/telegram del file (gre…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:2-18"
+  },
+  {
+   "key": "config.example.json:telegram.auto_stake",
+   "group": "config_json",
+   "type": "json",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "NESSUNO: nessun modulo legge le sezioni betfair/telegram del file (gre…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:2-18"
+  },
+  {
+   "key": "config.example.json:telegram.monitored_chat_ids",
+   "group": "config_json",
+   "type": "json",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "NESSUNO: nessun modulo legge le sezioni betfair/telegram del file (gre…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:2-18"
+  },
+  {
+   "key": "config.example.json:active_parser",
+   "group": "config_json",
+   "type": "json",
+   "default": "\"\" / {} (config_store.py:148,150)",
+   "gui": false,
+   "read_by": "Solo core/config_store (bridge XTrader legacy): NON importato da headl…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:19-20; core/config_store.py:148,150 DEFAULTS"
+  },
+  {
+   "key": "config.example.json:parser_by_chat",
+   "group": "config_json",
+   "type": "json",
+   "default": "\"\" / {} (config_store.py:148,150)",
+   "gui": false,
+   "read_by": "Solo core/config_store (bridge XTrader legacy): NON importato da headl…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config.example.json:19-20; core/config_store.py:148,150 DEFAULTS"
+  },
+  {
+   "key": "config.example.json:proxy.enabled",
+   "group": "config_json",
+   "type": "json",
+   "default": "nessun proxy se blocco assente (betfair_client.py:251-256)",
+   "gui": false,
+   "read_by": "betfair_client.py:721 (file da env PICKFAIR_CONFIG_PATH, betfair_clien…",
+   "conformity": "DA_VERIFICARE",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "betfair_client.py:721"
+  },
+  {
+   "key": "config.example.json:proxy.type",
+   "group": "config_json",
+   "type": "json",
+   "default": "nessun proxy se blocco assente (betfair_client.py:251-256)",
+   "gui": false,
+   "read_by": "betfair_client.py:734 (file da env PICKFAIR_CONFIG_PATH, betfair_clien…",
+   "conformity": "DA_VERIFICARE",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "betfair_client.py:734"
+  },
+  {
+   "key": "config.example.json:proxy.host",
+   "group": "config_json",
+   "type": "json",
+   "default": "nessun proxy se blocco assente (betfair_client.py:251-256)",
+   "gui": false,
+   "read_by": "betfair_client.py:724 (file da env PICKFAIR_CONFIG_PATH, betfair_clien…",
+   "conformity": "DA_VERIFICARE",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "betfair_client.py:724"
+  },
+  {
+   "key": "config.example.json:proxy.port",
+   "group": "config_json",
+   "type": "json",
+   "default": "nessun proxy se blocco assente (betfair_client.py:251-256)",
+   "gui": false,
+   "read_by": "betfair_client.py:725 (file da env PICKFAIR_CONFIG_PATH, betfair_clien…",
+   "conformity": "DA_VERIFICARE",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "betfair_client.py:725"
+  },
+  {
+   "key": "config.example.json:proxy.username",
+   "group": "config_json",
+   "type": "json",
+   "default": "nessun proxy se blocco assente (betfair_client.py:251-256)",
+   "gui": false,
+   "read_by": "betfair_client.py:775 (file da env PICKFAIR_CONFIG_PATH, betfair_clien…",
+   "conformity": "DA_VERIFICARE",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "betfair_client.py:775"
+  },
+  {
+   "key": "config.example.json:proxy.password",
+   "group": "config_json",
+   "type": "json",
+   "default": "nessun proxy se blocco assente (betfair_client.py:251-256)",
+   "gui": false,
+   "read_by": "betfair_client.py:776 (file da env PICKFAIR_CONFIG_PATH, betfair_clien…",
+   "conformity": "DA_VERIFICARE",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "betfair_client.py:776"
+  },
+  {
+   "key": "config_store.config_version",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:122",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:122 DEFAULTS"
+  },
+  {
+   "key": "config_store.bot_token",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:123",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:123 DEFAULTS"
+  },
+  {
+   "key": "config_store.chat_id",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:124",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:124 DEFAULTS"
+  },
+  {
+   "key": "config_store.csv_path",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:125",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:125 DEFAULTS"
+  },
+  {
+   "key": "config_store.clear_delay",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:126",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:126 DEFAULTS"
+  },
+  {
+   "key": "config_store.provider",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:127",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:127 DEFAULTS"
+  },
+  {
+   "key": "config_store.theme",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:130",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:130 DEFAULTS"
+  },
+  {
+   "key": "config_store.csv_language",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:136",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:136 DEFAULTS"
+  },
+  {
+   "key": "config_store.app_language",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:141",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:141 DEFAULTS"
+  },
+  {
+   "key": "config_store.recognition_mode",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:144",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:144 DEFAULTS"
+  },
+  {
+   "key": "config_store.active_parser",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:148",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:148 DEFAULTS"
+  },
+  {
+   "key": "config_store.parser_by_chat",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:150",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:150 DEFAULTS"
+  },
+  {
+   "key": "config_store.parser_list_by_chat",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:154",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:154 DEFAULTS"
+  },
+  {
+   "key": "config_store.source_chats",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:157",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:157 DEFAULTS"
+  },
+  {
+   "key": "config_store.xtrader_notification_chat_id",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:160",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:160 DEFAULTS"
+  },
+  {
+   "key": "config_store.confirmation_timeout",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:161",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:161 DEFAULTS"
+  },
+  {
+   "key": "config_store.confirmation_keywords",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:162",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:162 DEFAULTS"
+  },
+  {
+   "key": "config_store.rejection_keywords",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:163",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:163 DEFAULTS"
+  },
+  {
+   "key": "config_store.dry_run",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:167",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:167 DEFAULTS"
+  },
+  {
+   "key": "config_store.bridge_mode",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:172",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:172 DEFAULTS"
+  },
+  {
+   "key": "config_store.max_per_day",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:175",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:175 DEFAULTS"
+  },
+  {
+   "key": "config_store.queue_mode",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:179",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:179 DEFAULTS"
+  },
+  {
+   "key": "config_store.max_active_signals",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:183",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:183 DEFAULTS"
+  },
+  {
+   "key": "config_store.max_signal_age",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:187",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:187 DEFAULTS"
+  },
+  {
+   "key": "config_store.auto_start_listener",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:191",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:191 DEFAULTS"
+  },
+  {
+   "key": "config_store.debug_message_payload",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:197",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:197 DEFAULTS"
+  },
+  {
+   "key": "config_store.recorder_enabled",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:205",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:205 DEFAULTS"
+  },
+  {
+   "key": "config_store.betfair_auto_sync",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:210",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:210 DEFAULTS"
+  },
+  {
+   "key": "config_store.betfair_auto_sync_hour",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:211",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:211 DEFAULTS"
+  },
+  {
+   "key": "config_store.betfair_sync_sports",
+   "group": "config_store_legacy",
+   "type": "json",
+   "default": "vedi core/config_store.py:212",
+   "gui": false,
+   "read_by": "Solo moduli bridge legacy (core/csv_writer, core/token_store, core/aut…",
+   "conformity": "NON_LETTA",
+   "test_class": "LEGACY",
+   "roserpina42": false,
+   "l1_mode": "load_only",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/config_store.py:212 DEFAULTS"
+  },
+  {
+   "key": "risk_stop_state",
+   "group": "stato_runtime",
+   "type": "stato JSON",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "core/risk_stop.py:30",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/risk_stop.py:30"
+  },
+  {
+   "key": "risk_stop_reset_guard",
+   "group": "stato_runtime",
+   "type": "stato JSON",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "core/risk_stop.py:31",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/risk_stop.py:31"
+  },
+  {
+   "key": "daily_loss_state",
+   "group": "stato_runtime",
+   "type": "stato JSON",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "core/daily_loss_store.py:28",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/daily_loss_store.py:28"
+  },
+  {
+   "key": "microstake.sagas",
+   "group": "stato_runtime",
+   "type": "stato JSON",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "core/microstake_sim_port.py:38",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/microstake_sim_port.py:38"
+  },
+  {
+   "key": "microstake.sagas.live",
+   "group": "stato_runtime",
+   "type": "stato JSON",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "core/microstake_live_port.py:32",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/microstake_live_port.py:32"
+  },
+  {
+   "key": "roserpina.expansion_baseline_state",
+   "group": "stato_runtime",
+   "type": "stato JSON",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "core/runtime_controller.py:6295",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "core/runtime_controller.py:6295"
+  },
+  {
+   "key": "roserpina.monetary_caps_rectified_20261018",
+   "group": "stato_runtime",
+   "type": "stato JSON",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "services/setting_service.py:472",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "services/setting_service.py:472"
+  },
+  {
+   "key": "--live / --sim / --simulation",
+   "group": "cli_env",
+   "type": "CLI/env",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "headless_main.py:691-699",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "headless_main.py:691-699"
+  },
+  {
+   "key": "--live-enabled / --live-disabled",
+   "group": "cli_env",
+   "type": "CLI/env",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "headless_main.py:732-735",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "headless_main.py:732-735"
+  },
+  {
+   "key": "--kill-switch-on / --kill-switch-off",
+   "group": "cli_env",
+   "type": "CLI/env",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "headless_main.py:736-739",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "headless_main.py:736-739"
+  },
+  {
+   "key": "--password=",
+   "group": "cli_env",
+   "type": "CLI/env",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "headless_main.py:745-750",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "headless_main.py:745-750"
+  },
+  {
+   "key": "--emergency-stop",
+   "group": "cli_env",
+   "type": "CLI/env",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "headless_main.py:751",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "headless_main.py:751"
+  },
+  {
+   "key": "--preflight",
+   "group": "cli_env",
+   "type": "CLI/env",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "headless_main.py:899",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "headless_main.py:899"
+  },
+  {
+   "key": "--telegram-login",
+   "group": "cli_env",
+   "type": "CLI/env",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "headless_main.py:905",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "headless_main.py:905"
+  },
+  {
+   "key": "--api-id",
+   "group": "cli_env",
+   "type": "CLI/env",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "headless_main.py:1013",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "headless_main.py:1013"
+  },
+  {
+   "key": "env TELEGRAM_API_ID / TELEGRAM_API_HASH",
+   "group": "cli_env",
+   "type": "CLI/env",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "headless_main.py:1014-1015",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "headless_main.py:1014-1015"
+  },
+  {
+   "key": "env PICKFAIR_CONFIG_PATH",
+   "group": "cli_env",
+   "type": "CLI/env",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "betfair_client.py:65",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "betfair_client.py:65"
+  },
+  {
+   "key": "env PICKFAIR_SECRET_KEY",
+   "group": "cli_env",
+   "type": "CLI/env",
+   "default": "n/a",
+   "gui": false,
+   "read_by": "config_registry.py:59",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "static_or_manual",
+   "domain": {
+    "kind": "opaque",
+    "valid": [],
+    "boundary": [],
+    "invalid": []
+   },
+   "source": "config_registry.py:59"
+  }
+ ]
+}

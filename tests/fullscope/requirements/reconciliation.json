@@ -1,0 +1,322 @@
+{
+ "schema": "pf-unverified-reconciliation/1",
+ "source_tracker": "PICKFAIR_UNVERIFIED_CLOSURE_TRACKER v1 (#586 c.6505974575): 47 righe (R1 23, R3 12, R2 8, #582/#506 4)",
+ "harness_catalog": "tests/fullscope/requirements/catalog.json (43 ID)",
+ "states": [
+  "COVERED",
+  "PARTIAL",
+  "XFAIL",
+  "UNVERIFIED",
+  "DEFERRED",
+  "NOT_APPLICABLE"
+ ],
+ "note": "Ogni riga del tracker ha una destinazione. 'harness_id' e' l'ID nel catalogo dell'harness; 'aggregated_into' indica le 6 chiavi proxy raggruppate in R2-proxy; 'duplicate_of' le righe che il tracker stesso dichiara coincidenti. Lo stato e' quello sul head locale F-33 (SIM): un test passato NON e' una certificazione.",
+ "rows": [
+  {
+   "tracker_id": "T80U-2",
+   "harness_id": "T80U-2",
+   "primary_pr": "F-17",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "CAP-02",
+   "harness_id": "CAP-02",
+   "primary_pr": "F-18",
+   "state": "PARTIAL",
+   "evidence": "L1: None=non attivo e NaN/'abc' => NaN (fail-closed al loader) PASS; 'inf' accettato => xfail F-18; manca il test del consumer"
+  },
+  {
+   "tracker_id": "MM-01",
+   "harness_id": "MM-01",
+   "primary_pr": "F-16",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "MM-03",
+   "harness_id": "MM-03",
+   "primary_pr": "F-11",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "RST-03",
+   "harness_id": "RST-03",
+   "primary_pr": "F-10",
+   "state": "COVERED",
+   "evidence": "tests/fullscope/scenarios/test_sim_restart_003.py::test_rst03_* PASS in SIM sul head locale; NON certificato: serve CI #562 e certificazione Claude"
+  },
+  {
+   "tracker_id": "ROS-02",
+   "harness_id": "ROS-02",
+   "primary_pr": "F-11",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "SET-02",
+   "harness_id": "SET-02",
+   "primary_pr": "F-29",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "BF-04",
+   "harness_id": "BF-04",
+   "primary_pr": "F-31",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "BF-06",
+   "harness_id": "BF-06",
+   "primary_pr": "F-14",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "CFG-07",
+   "harness_id": "CFG-07",
+   "primary_pr": "F-25",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "CMP-03",
+   "harness_id": "CMP-03",
+   "primary_pr": "F-20",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "SIG-01",
+   "harness_id": "SIG-01",
+   "primary_pr": "F-23",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "SIG-02",
+   "harness_id": "SIG-02",
+   "primary_pr": "F-12",
+   "state": "UNVERIFIED",
+   "note": "= #506 L6 (stessa riga nel tracker)"
+  },
+  {
+   "tracker_id": "SIG-03",
+   "harness_id": "SIG-03",
+   "primary_pr": "F-05",
+   "state": "NOT_APPLICABLE",
+   "note": "processo (revisore A13), non un test eseguibile dall'harness; resta nel catalogo per tracciabilita'"
+  },
+  {
+   "tracker_id": "SIG-04",
+   "harness_id": "SIG-04",
+   "primary_pr": "F-23",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "MOD-01",
+   "harness_id": "MOD-01",
+   "primary_pr": "F-32",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "MOD-02",
+   "harness_id": "MOD-02",
+   "primary_pr": "F-31",
+   "state": "UNVERIFIED",
+   "note": "BLOCKED: gateway + GO-REALDATA"
+  },
+  {
+   "tracker_id": "MOD-04",
+   "harness_id": "MOD-04",
+   "primary_pr": "F-24",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "MOD-05",
+   "harness_id": "MOD-05",
+   "primary_pr": "F-33",
+   "state": "XFAIL",
+   "evidence": "manca il passo Dutching nel child runner: test xfail strict con riferimento F-33b/F-24"
+  },
+  {
+   "tracker_id": "QA-03",
+   "harness_id": "QA-03",
+   "primary_pr": "F-27",
+   "state": "UNVERIFIED",
+   "note": "BLOCKED: VPS/GO-4"
+  },
+  {
+   "tracker_id": "QA-04",
+   "harness_id": "QA-04",
+   "primary_pr": "infra-562",
+   "state": "DEFERRED",
+   "note": "suite in CI: Sessione A #562/#587"
+  },
+  {
+   "tracker_id": "CTL-01",
+   "harness_id": "CTL-01",
+   "primary_pr": "fase-E",
+   "state": "DEFERRED"
+  },
+  {
+   "tracker_id": "MCP-01",
+   "harness_id": "MCP-01",
+   "primary_pr": "fase-F",
+   "state": "DEFERRED"
+  },
+  {
+   "tracker_id": "SEC-10",
+   "harness_id": "SEC-10",
+   "primary_pr": "F-21",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "STR-07",
+   "harness_id": "STR-07",
+   "primary_pr": "F-23",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "STR-08",
+   "harness_id": "STR-08",
+   "primary_pr": "F-23",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "STG-DUT-09",
+   "harness_id": "STG-DUT-09",
+   "primary_pr": "F-26",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "STG-ROS-04",
+   "harness_id": "STG-ROS-04",
+   "primary_pr": "F-12",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "STG-MIC-07",
+   "harness_id": "STG-MIC-07",
+   "primary_pr": "F-32",
+   "state": "UNVERIFIED",
+   "note": "BLOCKED: LIVE"
+  },
+  {
+   "tracker_id": "DB-11",
+   "harness_id": "DB-11",
+   "primary_pr": "F-28",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "DB-12",
+   "harness_id": "DB-12",
+   "primary_pr": "F-28",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "LOG-02",
+   "harness_id": "LOG-02",
+   "primary_pr": "F-27",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "PKG-01",
+   "harness_id": "PKG-01",
+   "primary_pr": "F-27",
+   "state": "UNVERIFIED",
+   "note": "BLOCKED: ambiente Windows"
+  },
+  {
+   "tracker_id": "DOC-08",
+   "harness_id": "DOC-08",
+   "primary_pr": "F-25",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "DOC-09",
+   "harness_id": "DOC-09",
+   "primary_pr": "F-25",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "R2 simulation.commission_pct",
+   "harness_id": "R2-simulation.commission_pct",
+   "primary_pr": "F-17",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "R2 trading_config.BETFAIR_ITALY_COMMISSION_PCT",
+   "harness_id": "R2-trading_config.BETFAIR_ITALY_COMMISSION_PCT",
+   "primary_pr": "F-17",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "R2 proxy.enabled",
+   "harness_id": "R2-proxy",
+   "aggregated_into": "R2-proxy",
+   "primary_pr": "F-15",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "R2 proxy.type",
+   "harness_id": "R2-proxy",
+   "aggregated_into": "R2-proxy",
+   "primary_pr": "F-15",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "R2 proxy.host",
+   "harness_id": "R2-proxy",
+   "aggregated_into": "R2-proxy",
+   "primary_pr": "F-15",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "R2 proxy.port",
+   "harness_id": "R2-proxy",
+   "aggregated_into": "R2-proxy",
+   "primary_pr": "F-15",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "R2 proxy.username",
+   "harness_id": "R2-proxy",
+   "aggregated_into": "R2-proxy",
+   "primary_pr": "F-15",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "R2 proxy.password",
+   "harness_id": "R2-proxy",
+   "aggregated_into": "R2-proxy",
+   "primary_pr": "F-15",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "N-R1-1 (#582)",
+   "harness_id": "N-R1-1",
+   "primary_pr": "F-16",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "H7 / CL19-CASH-REF-001",
+   "harness_id": "H7-CL19",
+   "primary_pr": "F-05",
+   "state": "UNVERIFIED",
+   "note": "l'harness osserva l'hedge sull'exchange ma il ledger non lo registra (CSH-06 xfail F-05): il ref non e' verificabile dal ledger"
+  },
+  {
+   "tracker_id": "NEW-01 (#506)",
+   "harness_id": "NEW-01",
+   "primary_pr": "F-18",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "CL02-RSR-RACE-001",
+   "harness_id": "CL02-RSR-RACE-001",
+   "primary_pr": "F-19",
+   "state": "UNVERIFIED"
+  },
+  {
+   "tracker_id": "K-6 (aggiunta policy)",
+   "harness_id": "K-6",
+   "primary_pr": "F-30",
+   "state": "UNVERIFIED",
+   "note": "non nel conteggio 47: aggiunto dal mandato CONTINUOUS_UNVERIFIED_CLOSURE"
+  }
+ ]
+}
