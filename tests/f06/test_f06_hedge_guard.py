@@ -168,8 +168,9 @@ def test_middleware_invalid_side_rejected(side):
 
 def test_matched_size_uses_the_average_matched_price_not_the_requested_price():
     # ingresso richiesto a 5.0 ma abbinato in media a 2.0: l'esposizione e' 0.23*2.0 = 0.46, la chiusura 0.26
+    # (il comando dichiara 5.0: vale l'abbinato dell'exchange, non il prezzo richiesto)
     orders = [dict(_order(), averagePriceMatched=2.0, priceSize={"price": 5.0, "size": 0.23})]
-    bus, router = _run(_cmd(stake=0.5), orders=orders)
+    bus, router = _run(_cmd(stake=0.5, orig_price=5.0), orders=orders)
     assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:size"
 
 
@@ -253,4 +254,11 @@ def test_matched_opposite_side_orders_reduce_the_exposure():
                                   {"side": "BACK", "stake": 0.23, "price": float("nan")}])
 def test_unreadable_identified_position_size_rejected(orig):
     bus, router = _run(_cmd(original_pos=orig), orders=[_order()])
+    assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_assente"
+
+
+def test_a_hedge_order_alone_is_never_the_position_to_close():
+    # sull'exchange c'e' solo un hedge (customer_ref `hedge:`) dello stesso lato: nessuna posizione da chiudere
+    from core.hedge_ref import new_hedge_ref
+    bus, router = _run(_cmd(), orders=[_order(ref=new_hedge_ref())])
     assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_assente"
