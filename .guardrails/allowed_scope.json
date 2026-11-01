@@ -3281,6 +3281,20 @@
         "tests/scripts/test_roadmap_merge_delegation.py"
       ],
       "max_files": 6
+    },
+    "f10_rst03_crash_debt": {
+      "description": "F-10 (#586, RST-03 P0, D-582-R4-01; ordine roadmap V2: dopo F-08 e F-09): prova sul runtime vero del crash fra il CLOSED nel broker e RUNTIME_CLOSE_POSITION; fix: il settlement SIM senza tavolo sul mercato si attribuisce all'unica riga ordine del bot (tavolo persistito), il debito di recovery non si perde. tests/f026/child_f026.py: operazione crash_before_close_position dell'harness.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/runtime_controller.py",
+        "docs/startup_recovery.md",
+        "guardrails/mutation_catalog.json",
+        "tests/f026/child_f026.py",
+        "tests/recovery/test_f10_rst03_crash_debt.py"
+      ],
+      "max_files": 7
     }
   }
 }
