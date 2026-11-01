@@ -498,7 +498,9 @@ BACK la raddoppia; un LAY 50 su una posizione da 0.23 apre una nuova esposizione
     (se <= 1: `priceSize.price`, come `cashout_resolver._row_matched_price`). Vale il minore dei due: altri ingressi
     dello stesso lato (manuali, altri tavoli) non allargano mai l'hedge, una coppia gia' neutra non conta e una chiusura
     gia' abbinata lo riduce (Sol su `a16f0d3`). Esposizione nulla => `posizione_assente`; ordini illeggibili,
-    malformati o in errore => `hedge_non_coerente:posizione_non_verificabile`;
+    malformati o in errore, `sizeMatched` assente o non numerico (mai letto come zero, Codex su `73296a3`) =>
+    `hedge_non_coerente:posizione_non_verificabile`. Un `original_pos` col lato opposto alla posizione reale ha netto
+    negativo sul lato dichiarato => rifiuto (mai un raddoppio);
   - stake dell'hedge <= `esposizione / prezzo_hedge + 0.005` (confronto esatto in Decimal: il mezzo centesimo e'
     il massimo che l'arrotondamento ROUND_HALF_UP del resolver aggiunge), altrimenti `hedge_non_coerente:size`. Un
     secondo arrotondamento su un float rifiutava green-up legittimi al confine (0.35 x 11.0 / 4.4 = 0.875 => 0.88

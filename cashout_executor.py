@@ -346,7 +346,13 @@ class CashoutExecutor:
                     or str(order.get("selectionId") or order.get("selection_id") or "") != selection
                     or side not in self._VALID_SIDES):
                 continue
-            matched = self._as_float(order.get("sizeMatched", order.get("size_matched")))
+            # Codex P1 su 73296a3: conversione STRETTA. `_as_float` legge None/"x"/assente come 0.0 e l'ordine
+            # spariva dal netto (un LAY opposto che gia' copre la posizione) => esposizione non verificabile
+            raw_matched = order.get("sizeMatched", order.get("size_matched"))
+            try:
+                matched = float(raw_matched) if not isinstance(raw_matched, bool) else float("nan")
+            except (TypeError, ValueError):
+                return None
             if not math.isfinite(matched) or matched < 0.0:
                 return None
             if matched == 0.0:

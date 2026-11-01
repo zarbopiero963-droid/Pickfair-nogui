@@ -7808,6 +7808,18 @@
         "tests/f06/test_f06_hedge_guard.py"
       ],
       "rationale": "F-06 (Sol su a16f0d3): altri ingressi dello stesso lato allargano l'hedge oltre la posizione identificata."
+    },
+    {
+      "id": "f06_unreadable_matched_read_as_zero",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            except (TypeError, ValueError):\n                return None\n            if not math.isfinite(matched) or matched < 0.0:",
+      "mutated": "            except (TypeError, ValueError):\n                matched = 0.0\n            if not math.isfinite(matched) or matched < 0.0:",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06 (Codex P1 su 73296a3): sizeMatched illeggibile letto come zero, l'ordine sparisce dal netto (fail-open)."
     }
   ]
 }
