@@ -426,6 +426,8 @@ def test_doppia_richiesta_di_chiusura_un_solo_cmd(gui):
         "market_id": MERCATO, "selection_id": 11, "side": "LAY",
         "stake": STAKE_CHIUSURA, "price": 2.0, "green_up": GREEN_UP,
         "source": "TELEGRAM",
+        # F-06: come la richiesta del resolver, porta la posizione BACK 10 @ 2.02 da chiudere
+        "original_pos": {"side": "BACK", "stake": 10.0, "price": 2.02},
     }
     gui.eventi.clear()
 
