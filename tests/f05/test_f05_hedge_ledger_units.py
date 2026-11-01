@@ -289,3 +289,48 @@ def test_unreadable_remaining_size_of_the_previous_hedge_counts_as_live(db, rema
     ex.on_cmd_execute_cashout(_cmd(cashout_request_id="req-2"))
     assert router.calls == [] and [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == [
         "previous_hedge_still_live"]
+
+
+@pytest.mark.parametrize("reply", [None, {"currentOrders": [_live("R1")]}, "R1", [_live("R1"), "garbage"], [None]])
+def test_malformed_current_orders_reply_never_reads_as_closed_hedge(db, reply):
+    # Sol su f5a7982: None => [] e gli elementi non-dict ignorati leggevano l'hedge precedente come chiuso (fail-open)
+    _first_hedge_resting(db)
+    bus, router, ex = _executor(db, _ok(bet_id="CB2"), lambda: reply)
+    ex.on_cmd_execute_cashout(_cmd(cashout_request_id="req-2"))
+    assert router.calls == [], "risposta malformata letta come 'hedge precedente chiuso'"
+    assert [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] in (
+        ["hedge_liveness_unverifiable"], ["previous_hedge_still_live"])
+
+
+# Grok su f5a7982: fill e cancellazione non vanno confusi. listCurrentOrders (LIVE, e il SIM) riporta l'hedge eseguito
+# come EXECUTION_COMPLETE con sizeMatched > 0 e sizeRemaining 0: la posizione e' gia' coperta, un nuovo hedge la
+# sovracoprirebbe. Solo matched 0 e remaining 0 (o l'ordine sparito) e' una cancellazione senza abbinamento.
+
+def _done(bet_id, matched):
+    row = _live(bet_id, remaining=0.0)
+    row["sizeMatched"] = matched
+    return row
+
+
+def test_previous_hedge_already_matched_blocks_a_new_hedge(db):
+    _first_hedge_resting(db)
+    bus, router, ex = _executor(db, _ok(bet_id="CB2"), lambda: [_done("R1", 4.0)])
+    ex.on_cmd_execute_cashout(_cmd(cashout_request_id="req-2"))
+    assert router.calls == [], "hedge precedente abbinato letto come cancellato: sovracopertura"
+    assert [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == ["previous_hedge_matched"]
+
+
+def test_previous_hedge_cancelled_without_any_match_allows_a_new_hedge(db):
+    _first_hedge_resting(db)
+    bus, router, ex = _executor(db, _ok(bet_id="CB2"), lambda: [_done("R1", 0.0)])
+    ex.on_cmd_execute_cashout(_cmd(cashout_request_id="req-2"))
+    assert len(router.calls) == 1 and CASHOUT_SUCCESS in bus.topics()
+
+
+@pytest.mark.parametrize("matched", [None, "x", float("nan"), float("inf")])
+def test_unreadable_matched_size_of_the_previous_hedge_blocks(db, matched):
+    _first_hedge_resting(db)
+    bus, router, ex = _executor(db, _ok(bet_id="CB2"), lambda: [_done("R1", matched)])
+    ex.on_cmd_execute_cashout(_cmd(cashout_request_id="req-2"))
+    assert router.calls == [] and [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == [
+        "hedge_liveness_unverifiable"]

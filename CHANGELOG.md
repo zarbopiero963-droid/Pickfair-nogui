@@ -16,7 +16,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   posizione singola escludono i ref `hedge:` (nessun doppio P&L); l'identita' I1 include la bet dell'hedge
   (daily-loss LIVE, nessun secondo hedge della stessa posizione). Hedge idempotente (stessa richiesta o esito
   incerto sulla selezione => rifiuto), nessun nuovo hedge finche' il precedente sulla stessa selezione e' ancora
-  abbinabile sull'exchange (`previous_hedge_still_live`, vivacita' non verificabile = rifiuto; Sol su #593) e riavvio
+  abbinabile sull'exchange (`previous_hedge_still_live`) o gia' abbinato (`previous_hedge_matched`); vivacita' non
+  verificabile o ordini correnti malformati = rifiuto (Sol e Grok su #593) e riavvio
   dopo crash (`HEDGE_PENDING` => `HEDGE_AMBIGUOUS`). `core/hedge_ref.py`; test `tests/f05/`;
   mutazioni `f05_*`; `docs/cashout_overview.md` §7.3.
 ### Added

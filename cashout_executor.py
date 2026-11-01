@@ -185,13 +185,16 @@ class CashoutExecutor:
         if "" in bet_ids or self.fetch_current_orders is None:
             return "hedge_liveness_unverifiable"        # hedge senza betId o nessuna fonte: non dimostrabile chiuso
         try:
-            current = list(self.fetch_current_orders() or [])
+            current = self.fetch_current_orders()
         except Exception:  # noqa: BLE001 - ordini correnti illeggibili => nessun nuovo hedge (fail-closed)
             logger.exception("[CashoutExecutor] ordini correnti illeggibili: vivacita' dell'hedge precedente ignota")
             return "hedge_liveness_unverifiable"
+        # Sol su f5a7982: solo una lista di ordini ben formati prova qualcosa. None, un envelope o un elemento non-dict
+        # NON sono "nessun ordine vivo": vivacita' non dimostrabile => nessun nuovo hedge.
+        if not isinstance(current, (list, tuple)) or not all(isinstance(order, dict) for order in current):
+            logger.error("[CashoutExecutor] ordini correnti malformati (%s): nessun nuovo hedge", type(current).__name__)
+            return "hedge_liveness_unverifiable"
         for order in current:
-            if not isinstance(order, dict):
-                continue
             bid = str(order.get("betId") or order.get("bet_id") or "").strip()
             if bid not in bet_ids:
                 continue
@@ -202,6 +205,17 @@ class CashoutExecutor:
                 return "previous_hedge_still_live"      # residuo illeggibile: vivo fino a prova contraria
             if not math.isfinite(remaining) or remaining > 0.0:
                 return "previous_hedge_still_live"
+            # Grok su f5a7982: residuo 0 non e' "cancellato". listCurrentOrders riporta l'hedge eseguito
+            # (EXECUTION_COMPLETE, sizeMatched > 0) fino al settlement: la posizione e' gia' coperta e un nuovo hedge
+            # calcolato prima la sovracoprirebbe. Solo matched 0 (o l'ordine sparito) prova una cancellazione a vuoto.
+            try:
+                matched = float(order.get("sizeMatched", order.get("size_matched")))
+            except (TypeError, ValueError):
+                return "hedge_liveness_unverifiable"
+            if not math.isfinite(matched):
+                return "hedge_liveness_unverifiable"
+            if matched > 0.0:
+                return "previous_hedge_matched"
         return ""
 
     def on_cmd_execute_cashout(self, payload: Dict[str, Any]) -> None:
