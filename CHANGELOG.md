@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Governance §0.9-ter (#586, owner 01/11/2026 «TEMPORARY MERGE DELEGATION — ROADMAP V2»):** delega owner
+  temporanea di merge per le 33 schede della roadmap V2, registrata in `OWNER_MERGE_DELEGATIONS` di
+  `scripts/pr_autonomy_policy.py` (il merge owner di questa PR ne e' la prova). Copre solo le protezioni finanziarie
+  fondamentali; credenziali, segreti, config, LIVE e governance restano sempre a merge owner; nessun gate in meno
+  (certificazione rafforzata §0.9-bis obbligatoria). Test `tests/scripts/test_roadmap_merge_delegation.py`;
+  mutazioni `pap_delegation_*`.
+
 ### Fixed
 - **F-01 (#586, CSH-01/CSH-10/NF-06 P0 latente) — P&L del monitor SL/TP:** netto liquidabile in Decimal con la
   formula del cashout (`core/sl_tp_pnl.py`): hedge dal book consumato livello per livello al proprio prezzo, TP

@@ -353,6 +353,40 @@ owner (fail-closed). Il full diff prodotto da `pr-guard` riporta `financial_owne
 
 Fino al merge di questa regola valeva il mandato roadmap V2: F-05, F-08 e F-01 a merge owner.
 
+### 0.9-ter Delega owner temporanea di merge — roadmap V2 (owner 01/11/2026)
+
+Mandato owner «TEMPORARY MERGE DELEGATION — ROADMAP V2» (#586): l'agente gestisce in autonomia sviluppo,
+certificazione e merge delle 33 schede funzionali della roadmap #586, anche quando una PR tocca un'area che §0.9-bis
+manda sempre a merge owner. La delega vale solo per quelle PR e termina al completamento della roadmap. Codificata in
+`scripts/pr_autonomy_policy` (`OWNER_MERGE_DELEGATIONS`, `merge_decision`).
+
+**Dove vive la delega.** Nel registro `OWNER_MERGE_DELEGATIONS` del codice della policy, non in un commento: gli
+account agente pubblicano come owner (#472), quindi un commento non e' autenticabile; il **merge owner** della PR
+che introduce il registro e' la prova. Il file e' a merge owner (§0.9): l'agente non puo' creare, allargare o
+prolungare una delega. L'owner la chiude mettendo `active: False` o rimuovendo la voce.
+
+**Cosa copre.** Solo le **protezioni finanziarie fondamentali** di §0.9-bis (rischio, perdite, dedupe, stake,
+money management, SL/TP, validatori...). Mai, nemmeno con la delega (`FINANCIAL_NON_DELEGABLE_PATTERNS`, rete larga
+per parola chiave): credenziali, autenticazione e segreti; impostazioni e configurazione (`setting`, `config`);
+attivazione LIVE e configurazione di esecuzione, comprese le righe che menzionano un interruttore LIVE
+(`LIVE_ACTIVATION_CONTENT_RE`); materiale con forma di segreto. Basta UN file non delegabile perche' tutta la PR
+resti owner. Le modifiche di governance e sicurezza (§0.9: `CLAUDE.md`, `AGENTS.md`, spec, workflow, `scripts/pr_*`)
+restano sempre a merge owner: quel ramo di `merge_decision` precede la delega.
+
+**Come si applica.** Lo stato di `merge-decision` porta `owner_delegation = {id, card, head_sha}`:
+`id` registrato e attivo, `card` fra `F-01`…`F-33`, `head_sha` = head valutato, e il full diff con
+`financial_owner_delegation_eligible: true`. Altrimenti `READY_FOR_OWNER_MANUAL_MERGE` con
+`owner_delegation:<motivo>` (`malformed`, `unknown_delegation`, `inactive`, `card_not_covered`,
+`stale_or_missing_head`, `area_not_delegable`). La delega **non toglie nessun gate**: tutti quelli di §0.9 (CI e
+Merge readiness verdi, Sol e Grok senza bloccanti, thread zero, nessun P0/P1, fix loop, scope) e la certificazione
+rafforzata di §0.9-bis completa sull'head, senza deroghe di review. Il verdetto `READY_FOR_AUTO_MERGE` dichiara
+`owner_delegation: {id, card}`, che l'agente riporta nel verdetto sulla PR e su #586. Dopo ogni merge: CI
+post-merge verde su main prima della PR successiva (§0.14), una PR alla volta.
+
+**Limite noto.** La scheda `card` la dichiara l'agente: il codice non puo' verificare da solo che la PR appartenga
+alla roadmap. Ogni merge delegato si traccia su #586 con scheda, PR, head e SHA di merge, cosi' l'owner puo'
+verificarlo e revocare la delega.
+
 ### 0.10 Controllo sul diff completo
 
 Sul diff ASSEMBLATO della PR (base...head, non l'ultimo push): base, head,

@@ -7412,6 +7412,66 @@
         "tests/scripts/test_certified_financial_automerge.py"
       ],
       "rationale": "§0.14: PR successiva aperta senza CI post-merge verde verificata su main."
+    },
+    {
+      "id": "pap_delegation_area_not_checked",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if full.get(\"financial_owner_delegation_eligible\") is not True:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter: la delega copre anche credenziali, segreti, config o LIVE."
+    },
+    {
+      "id": "pap_delegation_non_delegable_net_removed",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "                                                    and not classification[\"financial_owner_non_delegable\"]",
+      "mutated": "                                                    and True",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter: un file di credenziali/config/LIVE rende la PR delegabile."
+    },
+    {
+      "id": "pap_delegation_card_not_checked",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if not isinstance(card, str) or not _ROADMAP_CARD_RE.match(card) or card not in record.get(\"cards\", ()):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter: la delega vale per una PR fuori dalle 33 schede della roadmap V2."
+    },
+    {
+      "id": "pap_delegation_inactive_accepted",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if record.get(\"active\") is not True:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter: una delega chiusa dall'owner continua a valere."
+    },
+    {
+      "id": "pap_delegation_stale_head_accepted",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if requested.get(\"head_sha\") != current_head:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter: delega dichiarata per un head diverso da quello valutato."
     }
   ]
 }

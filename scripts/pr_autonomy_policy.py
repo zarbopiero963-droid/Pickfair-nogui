@@ -228,6 +228,38 @@ FINANCIAL_OWNER_ONLY_PATTERNS = (
     r"|stake_precision|dedupe|duplication|runtime_authority|bridge_mode)[^/]*$",
 )
 _FIN_OWNER_RE = tuple(re.compile(p) for p in FINANCIAL_OWNER_ONLY_PATTERNS)
+
+# §0.9-ter — delega owner temporanea (owner 01/11/2026 «TEMPORARY MERGE DELEGATION — ROADMAP V2», #586).
+# Dentro FINANCIAL_OWNER_ONLY, la delega copre SOLO le protezioni finanziarie fondamentali. Credenziali,
+# autenticazione, segreti, impostazioni/configurazione e attivazione LIVE NON sono mai delegabili: un file che
+# corrisponde anche a uno solo di questi pattern resta a merge owner (rete larga, come quella di sopra).
+FINANCIAL_NON_DELEGABLE_PATTERNS = (
+    r"^core/(secret_cipher|token_store|redaction)\.py$",
+    r"^telegram_sanitizer\.py$",
+    r"^betfair_client\.py$",
+    r"(?i)(^|/)[^/]*(auth|credential|certlogin|session_manager)[^/]*\.py$",
+    r"^core/(runtime_authority|execution_guard|microstake_live_port|bridge_mode|config_store)\.py$",
+    r"^(trading_config|config_registry)\.py$",
+    r"^scripts/live_gate\.py$",
+    r"^config\.example\.json$",
+    r"(?i)(^|/)[^/]*(secret|token|credential|auth|passw|certlogin|cipher|sanitiz|redact|setting|config|live"
+    r"|runtime_authority|bridge_mode)[^/]*$",
+)
+_FIN_NON_DELEGABLE_RE = tuple(re.compile(p) for p in FINANCIAL_NON_DELEGABLE_PATTERNS)
+
+# Registro delle deleghe owner. Sta in questo file (a merge MANUALE dell'owner, §0.9): il merge dell'owner E' la
+# prova della delega, perche' un commento su una issue non e' autenticabile (gli account agente pubblicano come
+# owner, #472). L'agente non puo' crearla, allargarla o prolungarla: ogni modifica qui torna al merge owner.
+# Per chiuderla l'owner mette `active: False` o rimuove la voce (al completamento della roadmap V2).
+OWNER_MERGE_DELEGATIONS: dict[str, dict[str, Any]] = {
+    "PF-ROADMAP-V2-MERGE-DELEGATION": {
+        "issue": 586,
+        "granted": "2026-11-01",
+        "active": True,
+        "cards": tuple(f"F-{n:02d}" for n in range(1, 34)),       # le 33 schede funzionali della roadmap V2
+    },
+}
+_ROADMAP_CARD_RE = re.compile(r"^F-[0-9]{2}$")
 # Script di prodotto che attivano il LIVE: fuori dal codice di prodotto ma sempre merge owner.
 FINANCIAL_OWNER_ONLY_SCRIPTS = frozenset({"scripts/live_gate.py"})
 
@@ -1128,6 +1160,11 @@ def classify_paths(paths: Iterable[str]) -> dict[str, list[str]]:
         "financial_owner_only": sorted(p for p in paths
                                        if (_is_product_path(p) or p in FINANCIAL_OWNER_ONLY_SCRIPTS)
                                        and any(r.search(p) for r in _FIN_OWNER_RE)),
+        # §0.9-ter: parte NON delegabile delle aree sempre-owner (credenziali, segreti, config, LIVE)
+        "financial_owner_non_delegable": sorted(p for p in paths
+                                                if (_is_product_path(p) or p in FINANCIAL_OWNER_ONLY_SCRIPTS)
+                                                and any(r.search(p) for r in _FIN_OWNER_RE)
+                                                and any(r.search(p) for r in _FIN_NON_DELEGABLE_RE)),
         "financial_critical": sorted(p for p in product if any(r.search(p) for r in _FIN_RE)),
         "owner_manual": sorted(p for p in paths if is_owner_manual_path(p)),
         "secret_material": sorted(p for p in paths if is_secret_material_path(p)),
@@ -1601,6 +1638,13 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
                                             or secret_content_tests),
         # §0.9-bis: aree finanziarie sempre a merge owner (credenziali, LIVE, protezioni fondamentali).
         "financial_owner_merge_required": bool(classification["financial_owner_only"] or live_activation),
+        # §0.9-ter: la delega owner puo' coprire la PR solo se le sue aree sempre-owner sono TUTTE protezioni
+        # fondamentali: nessuna credenziale/segreto/config/LIVE, nessuna riga che attiva il LIVE, nessun segreto.
+        "financial_owner_delegation_eligible": bool(classification["financial_owner_only"]
+                                                    and not classification["financial_owner_non_delegable"]
+                                                    and not live_activation
+                                                    and not classification["secret_material"]
+                                                    and not secret_content and not secret_content_tests),
     }
 
 
@@ -1731,12 +1775,28 @@ def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
         if problem:
             return {"status": "NEEDS_MANUAL", "reasons": [problem], "safety_critical": safety}
     # §0.9-bis: aree finanziarie sempre a merge owner. Campo assente = non provato => owner (fail-closed).
+    # §0.9-ter: unica eccezione, una delega owner registrata in OWNER_MERGE_DELEGATIONS che copre la PR; anche
+    # allora resta obbligatoria la certificazione rafforzata qui sotto (nessun gate in meno).
+    delegation: dict[str, Any] | None = None
     if full.get("financial_owner_merge_required") is not False:
-        return {"status": "READY_FOR_OWNER_MANUAL_MERGE", "reasons": ["financial_owner_only_area"],
-                "safety_critical": safety, "owner_waivers": waivers_used}
+        requested = state.get("owner_delegation")
+        if requested is None:
+            return {"status": "READY_FOR_OWNER_MANUAL_MERGE", "reasons": ["financial_owner_only_area"],
+                    "safety_critical": safety, "owner_waivers": waivers_used}
+        problems = _owner_delegation_problems(requested, current, full)
+        if problems:
+            return {"status": "READY_FOR_OWNER_MANUAL_MERGE",
+                    "reasons": ["financial_owner_only_area"] + [f"owner_delegation:{p}" for p in problems],
+                    "safety_critical": safety, "owner_waivers": waivers_used}
+        delegation = {"id": requested["id"], "card": requested["card"]}
     financial = cls.get("financial_critical") if isinstance(cls, Mapping) else None
     if not isinstance(financial, list) or not all(_nonempty_str(p) for p in financial):
         return {"status": "NEEDS_MANUAL", "reasons": ["financial_classification_unknown"], "safety_critical": safety}
+    if delegation is not None and not financial:
+        # un'area sempre-owner e' codice di prodotto, quindi finanziaria critica: lista vuota = classificazione
+        # incoerente, mai un auto-merge delegato senza certificazione rafforzata
+        return {"status": "NEEDS_MANUAL", "reasons": ["owner_delegation:financial_classification_inconsistent"],
+                "safety_critical": safety}
     if financial:
         # PR finanziaria critica: auto-merge solo con la certificazione rafforzata provata sull'head corrente.
         # Una deroga di review o una certificazione assente/vecchia/incompleta = merge owner, mai auto-merge.
@@ -1745,11 +1805,35 @@ def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
             problems.append("financial_review_waiver")
         if problems:
             return {"status": "READY_FOR_OWNER_MANUAL_MERGE",
-                    "reasons": [f"financial_certification:{p}" for p in problems],
+                    "reasons": ([] if delegation is None else ["financial_owner_only_area"])
+                    + [f"financial_certification:{p}" for p in problems],
                     "safety_critical": safety, "financial_critical": sorted(set(financial)),
                     "owner_waivers": waivers_used}
-    return {"status": "READY_FOR_AUTO_MERGE", "reasons": [], "safety_critical": safety,
-            "financial_critical": sorted(set(financial)), "owner_waivers": waivers_used}
+    result = {"status": "READY_FOR_AUTO_MERGE", "reasons": [], "safety_critical": safety,
+              "financial_critical": sorted(set(financial)), "owner_waivers": waivers_used}
+    if delegation is not None:
+        result["owner_delegation"] = delegation      # tracciabile: il verdetto dichiara la delega usata
+    return result
+
+
+def _owner_delegation_problems(requested: Any, current_head: str, full: Mapping[str, Any]) -> list[str]:
+    """§0.9-ter: motivi per cui la delega owner richiesta NON copre la PR (vuoto = copre)."""
+    if not isinstance(requested, Mapping):
+        return ["malformed"]
+    problems: list[str] = []
+    record = OWNER_MERGE_DELEGATIONS.get(requested.get("id")) if isinstance(requested.get("id"), str) else None
+    if not isinstance(record, Mapping):
+        return ["unknown_delegation"]
+    if record.get("active") is not True:
+        problems.append("inactive")
+    card = requested.get("card")
+    if not isinstance(card, str) or not _ROADMAP_CARD_RE.match(card) or card not in record.get("cards", ()):
+        problems.append("card_not_covered")
+    if requested.get("head_sha") != current_head:
+        problems.append("stale_or_missing_head")
+    if full.get("financial_owner_delegation_eligible") is not True:
+        problems.append("area_not_delegable")
+    return problems
 
 
 def _financial_certification_problems(cert: Any, current_head: str) -> list[str]:
