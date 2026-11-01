@@ -491,11 +491,14 @@ BACK la raddoppia; un LAY 50 su una posizione da 0.23 apre una nuova esposizione
     `hedge_non_coerente:posizione_assente`;
   - lato dell'hedge = opposto della posizione, altrimenti `hedge_non_coerente:lato`;
   - esposizione ABBINATA misurata sull'exchange (`BetfairService.list_current_orders`, che in LIVE riporta anche gli
-    ordini `EXECUTION_COMPLETE`): somma di `sizeMatched * averagePriceMatched` (in mancanza `priceSize.price`) degli
+    ordini `EXECUTION_COMPLETE`): somma di `sizeMatched * averagePriceMatched` (se <= 1: `priceSize.price`, come
+    `cashout_resolver._row_matched_price`) degli
     ordini non-hedge sulla stessa selezione e sullo stesso lato; esposizione nulla => `posizione_assente`; ordini
     illeggibili, malformati o in errore => `hedge_non_coerente:posizione_non_verificabile`;
-  - stake dell'hedge <= stake che chiude quell'esposizione, `esposizione / prezzo_hedge` arrotondato al centesimo
-    (ROUND_HALF_UP), altrimenti `hedge_non_coerente:size`. Nessun cap di stake: Roserpina resta l'unica autorita'
+  - stake dell'hedge <= `esposizione / prezzo_hedge + 0.005` (confronto esatto in Decimal: il mezzo centesimo e'
+    il massimo che l'arrotondamento ROUND_HALF_UP del resolver aggiunge), altrimenti `hedge_non_coerente:size`. Un
+    secondo arrotondamento su un float rifiutava green-up legittimi al confine (0.35 x 11.0 / 4.4 = 0.875 => 0.88
+    dal resolver, 0.87 ricalcolato). Nessun cap di stake: Roserpina resta l'unica autorita'
     sullo stake d'ingresso, qui si verifica solo che l'hedge chiuda (PF-EXEC-03, nessun inseguimento);
   - senza fonte ordini (doppi di test) l'esposizione e' quella di `original_pos` (`stake * price`): il controllo non
     si salta mai.

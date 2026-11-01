@@ -7706,7 +7706,7 @@
       "module": "core.risk_gate",
       "area": "cashout",
       "file": "core/risk_gate.py",
-      "original": "        if Decimal(str(stake)) > closing:",
+      "original": "        if Decimal(str(stake)) > closing_limit:",
       "mutated": "        if False:",
       "tests": [
         "tests/f06/test_f06_hedge_guard.py"
@@ -7754,8 +7754,8 @@
       "module": "cashout_executor",
       "area": "cashout",
       "file": "cashout_executor.py",
-      "original": "            price = self._as_float(order.get(\"averagePriceMatched\") or price_size.get(\"price\") or order.get(\"price\"))",
-      "mutated": "            price = self._as_float(price_size.get(\"price\") or order.get(\"price\"))",
+      "original": "            price = self._as_float(order.get(\"averagePriceMatched\"))\n            if not math.isfinite(price) or price <= 1.0:\n                price_size",
+      "mutated": "            price = 0.0\n            if not math.isfinite(price) or price <= 1.0:\n                price_size",
       "tests": [
         "tests/f06/test_f06_hedge_guard.py"
       ],

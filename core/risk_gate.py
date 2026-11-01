@@ -192,7 +192,9 @@ class RiskGate:
         chiusura protettiva senza inseguimento):
         - lato dell'hedge = opposto del lato della posizione (un hedge dello stesso lato la raddoppia);
         - stake <= stake che chiude l'esposizione ABBINATA: ``matched_notional / hedge_price`` (green-up:
-          ``stake * ingresso / chiusura``), arrotondato al centesimo come lo stake del cashout.
+          ``stake * ingresso / chiusura``) piu' il mezzo centesimo che l'arrotondamento ROUND_HALF_UP del resolver puo'
+          aggiungere: confronto esatto in Decimal, mai un secondo arrotondamento che al confine rifiuterebbe un
+          cashout legittimo.
         Qualunque valore non finito o non positivo => rifiuto. Ritorna ``{"allowed", "reason"}``."""
         pos, side = str(position_side or "").strip().upper(), str(hedge_side or "").strip().upper()
         if pos not in ("BACK", "LAY"):
@@ -205,9 +207,9 @@ class RiskGate:
             return {"allowed": False, "reason": "hedge_non_coerente:posizione_assente"}
         if stake is None or stake <= 0.0 or price is None or price <= 1.0:
             return {"allowed": False, "reason": "hedge_non_coerente:size"}
-        from decimal import ROUND_HALF_UP, Decimal
-        closing = Decimal(str(notional / price)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        if Decimal(str(stake)) > closing:
+        from decimal import Decimal
+        closing_limit = Decimal(str(notional)) / Decimal(str(price)) + Decimal("0.005") + Decimal("1e-9")
+        if Decimal(str(stake)) > closing_limit:
             return {"allowed": False, "reason": "hedge_non_coerente:size"}
         return {"allowed": True, "reason": None}
 

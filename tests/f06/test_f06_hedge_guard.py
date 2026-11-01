@@ -187,3 +187,36 @@ def test_hedge_coherence_is_enforced_on_the_ledger_path_of_the_real_wiring(tmp_p
             assert bus.last(CASHOUT_FAILED)["reason"].startswith("hedge_non_coerente:")
     rows = db._execute("SELECT status FROM orders", fetch=True, commit=False) or []
     assert len(rows) == 1, "un hedge incoerente non deve lasciare righe nel ledger"
+
+
+def _resolver_cmd(orders, current_price):
+    from cashout_resolver import build_cashout_request, reconstruct_open_positions
+    positions = reconstruct_open_positions(orders, is_bot_order=lambda r: True)
+    assert len(positions) == 1
+    return build_cashout_request(positions[0], current_price=current_price, commission=4.5)
+
+
+@pytest.mark.parametrize("side", ["BACK", "LAY"])
+def test_every_green_up_built_by_the_real_resolver_is_accepted(side):
+    # il resolver arrotonda lo stake ROUND_HALF_UP al centesimo: il controllo non deve mai rifiutare un cashout
+    # legittimo al confine del mezzo centesimo (secondo arrotondamento su un float leggermente diverso)
+    rejected = []
+    for matched in (0.23, 0.35, 1.0, 1.05, 2.15, 3.33, 7.77, 10.0, 12.5):
+        for entry in (1.01, 1.37, 1.85, 2.0, 2.62, 3.45, 5.5, 11.0):
+            for cur in (1.01, 1.29, 1.8, 2.06, 2.5, 3.15, 4.4, 9.8):
+                orders = [_order(side=side, matched=matched, price=entry)]
+                cmd = _resolver_cmd(orders, cur)
+                if cmd is None:
+                    continue
+                bus, router = _run(cmd, orders=orders)
+                if not router.calls:
+                    rejected.append((matched, entry, cur, cmd["stake"], bus.last(CASHOUT_FAILED)["reason"]))
+    assert rejected == [], rejected[:5]
+
+
+def test_invalid_average_price_falls_back_to_the_order_price_like_the_resolver():
+    # averagePriceMatched <= 1 (0.0 dell'API su ordini appena abbinati) => priceSize.price, come _row_matched_price
+    orders = [dict(_order(), averagePriceMatched=1.0)]
+    cmd = _resolver_cmd(orders, 1.8)
+    bus, router = _run(cmd, orders=orders)
+    assert len(router.calls) == 1, bus.last(CASHOUT_FAILED)

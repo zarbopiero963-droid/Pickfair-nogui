@@ -347,8 +347,12 @@ class CashoutExecutor:
                 return None
             if matched == 0.0:
                 continue
-            price_size = order.get("priceSize") if isinstance(order.get("priceSize"), dict) else {}
-            price = self._as_float(order.get("averagePriceMatched") or price_size.get("price") or order.get("price"))
+            # stesso prezzo d'ingresso di `cashout_resolver._row_matched_price`: averagePriceMatched (LIVE) se > 1,
+            # altrimenti priceSize.price (SIM)
+            price = self._as_float(order.get("averagePriceMatched"))
+            if not math.isfinite(price) or price <= 1.0:
+                price_size = order.get("priceSize") if isinstance(order.get("priceSize"), dict) else {}
+                price = self._as_float(price_size.get("price"))
             if not math.isfinite(price) or price <= 1.0:
                 return None
             notional += matched * price
