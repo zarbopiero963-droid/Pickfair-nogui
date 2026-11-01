@@ -8,6 +8,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **F-33 (#586) — harness full-scope di collaudo (solo test e tooling, GO-IMPLEMENT-LOCAL owner 29/10/2026):**
+  `tools/combi/` (inventario delle 190 chiavi censite con dominio e classe ATTIVA/LEGACY; generatore pairwise /
+  three-way greedy riproducibile con seed, vincoli, tuple non estendibili escluse, report di copertura verificato);
+  `tests/fullscope/` (tracciatore pytest dei requisiti UNVERIFIED con marker `pf_requirement` e
+  `requirements_report.json` per SHA/seed; child runner HeadlessApp reale in SIM con SIGKILL esterno al checkpoint e
+  riavvio sullo stesso HOME; netguard; oracolo Decimal indipendente; livello 1 sulle 79 chiavi persistite; scenari
+  SIM-COMBO-001, SIM-CASH-002, SIM-DUP-005, SIM-RESTART-003 con sonda RST-03). Nessun file applicativo toccato.
+  Hardening finale (owner 30/10): binding L2/L3 → runtime SIM (`combi_runner.py`: caso → settings → istanza →
+  scenario → oracolo → `combi_runs.json`), 13 mutazioni del generatore nel catalogo (area `fullscope_tooling`, 12
+  uccise + 1 equivalente documentata), riconciliazione 47→43 requisiti, test negativi dell'oracolo, nessuna attesa
+  fissa, `bus_idle` su API pubblica, netguard TCP+UDP.
+  Finding tracciati come xfail con riferimento: hedge del cashout assente dal ledger (CSH-06 → F-05), monitor SL/TP
+  inerte (→ F-01/F-02), loader fail-open su valori illeggibili/infiniti (NF-16 → F-18), `starting_balance 0` /
+  `commission_pct 0` sostituiti dal default (→ F-18/F-17). Marker nuovi in `pytest.ini`; `art/` ignorato;
+  `docs/testing/full_scope_harness.md`. Hook del tracciatore in `tests/fullscope/requirements/pytest_plugin.py`,
+  registrato dal `conftest.py` di root perché anche il controller pytest-xdist lo carichi (report aggregato con
+  `pytest -n auto ... tests`); artifact di scenario con nome allocato in creazione esclusiva (review Codex su #589).
+  Child runner: quiete del bus a callback terminati (`events.bus_drained`), metadati di book durevoli per il
+  settlement dopo il riavvio, output del child su file invece che su pipe non lette (review Codex su #589 `de1c980`).
+  Marker di checkpoint stantio rimosso prima del child; `repo_sha` del checkout eseguito (`PF_TREE`) e
+  `harness_sha` separato; oracolo riconciliato con il fill cumulativo e il prezzo medio dell'exchange per customer ref
+  (review Codex su #589 `0d9e091`).
+  Con `PF_TREE`: helper dell'harness caricati dal file accanto al child (runtime senza harness avviabile) e
+  report dei requisiti con `repo_sha` del runtime eseguito e `harness_sha` separato (review Codex su #589 `31d5364`).
+
 ### Security
 - **#590 — guard credenziali Telegram della lane `w5-telegram-live-sim` fail-open:** `env | grep -q "^TG_"` sotto
   `pipefail` non fermava la lane con credenziali `TG_*` presenti (SIGPIPE, 141). Ora `if compgen -e TG_ >/dev/null`
