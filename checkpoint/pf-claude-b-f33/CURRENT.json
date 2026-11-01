@@ -2,12 +2,12 @@
  "certification_verdict": "NOT VERIFIED",
  "checkpoint_commit": null,
  "code": {
-  "branch": "gov-gha-primary-buildkite-deferred",
-  "sha": "990b99d2e872acda9661b9bba984c7969e619514"
+  "branch": "f05-hedge-ledger",
+  "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05"
  },
- "mandate_id": "Claude B \u2014 OWNER CONFIRMATION 31/10/2026 CI GOVERNANCE FIRST",
- "next_atomic_action": "1) Attendere decisione owner su #586 c.6549919101 (dipendenza mutation-lane #592 <- #590): opz.1 port fix minimo #590 in #592 (raccomandata), opz.2 merge owner #592 con lane rossa, opz.3 merge #591 prima. Nessun push su #592 fino alla decisione. 2) Certificare #592 e dichiarare READY_FOR_OWNER_MANUAL_MERGE. 3) Dopo merge: verifica main, riaprire #591, merge main, ricertificare, merge owner. 4) Riaprire #589, merge main, CI+review, GO-MERGE condizionato. 5) F-05 -> F-08 -> F-01 (patches/), merge owner.",
- "previous_checkpoint_sha": "dfe3e1a0ca6290498ee038de880ac7738a11981a",
+ "mandate_id": "Claude B \u2014 OWNER DIRECTIVE FINALIZE #592 AND RESUME PICKFAIR ROADMAP V2",
+ "next_atomic_action": "1) #593 F-05 READY_FOR_OWNER_MANUAL_MERGE @84fd4f7 (gate verdi, fix loop 3/10): attendere merge owner. 2) Dopo il merge: F-08 (wt-f08) merge di main, test, PR, CI/review, merge owner. 3) Poi F-01 (wt-f01). Debito: max_files 43->44 della task key F-33 alla prossima PR che tocca il registro.",
+ "previous_checkpoint_sha": "717b486c74ce198bb736ffa24a9ccb465cd0fa94",
  "schema": "pf-current/1",
- "seq": 13
+ "seq": 14
 }
