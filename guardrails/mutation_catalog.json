@@ -355,6 +355,42 @@
       "rationale": "F-01 (CSH-10): stake del LAY = liability (P&L sovrastimato di (p-1) volte)."
     },
     {
+      "id": "f08_ghost_lookup_error_swallowed",
+      "module": "core.state_recovery",
+      "area": "recovery",
+      "file": "core/state_recovery.py",
+      "original": "                return {\"required\": True, \"completed\": False, \"ghost_orders_recovered\": len(recovered),\n                        \"ghost_orders_active\": active}",
+      "mutated": "                continue",
+      "tests": [
+        "tests/f08/test_f08_startup_orders_real_db.py"
+      ],
+      "rationale": "F-08 (RST-02): errore del DB sul ghost ignorato => recover() ok=True con ordine attivo non riconciliato (fail-open)."
+    },
+    {
+      "id": "f08_ghost_not_reseeded_on_restart",
+      "module": "core.state_recovery",
+      "area": "recovery",
+      "file": "core/state_recovery.py",
+      "original": "                self._seed_duplication_guard(order)\n                active += 1",
+      "mutated": "                active += 1",
+      "tests": [
+        "tests/f08/test_f08_startup_orders_real_db.py"
+      ],
+      "rationale": "F-08 (Codex P1 su 1b22a4e): ghost gia' persistito e ancora vivo non seminato nella guardia nuova al secondo avvio => duplicato accettato."
+    },
+    {
+      "id": "f08_startup_orders_table_missing",
+      "module": "database_schema",
+      "area": "recovery",
+      "file": "database_schema.py",
+      "original": "    CREATE TABLE IF NOT EXISTS startup_orders (",
+      "mutated": "    CREATE TABLE IF NOT EXISTS startup_orders_disabled (",
+      "tests": [
+        "tests/f08/test_f08_startup_orders_real_db.py"
+      ],
+      "rationale": "F-08 (DB-04): tabella startup_orders non creata => ogni ghost perso in silenzio."
+    },
+    {
       "id": "f05_duplicate_request_hedged_twice",
       "module": "cashout_executor",
       "area": "cashout",
@@ -7268,6 +7304,54 @@
         "tests/fullscope/combi/test_generator.py"
       ],
       "rationale": "F-33 (#586) harness full-scope: il seed non influenza piu' i pareggi: seed diversi danno sempre gli stessi casi (riproducibilita' dichiarata ma non effettiva)."
+    },
+    {
+      "id": "pap_financial_certification_skipped",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "        problems = _financial_certification_problems(state.get(\"financial_certification\"), current)",
+      "mutated": "        problems = []",
+      "tests": [
+        "tests/scripts/test_certified_financial_automerge.py"
+      ],
+      "rationale": "§0.9-bis: PR finanziaria critica in auto-merge senza la certificazione rafforzata provata sull'head."
+    },
+    {
+      "id": "pap_financial_owner_only_ignored",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if full.get(\"financial_owner_merge_required\") is not False:",
+      "mutated": "    if full.get(\"financial_owner_merge_required\") is True and False:",
+      "tests": [
+        "tests/scripts/test_certified_financial_automerge.py"
+      ],
+      "rationale": "§0.9-bis: credenziali, LIVE o protezioni finanziarie fondamentali in auto-merge invece che a merge owner."
+    },
+    {
+      "id": "pap_live_activation_not_detected",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "                live_activation.add(path)       # §0.9-bis: attivazione LIVE => merge owner",
+      "mutated": "                pass",
+      "tests": [
+        "tests/scripts/test_certified_financial_automerge.py"
+      ],
+      "rationale": "§0.9-bis: una riga che attiva il LIVE non instrada la PR al merge owner."
+    },
+    {
+      "id": "pap_next_pr_without_main_ci",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    if main_ci != \"GREEN\":",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/scripts/test_certified_financial_automerge.py"
+      ],
+      "rationale": "§0.14: PR successiva aperta senza CI post-merge verde verificata su main."
     }
   ]
 }

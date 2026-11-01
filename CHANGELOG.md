@@ -14,6 +14,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   liability), commissione sul netto. Prima il BACK aveva il segno invertito e si usava `lastPriceTraded`. Il monitor
   resta inerte fino a F-02. `docs/cashout_overview.md` §7.4; test `tests/core/test_sl_tp_pnl_sign.py`;
   mutazioni `f01_*`; `hard_verify_issue_320.py` (C1) allineato al book.
+- **F-08 (#586, RST-02/NF-10/DB-04 P0) — ordini ghost all'avvio su DB reale:** tabelle `startup_orders` e `outbox`
+  create (DDL additiva e idempotente, nessuna migrazione di dati); un errore del DB sul ghost rende `recover()`
+  `ok=False` / `STARTUP_RECONCILIATION_REQUIRED` invece di `ok=True` con l'ordine perso; un ghost ancora vivo e'
+  riseminato nel `DuplicationGuard` a ogni avvio (Codex P1 su #594). Gating del runtime: F-09.
+  `docs/startup_recovery.md`; test `tests/f08/`; mutazioni `f08_*`.
 - **F-05 (#586, CSH-06 P0) — l'hedge del cashout e' scritto nel ledger `orders`:** `CashoutExecutor` (con
   `ledger=db` da `cabla_catena_cashout`) scrive la riga dell'hedge PRIMA dell'invio (`HEDGE_PENDING`, ref `hedge:`)
   e la aggiorna con l'esito (`HEDGE_PLACED/UNMATCHED/FAILED/AMBIGUOUS`); ledger non scrivibile => nessun hedge.
@@ -64,6 +69,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   asserzione sul TTL cambiata, nessun codice di produzione toccato.
 
 ### Changed
+- **Governance — auto-merge certificato delle PR finanziarie critiche (OWNER DIRECTIVE 01/11/2026, #586):**
+  `pr_autonomy_policy.merge_decision` porta in auto-merge una PR finanziaria critica solo con la certificazione
+  rafforzata `financial_certification` provata sull'head (suite, mutation, controlli finanziari, Codex senza
+  bloccanti, review complete, scope, nessuna regressione nota, nessun test saltato, nessun override, nessuna
+  deroga); credenziali, attivazione LIVE e protezioni finanziarie fondamentali restano sempre a merge owner
+  (`FINANCIAL_OWNER_ONLY_PATTERNS`, `LIVE_ACTIVATION_CONTENT_RE`); `next_pr_decision` richiede la CI post-merge
+  verde su main. Spec §0.9-bis e §0.14, CLAUDE.md; test `tests/scripts/test_certified_financial_automerge.py`;
+  mutazioni `pap_*`.
 - **Governance CI — GitHub Actions primario, Buildkite differito (OWNER DECISION 31/10/2026, #586):** la merge
   readiness non conta piu' come gate gli status della lane Buildkite sospesa (`full-suite`, `overlap-check`,
   `pr-merge-readiness` su `buildkite.com`), che restano visibili fra gli ignorati. Il check run `overlap-check`

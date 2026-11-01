@@ -346,9 +346,20 @@ def merge_state(**extra):
         "preexisting_activated_or_aggravated": False, "unresolved_threads": 0,
         "introduced_p0_p1_open": 0, "reviewer_gate": "PASS", "merge_readiness": "PASS",
         "full_diff": full_diff(), "fix_loop_exhausted": False,
+        "financial_certification": financial_cert(),
     }
     state.update(extra)
     return state
+
+
+def financial_cert(head=HEAD, **extra):
+    """§0.9-bis: certificazione rafforzata completa sull'head (i test che la vogliono assente la tolgono)."""
+    cert = {"head_sha": head, "full_suite_pass": True, "mutation_gate_pass": True, "financial_tests_pass": True,
+            "codex_no_blockers": True, "reviews_complete": True, "scope_verified": True,
+            "known_financial_regression_unmanaged": False, "tests_skipped_or_disabled": False,
+            "branch_protection_override": False}
+    cert.update(extra)
+    return cert
 
 
 def test_runtime_safety_critical_con_tutti_i_gate_va_in_auto_merge():
@@ -874,7 +885,7 @@ def test_churn_non_consuma_un_ciclo_artificiale():
 # PR successiva e parallelismo
 # ---------------------------------------------------------------------------
 def next_state(**extra):
-    state = {"merge_verified": True, "merge_sha": "a193909", "main_reread": True,
+    state = {"merge_verified": True, "merge_sha": "a193909", "main_reread": True, "main_post_merge_ci": "GREEN",
              "roadmap_reread": True, "open_prs_same_repo": 0, "next_card": "PR26",
              "dependencies_satisfied": True, "pertinent_open_owner_decisions": [],
              "unrelated_open_owner_decisions": ["MANUAL via MCP"], "active_stop_conditions": []}

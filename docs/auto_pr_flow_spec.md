@@ -301,6 +301,58 @@ Limite noto #472 (rischio accettato dall'owner): l'agente mergia con la stessa
 identità GitHub che apre la PR, quindi l'esclusione dei file a merge owner è
 applicata dalla procedura e dalla label, non da un'identità separata.
 
+### 0.9-bis Auto-merge certificato delle PR finanziarie critiche (owner 01/11/2026)
+
+Decisione owner «GOVERNANCE AUTO-MERGE CERTIFICATO» (#586): ridurre gli interventi manuali sulle schede
+della roadmap senza abbassare i gate. Codificata in `scripts/pr_autonomy_policy.merge_decision`.
+
+**PR finanziaria critica**: tocca codice di prodotto, cioè qualunque file fuori da `tests/`, `docs/`,
+`scripts/`, `tools/`, `guardrails/`, `.guardrails/`, `.github/` e dai `.md` (`_is_product_path`). La scelta è
+fail-closed: in questo bot ogni modulo di prodotto può toccare segnali, ordini, denaro o il loro storico, e un
+elenco esplicito di moduli lasciava fuori file reali (`core/async_db_writer.py`, Codex su #595). Test,
+documentazione e tooling da soli non la rendono tale. Va in `READY_FOR_AUTO_MERGE` solo se, oltre a TUTTI i gate di
+§0.9 (CI e Merge readiness verdi, Sol e Grok senza bloccanti, thread zero, scope, dichiarazione
+safety-critical...), la **certificazione rafforzata** `financial_certification` è provata sull'head corrente:
+
+- `head_sha` = head valutato;
+- `full_suite_pass`, `mutation_gate_pass` (moduli toccati), `financial_tests_pass` (controlli finanziari
+  applicabili), `codex_no_blockers` (non solo «triagiato»), `reviews_complete` (nessuna review
+  inconcludente o troncata), `scope_verified`: tutti `true`;
+- `known_financial_regression_unmanaged`, `tests_skipped_or_disabled`, `branch_protection_override`: tutti
+  `false`;
+- nessuna deroga di review (`PASS_WITH_OWNER_WAIVER` non vale per una PR finanziaria).
+
+Prova assente, vecchia, incompleta o di tipo sbagliato → `READY_FOR_OWNER_MANUAL_MERGE` con il motivo
+(`financial_certification:<campo>`), mai auto-merge.
+
+**Sempre a merge owner**, anche con certificazione completa (`FINANCIAL_OWNER_ONLY_PATTERNS`,
+`financial_owner_merge_required` del full diff): credenziali, autenticazione e segreti (`betfair_client`,
+`core/secret_cipher`, `core/token_store`, `core/redaction`, `telegram_sanitizer`, file `*auth*`/`*credential*`);
+attivazione LIVE e configurazione di esecuzione (`core/runtime_authority`, `core/execution_guard`,
+`core/microstake_live_port`, `core/bridge_mode`, `core/config_store`, `trading_config`, `config_registry`,
+`config.example.json`, `scripts/live_gate.py`, e ogni riga aggiunta di prodotto che **menziona** un
+interruttore LIVE o di modalita', qualunque sia il valore (`LIVE_ACTIVATION_CONTENT_RE`: `allow_live`, `live_enabled`,
+`execution_mode`, `simulation_mode`/`set_simulation_mode`, `"simulation"`, `simulation=`..., anche dentro
+identificatori composti come `_live_enabled`; leggere `is_simulation_mode()` non conta); protezioni finanziarie fondamentali (`core/safety_layer`, `safety_guard`,
+`risk_*`, `loss_limits`, `daily_loss_store`, `duplication_guard`, `signal_dedupe`, `stake_precision`,
+`circuit_breaker`, `auto_throttle`, `safe_mode*`, `market_validator`, `ai/ai_guardrail`, `core/money_management` e
+`stake_mode` (cap dello stake, esposizione, kill switch del daily-loss), stop-loss/take-profit).
+Oltre ai file nominati vale una rete per parola chiave nel nome del file di prodotto (`secret`, `token`,
+`credential`, `auth`, `setting`, `config`, `risk`, `safety`, `guard`, `validator`, `live`, `system_state`,
+`dedupe`...): un elenco esplicito lasciava fuori `services/setting_service.py` (password e app key) e
+`core/system_state.py` (limiti di esposizione) — Codex su #595. Un falso positivo costa un merge owner.
+Restano owner anche le modifiche di governance e sicurezza (§0.9) e ogni PR con ambiguità finanziaria
+aperta, test inconcludenti o review incomplete. Campo di classificazione assente → owner o `NEEDS_MANUAL`
+(fail-closed).
+
+La certificazione la produce l'agente sull'head finale (`pr_autonomy_policy merge-decision` con
+`financial_certification` nello stato). Il percorso automatico del controller
+(`pr_automation_controller.can_auto_merge`) non la costruisce: una PR finanziaria che passa da lì va a merge
+owner (fail-closed). Il full diff prodotto da `pr-guard` riporta `financial_owner_merge_required` e
+`classification.financial_critical`; un full diff senza questi campi non vale come prova.
+
+Fino al merge di questa regola valeva il mandato roadmap V2: F-05, F-08 e F-01 a merge owner.
+
 ### 0.10 Controllo sul diff completo
 
 Sul diff ASSEMBLATO della PR (base...head, non l'ultimo push): base, head,
@@ -403,6 +455,10 @@ nessuna PR aperta nello stesso repository; rileggere roadmap e nuove decisioni;
 individuare la scheda successiva; verificarne le dipendenze; se nessuno STOP,
 avviare Phase 0 in automatico (`next_pr_decision`). Una scheda già
 soddisfatta riceve evidenza, non una PR artificiale.
+
+Prima della PR successiva la **CI post-merge su main** deve risultare verde (`main_post_merge_ci = "GREEN"`,
+owner 01/11/2026): `RED` → `STOP_MAIN_CI_RED` (si sistema main prima di procedere); non ancora verificata o
+di valore diverso → `WAIT_MAIN_CI_NOT_VERIFIED`.
 
 ### 0.15 Fix loop
 

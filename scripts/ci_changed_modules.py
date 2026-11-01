@@ -194,6 +194,7 @@ MODULE_RULES = [
             "tools/combi/",  # F-33 (#586): il generatore combinatorio ha mutazioni cg_* nel catalogo
 
             "database.py",
+            "database_schema.py",  # F-08: mutazione del catalogo sulla DDL di startup_orders
             "dutching.py",
             "betfair_client.py",  # RECTIFICATION-01: mutazione del catalogo sulla riduzione parziale (Microstake LIVE)
             "controllers/dutching_controller.py",  # #523: mutazioni del catalogo su Dutching e bet manuale
@@ -203,6 +204,7 @@ MODULE_RULES = [
             "scripts/ci/trusted_pr_guard.py",  # #562: mutazioni dei controlli della lane trusted
             "scripts/pr_automation_controller.py",  # #566: mutazioni della deduplica dei check run
             "scripts/pr_flow_automation.py",  # #586: mutazione del gate readiness con Buildkite differito
+            "scripts/pr_autonomy_policy.py",  # §0.9-bis: mutazioni dell'auto-merge finanziario certificato
             "scripts/pr_trusted_dispatcher.py",  # #562: mutazioni del dispatcher trusted
             "scripts/pr_full_suite_pipeline.py",  # #562 PR-B: mutazioni degli step M2 della full-suite
             "tests/",

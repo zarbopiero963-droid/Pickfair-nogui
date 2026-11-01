@@ -296,6 +296,26 @@ SCHEMA_DDL: tuple[str, ...] = (
         consumed_at REAL NOT NULL
     )
     """,
+    # F-08 (#586, RST-02/DB-04): ordini attivi sull'exchange trovati all'avvio senza riga locale ("ghost") e
+    # outbox degli eventi di riconciliazione. Tabelle ADDITIVE e idempotenti (CREATE IF NOT EXISTS): i metodi
+    # `startup_order_exists`/`load_startup_orders`/`upsert_startup_order`/`write_outbox` le usavano da sempre
+    # ma non erano mai state create, quindi ogni ghost veniva perso in silenzio. Nessuna colonna esistente cambia.
+    """
+    CREATE TABLE IF NOT EXISTS startup_orders (
+        order_id TEXT PRIMARY KEY,
+        payload TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS outbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_id TEXT,
+        event_name TEXT,
+        payload TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS audit_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
