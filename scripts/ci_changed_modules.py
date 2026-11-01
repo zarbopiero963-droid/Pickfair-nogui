@@ -194,6 +194,7 @@ MODULE_RULES = [
             "tools/combi/",  # F-33 (#586): il generatore combinatorio ha mutazioni cg_* nel catalogo
 
             "database.py",
+            "database_schema.py",  # F-08: mutazione del catalogo sulla DDL di startup_orders
             "dutching.py",
             "betfair_client.py",  # RECTIFICATION-01: mutazione del catalogo sulla riduzione parziale (Microstake LIVE)
             "controllers/dutching_controller.py",  # #523: mutazioni del catalogo su Dutching e bet manuale
