@@ -257,8 +257,23 @@ def test_unreadable_identified_position_size_rejected(orig):
     assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_assente"
 
 
-def test_a_hedge_order_alone_is_never_the_position_to_close():
-    # sull'exchange c'e' solo un hedge (customer_ref `hedge:`) dello stesso lato: nessuna posizione da chiudere
+
+def test_previous_opposite_position_neutralised_by_its_hedge_still_allows_the_close():
+    # Sol su 73296a3: LAY 1@2 gia' chiuso da un hedge BACK 1@2, poi un nuovo BACK 0.23@2 da chiudere. Escludendo
+    # l'hedge del lato della posizione il netto era -1.54 (cashout valido rifiutato): la coppia chiusa si annulla
     from core.hedge_ref import new_hedge_ref
-    bus, router = _run(_cmd(), orders=[_order(ref=new_hedge_ref())])
+    orders = [dict(_order(side="LAY", matched=1.0, ref="old-lay"), betId="L0"),
+              dict(_order(side="BACK", matched=1.0, ref=new_hedge_ref()), betId="H0"), _order()]
+    bus, router = _run(_cmd(), orders=orders)
+    assert len(router.calls) == 1, bus.last(CASHOUT_FAILED)
+    bus, router = _run(_cmd(stake=1.0), orders=orders)
+    assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:size"
+
+
+def test_same_side_matched_hedges_count_in_the_net_exposure():
+    # l'esposizione e' quella reale sull'exchange: un hedge abbinato dello stesso lato pesa come ogni altro ordine
+    from core.hedge_ref import new_hedge_ref
+    orders = [dict(_order(side="LAY", matched=1.0, ref="old-lay"), betId="L0"),
+              dict(_order(side="BACK", matched=1.0, ref=new_hedge_ref()), betId="H0")]
+    bus, router = _run(_cmd(), orders=orders)
     assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_assente"
