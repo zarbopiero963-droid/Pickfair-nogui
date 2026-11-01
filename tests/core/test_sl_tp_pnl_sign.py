@@ -124,3 +124,76 @@ def test_config_commission_other_than_policy_neither_raises_nor_changes_the_deci
     rc.config = SimpleNamespace(commission_pct=1.0)
     rc._monitor_sl_tp_trailing(_book(back=2.48, lay=2.5))
     assert [c["reason"] for c in _closes(rc)] == ["STOP_LOSS_REACHED"]
+
+
+# --- Sol su 6d232f4 -------------------------------------------------------------------------------------------------
+
+def _ladder_book(back_levels, lay_levels):
+    return {"marketId": "1.5", "runners": [{"selectionId": 11, "ex": {
+        "availableToBack": [{"price": p, "size": s} for p, s in back_levels],
+        "availableToLay": [{"price": p, "size": s} for p, s in lay_levels]}}]}
+
+
+def test_min_betfair_price_1_01_still_triggers_the_stop_loss():
+    # LAY 10 a 3.0 (liability 20), la selezione sta vincendo: chiusura BACK a 1.01 => hedge 29.70, netto -19.70.
+    # Prima 1.01 era scartata come prezzo non valido e lo SL spariva dal monitor.
+    from core.sl_tp_pnl import liquidable_pnl
+    assert liquidable_pnl("LAY", D("10"), D("3.0"), D("1.01"), D("4.5")) == D("-19.70")
+    rc = _controller(_table("LAY", 3.0, 20.0, sl=5.0, stake=10.0))
+    rc._monitor_sl_tp_trailing(_ladder_book([(1.01, 1000)], [(1.02, 1000)]))
+    assert [c["reason"] for c in _closes(rc)] == ["STOP_LOSS_REACHED"]
+
+
+def test_take_profit_requires_enough_depth_to_close():
+    # BACK 10 a 2.0, chiusura LAY a 1.60 serve hedge 12.50: con 0.01 disponibili il profitto non e' liquidabile.
+    rc = _controller(_table("BACK", 2.0, 10.0, tp=1.0))
+    rc._monitor_sl_tp_trailing(_ladder_book([(1.58, 100)], [(1.60, 0.01)]))
+    assert _closes(rc) == [], "TP su profitto non liquidabile (profondita' ignorata)"
+
+
+def test_take_profit_uses_the_deepest_level_needed():
+    # 1.60 x 5 + 1.70 x 100: hedge a 1.70 = 11.77 coperto solo arrivando al secondo livello => prezzo 1.70,
+    # netto +1.69 (non +2.39 del miglior prezzo). TP 2.0 non scatta, TP 1.6 si'.
+    from core.sl_tp_pnl import closing_quote, liquidable_pnl
+    runner = _ladder_book([(1.58, 100)], [(1.60, 5), (1.70, 100)])["runners"][0]
+    assert closing_quote(runner, "BACK", D("10"), D("2.0")) == (D("1.7"), True)
+    assert liquidable_pnl("BACK", D("10"), D("2.0"), D("1.7"), D("4.5")) == D("1.69")
+    rc = _controller(_table("BACK", 2.0, 10.0, tp=2.0))
+    rc._monitor_sl_tp_trailing(_ladder_book([(1.58, 100)], [(1.60, 5), (1.70, 100)]))
+    assert _closes(rc) == []
+    rc = _controller(_table("BACK", 2.0, 10.0, tp=1.6))
+    rc._monitor_sl_tp_trailing(_ladder_book([(1.58, 100)], [(1.60, 5), (1.70, 100)]))
+    assert [c["reason"] for c in _closes(rc)] == ["TAKE_PROFIT_REACHED"]
+
+
+def test_stop_loss_still_triggers_with_insufficient_depth():
+    # Chiusura protettiva (PF-EXEC-03): BACK 10 a 2.0, il book LAY offre solo 1.00 a 2.5 (servono 8.00).
+    # La perdita sull'ultimo livello (-2.00) e' un limite inferiore di quella reale: lo SL scatta comunque.
+    from core.sl_tp_pnl import closing_quote
+    runner = _ladder_book([(2.48, 100)], [(2.5, 1)])["runners"][0]
+    assert closing_quote(runner, "BACK", D("10"), D("2.0")) == (D("2.5"), False)
+    rc = _controller(_table("BACK", 2.0, 10.0, sl=1.5))
+    rc._monitor_sl_tp_trailing(_ladder_book([(2.48, 100)], [(2.5, 1)]))
+    assert [c["reason"] for c in _closes(rc)] == ["STOP_LOSS_REACHED"]
+
+
+@pytest.mark.parametrize("size", [float("nan"), -1, "x", None])
+def test_unreadable_depth_never_counts_as_covered(size):
+    from core.sl_tp_pnl import closing_quote
+    runner = {"ex": {"availableToLay": [{"price": 1.6, "size": size}]}}
+    assert closing_quote(runner, "BACK", D("10"), D("2.0")) is None
+    rc = _controller(_table("BACK", 2.0, 10.0, tp=0.01))
+    rc._monitor_sl_tp_trailing({"runners": [{"selectionId": 11, "ex": {"availableToLay": [{"price": 1.6, "size": size}]}}]})
+    assert _closes(rc) == []
+
+
+@pytest.mark.parametrize("side", ["BACK", "LAY"])
+@pytest.mark.parametrize("entry", ["1.5", "2.0", "3.4", "7.0"])
+@pytest.mark.parametrize("close", ["1.02", "1.6", "2.5", "4.1", "12.0"])
+def test_same_result_as_the_cashout_function_where_it_is_defined(side, entry, close):
+    # la formula propria coincide con dutching.dynamic_cashout_single dove questa e' definita (> 1.01)
+    from core.sl_tp_pnl import liquidable_pnl
+    from dutching import dynamic_cashout_single
+    ref = dynamic_cashout_single(matched_stake=10.0, matched_price=float(entry), current_price=float(close),
+                                 commission=4.5, side=side)["net_profit"]
+    assert liquidable_pnl(side, D("10"), D(entry), D(close), D("4.5")) == D(str(ref)).quantize(D("0.01"))

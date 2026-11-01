@@ -355,6 +355,42 @@
       "rationale": "F-01 (CSH-10): stake del LAY = liability (P&L sovrastimato di (p-1) volte)."
     },
     {
+      "id": "f01_tp_ignores_depth",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            elif tp_d is not None and covered and pnl >= abs(tp_d):",
+      "mutated": "            elif tp_d is not None and pnl >= abs(tp_d):",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01 (Sol su 6d232f4): TP su profitto non liquidabile per profondita' insufficiente del book."
+    },
+    {
+      "id": "f01_depth_always_covered",
+      "module": "core.sl_tp_pnl",
+      "area": "money_management",
+      "file": "core/sl_tp_pnl.py",
+      "original": "        if covered_size >= (s * entry / price).quantize(CENT):",
+      "mutated": "        if True:",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01: la profondita' del book non viene verificata (miglior prezzo con size irrisoria)."
+    },
+    {
+      "id": "f01_min_price_rejected",
+      "module": "core.sl_tp_pnl",
+      "area": "money_management",
+      "file": "core/sl_tp_pnl.py",
+      "original": "    if s <= 0 or entry < MIN_PRICE or close < MIN_PRICE or comm < 0:",
+      "mutated": "    if s <= 0 or entry <= MIN_PRICE or close <= MIN_PRICE or comm < 0:",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01 (Sol su 6d232f4): quota 1.01 scartata => SL di un LAY in forte perdita saltato."
+    },
+    {
       "id": "f08_ghost_lookup_error_swallowed",
       "module": "core.state_recovery",
       "area": "recovery",

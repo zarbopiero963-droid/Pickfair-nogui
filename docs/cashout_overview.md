@@ -456,8 +456,13 @@ Test: `tests/f05/` (unita' e HeadlessApp reale in SIM), mutazioni `f05_*` in `gu
 confronta SL/TP con il **netto liquidabile** della posizione (decisione owner #426 c.6112703848), calcolato da
 `core/sl_tp_pnl.py` in Decimal con la stessa funzione del cashout (`dutching.dynamic_cashout_single`):
 
-- prezzo di chiusura dal book, al lato opposto della posizione (BACK => miglior `availableToLay`, LAY => miglior
-  `availableToBack`); mai `lastPriceTraded`;
+- prezzo di chiusura dal book, al lato opposto della posizione (BACK => `availableToLay`, LAY => `availableToBack`),
+  **con la profondita'**: si scorrono i livelli finche' la size cumulata copre l'hedge (`stake*ingresso/prezzo`) e si
+  usa il prezzo del livello piu' profondo necessario; mai `lastPriceTraded` (`sl_tp_pnl.closing_quote`);
+- il TP scatta solo se il book basta a chiudere l'intera posizione (profitto liquidabile); lo SL, chiusura
+  protettiva (PF-EXEC-03), scatta anche con book insufficiente: la perdita sull'ultimo livello e' un limite inferiore;
+- la quota minima 1.01 e' valida (stessa formula del cashout, calcolata qui anche dove `dynamic_cashout_single`
+  la rifiuta);
 - stake reale della gamba: `meta["stake"]`, altrimenti BACK = esposizione e LAY = liability/(prezzo-1);
 - commissione di policy del cashout (`BETFAIR_ITALY_COMMISSION_PCT`), solo sul netto positivo;
 - input non validi (NaN/inf/non numerici, book vuoto) o calcolo che solleva => nessuna decisione (fail-closed).

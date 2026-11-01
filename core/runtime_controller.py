@@ -6824,8 +6824,12 @@ class RuntimeController:
             if not runner:
                 continue
             side = str(meta.get("bet_type") or "BACK").upper()
-            close = sl_tp_pnl.closing_price(runner, side)
             stake = sl_tp_pnl.position_stake(side, meta, table.current_exposure)
+            quote = sl_tp_pnl.closing_quote(runner, side, stake, meta.get("price"))
+            if quote is None:
+                continue                        # book illeggibile o vuoto: nessuna decisione (fail-closed)
+            # covered=False: il book non basta a chiudere tutta la posizione a quel prezzo (Sol su 6d232f4)
+            close, covered = quote
             # Commissione di policy del cashout (la stessa che `dynamic_cashout_single` applica all'hedge reale):
             # una commissione di configurazione diversa farebbe sollevare la funzione del cashout nell'handler.
             try:
@@ -6839,7 +6843,9 @@ class RuntimeController:
             tp_d = sl_tp_pnl.to_decimal(tp) if tp is not None else None
             if sl_d is not None and pnl <= -abs(sl_d):
                 self._trigger_auto_close_table(table, "STOP_LOSS_REACHED", float(pnl))
-            elif tp_d is not None and pnl >= abs(tp_d):
+            # TP solo su profitto LIQUIDABILE per intero; lo SL (chiusura protettiva, PF-EXEC-03) scatta anche con book
+            # insufficiente: la perdita calcolata sull'ultimo livello disponibile e' un limite inferiore di quella reale.
+            elif tp_d is not None and covered and pnl >= abs(tp_d):
                 self._trigger_auto_close_table(table, "TAKE_PROFIT_REACHED", float(pnl))
 
     def _trigger_auto_close_table(self, table, reason: str, pnl: float) -> None:
