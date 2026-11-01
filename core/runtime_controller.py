@@ -6846,8 +6846,12 @@ class RuntimeController:
                 self._trigger_auto_close_table(table, "STOP_LOSS_REACHED", float(pnl))
             # TP solo su profitto LIQUIDABILE per intero; lo SL (chiusura protettiva, PF-EXEC-03) scatta anche con book
             # insufficiente: il residuo non coperto e' valutato all'ultimo livello disponibile.
-            elif tp_d is not None and covered and pnl >= abs(tp_d):
-                self._trigger_auto_close_table(table, "TAKE_PROFIT_REACHED", float(pnl))
+            # Il TP confronta il netto dell'esito PEGGIORE sulle gambe arrotondate (profitto garantito, Sol su f1de646).
+            elif tp_d is not None and covered:
+                tp_pnl = sl_tp_pnl.liquidable_pnl_legs(side, stake, meta.get("price"), legs,
+                                                       BETFAIR_ITALY_COMMISSION_PCT, guaranteed=True)
+                if tp_pnl is not None and tp_pnl >= abs(tp_d):
+                    self._trigger_auto_close_table(table, "TAKE_PROFIT_REACHED", float(tp_pnl))
 
     def _trigger_auto_close_table(self, table, reason: str, pnl: float) -> None:
         logger.info(f"[RuntimeController] Auto-closing table {table.table_id} reason={reason} pnl={pnl:.2f}")

@@ -403,6 +403,18 @@
       "rationale": "F-01 (Codex P2 e Sol su abfd2ed): livelli del book non pesati al proprio prezzo => copertura e P&L falsi (TP/SL spuri)."
     },
     {
+      "id": "f01_tp_uses_average_not_guaranteed",
+      "module": "core.sl_tp_pnl",
+      "area": "money_management",
+      "file": "core/sl_tp_pnl.py",
+      "original": "    green = min(if_win, if_lose) if guaranteed else _round_step((if_win + if_lose) / Decimal(\"2\"))",
+      "mutated": "    green = _round_step((if_win + if_lose) / Decimal(\"2\"))",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01 (Sol su f1de646): TP sulla media degli esiti invece del profitto garantito (gamba arrotondata a zero)."
+    },
+    {
       "id": "f08_ghost_lookup_error_swallowed",
       "module": "core.state_recovery",
       "area": "recovery",

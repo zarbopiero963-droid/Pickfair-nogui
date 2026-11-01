@@ -98,12 +98,15 @@ def liquidable_pnl(side: str, stake: Any, entry_price: Any, close_price: Any, co
     return liquidable_pnl_legs(side, s, entry, [(close, _round_step(s * entry / close))], commission_pct)
 
 
-def liquidable_pnl_legs(side: str, stake: Any, entry_price: Any, legs: Any, commission_pct: Any) -> Optional[Decimal]:
+def liquidable_pnl_legs(side: str, stake: Any, entry_price: Any, legs: Any, commission_pct: Any,
+                        guaranteed: bool = False) -> Optional[Decimal]:
     """Netto liquidabile (2 decimali) chiudendo la posizione con le gambe di hedge ``[(prezzo, size), ...]``.
 
     Esiti della posizione + hedge (LAY chiuso in BACK, BACK chiuso in LAY), green-up = media dei due esiti
     arrotondati, commissione di policy sul netto positivo: con una sola gamba coincide con
-    ``dutching.dynamic_cashout_single``. Input non valido => ``None`` (il monitor non decide: fail-closed)."""
+    ``dutching.dynamic_cashout_single``. ``guaranteed=True`` (per il TP) restituisce invece il netto dell'esito
+    PEGGIORE: con le size arrotondate gli esiti possono divergere (Sol su f1de646: LAY 10@1.60 + 2@1000, ultima gamba
+    0.00 => esiti +4/0, la media +1.91 non e' un profitto garantito). Input non valido => ``None`` (fail-closed)."""
     side_u = str(side or "").upper()
     s, entry, comm = to_decimal(stake), to_decimal(entry_price), to_decimal(commission_pct)
     if side_u not in ("BACK", "LAY") or None in (s, entry, comm) or not isinstance(legs, list) or not legs:
@@ -129,5 +132,6 @@ def liquidable_pnl_legs(side: str, stake: Any, entry_price: Any, legs: Any, comm
         if_win, if_lose = hedge_win - s * (entry - one), s - hedge_total
     else:
         if_win, if_lose = s * (entry - one) - hedge_win, hedge_total - s
-    green = _round_step((_round_step(if_win) + _round_step(if_lose)) / Decimal("2"))
+    if_win, if_lose = _round_step(if_win), _round_step(if_lose)
+    green = min(if_win, if_lose) if guaranteed else _round_step((if_win + if_lose) / Decimal("2"))
     return _round_step(_apply_commission(green, _resolve_policy_commission_pct(comm))).quantize(CENT)

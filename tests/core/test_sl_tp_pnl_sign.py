@@ -192,6 +192,30 @@ def test_no_spurious_stop_loss_from_a_thin_deeper_level():
     assert _closes(rc) == [], "stop-loss spurio su posizione liquidabile in profitto"
 
 
+def test_take_profit_uses_the_guaranteed_profit_not_the_average():
+    # Sol su f1de646: BACK 10 a 2.0, LAY 10 a 1.60 (copre 16) + 2 a 1000 (servono 0.004 => 0.00 arrotondato).
+    # Esiti +4.00 / 0.00: la media (+1.91 netto) non e' liquidabile come profitto; garantito = 0.00 => TP 1.5 fermo.
+    from core.sl_tp_pnl import closing_legs, liquidable_pnl_legs
+    runner = _ladder_book([(1.58, 100)], [(1.60, 10), (1000, 2)])["runners"][0]
+    legs, covered = closing_legs(runner, "BACK", D("10"), D("2.0"))
+    assert liquidable_pnl_legs("BACK", D("10"), D("2.0"), legs, D("4.5")) == D("1.91")
+    assert liquidable_pnl_legs("BACK", D("10"), D("2.0"), legs, D("4.5"), guaranteed=True) == D("0.00")
+    rc = _controller(_table("BACK", 2.0, 10.0, tp=1.5))
+    rc._monitor_sl_tp_trailing(_ladder_book([(1.58, 100)], [(1.60, 10), (1000, 2)]))
+    assert _closes(rc) == [], "TP su profitto non garantito (gamba finale arrotondata a zero)"
+
+
+@pytest.mark.parametrize("side,entry,close", [("BACK", "2.0", "1.6"), ("LAY", "2.0", "2.5"), ("BACK", "3.4", "2.5"),
+                                              ("LAY", "1.5", "4.1")])
+def test_guaranteed_equals_green_up_on_a_balanced_hedge(side, entry, close):
+    # su un green-up vero gli esiti coincidono al centesimo: il TP non diventa piu' severo del cashout
+    from core.sl_tp_pnl import liquidable_pnl, liquidable_pnl_legs
+    from dutching import _round_step
+    legs = [(D(close), _round_step(D("10") * D(entry) / D(close)))]
+    avg = liquidable_pnl(side, D("10"), D(entry), D(close), D("4.5"))
+    assert abs(liquidable_pnl_legs(side, D("10"), D(entry), legs, D("4.5"), guaranteed=True) - avg) <= D("0.01")
+
+
 def test_lay_closes_level_by_level_on_the_back_side():
     # LAY 10 a 3.0 (nozionale 30) chiuso in BACK: 2.0 x 10 (copre 20) + 2.5 x 100 (4.00 copre 10).
     # Esiti: vince 10*1.0 + 4*1.5 - 10*2 = -4.00, perde 10 - 14 = -4.00 => -4.00.

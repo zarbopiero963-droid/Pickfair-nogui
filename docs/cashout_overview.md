@@ -462,7 +462,8 @@ livelli del book:
   `somma(hedge_i * prezzo_i) = stake * ingresso` (`sl_tp_pnl.closing_legs`); P&L = media dei due esiti della posizione
   con quelle gambe (`sl_tp_pnl.liquidable_pnl_legs`). Applicare il prezzo del livello piu' profondo a tutta la
   posizione dichiarava coperti book che non lo erano e poteva invertire il P&L (Codex e Sol su `abfd2ed`);
-- il TP scatta solo se il book basta a chiudere l'intera posizione (profitto liquidabile); lo SL, chiusura
+- il TP scatta solo se il book basta a chiudere l'intera posizione e confronta il netto dell'esito PEGGIORE sulle
+  gambe arrotondate (profitto garantito: un'ultima gamba arrotondata a zero non conta); lo SL, chiusura
   protettiva (PF-EXEC-03), scatta anche con book insufficiente: il residuo non coperto e' valutato all'ultimo livello;
 - la quota minima 1.01 e' valida (stessa formula del cashout, calcolata qui anche dove `dynamic_cashout_single`
   la rifiuta);
