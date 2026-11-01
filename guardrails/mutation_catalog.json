@@ -7688,6 +7688,114 @@
         "tests/scripts/test_roadmap_merge_delegation.py"
       ],
       "rationale": "§0.9-ter (Codex P1 su ebdd11e): core/system_state.py (BetfairConfig, TelegramRuntimeConfig) delegabile."
+    },
+    {
+      "id": "f06_same_side_hedge_allowed",
+      "module": "core.risk_gate",
+      "area": "cashout",
+      "file": "core/risk_gate.py",
+      "original": "        if side != {\"BACK\": \"LAY\", \"LAY\": \"BACK\"}[pos]:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06: hedge dello stesso lato della posizione (la raddoppia)."
+    },
+    {
+      "id": "f06_oversized_hedge_allowed",
+      "module": "core.risk_gate",
+      "area": "cashout",
+      "file": "core/risk_gate.py",
+      "original": "        if Decimal(str(stake)) > closing:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06: hedge oltre l'esposizione abbinata (apre nuova esposizione)."
+    },
+    {
+      "id": "f06_ledger_path_skips_coherence",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "                    block = self._hedge_block(payload) or self._hedge_coherence_block(payload)",
+      "mutated": "                    block = self._hedge_block(payload)",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06: wiring reale (con ledger) senza controllo di coerenza."
+    },
+    {
+      "id": "f06_no_ledger_path_skips_coherence",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "                coherence = self._hedge_coherence_block(payload)   # F-06: stesso controllo anche senza ledger",
+      "mutated": "                coherence = \"\"",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06: executor senza ledger senza controllo di coerenza."
+    },
+    {
+      "id": "f06_previous_hedges_count_as_position",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "                    or _hedge.is_hedge_order_ref(order.get(\"customerOrderRef\") or order.get(\"customer_ref\"))):",
+      "mutated": "                    or False):",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06: hedge precedenti contati come posizione da chiudere."
+    },
+    {
+      "id": "f06_requested_price_instead_of_matched",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            price = self._as_float(order.get(\"averagePriceMatched\") or price_size.get(\"price\") or order.get(\"price\"))",
+      "mutated": "            price = self._as_float(price_size.get(\"price\") or order.get(\"price\"))",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06: esposizione al prezzo richiesto, non al prezzo medio abbinato."
+    },
+    {
+      "id": "f06_fetch_error_reads_as_flat",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            logger.exception(\"[CashoutExecutor] ordini correnti illeggibili: coerenza dell'hedge non verificabile\")\n            return None",
+      "mutated": "            logger.exception(\"[CashoutExecutor] ordini correnti illeggibili: coerenza dell'hedge non verificabile\")\n            return 1e9",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06: ordini illeggibili letti come esposizione illimitata (fail-open)."
+    },
+    {
+      "id": "f06_middleware_default_lay",
+      "module": "core.risk_middleware",
+      "area": "cashout",
+      "file": "core/risk_middleware.py",
+      "original": "                \"side\": self._cashout_side(payload.get(\"side\")),",
+      "mutated": "                \"side\": str(payload.get(\"side\", \"LAY\")).upper(),",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06 (NF-01): lato mancante defaultato a LAY."
+    },
+    {
+      "id": "f06_malformed_orders_read_as_position",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "        if not isinstance(current, (list, tuple)) or any(not isinstance(order, dict) for order in current):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06: risposta ordini malformata letta come esposizione misurata (fail-open o crash)."
     }
   ]
 }

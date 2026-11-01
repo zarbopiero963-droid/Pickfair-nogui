@@ -265,7 +265,8 @@ class CashoutExecutor:
             ledger_id = None
             if self.ledger is not None:
                 with self._ledger_lock:
-                    block = self._hedge_block(payload)
+                    # F-06: lato/size contro la posizione da chiudere, dopo il preflight degli hedge precedenti
+                    block = self._hedge_block(payload) or self._hedge_coherence_block(payload)
                     if block:
                         self._fail(block, status="REJECTED", payload=payload)
                         return
@@ -276,6 +277,11 @@ class CashoutExecutor:
                         logger.exception("[CashoutExecutor] hedge non registrabile nel ledger: nessun invio")
                         self._fail(f"ledger_write_failed:{exc}", status="REJECTED", payload=payload)
                         return
+            else:
+                coherence = self._hedge_coherence_block(payload)   # F-06: stesso controllo anche senza ledger
+                if coherence:
+                    self._fail(coherence, status="REJECTED", payload=payload)
+                    return
             # Cattura il mode SIM/LIVE IMMEDIATAMENTE prima del place: l'OrderRouter sceglie il broker via
             # get_client() all'inizio di place(), quindi catturarlo qui (nessun I/O tra questa riga e get_client)
             # riflette il broker effettivo. Rileggerlo dopo place() esporrebbe a uno switch SIM/LIVE in volo (Codex
@@ -292,6 +298,61 @@ class CashoutExecutor:
             result = result if isinstance(result, dict) else {}
             self._ledger_outcome(ledger_id, self._ledger_status(result), result, None)
             self._handle_result(result, payload, sim)
+
+    def _hedge_coherence_block(self, payload: Dict[str, Any]) -> str:
+        """F-06 (#586 CSH-05, MM-02): '' se l'hedge chiude la posizione, altrimenti ``hedge_non_coerente:<motivo>``.
+
+        La posizione e' ``original_pos`` (lato) e la sua esposizione ABBINATA sull'exchange
+        (``fetch_current_orders``: ordini non-hedge sulla stessa selezione e sullo stesso lato, ``sizeMatched`` per
+        prezzo medio abbinato): l'exchange, non il payload, misura cio' che va chiuso. Ordini illeggibili o in errore
+        => ``posizione_non_verificabile`` (nessun hedge). Senza sorgente (doppi di test) l'esposizione e' quella
+        dichiarata in ``original_pos``: la coerenza si verifica comunque, mai saltata. Il verdetto e'
+        `RiskGate.protective_hedge` (nessun cap di stake, solo lato e size)."""
+        from core.risk_gate import RiskGate
+        orig = payload.get("original_pos")
+        pos_side = str(orig.get("side") or "").strip().upper() if isinstance(orig, dict) else ""
+        if pos_side not in self._VALID_SIDES:
+            return "hedge_non_coerente:posizione_assente"
+        if self.fetch_current_orders is None:
+            notional = self._as_float(orig.get("stake")) * self._as_float(orig.get("price"))
+            notional = notional if math.isfinite(notional) else float("nan")
+        else:
+            notional = self._matched_notional(payload, pos_side)
+            if notional is None:
+                return "hedge_non_coerente:posizione_non_verificabile"
+        verdict = RiskGate.protective_hedge(position_side=pos_side, hedge_side=payload.get("side"),
+                                            hedge_stake=payload.get("stake"), hedge_price=payload.get("price"),
+                                            matched_notional=notional)
+        return "" if verdict.get("allowed") is True else str(verdict.get("reason") or "hedge_non_coerente")
+
+    def _matched_notional(self, payload: Dict[str, Any], pos_side: str) -> Optional[float]:
+        """Somma ``sizeMatched * prezzo medio abbinato`` degli ordini non-hedge della posizione; None se non leggibile."""
+        try:
+            current = self.fetch_current_orders()
+        except Exception:  # noqa: BLE001 - ordini correnti illeggibili => posizione non verificabile
+            logger.exception("[CashoutExecutor] ordini correnti illeggibili: coerenza dell'hedge non verificabile")
+            return None
+        if not isinstance(current, (list, tuple)) or any(not isinstance(order, dict) for order in current):
+            return None                                 # risposta malformata: esposizione non misurabile
+        market, selection = str(payload.get("market_id", "")), str(payload.get("selection_id", ""))
+        notional = 0.0
+        for order in current:
+            if (str(order.get("marketId") or order.get("market_id") or "") != market
+                    or str(order.get("selectionId") or order.get("selection_id") or "") != selection
+                    or str(order.get("side") or "").upper() != pos_side
+                    or _hedge.is_hedge_order_ref(order.get("customerOrderRef") or order.get("customer_ref"))):
+                continue
+            matched = self._as_float(order.get("sizeMatched", order.get("size_matched")))
+            if not math.isfinite(matched) or matched < 0.0:
+                return None
+            if matched == 0.0:
+                continue
+            price_size = order.get("priceSize") if isinstance(order.get("priceSize"), dict) else {}
+            price = self._as_float(order.get("averagePriceMatched") or price_size.get("price") or order.get("price"))
+            if not math.isfinite(price) or price <= 1.0:
+                return None
+            notional += matched * price
+        return notional
 
     @classmethod
     def _enforce_hard_invariants(cls, payload: Dict[str, Any]) -> None:
