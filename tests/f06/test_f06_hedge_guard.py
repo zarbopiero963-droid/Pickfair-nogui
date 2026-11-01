@@ -277,3 +277,24 @@ def test_same_side_matched_hedges_count_in_the_net_exposure():
               dict(_order(side="BACK", matched=1.0, ref=new_hedge_ref()), betId="H0")]
     bus, router = _run(_cmd(), orders=orders)
     assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_assente"
+
+
+@pytest.mark.parametrize("matched", [None, "", "x", "MISSING"])
+def test_unreadable_matched_size_on_any_selection_order_never_places(matched):
+    # Codex P1 su 73296a3: un LAY opposto con sizeMatched assente/non numerico diventava 0.0 e spariva dal netto
+    # (la posizione poteva essere gia' coperta) => esposizione non verificabile, nessun hedge
+    row = dict(_order(side="LAY", matched=0.23, ref="other"), betId="L1")
+    if matched == "MISSING":
+        row.pop("sizeMatched")
+    else:
+        row["sizeMatched"] = matched
+    bus, router = _run(_cmd(), orders=[_order(), row])
+    assert router.calls == []
+    assert bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_non_verificabile"
+
+
+def test_declaring_the_opposite_position_side_never_doubles_the_real_position():
+    # Grok su a16f0d3: original_pos.side e' nel payload. Posizione reale BACK 0.23@2; comando che dichiara LAY e manda
+    # un hedge BACK (stesso lato della reale): il netto sul lato dichiarato e' negativo => rifiuto, mai un raddoppio
+    bus, router = _run(_cmd(side="BACK", stake=0.23, price=2.0, orig_side="LAY"), orders=[_order()])
+    assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_assente"
