@@ -7550,12 +7550,24 @@
       "module": "scripts.pr_autonomy_policy",
       "area": "trusted_gate",
       "file": "scripts/pr_autonomy_policy.py",
-      "original": "        if line.startswith((\"+\", \"-\")):",
-      "mutated": "        if line.startswith(\"+\"):",
+      "original": "                    removed.setdefault(current or old_path, []).append(line[1:])",
+      "mutated": "                    pass",
       "tests": [
         "tests/scripts/test_roadmap_merge_delegation.py"
       ],
       "rationale": "§0.9-ter: la rimozione di una protezione di credenziale non conta per la delega."
+    },
+    {
+      "id": "pap_delegation_unparsable_patch_delegable",
+      "module": "scripts.pr_autonomy_policy",
+      "area": "trusted_gate",
+      "file": "scripts/pr_autonomy_policy.py",
+      "original": "    classification[\"delegation_credential_content\"] = ([\"<patch-unparsable>\"] if changed is None else sorted(",
+      "mutated": "    classification[\"delegation_credential_content\"] = ([] if changed is None else sorted(",
+      "tests": [
+        "tests/scripts/test_roadmap_merge_delegation.py"
+      ],
+      "rationale": "§0.9-ter (Sol su 665ecb6): patch non interpretabile trattato come privo di credenziali (fail-open)."
     },
     {
       "id": "pap_delegation_mixed_module_delegable",

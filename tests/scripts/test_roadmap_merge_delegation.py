@@ -77,6 +77,32 @@ def test_riga_che_tocca_credenziali_non_e_delegabile_anche_in_una_protezione(lin
     assert res["status"] == "READY_FOR_OWNER_MANUAL_MERGE" and "owner_delegation:area_not_delegable" in res["reasons"]
 
 
+def test_header_git_quotato_con_path_unicode_non_salta_il_controllo():
+    # Sol su 665ecb6: `git diff` mette fra virgolette i path non ASCII; il parser semplice saltava il file
+    q = '"b/core/risk_\\303\\250.py"'
+    patch = (f'diff --git "a/core/risk_\\303\\250.py" {q}\n--- "a/core/risk_\\303\\250.py"\n+++ {q}\n'
+             "@@ -1,0 +1,1 @@\n+    api_key = os.environ['K']\n")
+    changed = policy._changed_lines_by_file(patch)
+    assert changed == {"core/risk_\u00e8.py": ["    api_key = os.environ['K']"]}, changed
+    diff = _diff(["core/risk_\u00e8.py", "core/risk_gate.py", SCOPE], patch)
+    assert diff["classification"]["delegation_credential_content"] == ["core/risk_\u00e8.py"]
+    assert diff["financial_owner_delegation_eligible"] is False
+
+
+def test_patch_non_interpretabile_non_e_mai_delegabile():
+    bad = "diff --git a/core/risk_gate.py b/core/risk_gate.py\n--- a/core/risk_gate.py\n+++ b/core/risk_gate.py\n@@ -1,0 +1,3 @@\n+x\n"
+    assert policy._changed_lines_by_file(bad) is None
+    diff = _diff(["core/risk_gate.py", SCOPE], bad)
+    assert diff["classification"]["delegation_credential_content"] == ["<patch-unparsable>"]
+    assert diff["financial_owner_delegation_eligible"] is False
+
+
+def test_righe_rimosse_di_un_file_cancellato_contano():
+    patch = ("diff --git a/core/risk_gate.py b/core/risk_gate.py\ndeleted file mode 100644\n--- a/core/risk_gate.py\n"
+             "+++ /dev/null\n@@ -1,1 +0,0 @@\n-    return redact(token)\n")
+    assert policy._changed_lines_by_file(patch) == {"core/risk_gate.py": ["    return redact(token)"]}
+
+
 def test_caso_codex_system_state_app_key_non_va_in_auto_merge():
     line = "+    app_key_live: str = field(default=\"\", repr=True)"
     diff = _diff(["core/system_state.py", SCOPE], _patch("core/system_state.py", line))

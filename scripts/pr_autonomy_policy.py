@@ -259,20 +259,20 @@ DELEGATION_CREDENTIAL_CONTENT_RE = re.compile(
 )
 
 
-def _changed_lines_by_file(patch_text: str) -> dict[str, list[str]]:
-    """Righe aggiunte E rimosse per file (path `b/`), per il controllo di contenuto della delega (§0.9-ter).
-    Parser volutamente semplice: ogni dubbio rende la PR non delegabile, mai il contrario."""
-    out: dict[str, list[str]] = {}
-    current = None
-    for line in (patch_text or "").splitlines():
-        if line.startswith("diff --git "):
-            parts = line.split(" b/", 1)
-            current = parts[1] if len(parts) == 2 else None
-            continue
-        if current is None or line.startswith(("+++ ", "--- ")):
-            continue
-        if line.startswith(("+", "-")):
-            out.setdefault(current, []).append(line[1:])
+def _changed_lines_by_file(patch_text: str) -> dict[str, list[str]] | None:
+    """Righe aggiunte E rimosse per file, per il controllo di contenuto della delega (§0.9-ter).
+
+    Sol su 665ecb6: un parser semplice saltava gli header git tra virgolette (path Unicode) e il controllo falliva
+    aperto. Si riusa `_parse_patch_numbered` (header quotati decodificati, conteggi degli hunk): patch non
+    interpretabile => ``None``, che il chiamante tratta come NON delegabile (fail-closed)."""
+    removed: dict[str, list[str]] = {}
+    try:
+        added, _binary = _parse_patch_numbered(patch_text or "", removed=removed)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    out: dict[str, list[str]] = {path: [line[1:] for _, line in rows] for path, rows in added.items()}
+    for path, lines in removed.items():
+        out.setdefault(path, []).extend(lines)
     return out
 
 # Registro delle deleghe owner. Sta in questo file (a merge MANUALE dell'owner, §0.9): il merge dell'owner E' la
@@ -1337,7 +1337,8 @@ def _parse_patch(patch_text: str) -> tuple[dict[str, list[str]], set[str]]:
     return {path: [line for _, line in rows] for path, rows in numbered.items()}, binary
 
 
-def _parse_patch_numbered(patch_text: str) -> tuple[dict[str, list[tuple[int, str]]], set[str]]:
+def _parse_patch_numbered(patch_text: str, removed: dict[str, list[str]] | None = None
+                          ) -> tuple[dict[str, list[tuple[int, str]]], set[str]]:
     """Righe aggiunte per file, col numero di riga nel file NUOVO, + file binari.
 
     Parser a stati sui conteggi degli hunk (rilievo Codex #499): una riga
@@ -1348,6 +1349,7 @@ def _parse_patch_numbered(patch_text: str) -> tuple[dict[str, list[tuple[int, st
     out: dict[str, list[tuple[int, str]]] = {}
     binary: set[str] = set()
     current: str | None = None
+    old_path: str | None = None     # §0.9-ter: file delle righe RIMOSSE (anche se cancellato, `+++ /dev/null`)
     old_left = new_left = 0
     new_no = 0
     # split("\n") e non splitlines(): \r, \x0c, \x1c… dentro una riga di
@@ -1361,6 +1363,8 @@ def _parse_patch_numbered(patch_text: str) -> tuple[dict[str, list[tuple[int, st
                 new_no += 1
             elif line.startswith("-"):
                 old_left -= 1
+                if removed is not None and (current or old_path) is not None:
+                    removed.setdefault(current or old_path, []).append(line[1:])
             elif line.startswith(" "):
                 old_left -= 1
                 new_left -= 1
@@ -1373,7 +1377,11 @@ def _parse_patch_numbered(patch_text: str) -> tuple[dict[str, list[tuple[int, st
                 raise ValueError("hunk con più righe del dichiarato")
             continue
         if line.startswith("diff --git "):
-            current = None
+            current = old_path = None
+            continue
+        if line.startswith("--- "):
+            source = _unquote_git_path(line[4:].rstrip("\t").strip())
+            old_path = source[2:] if source.startswith("a/") else None
             continue
         if line.startswith("+++ "):
             target = _unquote_git_path(line[4:].rstrip("\t").strip())
@@ -1645,9 +1653,10 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
         problems.append("stdlib_list_unavailable")
     classification["live_activation"] = sorted(live_activation)
     # §0.9-ter: codice di prodotto con righe (aggiunte o rimosse) che toccano credenziali => non delegabile
-    classification["delegation_credential_content"] = sorted(
-        path for path, lines in _changed_lines_by_file(patch_text if isinstance(patch_text, str) else "").items()
-        if _is_product_path(path) and any(DELEGATION_CREDENTIAL_CONTENT_RE.search(x) for x in lines))
+    changed = _changed_lines_by_file(patch_text if isinstance(patch_text, str) else "")
+    classification["delegation_credential_content"] = (["<patch-unparsable>"] if changed is None else sorted(
+        path for path, lines in changed.items()
+        if _is_product_path(path) and any(DELEGATION_CREDENTIAL_CONTENT_RE.search(x) for x in lines)))
     status = "BLOCK" if problems else "PASS"
     if problems and set(problems) <= {"base_or_head_unknown", "patch_unreadable",
                                      "declared_scope_unknown", "stdlib_list_unavailable",
