@@ -17,7 +17,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (daily-loss LIVE, nessun secondo hedge della stessa posizione). Hedge idempotente (stessa richiesta o esito
   incerto sulla selezione => rifiuto), nessun nuovo hedge finche' il precedente sulla stessa selezione e' ancora
   abbinabile sull'exchange (`previous_hedge_still_live`) o gia' abbinato (`previous_hedge_matched`); vivacita' non
-  verificabile o ordini correnti malformati = rifiuto (Sol e Grok su #593) e riavvio
+  verificabile o ordini correnti malformati (anche senza `betId`) = rifiuto (Sol e Grok su #593); il flag `sim` del
+  `CASHOUT_SUCCESS` e' catturato subito prima dell'invio, dopo il preflight del ledger (Codex P1 su #593) e riavvio
   dopo crash (`HEDGE_PENDING` => `HEDGE_AMBIGUOUS`). `core/hedge_ref.py`; test `tests/f05/`;
   mutazioni `f05_*`; `docs/cashout_overview.md` §7.3.
 ### Added

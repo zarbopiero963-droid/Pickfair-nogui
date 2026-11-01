@@ -391,6 +391,18 @@
       "rationale": "F-05 (Grok su f5a7982): hedge precedente gia' abbinato (residuo 0) letto come cancellato => secondo hedge, sovracopertura."
     },
     {
+      "id": "f05_current_order_without_bet_id_ignored",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "        if any(not str(order.get(\"betId\") or order.get(\"bet_id\") or \"\").strip() for order in current):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05 (Sol su 4a6a843): ordine corrente senza betId ignorato => hedge precedente letto come chiuso (fail-open)."
+    },
+    {
       "id": "f05_hedge_not_written_ahead",
       "module": "cashout_executor",
       "area": "cashout",

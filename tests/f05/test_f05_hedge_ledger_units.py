@@ -334,3 +334,39 @@ def test_unreadable_matched_size_of_the_previous_hedge_blocks(db, matched):
     ex.on_cmd_execute_cashout(_cmd(cashout_request_id="req-2"))
     assert router.calls == [] and [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == [
         "hedge_liveness_unverifiable"]
+
+
+@pytest.mark.parametrize("bad", [{}, {"betId": ""}, {"betId": None}, {"bet_id": "  "}, {"marketId": "1.222"}])
+def test_current_order_without_a_bet_id_makes_liveness_unverifiable(db, bad):
+    # Sol su 4a6a843: un ordine senza identificativo veniva ignorato e l'hedge precedente risultava chiuso
+    _first_hedge_resting(db)
+    bus, router, ex = _executor(db, _ok(bet_id="CB2"), lambda: [_live("OTHER", selection=99), bad])
+    ex.on_cmd_execute_cashout(_cmd(cashout_request_id="req-2"))
+    assert router.calls == [] and [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == [
+        "hedge_liveness_unverifiable"]
+
+
+def test_sim_flag_is_captured_after_the_ledger_preflight(db):
+    # Codex P1 su 4a6a843: il controllo dell'hedge precedente fa I/O (list_current_orders) prima del place; il mode
+    # SIM/LIVE va catturato DOPO, immediatamente prima dell'invio, altrimenti un cambio LIVE->SIM nel frattempo
+    # pubblica un CASHOUT_SUCCESS simulato con sim=False (broadcast ai follower reali).
+    class _Svc:
+        simulation = False
+
+        def is_simulation_mode(self):
+            return self.simulation
+
+    svc = _Svc()
+    _first_hedge_resting(db)
+
+    def fetch_and_switch():
+        svc.simulation = True                      # LIVE -> SIM durante il preflight
+        return [_live("OTHER", selection=99)]
+
+    bus, router = _Bus(), _Router(db, _ok(bet_id="CB2"))
+    router.service = svc
+    CashoutExecutor(bus, router, ledger=db, fetch_current_orders=fetch_and_switch).on_cmd_execute_cashout(
+        _cmd(cashout_request_id="req-2"))
+    success = [p for t, p in bus.published if t == CASHOUT_SUCCESS]
+    assert len(router.calls) == 1 and len(success) == 1
+    assert success[0]["sim"] is True, "CASHOUT_SUCCESS simulato pubblicato come LIVE (flag sim stantio)"

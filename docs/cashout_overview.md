@@ -440,7 +440,7 @@ router pubblica il nuovo hedge prima del flatten best-effort del resting); `prev
 risulta gia' abbinato (`sizeMatched > 0` con residuo 0: `listCurrentOrders` riporta l'hedge eseguito fino al
 settlement, quindi la posizione e' gia' coperta). Si ripunta solo se l'hedge precedente e' sparito dagli ordini
 correnti o e' chiuso con abbinato 0 e residuo 0; `hedge_liveness_unverifiable` se gli ordini
-correnti non si leggono, non sono una lista di ordini ben formati (`None`, envelope, elemento non-dict), la fonte manca
+correnti non si leggono, non sono una lista di ordini ben formati (`None`, envelope, elemento non-dict, ordine senza `betId`), la fonte manca
 o l'hedge precedente non ha `bet_id`; `ledger_read_failed` se il ledger non si
 legge. Un hedge `HEDGE_FAILED` (mai piazzato) non blocca.
 

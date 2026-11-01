@@ -194,6 +194,11 @@ class CashoutExecutor:
         if not isinstance(current, (list, tuple)) or not all(isinstance(order, dict) for order in current):
             logger.error("[CashoutExecutor] ordini correnti malformati (%s): nessun nuovo hedge", type(current).__name__)
             return "hedge_liveness_unverifiable"
+        # Sol su 4a6a843: un ordine senza identificativo leggibile non si puo' escludere dall'insieme degli hedge
+        # precedenti => la risposta non prova nulla.
+        if any(not str(order.get("betId") or order.get("bet_id") or "").strip() for order in current):
+            logger.error("[CashoutExecutor] ordine corrente senza betId: vivacita' dell'hedge precedente ignota")
+            return "hedge_liveness_unverifiable"
         for order in current:
             bid = str(order.get("betId") or order.get("bet_id") or "").strip()
             if bid not in bet_ids:
@@ -244,12 +249,6 @@ class CashoutExecutor:
             self._fail(f"campo_mancante:{exc}", status="REJECTED", payload=payload)
             return
 
-        # Cattura il mode SIM/LIVE PRIMA del place: l'OrderRouter sceglie il
-        # broker via get_client() all'inizio di place(), quindi catturarlo qui
-        # (nessun I/O tra questa riga e get_client) riflette il broker effettivo.
-        # Rileggerlo dopo place() esporrebbe a uno switch SIM/LIVE in volo (la
-        # finestra della chiamata di rete) → flag sim errato (Codex P2).
-        sim = self._is_simulation()
         operation = self.authority_operation
         stack = contextlib.ExitStack()
         try:
@@ -277,6 +276,12 @@ class CashoutExecutor:
                         logger.exception("[CashoutExecutor] hedge non registrabile nel ledger: nessun invio")
                         self._fail(f"ledger_write_failed:{exc}", status="REJECTED", payload=payload)
                         return
+            # Cattura il mode SIM/LIVE IMMEDIATAMENTE prima del place: l'OrderRouter sceglie il broker via
+            # get_client() all'inizio di place(), quindi catturarlo qui (nessun I/O tra questa riga e get_client)
+            # riflette il broker effettivo. Rileggerlo dopo place() esporrebbe a uno switch SIM/LIVE in volo (Codex
+            # P2); catturarlo prima del preflight del ledger (write-ahead, list_current_orders) idem (Codex P1 su
+            # 4a6a843): un CASHOUT_SUCCESS simulato con sim=False verrebbe trasmesso ai follower reali.
+            sim = self._is_simulation()
             try:
                 result = self.order_router.place(place_payload)
             except Exception as exc:  # noqa: BLE001 - esito ignoto => fail-closed
