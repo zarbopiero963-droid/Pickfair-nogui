@@ -69,13 +69,18 @@ class CashoutExecutor:
     def __init__(self, bus: Any, order_router: Any, safety_layer: Optional[Any] = None,
                  authority_check: Optional[Callable[[], str]] = None,
                  authority_operation: Optional[Callable[[], Any]] = None,
-                 ledger: Optional[Any] = None) -> None:
+                 ledger: Optional[Any] = None,
+                 fetch_current_orders: Optional[Callable[[], Any]] = None) -> None:
         self.bus = bus
         # F-05 (CSH-06): ledger `orders` del bot (Database). Con il ledger l'hedge e' scritto PRIMA dell'invio
         # (write-ahead) e aggiornato con l'esito; senza (doppi di test) il comportamento resta quello di prima.
         self.ledger = ledger
         # controllo d'idempotenza + write-ahead atomici rispetto ai worker concorrenti del bus
         self._ledger_lock = threading.Lock()
+        # F-05 (Sol su 59c7eca): ordini correnti dell'exchange (``BetfairService.list_current_orders``) per sapere se
+        # un hedge precedente sulla stessa selezione e' ancora abbinabile. Assente o in errore => nessun nuovo hedge
+        # finche' ne esiste uno precedente non chiuso (fail-closed).
+        self.fetch_current_orders = fetch_current_orders
         self.order_router = order_router
         self.safety_layer = safety_layer
         self.authority_check = authority_check
@@ -126,7 +131,7 @@ class CashoutExecutor:
 
     def _hedge_rows(self) -> list:
         rows = self.ledger._execute(
-            "SELECT id, customer_ref, status, payload_json FROM orders WHERE customer_ref LIKE 'hedge:%'",
+            "SELECT id, customer_ref, status, payload_json, response_json FROM orders WHERE customer_ref LIKE 'hedge:%'",
             fetch=True, commit=False) or []
         out = []
         for raw in rows:
@@ -135,8 +140,13 @@ class CashoutExecutor:
                 payload = json.loads(row.get("payload_json") or "{}")
             except (TypeError, ValueError):
                 payload = {}
+            try:
+                response = json.loads(row.get("response_json") or "{}")
+            except (TypeError, ValueError):
+                response = {}
             out.append({"id": str(row.get("id")), "customer_ref": str(row.get("customer_ref") or ""),
-                        "status": str(row.get("status") or ""), "payload": payload if isinstance(payload, dict) else {}})
+                        "status": str(row.get("status") or ""), "payload": payload if isinstance(payload, dict) else {},
+                        "response": response if isinstance(response, dict) else {}})
         return out
 
     def _hedge_block(self, payload: Dict[str, Any]) -> str:
@@ -144,6 +154,10 @@ class CashoutExecutor:
         - stessa ``cashout_request_id`` gia' con un hedge non fallito => duplicato, mai un secondo hedge;
         - un hedge con esito incerto (PENDING/AMBIGUOUS) sulla stessa selezione => nessun nuovo hedge finche' non e'
           riconciliato (esito ignoto: mai retry);
+        - un hedge accettato (UNMATCHED/PLACED) sulla stessa selezione ancora abbinabile sull'exchange
+          (``sizeRemaining > 0``) => nessun nuovo hedge finche' la sua cancellazione non e' confermata (PF-EXEC-01;
+          Sol su 59c7eca: il router pubblica il nuovo hedge prima del flatten best-effort del resting); vivacita' non
+          verificabile => rifiuto;
         - ledger illeggibile => rifiuto (fail-closed)."""
         try:
             rows = self._hedge_rows()
@@ -159,6 +173,35 @@ class CashoutExecutor:
             if (status in (_hedge.HEDGE_PENDING, _hedge.HEDGE_AMBIGUOUS)
                     and str(p.get("market_id", "")) == market and str(p.get("selection_id", "")) == selection):
                 return "hedge_outcome_uncertain"
+        accepted = [row for row in rows
+                    if row["status"] in (_hedge.HEDGE_UNMATCHED, _hedge.HEDGE_PLACED)
+                    and str(row["payload"].get("market_id", "")) == market
+                    and str(row["payload"].get("selection_id", "")) == selection]
+        return self._previous_hedge_block(accepted) if accepted else ""
+
+    def _previous_hedge_block(self, accepted: list) -> str:
+        """'' se nessuno degli hedge accettati sulla selezione e' ancora abbinabile sull'exchange."""
+        bet_ids = {str(row["response"].get("bet_id") or "").strip() for row in accepted}
+        if "" in bet_ids or self.fetch_current_orders is None:
+            return "hedge_liveness_unverifiable"        # hedge senza betId o nessuna fonte: non dimostrabile chiuso
+        try:
+            current = list(self.fetch_current_orders() or [])
+        except Exception:  # noqa: BLE001 - ordini correnti illeggibili => nessun nuovo hedge (fail-closed)
+            logger.exception("[CashoutExecutor] ordini correnti illeggibili: vivacita' dell'hedge precedente ignota")
+            return "hedge_liveness_unverifiable"
+        for order in current:
+            if not isinstance(order, dict):
+                continue
+            bid = str(order.get("betId") or order.get("bet_id") or "").strip()
+            if bid not in bet_ids:
+                continue
+            raw = order.get("sizeRemaining", order.get("size_remaining"))
+            try:
+                remaining = float(raw)
+            except (TypeError, ValueError):
+                return "previous_hedge_still_live"      # residuo illeggibile: vivo fino a prova contraria
+            if not math.isfinite(remaining) or remaining > 0.0:
+                return "previous_hedge_still_live"
         return ""
 
     def on_cmd_execute_cashout(self, payload: Dict[str, Any]) -> None:

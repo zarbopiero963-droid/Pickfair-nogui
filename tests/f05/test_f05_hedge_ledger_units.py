@@ -222,3 +222,70 @@ def test_concurrent_duplicate_commands_place_exactly_one_hedge(db):
         t.join()
     assert len(router.calls) == 1, f"{len(router.calls)} hedge per lo stesso comando"
     assert len(_rows(db)) == 1
+
+
+# --- Sol su 59c7eca (#593): un hedge precedente ancora vivo sull'exchange blocca un nuovo hedge sulla selezione ---
+# Percorso reale: il primo hedge resta a riposo (HEDGE_UNMATCHED, CASHOUT_FAILED), l'operatore rimanda il CASHOUT con
+# un nuovo cashout_request_id, il router pubblica il nuovo hedge PRIMA del flatten best-effort del resting: senza
+# questo blocco due hedge abbinabili sovracoprono la posizione (PF-EXEC-01: si ripunta solo dopo cancellazione
+# confermata).
+
+def _live(bet_id, remaining=4.0, market="1.222", selection=55):
+    return {"betId": bet_id, "bet_id": bet_id, "marketId": market, "selectionId": selection,
+            "sizeMatched": 0.0, "sizeRemaining": remaining}
+
+
+def _executor(db, result, fetch):
+    bus, router = _Bus(), _Router(db, result)
+    return bus, router, CashoutExecutor(bus, router, ledger=db, fetch_current_orders=fetch)
+
+
+def _first_hedge_resting(db):
+    _, _, ex = _executor(db, {"placed": True, "matched": 0.0, "bet_id": "R1"}, lambda: [])
+    ex.on_cmd_execute_cashout(_cmd())
+    assert [r["status"] for r in _rows(db)] == [H.HEDGE_UNMATCHED]
+
+
+def test_resting_hedge_still_live_blocks_a_new_hedge_on_the_same_selection(db):
+    _first_hedge_resting(db)
+    bus, router, ex = _executor(db, _ok(bet_id="CB2"), lambda: [_live("R1")])
+    ex.on_cmd_execute_cashout(_cmd(cashout_request_id="req-2"))
+    assert router.calls == [], "secondo hedge con il primo ancora abbinabile sull'exchange"
+    assert [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == ["previous_hedge_still_live"]
+
+
+def test_new_hedge_is_allowed_once_the_resting_hedge_is_gone(db):
+    _first_hedge_resting(db)
+    bus, router, ex = _executor(db, _ok(bet_id="CB2"), lambda: [_live("OTHER", selection=99)])
+    ex.on_cmd_execute_cashout(_cmd(cashout_request_id="req-2"))
+    assert len(router.calls) == 1 and CASHOUT_SUCCESS in bus.topics(), "hedge precedente cancellato: si ripunta"
+
+
+def test_unverifiable_liveness_of_a_previous_hedge_means_no_new_hedge(db):
+    _first_hedge_resting(db)
+
+    def boom():
+        raise RuntimeError("LIVE_BLOCKED_SESSION_INVALID")
+    for fetch in (boom, None):
+        bus, router, ex = _executor(db, _ok(bet_id="CB2"), fetch)
+        ex.on_cmd_execute_cashout(_cmd(cashout_request_id="req-2"))
+        assert router.calls == [] and [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == [
+            "hedge_liveness_unverifiable"]
+
+
+def test_previous_hedge_on_another_selection_never_blocks(db):
+    _first_hedge_resting(db)
+    bus, router, ex = _executor(db, _ok(bet_id="CB2"), None)
+    ex.on_cmd_execute_cashout(_cmd(cashout_request_id="req-2", selection_id=77))
+    assert len(router.calls) == 1
+
+
+@pytest.mark.parametrize("remaining", [None, "x", float("nan"), float("inf")])
+def test_unreadable_remaining_size_of_the_previous_hedge_counts_as_live(db, remaining):
+    _first_hedge_resting(db)
+    row = _live("R1")
+    row["sizeRemaining"] = remaining
+    bus, router, ex = _executor(db, _ok(bet_id="CB2"), lambda: [row])
+    ex.on_cmd_execute_cashout(_cmd(cashout_request_id="req-2"))
+    assert router.calls == [] and [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == [
+        "previous_hedge_still_live"]

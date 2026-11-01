@@ -15,7 +15,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Gli stati `HEDGE_*` restano fuori dagli ordini aperti (nessun tavolo fantasma, nessun PAUSED); settlement e
   posizione singola escludono i ref `hedge:` (nessun doppio P&L); l'identita' I1 include la bet dell'hedge
   (daily-loss LIVE, nessun secondo hedge della stessa posizione). Hedge idempotente (stessa richiesta o esito
-  incerto sulla selezione => rifiuto) e riavvio dopo crash (`HEDGE_PENDING` => `HEDGE_AMBIGUOUS`). `core/hedge_ref.py`; test `tests/f05/`;
+  incerto sulla selezione => rifiuto), nessun nuovo hedge finche' il precedente sulla stessa selezione e' ancora
+  abbinabile sull'exchange (`previous_hedge_still_live`, vivacita' non verificabile = rifiuto; Sol su #593) e riavvio
+  dopo crash (`HEDGE_PENDING` => `HEDGE_AMBIGUOUS`). `core/hedge_ref.py`; test `tests/f05/`;
   mutazioni `f05_*`; `docs/cashout_overview.md` §7.3.
 ### Added
 - **F-33 (#586) — harness full-scope di collaudo (solo test e tooling, GO-IMPLEMENT-LOCAL owner 29/10/2026):**

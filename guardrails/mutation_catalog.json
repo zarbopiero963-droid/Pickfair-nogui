@@ -343,6 +343,30 @@
       "rationale": "F-05: hedge in volo al crash resta PENDING senza riconciliazione dopo il riavvio."
     },
     {
+      "id": "f05_resting_hedge_not_checked",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "        return self._previous_hedge_block(accepted) if accepted else \"\"",
+      "mutated": "        return \"\"",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05 (Sol su #593): un hedge precedente ancora abbinabile sulla stessa selezione non blocca un nuovo hedge (sovracopertura)."
+    },
+    {
+      "id": "f05_unreadable_remaining_counts_as_closed",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            if not math.isfinite(remaining) or remaining > 0.0:",
+      "mutated": "            if remaining > 0.0:",
+      "tests": [
+        "tests/f05/test_f05_hedge_ledger_units.py"
+      ],
+      "rationale": "F-05: residuo NaN/inf dell'hedge precedente letto come chiuso (fail-open) => secondo hedge."
+    },
+    {
       "id": "f05_hedge_not_written_ahead",
       "module": "cashout_executor",
       "area": "cashout",

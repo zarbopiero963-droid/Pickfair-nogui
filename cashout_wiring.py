@@ -90,7 +90,9 @@ def cabla_catena_cashout(
     cashout_executor = CashoutExecutor(bus, order_router, safety_layer=SafetyLayer(),
                                        authority_check=runtime_authority_check,
                                        authority_operation=runtime_authority_operation,
-                                       ledger=ledger)            # F-05: hedge scritto nel ledger `orders`
+                                       ledger=ledger,            # F-05: hedge scritto nel ledger `orders`
+                                       # F-05: hedge precedente ancora abbinabile => nessun nuovo hedge
+                                       fetch_current_orders=lambda: betfair_service.list_current_orders())
     cashout_executor.wire()
 
     cashout_request_bridge = CashoutRequestBridge(bus)

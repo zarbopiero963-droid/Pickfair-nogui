@@ -433,7 +433,12 @@ vede, e ingresso + hedge sulla stessa selezione formano una posizione MISTA che 
 **Idempotenza.** Prima del write-ahead, sotto un lock (i worker del bus sono concorrenti), l'executor rifiuta con
 `REJECTED`: `duplicate_cashout_request` se la stessa `cashout_request_id` ha gia' un hedge non `HEDGE_FAILED`;
 `hedge_outcome_uncertain` se sulla stessa selezione c'e' un hedge `HEDGE_PENDING`/`HEDGE_AMBIGUOUS` (esito ignoto:
-mai retry); `ledger_read_failed` se il ledger non si legge. Un hedge `HEDGE_FAILED` (mai piazzato) non blocca.
+mai retry); `previous_hedge_still_live` se sulla stessa selezione un hedge `HEDGE_UNMATCHED`/`HEDGE_PLACED` e' ancora
+abbinabile sull'exchange (`sizeRemaining > 0` negli ordini correnti di `BetfairService.list_current_orders`, residuo
+illeggibile o non finito = vivo): si ripunta solo dopo la cancellazione confermata del precedente (PF-EXEC-01; il
+router pubblica il nuovo hedge prima del flatten best-effort del resting); `hedge_liveness_unverifiable` se gli ordini
+correnti non si leggono, la fonte manca o l'hedge precedente non ha `bet_id`; `ledger_read_failed` se il ledger non si
+legge. Un hedge `HEDGE_FAILED` (mai piazzato) non blocca.
 
 **Riavvio dopo un crash.** `CashoutExecutor.wire()` marca `HEDGE_AMBIGUOUS` (`ambiguity_reason=restart_before_outcome`)
 ogni riga `HEDGE_PENDING` del processo precedente: l'hedge puo' essere sull'exchange, quindi riconciliazione manuale,
