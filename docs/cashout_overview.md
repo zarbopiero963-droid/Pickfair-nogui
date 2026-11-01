@@ -450,6 +450,32 @@ nessun nuovo hedge sulla selezione e nessun ingresso aperto fantasma. Limite res
 di queste righe contro `listCurrentOrders` (LIVE non riporta il `customerOrderRef`) e' un follow-up.
 Test: `tests/f05/` (unita' e HeadlessApp reale in SIM), mutazioni `f05_*` in `guardrails/mutation_catalog.json`.
 
+### 7.4 P&L del monitor SL/TP (F-01, CSH-01/CSH-10)
+
+`RuntimeController._monitor_sl_tp_trailing` (inerte fino a F-02: nessuna sorgente SL/TP nei meta dei tavoli)
+confronta SL/TP con il **netto liquidabile** della posizione (decisione owner #426 c.6112703848), calcolato da
+`core/sl_tp_pnl.py` in Decimal con la stessa formula del cashout (`dutching.dynamic_cashout_single`), estesa a piu'
+livelli del book:
+
+- hedge al lato opposto della posizione (BACK => `availableToLay`, LAY => `availableToBack`), mai `lastPriceTraded`,
+  **consumato livello per livello, ognuno al proprio prezzo e fino alla propria size**, finche'
+  `somma(hedge_i * prezzo_i) = stake * ingresso` (`sl_tp_pnl.closing_legs`); P&L = media dei due esiti della posizione
+  con quelle gambe (`sl_tp_pnl.liquidable_pnl_legs`). Applicare il prezzo del livello piu' profondo a tutta la
+  posizione dichiarava coperti book che non lo erano e poteva invertire il P&L (Codex e Sol su `abfd2ed`);
+- il TP scatta solo se il book basta a chiudere l'intera posizione e confronta il netto dell'esito PEGGIORE sulle
+  gambe arrotondate (profitto garantito: un'ultima gamba arrotondata a zero non conta); lo SL, chiusura
+  protettiva (PF-EXEC-03), scatta anche con book insufficiente: il residuo non coperto e' valutato all'ultimo livello;
+- la quota minima 1.01 e' valida (stessa formula del cashout, calcolata qui anche dove `dynamic_cashout_single`
+  la rifiuta);
+- stake reale della gamba: `meta["stake"]`, altrimenti BACK = esposizione e LAY = liability/(prezzo-1);
+- commissione di policy del cashout (`BETFAIR_ITALY_COMMISSION_PCT`), solo sul netto positivo;
+- input non validi (NaN/inf/non numerici, book vuoto) o calcolo che solleva => nessuna decisione (fail-closed).
+
+Esempi (stake 10, ingresso 2.0, commissione 4.5 %): BACK chiuso in LAY a 2.5 => -2.00, a 1.6 => +2.39;
+LAY chiuso in BACK a 2.5 => +1.91, a 1.6 => -2.50; LAY con liability 10 a 3.0 (stake 5) chiuso a 4.0 => +1.19.
+Su piu' livelli: BACK chiuso con LAY 12 a 1.60 + 1 a 2.50 => 12 a 1.60 + 0.32 a 2.50, netto +2.22 (non -2.00).
+Prima il BACK aveva il segno invertito (una perdita sembrava profitto). Test: `tests/core/test_sl_tp_pnl_sign.py`.
+
 ---
 
 ## 8. Limiti noti & possibili aggiunte (follow-up)

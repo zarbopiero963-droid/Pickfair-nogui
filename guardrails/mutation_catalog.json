@@ -319,6 +319,102 @@
       "rationale": "Esito ignoto dell'hedge riportato come fallimento (ritentabile)."
     },
     {
+      "id": "f01_sl_sign_inverted",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if sl_d is not None and pnl <= -abs(sl_d):",
+      "mutated": "            if sl_d is not None and pnl >= abs(sl_d):",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01 (CSH-01): SL valutato con il segno invertito (una perdita non lo fa scattare)."
+    },
+    {
+      "id": "f01_closing_side_swapped",
+      "module": "core.sl_tp_pnl",
+      "area": "money_management",
+      "file": "core/sl_tp_pnl.py",
+      "original": "    ladder = ex.get(\"availableToLay\") if str(side).upper() == \"BACK\" else ex.get(\"availableToBack\")",
+      "mutated": "    ladder = ex.get(\"availableToBack\") if str(side).upper() == \"BACK\" else ex.get(\"availableToLay\")",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01: prezzo di chiusura preso dal lato sbagliato del book (P&L non liquidabile)."
+    },
+    {
+      "id": "f01_lay_stake_is_liability",
+      "module": "core.sl_tp_pnl",
+      "area": "money_management",
+      "file": "core/sl_tp_pnl.py",
+      "original": "    if str(side).upper() == \"BACK\":",
+      "mutated": "    if True:",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01 (CSH-10): stake del LAY = liability (P&L sovrastimato di (p-1) volte)."
+    },
+    {
+      "id": "f01_tp_ignores_depth",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            elif tp_d is not None and covered:",
+      "mutated": "            elif tp_d is not None:",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01 (Sol su 6d232f4): TP su profitto non liquidabile per profondita' insufficiente del book."
+    },
+    {
+      "id": "f01_depth_always_covered",
+      "module": "core.sl_tp_pnl",
+      "area": "money_management",
+      "file": "core/sl_tp_pnl.py",
+      "original": "        if size >= need:",
+      "mutated": "        if True:",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01: la profondita' del book non viene verificata (miglior prezzo con size irrisoria)."
+    },
+    {
+      "id": "f01_min_price_rejected",
+      "module": "core.sl_tp_pnl",
+      "area": "money_management",
+      "file": "core/sl_tp_pnl.py",
+      "original": "        if price is None or price < MIN_PRICE or size is None or size < 0:",
+      "mutated": "        if price is None or price <= MIN_PRICE or size is None or size < 0:",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01 (Sol su 6d232f4): quota 1.01 scartata => SL di un LAY in forte perdita saltato."
+    },
+    {
+      "id": "f01_levels_not_weighted_by_price",
+      "module": "core.sl_tp_pnl",
+      "area": "money_management",
+      "file": "core/sl_tp_pnl.py",
+      "original": "            residual -= size * price            # ogni livello copre size * il PROPRIO prezzo",
+      "mutated": "            residual -= size",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01 (Codex P2 e Sol su abfd2ed): livelli del book non pesati al proprio prezzo => copertura e P&L falsi (TP/SL spuri)."
+    },
+    {
+      "id": "f01_tp_uses_average_not_guaranteed",
+      "module": "core.sl_tp_pnl",
+      "area": "money_management",
+      "file": "core/sl_tp_pnl.py",
+      "original": "    green = min(if_win, if_lose) if guaranteed else _round_step((if_win + if_lose) / Decimal(\"2\"))",
+      "mutated": "    green = _round_step((if_win + if_lose) / Decimal(\"2\"))",
+      "tests": [
+        "tests/core/test_sl_tp_pnl_sign.py"
+      ],
+      "rationale": "F-01 (Sol su f1de646): TP sulla media degli esiti invece del profitto garantito (gamba arrotondata a zero)."
+    },
+    {
       "id": "f08_ghost_lookup_error_swallowed",
       "module": "core.state_recovery",
       "area": "recovery",
