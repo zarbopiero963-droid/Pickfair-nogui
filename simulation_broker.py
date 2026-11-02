@@ -8,6 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.order_ref import customer_order_ref as _conforming_ref
@@ -278,6 +279,22 @@ class SimulationState:
 
 def _chiave_liquidita(market_id: str, selection_id: int, lato: str, price: float) -> str:
     return f"{market_id}|{int(selection_id)}|{lato}|{float(price):.6f}"
+
+
+_RUMORE = Decimal("1e-9")
+
+
+def _fondi_al_centesimo(cassa: float, esposizione: float, riserva: float) -> Tuple[Decimal, Decimal, Decimal]:
+    """CB-586-FI-08B (#586, P1): fondi senza deriva binaria.
+
+    Le somme interne restano float (contabilita' storica dei fill e del P&L, che al settlement puo' avere frazioni di
+    centesimo reali, es. 10,505 netto di commissione: non si toccano). Al confine si toglie SOLO il rumore binario,
+    arrotondando a 1e-9 (0.30000000000000004 -> 0.30, 9.700000000000001 -> 9.70), e il disponibile si calcola in
+    Decimal: con il bankroll pienamente impegnato da N x 0,10 e' 0,00 esatto, non -5,55e-17, quindi il verdetto di
+    rischio non dipende piu' da N."""
+    def dec(v: float) -> Decimal:
+        return Decimal(repr(float(v))).quantize(_RUMORE, rounding=ROUND_HALF_EVEN)
+    return dec(cassa), dec(esposizione), dec(riserva)
 
 
 def _fill_valido(item: Any) -> Optional[Dict[str, Any]]:
@@ -682,16 +699,18 @@ class SimulationBroker:
             except (TypeError, ValueError):
                 # Registro dei fill incoerente: fondi NON verificabili, non "zero".
                 logger.warning("Fondi SIM non verificabili: registro dei fill incoerente")
+                _, esp, riserva = _fondi_al_centesimo(0.0, esposizione, max(0.0, esposizione - abbinata))
                 return {
-                    "available": 0.0, "exposure": esposizione, "total": 0.0,
-                    "reserved_unmatched": max(0.0, esposizione - abbinata),
+                    "available": 0.0, "exposure": float(esp), "total": 0.0,
+                    "reserved_unmatched": float(riserva),
                     "error": "FILL_LEDGER_INCONSISTENT", "simulated": True,
                 }
+            totale, esp, riserva = _fondi_al_centesimo(cassa, esposizione, max(0.0, esposizione - abbinata))
             return {
-                "available": cassa - esposizione,
-                "exposure": esposizione,
-                "total": cassa,
-                "reserved_unmatched": max(0.0, esposizione - abbinata),
+                "available": float(totale - esp),
+                "exposure": float(esp),
+                "total": float(totale),
+                "reserved_unmatched": float(riserva),
                 "simulated": True,
             }
 

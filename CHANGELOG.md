@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **CB-586-FI-08B (#586, P1):** i fondi del SIM avevano una deriva binaria. Dopo 3×0,10 risultavano exposure
+  0.30000000000000004 e available 9.700000000000001. Con il bankroll pienamente impegnato il disponibile arrivava a
+  -5,55e-17, e quindi `_account_from_funds` negava gli ingressi per N = 3/6/7 ma non per N = 10. Ora
+  `get_account_funds` elimina solo il rumore (arrotondamento a 1e-9) e calcola il disponibile in Decimal: il verdetto
+  di rischio è identico per ogni N. Le frazioni di centesimo reali (per esempio un P&L netto di 10,505) restano
+  invariate. Test `tests/fi08b/`; mutazione `fi08b_funds_float_drift`.
+
 ### Changed
 - **Governance §0.9-ter (#586, owner 01/11/2026 «TEMPORARY MERGE DELEGATION — ROADMAP V2»):** delega owner
   temporanea di merge per le 33 schede della roadmap V2, registrata in `OWNER_MERGE_DELEGATIONS` di

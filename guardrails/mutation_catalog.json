@@ -21,6 +21,18 @@
   ],
   "mutations": [
     {
+      "id": "fi08b_funds_float_drift",
+      "module": "simulation_broker",
+      "area": "exposure",
+      "file": "simulation_broker.py",
+      "original": "                \"available\": float(totale - esp),",
+      "mutated": "                \"available\": cassa - esposizione,",
+      "tests": [
+        "tests/fi08b/test_sim_funds_cent_exact.py"
+      ],
+      "rationale": "CB-586-FI-08B: il disponibile in float torna a -5,55e-17 con il bankroll pienamente impegnato e il verdetto di rischio dipende da N."
+    },
+    {
       "id": "side_match_back_lay_inverted",
       "module": "simulation_broker",
       "area": "side",
