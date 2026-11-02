@@ -3360,6 +3360,24 @@
         "tests/scripts/test_pr_review_recovery.py"
       ],
       "max_files": 10
+    },
+    "pf_merge_readiness_fast_01": {
+      "description": "PF-MERGE-READINESS-FAST-01 + PF-CI-PERFORMANCE-FINAL-01 + PF-DUAL-CERTIFICATION-01 §5 (#586, merge owner: workflow e scripts/pr_*): timeout per chiamata gh, retry limitati solo su errori transitori, polling leggero e adattivo, scadenza complessiva, head cambiato, readiness_status (READY/PENDING_EXTERNAL/BLOCKED/FAILED/TIMEOUT), uscita anticipata PENDING_EXTERNAL e riattivazione event-driven (pr-readiness-retrigger.yml), LIVE_READINESS informativo. Nessun gate rimosso, nessun nuovo required check.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-merge-readiness.yml",
+        ".github/workflows/pr-readiness-retrigger.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/merge_readiness_performance.md",
+        "scripts/pr_flow_automation.py",
+        "scripts/pr_full_suite_pipeline.py",
+        "scripts/pr_readiness_retrigger.py",
+        "tests/scripts/test_merge_readiness_fast.py",
+        "tests/scripts/test_pr_flow_automation.py",
+        "tests/scripts/test_pr_readiness_retrigger.py"
+      ],
+      "max_files": 11
     }
   }
 }

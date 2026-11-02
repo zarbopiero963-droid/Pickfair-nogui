@@ -53,6 +53,10 @@ jobs:
     timeout-minutes: 120
     env:
       GH_TOKEN: ${{ github.token }}
+      # PF-MERGE-READINESS-FAST-01: ogni chiamata `gh` ha una scadenza; gli errori transitori (timeout, 5xx, rete,
+      # rate limit) si ritentano al massimo 3 volte con backoff 2 s / 4 s, poi il gate decide "API non disponibile".
+      PF_GH_CALL_TIMEOUT_SECONDS: "60"
+      PF_GH_RETRIES: "3"
       REPO: ${{ github.repository }}
       PR: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
     steps:
@@ -91,6 +95,10 @@ jobs:
             --ignore-safe-autofix \
             --wait-pending-seconds 6600 \
             --poll-seconds 15 \
+            --max-poll-seconds 60 \
+            --backoff-after-seconds 300 \
+            --deadline-seconds 6900 \
+            --pending-external-exit-after 300 \
             --output .merge-readiness/decision.json
 
           CAN_MERGE="$(jq -r '.can_merge' .merge-readiness/decision.json)"
@@ -106,6 +114,12 @@ jobs:
             echo "- ignored checks: \`$(jq '.ignored_self_checks | length' .merge-readiness/decision.json)\`"
             # PF-REVIEW-RECOVERY-01 (#550): gate Sol/Grok dai commenti grezzi, INFORMATIVO (non cambia can_merge).
             echo "- ai_review_gate: \`$(jq -r '.ai_review_gate_status // "UNKNOWN"' .merge-readiness/decision.json)\`"
+            # PF-CI-PERFORMANCE-FINAL-01: stato leggibile (solo READY = can_merge) e tempo impiegato.
+            echo "- readiness_status: \`$(jq -r '.readiness_status // "UNKNOWN"' .merge-readiness/decision.json)\`"
+            echo "- elapsed: \`$(jq -r '.readiness_elapsed_seconds // "?"' .merge-readiness/decision.json)\` s"
+            # PF-DUAL-CERTIFICATION-01: INFORMATIVO, mai requisito di merge. LIVE_READINESS_PASS != LIVE_CERTIFIED.
+            echo "- live_certification: \`$(jq -r '.live_certification // "UNKNOWN"' .merge-readiness/decision.json)\`"
+            echo "- live_readiness: \`$(jq -r '.live_readiness // "UNKNOWN"' .merge-readiness/decision.json)\`"
             echo ""
             echo "### Reasons"
             jq -r '.reasons[]? | "- " + .' .merge-readiness/decision.json
