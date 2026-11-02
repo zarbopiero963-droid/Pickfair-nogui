@@ -243,7 +243,7 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
 #: motivi di ``check_attestation`` per artefatti autentici che semplicemente non si applicano a questa decisione
 _NOT_APPLICABLE = ("WRONG_PR", "NOTHING_REVIEWED", "DIFF_TRUNCATED", "DIFF_MISMATCH", "DIFF_UNVERIFIABLE")
 #: motivi che negano il PASS
-_GATING = ("NOT_COVERED", "OPEN_BLOCKERS", "REQUIRED_", "HEAD_", "UNVERIFIED_ATTESTATION")
+_GATING = ("NOT_COVERED", "OPEN_BLOCKERS", "REQUIRED_", "HEAD_", "UNVERIFIED_ATTESTATION", "REVIEW_PENDING")
 
 
 def _emitted_at(att: Mapping[str, Any], is_pass: bool) -> float:
@@ -391,8 +391,22 @@ class GitHub:
         else:
             raise RuntimeError(f"review runs oltre {max_pages} pagine")
         return [r for r in runs if r.get("path") == workflow_path and r.get("status") == "completed"
-                and ((head_ref and r.get("head_branch") == head_ref)
-                     or any(p.get("number") == number for p in r.get("pull_requests") or []))]
+                and _run_belongs(r, number, since, head_ref)]
+
+    def pending_review_runs(self, workflow_path: str, number: int, since: str = "",
+                            head_ref: str = "") -> List[Dict[str, Any]]:
+        """Run del workflow per la PR non ancora conclusi (queued / in_progress / waiting / ...). Una review in corso
+        puo' ancora pubblicare un BLOCKERS: finche' c'e', nessun PASS (rilievo Codex P1 su #602)."""
+        file = workflow_path.rsplit("/", 1)[-1]
+        out: List[Dict[str, Any]] = []
+        for status in ("queued", "in_progress", "waiting", "requested", "pending"):
+            rows = self.json(f"/actions/workflows/{file}/runs?event={TRUSTED_EVENT}&status={status}&per_page=100"
+                             ).get("workflow_runs", [])
+            if len(rows) >= 100:
+                raise RuntimeError(f"run {status} oltre una pagina: non verificabile")
+            out += [r for r in rows if r.get("path") == workflow_path and r.get("status") != "completed"
+                    and _run_belongs(r, number, since, head_ref)]
+        return out
 
     def attestation_files(self, run_id: int) -> List[bytes]:
         return [raw for _name, raw in self.attestation_artifacts(run_id)]
@@ -433,6 +447,15 @@ class GitHub:
         return self.json(f"/commits/{sha}/check-runs?per_page=100").get("check_runs", [])
 
 
+def _run_belongs(run: Mapping[str, Any], number: int, since: str, head_ref: str) -> bool:
+    """Run della PR: elencato da GitHub in ``pull_requests``, oppure sul branch della PR e creato DOPO la sua apertura
+    (un branch riusato non porta dentro i run di una PR precedente, rilievo Codex P2 su #602)."""
+    if any(p.get("number") == number for p in run.get("pull_requests") or []):
+        return True
+    created = str(run.get("created_at") or "")
+    return bool(head_ref) and run.get("head_branch") == head_ref and (not since or (bool(created) and created >= since))
+
+
 def verify_pr(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], Signed]) -> Dict[str, Any]:
     """Raccoglie dal repository le attestazioni delle review della PR e applica ``decide``. Ogni errore => non PASS."""
     try:
@@ -443,9 +466,12 @@ def verify_pr(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], 
         commits = gh.pr_commits(number)
         pairs = []
         unpublished: List[str] = []
+        pending: List[str] = []
+        since, head_ref = str(pr.get("created_at") or ""), str(pr["head"].get("ref") or "")
         for reviewer, path in TRUSTED_REVIEW_WORKFLOWS.items():
-            for run in gh.review_runs(path, number, since=str(pr.get("created_at") or ""),
-                                      head_ref=str(pr["head"].get("ref") or "")):
+            pending += [f"REVIEW_PENDING:{reviewer}:{r['id']}"
+                        for r in gh.pending_review_runs(path, number, since=since, head_ref=head_ref)]
+            for run in gh.review_runs(path, number, since=since, head_ref=head_ref):
                 artifacts = gh.attestation_artifacts(int(run["id"]))
                 for _name, raw in artifacts:
                     pairs.append((raw, verify_signature(raw, path)))
@@ -465,13 +491,17 @@ def verify_pr(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], 
         out["passed"] = False
         out["reasons"] = list(out.get("reasons", [])) + unpublished + (
             [] if "UNVERIFIED_ATTESTATION" in out.get("reasons", []) else ["UNVERIFIED_ATTESTATION"])
+    if pending:
+        out["passed"] = False
+        out["reasons"] = list(out.get("reasons", [])) + pending
     return out
 
 
 def _still_waiting(result: Mapping[str, Any]) -> bool:
     """Vale la pena riprovare solo se manca la copertura (review ancora in corso): bloccanti, firme o API no."""
     gating = [r for r in result.get("reasons", []) if r.startswith(_GATING + ("GITHUB_API", "FORK"))]
-    return not result.get("passed") and bool(gating) and all(r.startswith("NOT_COVERED_TO_HEAD:") for r in gating)
+    return not result.get("passed") and bool(gating) and all(
+        r.startswith(("NOT_COVERED_TO_HEAD:", "REVIEW_PENDING:")) for r in gating)
 
 
 def verify_pr_waiting(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], Signed], *,

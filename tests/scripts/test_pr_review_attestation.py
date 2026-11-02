@@ -835,3 +835,41 @@ def test_a_published_review_that_cannot_be_attested_turns_the_job_red(path):
     _w, py = _workflow_python(path)
     tail = py[py.rindex("write_attestation(attempt_state"):]
     assert "sys.exit(1)" in tail.split("\n")[2], tail[:300]
+
+
+# ── Codex su #602 (e76f2e4): review in corso e branch riusati ────────────────────────────────────────────────────
+
+class _PendingAPI(_API):
+    def __init__(self, pending_status, **kw):
+        super().__init__(**kw)
+        self.pending_status = pending_status
+
+    def __call__(self, url):
+        p = url.split(f"/repos/{REPO}", 1)[1]
+        if p.startswith("/actions/workflows/") and "gpt56" in p and "&status=" in p:
+            st = p.split("&status=")[1].split("&")[0]
+            rows = [{"id": 900, "path": ".github/workflows/" + p.split("/")[3], "status": st,
+                     "pull_requests": [{"number": PR}]}] if st == self.pending_status else []
+            return 200, json.dumps({"workflow_runs": rows}).encode()
+        return super().__call__(url)
+
+
+@pytest.mark.parametrize("status", ["queued", "in_progress", "waiting"])
+def test_a_review_still_running_denies_pass_even_with_full_older_coverage(status):
+    out = _verify(_PendingAPI(status))
+    assert not out["passed"] and f"REVIEW_PENDING:gpt-6.1-sol:900" in out["reasons"]
+    assert A._still_waiting(out), "una review in corso si aspetta (entro il limite)"
+
+
+def test_no_pending_review_keeps_the_pass():
+    assert _verify(_PendingAPI("nessuno"))["passed"]
+
+
+@pytest.mark.parametrize("run,belongs", [
+    ({"head_branch": "feat", "created_at": "2026-11-01T00:00:00Z", "pull_requests": []}, False),   # PR precedente
+    ({"head_branch": "feat", "created_at": "2026-11-02T12:00:00Z", "pull_requests": []}, True),
+    ({"head_branch": "feat", "pull_requests": []}, False),                                         # data assente
+    ({"head_branch": "other", "created_at": "2026-11-01T00:00:00Z", "pull_requests": [{"number": PR}]}, True),
+])
+def test_runs_on_a_reused_branch_before_the_pr_was_opened_do_not_belong_to_it(run, belongs):
+    assert A._run_belongs(run, PR, "2026-11-02T10:00:00Z", "feat") is belongs

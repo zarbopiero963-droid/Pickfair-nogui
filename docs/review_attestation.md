@@ -46,13 +46,16 @@ rosso: se il primo tentativo non aveva pubblicato l'attestazione, il run resta s
      all'apertura della PR (oltre 20 pagine: non verificabile, mai una lista parziale). Un run appartiene alla PR se
      il suo `head_branch` è il branch della PR o se GitHub lo elenca in `pull_requests`: quel campo si svuota quando
      l'head cambia (osservato sui run di #601), quindi da solo perderebbe i range già firmati. Ciò che conta resta il
-     campo `pr` firmato;
+     campo `pr` firmato. Un run sul branch conta solo se creato dopo l'apertura della PR: un branch riusato non porta
+     dentro i run di una PR precedente;
   2. scarica gli artefatti;
   3. per ognuno, verifica la firma con
      `gh attestation verify --signer-workflow R/<workflow> --source-ref refs/heads/main --cert-oidc-issuer …`;
   4. applica `decide`;
-  5. con `--wait-seconds S` (Merge readiness: 1800) riprova ogni 60 s finché l'unico motivo è `NOT_COVERED_TO_HEAD`,
-     cioè le review sono ancora in corso. Bloccanti, firme non valide, fork o API non leggibile non si aspettano.
+  5. una review dei workflow trusted ancora in corso per la PR (queued, in_progress, waiting…) dà `REVIEW_PENDING` e
+     nega il PASS anche se la copertura più vecchia arriva all'head: può ancora pubblicare un BLOCKERS;
+  6. con `--wait-seconds S` (Merge readiness: 1800) riprova ogni 60 s finché gli unici motivi sono
+     `NOT_COVERED_TO_HEAD` o `REVIEW_PENDING`, cioè le review sono ancora in corso. Bloccanti, firme non valide, fork o API non leggibile non si aspettano.
 - `decide` accetta un'attestazione solo se valgono tutte queste condizioni:
   - firma valida, issuer GitHub, digest del file uguale;
   - evento `pull_request_target`;
