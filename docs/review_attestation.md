@@ -24,6 +24,15 @@ base, senza checkout né esecuzione del codice della PR. Dopo il commento della 
 L'attestazione si scrive solo dentro Actions. Se la scrittura fallisce, la review non conta per i gate
 (fail-closed) ma il commento resta.
 
+**Rerun di un range già revisionato.** Se firma o upload falliscono al primo giro, un rerun del workflow trova il
+`done_marker` e non richiama il modello, quindi non ripaga la review. Prima di uscire però ri-emette l'attestazione
+dal commento del bot (`github-actions[bot]`):
+- il verdetto è quello classificato allora, preso dall'ultimo tentativo valido;
+- `generated_at` è l'`updated_at` del commento;
+- `reemitted` vale `true`.
+
+Commento assente, non del bot o senza uno stato valido: nessuna attestazione.
+
 ## 3. Verifica (`scripts/pr_review_attestation.py`, unica per Merge readiness e VPS)
 - `verify-pr --repo R --pr N`:
   1. elenca i run `pull_request_target` dei workflow in allowlist per la PR, paginando fino ai run precedenti
@@ -65,6 +74,11 @@ L'attestazione si scrive solo dentro Actions. Se la scrittura fallisce, la revie
 
   Un BLOCKERS emesso dopo un PASS sullo stesso head annulla quel PASS. Un istante illeggibile blocca se il verdetto
   non è PASS e non sblocca nulla se è PASS. A parità di secondo, il PASS non sblocca.
+
+  **Artefatto non verificabile** (firma, identità, verificatore in timeout, contenuto malformato): dà
+  `UNVERIFIED_ATTESTATION` e nega il PASS anche con una copertura valida. Gli artefatti arrivano solo dai run dei
+  workflow trusted, quindi quello illeggibile potrebbe essere un BLOCKERS. Non bloccano solo gli artefatti autentici
+  che non si applicano: quelli di un'altra PR, o un PASS incompleto che semplicemente non copre.
 
   Le PR da fork e gli errori API danno sempre non PASS.
 - `verify-prelive --repo R --pr N`: il check `pf-betfair-certification` dell'app `pickfair-dedicated` deve essere

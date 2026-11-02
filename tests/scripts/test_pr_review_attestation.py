@@ -342,8 +342,9 @@ def test_review_workflow_signs_and_uploads_the_attestation(reviewer, path):
     assert sign["uses"].startswith("actions/attest-build-provenance@") and sign["with"]["subject-path"] == \
         "review-attestation.json"
     assert f'"reviewer": "{reviewer}"' in py and f'"workflow_path": "{path}"' in py
-    assert '"verdict": _verdicts.get(attempt_state, "ERROR")' in py, "verdetto non dalla classificazione"
-    assert '"generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())' in py, "formato letto da _emitted_at"
+    assert '"verdict": _verdicts.get(state, "ERROR")' in py, "verdetto non dalla classificazione"
+    assert 'write_attestation(attempt_state, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))' in py, \
+        "formato letto da _emitted_at"
     trigger = w.get("on", w.get(True))
     assert list(trigger) == ["pull_request_target"], "il workflow firmatario deve girare dal base"
 
@@ -670,3 +671,88 @@ def test_an_attestation_of_another_pr_on_the_same_branch_never_counts():
     pairs = [_pair("gpt-6.1-sol", run=1, pr=PR + 1), _pair("grok-4.7", run=2)]
     d = _decide(pairs)
     assert not d.passed and "WRONG_PR" in d.reasons
+
+
+@pytest.mark.parametrize("sig", [{"ok": False, "reason": "VERIFIER_ERROR:TimeoutExpired"}, {"digest": "0" * 64},
+                                 {"event_name": "pull_request"}, {"workflow_sha": "f" * 40}])
+def test_an_unverifiable_artifact_blocks_even_with_valid_older_coverage(sig):
+    # Codex P1 su #602 (238f78f): un artefatto dei workflow trusted che non si verifica potrebbe essere un BLOCKERS
+    pairs = [_pair("gpt-6.1-sol", run=1), _pair("gpt-6.1-sol", verdict="BLOCKERS", run=2, sig=sig),
+             _pair("grok-4.7", run=3)]
+    d = _decide(pairs)
+    assert not d.passed and "UNVERIFIED_ATTESTATION" in d.reasons, d.reasons
+
+
+@pytest.mark.parametrize("over", [{"pr": PR + 1}, {"files_truncated": 1}, {"diff_sha256": "0" * 64}])
+def test_authentic_artifacts_that_simply_do_not_apply_do_not_block(over):
+    # di un'altra PR sullo stesso branch, o un PASS incompleto che semplicemente non copre
+    pairs = [_pair("gpt-6.1-sol", run=1), _pair("gpt-6.1-sol", run=2, **over), _pair("grok-4.7", run=3)]
+    assert _decide(pairs).passed
+
+
+def test_readiness_does_not_wait_out_an_unverified_attestation():
+    assert not A._still_waiting({"passed": False, "reasons": ["NOT_COVERED_TO_HEAD:x", "UNVERIFIED_ATTESTATION"]})
+
+
+# ── Codex P2 su #602: un rerun dopo firma/upload falliti ri-emette l'attestazione senza ripagare il modello ─────────
+
+def _attestation_fns(path, tmp_path, comments, states_header=None):
+    import ast
+    import re as _re
+    _w, py = _workflow_python(path)
+    tree = ast.parse(py)
+    names = {"canonical_range_digest", "write_attestation", "reemit_from_done_review", "rr_attempts", "rr_coverage_gaps"}
+    fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+    assigns = [n for n in tree.body if isinstance(n, ast.Assign) and any(
+        isinstance(t, ast.Name) and (t.id.startswith("RR_") or t.id.startswith("_RR_")) for t in n.targets)]
+    import hashlib
+    import os as _os
+    ns = {"json": json, "re": _re, "os": _os, "_hl": hashlib, "REPO": REPO, "PR_NUMBER": str(PR), "REVIEW_ID": "x",
+          "range_base": C2, "range_head": HEAD, "BASE_SHA": BASE, "marker": "<!-- m -->",
+          "done_marker": "<!-- done -->", "files": [{"filename": "a.py", "patch": "+1"}],
+          "diff_text": "\n\n### FILE: a.py\n+1", "compare_truncated": False, "print": lambda *a, **k: None,
+          "gh_request": lambda method, url: comments}
+    exec(compile(ast.Module(body=assigns + fns, type_ignores=[]), path, "exec"), ns)
+    return ns
+
+
+@pytest.mark.parametrize("reviewer,path", sorted(A.TRUSTED_REVIEW_WORKFLOWS.items()))
+def test_rerun_of_a_reviewed_range_re_emits_the_signed_verdict_without_a_model_call(reviewer, path, tmp_path,
+                                                                                     monkeypatch):
+    rid = "gpt56sol" if "sol" in path else "grok46"
+    head = (f"<!-- {rid}-pr-review:pickfair-nogui:{C2[:12]}...{HEAD[:12]} --><!-- done -->"
+            f"<!-- {rid}-pr-review-attempt:pickfair-nogui:{C2[:12]}...{HEAD[:12]}:1:VALID_BLOCKERS -->\n# review")
+    comments = [{"user": {"login": "someone"}, "body": "<!-- done --> forged", "updated_at": "2026-11-02T09:00:00Z"},
+                {"user": {"login": "github-actions[bot]"}, "body": head, "updated_at": "2026-11-02T10:11:12Z"}]
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_RUN_ID", "77")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("PR_AUTHOR", AUTHOR)
+    ns = _attestation_fns(path, tmp_path, comments)
+    ns["REVIEW_ID"] = rid
+    ns["reemit_from_done_review"]()
+    att = json.loads((tmp_path / "review-attestation.json").read_text())
+    assert att["verdict"] == "BLOCKERS" and att["reemitted"] is True and att["reviewer"] == reviewer
+    assert att["generated_at"] == "2026-11-02T10:11:12Z" and att["run_attempt"] == 2
+    assert att["range"] == {"from": C2, "to": HEAD} and att["diff_sha256"] == A.canonical_range_digest(ns["files"])
+
+
+@pytest.mark.parametrize("path", sorted(A.TRUSTED_REVIEW_WORKFLOWS.values()))
+@pytest.mark.parametrize("comments", [
+    [],                                                                                     # commento assente
+    [{"user": {"login": "someone"}, "body": "<!-- done -->", "updated_at": "2026-11-02T10:11:12Z"}],   # non del bot
+    [{"user": {"login": "github-actions[bot]"}, "body": "<!-- done -->\n", "updated_at": "2026-11-02T10:11:12Z"}],
+])
+def test_no_reliable_done_review_means_no_re_emitted_attestation(path, comments, tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    _attestation_fns(path, tmp_path, comments)["reemit_from_done_review"]()
+    assert not (tmp_path / "review-attestation.json").exists()
+
+
+@pytest.mark.parametrize("path", sorted(A.TRUSTED_REVIEW_WORKFLOWS.values()))
+def test_both_dedup_exits_re_emit_before_leaving(path):
+    _w, py = _workflow_python(path)
+    assert py.count("reemit_from_done_review()\n    sys.exit(0)") == 2
+    assert py.index("def write_attestation") < py.index("_already_reviewed = comment_exists(done_marker)")

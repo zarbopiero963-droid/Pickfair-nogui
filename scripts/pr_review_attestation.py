@@ -197,6 +197,12 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
                                      range_diff_sha256=range_diff_sha256)
         if att is None:
             reasons.append(why)
+            # Gli artefatti vengono SOLO dai run dei workflow trusted: se uno non si verifica (firma, identita',
+            # verificatore in timeout, contenuto malformato) potrebbe essere un BLOCKERS, quindi la copertura piu'
+            # vecchia non basta (rilievo Codex P1 su #602). Non bloccano solo gli artefatti autentici che non si
+            # applicano: di un'altra PR, o un PASS incompleto che semplicemente non copre.
+            if not why.startswith(_NOT_APPLICABLE) and "UNVERIFIED_ATTESTATION" not in reasons:
+                reasons.append("UNVERIFIED_ATTESTATION")
             continue
         frm, to = att["range"]["from"], att["range"]["to"]
         # base avanzato senza cambiare la PR: il range iniziale parte dalla base FIRMATA di allora, che conta come
@@ -230,8 +236,14 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
             reasons.append(f"NOT_COVERED_TO_HEAD:{reviewer}")
         elif open_bad:
             reasons.append(f"OPEN_BLOCKERS:{reviewer}")
-    passed = not [r for r in reasons if r.startswith(("NOT_COVERED", "OPEN_BLOCKERS", "REQUIRED_", "HEAD_"))]
+    passed = not [r for r in reasons if r.startswith(_GATING)]
     return Decision(passed, reasons, covered)
+
+
+#: motivi di ``check_attestation`` per artefatti autentici che semplicemente non si applicano a questa decisione
+_NOT_APPLICABLE = ("WRONG_PR", "NOTHING_REVIEWED", "DIFF_TRUNCATED", "DIFF_MISMATCH", "DIFF_UNVERIFIABLE")
+#: motivi che negano il PASS
+_GATING = ("NOT_COVERED", "OPEN_BLOCKERS", "REQUIRED_", "HEAD_", "UNVERIFIED_ATTESTATION")
 
 
 def _emitted_at(att: Mapping[str, Any], is_pass: bool) -> float:
@@ -442,8 +454,7 @@ def verify_pr(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], 
 
 def _still_waiting(result: Mapping[str, Any]) -> bool:
     """Vale la pena riprovare solo se manca la copertura (review ancora in corso): bloccanti, firme o API no."""
-    gating = [r for r in result.get("reasons", []) if r.startswith(("NOT_COVERED", "OPEN_BLOCKERS", "REQUIRED_", "HEAD_",
-                                                                     "GITHUB_API", "FORK"))]
+    gating = [r for r in result.get("reasons", []) if r.startswith(_GATING + ("GITHUB_API", "FORK"))]
     return not result.get("passed") and bool(gating) and all(r.startswith("NOT_COVERED_TO_HEAD:") for r in gating)
 
 
