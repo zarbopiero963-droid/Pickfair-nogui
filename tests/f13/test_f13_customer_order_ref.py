@@ -340,3 +340,22 @@ def test_trading_engine_minimal_contract_for_an_uninspectable_client_is_unchange
             return kw
     kwargs = TradingEngine._kwargs_per_place_bet(_Opaque(), _payload())
     assert set(kwargs) == {"market_id", "selection_id", "side", "price", "size", "customer_ref"}
+
+
+def test_trading_engine_sim_duplicate_is_ambiguous_never_failed():
+    # Codex P2 su 95f6752: il percorso dei segnali chiama SimulationBroker.place_bet direttamente. Il duplicato non
+    # deve diventare un FAILED definitivo che rilascia le protezioni: la prima richiesta e' viva (come in LIVE)
+    from tests.test_microstake_engine_native import _book, _engine, _payload as _engine_payload
+    engine, broker, _ = _engine()
+    _book(broker, "1.100", 7, back=(3.0, 50.0))
+    ref = uuid.uuid4().hex
+    broker.place_bet(market_id="1.100", selection_id=7, side="BACK", price=3.0, size=2.0, customer_ref=ref)
+    res = engine.submit_quick_bet(_engine_payload(ref, size=2.0, price=3.0))
+    assert str(res.get("status") or "").upper() == "AMBIGUOUS", res
+    assert len([o for o in broker.state.orders.values()]) == 1
+
+
+def test_sim_duplicate_response_carries_the_universal_unknown_outcome_marker():
+    broker = _sim()
+    _place(broker)
+    assert _place(broker)["order_unknown"] is True
