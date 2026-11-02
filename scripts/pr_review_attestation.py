@@ -247,3 +247,167 @@ def gh_signature_verifier(run: Callable[[List[str]], Tuple[int, str]], *, reposi
                       workflow_sha=str(cert.get("buildSignerDigest", "")))
 
     return verify
+
+
+# ── integrazione GitHub (Merge readiness / VPS) ─────────────────────────────────────────────────────────────────────
+
+PRELIVE_CHECK = "pf-betfair-certification"
+PRELIVE_APP = "pickfair-dedicated"
+ATTESTATION_FILE = "review-attestation.json"
+
+
+class GitHub:
+    """Letture REST minime. ``http(url) -> (status, bytes)`` iniettabile; il token non segue i redirect."""
+
+    def __init__(self, repository: str, token: str, http: Optional[Callable[[str], Tuple[int, bytes]]] = None):
+        self.repository, self.token = repository, token
+        self.http = http or self._urllib
+
+    def _urllib(self, url: str) -> Tuple[int, bytes]:
+        import urllib.request
+        req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
+        if self.token:
+            req.add_unredirected_header("Authorization", f"Bearer {self.token}")
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 - solo api.github.com e i suoi redirect
+            return resp.status, resp.read()
+
+    def json(self, path: str) -> Any:
+        status, body = self.http(f"https://api.github.com/repos/{self.repository}{path}")
+        if status != 200:
+            raise RuntimeError(f"HTTP {status} {path}")
+        return json.loads(body.decode("utf-8"))
+
+    def pr(self, number: int) -> Dict[str, Any]:
+        return self.json(f"/pulls/{number}")
+
+    def pr_commits(self, number: int) -> List[str]:
+        out: List[str] = []
+        page = 1
+        while True:
+            rows = self.json(f"/pulls/{number}/commits?per_page=100&page={page}")
+            out += [r["sha"] for r in rows]
+            if len(rows) < 100:
+                return out
+            page += 1
+
+    def review_runs(self, workflow_path: str, number: int) -> List[Dict[str, Any]]:
+        file = workflow_path.rsplit("/", 1)[-1]
+        runs = self.json(f"/actions/workflows/{file}/runs?event={TRUSTED_EVENT}&per_page=100").get("workflow_runs", [])
+        return [r for r in runs if r.get("path") == workflow_path and r.get("status") == "completed"
+                and any(p.get("number") == number for p in r.get("pull_requests") or [])]
+
+    def attestation_files(self, run_id: int) -> List[bytes]:
+        import io
+        import zipfile
+        arts = self.json(f"/actions/runs/{run_id}/artifacts?per_page=100").get("artifacts", [])
+        out = []
+        for art in arts:
+            if not str(art.get("name", "")).startswith("review-attestation-") or art.get("expired"):
+                continue
+            status, blob = self.http(f"https://api.github.com/repos/{self.repository}/actions/artifacts/{art['id']}/zip")
+            if status != 200:
+                raise RuntimeError(f"HTTP {status} artifact {art['id']}")
+            with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+                out.append(zf.read(ATTESTATION_FILE))
+        return out
+
+    def is_on_main(self, sha: str) -> bool:
+        cmp = self.json(f"/compare/{sha}...main")
+        return cmp.get("status") in ("identical", "ahead")      # sha antenato (o uguale) di main
+
+    def range_digest(self, frm: str, to: str) -> Optional[str]:
+        cmp = self.json(f"/compare/{frm}...{to}")
+        files = cmp.get("files")
+        if not isinstance(files, list) or len(files) >= 300:
+            return None                                          # Compare API troncata: non verificabile
+        return canonical_range_digest(files)
+
+    def check_runs(self, sha: str) -> List[Dict[str, Any]]:
+        return self.json(f"/commits/{sha}/check-runs?per_page=100").get("check_runs", [])
+
+
+def verify_pr(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], Signed]) -> Dict[str, Any]:
+    """Raccoglie dal repository le attestazioni delle review della PR e applica ``decide``. Ogni errore => non PASS."""
+    try:
+        pr = gh.pr(number)
+        head, base = pr["head"]["sha"], pr["base"]["sha"]
+        if pr["head"]["repo"]["full_name"] != gh.repository:
+            return {"passed": False, "reasons": ["FORK_PR"], "head_sha": head}
+        commits = gh.pr_commits(number)
+        pairs = []
+        for reviewer, path in TRUSTED_REVIEW_WORKFLOWS.items():
+            for run in gh.review_runs(path, number):
+                for raw in gh.attestation_files(int(run["id"])):
+                    pairs.append((raw, verify_signature(raw, path)))
+    except Exception as exc:  # noqa: BLE001 - API non leggibile => non verificabile
+        return {"passed": False, "reasons": [f"GITHUB_API_UNAVAILABLE:{type(exc).__name__}"]}
+    decision = decide(pairs, repository=gh.repository, pr=number, pr_author=pr["user"]["login"], head_sha=head,
+                      base_sha=base, commits=commits, is_trusted_workflow_commit=gh.is_on_main,
+                      range_diff_sha256=gh.range_digest)
+    return dict(decision.to_dict(), head_sha=head, attestations=len(pairs))
+
+
+def verify_prelive(gh: GitHub, head_sha: str) -> Dict[str, Any]:
+    """Il check PRE-LIVE di Pickfair Dedicated in SUCCESS sull'head esatto. Il check LIVE non e' un gate qui."""
+    try:
+        runs = gh.check_runs(head_sha)
+    except Exception as exc:  # noqa: BLE001
+        return {"passed": False, "reason": f"GITHUB_API_UNAVAILABLE:{type(exc).__name__}"}
+    mine = [r for r in runs if r.get("name") == PRELIVE_CHECK and (r.get("app") or {}).get("slug") == PRELIVE_APP
+            and r.get("head_sha") == head_sha]
+    if not mine:
+        return {"passed": False, "reason": "PRELIVE_MISSING"}
+    latest = max(mine, key=lambda r: str(r.get("completed_at") or r.get("started_at") or ""))
+    if latest.get("status") != "completed":
+        return {"passed": False, "reason": "PRELIVE_PENDING"}
+    if latest.get("conclusion") != "success":
+        return {"passed": False, "reason": f"PRELIVE_{str(latest.get('conclusion')).upper()}"}
+    return {"passed": True, "reason": "", "check_run_id": latest.get("id")}
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    import argparse
+    import os
+    import subprocess
+    import tempfile
+    parser = argparse.ArgumentParser(description="PF-REVIEW-ATTESTATION v2 / gate PRE-LIVE")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    for name in ("verify-pr", "verify-prelive"):
+        p = sub.add_parser(name)
+        p.add_argument("--repo", required=True)
+        p.add_argument("--pr", type=int, required=True)
+        p.add_argument("--output", required=True)
+    args = parser.parse_args(argv)
+    gh = GitHub(args.repo, os.environ.get("GH_TOKEN", ""))
+
+    def run(cmd: List[str]) -> Tuple[int, str]:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        return done.returncode, done.stdout
+
+    if args.cmd == "verify-pr":
+        verifier = gh_signature_verifier(run, repository=args.repo)
+
+        def verify_signature(raw: bytes, workflow_path: str) -> Signed:
+            with tempfile.NamedTemporaryFile("wb", suffix=".json", delete=False) as fh:
+                fh.write(raw)
+            try:
+                return verifier(fh.name, workflow_path)
+            finally:
+                os.unlink(fh.name)
+
+        result = verify_pr(gh, args.pr, verify_signature)
+    else:
+        try:
+            head = gh.pr(args.pr)["head"]["sha"]
+        except Exception as exc:  # noqa: BLE001
+            result = {"passed": False, "reason": f"GITHUB_API_UNAVAILABLE:{type(exc).__name__}"}
+        else:
+            result = verify_prelive(gh, head)
+    with open(args.output, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2, sort_keys=True)
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result.get("passed") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

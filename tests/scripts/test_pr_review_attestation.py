@@ -275,3 +275,136 @@ def test_workflow_digest_function_matches_the_library(path):
     files = [{"filename": "b.py", "patch": "@@ -1 +1 @@\n-x\n+y"}, {"filename": "a.py", "patch": "+é"},
              {"filename": "bin.png"}, "garbage"]
     assert ns["canonical_range_digest"](files) == A.canonical_range_digest(files)
+
+
+# ── integrazione GitHub (HTTP finto) ────────────────────────────────────────────────────────────────────────────────
+
+import io
+import zipfile
+
+
+def _zip(raw):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(A.ATTESTATION_FILE, raw)
+    return buf.getvalue()
+
+
+class _API:
+    def __init__(self, *, fork=False, on_main=True, digest_ok=True, prelive=("completed", "success"), fail=None):
+        self.raws = {1: _att("gpt-6.1-sol", run=1), 2: _att("grok-4.7", run=2)}
+        self.fork, self.on_main, self.digest_ok, self.prelive, self.fail = fork, on_main, digest_ok, prelive, fail
+
+    def __call__(self, url):
+        if self.fail and self.fail in url:
+            return 500, b""
+        p = url.split(f"/repos/{REPO}", 1)[1]
+        if p == f"/pulls/{PR}":
+            body = {"head": {"sha": HEAD, "repo": {"full_name": "fork/x" if self.fork else REPO}},
+                    "base": {"sha": BASE}, "user": {"login": AUTHOR}}
+        elif p.startswith(f"/pulls/{PR}/commits"):
+            body = [{"sha": s} for s in COMMITS]
+        elif p.startswith("/actions/workflows/"):
+            file = p.split("/")[3]
+            run = 1 if "gpt56" in file else 2
+            body = {"workflow_runs": [{"id": run, "path": f".github/workflows/{file}", "status": "completed",
+                                       "pull_requests": [{"number": PR}]},
+                                      {"id": 99, "path": f".github/workflows/{file}", "status": "completed",
+                                       "pull_requests": [{"number": 7}]}]}
+        elif p.startswith("/actions/runs/") and p.endswith("/artifacts?per_page=100"):
+            rid = int(p.split("/")[3])
+            body = {"artifacts": [{"id": 1000 + rid, "name": "review-attestation-1", "expired": False}]}
+        elif p.startswith("/actions/artifacts/"):
+            return 200, _zip(self.raws[int(p.split("/")[3]) - 1000])
+        elif p.startswith(f"/compare/{MAIN_WF}...main"):
+            body = {"status": "ahead" if self.on_main else "diverged"}
+        elif p.startswith("/compare/"):
+            frm, to = p.split("/compare/")[1].split("...")
+            body = {"files": [{"filename": "x", "patch": "+1"}]}
+            self.last_range = (frm, to)
+        elif p.startswith(f"/commits/{HEAD}/check-runs"):
+            st, concl = self.prelive
+            body = {"check_runs": [{"id": 5, "name": A.PRELIVE_CHECK, "app": {"slug": A.PRELIVE_APP}, "head_sha": HEAD,
+                                    "status": st, "conclusion": concl, "completed_at": "2026-11-02T17:00:00Z"},
+                                   {"id": 6, "name": "pf-betfair-live-certification", "app": {"slug": A.PRELIVE_APP},
+                                    "head_sha": HEAD, "status": "completed", "conclusion": "neutral"}]}
+        else:
+            return 404, b""
+        return 200, json.dumps(body).encode()
+
+
+def _verify(api):
+    gh = A.GitHub(REPO, "t", http=api)
+    # firma "valida" dello stub; il digest canonico del range finto e' quello di [["x","+1"]]
+    canon = A.canonical_range_digest([{"filename": "x", "patch": "+1"}])
+    for k, raw in list(api.raws.items()):
+        body = json.loads(raw)
+        body["diff_sha256"] = canon if api.digest_ok else "0" * 64
+        api.raws[k] = json.dumps(body).encode()
+    reviewer_of = {1: "gpt-6.1-sol", 2: "grok-4.7"}
+    return A.verify_pr(gh, PR, lambda raw, path: _sig(raw, json.loads(raw)["reviewer"], json.loads(raw)["run_id"]))
+
+
+def test_verify_pr_collects_signed_attestations_of_this_pr_only():
+    out = _verify(_API())
+    assert out["passed"] and out["attestations"] == 2, out
+
+
+def test_verify_pr_refuses_a_fork():
+    assert _verify(_API(fork=True))["reasons"] == ["FORK_PR"]
+
+
+def test_verify_pr_refuses_a_workflow_commit_not_on_main():
+    out = _verify(_API(on_main=False))
+    assert not out["passed"] and "WORKFLOW_COMMIT_NOT_ON_MAIN" in out["reasons"]
+
+
+def test_verify_pr_refuses_a_diff_the_reviewer_did_not_see():
+    out = _verify(_API(digest_ok=False))
+    assert not out["passed"] and "DIFF_MISMATCH" in out["reasons"]
+
+
+@pytest.mark.parametrize("fail", ["/pulls/601", "/actions/workflows/", "/artifacts"])
+def test_verify_pr_api_errors_are_never_pass(fail):
+    out = _verify(_API(fail=fail))
+    assert not out["passed"]
+
+
+def test_prelive_success_on_the_exact_head_passes_and_live_neutral_is_ignored():
+    out = A.verify_prelive(A.GitHub(REPO, "t", http=_API()), HEAD)
+    assert out["passed"] and out["check_run_id"] == 5
+
+
+@pytest.mark.parametrize("state,reason", [(("completed", "failure"), "PRELIVE_FAILURE"),
+                                          (("completed", "action_required"), "PRELIVE_ACTION_REQUIRED"),
+                                          (("completed", "neutral"), "PRELIVE_NEUTRAL"),
+                                          (("in_progress", None), "PRELIVE_PENDING")])
+def test_prelive_not_success_never_passes(state, reason):
+    out = A.verify_prelive(A.GitHub(REPO, "t", http=_API(prelive=state)), HEAD)
+    assert not out["passed"] and out["reason"] == reason
+
+
+def test_prelive_missing_or_from_another_app_never_passes():
+    class Other(_API):
+        def __call__(self, url):
+            status, body = super().__call__(url)
+            if "/check-runs" in url:
+                d = json.loads(body)
+                for r in d["check_runs"]:
+                    r["app"]["slug"] = "evil-app"
+                body = json.dumps(d).encode()
+            return status, body
+    assert A.verify_prelive(A.GitHub(REPO, "t", http=Other()), HEAD)["reason"] == "PRELIVE_MISSING"
+
+
+def test_live_neutral_alone_can_never_satisfy_prelive():
+    # PRE-LIVE assente, solo il LIVE neutral sull'head: mai PASS
+    class OnlyLive(_API):
+        def __call__(self, url):
+            status, body = super().__call__(url)
+            if "/check-runs" in url:
+                d = json.loads(body)
+                d["check_runs"] = [r for r in d["check_runs"] if r["name"] != A.PRELIVE_CHECK]
+                body = json.dumps(d).encode()
+            return status, body
+    assert A.verify_prelive(A.GitHub(REPO, "t", http=OnlyLive()), HEAD)["reason"] == "PRELIVE_MISSING"
