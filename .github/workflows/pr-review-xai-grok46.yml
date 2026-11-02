@@ -25,6 +25,8 @@ permissions:
   # PF-REVIEW-ATTESTATION v2 (#586): firma Sigstore dell'esito della review (OIDC del workflow, nessun segreto nuovo)
   id-token: write
   attestations: write
+  # sola lettura: il rerun controlla se il run ha gia' un'attestazione pubblicata da un tentativo precedente
+  actions: read
 
 concurrency:
   group: pr-review-grok46-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
@@ -1178,13 +1180,24 @@ jobs:
                   print(f"::warning::{REVIEW_ID}: attestazione non ri-emessa ({type(_exc).__name__})")
               return False
 
+          def run_has_attestation():
+              """True se un tentativo precedente di QUESTO run ha pubblicato un'attestazione. Errore => False (rosso)."""
+              try:
+                  arts = (gh_request("GET", f"/repos/{REPO}/actions/runs/{os.environ['GITHUB_RUN_ID']}/artifacts"
+                                            "?per_page=100") or {}).get("artifacts", [])
+                  return any(str(a.get("name", "")).startswith("review-attestation-") and not a.get("expired")
+                             for a in arts)
+              except Exception as _exc:  # noqa: BLE001
+                  print(f"::warning::{REVIEW_ID}: artefatti del run non leggibili ({type(_exc).__name__})")
+                  return False
+
           def dedup_exit():
               """Uscita per range gia' revisionato. Sul RERUN di un run (attempt > 1) che non riesce a ri-emettere
-              (PASS, che non si ri-emette mai, o commento illeggibile) il job chiude ROSSO: se il primo tentativo non
-              aveva pubblicato l'attestazione, il run resta senza attestazione e il verificatore nega il PASS. Se il
-              primo tentativo l'aveva pubblicata, quella resta valida (il run ha un'attestazione)."""
+              (PASS, che non si ri-emette mai, o commento illeggibile) il job chiude ROSSO se il run non ha gia'
+              un'attestazione da un tentativo precedente: l'esito del primo tentativo e' sconosciuto e il verificatore
+              nega il PASS. Se l'attestazione precedente c'e', questo tentativo chiude verde e quella resta valida."""
               if (not reemit_from_done_review() and os.environ.get("GITHUB_ACTIONS") == "true"
-                      and int(os.environ.get("GITHUB_RUN_ATTEMPT") or 1) > 1):
+                      and int(os.environ.get("GITHUB_RUN_ATTEMPT") or 1) > 1 and not run_has_attestation()):
                   print(f"::error::{REVIEW_ID}: rerun di un range gia' revisionato senza attestazione ri-emettibile.")
                   sys.exit(1)
               sys.exit(0)

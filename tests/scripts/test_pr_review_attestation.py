@@ -696,13 +696,13 @@ def test_readiness_does_not_wait_out_an_unverified_attestation():
 
 # ── Codex P2 su #602: un rerun dopo firma/upload falliti ri-emette l'attestazione senza ripagare il modello ─────────
 
-def _attestation_fns(path, tmp_path, comments, states_header=None):
+def _attestation_fns(path, tmp_path, comments, states_header=None, run_artifacts=()):
     import ast
     import re as _re
     _w, py = _workflow_python(path)
     tree = ast.parse(py)
     names = {"canonical_range_digest", "write_attestation", "reemit_from_done_review", "rr_attempts", "rr_coverage_gaps",
-             "dedup_exit"}
+             "dedup_exit", "run_has_attestation"}
     fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
     assigns = [n for n in tree.body if isinstance(n, ast.Assign) and any(
         isinstance(t, ast.Name) and (t.id.startswith("RR_") or t.id.startswith("_RR_")) for t in n.targets)]
@@ -712,7 +712,8 @@ def _attestation_fns(path, tmp_path, comments, states_header=None):
           "range_base": C2, "range_head": HEAD, "BASE_SHA": BASE, "marker": "<!-- m -->",
           "done_marker": "<!-- done -->", "files": [{"filename": "a.py", "patch": "+1"}],
           "diff_text": "\n\n### FILE: a.py\n+1", "compare_truncated": False, "print": lambda *a, **k: None,
-          "gh_request": lambda method, url: comments}
+          "gh_request": lambda method, url: ({"artifacts": [{"name": n} for n in run_artifacts]}
+                                             if "/artifacts" in url else comments)}
     exec(compile(ast.Module(body=assigns + fns, type_ignores=[]), path, "exec"), ns)
     return ns
 
@@ -793,16 +794,20 @@ class _RunsAPI(_API):
             return 200, json.dumps(d).encode()
         if p.startswith("/actions/runs/500/artifacts"):
             return 200, json.dumps({"artifacts": self.extra_artifacts}).encode()
+        if p.startswith("/actions/artifacts/5001/"):
+            return 200, _zip(self.raws[1])
         return super().__call__(url)
 
 
-@pytest.mark.parametrize("conclusion,artifacts,blocked", [
-    ("failure", [], True),                                   # review conclusa, firma/upload falliti: esito sconosciuto
-    ("cancelled", [], True),
-    ("success", [], False),                                  # salto legittimo (dedup, costo, range vuoto)
+@pytest.mark.parametrize("conclusion,attempt,artifacts,blocked", [
+    ("failure", 1, [], True),                                # review conclusa, firma/upload falliti: esito sconosciuto
+    ("cancelled", 1, [], True),
+    ("success", 1, [], False),                               # salto legittimo (dedup, costo, range vuoto)
+    # Sol su #602 (e76f2e4): un PASS del tentativo 1 non copre un rerun (tentativo 2) fallito senza attestazione
+    ("failure", 2, [{"id": 5001, "name": "review-attestation-1", "expired": False}], True),
 ])
-def test_trusted_run_without_attestation(conclusion, artifacts, blocked):
-    run = {"id": 500, "status": "completed", "conclusion": conclusion, "run_attempt": 1,
+def test_trusted_run_without_attestation(conclusion, attempt, artifacts, blocked):
+    run = {"id": 500, "status": "completed", "conclusion": conclusion, "run_attempt": attempt,
            "pull_requests": [{"number": PR}]}
     out = _verify(_RunsAPI(run, artifacts))
     assert out["passed"] is (not blocked), out
@@ -810,12 +815,13 @@ def test_trusted_run_without_attestation(conclusion, artifacts, blocked):
 
 
 @pytest.mark.parametrize("path", sorted(A.TRUSTED_REVIEW_WORKFLOWS.values()))
-@pytest.mark.parametrize("state,attempt,code", [
-    ("VALID_PASS", "2", 1),          # rerun che non puo' ri-emettere (PASS): rosso
-    ("VALID_PASS", "1", 0),          # primo tentativo che trova il range gia' fatto da un altro run: salto legittimo
-    ("VALID_BLOCKERS", "2", 0),      # rerun che ri-emette il bloccante: verde, con attestazione
+@pytest.mark.parametrize("state,attempt,prior,code", [
+    ("VALID_PASS", "2", (), 1),                          # rerun senza attestazioni precedenti, non ri-emettibile: rosso
+    ("VALID_PASS", "2", ("review-attestation-1",), 0),   # il primo tentativo l'aveva pubblicata: resta valida, verde
+    ("VALID_PASS", "1", (), 0),          # primo tentativo che trova il range gia' fatto da un altro run: salto legittimo
+    ("VALID_BLOCKERS", "2", (), 0),      # rerun che ri-emette il bloccante: verde, con attestazione
 ])
-def test_dedup_exit_turns_red_when_a_rerun_cannot_re_emit(path, state, attempt, code, tmp_path, monkeypatch):
+def test_dedup_exit_turns_red_when_a_rerun_cannot_re_emit(path, state, attempt, prior, code, tmp_path, monkeypatch):
     rid = "gpt56sol" if "sol" in path else "grok46"
     head = (f"<!-- {rid}-pr-review:pickfair-nogui:{C2[:12]}...{HEAD[:12]} --><!-- done -->"
             f"<!-- {rid}-pr-review-attempt:pickfair-nogui:{C2[:12]}...{HEAD[:12]}:1:{state} -->\n# review")
@@ -823,7 +829,7 @@ def test_dedup_exit_turns_red_when_a_rerun_cannot_re_emit(path, state, attempt, 
     for k, v in (("GITHUB_ACTIONS", "true"), ("GITHUB_RUN_ID", "77"), ("GITHUB_RUN_ATTEMPT", attempt),
                  ("GITHUB_WORKSPACE", str(tmp_path)), ("PR_AUTHOR", AUTHOR)):
         monkeypatch.setenv(k, v)
-    ns = _attestation_fns(path, tmp_path, comments)
+    ns = _attestation_fns(path, tmp_path, comments, run_artifacts=prior)
     ns["REVIEW_ID"] = rid
     with pytest.raises(SystemExit) as exc:
         ns["dedup_exit"]()
@@ -873,3 +879,9 @@ def test_no_pending_review_keeps_the_pass():
 ])
 def test_runs_on_a_reused_branch_before_the_pr_was_opened_do_not_belong_to_it(run, belongs):
     assert A._run_belongs(run, PR, "2026-11-02T10:00:00Z", "feat") is belongs
+
+
+@pytest.mark.parametrize("path", sorted(A.TRUSTED_REVIEW_WORKFLOWS.values()))
+def test_review_workflows_can_read_their_own_run_artifacts(path):
+    w, _py = _workflow_python(path)
+    assert w["permissions"].get("actions") == "read"

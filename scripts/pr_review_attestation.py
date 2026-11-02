@@ -475,11 +475,13 @@ def verify_pr(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], 
                 artifacts = gh.attestation_artifacts(int(run["id"]))
                 for _name, raw in artifacts:
                     pairs.append((raw, verify_signature(raw, path)))
-                # Un run che non chiude `success` e non ha nessuna attestazione puo' aver concluso una review (anche
-                # BLOCKERS) senza riuscire a pubblicarla: esito sconosciuto => niente PASS (Codex P1 su #602). I workflow
-                # chiudono rosso quando la scrittura, la firma o l'upload falliscono, e anche sul rerun che non puo'
-                # ri-emettere; i salti legittimi (dedup, gate di costo, range vuoto) chiudono `success`.
-                if run.get("conclusion") != "success" and not artifacts:
+                # Un run il cui ULTIMO tentativo non chiude `success` e non ha la propria attestazione puo' aver
+                # concluso una review (anche BLOCKERS) senza riuscire a pubblicarla: esito sconosciuto => niente PASS
+                # (Codex P1 e Sol su #602). Conta il tentativo, non il run: un artefatto PASS di un tentativo precedente
+                # non copre un rerun fallito. I workflow chiudono rosso quando scrittura, firma o upload falliscono e sul
+                # rerun che non puo' ri-emettere senza attestazioni precedenti; i salti legittimi chiudono `success`.
+                latest = f"review-attestation-{run.get('run_attempt') or 1}"
+                if run.get("conclusion") != "success" and latest not in {name for name, _raw in artifacts}:
                     unpublished.append(f"RUN_WITHOUT_ATTESTATION:{reviewer}:{run['id']}")
     except Exception as exc:  # noqa: BLE001 - API non leggibile => non verificabile
         return {"passed": False, "reasons": [f"GITHUB_API_UNAVAILABLE:{type(exc).__name__}"]}

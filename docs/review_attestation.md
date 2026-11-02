@@ -22,9 +22,10 @@ base, senza checkout né esecuzione del codice della PR. Dopo il commento della 
 3. **Pubblicazione.** Lo carica come artefatto `review-attestation-<attempt>`.
 
 L'attestazione si scrive solo dentro Actions. Se scrittura, firma o upload falliscono, il commento della review
-resta pubblicato ma il job chiude **rosso**. Il verificatore tratta un run dei workflow trusted che non chiude
-`success` e non ha nessuna attestazione come `RUN_WITHOUT_ATTESTATION` e nega il PASS (`UNVERIFIED_ATTESTATION`):
-quel run può aver concluso una review BLOCKERS senza riuscire a pubblicarla. I salti legittimi (dedup, gate di costo,
+resta pubblicato ma il job chiude **rosso**. Il verificatore guarda l'**ultimo tentativo** di ogni run dei workflow
+trusted: se non chiude `success` e non ha la propria attestazione (`review-attestation-<attempt>`), dà
+`RUN_WITHOUT_ATTESTATION` e nega il PASS (`UNVERIFIED_ATTESTATION`). Quel tentativo può aver concluso una review
+BLOCKERS senza riuscire a pubblicarla, e un PASS di un tentativo precedente non lo copre. I salti legittimi (dedup, gate di costo,
 range vuoto) chiudono `success` senza artefatto.
 
 **Rerun di un range già revisionato.** Se firma o upload falliscono al primo giro, un rerun del workflow trova il
@@ -38,7 +39,8 @@ Perché solo non PASS: chi ha accesso in scrittura può modificare un commento d
 il commento non è una fonte autenticata. Un verdetto negativo ri-emesso può soltanto bloccare; un PASS ri-emesso da un
 commento modificato sarebbe un PASS falso firmato. Commento assente, non del bot o senza uno stato valido: nessuna
 attestazione. Su un rerun (attempt > 1) che non può ri-emettere (un PASS, o un commento illeggibile) il job chiude
-rosso: se il primo tentativo non aveva pubblicato l'attestazione, il run resta senza attestazione e blocca.
+rosso se il run non ha già un'attestazione da un tentativo precedente; se ce l'ha, chiude verde e quella resta valida.
+Per leggere gli artefatti del proprio run i workflow hanno `actions: read`.
 
 ## 3. Verifica (`scripts/pr_review_attestation.py`, unica per Merge readiness e VPS)
 - `verify-pr --repo R --pr N`:
