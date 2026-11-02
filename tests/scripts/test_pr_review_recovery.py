@@ -209,6 +209,10 @@ def run_review(world: FakeWorld, reviewer: str, monkeypatch, head: str = HEAD, e
            "MODEL_LABEL": reviewer.upper(), "GITHUB_RUN_ID": "4242"}
     for k, v in env.items():
         monkeypatch.setenv(k, v)
+    # Ambiente isolato dal runner: in CI GITHUB_ACTIONS=true attiverebbe il percorso di attestazione (scrittura del
+    # file, job rosso se la review non e' pubblicata), che ha i suoi test in test_pr_review_attestation.py. Qui si
+    # verifica la recovery dei tentativi, che deve dare lo stesso esito in locale e in CI (owner, ciclo 11 su #602).
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(urllib.request, "urlopen", world.urlopen)
     monkeypatch.setattr("time.sleep", lambda *_: None)
     try:

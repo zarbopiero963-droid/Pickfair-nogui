@@ -3345,7 +3345,7 @@
       "max_files": 18
     },
     "gov_review_attestation": {
-      "description": "Governance PF-REVIEW-ATTESTATION v2 (#586, mandato owner PF-FINAL-AUTONOMOUS-CERTIFICATION-01; merge owner: workflow e scripts/pr_*): attestazione Sigstore dell'esito della review nei workflow di Sol e Grok, verificatore condiviso scripts/pr_review_attestation.py (Merge readiness e VPS), gate PRE-LIVE pf-betfair-certification in Merge readiness (LIVE escluso), spec §0.7 e docs. Nessun gate esistente rimosso.",
+      "description": "Governance PF-REVIEW-ATTESTATION v2 (#586, mandato owner PF-FINAL-AUTONOMOUS-CERTIFICATION-01; merge owner: workflow e scripts/pr_*): attestazione Sigstore dell'esito della review nei workflow di Sol e Grok, verificatore condiviso scripts/pr_review_attestation.py (Merge readiness e VPS), gate PRE-LIVE pf-betfair-certification in Merge readiness (LIVE escluso), spec §0.7 e docs. Nessun gate esistente rimosso. Estensione dichiarata (ciclo 11, deroga owner su #602): tests/scripts/test_pr_review_recovery.py, harness run_review isolato da GITHUB_ACTIONS.",
       "allow_tests": true,
       "files": [
         ".github/workflows/pr-merge-readiness.yml",
@@ -3356,9 +3356,10 @@
         "docs/auto_pr_flow_spec.md",
         "docs/review_attestation.md",
         "scripts/pr_review_attestation.py",
-        "tests/scripts/test_pr_review_attestation.py"
+        "tests/scripts/test_pr_review_attestation.py",
+        "tests/scripts/test_pr_review_recovery.py"
       ],
-      "max_files": 9
+      "max_files": 10
     }
   }
 }
