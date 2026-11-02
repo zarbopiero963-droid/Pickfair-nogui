@@ -844,7 +844,17 @@ def test_dedup_exit_turns_red_when_a_rerun_cannot_re_emit(path, state, attempt, 
 def test_a_published_review_that_cannot_be_attested_turns_the_job_red(path):
     _w, py = _workflow_python(path)
     tail = py[py.rindex("write_attestation(attempt_state"):]
-    assert "sys.exit(1)" in tail.split("\n")[2], tail[:300]
+    assert "sys.exit(1)" in tail.split("\n")[1], tail[:300]
+
+
+@pytest.mark.parametrize("path", sorted(A.TRUSTED_REVIEW_WORKFLOWS.values()))
+def test_no_attestation_is_written_for_a_review_that_was_not_published(path):
+    # Codex P1 su #602 (48ad2e6): upsert_comment fallito => niente PASS firmato, job rosso
+    _w, py = _workflow_python(path)
+    pub = py.rindex("_published = upsert_comment(marker, body[:64000])")
+    guard = py.index("if not _published:", pub)
+    assert guard < py.index("write_attestation(attempt_state", pub)
+    assert "sys.exit(1)" in py[guard:py.index("write_attestation(attempt_state", pub)]
 
 
 # ── Codex su #602 (e76f2e4): review in corso e branch riusati ────────────────────────────────────────────────────

@@ -21,8 +21,9 @@ base, senza checkout né esecuzione del codice della PR. Dopo il commento della 
    commit del workflow.
 3. **Pubblicazione.** Lo carica come artefatto `review-attestation-<attempt>`.
 
-L'attestazione si scrive solo dentro Actions. Se scrittura, firma o upload falliscono, il commento della review
-resta pubblicato ma il job chiude **rosso**. Il verificatore guarda **ogni tentativo** di ogni run dei workflow
+L'attestazione si scrive solo dentro Actions e solo dopo che la review è stata pubblicata: se l'aggiornamento finale
+del commento fallisce, non si scrive nessuna attestazione e il job chiude **rosso**. Se scrittura, firma o upload
+falliscono, il commento della review resta pubblicato ma il job chiude **rosso**. Il verificatore guarda **ogni tentativo** di ogni run dei workflow
 trusted: un tentativo che non chiude `success` e non ha la propria attestazione (`review-attestation-<attempt>`) dà
 `RUN_WITHOUT_ATTESTATION` e nega il PASS (`UNVERIFIED_ATTESTATION`). Vale anche se un rerun successivo chiude
 verde. Quel tentativo può aver concluso una review BLOCKERS senza riuscire a pubblicarla, e un PASS di un altro

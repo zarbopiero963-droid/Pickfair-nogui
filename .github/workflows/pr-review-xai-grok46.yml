@@ -1476,11 +1476,17 @@ jobs:
           Nota: questa review AI è un filtro tecnico economico, non sostituisce il controllo umano.
           """
 
-          upsert_comment(marker, body[:64000])
+          _published = upsert_comment(marker, body[:64000])
 
-          if (not write_attestation(attempt_state, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-                  and os.environ.get("GITHUB_ACTIONS") == "true"):
-              sys.exit(1)   # review pubblicata ma non attestata: job rosso, il verificatore nega il PASS
+          if os.environ.get("GITHUB_ACTIONS") == "true":
+              # Nessuna attestazione per una review che non e' stata pubblicata: sulla PR resterebbe solo il commento
+              # "in corso", senza marker ne' testo leggibile (rilievo Codex P1 su #602). Job rosso => il verificatore
+              # vede un run senza attestazione e nega il PASS.
+              if not _published:
+                  print(f"::error::{REVIEW_ID}: review non pubblicata: nessuna attestazione.")
+                  sys.exit(1)
+              if not write_attestation(attempt_state, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())):
+                  sys.exit(1)   # review pubblicata ma non attestata: job rosso, il verificatore nega il PASS
           PY
 
       # PF-REVIEW-ATTESTATION v2: firma Sigstore dell'attestazione (provenance SLSA, identita' del workflow su main)
