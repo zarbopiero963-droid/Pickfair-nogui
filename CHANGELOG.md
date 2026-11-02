@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **Governance PF-REVIEW-ATTESTATION v2 (#586) — review firmate e PRE-LIVE nei gate:** i workflow di Sol e Grok
+  firmano (Sigstore, `actions/attest-build-provenance`) un'attestazione dell'esito della review (verdetto dalla
+  classificazione, range, file inviati, impronta delle patch) e la caricano come artefatto; `scripts/pr_review_attestation.py`
+  la verifica (workflow su main, evento, commit, contenuto, diff realmente revisionato, copertura fino all'head) per Merge
+  readiness e VPS; Merge readiness richiede anche `pf-betfair-certification` SUCCESS sull'head (LIVE escluso). I gate
+  esistenti restano. `docs/review_attestation.md`, spec §0.7; test `tests/scripts/test_pr_review_attestation.py`.
+
+### Changed
 - **Governance §0.9-ter (#586, owner 01/11/2026 «TEMPORARY MERGE DELEGATION — ROADMAP V2»):** delega owner
   temporanea di merge per le 33 schede della roadmap V2, registrata in `OWNER_MERGE_DELEGATIONS` di
   `scripts/pr_autonomy_policy.py` (il merge owner di questa PR ne e' la prova). Copre solo le protezioni finanziarie

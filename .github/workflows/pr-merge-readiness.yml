@@ -40,6 +40,8 @@ permissions:
   checks: read
   statuses: read
   actions: read
+  # PF-REVIEW-ATTESTATION v2: lettura delle attestazioni Sigstore delle review (gh attestation verify)
+  attestations: read
 
 jobs:
   readiness:
@@ -143,6 +145,27 @@ jobs:
             jq '.reasons' .merge-readiness/decision.json
             exit 1
           fi
+
+      # PF-REVIEW-ATTESTATION v2 (#586): oltre al gate esistente (che resta), le review di Sol e Grok contano solo
+      # con un'attestazione firmata dal workflow trusted su main che copre l'head; e il PRE-LIVE di Pickfair
+      # Dedicated deve essere SUCCESS sull'head esatto. Il check LIVE non e' un gate delle PR di sviluppo.
+      - name: Verify signed review attestations
+        if: env.PR != '' && env.PR != 'null'
+        run: |
+          set -euo pipefail
+          mkdir -p .merge-readiness
+          # Sol/Grok girano da pull_request_target e possono finire DOPO la CI dell'head: attesa limitata (30 min)
+          # finche' manca solo la copertura; bloccanti, firme non valide o API non leggibile non si aspettano.
+          python3 scripts/pr_review_attestation.py verify-pr --repo "$REPO" --pr "$PR" --wait-seconds 1800 \
+            --output .merge-readiness/review-attestation.json
+
+      - name: Verify PRE-LIVE Betfair certification
+        if: env.PR != '' && env.PR != 'null'
+        run: |
+          set -euo pipefail
+          mkdir -p .merge-readiness
+          python3 scripts/pr_review_attestation.py verify-prelive --repo "$REPO" --pr "$PR" \
+            --output .merge-readiness/prelive.json
 
       - name: Upload readiness decision
         if: always()
