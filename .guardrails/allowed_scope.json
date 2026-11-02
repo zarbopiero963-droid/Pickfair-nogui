@@ -3342,6 +3342,24 @@
         "tests/test_microstake_sim_port.py"
       ],
       "max_files": 17
+    },
+    "f13b_order_identity_cashout": {
+      "description": "F-13b (#586, ID-01; dopo F-13a): il customerOrderRef e' la seconda chiave d'identita' del bot. Database.get_bot_order_refs (ref conformi di ogni riga orders, anche senza betId); cashout_router I1 per betId o ref (ordini sostituiti o con risposta persa: posizione, resting, CASHOUT singolo), ref illeggibili => CASHOUT_FAILED; F018 ricostruisce come certa una riga SUBMITTED col ref vivo; CashoutExecutor riconosce l'hedge precedente sostituito dal ref hedge:. Ref estranei o assenti mai adottati.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "cashout_executor.py",
+        "cashout_router.py",
+        "core/runtime_controller.py",
+        "database.py",
+        "docs/order_identity.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/ci_changed_modules.py",
+        "tests/f13b/__init__.py",
+        "tests/f13b/test_f13b_order_identity.py"
+      ],
+      "max_files": 11
     }
   }
 }

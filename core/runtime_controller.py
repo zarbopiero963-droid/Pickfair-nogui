@@ -20,6 +20,7 @@ from core.duplication_guard import DuplicationGuard
 from core.hedge_ref import is_hedge_order_ref
 from core.dutching_batch_manager import DutchingBatchManager
 from core.market_tracker import MarketTracker
+from core.order_ref import customer_order_ref
 from core.money_management import RoserpinaMoneyManagement
 from core.pnl_engine import PnLEngine
 from core.reconciliation_engine import ReconciliationEngine
@@ -3668,6 +3669,8 @@ class RuntimeController:
                 publish=lambda topic, payload=None: RuntimeController._publish_from_cashout_router(self, topic, payload),
                 commission_pct=commission,
                 source="TELEGRAM",
+                # F-13b: seconda chiave I1 (customerOrderRef), per gli ordini sostituiti o con risposta persa
+                fetch_bot_refs=getattr(self.db, "get_bot_order_refs", None),
             )
             ctx = getattr(self, "_cashout_route_ctx", None)
             RuntimeController._await_entries_in_flight(self, getattr(ctx, "barrier_id", None))
@@ -5355,9 +5358,14 @@ class RuntimeController:
             result.update(ok=False, reason=f"EXCHANGE_ORDERS_UNAVAILABLE:{type(exc).__name__}")
         live_bets = {str(o.get("bet_id") or o.get("betId") or "") for o in (current or [])}
         live_markets = {str(o.get("marketId") or o.get("market_id") or "") for o in (current or [])}
+        # F-13b (#586, ID-01): il customerOrderRef (= customer_ref conforme, inviato da F-13a) sopravvive a un replace
+        # (nuovo betId) e a una risposta persa (riga senza betId): con il ref vivo la posizione e' certa, mai 'closed'.
+        live_refs = {ref for ref in (customer_order_ref(o.get("customerOrderRef") or o.get("customer_order_ref"))
+                                     for o in (current or []) if isinstance(o, dict)) if ref}
         for c in candidates:
             if c["status"] == "SUBMITTED" and current is not None:
-                if c["bet_id"] and c["bet_id"] in live_bets:
+                own_ref = customer_order_ref(c["customer_ref"])
+                if (c["bet_id"] and c["bet_id"] in live_bets) or (own_ref and own_ref in live_refs):
                     is_uncertain = False
                 elif not c["bet_id"] and c["market_id"] in live_markets:
                     is_uncertain = True                       # ordine sul mercato ma senza identita' certa

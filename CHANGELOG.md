@@ -19,6 +19,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `tests/scripts/test_roadmap_merge_delegation.py`; mutazioni `pap_delegation_*`, `pap_live_removed_lines_ignored`.
 
 ### Fixed
+- **F-13b (#586, ID-01) — il ref è identità del bot nel cashout, al riavvio e negli hedge:** un ordine sostituito
+  (nuovo `betId`) o con risposta persa era invisibile al cashout (hedge sottodimensionato, resting vivo, `no_bot_orders`),
+  veniva chiuso alla ricostruzione F018 e un hedge sostituito non bloccava il secondo. Ora il `customerOrderRef`
+  (`Database.get_bot_order_refs`) è la seconda chiave I1 in `cashout_router`, F018 e `CashoutExecutor`; ref estranei o
+  assenti mai adottati, ref illeggibili => `CASHOUT_FAILED`. `docs/order_identity.md` §5; test `tests/f13b/`;
+  mutazioni `f13b_*`.
 - **F-13a (#586, ID-01/D-582-01/D1) — identità degli ordini:**
   - Ogni place diretto (router, OrderManager, BetfairService, engine) invia `customerOrderRef` = `customer_ref` se conforme (≤32, charset Betfair); un ref non conforme viene omesso, mai rifiutato.
   - Il SIM rifiuta la stessa richiesta entro 60 s (`DUPLICATE_TRANSACTION`), che OrderRouter e OrderManager trattano come esito ignoto (AMBIGUOUS) come in LIVE; il replace conserva il ref.
