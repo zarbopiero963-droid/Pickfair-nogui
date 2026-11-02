@@ -327,3 +327,21 @@ def test_unreadable_market_or_selection_identity_never_places(over):
     bus, router = _run(_cmd(), orders=[_order(), _covering_lay(**over)])
     assert router.calls == []
     assert bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_non_verificabile"
+
+
+@pytest.mark.parametrize("over", [{"selectionId": 0, "selection_id": 55}, {"selectionId": 55, "selection_id": 99},
+                                  {"marketId": "1.999", "market_id": "1.222"}, {"selectionId": False, "selection_id": 55}])
+def test_conflicting_identity_spellings_never_hide_a_covering_order(over):
+    # Sol su 360aa7d: selectionId=0 con selection_id=55 dava "0" e il LAY che copre la posizione spariva (prima l'alias
+    # lo recuperava). Due grafie in disaccordo => riga ambigua => esposizione non verificabile
+    bus, router = _run(_cmd(), orders=[_order(), _covering_lay(**over)])
+    assert router.calls == []
+    assert bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_non_verificabile"
+
+
+@pytest.mark.parametrize("over", [{"selectionId": None, "selection_id": 55}, {"selectionId": "", "selection_id": "55"},
+                                  {"selectionId": 55, "selection_id": "55"}])
+def test_a_single_or_agreeing_identity_spelling_is_used(over):
+    # una sola grafia valida, o due concordi: l'ordine e' riconosciuto (qui il LAY copre gia' la posizione)
+    bus, router = _run(_cmd(), orders=[_order(), _covering_lay(**over)])
+    assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_assente"
