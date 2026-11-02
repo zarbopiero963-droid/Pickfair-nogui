@@ -298,3 +298,32 @@ def test_declaring_the_opposite_position_side_never_doubles_the_real_position():
     # un hedge BACK (stesso lato della reale): il netto sul lato dichiarato e' negativo => rifiuto, mai un raddoppio
     bus, router = _run(_cmd(side="BACK", stake=0.23, price=2.0, orig_side="LAY"), orders=[_order()])
     assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_assente"
+
+
+def _covering_lay(**over):
+    row = dict(_order(side="LAY", matched=0.23, ref="cover"), betId="C1")
+    row.update(over)
+    return row
+
+
+@pytest.mark.parametrize("over", [{"side": None}, {"side": ""}, {"side": "X"}, {"side": 1}, {"side": "SIDE"}])
+def test_unreadable_side_on_the_target_selection_never_places(over):
+    # Codex P1 su 954c2cd: un LAY che gia' copre la posizione, con lato illeggibile, era scartato dal netto
+    bus, router = _run(_cmd(), orders=[_order(), _covering_lay(**over)])
+    assert router.calls == []
+    assert bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_non_verificabile"
+
+
+def test_padded_side_is_normalised_and_counted():
+    # " lay " e' un LAY: conta nel netto (la posizione e' gia' coperta), non sparisce
+    bus, router = _run(_cmd(), orders=[_order(), _covering_lay(side=" lay ")])
+    assert router.calls == [] and bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_assente"
+
+
+@pytest.mark.parametrize("over", [{"selectionId": None}, {"selectionId": ""}, {"marketId": None, "market_id": None},
+                                  {"marketId": "  "}])
+def test_unreadable_market_or_selection_identity_never_places(over):
+    # stessa causa: una riga che non si puo' escludere con certezza dalla selezione non dimostra nulla
+    bus, router = _run(_cmd(), orders=[_order(), _covering_lay(**over)])
+    assert router.calls == []
+    assert bus.last(CASHOUT_FAILED)["reason"] == "hedge_non_coerente:posizione_non_verificabile"
