@@ -3378,6 +3378,18 @@
         "tests/scripts/test_pr_readiness_retrigger.py"
       ],
       "max_files": 11
+    },
+    "cb586_fi03z_sim_zero_size": {
+      "description": "CB-586-FI-03Z (#586 c.6588978024, P1): SimulationBroker._match_order non abbina contro livelli del book con size esplicita <= 0 (delta Betfair = livello rimosso), coerente con best_counterparty_price; catalogo mutazioni riallineato + mutazione fi03z.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "guardrails/mutation_catalog.json",
+        "simulation_broker.py",
+        "tests/fi03z/test_sim_zero_size_level.py"
+      ],
+      "max_files": 5
     }
   }
 }

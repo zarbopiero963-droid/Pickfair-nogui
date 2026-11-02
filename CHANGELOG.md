@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **CB-586-FI-03Z (#586, P1):** il broker SIM abbinava ordini contro livelli del book con size 0. Esempio: un LAY
+  0,10@3.0 risultava abbinato a 2.02 su un book senza liquidità, con un matched finto e un'esposizione abbinata
+  inventata. Ora un livello con size esplicita ≤ 0 è assente, come il delta Betfair che lo rimuove, e il migliore è il
+  livello successivo, coerente con `best_counterparty_price`. Una size assente resta invariata. Test
+  `tests/fi03z/`; mutazione `fi03z_zero_size_level_matches`.
+
 ### Changed
 - **Governance PF-REVIEW-ATTESTATION v2 (#586) — review firmate e PRE-LIVE nei gate:** i workflow di Sol e Grok
   firmano (Sigstore, `actions/attest-build-provenance`) un'attestazione dell'esito della review (verdetto dalla
