@@ -8086,6 +8086,42 @@
       "rationale": "F-13 (Grok su 95f6752..3774a68): replace riuscito, gamba congelata PLACED con due ordini dello stesso ref."
     },
     {
+      "id": "f13_replace_view_keeps_substitute_price",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "            view[\"averagePriceMatched\"] = matched_notional / matched_total",
+      "mutated": "            pass",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (Grok su d5e7f54..b6e82d2): abbinato dell'originale prezzato alla quota del sostituto, liability e hedge falsi."
+    },
+    {
+      "id": "f13_replace_view_sums_foreign_runner",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "            if self._order_runner(order) != runner:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (Grok su d5e7f54..b6e82d2): un completo con lo stesso ref su altro runner/lato entra nella somma e chiude la gamba."
+    },
+    {
+      "id": "f13_replace_view_unreadable_price_accepted",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "            if not math.isfinite(size) or size < 0 or (size > 0 and not (math.isfinite(avg) and avg > 1.0)):",
+      "mutated": "            if not math.isfinite(size) or size < 0:",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (Grok su d5e7f54..b6e82d2): prezzo abbinato illeggibile o non valido accettato nella media."
+    },
+    {
       "id": "f13_sim_dedup_not_in_snapshot",
       "module": "simulation_broker",
       "area": "dedupe",

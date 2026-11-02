@@ -71,15 +71,22 @@ Se nessuna identità corrisponde ma sul runner della gamba c'è un ordine (`_una
 
 Se invece l'identità porta a **più** ordini distinti (un replace: originale con la parte abbinata e sostituto col
 residuo, stesso ref), decide `_leg_identity_view`:
-- **replace riuscito.** La gamba punta col suo `bet_id` all'ordine vivo e tutti gli altri ordini dell'identità sono
-  `EXECUTION_COMPLETE`. La gamba si riconcilia su una vista aggregata: l'ordine della gamba, con `sizeMatched` pari alla
-  somma degli abbinati di tutti gli ordini dell'identità e il residuo dell'ordine della gamba. Esempio: originale con
-  2.00 abbinati e sostituto con 3.00 vivi danno PARTIAL; sostituto abbinato per intero dà MATCHED (Grok su
-  `95f6752..3774a68`). Il `raw_response` della gamba porta `identityBetIds`;
+- **replace riuscito.** La gamba punta col suo `bet_id` all'ordine vivo. Tutti gli altri ordini dell'identità sono
+  `EXECUTION_COMPLETE` e stanno sullo stesso mercato, runner e lato. La gamba si riconcilia su una vista aggregata:
+  - l'ordine della gamba, con il suo residuo;
+  - `sizeMatched` pari alla somma degli abbinati di tutti gli ordini dell'identità;
+  - `averagePriceMatched` pari alla loro media ponderata, mai la sola quota del sostituto (Grok su `d5e7f54..b6e82d2`).
+
+  Esempi:
+  - originale con 2.00 abbinati e sostituto con 3.00 vivi danno PARTIAL;
+  - sostituto abbinato per intero dà MATCHED (Grok su `95f6752..3774a68`);
+  - 2.00 a 3.0 più 1.00 a 2.5 danno un prezzo medio di 2.833.
+
+  Il `raw_response` della gamba porta `identityBetIds`;
 - **in ogni altro caso** la gamba non si chiude su uno solo: resta com'è, con la decisione
   `MULTIPLE_EXCHANGE_ORDERS_FOR_LEG`. Sono i casi in cui un altro ordine è ancora vivo (replace con risposta persa: la
-  gamba punta ancora al vecchio `bet_id`, Sol su `95f6752`), la gamba non ha `bet_id`, oppure uno stato o una size
-  sono illeggibili.
+  gamba punta ancora al vecchio `bet_id`, Sol su `95f6752`), la gamba non ha `bet_id`, lo stesso ref compare su un altro
+  mercato, runner o lato, oppure uno stato, una size o un prezzo abbinato sono illeggibili.
 
 Senza nessun ordine sul runner, il timeout si applica come prima.
 

@@ -821,11 +821,13 @@ class ReconciliationEngine:
 
         Un'identita' (``bet_id`` o ``customer_ref``) che porta a UN solo ordine => ``selected``. Se porta a piu'
         ordini distinti (un replace: originale con la parte abbinata + sostituto col residuo, stesso ref):
-        - la gamba punta col suo ``bet_id`` a ``selected`` e TUTTI gli altri sono ``EXECUTION_COMPLETE`` (replace
-          riuscito, Grok su 95f6752..3774a68) => vista aggregata: ``selected`` con ``sizeMatched`` = somma degli
-          abbinati di tutti gli ordini dell'identita' e il residuo di ``selected``, l'unico ancora vivo;
+        - la gamba punta col suo ``bet_id`` a ``selected``, TUTTI gli altri sono ``EXECUTION_COMPLETE`` e stanno sullo
+          stesso mercato, runner e lato (replace riuscito, Grok su 95f6752..3774a68) => vista aggregata: ``selected``
+          con ``sizeMatched`` = somma degli abbinati, ``averagePriceMatched`` = loro media ponderata (Grok su
+          d5e7f54..b6e82d2) e il residuo di ``selected``, l'unico ancora vivo;
         - altrimenti (un altro ordine e' ancora vivo: replace con risposta persa, Sol su 95f6752; gamba senza
-          ``bet_id``; stato o size illeggibili) => ``None``: chiuderla su uno solo lascerebbe l'altro fuori.
+          ``bet_id``; stesso ref su un altro mercato, runner o lato; stato, size o prezzo abbinato illeggibili) =>
+          ``None``: chiuderla su uno solo, o su ordini estranei, sarebbe falso.
         """
         bid = str(leg.get("bet_id") or "").strip()
         cref = str(leg.get("customer_ref") or "").strip()
@@ -840,21 +842,39 @@ class ReconciliationEngine:
             return None
         if self._extract_order_status(selected) not in {"EXECUTABLE", "EXECUTION_COMPLETE"}:
             return None
+        runner = self._order_runner(selected)
+        if runner is None:
+            return None
         matched_total = 0.0
+        matched_notional = 0.0
         for key, order in hits.items():
             if key != bid and self._extract_order_status(order) != "EXECUTION_COMPLETE":
                 return None
+            if self._order_runner(order) != runner:
+                # stesso ref ma altro mercato, runner o lato (Grok su d5e7f54..b6e82d2): non e' la stessa gamba
+                return None
             try:
                 size = float(order.get("sizeMatched", 0) or 0)
+                avg = float(order.get("averagePriceMatched", 0) or 0) if size > 0 else 0.0
             except (TypeError, ValueError):
                 return None
-            if not math.isfinite(size) or size < 0:
+            if not math.isfinite(size) or size < 0 or (size > 0 and not (math.isfinite(avg) and avg > 1.0)):
                 return None
             matched_total += size
+            matched_notional += size * avg
         view = dict(selected)
         view["sizeMatched"] = round(matched_total, 2)
+        if matched_total > 0:
+            # abbinato prezzato alla media ponderata di tutti gli ordini dell'identita', mai alla quota del sostituto
+            view["averagePriceMatched"] = matched_notional / matched_total
         view["identityBetIds"] = sorted(str(k) for k in hits)
         return view
+
+    def _order_runner(self, order: Dict[str, Any]) -> Optional[Tuple[str, str, str]]:
+        """``(market_id, selection_id, side)`` dell'ordine, o ``None`` se uno dei tre manca."""
+        runner = (self._extract_market_id(order), self._extract_selection_id(order),
+                  self._first_of(order, "side").upper())
+        return runner if all(runner) else None
 
     @staticmethod
     def _unattributed_on_selection(leg: Dict[str, Any], by_sel: Dict[str, Dict[str, Any]]) -> bool:

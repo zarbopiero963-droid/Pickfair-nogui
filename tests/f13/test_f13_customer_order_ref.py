@@ -269,9 +269,10 @@ def _leg(**over):
     return leg
 
 
-def _remote(bet_id, ref="", selection=7, matched=5.0):
-    return {"betId": bet_id, "marketId": "1.100", "selectionId": selection, "customerOrderRef": ref,
-            "status": "EXECUTION_COMPLETE", "sizeMatched": matched, "sizeRemaining": 0.0}
+def _remote(bet_id, ref="", selection=7, matched=5.0, side="BACK", avg=3.0):
+    return {"betId": bet_id, "marketId": "1.100", "selectionId": selection, "customerOrderRef": ref, "side": side,
+            "status": "EXECUTION_COMPLETE", "sizeMatched": matched, "sizeRemaining": 0.0,
+            "averagePriceMatched": avg if matched else 0.0}
 
 
 def _reconcile(leg, orders):
@@ -403,6 +404,36 @@ def test_aggregated_view_sums_the_matched_size_of_every_identity_order():
     new = dict(_remote("NEW", ref="REF1", matched=0.5), status="EXECUTABLE", sizeRemaining=2.5)
     view = engine._leg_identity_view(_leg(bet_id="NEW"), [old, new], new)
     assert view["betId"] == "NEW" and view["sizeMatched"] == 2.5 and view["sizeRemaining"] == 2.5
+
+
+def test_aggregated_view_prices_the_matched_part_at_the_weighted_average():
+    # Grok su d5e7f54..b6e82d2: 2.00 abbinati a 3.0 sull'originale + 1.00 a 2.5 sul sostituto => media ponderata
+    # (2*3.0 + 1*2.5) / 3 = 2.8333..., mai la quota del solo sostituto
+    engine = ReconciliationEngine(db=_DB(), batch_manager=_Batches(_leg()), client_getter=lambda: _Exchange([]))
+    old = _remote("OLD", ref="REF1", matched=2.0, avg=3.0)
+    new = dict(_remote("NEW", ref="REF1", matched=1.0, avg=2.5), status="EXECUTABLE", sizeRemaining=2.0)
+    view = engine._leg_identity_view(_leg(bet_id="NEW"), [old, new], new)
+    assert view["sizeMatched"] == 3.0
+    assert abs(view["averagePriceMatched"] - (2 * 3.0 + 1 * 2.5) / 3) < 1e-9, view
+
+
+@pytest.mark.parametrize("over", [{"averagePriceMatched": "n/a"}, {"averagePriceMatched": 0.0},
+                                  {"averagePriceMatched": float("nan")}])
+def test_identity_order_with_unreadable_matched_price_holds_the_leg(over):
+    old = dict(_remote("OLD", ref="REF1", matched=2.0), **over)
+    new = dict(_remote("NEW", ref="REF1", matched=0.0), status="EXECUTABLE", sizeRemaining=3.0)
+    leg, _ = _reconcile(_leg(bet_id="NEW"), [old, new])
+    assert leg["status"] == "PLACED", "abbinato dell'originale senza un prezzo leggibile"
+
+
+@pytest.mark.parametrize("over", [{"selectionId": 99}, {"marketId": "1.999"}, {"side": "LAY"}, {"side": ""}])
+def test_completed_order_with_the_ref_on_another_runner_or_side_holds_the_leg(over):
+    # Grok su d5e7f54..b6e82d2: un completo con lo stesso ref ma estraneo (altro mercato, runner o lato) non entra
+    # nella somma e non chiude la gamba: resta MULTIPLE_EXCHANGE_ORDERS_FOR_LEG
+    old = dict(_remote("OLD", ref="REF1", matched=2.0), **over)
+    new = dict(_remote("NEW", ref="REF1", matched=0.0), status="EXECUTABLE", sizeRemaining=3.0)
+    leg, _ = _reconcile(_leg(bet_id="NEW"), [old, new])
+    assert leg["status"] == "PLACED", leg
 
 
 def test_identity_order_with_unreadable_size_holds_the_leg():

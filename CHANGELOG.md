@@ -23,7 +23,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Ogni place diretto (router, OrderManager, BetfairService, engine) invia `customerOrderRef` = `customer_ref` se conforme (≤32, charset Betfair); un ref non conforme viene omesso, mai rifiutato.
   - Il SIM rifiuta la stessa richiesta entro 60 s (`DUPLICATE_TRANSACTION`), che OrderRouter e OrderManager trattano come esito ignoto (AMBIGUOUS) come in LIVE; il replace conserva il ref.
   - La riconciliazione attribuisce per `bet_id` poi per ref, mai per `market::selection`: prima adottava l'ordine altrui sullo stesso runner. Con un ordine non attribuibile sul runner la gamba resta in attesa invece di chiudersi FAILED.
-  - Dopo un replace riuscito (originale completo con la parte abbinata, sostituto vivo, stesso ref) la gamba si riconcilia sul sostituto contando l'abbinato dell'originale; se un altro ordine dell'identità è ancora vivo (replace con risposta persa) resta in attesa.
+  - Dopo un replace riuscito (originale completo con la parte abbinata, sostituto vivo, stesso ref) la gamba si riconcilia sul sostituto contando l'abbinato dell'originale, al prezzo medio ponderato e solo se tutti gli ordini stanno sullo stesso mercato/runner/lato; se un altro ordine dell'identità è ancora vivo (replace con risposta persa) resta in attesa.
   - `docs/order_identity.md`; test `tests/f13/`; mutazioni `f13_*`. Seguito: F-13b (F018 e cashout_router con il ref).
 - **F-06 (#586, CSH-05/MM-02/NF-01) — hedge del cashout coerente con la posizione:** l'executor piazzava qualunque
   lato/size del comando (hedge dello stesso lato o oltre l'esposizione = nuova esposizione) e il middleware defaultava
