@@ -7856,6 +7856,18 @@
         "tests/f06/test_f06_hedge_guard.py"
       ],
       "rationale": "F-06: ordine senza mercato leggibile scartato dal netto."
+    },
+    {
+      "id": "f06_identity_conflict_resolved",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "        return values.pop() if len(values) == 1 else \"\"",
+      "mutated": "        return values.pop() if values else \"\"",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06 (Sol su 360aa7d): grafie dell'identificativo in disaccordo risolte scegliendone una, un ordine che copre la posizione sparisce."
     }
   ]
 }

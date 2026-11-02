@@ -500,7 +500,8 @@ BACK la raddoppia; un LAY 50 su una posizione da 0.23 apre una nuova esposizione
     gia' abbinata lo riduce (Sol su `a16f0d3`). Esposizione nulla => `posizione_assente`; ordini illeggibili,
     malformati o in errore, `sizeMatched` assente o non numerico (mai letto come zero, Codex su `73296a3`), una riga
     che non si puo' escludere con certezza dalla selezione (mercato illeggibile; selezione illeggibile sul mercato
-    target; lato illeggibile sulla selezione target, Codex su `954c2cd`) =>
+    target; lato illeggibile sulla selezione target, Codex su `954c2cd`; grafie camelCase/snake_case
+    dell'identificativo presenti e in disaccordo, Sol su `360aa7d`) =>
     `hedge_non_coerente:posizione_non_verificabile`. Un `original_pos` col lato opposto alla posizione reale ha netto
     negativo sul lato dichiarato => rifiuto (mai un raddoppio);
   - stake dell'hedge <= `esposizione / prezzo_hedge + 0.005` (confronto esatto in Decimal: il mezzo centesimo e'

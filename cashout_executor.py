@@ -382,11 +382,20 @@ class CashoutExecutor:
 
     @staticmethod
     def _identity(order: Dict[str, Any], camel: str, snake: str) -> str:
-        """Identificativo dell'ordine (camelCase o snake_case) normalizzato; '' se assente o vuoto."""
-        raw = order.get(camel)
-        if raw is None or (isinstance(raw, str) and not raw.strip()):
-            raw = order.get(snake)
-        return "" if raw is None or isinstance(raw, bool) else str(raw).strip()
+        """Identificativo dell'ordine; '' se assente, vuoto, booleano o AMBIGUO.
+
+        Sol su 360aa7d: le due grafie (camelCase/snake_case) presenti e in disaccordo (``selectionId=0``,
+        ``selection_id=55``) non si risolvono scegliendone una: la riga e' ambigua e il chiamante la tratta come
+        esposizione non verificabile. Una sola grafia valida, o due concordi, e' l'identificativo."""
+        values = set()
+        for key in (camel, snake):
+            raw = order.get(key)
+            if raw is None or (isinstance(raw, str) and not raw.strip()):
+                continue
+            if isinstance(raw, bool):
+                return ""
+            values.add(str(raw).strip())
+        return values.pop() if len(values) == 1 else ""
 
     @classmethod
     def _enforce_hard_invariants(cls, payload: Dict[str, Any]) -> None:
