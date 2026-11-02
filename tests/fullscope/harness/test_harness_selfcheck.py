@@ -39,24 +39,38 @@ def test_netguard_blocks_non_local_connections():
 
 
 def test_netguard_blocks_udp_sendto_and_connect_ex():
+    """Il netguard del harness blocca UDP ``sendto`` e TCP ``connect_ex`` con il proprio messaggio.
+
+    In una sandbox che vieta la famiglia AF_INET a livello di sistema (es. systemd ``RestrictAddressFamilies``,
+    VPS di certificazione #586) la creazione stessa del socket fallisce con EAFNOSUPPORT/EPERM/EACCES prima che il
+    netguard possa agire: la rete e' bloccata un livello piu' in basso e il caso e' registrato come ``*_BLOCKED_OS``.
+    Una connessione aperta o un errore diverso fanno sempre fallire il test; dove il socket si crea, il blocco deve
+    venire dal netguard."""
     env = dict(os.environ)
     env["PYTHONPATH"] = H.NETGUARD
-    code = ("import socket\n"
+    code = ("import errno, socket\n"
+            "OS_BLOCK = {errno.EAFNOSUPPORT, errno.EPERM, errno.EACCES}\n"
             "out = []\n"
-            "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
-            "try:\n"
-            "    s.sendto(b'x', ('8.8.8.8', 53)); out.append('UDP_OPEN')\n"
-            "except OSError as e:\n"
-            "    out.append('UDP_BLOCKED' if 'PF_NETGUARD' in str(e) else 'UDP_OTHER')\n"
-            "t = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
-            "t.settimeout(1)\n"
-            "try:\n"
-            "    t.connect_ex(('93.184.216.34', 80)); out.append('EX_OPEN')\n"
-            "except OSError as e:\n"
-            "    out.append('EX_BLOCKED' if 'PF_NETGUARD' in str(e) else 'EX_OTHER:' + str(e))\n"
+            "def probe(tag, kind, act):\n"
+            "    try:\n"
+            "        s = socket.socket(socket.AF_INET, kind)\n"
+            "    except OSError as e:\n"
+            "        out.append(tag + ('_BLOCKED_OS' if e.errno in OS_BLOCK else '_OTHER:' + str(e)))\n"
+            "        return\n"
+            "    try:\n"
+            "        act(s); out.append(tag + '_OPEN')\n"
+            "    except OSError as e:\n"
+            "        out.append(tag + ('_BLOCKED' if 'PF_NETGUARD' in str(e) else '_OTHER:' + str(e)))\n"
+            "def tcp(t):\n"
+            "    t.settimeout(1)\n"
+            "    t.connect_ex(('93.184.216.34', 80))\n"
+            "probe('UDP', socket.SOCK_DGRAM, lambda s: s.sendto(b'x', ('8.8.8.8', 53)))\n"
+            "probe('EX', socket.SOCK_STREAM, tcp)\n"
             "print(' '.join(out))\n")
     out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=30)
-    assert out.stdout.strip() == "UDP_BLOCKED EX_BLOCKED", out.stdout + out.stderr
+    udp, ex = (out.stdout.strip().split() + ["", ""])[:2]
+    assert udp in {"UDP_BLOCKED", "UDP_BLOCKED_OS"}, out.stdout + out.stderr
+    assert ex in {"EX_BLOCKED", "EX_BLOCKED_OS"}, out.stdout + out.stderr
 
 
 def test_external_sigkill_at_checkpoint_then_restart_keeps_db_and_exchange_state():
