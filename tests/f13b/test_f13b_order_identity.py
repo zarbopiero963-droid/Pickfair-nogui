@@ -264,3 +264,38 @@ def test_replaced_previous_hedge_still_live_blocks_a_second_hedge(db):
         _cmd(cashout_request_id="req-2"))
     assert router.calls == [], "secondo hedge con il primo (sostituito) ancora abbinabile"
     assert [p["reason"] for t, p in bus.published if t == CASHOUT_FAILED] == ["previous_hedge_still_live"]
+
+
+# ── E2E sul percorso reale: SimulationBroker + Database + CashoutRouter ─────────────────────────────────────────────
+
+def test_e2e_replaced_partial_order_is_fully_closed_by_the_cashout(db):
+    from simulation_broker import SimulationBroker
+    broker = SimulationBroker(starting_balance=100.0)
+    broker.update_market_book("1.1", {"marketId": "1.1", "status": "OPEN", "runners": [
+        {"selectionId": 7, "ex": {"availableToBack": [{"price": 2.0, "size": 2.0}], "availableToLay": []}}]})
+    placed = broker.place_bet(market_id="1.1", selection_id=7, side="BACK", price=2.0, size=5.0,
+                              customer_ref=REF, customer_order_ref=REF)
+    old_bet = placed["instructionReports"][0]["betId"]
+    _insert(db, REF, bet_id=old_bet)                       # il ledger del bot conosce solo il betId originale
+    new_bet = broker.replace_orders(market_id="1.1", bet_id=old_bet, new_price=3.0)["instructionReports"][0]["betId"]
+    broker.update_market_book("1.1", {"marketId": "1.1", "status": "OPEN", "runners": [
+        {"selectionId": 7, "ex": {"availableToBack": [{"price": 3.0, "size": 1.0}], "availableToLay": []}}]})
+    current = broker.get_current_orders(["1.1"])
+    assert {o["betId"] for o in current} == {old_bet, new_bet}
+    matched = sum(float(o["sizeMatched"]) for o in current)            # 2 a 2.0 + 1 a 3.0
+    resting = [o["betId"] for o in current if float(o["sizeRemaining"]) > 0]
+    assert matched == 3.0 and resting == [new_bet]
+
+    published, cancelled = [], []
+    router = CashoutRouter(
+        fetch_current_orders=lambda: broker.get_current_orders(["1.1"]),
+        fetch_bot_orders=db.get_bot_active_orders, fetch_bot_refs=db.get_bot_order_refs,
+        fetch_market_book=lambda m: _book(m),
+        cancel_orders=lambda m, ids: cancelled.append((m, list(ids))) or True,
+        publish=lambda t, p: published.append((t, p)), commission_pct=4.5)
+    out = router.route({"signal_type": "CASHOUT_ALL"})
+    assert out["published"] == 1, out
+    assert ("1.1", [new_bet]) in cancelled, "resting del sostituto sopravvissuto al cashout"
+    (req,) = [p for t, p in published if t == REQ_EXECUTE_CASHOUT]
+    # la posizione chiusa comprende l'abbinato di ENTRAMBI gli ordini (3.00), non solo dell'originale (2.00)
+    assert req["original_pos"]["stake"] == pytest.approx(3.0), req["original_pos"]
