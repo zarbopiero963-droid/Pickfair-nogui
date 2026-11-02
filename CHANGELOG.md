@@ -19,6 +19,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `tests/scripts/test_roadmap_merge_delegation.py`; mutazioni `pap_delegation_*`, `pap_live_removed_lines_ignored`.
 
 ### Fixed
+- **F-18 (#586, CFG-01/02/04, NF-16, NF-17) — impostazioni Roserpina validate al salvataggio, loader fail-closed:**
+  un valore illeggibile (`"abc"`, NaN, inf) o fuori dominio (commissione -5, percentuale 150, `table_count` 2.5) veniva
+  salvato e al caricamento ricadeva in silenzio sul default di codice. Ora `core/config_validation.py` definisce i domini;
+  `SettingsService.save_settings` rifiuta l'intero salvataggio (config precedente intatta); un DB corrotto si carica
+  senza crash con NaN/valore protettivo e `RoserpinaConfig.invalid_settings`, che nega ogni nuova entrata
+  (`configurazione_non_valida:<chiave>`). Nessun cap monetario attivo di default; `min_stake` solo > 0 (0,10 € valido,
+  mai alzato). 36 xfail NF-16 ora verdi. `docs/config_validation.md`; test `tests/f18/`; mutazioni `f18_*`.
 - **F-13b (#586, ID-01) — il ref è identità del bot nel cashout, al riavvio e negli hedge:** un ordine sostituito
   (nuovo `betId`) o con risposta persa era invisibile al cashout (hedge sottodimensionato, resting vivo, `no_bot_orders`),
   veniva chiuso alla ricostruzione F018 e un hedge sostituito non bloccava il secondo. Ora il `customerOrderRef`

@@ -3360,6 +3360,26 @@
         "tests/f13b/test_f13b_order_identity.py"
       ],
       "max_files": 11
+    },
+    "f18_config_validation": {
+      "description": "F-18 (#586, CFG-01/02/04, NF-16, NF-17): dominio unico delle chiavi Roserpina (core/config_validation.py); SettingsService.save_settings rifiuta per intero valori illeggibili/fuori dominio/incoerenti (config intatta); loader: valore presente ma invalido mai default silenzioso (NaN, valore protettivo, RoserpinaConfig.invalid_settings) => validators.risk_pcts_reason nega ogni nuova entrata. Nessun cap monetario di default, min_stake solo > 0 (microstake 0,10). Test che collaudavano il loader via save scrivono raw; due test che fissavano il fallback al default (NF-16) aggiornati al nuovo contratto.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/config_validation.py",
+        "core/system_state.py",
+        "core/validators.py",
+        "docs/config_validation.md",
+        "guardrails/mutation_catalog.json",
+        "services/setting_service.py",
+        "tests/f18/__init__.py",
+        "tests/f18/test_f18_config_validation.py",
+        "tests/fullscope/config/test_l1_settings_roundtrip.py",
+        "tests/roserpina41/test_rsr_targeted.py",
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "max_files": 13
     }
   }
 }

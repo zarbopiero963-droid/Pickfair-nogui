@@ -8218,6 +8218,78 @@
       "rationale": "F-13b: hedge precedente sostituito ancora vivo, secondo hedge che sovracopre la posizione."
     },
     {
+      "id": "f18_invalid_config_not_gated",
+      "module": "core.validators",
+      "area": "exposure",
+      "file": "core/validators.py",
+      "original": "    if invalid:\n        return f\"configurazione_non_valida:{invalid[0]}\"",
+      "mutated": "    if False:\n        return f\"configurazione_non_valida:{invalid[0]}\"",
+      "tests": [
+        "tests/f18/test_f18_config_validation.py"
+      ],
+      "rationale": "F-18: configurazione con chiavi invalide non nega le nuove entrate."
+    },
+    {
+      "id": "f18_non_finite_number_accepted",
+      "module": "core.config_validation",
+      "area": "exposure",
+      "file": "core/config_validation.py",
+      "original": "    return number if math.isfinite(number) else None",
+      "mutated": "    return number",
+      "tests": [
+        "tests/f18/test_f18_config_validation.py"
+      ],
+      "rationale": "F-18: NaN/inf accettati al salvataggio e al caricamento."
+    },
+    {
+      "id": "f18_lower_bound_not_checked",
+      "module": "core.config_validation",
+      "area": "exposure",
+      "file": "core/config_validation.py",
+      "original": "    if low is not None and (number < low or (number == low and not low_inc)):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/f18/test_f18_config_validation.py"
+      ],
+      "rationale": "F-18: valori negativi o zero salvati (commissione -5, min_stake 0, quota < 1.01)."
+    },
+    {
+      "id": "f18_any_number_is_a_bool",
+      "module": "core.config_validation",
+      "area": "exposure",
+      "file": "core/config_validation.py",
+      "original": "    if isinstance(value, (int, float)) and value in (0, 1):",
+      "mutated": "    if isinstance(value, (int, float)):",
+      "tests": [
+        "tests/f18/test_f18_config_validation.py"
+      ],
+      "rationale": "F-18: 2 letto come booleano valido per un interruttore di sicurezza."
+    },
+    {
+      "id": "f18_fractional_int_accepted",
+      "module": "core.config_validation",
+      "area": "exposure",
+      "file": "core/config_validation.py",
+      "original": "    if number is None or number != int(number):",
+      "mutated": "    if number is None:",
+      "tests": [
+        "tests/f18/test_f18_config_validation.py"
+      ],
+      "rationale": "F-18: table_count 2.5 accettato e troncato."
+    },
+    {
+      "id": "f18_book_coherence_not_checked",
+      "module": "core.config_validation",
+      "area": "exposure",
+      "file": "core/config_validation.py",
+      "original": "    if warning is not None and block is not None and block < warning:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/f18/test_f18_config_validation.py"
+      ],
+      "rationale": "F-18: soglia di blocco del book inferiore a quella di avviso accettata."
+    },
+    {
       "id": "f13_sim_dedup_not_in_snapshot",
       "module": "simulation_broker",
       "area": "dedupe",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 # `trading_config` e' un modulo-foglia (nessun import di core/services): safe da
 # importare qui. Fonte UNICA del floor di stake `MIN_STAKE` (#320-D2).
@@ -191,3 +191,8 @@ class RoserpinaConfig:
     # clamp a [0, 30]s lato runtime.
     auto_green_delay_enabled: bool = False
     auto_green_delay_sec: float = 2.5
+    # F-18 (#586): chiavi presenti nel DB ma illeggibili o fuori dominio (core/config_validation.py). Non vuoto =>
+    # ogni nuova entrata e' negata (`configurazione_non_valida:<chiave>`, core/validators.risk_pcts_reason); il valore
+    # caricato per quella chiave non e' mai il default di codice in silenzio (NaN per i numeri, il valore protettivo
+    # per i booleani di sicurezza).
+    invalid_settings: Tuple[str, ...] = ()
