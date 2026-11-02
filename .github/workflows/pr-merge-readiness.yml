@@ -154,7 +154,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .merge-readiness
-          python3 scripts/pr_review_attestation.py verify-pr --repo "$REPO" --pr "$PR" \
+          # Sol/Grok girano da pull_request_target e possono finire DOPO la CI dell'head: attesa limitata (30 min)
+          # finche' manca solo la copertura; bloccanti, firme non valide o API non leggibile non si aspettano.
+          python3 scripts/pr_review_attestation.py verify-pr --repo "$REPO" --pr "$PR" --wait-seconds 1800 \
             --output .merge-readiness/review-attestation.json
 
       - name: Verify PRE-LIVE Betfair certification

@@ -26,11 +26,14 @@ L'attestazione si scrive solo dentro Actions. Se la scrittura fallisce, la revie
 
 ## 3. Verifica (`scripts/pr_review_attestation.py`, unica per Merge readiness e VPS)
 - `verify-pr --repo R --pr N`:
-  1. elenca i run `pull_request_target` dei workflow in allowlist per la PR;
+  1. elenca i run `pull_request_target` dei workflow in allowlist per la PR, paginando fino ai run precedenti
+     all'apertura della PR (oltre 20 pagine: non verificabile, mai una lista parziale);
   2. scarica gli artefatti;
   3. per ognuno, verifica la firma con
      `gh attestation verify --signer-workflow R/<workflow> --source-ref refs/heads/main --cert-oidc-issuer …`;
-  4. applica `decide`.
+  4. applica `decide`;
+  5. con `--wait-seconds S` (Merge readiness: 1800) riprova ogni 60 s finché l'unico motivo è `NOT_COVERED_TO_HEAD`,
+     cioè le review sono ancora in corso. Bloccanti, firme non valide, fork o API non leggibile non si aspettano.
 - `decide` accetta un'attestazione solo se valgono tutte queste condizioni:
   - firma valida, issuer GitHub, digest del file uguale;
   - evento `pull_request_target`;
@@ -39,7 +42,13 @@ L'attestazione si scrive solo dentro Actions. Se la scrittura fallisce, la revie
   - repo, PR, run e autore coincidenti;
   - verdetto noto;
   - `files_sent > 0`, `files_truncated == 0`;
-  - `diff_sha256` uguale all'impronta ricalcolata dal verificatore.
+  - `diff_sha256` uguale all'impronta ricalcolata dal verificatore, con la stessa normalizzazione del workflow
+    (`pr_range_files`, parità testata con `solo_file_della_pr`). La normalizzazione usa la `base_sha` firmata: su una
+    push che porta dentro main restano solo i file della PR, con il patch calcolato sulla base.
+
+  Se main avanza senza che la PR cambi, il range iniziale firmato parte dalla base di allora: vale come inizio della
+  catena solo se coincide con la `base_sha` firmata nell'attestazione. Qualsiasi altro SHA estraneo dà
+  `RANGE_NOT_IN_PR`.
 
   **Copertura:** per ogni reviewer richiesto (Sol, Grok) i range PASS sono contigui dal base all'head. Un range non
   PASS che non è superato da un PASS successivo dà `OPEN_BLOCKERS` oppure `NOT_COVERED_TO_HEAD`. «Successivo» è
@@ -74,8 +83,14 @@ più volte per la stessa PR, le attestazioni sono idempotenti: la VPS rivaluta o
   - API giù;
   - PRE-LIVE assente, pendente o non `success`, oppure di un'altra app;
   - LIVE neutral da solo.
-- **struttura e parità:** i workflow firmano e caricano l'attestazione, e la loro `canonical_range_digest` coincide con
-  quella della libreria.
+- **struttura e parità:** i workflow firmano e caricano l'attestazione, e la loro `canonical_range_digest` e la loro
+  `solo_file_della_pr` coincidono con quelle della libreria.
+- **rilievi Sol/Codex su #602:**
+  - PASS seguito da BLOCKERS sullo stesso head;
+  - base avanzata;
+  - digest di una push-merge;
+  - paginazione dei run;
+  - attesa limitata della readiness.
 
 ## 5. Limiti e prossimi passi
 - **Prova integrata reale.** Va fatta sulla prima PR dopo il merge di questa: review firmate, `gh attestation verify`,

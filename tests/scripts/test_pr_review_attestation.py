@@ -32,7 +32,7 @@ def _att(reviewer="gpt-6.1-sol", frm=BASE, to=HEAD, verdict="PASS", run=11, atte
 MAIN_WF = "a" * 40           # commit di main da cui gira il workflow di review
 
 
-def _diff(frm, to):
+def _diff(frm, to, base=None):
     return A.sha256_hex(f"{frm}...{to}".encode())
 
 
@@ -238,7 +238,7 @@ def test_valid_signature_from_a_workflow_version_not_on_main_never_counts():
 
 
 @pytest.mark.parametrize("kw", [{"is_trusted_workflow_commit": None}, {"range_diff_sha256": None},
-                                {"range_diff_sha256": lambda a, b: None}])
+                                {"range_diff_sha256": lambda a, b, c: None}])
 def test_unverifiable_workflow_commit_or_diff_never_counts(kw):
     d = _decide(_both(), **kw)
     assert not d.passed and any(r in d.reasons for r in ("WORKFLOW_COMMIT_UNVERIFIABLE", "DIFF_UNVERIFIABLE"))
@@ -435,3 +435,166 @@ def test_live_neutral_alone_can_never_satisfy_prelive():
                 body = json.dumps(d).encode()
             return status, body
     assert A.verify_prelive(A.GitHub(REPO, "t", http=OnlyLive()), HEAD)["reason"] == "PRELIVE_MISSING"
+
+
+# ── rilievi Codex/Sol su #602 ────────────────────────────────────────────────────────────────────────────────────────
+
+OLD_BASE = "c" * 40
+
+
+def test_base_advanced_after_the_review_keeps_the_signed_initial_range():
+    # main avanza senza toccare la PR: la base corrente e' NEW, i range firmati partono dalla base di allora
+    pairs = [_pair("gpt-6.1-sol", OLD_BASE, HEAD, run=1, base_sha=OLD_BASE),
+             _pair("grok-4.7", OLD_BASE, HEAD, run=2, base_sha=OLD_BASE)]
+    assert _decide(pairs).passed
+
+
+def test_a_range_from_an_unknown_sha_that_is_not_its_signed_base_never_counts():
+    pairs = [_pair("gpt-6.1-sol", OLD_BASE, HEAD, run=1), _pair("grok-4.7", run=2)]   # base_sha firmata = BASE
+    d = _decide(pairs)
+    assert not d.passed and "RANGE_NOT_IN_PR:gpt-6.1-sol" in d.reasons
+
+
+def test_digest_is_recomputed_on_the_signed_base():
+    seen = []
+    pairs = [_pair("gpt-6.1-sol", C2, HEAD, run=1, base_sha=OLD_BASE)]
+    A.decide(pairs, repository=REPO, pr=PR, pr_author=AUTHOR, head_sha=HEAD, base_sha=BASE, commits=COMMITS,
+             is_trusted_workflow_commit=lambda sha: True,
+             range_diff_sha256=lambda f, t, b: seen.append(b) or _diff(f, t))
+    assert seen == [OLD_BASE]
+
+
+def _workflow_filter(path):
+    import ast
+    _w, py = _workflow_python(path)
+    fn = next(n for n in ast.parse(py).body if isinstance(n, ast.FunctionDef) and n.name == "solo_file_della_pr")
+    return fn
+
+
+def _run_workflow_filter(path, push, own, frm, base, own_error=False):
+    import ast
+    import re as _re
+    ns = {"BASE_SHA": base, "REVIEW_ID": "t", "redact": str, "print": lambda *a, **k: None,
+          "good_sha": lambda x: bool(_re.fullmatch(r"[0-9a-f]{40}", x or ""))}
+
+    def compare_range(b, h):
+        if own_error:
+            raise RuntimeError("api")
+        return {"files": own}
+    ns["compare_range"] = compare_range
+    exec(compile(ast.Module(body=[_workflow_filter(path)], type_ignores=[]), path, "exec"), ns)
+    return ns["solo_file_della_pr"](push, frm, HEAD)[0]
+
+
+_PUSH_MERGE = [{"filename": "mine.py", "patch": "+mine and main lines"}, {"filename": "from_main.py", "patch": "+m"},
+               {"filename": "renamed.py", "previous_filename": "old.py", "patch": "+r"}]
+_OWN = [{"filename": "mine.py", "patch": "+mine only"}, {"filename": "renamed.py", "previous_filename": "old.py"}]
+
+
+@pytest.mark.parametrize("path", sorted(A.TRUSTED_REVIEW_WORKFLOWS.values()))
+@pytest.mark.parametrize("push,own,frm,own_error", [
+    (_PUSH_MERGE, _OWN, C1, False),                                    # push che porta dentro main: filtro + patch vs base
+    (_PUSH_MERGE[:1], _OWN, C1, False),                                # push normale: invariato
+    (_PUSH_MERGE, _OWN, BASE, False),                                  # range dalla base: invariato
+    (_PUSH_MERGE, None, C1, True),                                     # file propri non calcolabili: invariato
+    ([{"filename": f"f{i}", "patch": "+"} for i in range(300)], _OWN, C1, False),   # cap 300: invariato
+    (_PUSH_MERGE, [{"filename": f"f{i}"} for i in range(300)], C1, False),          # propri al cap: invariato
+])
+def test_range_normalization_matches_the_review_workflow(path, push, own, frm, own_error):
+    expected = _run_workflow_filter(path, push, own, frm, BASE, own_error)
+    assert A.pr_range_files(push, None if own_error else own, frm, BASE) == expected
+
+
+def test_merge_push_digest_on_the_verifier_matches_what_the_reviewer_signed():
+    class Merge(_API):
+        def __call__(self, url):
+            if f"/compare/{C1}...{HEAD}" in url:
+                return 200, json.dumps({"files": _PUSH_MERGE}).encode()
+            if f"/compare/{BASE}...{HEAD}" in url:
+                return 200, json.dumps({"files": _OWN}).encode()
+            return super().__call__(url)
+    gh = A.GitHub(REPO, "t", http=Merge())
+    signed_by_workflow = A.canonical_range_digest(
+        _run_workflow_filter(A.TRUSTED_REVIEW_WORKFLOWS["gpt-6.1-sol"], _PUSH_MERGE, _OWN, C1, BASE))
+    assert gh.range_digest(C1, HEAD, BASE) == signed_by_workflow
+    assert signed_by_workflow != A.canonical_range_digest(_PUSH_MERGE)   # senza normalizzazione: DIFF_MISMATCH
+
+
+def _runs_api(pages, pr_page):
+    def http(url):
+        page = int(url.rsplit("page=", 1)[1])
+        rows = [{"id": page * 1000 + i, "path": "x", "status": "completed", "pull_requests": [{"number": 7}],
+                 "created_at": f"2026-11-{30 - page:02d}T00:00:00Z"} for i in range(100 if page < pages else 3)]
+        if page == pr_page:
+            rows[0] = {"id": 42, "path": "x", "status": "completed", "pull_requests": [{"number": PR}],
+                       "created_at": rows[0]["created_at"]}
+        return 200, json.dumps({"workflow_runs": rows}).encode()
+    return A.GitHub(REPO, "t", http=http)
+
+
+def test_review_runs_paginate_past_the_first_hundred():
+    runs = _runs_api(pages=3, pr_page=2).review_runs("x", PR)
+    assert [r["id"] for r in runs] == [42]
+
+
+def test_review_runs_stop_at_runs_older_than_the_pr():
+    calls = []
+    gh = _runs_api(pages=10, pr_page=1)
+    http = gh.http
+    gh.http = lambda url: calls.append(url) or http(url)
+    gh.review_runs("x", PR, since="2026-11-28T12:00:00Z")      # pagina 2 = 28/11 00:00, gia' prima della PR
+    assert len(calls) == 2
+
+
+def test_review_runs_beyond_the_page_cap_are_unverifiable_not_partial():
+    with pytest.raises(RuntimeError):
+        _runs_api(pages=50, pr_page=1).review_runs("x", PR, max_pages=3)
+
+
+class _Seq:
+    def __init__(self, results):
+        self.results, self.calls, self.now = list(results), 0, 0.0
+
+    def verify(self, *_a):
+        self.calls += 1
+        return self.results.pop(0) if len(self.results) > 1 else self.results[0]
+
+    def sleep(self, s):
+        self.now += s
+
+
+@pytest.fixture
+def seq(monkeypatch):
+    def make(results):
+        q = _Seq(results)
+        monkeypatch.setattr(A, "verify_pr", q.verify)
+        return q
+    return make
+
+
+NOT_COV = {"passed": False, "reasons": ["NOT_COVERED_TO_HEAD:grok-4.7"]}
+
+
+def test_readiness_waits_while_reviews_are_still_running(seq):
+    q = seq([NOT_COV, NOT_COV, {"passed": True, "reasons": []}])
+    out = A.verify_pr_waiting(None, PR, None, wait_seconds=600, interval=60, sleep=q.sleep, clock=lambda: q.now)
+    assert out["passed"] and q.calls == 3
+
+
+@pytest.mark.parametrize("bad", [["OPEN_BLOCKERS:gpt-6.1-sol"], ["GITHUB_API_UNAVAILABLE:RuntimeError"], ["FORK_PR"],
+                                 ["NOT_COVERED_TO_HEAD:grok-4.7", "OPEN_BLOCKERS:gpt-6.1-sol"]])
+def test_readiness_does_not_wait_out_blockers_or_errors(seq, bad):
+    q = seq([{"passed": False, "reasons": bad}])
+    out = A.verify_pr_waiting(None, PR, None, wait_seconds=600, sleep=q.sleep, clock=lambda: q.now)
+    assert not out["passed"] and q.calls == 1
+
+
+def test_readiness_wait_is_bounded(seq):
+    q = seq([NOT_COV])
+    out = A.verify_pr_waiting(None, PR, None, wait_seconds=300, interval=60, sleep=q.sleep, clock=lambda: q.now)
+    assert not out["passed"] and q.calls == 6 and q.now <= 300
+
+
+def test_readiness_workflow_waits_for_the_reviews():
+    text = (Path(__file__).resolve().parents[2] / ".github/workflows/pr-merge-readiness.yml").read_text()
+    assert "verify-pr --repo \"$REPO\" --pr \"$PR\" --wait-seconds 1800" in text

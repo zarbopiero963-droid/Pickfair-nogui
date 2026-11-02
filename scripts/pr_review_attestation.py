@@ -88,14 +88,15 @@ def _bad(reason: str) -> Tuple[Optional[Dict[str, Any]], str]:
 def check_attestation(raw: bytes, signed: Signed, *, repository: str, pr: int, pr_author: str,
                       trusted: Mapping[str, str] = TRUSTED_REVIEW_WORKFLOWS,
                       is_trusted_workflow_commit: Optional[Callable[[str], bool]] = None,
-                      range_diff_sha256: Optional[Callable[[str, str], Optional[str]]] = None,
+                      range_diff_sha256: Optional[Callable[[str, str, str], Optional[str]]] = None,
                       ) -> Tuple[Optional[Dict[str, Any]], str]:
     """``(attestazione, "")`` se autentica e ben formata per questa PR, altrimenti ``(None, motivo)``.
 
     Oltre alla firma (owner #586: «una firma autentica non dimostra che la review sia corretta o indipendente»):
     - ``is_trusted_workflow_commit(sha)``: il commit del workflow firmatario e' su ``main`` (versione non controllabile
       dall'autore della PR). Obbligatorio: assente => non verificabile;
-    - ``range_diff_sha256(from, to)``: ``canonical_range_digest`` del range ricalcolato dal verificatore (Compare API); deve
+    - ``range_diff_sha256(from, to, base)``: ``canonical_range_digest`` del range ricalcolato dal verificatore (Compare
+      API) con la STESSA normalizzazione del workflow (``pr_range_files``, sulla ``base_sha`` firmata); deve
       coincidere con ``diff_sha256`` dichiarato, con ``files_sent > 0`` e ``files_truncated == 0`` (il reviewer ha
       ricevuto TUTTO il codice del range). Obbligatorio: assente => non verificabile.
     Non decide sull'head ne' sulla copertura (vedi ``decide``)."""
@@ -126,8 +127,8 @@ def check_attestation(raw: bytes, signed: Signed, *, repository: str, pr: int, p
     if str(att.get("run_id")) != str(signed.run_id) or str(att.get("run_attempt")) != str(signed.run_attempt):
         return _bad("RUN_MISMATCH")
     rng = att.get("range") if isinstance(att.get("range"), dict) else {}
-    head, frm, to = att.get("head_sha"), rng.get("from"), rng.get("to")
-    if not all(isinstance(x, str) and _SHA.fullmatch(x) for x in (head, frm, to)) or to != head:
+    head, frm, to, base = att.get("head_sha"), rng.get("from"), rng.get("to"), att.get("base_sha")
+    if not all(isinstance(x, str) and _SHA.fullmatch(x) for x in (head, frm, to, base)) or to != head:
         return _bad("MALFORMED_RANGE")
     if not pr_author or att.get("pr_author") != pr_author:
         return _bad("AUTHOR_MISMATCH")
@@ -149,7 +150,7 @@ def check_attestation(raw: bytes, signed: Signed, *, repository: str, pr: int, p
     if range_diff_sha256 is None:
         return _bad("DIFF_UNVERIFIABLE")
     try:
-        expected = range_diff_sha256(frm, to)
+        expected = range_diff_sha256(frm, to, base)
     except Exception:  # noqa: BLE001
         expected = None
     if not expected:
@@ -164,7 +165,7 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
            required: Sequence[str] = REQUIRED_REVIEWERS,
            trusted: Mapping[str, str] = TRUSTED_REVIEW_WORKFLOWS,
            is_trusted_workflow_commit: Optional[Callable[[str], bool]] = None,
-           range_diff_sha256: Optional[Callable[[str, str], Optional[str]]] = None) -> Decision:
+           range_diff_sha256: Optional[Callable[[str, str, str], Optional[str]]] = None) -> Decision:
     """Verdetto delle review per l'head ``head_sha``.
 
     ``commits`` = SHA della PR dal piu' vecchio all'head (la catena ``base -> ... -> head``). Per ogni reviewer
@@ -190,11 +191,14 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
             reasons.append(why)
             continue
         frm, to = att["range"]["from"], att["range"]["to"]
-        if frm not in index or to not in index or index[frm] >= index[to]:
+        # base avanzato senza cambiare la PR: il range iniziale parte dalla base FIRMATA di allora, che conta come
+        # l'inizio della catena (il digest del diff e' gia' stato ricalcolato su quella base)
+        start = 0 if frm == att["base_sha"] and frm not in index else index.get(frm)
+        if start is None or to not in index or start >= index[to]:
             reasons.append(f"RANGE_NOT_IN_PR:{att['reviewer']}")
             continue
         by_reviewer.setdefault(att["reviewer"], []).append(
-            (index[frm], index[to], att["verdict"], _run_order(signed, att["verdict"] == "PASS")))
+            (start, index[to], att["verdict"], _run_order(signed, att["verdict"] == "PASS")))
     covered: List[Tuple[str, str, str]] = []
     for reviewer in required:
         if reviewer not in trusted:
@@ -264,6 +268,39 @@ def gh_signature_verifier(run: Callable[[List[str]], Tuple[int, str]], *, reposi
     return verify
 
 
+def pr_range_files(push_files: List[Dict[str, Any]], own_files: Optional[List[Dict[str, Any]]], range_from: str,
+                   base_sha: str) -> List[Dict[str, Any]]:
+    """I file del range come li ha ricevuti il reviewer: stessa regola di ``solo_file_della_pr`` dei workflow Sol/Grok
+    (test di parita'). ``own_files`` = Compare ``base_sha...to`` (``None`` se non calcolabile).
+
+    Range che parte dalla base, liste al cap di 300 o file propri non calcolabili => range intero. Altrimenti si tengono
+    solo i file che la PR cambia; se qualcosa e' stato escluso (push che porta dentro main), per i file tenuti si usa il
+    patch calcolato sulla base, quando GitHub lo fornisce."""
+    if range_from == base_sha or not _SHA.fullmatch(base_sha or "") or len(push_files) >= 300:
+        return push_files
+    if own_files is None or len(own_files) >= 300:
+        return push_files
+    names = {f.get("filename") for f in own_files} | {f.get("previous_filename") for f in own_files}
+    names.discard(None)
+    kept = [f for f in push_files if f.get("filename") in names or f.get("previous_filename") in names]
+    excluded = {f.get("filename") for f in push_files} - {f.get("filename") for f in kept} - {None}
+    if not excluded:
+        return kept
+    by_name: Dict[Any, Dict[str, Any]] = {}
+    for f in own_files:
+        if f.get("previous_filename"):
+            by_name[f["previous_filename"]] = f
+    for f in own_files:
+        if f.get("filename"):
+            by_name[f["filename"]] = f
+
+    def from_base(f: Dict[str, Any]) -> Dict[str, Any]:
+        own = by_name.get(f.get("filename")) or by_name.get(f.get("previous_filename"))
+        return own if own and own.get("patch") else f
+
+    return [from_base(f) for f in kept]
+
+
 # ── integrazione GitHub (Merge readiness / VPS) ─────────────────────────────────────────────────────────────────────
 
 PRELIVE_CHECK = "pf-betfair-certification"
@@ -305,9 +342,19 @@ class GitHub:
                 return out
             page += 1
 
-    def review_runs(self, workflow_path: str, number: int) -> List[Dict[str, Any]]:
+    def review_runs(self, workflow_path: str, number: int, since: str = "", max_pages: int = 20) -> List[Dict[str, Any]]:
+        """Run completati del workflow per la PR, paginando fino ai run creati prima di ``since`` (apertura della PR).
+        Oltre ``max_pages`` senza arrivarci => errore (non verificabile), mai una lista parziale in silenzio."""
         file = workflow_path.rsplit("/", 1)[-1]
-        runs = self.json(f"/actions/workflows/{file}/runs?event={TRUSTED_EVENT}&per_page=100").get("workflow_runs", [])
+        runs: List[Dict[str, Any]] = []
+        for page in range(1, max_pages + 1):
+            rows = self.json(f"/actions/workflows/{file}/runs?event={TRUSTED_EVENT}&per_page=100&page={page}"
+                             ).get("workflow_runs", [])
+            runs += rows
+            if len(rows) < 100 or (since and min(str(r.get("created_at") or "") for r in rows) < since):
+                break
+        else:
+            raise RuntimeError(f"review runs oltre {max_pages} pagine")
         return [r for r in runs if r.get("path") == workflow_path and r.get("status") == "completed"
                 and any(p.get("number") == number for p in r.get("pull_requests") or [])]
 
@@ -330,12 +377,18 @@ class GitHub:
         cmp = self.json(f"/compare/{sha}...main")
         return cmp.get("status") in ("identical", "ahead")      # sha antenato (o uguale) di main
 
-    def range_digest(self, frm: str, to: str) -> Optional[str]:
-        cmp = self.json(f"/compare/{frm}...{to}")
-        files = cmp.get("files")
+    def range_digest(self, frm: str, to: str, base: str) -> Optional[str]:
+        files = self.json(f"/compare/{frm}...{to}").get("files")
         if not isinstance(files, list) or len(files) >= 300:
             return None                                          # Compare API troncata: non verificabile
-        return canonical_range_digest(files)
+        own: Optional[List[Dict[str, Any]]] = None
+        if frm != base:
+            try:
+                own = self.json(f"/compare/{base}...{to}").get("files")
+            except Exception:  # noqa: BLE001 - come il workflow: file propri non calcolabili => range intero
+                own = None
+            own = own if isinstance(own, list) else None
+        return canonical_range_digest(pr_range_files(files, own, frm, base))
 
     def check_runs(self, sha: str) -> List[Dict[str, Any]]:
         return self.json(f"/commits/{sha}/check-runs?per_page=100").get("check_runs", [])
@@ -351,7 +404,7 @@ def verify_pr(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], 
         commits = gh.pr_commits(number)
         pairs = []
         for reviewer, path in TRUSTED_REVIEW_WORKFLOWS.items():
-            for run in gh.review_runs(path, number):
+            for run in gh.review_runs(path, number, since=str(pr.get("created_at") or "")):
                 for raw in gh.attestation_files(int(run["id"])):
                     pairs.append((raw, verify_signature(raw, path)))
     except Exception as exc:  # noqa: BLE001 - API non leggibile => non verificabile
@@ -360,6 +413,29 @@ def verify_pr(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], 
                       base_sha=base, commits=commits, is_trusted_workflow_commit=gh.is_on_main,
                       range_diff_sha256=gh.range_digest)
     return dict(decision.to_dict(), head_sha=head, attestations=len(pairs))
+
+
+def _still_waiting(result: Mapping[str, Any]) -> bool:
+    """Vale la pena riprovare solo se manca la copertura (review ancora in corso): bloccanti, firme o API no."""
+    gating = [r for r in result.get("reasons", []) if r.startswith(("NOT_COVERED", "OPEN_BLOCKERS", "REQUIRED_", "HEAD_",
+                                                                     "GITHUB_API", "FORK"))]
+    return not result.get("passed") and bool(gating) and all(r.startswith("NOT_COVERED_TO_HEAD:") for r in gating)
+
+
+def verify_pr_waiting(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], Signed], *,
+                      wait_seconds: float = 0, interval: float = 60, sleep: Callable[[float], None] = None,
+                      clock: Callable[[], float] = None) -> Dict[str, Any]:
+    """``verify_pr`` con attesa limitata: Merge readiness puo' partire prima che Sol/Grok abbiano finito. Si riprova
+    finche' l'unico motivo e' ``NOT_COVERED_TO_HEAD`` e non e' scaduto ``wait_seconds``; poi vale l'ultimo esito."""
+    import time
+    sleep = sleep or time.sleep
+    clock = clock or time.monotonic
+    deadline = clock() + max(0.0, wait_seconds)
+    while True:
+        result = verify_pr(gh, number, verify_signature)
+        if not _still_waiting(result) or clock() + interval > deadline:
+            return result
+        sleep(interval)
 
 
 def verify_prelive(gh: GitHub, head_sha: str) -> Dict[str, Any]:
@@ -392,6 +468,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         p.add_argument("--repo", required=True)
         p.add_argument("--pr", type=int, required=True)
         p.add_argument("--output", required=True)
+        p.add_argument("--wait-seconds", type=float, default=0)
     args = parser.parse_args(argv)
     gh = GitHub(args.repo, os.environ.get("GH_TOKEN", ""))
 
@@ -410,7 +487,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             finally:
                 os.unlink(fh.name)
 
-        result = verify_pr(gh, args.pr, verify_signature)
+        result = verify_pr_waiting(gh, args.pr, verify_signature, wait_seconds=args.wait_seconds)
     else:
         try:
             head = gh.pr(args.pr)["head"]["sha"]
