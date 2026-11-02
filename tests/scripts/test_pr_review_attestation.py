@@ -133,6 +133,21 @@ def test_later_pass_that_re_covers_the_blocked_range_clears_it():
     assert _decide(pairs).passed
 
 
+@pytest.mark.parametrize("over", [{"files_truncated": 1}, {"files_sent": 0}, {"diff_sha256": "0" * 64}])
+@pytest.mark.parametrize("verdict", ["BLOCKERS", "INCONCLUSIVE", "ERROR"])
+def test_authentic_non_pass_counts_even_when_its_coverage_would_not_qualify_for_pass(verdict, over):
+    # Codex su #602 (7f3e48f): un BLOCKERS autentico con diff troncato non deve sparire davanti a una copertura vecchia
+    pairs = [_pair("gpt-6.1-sol", run=1), _pair("gpt-6.1-sol", verdict=verdict, run=2, **over), _pair("grok-4.7", run=3)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
+
+
+@pytest.mark.parametrize("over", [{"files_truncated": 1}, {"files_sent": 0}, {"diff_sha256": "0" * 64}])
+def test_a_pass_with_incomplete_coverage_still_never_counts(over):
+    d = _decide([_pair("gpt-6.1-sol", run=1, **over), _pair("grok-4.7", run=2)])
+    assert not d.passed and "NOT_COVERED_TO_HEAD:gpt-6.1-sol" in d.reasons
+
+
 def test_pass_after_blockers_on_the_same_head_clears_them():
     pairs = [_pair("gpt-6.1-sol", verdict="BLOCKERS", run=1), _pair("gpt-6.1-sol", run=2), _pair("grok-4.7", run=3)]
     assert _decide(pairs).passed

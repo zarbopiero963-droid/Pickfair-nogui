@@ -44,8 +44,9 @@ L'attestazione si scrive solo dentro Actions. Se la scrittura fallisce, la revie
   - commit del workflow raggiungibile da `main`;
   - repo, PR, run e autore coincidenti;
   - verdetto noto;
-  - `files_sent > 0`, `files_truncated == 0`;
-  - `diff_sha256` uguale all'impronta ricalcolata dal verificatore, con la stessa normalizzazione del workflow
+  - solo per un PASS: `files_sent > 0` e `files_truncated == 0`. Un verdetto non PASS autentico conta sempre come
+    bloccante, anche se la sua review era incompleta: una copertura più vecchia non lo fa sparire;
+  - solo per un PASS: `diff_sha256` uguale all'impronta ricalcolata dal verificatore, con la stessa normalizzazione del workflow
     (`pr_range_files`, parità testata con `solo_file_della_pr`). La normalizzazione usa la `base_sha` firmata: su una
     push che porta dentro main restano solo i file della PR, con il patch calcolato sulla base.
 

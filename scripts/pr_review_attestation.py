@@ -99,7 +99,8 @@ def check_attestation(raw: bytes, signed: Signed, *, repository: str, pr: int, p
       API) con la STESSA normalizzazione del workflow (``pr_range_files``, sulla ``base_sha`` firmata); deve
       coincidere con ``diff_sha256`` dichiarato, con ``files_sent > 0`` e ``files_truncated == 0`` (il reviewer ha
       ricevuto TUTTO il codice del range). Obbligatorio: assente => non verificabile.
-    Non decide sull'head ne' sulla copertura (vedi ``decide``)."""
+    I tre requisiti di copertura valgono solo per un PASS: un verdetto non PASS autentico e' accettato comunque, cosi'
+    ``decide`` lo conta come bloccante. Non decide sull'head ne' sulla copertura (vedi ``decide``)."""
     if not signed.ok:
         return _bad(f"SIGNATURE_INVALID:{signed.reason or 'unverified'}")
     if signed.issuer != OIDC_ISSUER:
@@ -142,6 +143,11 @@ def check_attestation(raw: bytes, signed: Signed, *, repository: str, pr: int, p
         return _bad("WORKFLOW_COMMIT_UNVERIFIABLE")
     if not trusted_commit:
         return _bad("WORKFLOW_COMMIT_NOT_ON_MAIN")
+    if att["verdict"] != "PASS":
+        # verdetto negativo autentico: conta SEMPRE, anche se la sua review era incompleta (troncata, nulla inviato, diff
+        # non ricalcolabile). I requisiti di copertura servono a meritare un PASS, non a far sparire un bloccante
+        # davanti a una copertura piu' vecchia (rilievo Codex su #602; AGENTS.md: review troncata mai PASS).
+        return att, ""
     sent, truncated = att.get("files_sent"), att.get("files_truncated")
     if not isinstance(sent, int) or isinstance(sent, bool) or sent <= 0:
         return _bad("NOTHING_REVIEWED")
