@@ -1123,10 +1123,11 @@ jobs:
               return _hl.sha256(json.dumps(rows, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
 
           def write_attestation(state, emitted_at, reemitted=False):
-              """Scrive review-attestation.json. Solo dentro GitHub Actions (run_id/attempt reali); un errore qui non
-              fa mai fallire la review gia' pubblicata: senza attestazione i verificatori non la contano (fail-closed)."""
+              """Scrive review-attestation.json; True se scritto. Solo dentro GitHub Actions (run_id/attempt reali). Il
+              commento della review resta pubblicato anche se qui qualcosa fallisce; il chiamante chiude allora il job
+              ROSSO, cosi' il verificatore vede un run senza attestazione e nega il PASS (Codex P1 su #602)."""
               if os.environ.get("GITHUB_ACTIONS") != "true":
-                  return
+                  return False
               try:
                   _verdicts = {RR_VALID_PASS: "PASS", RR_VALID_BLOCKERS: "BLOCKERS", RR_VALID_INCONCLUSIVE: "INCONCLUSIVE"}
                   _gaps = rr_coverage_gaps(files, diff_text, compare_truncated)
@@ -1146,8 +1147,10 @@ jobs:
                   with open(os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), "review-attestation.json"), "w",
                             encoding="utf-8") as _fh:
                       json.dump(attestation, _fh, sort_keys=True, separators=(",", ":"))
+                  return True
               except Exception as _exc:  # noqa: BLE001
-                  print(f"::warning::{REVIEW_ID}: attestazione non scritta ({type(_exc).__name__}): la review non conta per i gate")
+                  print(f"::error::{REVIEW_ID}: attestazione non scritta ({type(_exc).__name__}): la review non conta per i gate")
+                  return False
 
           def reemit_from_done_review():
               """Range gia' revisionato (done_marker): ri-emette l'attestazione dal commento del bot, con il verdetto
@@ -1169,13 +1172,25 @@ jobs:
                               when = str(c.get("updated_at") or "")
                               if states and states[-1] in (RR_VALID_BLOCKERS, RR_VALID_INCONCLUSIVE) and re.fullmatch(
                                       r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", when):
-                                  write_attestation(states[-1], when, reemitted=True)
-                              return
+                                  return write_attestation(states[-1], when, reemitted=True)
+                              return False
                       if len(comments) < 100:
-                          return
+                          return False
                       page += 1
               except Exception as _exc:  # noqa: BLE001
                   print(f"::warning::{REVIEW_ID}: attestazione non ri-emessa ({type(_exc).__name__})")
+              return False
+
+          def dedup_exit():
+              """Uscita per range gia' revisionato. Sul RERUN di un run (attempt > 1) che non riesce a ri-emettere
+              (PASS, che non si ri-emette mai, o commento illeggibile) il job chiude ROSSO: se il primo tentativo non
+              aveva pubblicato l'attestazione, il run resta senza attestazione e il verificatore nega il PASS. Se il
+              primo tentativo l'aveva pubblicata, quella resta valida (il run ha un'attestazione)."""
+              if (not reemit_from_done_review() and os.environ.get("GITHUB_ACTIONS") == "true"
+                      and int(os.environ.get("GITHUB_RUN_ATTEMPT") or 1) > 1):
+                  print(f"::error::{REVIEW_ID}: rerun di un range gia' revisionato senza attestazione ri-emettibile.")
+                  sys.exit(1)
+              sys.exit(0)
 
           try:
               _already_reviewed = comment_exists(done_marker)
@@ -1196,8 +1211,7 @@ jobs:
                   f"{REVIEW_ID}: review già presente per {range_base[:12]}...{range_head[:12]} "
                   "→ salto la chiamata AI a pagamento."
               )
-              reemit_from_done_review()
-              sys.exit(0)
+              dedup_exit()
 
           # PF-REVIEW-RECOVERY-01: i tentativi di QUESTO range stanno nel commento
           # del bot per il range. Al massimo RR_MAX_ATTEMPTS chiamate in totale:
@@ -1239,8 +1253,7 @@ jobs:
               if manual_files or compare_truncated:
                   try_add_label()
               print(f"{REVIEW_ID}: review gia' completata per {range_base[:12]}...{range_head[:12]} → nessuna chiamata.")
-              reemit_from_done_review()
-              sys.exit(0)
+              dedup_exit()
           run_url = (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{REPO}/actions/runs/"
                      f"{os.environ.get('GITHUB_RUN_ID', '?')}")
           if rr_next_action(previous_attempts, False) == "OWNER_DECISION":
@@ -1455,7 +1468,9 @@ jobs:
 
           upsert_comment(marker, body[:64000])
 
-          write_attestation(attempt_state, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+          if (not write_attestation(attempt_state, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                  and os.environ.get("GITHUB_ACTIONS") == "true"):
+              sys.exit(1)   # review pubblicata ma non attestata: job rosso, il verificatore nega il PASS
           PY
 
       # PF-REVIEW-ATTESTATION v2: firma Sigstore dell'attestazione (provenance SLSA, identita' del workflow su main)

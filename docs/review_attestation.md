@@ -21,8 +21,11 @@ base, senza checkout né esecuzione del codice della PR. Dopo il commento della 
    commit del workflow.
 3. **Pubblicazione.** Lo carica come artefatto `review-attestation-<attempt>`.
 
-L'attestazione si scrive solo dentro Actions. Se la scrittura fallisce, la review non conta per i gate
-(fail-closed) ma il commento resta.
+L'attestazione si scrive solo dentro Actions. Se scrittura, firma o upload falliscono, il commento della review
+resta pubblicato ma il job chiude **rosso**. Il verificatore tratta un run dei workflow trusted che non chiude
+`success` e non ha nessuna attestazione come `RUN_WITHOUT_ATTESTATION` e nega il PASS (`UNVERIFIED_ATTESTATION`):
+quel run può aver concluso una review BLOCKERS senza riuscire a pubblicarla. I salti legittimi (dedup, gate di costo,
+range vuoto) chiudono `success` senza artefatto.
 
 **Rerun di un range già revisionato.** Se firma o upload falliscono al primo giro, un rerun del workflow trova il
 `done_marker` e non richiama il modello, quindi non ripaga la review. Prima di uscire però ri-emette l'attestazione
@@ -34,7 +37,8 @@ dal commento del bot (`github-actions[bot]`), solo se il verdetto è **non PASS*
 Perché solo non PASS: chi ha accesso in scrittura può modificare un commento del bot senza cambiarne l'autore, quindi
 il commento non è una fonte autenticata. Un verdetto negativo ri-emesso può soltanto bloccare; un PASS ri-emesso da un
 commento modificato sarebbe un PASS falso firmato. Commento assente, non del bot o senza uno stato valido: nessuna
-attestazione.
+attestazione. Su un rerun (attempt > 1) che non può ri-emettere (un PASS, o un commento illeggibile) il job chiude
+rosso: se il primo tentativo non aveva pubblicato l'attestazione, il run resta senza attestazione e blocca.
 
 ## 3. Verifica (`scripts/pr_review_attestation.py`, unica per Merge readiness e VPS)
 - `verify-pr --repo R --pr N`:
@@ -128,10 +132,9 @@ più volte per la stessa PR, le attestazioni sono idempotenti: la VPS rivaluta o
   sulla correzione revisionata nella push dopo. Questo PASS non dimostra che il bloccante sia stato risolto: lo
   dimostrano il triage dell'agente nel thread e il test che lo riproduce (spec §0.3–§0.6). È lo stesso limite delle
   review diff-only già in vigore, non un allargamento.
-- **Attestazione persa.** Se firma o upload falliscono su una review PASS, quel range resta non coperto e la PR non
-  passa il gate: è fail-closed e serve l'owner. Se falliscono su una review BLOCKERS e nessuno rilancia il run,
-  l'attestazione manca. Il bloccante resta però nel commento della review, che il gate di review a commenti esistente
-  continua a leggere; un rerun lo ri-emette firmato.
+- **Attestazione persa.** Se scrittura, firma o upload falliscono, il run chiude rosso senza attestazione e la PR
+  non passa il gate finché un rerun non ri-emette un verdetto negativo. Un PASS perso non si ri-emette mai: il range
+  resta non coperto e serve l'owner (fail-closed).
 - **Questa PR.** Le sue review girano con i workflow di main ancora senza attestazione, quindi il nuovo controllo di
   readiness la vede non PASS. È atteso, e la PR è comunque a merge owner.
 - **Reviewer Claude (`pr-review-claude-fable5.yml`, sospeso da P41).** Esito dell'audit: usa ancora la regola larga

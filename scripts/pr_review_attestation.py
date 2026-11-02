@@ -395,10 +395,13 @@ class GitHub:
                      or any(p.get("number") == number for p in r.get("pull_requests") or []))]
 
     def attestation_files(self, run_id: int) -> List[bytes]:
+        return [raw for _name, raw in self.attestation_artifacts(run_id)]
+
+    def attestation_artifacts(self, run_id: int) -> List[Tuple[str, bytes]]:
         import io
         import zipfile
         arts = self.json(f"/actions/runs/{run_id}/artifacts?per_page=100").get("artifacts", [])
-        out = []
+        out: List[Tuple[str, bytes]] = []
         for art in arts:
             if not str(art.get("name", "")).startswith("review-attestation-") or art.get("expired"):
                 continue
@@ -406,7 +409,7 @@ class GitHub:
             if status != 200:
                 raise RuntimeError(f"HTTP {status} artifact {art['id']}")
             with zipfile.ZipFile(io.BytesIO(blob)) as zf:
-                out.append(zf.read(ATTESTATION_FILE))
+                out.append((str(art.get("name")), zf.read(ATTESTATION_FILE)))
         return out
 
     def is_on_main(self, sha: str) -> bool:
@@ -439,17 +442,30 @@ def verify_pr(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], 
             return {"passed": False, "reasons": ["FORK_PR"], "head_sha": head}
         commits = gh.pr_commits(number)
         pairs = []
+        unpublished: List[str] = []
         for reviewer, path in TRUSTED_REVIEW_WORKFLOWS.items():
             for run in gh.review_runs(path, number, since=str(pr.get("created_at") or ""),
                                       head_ref=str(pr["head"].get("ref") or "")):
-                for raw in gh.attestation_files(int(run["id"])):
+                artifacts = gh.attestation_artifacts(int(run["id"]))
+                for _name, raw in artifacts:
                     pairs.append((raw, verify_signature(raw, path)))
+                # Un run che non chiude `success` e non ha nessuna attestazione puo' aver concluso una review (anche
+                # BLOCKERS) senza riuscire a pubblicarla: esito sconosciuto => niente PASS (Codex P1 su #602). I workflow
+                # chiudono rosso quando la scrittura, la firma o l'upload falliscono, e anche sul rerun che non puo'
+                # ri-emettere; i salti legittimi (dedup, gate di costo, range vuoto) chiudono `success`.
+                if run.get("conclusion") != "success" and not artifacts:
+                    unpublished.append(f"RUN_WITHOUT_ATTESTATION:{reviewer}:{run['id']}")
     except Exception as exc:  # noqa: BLE001 - API non leggibile => non verificabile
         return {"passed": False, "reasons": [f"GITHUB_API_UNAVAILABLE:{type(exc).__name__}"]}
     decision = decide(pairs, repository=gh.repository, pr=number, pr_author=pr["user"]["login"], head_sha=head,
                       base_sha=base, commits=commits, is_trusted_workflow_commit=gh.is_on_main,
                       range_diff_sha256=gh.range_digest)
-    return dict(decision.to_dict(), head_sha=head, attestations=len(pairs))
+    out = dict(decision.to_dict(), head_sha=head, attestations=len(pairs))
+    if unpublished:
+        out["passed"] = False
+        out["reasons"] = list(out.get("reasons", [])) + unpublished + (
+            [] if "UNVERIFIED_ATTESTATION" in out.get("reasons", []) else ["UNVERIFIED_ATTESTATION"])
+    return out
 
 
 def _still_waiting(result: Mapping[str, Any]) -> bool:

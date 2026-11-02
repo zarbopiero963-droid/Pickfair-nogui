@@ -701,13 +701,14 @@ def _attestation_fns(path, tmp_path, comments, states_header=None):
     import re as _re
     _w, py = _workflow_python(path)
     tree = ast.parse(py)
-    names = {"canonical_range_digest", "write_attestation", "reemit_from_done_review", "rr_attempts", "rr_coverage_gaps"}
+    names = {"canonical_range_digest", "write_attestation", "reemit_from_done_review", "rr_attempts", "rr_coverage_gaps",
+             "dedup_exit"}
     fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
     assigns = [n for n in tree.body if isinstance(n, ast.Assign) and any(
         isinstance(t, ast.Name) and (t.id.startswith("RR_") or t.id.startswith("_RR_")) for t in n.targets)]
     import hashlib
     import os as _os
-    ns = {"json": json, "re": _re, "os": _os, "_hl": hashlib, "REPO": REPO, "PR_NUMBER": str(PR), "REVIEW_ID": "x",
+    ns = {"json": json, "re": _re, "os": _os, "_hl": hashlib, "sys": sys, "REPO": REPO, "PR_NUMBER": str(PR), "REVIEW_ID": "x",
           "range_base": C2, "range_head": HEAD, "BASE_SHA": BASE, "marker": "<!-- m -->",
           "done_marker": "<!-- done -->", "files": [{"filename": "a.py", "patch": "+1"}],
           "diff_text": "\n\n### FILE: a.py\n+1", "compare_truncated": False, "print": lambda *a, **k: None,
@@ -756,7 +757,7 @@ def test_no_reliable_done_review_means_no_re_emitted_attestation(path, comments,
 @pytest.mark.parametrize("path", sorted(A.TRUSTED_REVIEW_WORKFLOWS.values()))
 def test_both_dedup_exits_re_emit_before_leaving(path):
     _w, py = _workflow_python(path)
-    assert py.count("reemit_from_done_review()\n    sys.exit(0)") == 2
+    assert py.count("\n    dedup_exit()\n") == 2
     assert py.index("def write_attestation") < py.index("_already_reviewed = comment_exists(done_marker)")
 
 
@@ -774,3 +775,63 @@ def test_a_pass_is_never_re_emitted_from_an_editable_comment(path, tmp_path, mon
     ns["REVIEW_ID"] = rid
     ns["reemit_from_done_review"]()
     assert not (tmp_path / "review-attestation.json").exists()
+
+
+# ── Codex P1 su #602 (05f6290): un run trusted fallito senza attestazione puo' nascondere un BLOCKERS ───────────────
+
+class _RunsAPI(_API):
+    def __init__(self, extra_run, extra_artifacts, **kw):
+        super().__init__(**kw)
+        self.extra_run, self.extra_artifacts = extra_run, extra_artifacts
+
+    def __call__(self, url):
+        p = url.split(f"/repos/{REPO}", 1)[1]
+        if p.startswith("/actions/workflows/") and "gpt56" in p:
+            status, body = super().__call__(url)
+            d = json.loads(body)
+            d["workflow_runs"].append(dict(self.extra_run, path=".github/workflows/" + p.split("/")[3]))
+            return 200, json.dumps(d).encode()
+        if p.startswith("/actions/runs/500/artifacts"):
+            return 200, json.dumps({"artifacts": self.extra_artifacts}).encode()
+        return super().__call__(url)
+
+
+@pytest.mark.parametrize("conclusion,artifacts,blocked", [
+    ("failure", [], True),                                   # review conclusa, firma/upload falliti: esito sconosciuto
+    ("cancelled", [], True),
+    ("success", [], False),                                  # salto legittimo (dedup, costo, range vuoto)
+])
+def test_trusted_run_without_attestation(conclusion, artifacts, blocked):
+    run = {"id": 500, "status": "completed", "conclusion": conclusion, "run_attempt": 1,
+           "pull_requests": [{"number": PR}]}
+    out = _verify(_RunsAPI(run, artifacts))
+    assert out["passed"] is (not blocked), out
+    assert ("UNVERIFIED_ATTESTATION" in out["reasons"]) is blocked
+
+
+@pytest.mark.parametrize("path", sorted(A.TRUSTED_REVIEW_WORKFLOWS.values()))
+@pytest.mark.parametrize("state,attempt,code", [
+    ("VALID_PASS", "2", 1),          # rerun che non puo' ri-emettere (PASS): rosso
+    ("VALID_PASS", "1", 0),          # primo tentativo che trova il range gia' fatto da un altro run: salto legittimo
+    ("VALID_BLOCKERS", "2", 0),      # rerun che ri-emette il bloccante: verde, con attestazione
+])
+def test_dedup_exit_turns_red_when_a_rerun_cannot_re_emit(path, state, attempt, code, tmp_path, monkeypatch):
+    rid = "gpt56sol" if "sol" in path else "grok46"
+    head = (f"<!-- {rid}-pr-review:pickfair-nogui:{C2[:12]}...{HEAD[:12]} --><!-- done -->"
+            f"<!-- {rid}-pr-review-attempt:pickfair-nogui:{C2[:12]}...{HEAD[:12]}:1:{state} -->\n# review")
+    comments = [{"user": {"login": "github-actions[bot]"}, "body": head, "updated_at": "2026-11-02T10:11:12Z"}]
+    for k, v in (("GITHUB_ACTIONS", "true"), ("GITHUB_RUN_ID", "77"), ("GITHUB_RUN_ATTEMPT", attempt),
+                 ("GITHUB_WORKSPACE", str(tmp_path)), ("PR_AUTHOR", AUTHOR)):
+        monkeypatch.setenv(k, v)
+    ns = _attestation_fns(path, tmp_path, comments)
+    ns["REVIEW_ID"] = rid
+    with pytest.raises(SystemExit) as exc:
+        ns["dedup_exit"]()
+    assert exc.value.code == code
+
+
+@pytest.mark.parametrize("path", sorted(A.TRUSTED_REVIEW_WORKFLOWS.values()))
+def test_a_published_review_that_cannot_be_attested_turns_the_job_red(path):
+    _w, py = _workflow_python(path)
+    tail = py[py.rindex("write_attestation(attempt_state"):]
+    assert "sys.exit(1)" in tail.split("\n")[2], tail[:300]
