@@ -342,9 +342,15 @@ class GitHub:
                 return out
             page += 1
 
-    def review_runs(self, workflow_path: str, number: int, since: str = "", max_pages: int = 20) -> List[Dict[str, Any]]:
+    def review_runs(self, workflow_path: str, number: int, since: str = "", max_pages: int = 20,
+                    head_ref: str = "") -> List[Dict[str, Any]]:
         """Run completati del workflow per la PR, paginando fino ai run creati prima di ``since`` (apertura della PR).
-        Oltre ``max_pages`` senza arrivarci => errore (non verificabile), mai una lista parziale in silenzio."""
+        Oltre ``max_pages`` senza arrivarci => errore (non verificabile), mai una lista parziale in silenzio.
+
+        Il campo ``pull_requests`` di un run e' calcolato da GitHub al momento della lettura e si svuota quando l'head
+        della PR cambia (run di #601 dopo i push successivi: ``[]``), quindi da solo perderebbe i range gia' firmati.
+        Vale anche il branch della PR (``head_branch`` dei run ``pull_request_target``); l'appartenenza vera alla PR
+        la decide comunque il contenuto FIRMATO (``pr``), controllato in ``check_attestation``."""
         file = workflow_path.rsplit("/", 1)[-1]
         runs: List[Dict[str, Any]] = []
         for page in range(1, max_pages + 1):
@@ -356,7 +362,8 @@ class GitHub:
         else:
             raise RuntimeError(f"review runs oltre {max_pages} pagine")
         return [r for r in runs if r.get("path") == workflow_path and r.get("status") == "completed"
-                and any(p.get("number") == number for p in r.get("pull_requests") or [])]
+                and ((head_ref and r.get("head_branch") == head_ref)
+                     or any(p.get("number") == number for p in r.get("pull_requests") or []))]
 
     def attestation_files(self, run_id: int) -> List[bytes]:
         import io
@@ -404,7 +411,8 @@ def verify_pr(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], 
         commits = gh.pr_commits(number)
         pairs = []
         for reviewer, path in TRUSTED_REVIEW_WORKFLOWS.items():
-            for run in gh.review_runs(path, number, since=str(pr.get("created_at") or "")):
+            for run in gh.review_runs(path, number, since=str(pr.get("created_at") or ""),
+                                      head_ref=str(pr["head"].get("ref") or "")):
                 for raw in gh.attestation_files(int(run["id"])):
                     pairs.append((raw, verify_signature(raw, path)))
     except Exception as exc:  # noqa: BLE001 - API non leggibile => non verificabile

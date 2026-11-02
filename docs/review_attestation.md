@@ -27,7 +27,10 @@ L'attestazione si scrive solo dentro Actions. Se la scrittura fallisce, la revie
 ## 3. Verifica (`scripts/pr_review_attestation.py`, unica per Merge readiness e VPS)
 - `verify-pr --repo R --pr N`:
   1. elenca i run `pull_request_target` dei workflow in allowlist per la PR, paginando fino ai run precedenti
-     all'apertura della PR (oltre 20 pagine: non verificabile, mai una lista parziale);
+     all'apertura della PR (oltre 20 pagine: non verificabile, mai una lista parziale). Un run appartiene alla PR se
+     il suo `head_branch` è il branch della PR o se GitHub lo elenca in `pull_requests`: quel campo si svuota quando
+     l'head cambia (osservato sui run di #601), quindi da solo perderebbe i range già firmati. Ciò che conta resta il
+     campo `pr` firmato;
   2. scarica gli artefatti;
   3. per ognuno, verifica la firma con
      `gh attestation verify --signer-workflow R/<workflow> --source-ref refs/heads/main --cert-oidc-issuer …`;

@@ -598,3 +598,19 @@ def test_readiness_wait_is_bounded(seq):
 def test_readiness_workflow_waits_for_the_reviews():
     text = (Path(__file__).resolve().parents[2] / ".github/workflows/pr-merge-readiness.yml").read_text()
     assert "verify-pr --repo \"$REPO\" --pr \"$PR\" --wait-seconds 1800" in text
+
+
+def test_review_runs_keep_earlier_ranges_after_github_empties_pull_requests():
+    # osservato su #601: dopo i push successivi i run vecchi hanno pull_requests == []
+    rows = [{"id": 1, "path": "x", "status": "completed", "pull_requests": [], "head_branch": "feat"},
+            {"id": 2, "path": "x", "status": "completed", "pull_requests": [], "head_branch": "other"},
+            {"id": 3, "path": "x", "status": "in_progress", "pull_requests": [], "head_branch": "feat"}]
+    gh = A.GitHub(REPO, "t", http=lambda url: (200, json.dumps({"workflow_runs": rows}).encode()))
+    assert [r["id"] for r in gh.review_runs("x", PR, head_ref="feat")] == [1]
+    assert gh.review_runs("x", PR) == []
+
+
+def test_an_attestation_of_another_pr_on_the_same_branch_never_counts():
+    pairs = [_pair("gpt-6.1-sol", run=1, pr=PR + 1), _pair("grok-4.7", run=2)]
+    d = _decide(pairs)
+    assert not d.passed and "WRONG_PR" in d.reasons
