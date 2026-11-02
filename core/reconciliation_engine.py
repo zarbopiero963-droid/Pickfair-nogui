@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import threading
 import time
 from collections import OrderedDict
@@ -813,16 +814,47 @@ class ReconciliationEngine:
 
         return None
 
-    def _leg_identity_spans_orders(self, leg: Dict[str, Any], remote_orders: Sequence[Dict[str, Any]]) -> bool:
-        """True se ``bet_id`` e ``customer_ref`` della gamba indicano piu' di un ordine distinto dell'exchange."""
+    def _leg_identity_view(
+        self, leg: Dict[str, Any], remote_orders: Sequence[Dict[str, Any]], selected: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """L'ordine su cui riconciliare la gamba, o ``None`` se la gamba va trattenuta (F-13).
+
+        Un'identita' (``bet_id`` o ``customer_ref``) che porta a UN solo ordine => ``selected``. Se porta a piu'
+        ordini distinti (un replace: originale con la parte abbinata + sostituto col residuo, stesso ref):
+        - la gamba punta col suo ``bet_id`` a ``selected`` e TUTTI gli altri sono ``EXECUTION_COMPLETE`` (replace
+          riuscito, Grok su 95f6752..3774a68) => vista aggregata: ``selected`` con ``sizeMatched`` = somma degli
+          abbinati di tutti gli ordini dell'identita' e il residuo di ``selected``, l'unico ancora vivo;
+        - altrimenti (un altro ordine e' ancora vivo: replace con risposta persa, Sol su 95f6752; gamba senza
+          ``bet_id``; stato o size illeggibili) => ``None``: chiuderla su uno solo lascerebbe l'altro fuori.
+        """
         bid = str(leg.get("bet_id") or "").strip()
         cref = str(leg.get("customer_ref") or "").strip()
-        hits = set()
+        hits: Dict[Any, Dict[str, Any]] = {}
         for order in remote_orders or []:
             obid = self._extract_bet_id(order)
             if (bid and obid == bid) or (cref and self._extract_customer_ref(order) == cref):
-                hits.add(obid or id(order))
-        return len(hits) > 1
+                hits.setdefault(obid or id(order), order)
+        if len(hits) <= 1:
+            return selected
+        if not bid or self._extract_bet_id(selected) != bid:
+            return None
+        if self._extract_order_status(selected) not in {"EXECUTABLE", "EXECUTION_COMPLETE"}:
+            return None
+        matched_total = 0.0
+        for key, order in hits.items():
+            if key != bid and self._extract_order_status(order) != "EXECUTION_COMPLETE":
+                return None
+            try:
+                size = float(order.get("sizeMatched", 0) or 0)
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(size) or size < 0:
+                return None
+            matched_total += size
+        view = dict(selected)
+        view["sizeMatched"] = round(matched_total, 2)
+        view["identityBetIds"] = sorted(str(k) for k in hits)
+        return view
 
     @staticmethod
     def _unattributed_on_selection(leg: Dict[str, Any], by_sel: Dict[str, Dict[str, Any]]) -> bool:
@@ -1778,10 +1810,14 @@ class ReconciliationEngine:
                         details={"reason": "ordine_non_attribuibile_sulla_selezione"},
                     )
                     continue
-                if remote_order is not None and self._leg_identity_spans_orders(leg, remote_orders):
-                    # F-13 (Sol su 95f6752): l'identita' della gamba porta a PIU' ordini dell'exchange (replace con
-                    # risposta persa: originale con la parte abbinata + sostituto col residuo, stesso ref). Chiuderla
-                    # su uno solo lascerebbe l'altro fuori dalla riconciliazione: resta com'e', decisione registrata.
+                identity_view = (
+                    self._leg_identity_view(leg, remote_orders, remote_order) if remote_order is not None else None
+                )
+                if remote_order is not None and identity_view is None:
+                    # F-13 (Sol su 95f6752): l'identita' della gamba porta a PIU' ordini dell'exchange e uno diverso
+                    # da quello della gamba e' ancora vivo (replace con risposta persa: originale con la parte
+                    # abbinata + sostituto col residuo, stesso ref). Chiuderla su uno solo lascerebbe l'altro fuori
+                    # dalla riconciliazione: resta com'e', decisione registrata (``_leg_identity_view``).
                     self._log_decision(
                         batch_id=batch_id, leg_index=leg_index,
                         case_classification="MULTIPLE_EXCHANGE_ORDERS_FOR_LEG",
@@ -1791,6 +1827,8 @@ class ReconciliationEngine:
                         details={"reason": "piu_ordini_per_la_stessa_gamba"},
                     )
                     continue
+                if identity_view is not None:
+                    remote_order = identity_view
                 cref = str(leg.get("customer_ref") or "").strip()
                 saga_pending = bool(cref and cref in pending_saga_refs)
 

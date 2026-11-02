@@ -380,6 +380,45 @@ def test_two_orders_with_the_leg_ref_and_no_bet_id_hold_the_leg():
     assert leg["status"] == "PLACED" and leg.get("bet_id") in (None, "")
 
 
+def test_completed_replace_reconciles_on_the_substitute_with_the_original_matched_part():
+    # Grok su 95f6752..3774a68: replace RIUSCITO, la gamba punta gia' al sostituto (NEW, residuo vivo) e l'originale
+    # (OLD, parte abbinata, completo) ha lo stesso ref. La gamba non resta congelata PLACED: si riconcilia sul
+    # sostituto contando anche la parte abbinata dell'originale
+    old = _remote("OLD", ref="REF1", matched=2.0)
+    new = dict(_remote("NEW", ref="REF1", matched=0.0), status="EXECUTABLE", sizeRemaining=3.0)
+    leg, _ = _reconcile(_leg(bet_id="NEW"), [old, new])
+    assert leg["status"] == "PARTIAL" and leg["bet_id"] == "NEW", leg
+
+
+def test_completed_replace_fully_matched_closes_the_leg_matched():
+    old = _remote("OLD", ref="REF1", matched=2.0)
+    new = _remote("NEW", ref="REF1", matched=3.0)
+    leg, _ = _reconcile(_leg(bet_id="NEW"), [old, new])
+    assert leg["status"] == "MATCHED" and leg["bet_id"] == "NEW", leg
+
+
+def test_aggregated_view_sums_the_matched_size_of_every_identity_order():
+    engine = ReconciliationEngine(db=_DB(), batch_manager=_Batches(_leg()), client_getter=lambda: _Exchange([]))
+    old = _remote("OLD", ref="REF1", matched=2.0)
+    new = dict(_remote("NEW", ref="REF1", matched=0.5), status="EXECUTABLE", sizeRemaining=2.5)
+    view = engine._leg_identity_view(_leg(bet_id="NEW"), [old, new], new)
+    assert view["betId"] == "NEW" and view["sizeMatched"] == 2.5 and view["sizeRemaining"] == 2.5
+
+
+def test_identity_order_with_unreadable_size_holds_the_leg():
+    old = dict(_remote("OLD", ref="REF1", matched=2.0), sizeMatched="n/a")
+    new = dict(_remote("NEW", ref="REF1", matched=0.0), status="EXECUTABLE", sizeRemaining=3.0)
+    leg, _ = _reconcile(_leg(bet_id="NEW"), [old, new])
+    assert leg["status"] == "PLACED", "vista aggregata costruita su una size illeggibile"
+
+
+def test_identity_order_in_an_unexpected_status_holds_the_leg():
+    old = dict(_remote("OLD", ref="REF1", matched=2.0), status="CANCELLED")
+    new = dict(_remote("NEW", ref="REF1", matched=0.0), status="EXECUTABLE", sizeRemaining=3.0)
+    leg, _ = _reconcile(_leg(bet_id="NEW"), [old, new])
+    assert leg["status"] == "PLACED"
+
+
 def test_a_single_order_for_the_leg_identity_is_still_resolved():
     leg, _ = _reconcile(_leg(bet_id="ONLY"), [_remote("ONLY", ref="REF1")])
     assert leg["status"] == "MATCHED"

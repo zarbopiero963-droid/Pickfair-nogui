@@ -8042,12 +8042,48 @@
       "module": "core.reconciliation_engine",
       "area": "reconciliation",
       "file": "core/reconciliation_engine.py",
-      "original": "                if remote_order is not None and self._leg_identity_spans_orders(leg, remote_orders):",
+      "original": "                if remote_order is not None and identity_view is None:",
       "mutated": "                if False:",
       "tests": [
         "tests/f13/test_f13_customer_order_ref.py"
       ],
       "rationale": "F-13 (Sol su 95f6752): replace con risposta persa, gamba chiusa sul vecchio ordine e residuo fuori dalla riconciliazione."
+    },
+    {
+      "id": "f13_replace_other_order_still_live_not_held",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "            if key != bid and self._extract_order_status(order) != \"EXECUTION_COMPLETE\":",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (Sol su 95f6752): un altro ordine dell'identita' e' ancora vivo, la vista aggregata chiude la gamba sul vecchio ordine."
+    },
+    {
+      "id": "f13_replace_view_ignores_original_matched_part",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "        view[\"sizeMatched\"] = round(matched_total, 2)",
+      "mutated": "        view[\"sizeMatched\"] = view.get(\"sizeMatched\", 0)",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (Grok su 95f6752..3774a68): replace riuscito, la parte abbinata dell'originale non conta e la gamba non risulta PARTIAL."
+    },
+    {
+      "id": "f13_replace_completed_still_frozen",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "        if len(hits) <= 1:\n            return selected",
+      "mutated": "        if len(hits) <= 1:\n            return selected\n        return None",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (Grok su 95f6752..3774a68): replace riuscito, gamba congelata PLACED con due ordini dello stesso ref."
     },
     {
       "id": "f13_sim_dedup_not_in_snapshot",
