@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from betfair_client import BetfairClient, BetfairDiagnosticError
+from core.order_ref import customer_order_ref
 from core.redaction import redact_literal_secrets
 from simulation_broker import SimulationBroker
 
@@ -892,6 +893,8 @@ class BetfairService:
                 # #PR-C: propaga il customer_ref al wire (customerRef, de-dup
                 # Betfair). Il client lo valida/normalizza; assente => "" => omesso.
                 customer_ref=payload.get("customer_ref") or "",
+                # F-13: lo stesso ref, se conforme, e' l'identita' dell'ordine (`customerOrderRef`)
+                customer_order_ref=customer_order_ref(payload.get("customer_ref")),
             )
         except Exception as exc:
             err = str(exc)

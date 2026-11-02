@@ -59,6 +59,8 @@ def test_place_forwards_expected_payload_to_client_without_mutation():
             "price": payload["price"],
             "size": payload["stake"],
             "customer_ref": payload["customer_ref"],
+            # F-13: il ref conforme e' anche l'identita' dell'ordine (`customerOrderRef`)
+            "customer_order_ref": payload["customer_ref"],
             "event_key": payload["event_key"],
             "table_id": payload["table_id"],
             "batch_id": payload["batch_id"],

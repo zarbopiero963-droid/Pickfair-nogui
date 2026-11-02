@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import threading
 import time
 from collections import OrderedDict
@@ -797,28 +798,101 @@ class ReconciliationEngine:
         by_bet: Dict[str, Dict[str, Any]],
         by_sel: Dict[str, Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
+        """L'ordine dell'exchange della gamba, solo per IDENTITA' dimostrata (F-13, D-582-01):
+          1. ``bet_id``        (assegnato da Betfair, univoco);
+          2. ``customer_ref``  (= ``customerOrderRef`` inviato con l'ordine, ritrova una risposta persa / un replace).
+        Mai per ``market_id::selection_id``: quell'indice e' last-wins e attribuiva alla gamba l'ordine di qualcun
+        altro sullo stesso runner. ``by_sel`` resta nella firma per il chiamante (vedi ``_unattributed_on_selection``).
         """
-        Multi-key lookup with priority:
-          1. customer_ref  (strongest — user-assigned)
-          2. bet_id        (exchange-assigned, survives replaces)
-          3. market_id+selection_id  (structural — catches replaced orders)
-        """
-        cref = str(leg.get("customer_ref") or "").strip()
-        if cref and cref in by_ref:
-            return by_ref[cref]
-
         bid = str(leg.get("bet_id") or "").strip()
         if bid and bid in by_bet:
             return by_bet[bid]
 
-        mid = str(leg.get("market_id") or "").strip()
-        sid = str(leg.get("selection_id") or "").strip()
-        if mid and sid:
-            compound = f"{mid}::{sid}"
-            if compound in by_sel:
-                return by_sel[compound]
+        cref = str(leg.get("customer_ref") or "").strip()
+        if cref and cref in by_ref:
+            return by_ref[cref]
 
         return None
+
+    def _leg_identity_view(
+        self, leg: Dict[str, Any], remote_orders: Sequence[Dict[str, Any]], selected: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """L'ordine su cui riconciliare la gamba, o ``None`` se la gamba va trattenuta (F-13).
+
+        Un'identita' (``bet_id`` o ``customer_ref``) che porta a UN solo ordine => ``selected``. Se porta a piu'
+        ordini distinti (un replace: originale con la parte abbinata + sostituto col residuo, stesso ref):
+        - la gamba punta col suo ``bet_id`` a ``selected``, TUTTI gli altri sono ``EXECUTION_COMPLETE`` e stanno sullo
+          stesso mercato, runner e lato (replace riuscito, Grok su 95f6752..3774a68) => vista aggregata: ``selected``
+          con ``sizeMatched`` = somma degli abbinati, ``averagePriceMatched`` = loro media ponderata (Grok su
+          d5e7f54..b6e82d2) e ``sizeRemaining`` = residuo dei soli ordini vivi (Codex su 9200468);
+        - altrimenti (un altro ordine e' ancora vivo: replace con risposta persa, Sol su 95f6752; gamba senza
+          ``bet_id``; stesso ref su un altro mercato, runner o lato; stato, size o prezzo abbinato illeggibili) =>
+          ``None``: chiuderla su uno solo, o su ordini estranei, sarebbe falso.
+        """
+        bid = str(leg.get("bet_id") or "").strip()
+        cref = str(leg.get("customer_ref") or "").strip()
+        hits: Dict[Any, Dict[str, Any]] = {}
+        for order in remote_orders or []:
+            obid = self._extract_bet_id(order)
+            if (bid and obid == bid) or (cref and self._extract_customer_ref(order) == cref):
+                hits.setdefault(obid or id(order), order)
+        if len(hits) <= 1:
+            return selected
+        if not bid or self._extract_bet_id(selected) != bid:
+            return None
+        if self._extract_order_status(selected) not in {"EXECUTABLE", "EXECUTION_COMPLETE"}:
+            return None
+        runner = self._order_runner(selected)
+        if runner is None:
+            return None
+        matched_total = 0.0
+        matched_notional = 0.0
+        remaining_live = 0.0
+        for key, order in hits.items():
+            if key != bid and self._extract_order_status(order) != "EXECUTION_COMPLETE":
+                return None
+            if self._order_runner(order) != runner:
+                # stesso ref ma altro mercato, runner o lato (Grok su d5e7f54..b6e82d2): non e' la stessa gamba
+                return None
+            try:
+                size = float(order.get("sizeMatched", 0) or 0)
+                avg = float(order.get("averagePriceMatched", 0) or 0) if size > 0 else 0.0
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(size) or size < 0 or (size > 0 and not (math.isfinite(avg) and avg > 1.0)):
+                return None
+            matched_total += size
+            matched_notional += size * avg
+            if self._extract_order_status(order) == "EXECUTABLE":
+                # residuo solo dagli ordini vivi: un EXECUTION_COMPLETE non ne ha (Codex su 9200468)
+                try:
+                    remaining = float(order.get("sizeRemaining", 0) or 0)
+                except (TypeError, ValueError):
+                    return None
+                if not math.isfinite(remaining) or remaining < 0:
+                    return None
+                remaining_live += remaining
+        view = dict(selected)
+        view["sizeMatched"] = round(matched_total, 2)
+        view["sizeRemaining"] = round(remaining_live, 2)
+        if matched_total > 0:
+            # abbinato prezzato alla media ponderata di tutti gli ordini dell'identita', mai alla quota del sostituto
+            view["averagePriceMatched"] = matched_notional / matched_total
+        view["identityBetIds"] = sorted(str(k) for k in hits)
+        return view
+
+    def _order_runner(self, order: Dict[str, Any]) -> Optional[Tuple[str, str, str]]:
+        """``(market_id, selection_id, side)`` dell'ordine, o ``None`` se uno dei tre manca."""
+        runner = (self._extract_market_id(order), self._extract_selection_id(order),
+                  self._first_of(order, "side").upper())
+        return runner if all(runner) else None
+
+    @staticmethod
+    def _unattributed_on_selection(leg: Dict[str, Any], by_sel: Dict[str, Dict[str, Any]]) -> bool:
+        """True se sul runner della gamba c'e' almeno un ordine dell'exchange (che l'identita' non attribuisce)."""
+        mid = str(leg.get("market_id") or "").strip()
+        sid = str(leg.get("selection_id") or "").strip()
+        return bool(mid and sid and f"{mid}::{sid}" in by_sel)
 
     # ─────────────────────────────────────────────────────────────
     # DECISION LOG – thread-safe, fail-closed
@@ -1754,6 +1828,38 @@ class ReconciliationEngine:
                 remote_order = self._lookup_remote_order(
                     leg, by_ref, by_bet, by_sel
                 )
+                if remote_order is None and self._unattributed_on_selection(leg, by_sel):
+                    # F-13: sul runner c'e' un ordine non attribuibile alla gamba. Non e' adottato (puo' essere di
+                    # qualcun altro) ma la gamba non si chiude FAILED alla cieca (puo' essere il suo, piazzato senza
+                    # ref): resta com'e', con la decisione registrata, finche' l'identita' non si dimostra.
+                    self._log_decision(
+                        batch_id=batch_id, leg_index=leg_index,
+                        case_classification="UNATTRIBUTED_ORDER_ON_SELECTION",
+                        reason_code=ReasonCode.LOCAL_WINS_SAGA_PENDING,
+                        local_status=current_status, exchange_status=None,
+                        resolved_status=current_status, merge_winner="LOCAL",
+                        details={"reason": "ordine_non_attribuibile_sulla_selezione"},
+                    )
+                    continue
+                identity_view = (
+                    self._leg_identity_view(leg, remote_orders, remote_order) if remote_order is not None else None
+                )
+                if remote_order is not None and identity_view is None:
+                    # F-13 (Sol su 95f6752): l'identita' della gamba porta a PIU' ordini dell'exchange e uno diverso
+                    # da quello della gamba e' ancora vivo (replace con risposta persa: originale con la parte
+                    # abbinata + sostituto col residuo, stesso ref). Chiuderla su uno solo lascerebbe l'altro fuori
+                    # dalla riconciliazione: resta com'e', decisione registrata (``_leg_identity_view``).
+                    self._log_decision(
+                        batch_id=batch_id, leg_index=leg_index,
+                        case_classification="MULTIPLE_EXCHANGE_ORDERS_FOR_LEG",
+                        reason_code=ReasonCode.LOCAL_WINS_SAGA_PENDING,
+                        local_status=current_status, exchange_status=None,
+                        resolved_status=current_status, merge_winner="LOCAL",
+                        details={"reason": "piu_ordini_per_la_stessa_gamba"},
+                    )
+                    continue
+                if identity_view is not None:
+                    remote_order = identity_view
                 cref = str(leg.get("customer_ref") or "").strip()
                 saga_pending = bool(cref and cref in pending_saga_refs)
 

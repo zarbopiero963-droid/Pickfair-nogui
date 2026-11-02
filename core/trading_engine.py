@@ -13,6 +13,7 @@ from typing import Any, Callable, Deque, Dict, List, Optional, Set
 
 from circuit_breaker import CircuitBreaker
 from core import stake_precision, validators
+from core.order_ref import customer_order_ref
 from core.trading_constants import (  # noqa: F401 – re-exported for backward compat
     _ACK_STATES,
     _PASSTHROUGH_KEYS,
@@ -2068,6 +2069,10 @@ class TradingEngine:
             "price": payload.get("price"),
             "size": payload.get("stake", payload.get("size")),
             "customer_ref": payload.get("customer_ref", ""),
+            # F-13: identita' dell'ordine sul wire (`customerOrderRef`), solo verso un client che la dichiara. Il
+            # fallback a firma non ispezionabile qui sotto resta il contratto minimo: un client che non la accetta
+            # solleverebbe TypeError e l'ordine non partirebbe.
+            "customer_order_ref": customer_order_ref(payload.get("customer_ref")),
             "event_key": payload.get("event_key", ""),
             "table_id": payload.get("table_id"),
             "batch_id": payload.get("batch_id", ""),

@@ -4,11 +4,13 @@ import copy
 import logging
 import math
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.order_ref import customer_order_ref as _conforming_ref
 from core.pnl_engine import MarketNetRealizedSettlementAggregator, exchange_settled_gross_pnl
 from core.position_ledger import PositionLedger
 
@@ -119,6 +121,9 @@ class SimulationState:
         # (mercato|selezione|lato|quota): il feed esterno non sa dei nostri
         # abbinamenti virtuali, quindi un book riletto la ripresenterebbe.
         self.liquidity_consumed: Dict[str, float] = {}
+        # F-13 (Codex su 3774a68): de-dup del `customerRef` (ref conforme -> istante epoch della richiesta accettata),
+        # nello snapshot come l'ordine che protegge: un riavvio entro i 60 s non lo azzera.
+        self.customer_ref_seen: Dict[str, float] = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -146,6 +151,7 @@ class SimulationState:
             "fills": copy.deepcopy(self.fills),
             "fills_corrupted": bool(self.fills_corrupted),
             "liquidity_consumed": dict(self.liquidity_consumed),
+            "customer_ref_seen": dict(self.customer_ref_seen),
         }
 
     # skipcq: PY-R1000 - pre-existing state-restoration complexity; PR3 only adds defensive parsing.
@@ -192,6 +198,14 @@ class SimulationState:
                 updated_at=str(p.get("updated_at") or datetime.utcnow().isoformat()),
             )
 
+        # F-13: voci malformate scartate (mai un crash al reload); la scadenza la applica il controllo di de-dup.
+        raw_seen = data.get("customer_ref_seen")
+        self.customer_ref_seen = {}
+        if isinstance(raw_seen, dict):
+            for ref, ts in raw_seen.items():
+                ts_f = _to_float(ts, float("nan"))
+                if isinstance(ref, str) and ref and math.isfinite(ts_f):
+                    self.customer_ref_seen[ref] = ts_f
         self.market_books = dict(data.get("market_books") or {})
         self.event_index = dict(data.get("event_index") or {})
         self.position_ledgers = {}
@@ -328,6 +342,11 @@ class SimulationBroker:
         )
         self._market_net_realized_aggregator.ledger = self.state.market_commission_ledger
         self._lock = threading.RLock()
+        # F-13: parita' col de-dup Betfair del `customerRef` (60 s dalla richiesta accettata). Chiave = ref conforme
+        # (LIVE omette quello non conforme e non deduplica). La mappa sta in `state.customer_ref_seen` (snapshot):
+        # orologio di parete, valido anche dopo un riavvio; sostituibile nei test.
+        self._customer_ref_clock = time.time
+        self._batch_depth = 0
         # #545: False dall'ultima scrittura fallita dello snapshot di reload finche' una successiva non riesce.
         self._snapshot_durevole = True
         # #543: memo per mercato indirizzato dal CONTENUTO (chiave = tutti i campi letti dal calcolo), non da
@@ -586,6 +605,37 @@ class SimulationBroker:
         if cassa - dopo >= -self._TOLLERANZA_FONDI:
             return True
         return dopo <= self._esposizione_totale_locked() + self._TOLLERANZA_FONDI
+
+    #: F-13: finestra del de-dup Betfair del `customerRef` (secondi dalla richiesta accettata).
+    CUSTOMER_REF_DEDUP_SEC = 60.0
+
+    def _customer_ref_duplicate_locked(self, request_ref: str) -> bool:
+        """True se ``request_ref`` e' gia' stato accettato negli ultimi 60 s (Betfair: DUPLICATE_TRANSACTION)."""
+        seen = self.state.customer_ref_seen.get(request_ref)
+        if seen is None:
+            return False
+        if self._customer_ref_clock() - seen < self.CUSTOMER_REF_DEDUP_SEC:
+            return True
+        del self.state.customer_ref_seen[request_ref]
+        return False
+
+    def _remember_customer_ref_locked(self, request_ref: str) -> None:
+        """Registra la richiesta accettata e toglie le voci scadute: la mappa resta limitata alla finestra (una voce
+        per ordine, mai tolta, cresceva senza limiti nello snapshot; review indipendente su 4881adb)."""
+        now = self._customer_ref_clock()
+        seen = self.state.customer_ref_seen
+        for ref in [r for r, ts in seen.items() if now - ts >= self.CUSTOMER_REF_DEDUP_SEC]:
+            del seen[ref]
+        seen[request_ref] = now
+
+    @staticmethod
+    def _rifiuto_duplicato(market_id: str) -> Dict[str, Any]:
+        """Risposta come Betfair a una richiesta deduplicata: FAILURE DUPLICATE_TRANSACTION, nulla piazzato. La prima
+        richiesta con lo stesso ``customerRef`` e' viva: e' un esito ignoto, non un rifiuto. ``order_unknown`` e' il
+        marcatore che ogni consumer gia' riconosce (TradingEngine, OrderRouter, OrderManager; Codex su 95f6752: il
+        percorso dei segnali chiama ``place_bet`` direttamente e lo leggeva come FAILED definitivo)."""
+        return {"status": "FAILURE", "errorCode": "DUPLICATE_TRANSACTION", "marketId": str(market_id),
+                "instructionReports": [], "order_unknown": True, "simulated": True}
 
     @staticmethod
     def _rifiuto_fondi(market_id: str, n_istruzioni: int = 1) -> Dict[str, Any]:
@@ -1318,6 +1368,7 @@ class SimulationBroker:
         event_name: str = "",
         market_name: str = "",
         runner_name: str = "",
+        customer_order_ref: str = "",
     ) -> Dict[str, Any]:
         # F10 (#453, #461 PR26): the PAPER boundary validates every argument
         # like BetfairClient.place_bet, in the same order and with the same
@@ -1358,7 +1409,9 @@ class SimulationBroker:
             side=normalized_side,
             price=price_f,
             size=size_f,
-            customer_ref=str(customer_ref or ""),
+            # F-13: l'identita' esposta come `customerOrderRef` e' quella dell'ordine, se data; altrimenti il ref della
+            # richiesta (comportamento preesistente del SIM)
+            customer_ref=str(customer_order_ref or customer_ref or ""),
             event_key=str(event_key or ""),
             table_id=table_id,
             batch_id=str(batch_id or ""),
@@ -1368,6 +1421,10 @@ class SimulationBroker:
         )
 
         with self._lock:
+            # F-13: la richiesta singola e' la transazione (in un batch la controlla `place_orders`, una volta)
+            request_ref = _conforming_ref(customer_ref) if self._batch_depth == 0 else ""
+            if request_ref and self._customer_ref_duplicate_locked(request_ref):
+                return self._rifiuto_duplicato(order.market_id)
             # PFC-004: l'ordine intero, come se restasse non abbinato, deve stare
             # nel disponibile; altrimenti INSUFFICIENT_FUNDS e nulla viene
             # memorizzato, abbinato o scritto. Su un mercato gia' regolato
@@ -1376,6 +1433,8 @@ class SimulationBroker:
                 return self._rifiuto_fondi(order.market_id)
             self._match_order(order)
             self.state.orders[order.bet_id] = order
+            if request_ref:
+                self._remember_customer_ref_locked(request_ref)
         self._persist_order(order)
         # PFC-006 (G7-c): l'ordine accettato e' durevole nella fonte di reload
         # (lo snapshot `simulation_state`) prima della risposta: un crash subito
@@ -1459,9 +1518,26 @@ class SimulationBroker:
         # Dutching parziale (PF-EXEC-02), niente ridimensionamento (PF-EXEC-04).
         # Il lock e' tenuto per tutto il batch: nessun ordine concorrente si
         # infila fra il controllo e le gambe.
+        request_ref = _conforming_ref(customer_ref)          # F-13: un batch e' UNA richiesta, un solo customerRef
+        if request_ref and self._customer_ref_duplicate_locked(request_ref):
+            return self._rifiuto_duplicato(str(market_id))
         if str(market_id) not in self.state.settlements and not self._fondi_sufficienti_locked(
                 self._candidati_batch(str(market_id), instructions)):
             return self._rifiuto_fondi(str(market_id), len(instructions or []))
+        if request_ref:
+            # nello snapshot scritto da ogni gamba (Codex su 3774a68), tolto sotto se nessuna gamba e' memorizzata
+            self._remember_customer_ref_locked(request_ref)
+        self._batch_depth += 1
+        try:
+            return self._place_orders_legs_locked(
+                market_id=market_id, instructions=instructions, customer_ref=customer_ref, event_key=event_key,
+                table_id=table_id, batch_id=batch_id, event_name=event_name, market_name=market_name,
+                request_ref=request_ref)
+        finally:
+            self._batch_depth -= 1
+
+    def _place_orders_legs_locked(self, *, market_id, instructions, customer_ref, event_key, table_id, batch_id,
+                                  event_name, market_name, request_ref):
         reports = []
         snapshot_fallito = False
         # NOTE: oltre al controllo dei fondi qui sopra, place_orders non e' atomico:
@@ -1528,6 +1604,8 @@ class SimulationBroker:
             if result.get("snapshot_persisted") is False:
                 snapshot_fallito = True
 
+        if request_ref and not any(str(r.get("betId") or "") for r in reports):
+            self.state.customer_ref_seen.pop(request_ref, None)   # F-13: nessuna gamba accettata, nessun de-dup
         return self._con_durabilita({
             "status": "SUCCESS",
             "marketId": str(market_id),
@@ -1652,6 +1730,9 @@ class SimulationBroker:
                             "size": order.size,
                         },
                         "sizeMatched": order.matched_size,
+                        # come CurrentOrderSummary di Betfair (F-13, Codex su e8015b3): la riconciliazione di un
+                        # replace prezza l'abbinato di ogni ordine dell'identita' con questo campo
+                        "averagePriceMatched": order.avg_price_matched,
                         "sizeRemaining": max(0.0, order.size - order.matched_size),
                         "status": order.status,
                     }
@@ -1690,7 +1771,10 @@ class SimulationBroker:
             if status == "CANCELLED" and float(o.get("sizeMatched") or 0.0) > 0.0:
                 # PF-ALL-F031 (parita' LIVE): su Betfair un ordine con parte abbinata e residuo annullato
                 # resta fra gli ordini correnti (EXECUTION_COMPLETE) fino al settlement: e' una posizione viva.
-                out.append(dict(o, status="EXECUTION_COMPLETE"))
+                # come Betfair (F-13, Codex su 9200468): il residuo annullato sta in sizeCancelled, un ordine
+                # EXECUTION_COMPLETE non ha sizeRemaining
+                cancelled = max(0.0, float(o.get("sizeRemaining") or 0.0))
+                out.append(dict(o, status="EXECUTION_COMPLETE", sizeRemaining=0.0, sizeCancelled=cancelled))
                 continue
             if status not in self._TERMINAL_ORDER_STATUSES:
                 out.append(o)
