@@ -383,3 +383,57 @@ def test_two_orders_with_the_leg_ref_and_no_bet_id_hold_the_leg():
 def test_a_single_order_for_the_leg_identity_is_still_resolved():
     leg, _ = _reconcile(_leg(bet_id="ONLY"), [_remote("ONLY", ref="REF1")])
     assert leg["status"] == "MATCHED"
+
+
+def _restarted(broker, now):
+    # stesso percorso di BetfairService al riavvio: nuovo broker + state.load_from_dict dello snapshot persistito
+    snapshot = broker.state.to_dict()
+    fresh = _sim()
+    fresh._customer_ref_clock = lambda: now[0]
+    fresh.state.load_from_dict(snapshot)
+    return fresh
+
+
+def test_sim_dedup_survives_a_restart_within_the_window():
+    # Codex P1 su 3774a68: la cache in memoria si azzerava al riavvio e lo stesso customer_ref piazzava un secondo
+    # ordine (l'ordine accettato invece veniva ripristinato dallo snapshot)
+    now = [1_000_000.0]
+    broker = _sim()
+    broker._customer_ref_clock = lambda: now[0]
+    _place(broker)
+    now[0] += 10.0
+    fresh = _restarted(broker, now)
+    dup = _place(fresh)
+    assert dup["errorCode"] == "DUPLICATE_TRANSACTION" and dup["order_unknown"] is True
+    assert len(fresh.state.orders) == 1, "dopo il riavvio la stessa richiesta ha piazzato un secondo ordine"
+
+
+def test_sim_dedup_restored_entries_still_expire():
+    now = [1_000_000.0]
+    broker = _sim()
+    broker._customer_ref_clock = lambda: now[0]
+    _place(broker)
+    now[0] += 61.0
+    fresh = _restarted(broker, now)
+    assert _place(fresh)["status"] == "SUCCESS"
+
+
+def test_sim_batch_ref_is_in_the_snapshot_of_its_legs():
+    # il ref del batch deve stare nello snapshot scritto dalle gambe, non solo in memoria dopo il loop
+    now = [1_000_000.0]
+    broker = _sim()
+    broker._customer_ref_clock = lambda: now[0]
+    snaps = []
+    broker._salva_snapshot = lambda: snaps.append(broker.state.to_dict()) or True
+    broker.place_orders(market_id="1.100", instructions=[{"selection_id": 7, "side": "BACK", "price": 2.0,
+                                                         "size": 1.0}], customer_ref=REF)
+    assert snaps and REF in (snaps[-1].get("customer_ref_seen") or {})
+
+
+@pytest.mark.parametrize("bad", [None, "x", {"r": "nan"}, {"r": float("inf")}, {"r": None}, [1, 2]])
+def test_malformed_persisted_dedup_entries_are_dropped_never_crash(bad):
+    broker = _sim()
+    snap = broker.state.to_dict()
+    snap["customer_ref_seen"] = bad
+    broker.state.load_from_dict(snap)
+    assert all(isinstance(v, float) for v in broker.state.customer_ref_seen.values())
