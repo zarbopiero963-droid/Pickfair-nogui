@@ -22,6 +22,9 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
+  # PF-REVIEW-ATTESTATION v2 (#586): firma Sigstore dell'esito della review (OIDC del workflow, nessun segreto nuovo)
+  id-token: write
+  attestations: write
 
 concurrency:
   group: pr-review-grok46-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
@@ -47,6 +50,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
       EVENT_ACTION: ${{ github.event.action }}
       BEFORE_SHA: ${{ github.event.before }}
       AFTER_SHA: ${{ github.event.after }}
@@ -1378,4 +1382,55 @@ jobs:
           """
 
           upsert_comment(marker, body[:64000])
+
+          # PF-REVIEW-ATTESTATION v2 (#586 c.6582617372): esito della review in forma verificabile. Il file viene
+          # firmato (Sigstore, identita' OIDC di QUESTO workflow su main) e caricato come artefatto dai passi
+          # successivi; Merge readiness e VPS lo verificano con scripts/pr_review_attestation.py. Il verdetto e'
+          # quello classificato qui, mai lo stato `success` del job. canonical_range_digest = stessa funzione dello
+          # script (test di parita').
+          import hashlib as _hl
+          def canonical_range_digest(files):
+              rows = sorted([str(f.get("filename") or ""), str(f.get("patch") or "")]
+                            for f in files if isinstance(f, dict) and f.get("patch"))
+              return _hl.sha256(json.dumps(rows, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+          # Solo dentro GitHub Actions (run_id/attempt reali); un errore qui non fa mai fallire la review gia'
+          # pubblicata: senza attestazione i verificatori non contano la review (fail-closed).
+          if os.environ.get("GITHUB_ACTIONS") == "true":
+            try:
+                _verdicts = {RR_VALID_PASS: "PASS", RR_VALID_BLOCKERS: "BLOCKERS", RR_VALID_INCONCLUSIVE: "INCONCLUSIVE"}
+                _gaps = rr_coverage_gaps(files, diff_text, compare_truncated)
+                attestation = {
+                    "schema": "pf-review-attestation/1", "repo": REPO, "pr": int(PR_NUMBER),
+                    "head_sha": range_head, "base_sha": BASE_SHA, "range": {"from": range_base, "to": range_head},
+                    "pr_author": os.environ.get("PR_AUTHOR", ""), "reviewer": "grok-4.7", "provider": "xai",
+                    "model": os.environ.get("XAI_MODEL", ""),
+                    "workflow_path": ".github/workflows/pr-review-xai-grok46.yml",
+                    "run_id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+                    "verdict": _verdicts.get(attempt_state, "ERROR"), "classification": attempt_state,
+                    "files_sent": diff_text.count("\n\n### FILE: "), "files_truncated": len(_gaps),
+                    "coverage_gaps": list(_gaps), "diff_sha256": canonical_range_digest(files),
+                    "comment_marker": marker,
+                    "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }
+                with open(os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), "review-attestation.json"), "w",
+                          encoding="utf-8") as _fh:
+                    json.dump(attestation, _fh, sort_keys=True, separators=(",", ":"))
+            except Exception as _exc:  # noqa: BLE001
+                print(f"::warning::{REVIEW_ID}: attestazione non scritta ({type(_exc).__name__}): la review non conta per i gate")
           PY
+
+      # PF-REVIEW-ATTESTATION v2: firma Sigstore dell'attestazione (provenance SLSA, identita' del workflow su main)
+      - name: Sign review attestation
+        if: ${{ hashFiles('review-attestation.json') != '' }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: review-attestation.json
+
+      - name: Upload review attestation
+        if: ${{ hashFiles('review-attestation.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-attestation-${{ github.run_attempt }}
+          path: review-attestation.json
+          if-no-files-found: error
+          retention-days: 90

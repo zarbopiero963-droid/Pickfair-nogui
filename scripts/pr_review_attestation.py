@@ -23,7 +23,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 SCHEMA = "pf-review-attestation/1"
-PREDICATE_TYPE = "https://pickfair/review-attestation/v1"
+#: provenance SLSA standard di actions/attest-build-provenance: lega il digest del file all'identita' del workflow
+PREDICATE_TYPE = "https://slsa.dev/provenance/v1"
 OIDC_ISSUER = "https://token.actions.githubusercontent.com"
 TRUSTED_REF = "refs/heads/main"
 TRUSTED_EVENT = "pull_request_target"
@@ -70,6 +71,16 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def canonical_range_digest(files: Iterable[Mapping[str, Any]]) -> str:
+    """Impronta canonica del codice di un range (Compare API ``files``): sha256 del JSON compatto e ordinato di
+    ``[nome_file, patch]`` per ogni file con patch. Il workflow di review la scrive nell'attestazione, il verificatore
+    la ricalcola dalla stessa API: coincide solo se il reviewer ha ricevuto le stesse patch. La STESSA funzione e'
+    copiata nei workflow (test di parita' in tests/scripts/test_pr_review_attestation.py)."""
+    rows = sorted([str(f.get("filename") or ""), str(f.get("patch") or "")]
+                  for f in files if isinstance(f, Mapping) and f.get("patch"))
+    return hashlib.sha256(json.dumps(rows, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
 def _bad(reason: str) -> Tuple[Optional[Dict[str, Any]], str]:
     return None, reason
 
@@ -84,7 +95,7 @@ def check_attestation(raw: bytes, signed: Signed, *, repository: str, pr: int, p
     Oltre alla firma (owner #586: «una firma autentica non dimostra che la review sia corretta o indipendente»):
     - ``is_trusted_workflow_commit(sha)``: il commit del workflow firmatario e' su ``main`` (versione non controllabile
       dall'autore della PR). Obbligatorio: assente => non verificabile;
-    - ``range_diff_sha256(from, to)``: sha256 del diff del range ricalcolato dal verificatore (Compare API); deve
+    - ``range_diff_sha256(from, to)``: ``canonical_range_digest`` del range ricalcolato dal verificatore (Compare API); deve
       coincidere con ``diff_sha256`` dichiarato, con ``files_sent > 0`` e ``files_truncated == 0`` (il reviewer ha
       ricevuto TUTTO il codice del range). Obbligatorio: assente => non verificabile.
     Non decide sull'head ne' sulla copertura (vedi ``decide``)."""

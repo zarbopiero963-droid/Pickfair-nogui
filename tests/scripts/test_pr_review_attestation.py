@@ -236,3 +236,42 @@ def test_missing_workflow_sha_in_the_certificate_never_counts():
     raw = _att("gpt-6.1-sol", run=1)
     d = _decide([(raw, _sig(raw, "gpt-6.1-sol", 1, workflow_sha="")), _pair("grok-4.7", run=2)])
     assert not d.passed and "WORKFLOW_COMMIT_UNVERIFIABLE" in d.reasons
+
+
+# ── i workflow di review producono e firmano l'attestazione (parita' con la libreria) ─────────────────────────────
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _workflow_python(path):
+    import yaml
+    w = yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))
+    run = w["jobs"]["review"]["steps"][0]["run"]
+    return w, run.split("python3 <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+
+
+@pytest.mark.parametrize("reviewer,path", sorted(A.TRUSTED_REVIEW_WORKFLOWS.items()))
+def test_review_workflow_signs_and_uploads_the_attestation(reviewer, path):
+    w, py = _workflow_python(path)
+    assert w["permissions"]["id-token"] == "write" and w["permissions"]["attestations"] == "write"
+    names = [s.get("name") for s in w["jobs"]["review"]["steps"]]
+    assert names[1:] == ["Sign review attestation", "Upload review attestation"]
+    sign = w["jobs"]["review"]["steps"][1]
+    assert sign["uses"].startswith("actions/attest-build-provenance@") and sign["with"]["subject-path"] == \
+        "review-attestation.json"
+    assert f'"reviewer": "{reviewer}"' in py and f'"workflow_path": "{path}"' in py
+    assert '"verdict": _verdicts.get(attempt_state, "ERROR")' in py, "verdetto non dalla classificazione"
+    trigger = w.get("on", w.get(True))
+    assert list(trigger) == ["pull_request_target"], "il workflow firmatario deve girare dal base"
+
+
+@pytest.mark.parametrize("path", sorted(A.TRUSTED_REVIEW_WORKFLOWS.values()))
+def test_workflow_digest_function_matches_the_library(path):
+    import ast
+    _w, py = _workflow_python(path)
+    fn = next(n for n in ast.parse(py).body if isinstance(n, ast.FunctionDef) and n.name == "canonical_range_digest")
+    ns = {"json": json, "_hl": __import__("hashlib")}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), path, "exec"), ns)
+    files = [{"filename": "b.py", "patch": "@@ -1 +1 @@\n-x\n+y"}, {"filename": "a.py", "patch": "+é"},
+             {"filename": "bin.png"}, "garbage"]
+    assert ns["canonical_range_digest"](files) == A.canonical_range_digest(files)
