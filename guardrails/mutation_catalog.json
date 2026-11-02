@@ -8024,6 +8024,18 @@
         "tests/f13/test_f13_customer_order_ref.py"
       ],
       "rationale": "F-13: il ref prevale sul bet_id (identita' primaria Betfair)."
+    },
+    {
+      "id": "f13_sim_duplicate_without_unknown_marker",
+      "module": "simulation_broker",
+      "area": "dedupe",
+      "file": "simulation_broker.py",
+      "original": "                \"instructionReports\": [], \"order_unknown\": True, \"simulated\": True}",
+      "mutated": "                \"instructionReports\": [], \"simulated\": True}",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (Codex P2 su 95f6752): duplicato SIM senza order_unknown, il percorso dei segnali lo chiude FAILED e rilascia le protezioni."
     }
   ]
 }

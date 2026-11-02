@@ -41,8 +41,10 @@ ne arriva mai uno. Il Microstake LIVE lo inviava già (`core/microstake_live_por
   conforme non si deduplica, perché LIVE non lo invierebbe;
 - il replace conserva il `customerOrderRef` dell'ordine sostituito.
 
-Il duplicato è un **esito ignoto**, come in LIVE: la prima richiesta è viva.
-- `OrderRouter._normalize_sim` lo riporta come `order_unknown=True`, `status=AMBIGUOUS`.
+Il duplicato è un **esito ignoto**, come in LIVE: la prima richiesta è viva. La risposta porta
+`order_unknown: True`, il marcatore che ogni consumer riconosce già:
+- `TradingEngine` (percorso dei segnali, che chiama `place_bet` direttamente) → AMBIGUOUS;
+- `OrderRouter._normalize_sim` lo riporta come `order_unknown=True`, `status=AMBIGUOUS`;
 - `OrderManager` registra la saga `AMBIGUOUS`.
 
 In nessuno dei due casi è un FAILED definitivo né un retry.

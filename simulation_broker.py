@@ -610,9 +610,11 @@ class SimulationBroker:
     @staticmethod
     def _rifiuto_duplicato(market_id: str) -> Dict[str, Any]:
         """Risposta come Betfair a una richiesta deduplicata: FAILURE DUPLICATE_TRANSACTION, nulla piazzato. La prima
-        richiesta con lo stesso ``customerRef`` e' viva: chi la legge la tratta come esito ignoto, non come rifiuto."""
+        richiesta con lo stesso ``customerRef`` e' viva: e' un esito ignoto, non un rifiuto. ``order_unknown`` e' il
+        marcatore che ogni consumer gia' riconosce (TradingEngine, OrderRouter, OrderManager; Codex su 95f6752: il
+        percorso dei segnali chiama ``place_bet`` direttamente e lo leggeva come FAILED definitivo)."""
         return {"status": "FAILURE", "errorCode": "DUPLICATE_TRANSACTION", "marketId": str(market_id),
-                "instructionReports": [], "simulated": True}
+                "instructionReports": [], "order_unknown": True, "simulated": True}
 
     @staticmethod
     def _rifiuto_fondi(market_id: str, n_istruzioni: int = 1) -> Dict[str, Any]:
