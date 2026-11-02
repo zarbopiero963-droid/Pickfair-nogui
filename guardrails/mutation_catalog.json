@@ -8072,6 +8072,18 @@
         "tests/f13/test_f13_customer_order_ref.py"
       ],
       "rationale": "F-13: de-dup SIM non ripristinato dallo snapshot."
+    },
+    {
+      "id": "f13_sim_dedup_map_unbounded",
+      "module": "simulation_broker",
+      "area": "dedupe",
+      "file": "simulation_broker.py",
+      "original": "        for ref in [r for r, ts in seen.items() if now - ts >= self.CUSTOMER_REF_DEDUP_SEC]:\n            del seen[ref]",
+      "mutated": "        for ref in []:\n            del seen[ref]",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (review indipendente su 4881adb): la mappa del de-dup SIM cresce di una voce per ordine nello snapshot, senza limiti."
     }
   ]
 }

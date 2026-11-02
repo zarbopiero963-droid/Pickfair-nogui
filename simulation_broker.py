@@ -619,6 +619,15 @@ class SimulationBroker:
         del self.state.customer_ref_seen[request_ref]
         return False
 
+    def _remember_customer_ref_locked(self, request_ref: str) -> None:
+        """Registra la richiesta accettata e toglie le voci scadute: la mappa resta limitata alla finestra (una voce
+        per ordine, mai tolta, cresceva senza limiti nello snapshot; review indipendente su 4881adb)."""
+        now = self._customer_ref_clock()
+        seen = self.state.customer_ref_seen
+        for ref in [r for r, ts in seen.items() if now - ts >= self.CUSTOMER_REF_DEDUP_SEC]:
+            del seen[ref]
+        seen[request_ref] = now
+
     @staticmethod
     def _rifiuto_duplicato(market_id: str) -> Dict[str, Any]:
         """Risposta come Betfair a una richiesta deduplicata: FAILURE DUPLICATE_TRANSACTION, nulla piazzato. La prima
@@ -1425,7 +1434,7 @@ class SimulationBroker:
             self._match_order(order)
             self.state.orders[order.bet_id] = order
             if request_ref:
-                self.state.customer_ref_seen[request_ref] = self._customer_ref_clock()
+                self._remember_customer_ref_locked(request_ref)
         self._persist_order(order)
         # PFC-006 (G7-c): l'ordine accettato e' durevole nella fonte di reload
         # (lo snapshot `simulation_state`) prima della risposta: un crash subito
@@ -1517,7 +1526,7 @@ class SimulationBroker:
             return self._rifiuto_fondi(str(market_id), len(instructions or []))
         if request_ref:
             # nello snapshot scritto da ogni gamba (Codex su 3774a68), tolto sotto se nessuna gamba e' memorizzata
-            self.state.customer_ref_seen[request_ref] = self._customer_ref_clock()
+            self._remember_customer_ref_locked(request_ref)
         self._batch_depth += 1
         try:
             return self._place_orders_legs_locked(

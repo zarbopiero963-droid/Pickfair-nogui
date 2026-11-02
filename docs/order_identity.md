@@ -42,7 +42,8 @@ ne arriva mai uno. Il Microstake LIVE lo inviava già (`core/microstake_live_por
 - il de-dup **sopravvive al riavvio**. La mappa ref → istante (orologio di parete) sta in
   `SimulationState.customer_ref_seen`, nello snapshot `simulation_state` scritto con l'ordine (anche dalle gambe di un
   batch), e viene ripristinata da `load_from_dict`. Le voci malformate vengono scartate e quelle scadute non bloccano
-  (Codex su `3774a68`);
+  (Codex su `3774a68`); alla registrazione di un nuovo ref le voci scadute si tolgono, così la mappa resta limitata
+  alla finestra;
 - il replace conserva il `customerOrderRef` dell'ordine sostituito.
 
 Il duplicato è un **esito ignoto**, come in LIVE: la prima richiesta è viva. La risposta porta
