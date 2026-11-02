@@ -698,14 +698,17 @@ def test_t27_hedge_del_cashout_rifiutato_al_piazzamento_senza_autorita(tmp_path)
     cancellato l'hedge arrivava al broker. Ora l'esecutore verifica l'autorita' subito prima dell'invio."""
     from tests.test_microstake_cashout_and_recovery import _book, _cashout_cmd
 
+    from tests.test_microstake_cashout_and_recovery import _entry_position
+
     c = _catena_armata(tmp_path, "t27.db")
     _cashout_wired(c)
+    _entry_position(c.broker)                                  # F-06: la posizione BACK reale da chiudere
     _book(c.broker, "1.100", 7, lay=(3.0, 50.0))
     c.bus.publish("CMD_EXECUTE_CASHOUT", _cashout_cmd(2.0))
-    assert len(c.broker.state.orders) == 1                     # con autorita': l'hedge parte
+    assert len(c.broker.state.orders) == 2                     # con autorita': l'hedge parte
     os.unlink(_lock_path(str(tmp_path / "t27.db")))
     c.bus.publish("CMD_EXECUTE_CASHOUT", {**_cashout_cmd(2.0), "position_id": "p2"})
-    assert len(c.broker.state.orders) == 1, "hedge piazzato da un runtime senza autorita'"
+    assert len(c.broker.state.orders) == 2, "hedge piazzato da un runtime senza autorita'"
     falliti = c.bus.payloads("CASHOUT_FAILED")
     assert falliti and falliti[-1]["status"] == "REJECTED"
     assert falliti[-1]["reason"].startswith("runtime_authority_lost:lock_file_deleted")
@@ -1005,8 +1008,11 @@ def test_t43_lo_stop_attende_anche_l_hedge_del_cashout_in_volo(tmp_path, monkeyp
     from tests.test_microstake_cashout_and_recovery import _book, _cashout_cmd
 
     monkeypatch.setattr(RuntimeController, "RUNTIME_AUTHORITY_DRAIN_SEC", 0.3)
+    from tests.test_microstake_cashout_and_recovery import _entry_position
+
     c = _catena_armata(tmp_path, "t43.db")
     catena = _cashout_wired(c)
+    _entry_position(c.broker)                                  # F-06: la posizione BACK reale da chiudere
     _book(c.broker, "1.100", 7, lay=(3.0, 50.0))
     auth = c.rc.runtime_authority
     visto = {}

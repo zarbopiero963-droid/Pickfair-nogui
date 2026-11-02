@@ -259,7 +259,9 @@ class RiskMiddleware:
             normalized = {
                 "market_id": str(payload.get("market_id", "")),
                 "selection_id": selection_id,
-                "side": str(payload.get("side", "LAY")).upper(),
+                # F-06 (NF-01): mai un lato di default. L'auto-close del monitor SL/TP manda il comando senza lato:
+                # un LAY inventato puo' aprire esposizione invece di chiuderla => rifiuto esplicito (CASHOUT_FAILED).
+                "side": self._cashout_side(payload.get("side")),
                 "stake": float(payload.get("stake", 0.0)),
                 "price": float(payload.get("price", 0.0)),
                 "green_up": float(payload.get("green_up", 0.0)),
@@ -278,6 +280,14 @@ class RiskMiddleware:
 
         logger.info("[RiskMiddleware] Forward REQ_EXECUTE_CASHOUT -> CMD_EXECUTE_CASHOUT")
         self.bus.publish("CMD_EXECUTE_CASHOUT", normalized)
+
+    @staticmethod
+    def _cashout_side(raw: Any) -> str:
+        """F-06 (NF-01): lato dell'hedge, solo se dichiarato e valido; mancante o invalido => ValueError."""
+        side = raw.strip().upper() if isinstance(raw, str) else ""
+        if side not in ("BACK", "LAY"):
+            raise ValueError("side_mancante_o_invalido")
+        return side
 
     @staticmethod
     def _cashout_failed_payload(payload: Any, exc: Any) -> Dict[str, Any]:

@@ -170,7 +170,7 @@ def test_real_paper_callers_pass_valid_sides_and_reject_missing_side():
                            sleep_fn=lambda _: None)
     managed = manager.place_order({
         "market_id": "1.1", "selection_id": 9, "bet_type": "BACK",
-        "price": 2.0, "stake": 1.0, "simulation_mode": True,
+        "price": 2.0, "stake": 2.0, "simulation_mode": True,
         "customer_ref": "P15-ROUTE",
     })
     assert managed["ok"] is True
@@ -188,6 +188,8 @@ def test_real_paper_callers_pass_valid_sides_and_reject_missing_side():
     CashoutExecutor(bus, router).on_cmd_execute_cashout({
         "market_id": "1.1", "selection_id": 9, "side": "LAY",
         "price": 1.8, "stake": 2.0, "green_up": 0.0,
+        # F-06: l'hedge chiude la posizione BACK 2@2.0 (chiusura massima 2.22 a 1.8)
+        "original_pos": {"side": "BACK", "stake": 2.0, "price": 2.0},
     })
     assert len(bus.events) == 1
     assert bus.events[0][0] == "CASHOUT_SUCCESS"

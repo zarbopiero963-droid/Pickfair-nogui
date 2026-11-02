@@ -55,6 +55,9 @@ class _Service:
     def get_live_client(self):
         return None
 
+    def list_current_orders(self, market_ids=None):
+        return self.simulation_broker.get_current_orders(market_ids)
+
 
 def _router_payload(stake, *, price=3.0, side="LAY", ref="telegram"):
     return {"market_id": "1.100", "selection_id": 7, "bet_type": side, "price": price, "stake": stake,
@@ -121,7 +124,18 @@ def test_router_native_cap_block_is_a_plain_failure_with_reason():
 # ------------------------------------------------------------------ catena cashout reale (stesso wiring di headless/GUI)
 def _cashout_cmd(stake, side="LAY", price=3.0):
     return {"market_id": "1.100", "selection_id": 7, "side": side, "price": price, "stake": stake, "green_up": 0.1,
-            "source": "telegram", "position_id": "p1"}
+            "source": "telegram", "position_id": "p1",
+            "original_pos": {"side": "BACK", "stake": 2.0, "price": 3.0}}
+
+
+def _entry_position(broker):
+    """F-06: la posizione BACK 2@3.0 abbinata sul SimulationBroker che l'hedge chiude (l'exchange la misura)."""
+    _book(broker, "1.100", 7, back=(3.0, 50.0))
+    res = broker.place_bet(market_id="1.100", selection_id=7, side="BACK", price=3.0, size=2.0,
+                           customer_ref="entry-1")
+    entry = [o for o in _orders(broker) if o["side"] == "BACK"]
+    assert len(entry) == 1 and entry[0]["sizeMatched"] == pytest.approx(2.0), res
+    return entry[0]["betId"]
 
 
 def test_cashout_chain_executes_a_sub_minimum_hedge_through_native_microstake():
@@ -131,6 +145,7 @@ def test_cashout_chain_executes_a_sub_minimum_hedge_through_native_microstake():
         bus=bus, betfair_service=_Service(broker), persist=lambda r: None,
         notify=lambda text, *, severity="HIGH": None,
         microstake_executor_provider=engine.native_microstake_executor)
+    _entry_position(broker)
     _book(broker, "1.100", 7, lay=(3.0, 50.0))
     bus.publish(CMD_EXECUTE_CASHOUT, _cashout_cmd(0.50))
     assert bus.payloads("CASHOUT_SUCCESS"), bus.events
@@ -143,10 +158,11 @@ def test_cashout_chain_without_native_executor_fails_closed_instead_of_sending_a
     bus = _Bus()
     cashout_wiring.cabla_catena_cashout(bus=bus, betfair_service=_Service(broker), persist=lambda r: None,
                                         notify=lambda text, *, severity="HIGH": None)
+    entry = _entry_position(broker)
     bus.publish(CMD_EXECUTE_CASHOUT, _cashout_cmd(0.50))
     failed = bus.payloads("CASHOUT_FAILED")
     assert failed and "MICROSTAKE_EXECUTOR_UNAVAILABLE" in str(failed[0])
-    assert _orders(broker) == []
+    assert [o["betId"] for o in _orders(broker)] == [entry], "nessun hedge oltre la posizione d'ingresso"
 
 
 # ------------------------------------------------------------------ recovery all'avvio (engine + runtime)

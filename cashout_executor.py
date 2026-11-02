@@ -265,7 +265,8 @@ class CashoutExecutor:
             ledger_id = None
             if self.ledger is not None:
                 with self._ledger_lock:
-                    block = self._hedge_block(payload)
+                    # F-06: lato/size contro la posizione da chiudere, dopo il preflight degli hedge precedenti
+                    block = self._hedge_block(payload) or self._hedge_coherence_block(payload)
                     if block:
                         self._fail(block, status="REJECTED", payload=payload)
                         return
@@ -276,6 +277,11 @@ class CashoutExecutor:
                         logger.exception("[CashoutExecutor] hedge non registrabile nel ledger: nessun invio")
                         self._fail(f"ledger_write_failed:{exc}", status="REJECTED", payload=payload)
                         return
+            else:
+                coherence = self._hedge_coherence_block(payload)   # F-06: stesso controllo anche senza ledger
+                if coherence:
+                    self._fail(coherence, status="REJECTED", payload=payload)
+                    return
             # Cattura il mode SIM/LIVE IMMEDIATAMENTE prima del place: l'OrderRouter sceglie il broker via
             # get_client() all'inizio di place(), quindi catturarlo qui (nessun I/O tra questa riga e get_client)
             # riflette il broker effettivo. Rileggerlo dopo place() esporrebbe a uno switch SIM/LIVE in volo (Codex
@@ -292,6 +298,104 @@ class CashoutExecutor:
             result = result if isinstance(result, dict) else {}
             self._ledger_outcome(ledger_id, self._ledger_status(result), result, None)
             self._handle_result(result, payload, sim)
+
+    def _hedge_coherence_block(self, payload: Dict[str, Any]) -> str:
+        """F-06 (#586 CSH-05, MM-02): '' se l'hedge chiude la posizione, altrimenti ``hedge_non_coerente:<motivo>``.
+
+        La posizione da chiudere e' quella IDENTIFICATA dal comando, ``original_pos`` (lato, stake, prezzo:
+        ``cashout_resolver`` la ricava dagli ordini del bot). L'exchange la limita dall'alto: esposizione NETTA della
+        selezione (``fetch_current_orders``): TUTTO l'abbinato del lato della posizione meno TUTTO l'abbinato del lato
+        opposto, hedge compresi, ``sizeMatched`` per prezzo medio abbinato (l'esposizione reale: una coppia gia' chiusa
+        dal suo hedge si annulla, Sol su 73296a3). Il tetto e' il minore dei due: altri ingressi dello stesso lato
+        (manuali, altri tavoli) non allargano mai l'hedge e una chiusura gia' abbinata lo riduce (Sol su a16f0d3). Ordini illeggibili o in errore => ``posizione_non_verificabile`` (nessun hedge).
+        Senza sorgente (doppi di test) vale ``original_pos``: la coerenza si verifica comunque, mai saltata. Il
+        verdetto e' `RiskGate.protective_hedge` (nessun cap di stake, solo lato e size)."""
+        from core.risk_gate import RiskGate
+        orig = payload.get("original_pos")
+        pos_side = str(orig.get("side") or "").strip().upper() if isinstance(orig, dict) else ""
+        if pos_side not in self._VALID_SIDES:
+            return "hedge_non_coerente:posizione_assente"
+        identified = self._as_float(orig.get("stake")) * self._as_float(orig.get("price"))
+        if not math.isfinite(identified) or identified <= 0.0:
+            return "hedge_non_coerente:posizione_assente"
+        notional = identified
+        if self.fetch_current_orders is not None:
+            net = self._matched_notional(payload, pos_side)
+            if net is None:
+                return "hedge_non_coerente:posizione_non_verificabile"
+            notional = min(identified, net)
+        verdict = RiskGate.protective_hedge(position_side=pos_side, hedge_side=payload.get("side"),
+                                            hedge_stake=payload.get("stake"), hedge_price=payload.get("price"),
+                                            matched_notional=notional)
+        return "" if verdict.get("allowed") is True else str(verdict.get("reason") or "hedge_non_coerente")
+
+    def _matched_notional(self, payload: Dict[str, Any], pos_side: str) -> Optional[float]:
+        """Esposizione netta abbinata della selezione sul lato ``pos_side``; None se gli ordini non sono leggibili."""
+        try:
+            current = self.fetch_current_orders()
+        except Exception:  # noqa: BLE001 - ordini correnti illeggibili => posizione non verificabile
+            logger.exception("[CashoutExecutor] ordini correnti illeggibili: coerenza dell'hedge non verificabile")
+            return None
+        if not isinstance(current, (list, tuple)) or any(not isinstance(order, dict) for order in current):
+            return None                                 # risposta malformata: esposizione non misurabile
+        market, selection = str(payload.get("market_id", "")), str(payload.get("selection_id", ""))
+        net = 0.0
+        for order in current:
+            # Codex P1 su 954c2cd: una riga che non si puo' ESCLUDERE con certezza dalla selezione non dimostra nulla.
+            # Identita' (mercato; selezione sul mercato target) o lato (sulla selezione target) illeggibili =>
+            # esposizione non verificabile, mai un ordine scartato in silenzio (un LAY che gia' copre la posizione).
+            order_market = self._identity(order, "marketId", "market_id")
+            if not order_market:
+                return None
+            if order_market != market:
+                continue
+            order_selection = self._identity(order, "selectionId", "selection_id")
+            if not order_selection:
+                return None
+            if order_selection != selection:
+                continue
+            raw_side = order.get("side")
+            side = raw_side.strip().upper() if isinstance(raw_side, str) else ""
+            if side not in self._VALID_SIDES:
+                return None
+            # Codex P1 su 73296a3: conversione STRETTA. `_as_float` legge None/"x"/assente come 0.0 e l'ordine
+            # spariva dal netto (un LAY opposto che gia' copre la posizione) => esposizione non verificabile
+            raw_matched = order.get("sizeMatched", order.get("size_matched"))
+            try:
+                matched = float(raw_matched) if not isinstance(raw_matched, bool) else float("nan")
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(matched) or matched < 0.0:
+                return None
+            if matched == 0.0:
+                continue
+            # stesso prezzo d'ingresso di `cashout_resolver._row_matched_price`: averagePriceMatched (LIVE) se > 1,
+            # altrimenti priceSize.price (SIM)
+            price = self._as_float(order.get("averagePriceMatched"))
+            if not math.isfinite(price) or price <= 1.0:
+                price_size = order.get("priceSize") if isinstance(order.get("priceSize"), dict) else {}
+                price = self._as_float(price_size.get("price"))
+            if not math.isfinite(price) or price <= 1.0:
+                return None
+            net += matched * price if side == pos_side else -matched * price
+        return net
+
+    @staticmethod
+    def _identity(order: Dict[str, Any], camel: str, snake: str) -> str:
+        """Identificativo dell'ordine; '' se assente, vuoto, booleano o AMBIGUO.
+
+        Sol su 360aa7d: le due grafie (camelCase/snake_case) presenti e in disaccordo (``selectionId=0``,
+        ``selection_id=55``) non si risolvono scegliendone una: la riga e' ambigua e il chiamante la tratta come
+        esposizione non verificabile. Una sola grafia valida, o due concordi, e' l'identificativo."""
+        values = set()
+        for key in (camel, snake):
+            raw = order.get(key)
+            if raw is None or (isinstance(raw, str) and not raw.strip()):
+                continue
+            if isinstance(raw, bool):
+                return ""
+            values.add(str(raw).strip())
+        return values.pop() if len(values) == 1 else ""
 
     @classmethod
     def _enforce_hard_invariants(cls, payload: Dict[str, Any]) -> None:

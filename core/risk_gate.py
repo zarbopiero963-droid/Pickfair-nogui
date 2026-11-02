@@ -183,6 +183,36 @@ class RiskGate:
             logger.exception("RiskGate ha sollevato -> DENY")
             return self._deny(payload, "RISK_GATE_INTERNAL_ERROR")
 
+    # -- hedge protettivo (F-06) ----------------------------------------
+    @staticmethod
+    def protective_hedge(*, position_side: Any, hedge_side: Any, hedge_stake: Any, hedge_price: Any,
+                         matched_notional: Any) -> Dict[str, Any]:
+        """F-06 (#586 CSH-05, MM-02): decisione protettiva sull'hedge di un cashout. Roserpina resta l'unica autorita'
+        sullo stake d'INGRESSO; qui NESSUN cap di stake, solo coerenza con la posizione da chiudere (PF-EXEC-03,
+        chiusura protettiva senza inseguimento):
+        - lato dell'hedge = opposto del lato della posizione (un hedge dello stesso lato la raddoppia);
+        - stake <= stake che chiude l'esposizione ABBINATA: ``matched_notional / hedge_price`` (green-up:
+          ``stake * ingresso / chiusura``) piu' il mezzo centesimo che l'arrotondamento ROUND_HALF_UP del resolver puo'
+          aggiungere: confronto esatto in Decimal, mai un secondo arrotondamento che al confine rifiuterebbe un
+          cashout legittimo.
+        Qualunque valore non finito o non positivo => rifiuto. Ritorna ``{"allowed", "reason"}``."""
+        pos, side = str(position_side or "").strip().upper(), str(hedge_side or "").strip().upper()
+        if pos not in ("BACK", "LAY"):
+            return {"allowed": False, "reason": "hedge_non_coerente:posizione_assente"}
+        if side != {"BACK": "LAY", "LAY": "BACK"}[pos]:
+            return {"allowed": False, "reason": "hedge_non_coerente:lato"}
+        stake, price, notional = (RiskGate._finite(hedge_stake), RiskGate._finite(hedge_price),
+                                  RiskGate._finite(matched_notional))
+        if notional is None or notional <= 0.0:
+            return {"allowed": False, "reason": "hedge_non_coerente:posizione_assente"}
+        if stake is None or stake <= 0.0 or price is None or price <= 1.0:
+            return {"allowed": False, "reason": "hedge_non_coerente:size"}
+        from decimal import Decimal
+        closing_limit = Decimal(str(notional)) / Decimal(str(price)) + Decimal("0.005") + Decimal("1e-9")
+        if Decimal(str(stake)) > closing_limit:
+            return {"allowed": False, "reason": "hedge_non_coerente:size"}
+        return {"allowed": True, "reason": None}
+
     # -- helper ----------------------------------------------------------
     @staticmethod
     def _deny(payload: Any, reason: str) -> Dict[str, Any]:
