@@ -79,6 +79,33 @@ def test_blockers_on_a_range_later_fixed_by_a_pass_range_pass():
 
 
 @pytest.mark.parametrize("verdict", ["BLOCKERS", "INCONCLUSIVE", "ERROR"])
+def test_later_non_pass_on_the_same_head_overrides_an_earlier_pass(verdict):
+    # Sol su #602: PASS e poi BLOCKERS sullo stesso range (run successivo) => il PASS vecchio non copre piu' l'head
+    pairs = [_pair("gpt-6.1-sol", run=1), _pair("gpt-6.1-sol", verdict=verdict, run=2), _pair("grok-4.7", run=3)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
+
+
+def test_later_attempt_blockers_overrides_an_earlier_attempt_pass_of_the_same_run():
+    pairs = [_pair("gpt-6.1-sol", run=5), _pair("gpt-6.1-sol", verdict="BLOCKERS", run=5, attempt=2,
+                                                  sig={"run_attempt": "2"}), _pair("grok-4.7", run=6)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
+
+
+def test_pass_after_blockers_on_the_same_head_clears_them():
+    pairs = [_pair("gpt-6.1-sol", verdict="BLOCKERS", run=1), _pair("gpt-6.1-sol", run=2), _pair("grok-4.7", run=3)]
+    assert _decide(pairs).passed
+
+
+def test_blockers_with_unreadable_run_order_never_clear():
+    pairs = [_pair("gpt-6.1-sol", verdict="BLOCKERS", run="x", sig={"run_id": "x"}), _pair("gpt-6.1-sol", run=2),
+             _pair("grok-4.7", run=3)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
+
+
+@pytest.mark.parametrize("verdict", ["BLOCKERS", "INCONCLUSIVE", "ERROR"])
 def test_non_pass_verdict_on_the_last_range_never_passes(verdict):
     pairs = [_pair("gpt-6.1-sol", BASE, C2, run=1), _pair("gpt-6.1-sol", C2, HEAD, verdict, run=2),
              _pair("grok-4.7", run=3)]

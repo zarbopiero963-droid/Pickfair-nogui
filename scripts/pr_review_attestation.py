@@ -171,6 +171,9 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
     richiesto le attestazioni PASS devono coprire la catena senza buchi fino all'head: ogni range ``from...to`` va da
     un commit della catena (o dal base) a un commit successivo, e l'ultimo termina sull'head. Un range con verdetto
     diverso da PASS che termina su un commit lo rende "non coperto" finche' un range PASS successivo non lo supera.
+    "Successivo" e' nell'ordine dei run firmati (``run_id``, poi ``run_attempt``), non nella posizione del range: un
+    BLOCKERS emesso DOPO un PASS sullo stesso head lo annulla (rilievo di Sol su #602). Un run il cui ordine non si
+    legge conta come l'ultimo se non e' PASS (blocca) e come il primo se e' PASS (non sblocca nulla).
     Anti-replay: repo, PR e range sono nel contenuto FIRMATO, quindi un'attestazione non vale per un'altra PR; la
     stessa attestazione riletta per la stessa PR (giri successivi della VPS) e' idempotente."""
     chain = [base_sha, *commits]
@@ -190,7 +193,8 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
         if frm not in index or to not in index or index[frm] >= index[to]:
             reasons.append(f"RANGE_NOT_IN_PR:{att['reviewer']}")
             continue
-        by_reviewer.setdefault(att["reviewer"], []).append((index[frm], index[to], att["verdict"], str(signed.run_id)))
+        by_reviewer.setdefault(att["reviewer"], []).append(
+            (index[frm], index[to], att["verdict"], _run_order(signed, att["verdict"] == "PASS")))
     covered: List[Tuple[str, str, str]] = []
     for reviewer in required:
         if reviewer not in trusted:
@@ -198,20 +202,31 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
         ranges = sorted(by_reviewer.get(reviewer, []), key=lambda r: (r[1], r[0]))
         # copertura: si avanza dal base (0) fino all'head (len(chain)-1) con range PASS contigui
         reached = 0
-        last_bad = -1
-        for a, b, verdict, _run in ranges:
-            if verdict != "PASS":
-                last_bad = max(last_bad, b)
-                continue
-            if a <= reached < b:
+        for a, b, verdict, _order in ranges:
+            if verdict == "PASS" and a <= reached < b:
                 reached = b
                 covered.append((reviewer, chain[a], chain[b]))
+        # un non-PASS che termina su ``b`` resta aperto finche' un PASS emesso DOPO di lui non arriva almeno a ``b``
+        open_bad = [
+            (b, order) for _a, b, verdict, order in ranges if verdict != "PASS"
+            and not any(v2 == "PASS" and b2 >= b and o2 > order for _a2, b2, v2, o2 in ranges)
+        ]
         if reached != len(chain) - 1:
             reasons.append(f"NOT_COVERED_TO_HEAD:{reviewer}")
-        elif last_bad > reached:
+        elif open_bad:
             reasons.append(f"OPEN_BLOCKERS:{reviewer}")
     passed = not [r for r in reasons if r.startswith(("NOT_COVERED", "OPEN_BLOCKERS", "REQUIRED_", "HEAD_"))]
     return Decision(passed, reasons, covered)
+
+
+def _run_order(signed: Signed, is_pass: bool) -> Tuple[float, float]:
+    """Ordine cronologico di un run firmato: (``run_id``, ``run_attempt``). Illeggibile => fail-closed:
+    +inf per un non-PASS (resta sempre l'ultimo, quindi blocca), -inf per un PASS (non supera mai nulla)."""
+    try:
+        return float(int(signed.run_id)), float(int(signed.run_attempt))
+    except (TypeError, ValueError):
+        edge = float("-inf") if is_pass else float("inf")
+        return edge, edge
 
 
 def gh_signature_verifier(run: Callable[[List[str]], Tuple[int, str]], *, repository: str,
