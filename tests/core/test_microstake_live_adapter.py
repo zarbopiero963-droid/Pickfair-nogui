@@ -305,7 +305,9 @@ def test_amount_at_or_above_the_one_euro_reference_goes_direct_without_saga(amou
     assert _names(fake) == ["placeOrders"]
     (ins,) = fake.calls[0][1]["instructions"]
     assert D(str(ins["limitOrder"]["size"])) == D(amount) and ins["limitOrder"]["price"] == 3.0
-    assert "customerOrderRef" not in ins, "percorso diretto invariato"
+    # F-13: il percorso diretto porta come customerOrderRef il ref della richiesta (mai un ref di stub Microstake)
+    assert ins.get("customerOrderRef") == fake.calls[0][1].get("customerRef"), "percorso diretto senza identita'"
+    assert ins["customerOrderRef"], "percorso diretto senza customerOrderRef"
     assert engine._live_microstake_executor is None and LIVE_SAGA_SETTINGS_KEY not in _settings(db)
 
 

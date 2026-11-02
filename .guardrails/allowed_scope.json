@@ -3335,12 +3335,13 @@
         "order_manager.py",
         "services/betfair_service.py",
         "simulation_broker.py",
+        "tests/core/test_microstake_live_adapter.py",
         "tests/core/test_order_router.py",
         "tests/f13/__init__.py",
         "tests/f13/test_f13_customer_order_ref.py",
         "tests/test_microstake_sim_port.py"
       ],
-      "max_files": 16
+      "max_files": 17
     }
   }
 }
