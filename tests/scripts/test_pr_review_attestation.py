@@ -24,9 +24,18 @@ def _att(reviewer="gpt-6.1-sol", frm=BASE, to=HEAD, verdict="PASS", run=11, atte
             "range": {"from": frm, "to": to}, "pr_author": AUTHOR, "reviewer": reviewer,
             "provider": "openrouter", "workflow_path": A.TRUSTED_REVIEW_WORKFLOWS.get(reviewer, "x"),
             "run_id": run, "run_attempt": attempt, "verdict": verdict, "blockers": [], "files_truncated": 0,
-            "files_sent": 3, "diff_sha256": _diff(frm, to)}
+            "files_sent": 3, "diff_sha256": _diff(frm, to), "generated_at": _ts(run, attempt)}
     body.update(over)
     return json.dumps(body).encode()
+
+
+def _ts(run, attempt=1):
+    """Istante di emissione di default: cresce con run e tentativo (i test che incrociano i run lo fissano a mano)."""
+    try:
+        sec = int(run) * 60 + int(attempt)
+    except (TypeError, ValueError):
+        return "non-una-data"
+    return f"2026-11-02T{sec // 3600:02d}:{sec % 3600 // 60:02d}:{sec % 60:02d}Z"
 
 
 MAIN_WF = "a" * 40           # commit di main da cui gira il workflow di review
@@ -91,6 +100,23 @@ def test_later_attempt_blockers_overrides_an_earlier_attempt_pass_of_the_same_ru
                                                   sig={"run_attempt": "2"}), _pair("grok-4.7", run=6)]
     d = _decide(pairs)
     assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
+
+
+def test_rerun_of_an_older_run_with_blockers_after_a_newer_pass_is_still_open():
+    # Sol su #602 (185058f): il rerun conserva il run_id; conta quando la review e' stata EMESSA, non il numero del run
+    pairs = [_pair("gpt-6.1-sol", run=11, generated_at="2026-11-02T10:00:00Z"),
+             _pair("gpt-6.1-sol", verdict="BLOCKERS", run=10, attempt=2, sig={"run_attempt": "2"},
+                   generated_at="2026-11-02T10:30:00Z"),
+             _pair("grok-4.7", run=12)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
+
+
+def test_pass_emitted_in_the_same_second_as_blockers_does_not_clear_them():
+    t = "2026-11-02T10:00:00Z"
+    pairs = [_pair("gpt-6.1-sol", verdict="BLOCKERS", run=1, generated_at=t), _pair("gpt-6.1-sol", run=2, generated_at=t),
+             _pair("grok-4.7", run=3)]
+    assert not _decide(pairs).passed
 
 
 def test_pass_after_blockers_on_the_same_head_clears_them():
@@ -288,6 +314,7 @@ def test_review_workflow_signs_and_uploads_the_attestation(reviewer, path):
         "review-attestation.json"
     assert f'"reviewer": "{reviewer}"' in py and f'"workflow_path": "{path}"' in py
     assert '"verdict": _verdicts.get(attempt_state, "ERROR")' in py, "verdetto non dalla classificazione"
+    assert '"generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())' in py, "formato letto da _emitted_at"
     trigger = w.get("on", w.get(True))
     assert list(trigger) == ["pull_request_target"], "il workflow firmatario deve girare dal base"
 

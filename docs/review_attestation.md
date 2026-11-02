@@ -54,10 +54,15 @@ L'attestazione si scrive solo dentro Actions. Se la scrittura fallisce, la revie
   `RANGE_NOT_IN_PR`.
 
   **Copertura:** per ogni reviewer richiesto (Sol, Grok) i range PASS sono contigui dal base all'head. Un range non
-  PASS che non è superato da un PASS successivo dà `OPEN_BLOCKERS` oppure `NOT_COVERED_TO_HEAD`. «Successivo» è
-  nell'ordine dei run firmati (`run_id`, poi `run_attempt`) e il PASS deve arrivare almeno al commit del non PASS:
-  un BLOCKERS emesso dopo un PASS sullo stesso head annulla quel PASS. Un run con ordine illeggibile blocca se non è
-  PASS e non sblocca nulla se è PASS.
+  PASS che non è superato da un PASS successivo dà `OPEN_BLOCKERS` oppure `NOT_COVERED_TO_HEAD`.
+
+  «Successivo» vuol dire due cose:
+  - è nell'istante di emissione firmato (`generated_at`, strettamente dopo). Non conta il numero del run, perché un
+    rerun lo conserva: un BLOCKERS del run 10 rilanciato dopo un PASS del run 11 resta aperto;
+  - il PASS deve arrivare almeno al commit del non PASS.
+
+  Un BLOCKERS emesso dopo un PASS sullo stesso head annulla quel PASS. Un istante illeggibile blocca se il verdetto
+  non è PASS e non sblocca nulla se è PASS. A parità di secondo, il PASS non sblocca.
 
   Le PR da fork e gli errori API danno sempre non PASS.
 - `verify-prelive --repo R --pr N`: il check `pf-betfair-certification` dell'app `pickfair-dedicated` deve essere

@@ -172,9 +172,10 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
     richiesto le attestazioni PASS devono coprire la catena senza buchi fino all'head: ogni range ``from...to`` va da
     un commit della catena (o dal base) a un commit successivo, e l'ultimo termina sull'head. Un range con verdetto
     diverso da PASS che termina su un commit lo rende "non coperto" finche' un range PASS successivo non lo supera.
-    "Successivo" e' nell'ordine dei run firmati (``run_id``, poi ``run_attempt``), non nella posizione del range: un
-    BLOCKERS emesso DOPO un PASS sullo stesso head lo annulla (rilievo di Sol su #602). Un run il cui ordine non si
-    legge conta come l'ultimo se non e' PASS (blocca) e come il primo se e' PASS (non sblocca nulla).
+    "Successivo" e' nell'istante di emissione firmato (``generated_at``, strettamente dopo), non nella posizione del
+    range ne' nel numero del run (i rerun lo conservano): un BLOCKERS emesso DOPO un PASS sullo stesso head lo annulla
+    (rilievi di Sol su #602). Un istante illeggibile conta come l'ultimo se non e' PASS (blocca) e come il primo se e'
+    PASS (non sblocca nulla); a parita' di secondo il PASS non sblocca.
     Anti-replay: repo, PR e range sono nel contenuto FIRMATO, quindi un'attestazione non vale per un'altra PR; la
     stessa attestazione riletta per la stessa PR (giri successivi della VPS) e' idempotente."""
     chain = [base_sha, *commits]
@@ -198,7 +199,7 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
             reasons.append(f"RANGE_NOT_IN_PR:{att['reviewer']}")
             continue
         by_reviewer.setdefault(att["reviewer"], []).append(
-            (start, index[to], att["verdict"], _run_order(signed, att["verdict"] == "PASS")))
+            (start, index[to], att["verdict"], _emitted_at(att, att["verdict"] == "PASS")))
     covered: List[Tuple[str, str, str]] = []
     for reviewer in required:
         if reviewer not in trusted:
@@ -223,14 +224,20 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
     return Decision(passed, reasons, covered)
 
 
-def _run_order(signed: Signed, is_pass: bool) -> Tuple[float, float]:
-    """Ordine cronologico di un run firmato: (``run_id``, ``run_attempt``). Illeggibile => fail-closed:
-    +inf per un non-PASS (resta sempre l'ultimo, quindi blocca), -inf per un PASS (non supera mai nulla)."""
+def _emitted_at(att: Mapping[str, Any], is_pass: bool) -> float:
+    """Istante di emissione della review: ``generated_at`` del contenuto FIRMATO (scritto dal workflow trusted).
+
+    Non ``run_id``: un rerun conserva il numero del run, quindi un BLOCKERS del run 10 rilanciato dopo un PASS del run 11
+    risulterebbe "precedente" (rilievo di Sol su #602, 185058f). Illeggibile => fail-closed: +inf per un non-PASS
+    (resta sempre l'ultimo, quindi blocca), -inf per un PASS (non supera mai nulla)."""
+    import datetime as _dt
+    text = att.get("generated_at")
     try:
-        return float(int(signed.run_id)), float(int(signed.run_attempt))
-    except (TypeError, ValueError):
-        edge = float("-inf") if is_pass else float("inf")
-        return edge, edge
+        if not isinstance(text, str) or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", text):
+            raise ValueError(text)
+        return _dt.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_dt.timezone.utc).timestamp()
+    except ValueError:
+        return float("-inf") if is_pass else float("inf")
 
 
 def gh_signature_verifier(run: Callable[[List[str]], Tuple[int, str]], *, repository: str,
