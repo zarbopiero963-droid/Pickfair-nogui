@@ -51,6 +51,7 @@ class Signed:
     run_attempt: str = ""
     issuer: str = ""
     digest: str = ""
+    workflow_sha: str = ""      # commit da cui e' stato eseguito il workflow firmatario (buildSignerDigest)
     reason: str = ""
 
 
@@ -74,9 +75,18 @@ def _bad(reason: str) -> Tuple[Optional[Dict[str, Any]], str]:
 
 
 def check_attestation(raw: bytes, signed: Signed, *, repository: str, pr: int, pr_author: str,
-                      trusted: Mapping[str, str] = TRUSTED_REVIEW_WORKFLOWS) -> Tuple[Optional[Dict[str, Any]], str]:
+                      trusted: Mapping[str, str] = TRUSTED_REVIEW_WORKFLOWS,
+                      is_trusted_workflow_commit: Optional[Callable[[str], bool]] = None,
+                      range_diff_sha256: Optional[Callable[[str, str], Optional[str]]] = None,
+                      ) -> Tuple[Optional[Dict[str, Any]], str]:
     """``(attestazione, "")`` se autentica e ben formata per questa PR, altrimenti ``(None, motivo)``.
 
+    Oltre alla firma (owner #586: «una firma autentica non dimostra che la review sia corretta o indipendente»):
+    - ``is_trusted_workflow_commit(sha)``: il commit del workflow firmatario e' su ``main`` (versione non controllabile
+      dall'autore della PR). Obbligatorio: assente => non verificabile;
+    - ``range_diff_sha256(from, to)``: sha256 del diff del range ricalcolato dal verificatore (Compare API); deve
+      coincidere con ``diff_sha256`` dichiarato, con ``files_sent > 0`` e ``files_truncated == 0`` (il reviewer ha
+      ricevuto TUTTO il codice del range). Obbligatorio: assente => non verificabile.
     Non decide sull'head ne' sulla copertura (vedi ``decide``)."""
     if not signed.ok:
         return _bad(f"SIGNATURE_INVALID:{signed.reason or 'unverified'}")
@@ -112,13 +122,38 @@ def check_attestation(raw: bytes, signed: Signed, *, repository: str, pr: int, p
         return _bad("AUTHOR_MISMATCH")
     if att.get("verdict") not in VERDICTS:
         return _bad("VERDICT_UNKNOWN")
+    if is_trusted_workflow_commit is None or not _SHA.fullmatch(signed.workflow_sha or ""):
+        return _bad("WORKFLOW_COMMIT_UNVERIFIABLE")
+    try:
+        trusted_commit = bool(is_trusted_workflow_commit(signed.workflow_sha))
+    except Exception:  # noqa: BLE001 - API non leggibile => non verificabile
+        return _bad("WORKFLOW_COMMIT_UNVERIFIABLE")
+    if not trusted_commit:
+        return _bad("WORKFLOW_COMMIT_NOT_ON_MAIN")
+    sent, truncated = att.get("files_sent"), att.get("files_truncated")
+    if not isinstance(sent, int) or isinstance(sent, bool) or sent <= 0:
+        return _bad("NOTHING_REVIEWED")
+    if truncated != 0:
+        return _bad("DIFF_TRUNCATED")
+    if range_diff_sha256 is None:
+        return _bad("DIFF_UNVERIFIABLE")
+    try:
+        expected = range_diff_sha256(frm, to)
+    except Exception:  # noqa: BLE001
+        expected = None
+    if not expected:
+        return _bad("DIFF_UNVERIFIABLE")
+    if att.get("diff_sha256") != expected:
+        return _bad("DIFF_MISMATCH")
     return att, ""
 
 
 def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr: int, pr_author: str, head_sha: str,
            base_sha: str, commits: Sequence[str],
            required: Sequence[str] = REQUIRED_REVIEWERS,
-           trusted: Mapping[str, str] = TRUSTED_REVIEW_WORKFLOWS) -> Decision:
+           trusted: Mapping[str, str] = TRUSTED_REVIEW_WORKFLOWS,
+           is_trusted_workflow_commit: Optional[Callable[[str], bool]] = None,
+           range_diff_sha256: Optional[Callable[[str, str], Optional[str]]] = None) -> Decision:
     """Verdetto delle review per l'head ``head_sha``.
 
     ``commits`` = SHA della PR dal piu' vecchio all'head (la catena ``base -> ... -> head``). Per ogni reviewer
@@ -134,7 +169,9 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
     reasons: List[str] = []
     by_reviewer: Dict[str, List[Tuple[int, int, str, str]]] = {}
     for raw, signed in attestations:
-        att, why = check_attestation(raw, signed, repository=repository, pr=pr, pr_author=pr_author, trusted=trusted)
+        att, why = check_attestation(raw, signed, repository=repository, pr=pr, pr_author=pr_author, trusted=trusted,
+                                     is_trusted_workflow_commit=is_trusted_workflow_commit,
+                                     range_diff_sha256=range_diff_sha256)
         if att is None:
             reasons.append(why)
             continue
@@ -195,6 +232,7 @@ def gh_signature_verifier(run: Callable[[List[str]], Tuple[int, str]], *, reposi
                       run_id=str(cert.get("runInvocationURI", "")).rstrip("/").split("/attempts/")[0].rsplit("/", 1)[-1],
                       run_attempt=str(cert.get("runInvocationURI", "")).rstrip("/").rsplit("/attempts/", 1)[-1]
                       if "/attempts/" in str(cert.get("runInvocationURI", "")) else "",
-                      issuer=str(cert.get("issuer", "")), digest=str(digest))
+                      issuer=str(cert.get("issuer", "")), digest=str(digest),
+                      workflow_sha=str(cert.get("buildSignerDigest", "")))
 
     return verify

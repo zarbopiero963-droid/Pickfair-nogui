@@ -23,15 +23,23 @@ def _att(reviewer="gpt-6.1-sol", frm=BASE, to=HEAD, verdict="PASS", run=11, atte
     body = {"schema": A.SCHEMA, "repo": REPO, "pr": PR, "head_sha": to, "base_sha": BASE,
             "range": {"from": frm, "to": to}, "pr_author": AUTHOR, "reviewer": reviewer,
             "provider": "openrouter", "workflow_path": A.TRUSTED_REVIEW_WORKFLOWS.get(reviewer, "x"),
-            "run_id": run, "run_attempt": attempt, "verdict": verdict, "blockers": [], "files_truncated": 0}
+            "run_id": run, "run_attempt": attempt, "verdict": verdict, "blockers": [], "files_truncated": 0,
+            "files_sent": 3, "diff_sha256": _diff(frm, to)}
     body.update(over)
     return json.dumps(body).encode()
+
+
+MAIN_WF = "a" * 40           # commit di main da cui gira il workflow di review
+
+
+def _diff(frm, to):
+    return A.sha256_hex(f"{frm}...{to}".encode())
 
 
 def _sig(raw, reviewer="gpt-6.1-sol", run=11, attempt=1, **over):
     s = dict(ok=True, job_workflow_ref=f"{REPO}/{A.TRUSTED_REVIEW_WORKFLOWS.get(reviewer, 'x')}@refs/heads/main",
              event_name="pull_request_target", run_id=str(run), run_attempt=str(attempt), issuer=A.OIDC_ISSUER,
-             digest=A.sha256_hex(raw))
+             digest=A.sha256_hex(raw), workflow_sha=MAIN_WF)
     s.update(over)
     return A.Signed(**s)
 
@@ -42,6 +50,8 @@ def _pair(reviewer="gpt-6.1-sol", frm=BASE, to=HEAD, verdict="PASS", run=11, sig
 
 
 def _decide(pairs, **kw):
+    kw.setdefault("is_trusted_workflow_commit", lambda sha: sha == MAIN_WF)
+    kw.setdefault("range_diff_sha256", _diff)
     return A.decide(pairs, repository=REPO, pr=PR, pr_author=AUTHOR, head_sha=HEAD, base_sha=BASE,
                     commits=COMMITS, **kw)
 
@@ -142,7 +152,8 @@ def test_range_outside_the_pr_commits_never_counts():
 
 
 def test_head_not_matching_the_commit_chain_never_passes():
-    d = A.decide(_both(), repository=REPO, pr=PR, pr_author=AUTHOR, head_sha="4" * 40, base_sha=BASE, commits=COMMITS)
+    d = A.decide(_both(), repository=REPO, pr=PR, pr_author=AUTHOR, head_sha="4" * 40, base_sha=BASE, commits=COMMITS,
+                 is_trusted_workflow_commit=lambda sha: True, range_diff_sha256=_diff)
     assert not d.passed and d.reasons == ["HEAD_NOT_IN_COMMITS"]
 
 
@@ -157,6 +168,7 @@ def _gh_json(digest, *, trigger="pull_request_target", signer=None):
     signer = signer or f"https://github.com/{REPO}/.github/workflows/pr-review-openrouter-gpt56-sol.yml@refs/heads/main"
     return json.dumps([{"verificationResult": {
         "signature": {"certificate": {"buildSignerURI": signer, "githubWorkflowTrigger": trigger,
+                                      "buildSignerDigest": MAIN_WF,
                                       "runInvocationURI": f"https://github.com/{REPO}/actions/runs/11/attempts/1",
                                       "issuer": A.OIDC_ISSUER}},
         "statement": {"subject": [{"digest": {"sha256": digest}}]}}}])
@@ -174,7 +186,8 @@ def test_gh_adapter_builds_the_strict_command_and_parses_the_certificate():
     assert argv[:3] == ["gh", "attestation", "verify"]
     assert "--signer-workflow" in argv and argv[argv.index("--source-ref") + 1] == "refs/heads/main"
     assert signed.ok and signed.run_id == "11" and signed.run_attempt == "1" and signed.event_name == "pull_request_target"
-    att, why = A.check_attestation(raw, signed, repository=REPO, pr=PR, pr_author=AUTHOR)
+    att, why = A.check_attestation(raw, signed, repository=REPO, pr=PR, pr_author=AUTHOR,
+                                   is_trusted_workflow_commit=lambda sha: sha == MAIN_WF, range_diff_sha256=_diff)
     assert why == "" and att["verdict"] == "PASS"
 
 
@@ -188,3 +201,38 @@ def test_gh_adapter_exception_is_unverified():
     def boom(argv):
         raise OSError("gh missing")
     assert A.gh_signature_verifier(boom, repository=REPO)("f.json", "w.yml").ok is False
+
+
+# ── owner #586: firma autentica != review corretta o indipendente ───────────────────────────────────────────────────
+
+def test_valid_signature_from_a_workflow_version_not_on_main_never_counts():
+    d = _decide(_both(), is_trusted_workflow_commit=lambda sha: False)
+    assert not d.passed and "WORKFLOW_COMMIT_NOT_ON_MAIN" in d.reasons
+
+
+@pytest.mark.parametrize("kw", [{"is_trusted_workflow_commit": None}, {"range_diff_sha256": None},
+                                {"range_diff_sha256": lambda a, b: None}])
+def test_unverifiable_workflow_commit_or_diff_never_counts(kw):
+    d = _decide(_both(), **kw)
+    assert not d.passed and any(r in d.reasons for r in ("WORKFLOW_COMMIT_UNVERIFIABLE", "DIFF_UNVERIFIABLE"))
+
+
+def test_workflow_commit_lookup_error_never_counts():
+    def boom(sha):
+        raise RuntimeError("API down")
+    assert not _decide(_both(), is_trusted_workflow_commit=boom).passed
+
+
+@pytest.mark.parametrize("over,reason", [({"files_sent": 0}, "NOTHING_REVIEWED"),
+                                         ({"files_truncated": 2}, "DIFF_TRUNCATED"),
+                                         ({"diff_sha256": "f" * 64}, "DIFF_MISMATCH")])
+def test_reviewer_that_did_not_see_the_whole_diff_never_counts(over, reason):
+    raw = _att("gpt-6.1-sol", run=1, **over)
+    d = _decide([(raw, _sig(raw, "gpt-6.1-sol", 1)), _pair("grok-4.7", run=2)])
+    assert not d.passed and reason in d.reasons, d.reasons
+
+
+def test_missing_workflow_sha_in_the_certificate_never_counts():
+    raw = _att("gpt-6.1-sol", run=1)
+    d = _decide([(raw, _sig(raw, "gpt-6.1-sol", 1, workflow_sha="")), _pair("grok-4.7", run=2)])
+    assert not d.passed and "WORKFLOW_COMMIT_UNVERIFIABLE" in d.reasons
