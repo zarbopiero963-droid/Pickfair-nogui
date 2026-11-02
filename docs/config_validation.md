@@ -29,7 +29,7 @@ può usare la virgola decimale (`"0,10"`). NaN, inf, un bool al posto di un nume
 
 ## 2. Al salvataggio
 
-`SettingsService.save_settings` rifiuta l'intero salvataggio (`InvalidSettingsError`, con tutti i motivi) prima di
+`SettingsService.save_settings`, e quindi anche `save_roserpina_config` (la tab Roserpina della GUI), rifiuta l'intero salvataggio (`InvalidSettingsError`, con tutti i motivi) prima di
 qualsiasi scrittura. Succede quando una chiave Roserpina è illeggibile o fuori dominio, oppure quando una coppia è
 incoerente con quanto già salvato. La configurazione precedente resta intatta. La tab Roserpina della GUI mostra
 l'errore («Errore salvataggio Roserpina»). Assente, `None` o `""` non sono errori.

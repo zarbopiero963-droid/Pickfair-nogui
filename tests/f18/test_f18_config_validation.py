@@ -173,3 +173,14 @@ def test_loading_a_corrupt_db_never_crashes(svc):
                                             "roserpina.book_block", "roserpina.allow_recovery")})
     cfg = svc.load_roserpina_config()
     assert len(cfg.invalid_settings) >= 6
+
+
+def test_gui_save_path_save_roserpina_config_is_validated_too(svc):
+    # la tab Roserpina della GUI salva con save_roserpina_config: anche quel percorso non deve scrivere valori invalidi
+    svc.save_settings(REQUIRED)
+    cfg = svc.load_roserpina_config()
+    before = svc.get_all_settings()
+    cfg.commission_pct = -5.0
+    with pytest.raises(InvalidSettingsError, match="commission_pct"):
+        svc.save_roserpina_config(cfg)
+    assert svc.get_all_settings() == before

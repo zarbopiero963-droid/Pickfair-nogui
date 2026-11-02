@@ -521,7 +521,8 @@ class SettingsService:
         if config.max_recovery_chase_abs is not None:
             payload["roserpina.max_recovery_chase_abs"] = config.max_recovery_chase_abs
 
-        self.db.save_settings(payload)
+        # F-18: stesso controllo del salvataggio generico (la tab Roserpina della GUI passa di qui)
+        self.save_settings(payload)
 
     # Rettifica owner 18/10/2026, chiarimento definitivo 19/10: anche i tetti monetari preesistenti
     # (max_stake_abs RSR-15, max_win RSR-26) sono opzionali e DISATTIVATI di default. Il vecchio default
