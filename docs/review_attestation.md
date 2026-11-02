@@ -59,7 +59,8 @@ L'attestazione si scrive solo dentro Actions. Se la scrittura fallisce, la revie
   «Successivo» vuol dire due cose:
   - è nell'istante di emissione firmato (`generated_at`, strettamente dopo). Non conta il numero del run, perché un
     rerun lo conserva: un BLOCKERS del run 10 rilanciato dopo un PASS del run 11 resta aperto;
-  - il PASS deve arrivare almeno al commit del non PASS.
+  - il PASS deve portare commit nuovi oltre il non PASS (la correzione, revisionata nella push successiva) oppure
+    ri-coprire tutto il suo range. Un PASS successivo solo su una parte dello stesso head non basta.
 
   Un BLOCKERS emesso dopo un PASS sullo stesso head annulla quel PASS. Un istante illeggibile blocca se il verdetto
   non è PASS e non sblocca nulla se è PASS. A parità di secondo, il PASS non sblocca.
@@ -105,6 +106,10 @@ più volte per la stessa PR, le attestazioni sono idempotenti: la VPS rivaluta o
   stesso esito sulla VPS. I nomi dei campi del certificato letti da `gh attestation verify --format json`
   (`buildSignerURI`, `buildSignerDigest`, `githubWorkflowTrigger`, `runInvocationURI`) sono da confermare su quel run.
   Finché non è confermato, il verificatore restituisce non PASS: è fail-closed.
+- **Modello push-range.** Un BLOCKERS su `a...b` è superato da un PASS successivo sui commit nuovi oltre `b`, cioè
+  sulla correzione revisionata nella push dopo. Questo PASS non dimostra che il bloccante sia stato risolto: lo
+  dimostrano il triage dell'agente nel thread e il test che lo riproduce (spec §0.3–§0.6). È lo stesso limite delle
+  review diff-only già in vigore, non un allargamento.
 - **Questa PR.** Le sue review girano con i workflow di main ancora senza attestazione, quindi il nuovo controllo di
   readiness la vede non PASS. È atteso, e la PR è comunque a merge owner.
 - **Reviewer Claude (`pr-review-claude-fable5.yml`, sospeso da P41).** Esito dell'audit: usa ancora la regola larga

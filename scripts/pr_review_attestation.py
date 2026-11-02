@@ -174,7 +174,8 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
     diverso da PASS che termina su un commit lo rende "non coperto" finche' un range PASS successivo non lo supera.
     "Successivo" e' nell'istante di emissione firmato (``generated_at``, strettamente dopo), non nella posizione del
     range ne' nel numero del run (i rerun lo conservano): un BLOCKERS emesso DOPO un PASS sullo stesso head lo annulla
-    (rilievi di Sol su #602). Un istante illeggibile conta come l'ultimo se non e' PASS (blocca) e come il primo se e'
+    (rilievi di Sol su #602). Il PASS che lo supera deve portare commit nuovi oltre il non-PASS o ri-coprirne tutto il
+    range; un PASS successivo solo su una parte dello stesso head non basta (Grok su #602). Un istante illeggibile conta come l'ultimo se non e' PASS (blocca) e come il primo se e'
     PASS (non sblocca nulla); a parita' di secondo il PASS non sblocca.
     Anti-replay: repo, PR e range sono nel contenuto FIRMATO, quindi un'attestazione non vale per un'altra PR; la
     stessa attestazione riletta per la stessa PR (giri successivi della VPS) e' idempotente."""
@@ -211,10 +212,13 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
             if verdict == "PASS" and a <= reached < b:
                 reached = b
                 covered.append((reviewer, chain[a], chain[b]))
-        # un non-PASS che termina su ``b`` resta aperto finche' un PASS emesso DOPO di lui non arriva almeno a ``b``
+        # un non-PASS ``a...b`` resta aperto finche' un PASS emesso DOPO di lui non lo supera: o porta commit nuovi
+        # oltre ``b`` (la correzione, revisionata nella push successiva), o ri-copre tutto ``a...b``. Un PASS successivo
+        # solo su una parte dello STESSO head non basta (rilievo di Grok su #602).
         open_bad = [
-            (b, order) for _a, b, verdict, order in ranges if verdict != "PASS"
-            and not any(v2 == "PASS" and b2 >= b and o2 > order for _a2, b2, v2, o2 in ranges)
+            (b, order) for a, b, verdict, order in ranges if verdict != "PASS"
+            and not any(v2 == "PASS" and o2 > order and (b2 > b or (b2 >= b and a2 <= a))
+                        for a2, b2, v2, o2 in ranges)
         ]
         if reached != len(chain) - 1:
             reasons.append(f"NOT_COVERED_TO_HEAD:{reviewer}")

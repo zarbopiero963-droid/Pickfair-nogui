@@ -119,6 +119,20 @@ def test_pass_emitted_in_the_same_second_as_blockers_does_not_clear_them():
     assert not _decide(pairs).passed
 
 
+def test_later_partial_pass_on_the_same_head_does_not_clear_blockers_on_the_whole_range():
+    # Grok su #602 (185058f): PASS intero, poi BLOCKERS intero, poi PASS solo sull'ultimo pezzo dello STESSO head
+    pairs = [_pair("gpt-6.1-sol", BASE, HEAD, run=1), _pair("gpt-6.1-sol", BASE, HEAD, "BLOCKERS", run=2),
+             _pair("gpt-6.1-sol", C2, HEAD, run=3), _pair("grok-4.7", run=4)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
+
+
+def test_later_pass_that_re_covers_the_blocked_range_clears_it():
+    pairs = [_pair("gpt-6.1-sol", BASE, HEAD, "BLOCKERS", run=1), _pair("gpt-6.1-sol", C1, HEAD, run=2),
+             _pair("gpt-6.1-sol", BASE, C1, run=3), _pair("gpt-6.1-sol", BASE, HEAD, run=4), _pair("grok-4.7", run=5)]
+    assert _decide(pairs).passed
+
+
 def test_pass_after_blockers_on_the_same_head_clears_them():
     pairs = [_pair("gpt-6.1-sol", verdict="BLOCKERS", run=1), _pair("gpt-6.1-sol", run=2), _pair("grok-4.7", run=3)]
     assert _decide(pairs).passed
