@@ -1,0 +1,78 @@
+# PF-BETFAIR-GITHUB-APP-ACTIVATION-01 — richiesta trusted di certificazione Betfair (GitHub Actions -> VPS).
+#
+# Gira da pull_request_target, cioe' con questo file e con il codice del branch BASE: una PR non puo' cambiare il
+# workflow per la propria esecuzione. Il codice della PR non viene MAI scaricato ne' eseguito qui: dalla PR si legge
+# solo l'elenco dei file cambiati, via API.
+#
+# Produce un commento /pf-cert v2 con un token OIDC di GitHub (audience pf-cert:<repo>). La VPS verifica il token
+# (firma GitHub, repository, job_workflow_ref su main, evento, run), rilegge PR e head dall'API, ricalcola gli
+# scenari con il classificatore di main e rifiuta replay, fork e head superati. Il commento da solo non autorizza
+# nulla: senza un token valido la VPS lo ignora. Protocollo: docs/pf_cert_protocol.md.
+#
+# Merge OWNER (tutti i workflow sono file a merge owner).
+name: pf-cert-request
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pf-cert-request-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  request:
+    # fork: niente richiesta (l'orchestratore li rifiuta comunque); draft: si richiede quando torna ready
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Checkout del branch base (classificatore fidato, mai il codice della PR)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: File cambiati dalla PR (solo l'elenco, via API)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${REPO}/pulls/${PR}/files?per_page=100" \
+            --jq '.[] | .filename, (.previous_filename // empty)' | jq -R -s 'split("\n") | map(select(length > 0))' \
+            > "${RUNNER_TEMP}/files.json"
+
+      - name: Classificazione degli scenari
+        run: |
+          set -euo pipefail
+          # -E -s: niente variabili PYTHON* ne' site utente; la cwd e' il checkout del branch base (fidato)
+          python3 -E -s -m tools.pf_cert.classify "${RUNNER_TEMP}/files.json" "${GITHUB_STEP_SUMMARY}" \
+            > "${RUNNER_TEMP}/scenarios.json"
+
+      - name: Token OIDC e richiesta trusted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          PF_CERT_OIDC="$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=pf-cert:${REPO}" | jq -r '.value')"
+          export PF_CERT_OIDC
+          test -n "${PF_CERT_OIDC}" && test "${PF_CERT_OIDC}" != "null"
+          body="$(python3 -E -s -m tools.pf_cert.request "${RUNNER_TEMP}/scenarios.json")"
+          gh api "repos/${REPO}/issues/${PR}/comments" -f body="${body}" > /dev/null

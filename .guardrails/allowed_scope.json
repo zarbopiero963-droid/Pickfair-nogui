@@ -3318,6 +3318,25 @@
         "tests/unit/test_simulation_broker_side_parity.py"
       ],
       "max_files": 16
+    },
+    "pf_cert_trusted_request": {
+      "description": "PF-BETFAIR-VPS-GITHUB-CERT-01 / PF-BETFAIR-GITHUB-APP-ACTIVATION-01 (#586): richiesta trusted /pf-cert v2 con OIDC di GitHub Actions dal workflow pull_request_target, selezione scenari fail-closed, verifica richiesta (VPS) e verifica manifest firmati ed25519 dell'orchestratore. Nessuna modifica a Merge readiness/required checks. Workflow nuovo => merge owner.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pf-cert-request.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/pf_cert_protocol.md",
+        "scripts/pr_full_suite_pipeline.py",
+        "tests/pf_cert/__init__.py",
+        "tests/pf_cert/test_pf_cert.py",
+        "tools/pf_cert/__init__.py",
+        "tools/pf_cert/classify.py",
+        "tools/pf_cert/crypto_verify.py",
+        "tools/pf_cert/request.py",
+        "tools/pf_cert/result.py"
+      ],
+      "max_files": 12
     }
   }
 }

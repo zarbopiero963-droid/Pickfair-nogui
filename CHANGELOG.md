@@ -8,6 +8,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Certificazione Betfair automatica delle PR, protocollo `/pf-cert v2` (#586, PF-BETFAIR-VPS-GITHUB-CERT-01):**
+  - workflow trusted `pf-cert-request.yml` (`pull_request_target`, dal base) che seleziona gli scenari dai file
+    cambiati e chiede la certificazione con un token OIDC di GitHub Actions, non con l'autore di un commento;
+  - `tools/pf_cert/`: classificatore fail-closed, verifica della richiesta per la VPS (firma RS256, claim, anti-replay,
+    stato della PR via API) e verifica dei manifest ed25519 firmati dall'orchestratore (`CERTIFIED` solo se ogni
+    scenario obbligatorio e' PASS sull'head);
+  - `docs/pf_cert_protocol.md`; test `tests/pf_cert/`. Nessuna modifica a Merge readiness o ai required checks
+    (PR di governance separata, merge owner).
+
 ### Changed
 - **Governance §0.9-ter (#586, owner 01/11/2026 «TEMPORARY MERGE DELEGATION — ROADMAP V2»):** delega owner
   temporanea di merge per le 33 schede della roadmap V2, registrata in `OWNER_MERGE_DELEGATIONS` di

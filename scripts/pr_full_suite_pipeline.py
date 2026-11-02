@@ -423,6 +423,7 @@ WORKFLOW_EXCLUDED = {
     "pr-review-claude-fable5": "reviewer sospeso (P41)",
     "pr-review-openrouter-fugu-ultra": "reviewer sospeso (P41)",
     "pr-review-openrouter-gpt-astra": "reviewer sospeso (P41)",
+    "pf-cert-request": "richiesta trusted di certificazione Betfair: `pull_request_target` con token OIDC, resta su Actions",
 }
 
 
