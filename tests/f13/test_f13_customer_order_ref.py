@@ -437,3 +437,45 @@ def test_malformed_persisted_dedup_entries_are_dropped_never_crash(bad):
     snap["customer_ref_seen"] = bad
     broker.state.load_from_dict(snap)
     assert all(isinstance(v, float) for v in broker.state.customer_ref_seen.values())
+
+
+@pytest.mark.parametrize("workers", [2, 8, 32])
+def test_concurrent_workers_with_the_same_customer_ref_create_one_exposure(workers):
+    # PF-BETFAIR-VPS-GITHUB-CERT-01 (P0 VPS `duplicate_customer_ref_no_double_exposure`): N worker concorrenti con
+    # lo stesso customer_ref sul SimulationBroker => un solo ordine e una sola esposizione, gli altri DUPLICATE
+    import threading
+    broker = _sim()
+    barrier, results = threading.Barrier(workers), []
+
+    def worker():
+        barrier.wait()
+        results.append(_place(broker))
+    threads = [threading.Thread(target=worker) for _ in range(workers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert len(results) == workers
+    assert sum(r["status"] == "SUCCESS" for r in results) == 1
+    assert all(r.get("errorCode") == "DUPLICATE_TRANSACTION" and r.get("order_unknown") is True
+               for r in results if r["status"] != "SUCCESS")
+    assert len(broker.state.orders) == 1
+
+
+def test_concurrent_order_managers_with_the_same_ref_never_double_the_exposure():
+    # stesso scenario dal livello Pickfair: due OrderManager (worker) sullo stesso broker SIM, stesso customer_ref
+    import threading
+    broker = _sim()
+    barrier, out = threading.Barrier(2), []
+
+    def worker():
+        m = OrderManager(db=_SagaDB(), client_getter=lambda: broker, sleep_fn=lambda _: None)
+        barrier.wait()
+        out.append(m.place_order({"market_id": "1.100", "selection_id": 7, "bet_type": "BACK", "price": 2.0,
+                                  "stake": 2.0, "simulation_mode": True, "customer_ref": REF}))
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert len(out) == 2 and len(broker.state.orders) == 1
