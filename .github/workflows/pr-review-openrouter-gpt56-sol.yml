@@ -1152,7 +1152,11 @@ jobs:
           def reemit_from_done_review():
               """Range gia' revisionato (done_marker): ri-emette l'attestazione dal commento del bot, con il verdetto
               classificato allora e il suo istante (``updated_at`` del commento), senza nuova chiamata al modello.
-              Commento o stato non leggibili => nessuna attestazione (il range resta non coperto: fail-closed)."""
+
+              SOLO verdetti non PASS: chi ha accesso in scrittura puo' modificare un commento del bot senza cambiarne
+              l'autore (rilievo Sol su #602), quindi il commento non e' una fonte autenticata. Un BLOCKERS ri-emesso puo'
+              soltanto bloccare; un PASS ri-emesso da un commento modificato sarebbe un PASS falso firmato. Un PASS
+              perso resta non coperto (fail-closed). Commento o stato non leggibili => nessuna attestazione."""
               try:
                   page = 1
                   while page <= 20:
@@ -1163,7 +1167,7 @@ jobs:
                           if ((c.get("user") or {}).get("login") or "") == "github-actions[bot]" and done_marker in body:
                               states = rr_attempts(body.partition("\n")[0], REVIEW_ID, range_base, range_head)
                               when = str(c.get("updated_at") or "")
-                              if states and states[-1] in RR_VALID_STATES and re.fullmatch(
+                              if states and states[-1] in (RR_VALID_BLOCKERS, RR_VALID_INCONCLUSIVE) and re.fullmatch(
                                       r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", when):
                                   write_attestation(states[-1], when, reemitted=True)
                               return

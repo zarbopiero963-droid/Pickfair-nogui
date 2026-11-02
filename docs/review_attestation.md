@@ -26,12 +26,15 @@ L'attestazione si scrive solo dentro Actions. Se la scrittura fallisce, la revie
 
 **Rerun di un range già revisionato.** Se firma o upload falliscono al primo giro, un rerun del workflow trova il
 `done_marker` e non richiama il modello, quindi non ripaga la review. Prima di uscire però ri-emette l'attestazione
-dal commento del bot (`github-actions[bot]`):
+dal commento del bot (`github-actions[bot]`), solo se il verdetto è **non PASS** (`BLOCKERS` o `INCONCLUSIVE`):
 - il verdetto è quello classificato allora, preso dall'ultimo tentativo valido;
 - `generated_at` è l'`updated_at` del commento;
 - `reemitted` vale `true`.
 
-Commento assente, non del bot o senza uno stato valido: nessuna attestazione.
+Perché solo non PASS: chi ha accesso in scrittura può modificare un commento del bot senza cambiarne l'autore, quindi
+il commento non è una fonte autenticata. Un verdetto negativo ri-emesso può soltanto bloccare; un PASS ri-emesso da un
+commento modificato sarebbe un PASS falso firmato. Commento assente, non del bot o senza uno stato valido: nessuna
+attestazione.
 
 ## 3. Verifica (`scripts/pr_review_attestation.py`, unica per Merge readiness e VPS)
 - `verify-pr --repo R --pr N`:
@@ -125,6 +128,10 @@ più volte per la stessa PR, le attestazioni sono idempotenti: la VPS rivaluta o
   sulla correzione revisionata nella push dopo. Questo PASS non dimostra che il bloccante sia stato risolto: lo
   dimostrano il triage dell'agente nel thread e il test che lo riproduce (spec §0.3–§0.6). È lo stesso limite delle
   review diff-only già in vigore, non un allargamento.
+- **Attestazione persa.** Se firma o upload falliscono su una review PASS, quel range resta non coperto e la PR non
+  passa il gate: è fail-closed e serve l'owner. Se falliscono su una review BLOCKERS e nessuno rilancia il run,
+  l'attestazione manca. Il bloccante resta però nel commento della review, che il gate di review a commenti esistente
+  continua a leggere; un rerun lo ri-emette firmato.
 - **Questa PR.** Le sue review girano con i workflow di main ancora senza attestazione, quindi il nuovo controllo di
   readiness la vede non PASS. È atteso, e la PR è comunque a merge owner.
 - **Reviewer Claude (`pr-review-claude-fable5.yml`, sospeso da P41).** Esito dell'audit: usa ancora la regola larga
