@@ -781,9 +781,10 @@ def test_a_pass_is_never_re_emitted_from_an_editable_comment(path, tmp_path, mon
 # ── Codex P1 su #602 (05f6290): un run trusted fallito senza attestazione puo' nascondere un BLOCKERS ───────────────
 
 class _RunsAPI(_API):
-    def __init__(self, extra_run, extra_artifacts, **kw):
+    def __init__(self, extra_run, extra_artifacts, attempt_conclusions=None, **kw):
         super().__init__(**kw)
         self.extra_run, self.extra_artifacts = extra_run, extra_artifacts
+        self.attempt_conclusions = attempt_conclusions or {}
 
     def __call__(self, url):
         p = url.split(f"/repos/{REPO}", 1)[1]
@@ -796,6 +797,9 @@ class _RunsAPI(_API):
             return 200, json.dumps({"artifacts": self.extra_artifacts}).encode()
         if p.startswith("/actions/artifacts/5001/"):
             return 200, _zip(self.raws[1])
+        if p.startswith("/actions/runs/500/attempts/"):
+            n = int(p.rsplit("/", 1)[1])
+            return 200, json.dumps({"conclusion": self.attempt_conclusions.get(n, "success")}).encode()
         return super().__call__(url)
 
 
@@ -885,3 +889,28 @@ def test_runs_on_a_reused_branch_before_the_pr_was_opened_do_not_belong_to_it(ru
 def test_review_workflows_can_read_their_own_run_artifacts(path):
     w, _py = _workflow_python(path)
     assert w["permissions"].get("actions") == "read"
+
+
+def test_a_failed_earlier_attempt_without_attestation_blocks_even_if_the_rerun_is_green():
+    # Grok su #602 (2864ace): tentativo 2 fallito senza attestazione, tentativo 3 (dedup) verde
+    run = {"id": 500, "status": "completed", "conclusion": "success", "run_attempt": 3,
+           "pull_requests": [{"number": PR}]}
+    arts = [{"id": 5001, "name": "review-attestation-1", "expired": False}]
+    out = _verify(_RunsAPI(run, arts, attempt_conclusions={2: "failure"}))
+    assert not out["passed"] and "RUN_WITHOUT_ATTESTATION:gpt-6.1-sol:500:2" in out["reasons"]
+    assert _verify(_RunsAPI(run, arts, attempt_conclusions={2: "success"}))["passed"]
+
+
+@pytest.mark.parametrize("verdict", ["BLOCKERS", "INCONCLUSIVE", "ERROR"])
+def test_current_head_blockers_from_an_out_of_chain_start_are_kept(verdict):
+    # Codex P1 su #602 (2864ace): force-push che torna a un head gia' revisionato da un tip divergente
+    stray = "9" * 40
+    pairs = [_pair("gpt-6.1-sol", run=1), _pair("gpt-6.1-sol", stray, HEAD, verdict, run=2), _pair("grok-4.7", run=3)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
+
+
+def test_an_out_of_chain_pass_still_never_counts():
+    stray = "9" * 40
+    d = _decide([_pair("gpt-6.1-sol", stray, HEAD, run=1), _pair("grok-4.7", run=2)])
+    assert not d.passed and "RANGE_NOT_IN_PR:gpt-6.1-sol" in d.reasons

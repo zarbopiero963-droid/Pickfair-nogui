@@ -22,10 +22,11 @@ base, senza checkout né esecuzione del codice della PR. Dopo il commento della 
 3. **Pubblicazione.** Lo carica come artefatto `review-attestation-<attempt>`.
 
 L'attestazione si scrive solo dentro Actions. Se scrittura, firma o upload falliscono, il commento della review
-resta pubblicato ma il job chiude **rosso**. Il verificatore guarda l'**ultimo tentativo** di ogni run dei workflow
-trusted: se non chiude `success` e non ha la propria attestazione (`review-attestation-<attempt>`), dà
-`RUN_WITHOUT_ATTESTATION` e nega il PASS (`UNVERIFIED_ATTESTATION`). Quel tentativo può aver concluso una review
-BLOCKERS senza riuscire a pubblicarla, e un PASS di un tentativo precedente non lo copre. I salti legittimi (dedup, gate di costo,
+resta pubblicato ma il job chiude **rosso**. Il verificatore guarda **ogni tentativo** di ogni run dei workflow
+trusted: un tentativo che non chiude `success` e non ha la propria attestazione (`review-attestation-<attempt>`) dà
+`RUN_WITHOUT_ATTESTATION` e nega il PASS (`UNVERIFIED_ATTESTATION`). Vale anche se un rerun successivo chiude
+verde. Quel tentativo può aver concluso una review BLOCKERS senza riuscire a pubblicarla, e un PASS di un altro
+tentativo non lo copre. I salti legittimi (dedup, gate di costo,
 range vuoto) chiudono `success` senza artefatto.
 
 **Rerun di un range già revisionato.** Se firma o upload falliscono al primo giro, un rerun del workflow trova il
@@ -92,6 +93,10 @@ Per leggere gli artefatti del proprio run i workflow hanno `actions: read`.
   workflow trusted, quindi quello illeggibile potrebbe essere un BLOCKERS. Non bloccano solo gli artefatti autentici
   che non si applicano: quelli di un'altra PR, o un PASS incompleto che semplicemente non copre.
 
+  **Non PASS con partenza fuori catena** (force-push che torna a un head già revisionato da un tip divergente): se
+  finisce su un commit della PR, conta come bloccante su tutto il tratto fino a quel commit. Un PASS fuori catena non
+  copre mai nulla.
+
   Le PR da fork e gli errori API danno sempre non PASS.
 - `verify-prelive --repo R --pr N`: il check `pf-betfair-certification` dell'app `pickfair-dedicated` deve essere
   `completed`/`success` sull'head esatto. `pf-betfair-live-certification` (neutral / LIVE_NOT_RUN) non soddisfa né
@@ -140,6 +145,14 @@ più volte per la stessa PR, le attestazioni sono idempotenti: la VPS rivaluta o
 - **Attestazione persa.** Se scrittura, firma o upload falliscono, il run chiude rosso senza attestazione e la PR
   non passa il gate finché un rerun non ri-emette un verdetto negativo. Un PASS perso non si ri-emette mai: il range
   resta non coperto e serve l'owner (fail-closed).
+- **Range vuoto dopo un merge di main.** Una push che porta dentro solo file di main non produce review né
+  attestazione, perché dopo la normalizzazione non resta nulla da rivedere. La catena ha allora un buco e la readiness
+  resta `NOT_COVERED_TO_HEAD` finché non arriva una review che lo ricopre: è un falso negativo fail-closed, non un
+  falso PASS. Un'attestazione «no-op» firmata per questi range è un incremento successivo.
+- **Altri chiamanti della readiness.** Questa PR applica le attestazioni nel workflow `pr-merge-readiness.yml`. La
+  lane Buildkite trusted (`scripts/ci/trusted_pr_guard.py`), disattivata per decisione owner, e `merge-decision` di
+  `scripts/pr_autonomy_policy.py` usano ancora il gate a commenti. Portarci il verificatore è l'incremento successivo
+  e va deciso con l'owner, perché tocca l'autorità di merge.
 - **Questa PR.** Le sue review girano con i workflow di main ancora senza attestazione, quindi il nuovo controllo di
   readiness la vede non PASS. È atteso, e la PR è comunque a merge owner.
 - **Reviewer Claude (`pr-review-claude-fable5.yml`, sospeso da P41).** Esito dell'audit: usa ancora la regola larga

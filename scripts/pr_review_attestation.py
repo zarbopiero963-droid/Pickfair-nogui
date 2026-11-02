@@ -208,6 +208,10 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
         # base avanzato senza cambiare la PR: il range iniziale parte dalla base FIRMATA di allora, che conta come
         # l'inizio della catena (il digest del diff e' gia' stato ricalcolato su quella base)
         start = 0 if frm == att["base_sha"] and frm not in index else index.get(frm)
+        if start is None and att["verdict"] != "PASS" and to in index:
+            # non-PASS autentico che finisce su un commit della PR ma parte da uno SHA fuori catena (force-push che
+            # torna a un head gia' revisionato): conta come bloccante su tutto il tratto fino a ``to`` (Codex P1 #602)
+            start = 0
         if start is None or to not in index or start >= index[to]:
             reasons.append(f"RANGE_NOT_IN_PR:{att['reviewer']}")
             continue
@@ -408,6 +412,9 @@ class GitHub:
                     and _run_belongs(r, number, since, head_ref)]
         return out
 
+    def run_attempt_conclusion(self, run_id: int, attempt: int) -> Optional[str]:
+        return self.json(f"/actions/runs/{run_id}/attempts/{attempt}").get("conclusion")
+
     def attestation_files(self, run_id: int) -> List[bytes]:
         return [raw for _name, raw in self.attestation_artifacts(run_id)]
 
@@ -480,9 +487,16 @@ def verify_pr(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], 
                 # (Codex P1 e Sol su #602). Conta il tentativo, non il run: un artefatto PASS di un tentativo precedente
                 # non copre un rerun fallito. I workflow chiudono rosso quando scrittura, firma o upload falliscono e sul
                 # rerun che non puo' ri-emettere senza attestazioni precedenti; i salti legittimi chiudono `success`.
-                latest = f"review-attestation-{run.get('run_attempt') or 1}"
-                if run.get("conclusion") != "success" and latest not in {name for name, _raw in artifacts}:
-                    unpublished.append(f"RUN_WITHOUT_ATTESTATION:{reviewer}:{run['id']}")
+                # Ogni tentativo, non solo l'ultimo: un tentativo fallito senza la propria attestazione resta un esito
+                # sconosciuto anche se un rerun successivo chiude verde (rilievo Grok su #602, 2864ace).
+                names = {name for name, _raw in artifacts}
+                latest = int(run.get("run_attempt") or 1)
+                for n in range(1, latest + 1):
+                    if f"review-attestation-{n}" in names:
+                        continue
+                    concl = run.get("conclusion") if n == latest else gh.run_attempt_conclusion(int(run["id"]), n)
+                    if concl != "success":
+                        unpublished.append(f"RUN_WITHOUT_ATTESTATION:{reviewer}:{run['id']}:{n}")
     except Exception as exc:  # noqa: BLE001 - API non leggibile => non verificabile
         return {"passed": False, "reasons": [f"GITHUB_API_UNAVAILABLE:{type(exc).__name__}"]}
     decision = decide(pairs, repository=gh.repository, pr=number, pr_author=pr["user"]["login"], head_sha=head,
