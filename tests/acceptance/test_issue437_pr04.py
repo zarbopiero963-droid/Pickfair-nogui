@@ -444,21 +444,29 @@ def test_doppia_richiesta_di_chiusura_un_solo_cmd(gui):
 # ERRORE — visibile nella GUI, mai un SUCCESS anticipato
 # --------------------------------------------------------------------------
 def test_errore_del_bridge_visibile_nel_log_senza_success(gui):
-    """Il publisher reale dell'auto-close (``_trigger_auto_close_table``)
-    manda una richiesta senza lato, quota e green-up (difetto noto, #320-C).
-    Prima nella GUI cadeva nel vuoto; ora il bridge la rifiuta: CASHOUT_FAILED
-    visibile nel Log, residuo registrato, nessun ordine, nessun SUCCESS."""
+    """F-02 (#586, R3-01): il monitor non pubblica piu' la richiesta di auto-close senza lato, quota e green-up
+    (difetto noto #320-C): lo scatto e' l'evento ``SL_TRIGGERED`` e nessun ordine parte finche' F-04 non costruisce la
+    chiusura. Una richiesta senza lato che arrivasse comunque al bridge resta rifiutata: CASHOUT_FAILED visibile nel
+    Log, residuo registrato, nessun ordine, nessun SUCCESS."""
     gui.avvia()
     gui.posizione()
     ordini_prima = gui.broker.get_current_orders(None)
     gui.eventi.clear()
 
     tavolo = types.SimpleNamespace(
-        table_id=1, market_id=MERCATO, selection_id=11, current_exposure=10.0
+        table_id=1, market_id=MERCATO, selection_id=11, current_exposure=10.0,
+        meta={"bet_type": "BACK", "price": 2.0, "stake": 10.0, "stop_loss": 2.0},
     )
     gui.rt._trigger_auto_close_table(tavolo, "STOP_LOSS_REACHED", -5.0)
     gui.svuota_bus()
+    assert len(gui.di("SL_TRIGGERED")) == 1
+    assert gui.di("REQ_EXECUTE_CASHOUT") == [] and gui.di("CASHOUT_FAILED") == []
+    assert gui.broker.get_current_orders(None) == ordini_prima
 
+    # il bridge continua a rifiutare una richiesta senza lato (qualunque publisher)
+    gui.rt.bus.publish("REQ_EXECUTE_CASHOUT", {"market_id": MERCATO, "selection_id": 11, "stake": 10.0,
+                                               "reason": "STOP_LOSS_REACHED", "source": "AUTO_MONITOR"})
+    gui.svuota_bus()
     falliti = gui.di("CASHOUT_FAILED")
     assert len(falliti) == 1
     assert falliti[0]["status"] == "REJECTED"

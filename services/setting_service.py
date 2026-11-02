@@ -340,6 +340,15 @@ class SettingsService:
                 return int(default)            # il conteggio resta utilizzabile, l'ingresso e' comunque negato
             return int(cv.parse_int(value))
 
+        def optional_pct(key: str):
+            value = data.get(key)
+            if cv.is_unset(value):
+                return None                    # OFF: nessuna protezione attiva di default
+            if cv.invalid_reason(key, value):
+                invalid.append(key)            # presente ma invalida: mai OFF in silenzio, ingresso negato
+                return float("nan")
+            return float(cv.parse_number(value))
+
         def flag(key: str, default: bool, protective: bool) -> bool:
             value = data.get(key)
             if cv.is_unset(value):
@@ -418,6 +427,9 @@ class SettingsService:
                 "roserpina.max_recovery_chase_abs",
                 fallback_key="max_recovery_chase_abs",
             ),
+            stop_loss_pct=optional_pct("roserpina.stop_loss_pct"),
+            take_profit_pct=optional_pct("roserpina.take_profit_pct"),
+            trailing_stop_pct=optional_pct("roserpina.trailing_stop_pct"),
             auto_reset_drawdown_pct=num("roserpina.auto_reset_drawdown_pct", 15.0),
             defense_drawdown_pct=num("roserpina.defense_drawdown_pct", 7.5),
             lockdown_drawdown_pct=num("roserpina.lockdown_drawdown_pct", 20.0),
@@ -497,6 +509,9 @@ class SettingsService:
             "roserpina.profit_epsilon_enabled": int(bool(config.profit_epsilon_enabled)),
             "roserpina.auto_green_delay_enabled": int(bool(config.auto_green_delay_enabled)),
             "roserpina.auto_green_delay_sec": config.auto_green_delay_sec,
+            # F-02: vuoto = OFF, scritto "" per disattivare davvero un valore gia' salvato
+            "roserpina.stop_loss_pct": "" if config.stop_loss_pct is None else config.stop_loss_pct,
+            "roserpina.take_profit_pct": "" if config.take_profit_pct is None else config.take_profit_pct,
         }
 
         # Preserve previously persisted hard-stop limits when caller omits these optional fields.
@@ -520,6 +535,10 @@ class SettingsService:
             payload["roserpina.max_exposure_stop"] = config.max_exposure_stop
         if config.max_recovery_chase_abs is not None:
             payload["roserpina.max_recovery_chase_abs"] = config.max_recovery_chase_abs
+
+        # F-02: il trailing non ha ancora un campo nella GUI (F-03): None preserva il valore salvato
+        if config.trailing_stop_pct is not None:
+            payload["roserpina.trailing_stop_pct"] = config.trailing_stop_pct
 
         # F-18: stesso controllo del salvataggio generico (la tab Roserpina della GUI passa di qui)
         self.save_settings(payload)

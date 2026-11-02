@@ -8290,6 +8290,79 @@
       "rationale": "F-18: soglia di blocco del book inferiore a quella di avviso accettata."
     },
     {
+      "id": "f02_signal_sl_tp_not_on_table",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                **self._sl_tp_meta(sl_tp, order_exposure, payload[\"stake\"]),",
+      "mutated": "                **{},",
+      "tests": [
+        "tests/f02/test_f02_sl_tp_path.py",
+        "tests/fullscope/scenarios/test_sim_combo_001.py"
+      ],
+      "rationale": "F-02 (F-CFG-01): SL/TP persi fra segnale e tavolo, il monitor non agisce mai."
+    },
+    {
+      "id": "f02_sl_on_stake_not_liability",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                meta[target] = float((risk * pct / sl_tp_pnl.Decimal(\"100\")).quantize(sl_tp_pnl.CENT))",
+      "mutated": "                meta[target] = float((stake_d * pct / sl_tp_pnl.Decimal(\"100\")).quantize(sl_tp_pnl.CENT))",
+      "tests": [
+        "tests/f02/test_f02_sl_tp_path.py"
+      ],
+      "rationale": "F-02: SL/TP del LAY calcolati sullo stake invece che sulla liability."
+    },
+    {
+      "id": "f02_invalid_sl_accepted",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "            if cfg_rules.invalid_reason(f\"roserpina.{name}\", raw):\n                return {}, f\"{name}_non_valido\"",
+      "mutated": "            if False:\n                return {}, f\"{name}_non_valido\"",
+      "tests": [
+        "tests/f02/test_f02_sl_tp_path.py"
+      ],
+      "rationale": "F-02: SL invalido dal segnale accettato (parse_number None => crash o protezione spenta)."
+    },
+    {
+      "id": "f02_trigger_repeats",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "        if meta.get(\"sl_tp_triggered\"):\n            return\n        meta[\"sl_tp_triggered\"] = reason",
+      "mutated": "        meta[\"sl_tp_triggered\"] = reason",
+      "tests": [
+        "tests/f02/test_f02_sl_tp_path.py"
+      ],
+      "rationale": "F-02: evento SL ripetuto a ogni book."
+    },
+    {
+      "id": "f02_poller_ignores_broken_stream",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "            streaming = feed is not None and bool(feed.healthy())",
+      "mutated": "            streaming = feed is not None",
+      "tests": [
+        "tests/f02/test_f02_sl_tp_path.py"
+      ],
+      "rationale": "F-02: con lo stream giu' il monitor SL/TP non gira piu'."
+    },
+    {
+      "id": "f02_rebuild_drops_sl_tp",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "                meta.update(self._sl_tp_meta(c.get(\"sl_tp\") or {}, exposure, c[\"stake\"]))",
+      "mutated": "                pass",
+      "tests": [
+        "tests/f02/test_f02_sl_tp_path.py"
+      ],
+      "rationale": "F-02: SL/TP persi al riavvio (F018)."
+    },
+    {
       "id": "f13_sim_dedup_not_in_snapshot",
       "module": "simulation_broker",
       "area": "dedupe",

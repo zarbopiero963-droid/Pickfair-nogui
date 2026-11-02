@@ -56,6 +56,10 @@ class _Config:
     max_total_exposure_pct = 100.0
     max_event_exposure_pct = 100.0
     max_stake_abs = None             # tetto assoluto del singolo ordine non attivo (0 dal catch-all = blocca tutto)
+    # F-02: SL/TP/trailing OFF come in produzione (0 dal catch-all e' una percentuale non valida => segnale rifiutato)
+    stop_loss_pct = None
+    take_profit_pct = None
+    trailing_stop_pct = None
 
     def __getattr__(self, _name):
         return 0

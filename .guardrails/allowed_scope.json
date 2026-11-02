@@ -3380,6 +3380,32 @@
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
       "max_files": 13
+    },
+    "f02_sl_tp_path": {
+      "description": "F-02 (#586, CSH-02/NF-03, F-CFG-01; dopo F-01/F-18): chiavi roserpina.stop_loss_pct/take_profit_pct/trailing_stop_pct (OFF di default, validate), SL/TP dal segnale o dalla config nel meta del tavolo come importi sul rischio della gamba (persistiti per F018 e auto-next), monitor anche in SIM/poll (poller, stream sano escluso), evento SL_TRIGGERED/TP_TRIGGERED una volta per posizione e nessun ordine dal trigger fino a F-04 (R3-01). Tab Roserpina: due campi.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/config_validation.py",
+        "core/runtime_controller.py",
+        "core/system_state.py",
+        "docs/cashout_overview.md",
+        "docs/design/design_handoff.md",
+        "guardrails/mutation_catalog.json",
+        "mini_gui.py",
+        "services/setting_service.py",
+        "tests/acceptance/test_issue437_pr04.py",
+        "tests/core/test_sl_tp_pnl_sign.py",
+        "tests/f02/__init__.py",
+        "tests/f02/test_f02_sl_tp_path.py",
+        "tests/fullscope/combi/test_generator.py",
+        "tests/fullscope/scenarios/test_l2_l3_runtime_binding.py",
+        "tests/fullscope/scenarios/test_sim_combo_001.py",
+        "tests/unit/test_runtime_controller_best_price_direct.py",
+        "tools/combi/inventory.json"
+      ],
+      "max_files": 19
     }
   }
 }

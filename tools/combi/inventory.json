@@ -1,13 +1,13 @@
 {
  "schema": "pf-combi-inventory/1",
  "baseline": "main 5f2fef7 (census 29/10/2026) / 6fa29b2",
- "count": 190,
+ "count": 193,
  "classes": {
-  "ATTIVA": 139,
+  "ATTIVA": 142,
   "LEGACY": 51
  },
  "l1_modes": {
-  "settings_roundtrip": 79,
+  "settings_roundtrip": 82,
   "load_only": 51,
   "static_or_manual": 60
  },
@@ -4891,6 +4891,135 @@
     "invalid": []
    },
    "source": "config_registry.py:59"
+  },
+  {
+   "key": "roserpina.stop_loss_pct",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None/OFF (F-02, stop-loss % sul rischio della gamba; core/system_state.py)",
+   "gui": true,
+   "read_by": "core/runtime_controller.py (_sl_tp_settings, monitor SL/TP)",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py (RoserpinaConfig.stop_loss_pct)"
+  },
+  {
+   "key": "roserpina.take_profit_pct",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None/OFF (F-02, take-profit % sul rischio della gamba; core/system_state.py)",
+   "gui": true,
+   "read_by": "core/runtime_controller.py (_sl_tp_settings, monitor SL/TP)",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py (RoserpinaConfig.take_profit_pct)"
+  },
+  {
+   "key": "roserpina.trailing_stop_pct",
+   "group": "roserpina",
+   "type": "float|None",
+   "default": "None/OFF (F-02, trailing stop % (F-03); core/system_state.py)",
+   "gui": true,
+   "read_by": "core/runtime_controller.py (_sl_tp_settings, monitor SL/TP)",
+   "conformity": "CONFORME",
+   "test_class": "ATTIVA",
+   "roserpina42": false,
+   "l1_mode": "settings_roundtrip",
+   "domain": {
+    "kind": "pct",
+    "min": 0.0,
+    "max": 100.0,
+    "none_allowed": true,
+    "valid": [
+     null,
+     0.5,
+     3.0,
+     18.0,
+     35.0,
+     100.0
+    ],
+    "boundary": [
+     0.0,
+     0.01,
+     99.99,
+     100.0,
+     100.01
+    ],
+    "invalid": [
+     "nan",
+     "inf",
+     "-inf",
+     -5,
+     150,
+     "abc",
+     ""
+    ]
+   },
+   "source": "core/system_state.py (RoserpinaConfig.trailing_stop_pct)"
   }
  ]
 }

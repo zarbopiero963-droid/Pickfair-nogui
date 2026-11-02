@@ -56,7 +56,8 @@ def _book(back, lay, last=None):
 
 
 def _closes(rc):
-    return [p for t, p in rc.bus.published if t == "REQ_EXECUTE_CASHOUT"]
+    # F-02: lo scatto e' l'evento SL_TRIGGERED/TP_TRIGGERED (una volta per posizione); la chiusura arriva con F-04
+    return [p for t, p in rc.bus.published if t in ("SL_TRIGGERED", "TP_TRIGGERED")]
 
 
 def test_back_price_up_is_loss():

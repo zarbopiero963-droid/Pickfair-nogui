@@ -37,6 +37,10 @@ SPECS: Dict[str, Tuple[str, Any]] = {
     "roserpina.max_total_exposure_pct": ("num", "pct"),
     "roserpina.max_event_exposure_pct": ("num", "pct"),
     "roserpina.max_drawdown_hard_stop_pct": ("num", "pct"),
+    # F-02/F-03 (#586): SL/TP/trailing in % del rischio della gamba (BACK stake, LAY liability); assenti = OFF
+    "roserpina.stop_loss_pct": ("num", "pct"),
+    "roserpina.take_profit_pct": ("num", "pct"),
+    "roserpina.trailing_stop_pct": ("num", "pct"),
     # cap monetari opzionali: se presenti devono essere > 0
     "roserpina.max_daily_loss": ("num", "positive"),
     "roserpina.max_open_exposure": ("num", "positive"),

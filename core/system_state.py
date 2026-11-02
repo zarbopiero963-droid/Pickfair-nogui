@@ -96,6 +96,12 @@ class RoserpinaConfig:
     #     _calculate_base_stake. Persistito come gli altri hard-stop opzionali
     #     (services.setting_service._optional_hard_stop_value).
     max_recovery_chase_abs: Optional[float] = None
+    # F-02/F-03 (#586, CSH-02/CSH-04): stop-loss, take-profit e trailing stop in PERCENTUALE del rischio della gamba
+    # (BACK: stake; LAY: liability). None = OFF (default, nessuna protezione inventata). Il tavolo riceve gli importi
+    # calcolati all'apertura (meta stop_loss/take_profit) e il monitor li confronta col P&L liquidabile (F-01).
+    stop_loss_pct: Optional[float] = None
+    take_profit_pct: Optional[float] = None
+    trailing_stop_pct: Optional[float] = None
 
     auto_reset_drawdown_pct: float = 15.0
     defense_drawdown_pct: float = 7.5

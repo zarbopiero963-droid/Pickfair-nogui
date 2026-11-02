@@ -452,8 +452,7 @@ Test: `tests/f05/` (unita' e HeadlessApp reale in SIM), mutazioni `f05_*` in `gu
 
 ### 7.4 P&L del monitor SL/TP (F-01, CSH-01/CSH-10)
 
-`RuntimeController._monitor_sl_tp_trailing` (inerte fino a F-02: nessuna sorgente SL/TP nei meta dei tavoli)
-confronta SL/TP con il **netto liquidabile** della posizione (decisione owner #426 c.6112703848), calcolato da
+`RuntimeController._monitor_sl_tp_trailing` (cablato da F-02, §7.4-bis) confronta SL/TP con il **netto liquidabile** della posizione (decisione owner #426 c.6112703848), calcolato da
 `core/sl_tp_pnl.py` in Decimal con la stessa formula del cashout (`dutching.dynamic_cashout_single`), estesa a piu'
 livelli del book:
 
@@ -476,6 +475,31 @@ LAY chiuso in BACK a 2.5 => +1.91, a 1.6 => -2.50; LAY con liability 10 a 3.0 (s
 Su piu' livelli: BACK chiuso con LAY 12 a 1.60 + 1 a 2.50 => 12 a 1.60 + 0.32 a 2.50, netto +2.22 (non -2.00).
 Prima il BACK aveva il segno invertito (una perdita sembrava profitto). Test: `tests/core/test_sl_tp_pnl_sign.py`.
 
+### 7.4-bis Percorso SL/TP fino al monitor (F-02, CSH-02/NF-03, F-CFG-01)
+
+- **Impostazioni:** `roserpina.stop_loss_pct`, `roserpina.take_profit_pct` e `roserpina.trailing_stop_pct` (F-03),
+  in percentuale del **rischio della gamba** (BACK: stake; LAY: liability). Assenti = OFF, che è il default.
+  Dominio (0, 100]: NaN, -5, 150 o 0 rifiutano il salvataggio, e un valore corrotto nel DB nega ogni ingresso (F-18,
+  `docs/config_validation.md`). Tab Roserpina: `Stop-loss % del rischio` e `Take-profit % del rischio`.
+- **Posizione:** un segnale può portare le proprie `stop_loss_pct`/`take_profit_pct`/`trailing_stop_pct`, altrimenti
+  valgono quelle della configurazione (`RuntimeController._sl_tp_settings`). Un valore invalido rifiuta il segnale
+  (`<chiave>_non_valido`).
+- **Tavolo:** all'apertura `_sl_tp_meta` mette in meta gli importi `stop_loss`/`take_profit` (percentuale × rischio,
+  Decimal al centesimo, ROUND_HALF_EVEN) e lo stake reale. Esempi: BACK 3,00 con SL 20 % → 0,60; LAY 2,00 a 3,0
+  (liability 4,00) con SL 20 % → 0,80; microstake 0,10 con SL 25 % → 0,02.
+- **Persistenza:** le percentuali viaggiano nel payload dell'ordine (tabella `orders`). La ricostruzione F018 le
+  rimette sul tavolo dopo un riavvio, e l'auto-next le eredita come ogni nuova posizione.
+- **Monitor:** con lo stream sano gira nel callback dello stream; altrimenti, in SIM, in poll o con lo stream giù o
+  degradato, gira un poller (`_sl_tp_poll_once`, ogni `sl_tp_poll_sec`, default 2 s). Il poller legge lo snapshot
+  del book solo dei mercati con una protezione armata.
+- **Scatto:** l'evento `SL_TRIGGERED` / `TP_TRIGGERED` (tavolo, mercato, lato, stake, quota, soglia, P&L, ref) parte
+  **una sola volta** per posizione. Nessun ordine parte dal trigger finché F-04 non costruisce la chiusura con lato,
+  prezzo e barriera. La richiesta precedente (`REQ_EXECUTE_CASHOUT` senza lato né prezzo, R3-01) veniva sempre
+  rifiutata dal bridge (`side_invalido`).
+
+Test: `tests/f02/`, `tests/core/test_sl_tp_pnl_sign.py`, SIM end-to-end
+`tests/fullscope/scenarios/test_sim_combo_001.py::test_stop_loss_leg_triggers_on_adverse_price` (prima xfail strict).
+
 ### 7.5 Hedge coerente con la posizione (F-06, CSH-05/MM-02/NF-01)
 
 Prima di F-06 `CashoutExecutor` piazzava qualunque lato e size arrivasse nel comando (un hedge BACK su una posizione
@@ -483,8 +507,8 @@ BACK la raddoppia; un LAY 50 su una posizione da 0.23 apre una nuova esposizione
 `side="LAY"` quando il lato mancava. Ora:
 
 - `RiskMiddleware._cashout_side`: lato solo se dichiarato `BACK`/`LAY`; mancante o invalido => `CASHOUT_FAILED`
-  (`side_mancante_o_invalido`), mai un lato di default. L'auto-close del monitor SL/TP (inerte fino a F-02) dovra'
-  quindi mandare il lato dell'hedge;
+  (`side_mancante_o_invalido`), mai un lato di default. L'auto-close del monitor SL/TP (F-04, dopo l'evento
+  di F-02) dovra' quindi mandare il lato dell'hedge;
 - `CashoutExecutor._hedge_coherence_block`, dentro il preflight del ledger (dopo i controlli sugli hedge precedenti
   di §7.3, sotto lo stesso lock) e anche senza ledger, decide con `RiskGate.protective_hedge`:
   - lato della posizione da `original_pos` (`cashout_resolver` lo mette sempre); assente/invalido =>
