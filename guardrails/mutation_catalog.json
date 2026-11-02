@@ -8122,6 +8122,18 @@
       "rationale": "F-13 (Grok su d5e7f54..b6e82d2): prezzo abbinato illeggibile o non valido accettato nella media."
     },
     {
+      "id": "f13_sim_current_orders_without_matched_price",
+      "module": "simulation_broker",
+      "area": "reconciliation",
+      "file": "simulation_broker.py",
+      "original": "                        \"averagePriceMatched\": order.avg_price_matched,",
+      "mutated": "",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (Codex su e8015b3): SIM senza averagePriceMatched nei current orders, il replace riuscito resta congelato (parita' SIM/LIVE)."
+    },
+    {
       "id": "f13_sim_dedup_not_in_snapshot",
       "module": "simulation_broker",
       "area": "dedupe",

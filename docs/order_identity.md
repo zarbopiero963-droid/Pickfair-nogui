@@ -45,6 +45,8 @@ ne arriva mai uno. Il Microstake LIVE lo inviava già (`core/microstake_live_por
   (Codex su `3774a68`); alla registrazione di un nuovo ref le voci scadute si tolgono, così la mappa resta limitata
   alla finestra;
 - il replace conserva il `customerOrderRef` dell'ordine sostituito.
+- i current orders portano `averagePriceMatched`, come il `CurrentOrderSummary` di Betfair: serve alla riconciliazione di un
+  replace (§4).
 
 Il duplicato è un **esito ignoto**, come in LIVE: la prima richiesta è viva. La risposta porta
 `order_unknown: True`, il marcatore che ogni consumer riconosce già:

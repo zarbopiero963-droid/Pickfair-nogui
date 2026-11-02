@@ -1730,6 +1730,9 @@ class SimulationBroker:
                             "size": order.size,
                         },
                         "sizeMatched": order.matched_size,
+                        # come CurrentOrderSummary di Betfair (F-13, Codex su e8015b3): la riconciliazione di un
+                        # replace prezza l'abbinato di ogni ordine dell'identita' con questo campo
+                        "averagePriceMatched": order.avg_price_matched,
                         "sizeRemaining": max(0.0, order.size - order.matched_size),
                         "status": order.status,
                     }

@@ -436,6 +436,32 @@ def test_completed_order_with_the_ref_on_another_runner_or_side_holds_the_leg(ov
     assert leg["status"] == "PLACED", leg
 
 
+def test_sim_current_orders_expose_the_matched_average_price_like_betfair():
+    # Codex P1 su e8015b3: CurrentOrderSummary di Betfair porta averagePriceMatched, il SIM no (parita' SIM/LIVE)
+    broker = _sim()
+    _place(broker)
+    (row,) = broker.get_current_orders(["1.100"])
+    assert row["averagePriceMatched"] == 2.0 and row["sizeMatched"] == 2.0
+
+
+def test_sim_replace_after_partial_match_reconciles_the_leg_partial():
+    # Codex P1 su e8015b3, percorso reale: ordine 5.00 abbinato per 2.00, replace del residuo => originale completo
+    # + sostituto vivo, stesso ref. La gamba che punta al sostituto si riconcilia PARTIAL, mai congelata
+    broker = SimulationBroker(starting_balance=100.0)
+    broker.update_market_book("1.100", {"marketId": "1.100", "status": "OPEN", "runners": [
+        {"selectionId": 7, "ex": {"availableToBack": [{"price": 2.0, "size": 2.0}], "availableToLay": []}}]})
+    placed = broker.place_bet(market_id="1.100", selection_id=7, side="BACK", price=2.0, size=5.0,
+                              customer_ref="REF1", customer_order_ref="REF1")
+    old_bet = placed["instructionReports"][0]["betId"]
+    replaced = broker.replace_orders(market_id="1.100", bet_id=old_bet, new_price=3.0)
+    new_bet = replaced["instructionReports"][0]["betId"]
+    assert new_bet and new_bet != old_bet, replaced
+    rows = broker.get_current_orders(["1.100"])
+    assert len(rows) == 2, rows
+    leg, _ = _reconcile(_leg(bet_id=new_bet), rows)
+    assert leg["status"] == "PARTIAL" and leg["bet_id"] == new_bet, (leg, rows)
+
+
 def test_identity_order_with_unreadable_size_holds_the_leg():
     old = dict(_remote("OLD", ref="REF1", matched=2.0), sizeMatched="n/a")
     new = dict(_remote("NEW", ref="REF1", matched=0.0), status="EXECUTABLE", sizeRemaining=3.0)
