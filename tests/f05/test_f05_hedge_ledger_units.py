@@ -233,8 +233,8 @@ def test_concurrent_duplicate_commands_place_exactly_one_hedge(db):
 # confermata).
 
 def _live(bet_id, remaining=4.0, market="1.222", selection=55):
-    return {"betId": bet_id, "bet_id": bet_id, "marketId": market, "selectionId": selection,
-            "sizeMatched": 0.0, "sizeRemaining": remaining}
+    return {"betId": bet_id, "bet_id": bet_id, "marketId": market, "selectionId": selection, "side": "LAY",
+            "sizeMatched": 0.0, "sizeRemaining": remaining}       # F-06: ogni ordine dell'exchange ha il lato
 
 
 def _entry(market="1.222", selection=55):

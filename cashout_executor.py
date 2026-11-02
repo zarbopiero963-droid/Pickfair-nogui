@@ -341,11 +341,23 @@ class CashoutExecutor:
         market, selection = str(payload.get("market_id", "")), str(payload.get("selection_id", ""))
         net = 0.0
         for order in current:
-            side = str(order.get("side") or "").upper()
-            if (str(order.get("marketId") or order.get("market_id") or "") != market
-                    or str(order.get("selectionId") or order.get("selection_id") or "") != selection
-                    or side not in self._VALID_SIDES):
+            # Codex P1 su 954c2cd: una riga che non si puo' ESCLUDERE con certezza dalla selezione non dimostra nulla.
+            # Identita' (mercato; selezione sul mercato target) o lato (sulla selezione target) illeggibili =>
+            # esposizione non verificabile, mai un ordine scartato in silenzio (un LAY che gia' copre la posizione).
+            order_market = self._identity(order, "marketId", "market_id")
+            if not order_market:
+                return None
+            if order_market != market:
                 continue
+            order_selection = self._identity(order, "selectionId", "selection_id")
+            if not order_selection:
+                return None
+            if order_selection != selection:
+                continue
+            raw_side = order.get("side")
+            side = raw_side.strip().upper() if isinstance(raw_side, str) else ""
+            if side not in self._VALID_SIDES:
+                return None
             # Codex P1 su 73296a3: conversione STRETTA. `_as_float` legge None/"x"/assente come 0.0 e l'ordine
             # spariva dal netto (un LAY opposto che gia' copre la posizione) => esposizione non verificabile
             raw_matched = order.get("sizeMatched", order.get("size_matched"))
@@ -367,6 +379,14 @@ class CashoutExecutor:
                 return None
             net += matched * price if side == pos_side else -matched * price
         return net
+
+    @staticmethod
+    def _identity(order: Dict[str, Any], camel: str, snake: str) -> str:
+        """Identificativo dell'ordine (camelCase o snake_case) normalizzato; '' se assente o vuoto."""
+        raw = order.get(camel)
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            raw = order.get(snake)
+        return "" if raw is None or isinstance(raw, bool) else str(raw).strip()
 
     @classmethod
     def _enforce_hard_invariants(cls, payload: Dict[str, Any]) -> None:

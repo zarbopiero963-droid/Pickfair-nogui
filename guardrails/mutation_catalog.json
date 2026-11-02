@@ -7820,6 +7820,42 @@
         "tests/f06/test_f06_hedge_guard.py"
       ],
       "rationale": "F-06 (Codex P1 su 73296a3): sizeMatched illeggibile letto come zero, l'ordine sparisce dal netto (fail-open)."
+    },
+    {
+      "id": "f06_unreadable_side_skipped",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            if side not in self._VALID_SIDES:\n                return None",
+      "mutated": "            if side not in self._VALID_SIDES:\n                continue",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06 (Codex P1 su 954c2cd): ordine della selezione con lato illeggibile scartato dal netto (fail-open)."
+    },
+    {
+      "id": "f06_unreadable_selection_skipped",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            if not order_selection:\n                return None",
+      "mutated": "            if not order_selection:\n                continue",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06: ordine del mercato senza selezione leggibile scartato dal netto."
+    },
+    {
+      "id": "f06_unreadable_market_skipped",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            if not order_market:\n                return None",
+      "mutated": "            if not order_market:\n                continue",
+      "tests": [
+        "tests/f06/test_f06_hedge_guard.py"
+      ],
+      "rationale": "F-06: ordine senza mercato leggibile scartato dal netto."
     }
   ]
 }
