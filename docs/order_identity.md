@@ -39,6 +39,10 @@ ne arriva mai uno. Il Microstake LIVE lo inviava già (`core/microstake_live_por
   (`place_orders`) è **una** richiesta: le sue gambe condividono il ref e il batch ripetuto è rifiutato per intero. Il
   ref si registra solo quando un ordine viene memorizzato (un rifiuto per fondi non lo consuma). Un ref vuoto o non
   conforme non si deduplica, perché LIVE non lo invierebbe;
+- il de-dup **sopravvive al riavvio**. La mappa ref → istante (orologio di parete) sta in
+  `SimulationState.customer_ref_seen`, nello snapshot `simulation_state` scritto con l'ordine (anche dalle gambe di un
+  batch), e viene ripristinata da `load_from_dict`. Le voci malformate vengono scartate e quelle scadute non bloccano
+  (Codex su `3774a68`);
 - il replace conserva il `customerOrderRef` dell'ordine sostituito.
 
 Il duplicato è un **esito ignoto**, come in LIVE: la prima richiesta è viva. La risposta porta

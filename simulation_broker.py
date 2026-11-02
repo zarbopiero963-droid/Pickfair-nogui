@@ -121,6 +121,9 @@ class SimulationState:
         # (mercato|selezione|lato|quota): il feed esterno non sa dei nostri
         # abbinamenti virtuali, quindi un book riletto la ripresenterebbe.
         self.liquidity_consumed: Dict[str, float] = {}
+        # F-13 (Codex su 3774a68): de-dup del `customerRef` (ref conforme -> istante epoch della richiesta accettata),
+        # nello snapshot come l'ordine che protegge: un riavvio entro i 60 s non lo azzera.
+        self.customer_ref_seen: Dict[str, float] = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -148,6 +151,7 @@ class SimulationState:
             "fills": copy.deepcopy(self.fills),
             "fills_corrupted": bool(self.fills_corrupted),
             "liquidity_consumed": dict(self.liquidity_consumed),
+            "customer_ref_seen": dict(self.customer_ref_seen),
         }
 
     # skipcq: PY-R1000 - pre-existing state-restoration complexity; PR3 only adds defensive parsing.
@@ -194,6 +198,14 @@ class SimulationState:
                 updated_at=str(p.get("updated_at") or datetime.utcnow().isoformat()),
             )
 
+        # F-13: voci malformate scartate (mai un crash al reload); la scadenza la applica il controllo di de-dup.
+        raw_seen = data.get("customer_ref_seen")
+        self.customer_ref_seen = {}
+        if isinstance(raw_seen, dict):
+            for ref, ts in raw_seen.items():
+                ts_f = _to_float(ts, float("nan"))
+                if isinstance(ref, str) and ref and math.isfinite(ts_f):
+                    self.customer_ref_seen[ref] = ts_f
         self.market_books = dict(data.get("market_books") or {})
         self.event_index = dict(data.get("event_index") or {})
         self.position_ledgers = {}
@@ -331,9 +343,9 @@ class SimulationBroker:
         self._market_net_realized_aggregator.ledger = self.state.market_commission_ledger
         self._lock = threading.RLock()
         # F-13: parita' col de-dup Betfair del `customerRef` (60 s dalla richiesta accettata). Chiave = ref conforme
-        # (LIVE omette quello non conforme e non deduplica); orologio sostituibile nei test.
-        self._customer_ref_seen: Dict[str, float] = {}
-        self._customer_ref_clock = time.monotonic
+        # (LIVE omette quello non conforme e non deduplica). La mappa sta in `state.customer_ref_seen` (snapshot):
+        # orologio di parete, valido anche dopo un riavvio; sostituibile nei test.
+        self._customer_ref_clock = time.time
         self._batch_depth = 0
         # #545: False dall'ultima scrittura fallita dello snapshot di reload finche' una successiva non riesce.
         self._snapshot_durevole = True
@@ -599,12 +611,12 @@ class SimulationBroker:
 
     def _customer_ref_duplicate_locked(self, request_ref: str) -> bool:
         """True se ``request_ref`` e' gia' stato accettato negli ultimi 60 s (Betfair: DUPLICATE_TRANSACTION)."""
-        seen = self._customer_ref_seen.get(request_ref)
+        seen = self.state.customer_ref_seen.get(request_ref)
         if seen is None:
             return False
         if self._customer_ref_clock() - seen < self.CUSTOMER_REF_DEDUP_SEC:
             return True
-        del self._customer_ref_seen[request_ref]
+        del self.state.customer_ref_seen[request_ref]
         return False
 
     @staticmethod
@@ -1413,7 +1425,7 @@ class SimulationBroker:
             self._match_order(order)
             self.state.orders[order.bet_id] = order
             if request_ref:
-                self._customer_ref_seen[request_ref] = self._customer_ref_clock()
+                self.state.customer_ref_seen[request_ref] = self._customer_ref_clock()
         self._persist_order(order)
         # PFC-006 (G7-c): l'ordine accettato e' durevole nella fonte di reload
         # (lo snapshot `simulation_state`) prima della risposta: un crash subito
@@ -1503,6 +1515,9 @@ class SimulationBroker:
         if str(market_id) not in self.state.settlements and not self._fondi_sufficienti_locked(
                 self._candidati_batch(str(market_id), instructions)):
             return self._rifiuto_fondi(str(market_id), len(instructions or []))
+        if request_ref:
+            # nello snapshot scritto da ogni gamba (Codex su 3774a68), tolto sotto se nessuna gamba e' memorizzata
+            self.state.customer_ref_seen[request_ref] = self._customer_ref_clock()
         self._batch_depth += 1
         try:
             return self._place_orders_legs_locked(
@@ -1580,8 +1595,8 @@ class SimulationBroker:
             if result.get("snapshot_persisted") is False:
                 snapshot_fallito = True
 
-        if request_ref and any(str(r.get("betId") or "") for r in reports):
-            self._customer_ref_seen[request_ref] = self._customer_ref_clock()   # F-13: richiesta accettata
+        if request_ref and not any(str(r.get("betId") or "") for r in reports):
+            self.state.customer_ref_seen.pop(request_ref, None)   # F-13: nessuna gamba accettata, nessun de-dup
         return self._con_durabilita({
             "status": "SUCCESS",
             "marketId": str(market_id),

@@ -8048,6 +8048,30 @@
         "tests/f13/test_f13_customer_order_ref.py"
       ],
       "rationale": "F-13 (Sol su 95f6752): replace con risposta persa, gamba chiusa sul vecchio ordine e residuo fuori dalla riconciliazione."
+    },
+    {
+      "id": "f13_sim_dedup_not_in_snapshot",
+      "module": "simulation_broker",
+      "area": "dedupe",
+      "file": "simulation_broker.py",
+      "original": "            \"customer_ref_seen\": dict(self.customer_ref_seen),",
+      "mutated": "            \"customer_ref_seen\": {},",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (Codex P1 su 3774a68): de-dup SIM non persistito, un riavvio entro 60 s ripiazza la stessa richiesta."
+    },
+    {
+      "id": "f13_sim_dedup_not_restored",
+      "module": "simulation_broker",
+      "area": "dedupe",
+      "file": "simulation_broker.py",
+      "original": "                    self.customer_ref_seen[ref] = ts_f",
+      "mutated": "                    pass",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: de-dup SIM non ripristinato dallo snapshot."
     }
   ]
 }
