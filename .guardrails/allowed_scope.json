@@ -3343,6 +3343,20 @@
         "tests/test_microstake_sim_port.py"
       ],
       "max_files": 18
+    },
+    "pf_dispatcher_01": {
+      "description": "PF-DISPATCHER-01 (#586, mandato owner PF-CLAUDE-AUTO-DEV-01; scheda Grok c.6583997783): coda Roadmap V2 scripts/roadmap_dispatcher.py (schede da issue roadmap-v2 e registro #586, eventi pf-dispatch, una PR alla volta, dipendenze, lease, classificazione esiti) e worker Claude B scripts/claude_worker.py SOLO dry-run (attivazione rifiutata, GO owner separato). Nessun workflow, nessuna scrittura sulle PR.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/roadmap_dispatcher.md",
+        "scripts/claude_worker.py",
+        "scripts/roadmap_dispatcher.py",
+        "tests/scripts/test_claude_worker.py",
+        "tests/scripts/test_roadmap_dispatcher.py"
+      ],
+      "max_files": 7
     }
   }
 }

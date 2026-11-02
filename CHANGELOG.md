@@ -8,6 +8,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **PF-DISPATCHER-01 (#586, mandato owner PF-CLAUDE-AUTO-DEV-01):** coda di lavoro della Roadmap V2
+  (`scripts/roadmap_dispatcher.py`). Legge le schede dalle issue `roadmap-v2` (label del registrar VPS) e dal
+  registro su #586. Seleziona una scheda alla volta per priorità e dipendenze, mai con un'altra PR `[TASK:` o #602
+  aperta. Lo stato persistente sono gli eventi `pf-dispatch` su #586, e dopo un riavvio la scheda viene ripresa, non
+  riassegnata. Distingue fallimento applicativo, infrastrutturale, evidenza mancante, bloccanti di review, approvazione
+  owner e LIVE_NOT_RUN, e nessun errore diventa PASS. Non scrive sulle PR.
+  Worker di Claude B `scripts/claude_worker.py` **solo dry-run**: lease locale con fencing, piano, prompt e audit
+  senza esecuzione; l'attivazione è rifiutata finché non c'è un GO owner separato. Documentazione:
+  `docs/roadmap_dispatcher.md`.
+
 ### Changed
 - **Governance §0.9-ter (#586, owner 01/11/2026 «TEMPORARY MERGE DELEGATION — ROADMAP V2»):** delega owner
   temporanea di merge per le 33 schede della roadmap V2, registrata in `OWNER_MERGE_DELEGATIONS` di
