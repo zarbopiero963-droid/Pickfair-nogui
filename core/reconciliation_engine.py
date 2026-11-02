@@ -813,6 +813,17 @@ class ReconciliationEngine:
 
         return None
 
+    def _leg_identity_spans_orders(self, leg: Dict[str, Any], remote_orders: Sequence[Dict[str, Any]]) -> bool:
+        """True se ``bet_id`` e ``customer_ref`` della gamba indicano piu' di un ordine distinto dell'exchange."""
+        bid = str(leg.get("bet_id") or "").strip()
+        cref = str(leg.get("customer_ref") or "").strip()
+        hits = set()
+        for order in remote_orders or []:
+            obid = self._extract_bet_id(order)
+            if (bid and obid == bid) or (cref and self._extract_customer_ref(order) == cref):
+                hits.add(obid or id(order))
+        return len(hits) > 1
+
     @staticmethod
     def _unattributed_on_selection(leg: Dict[str, Any], by_sel: Dict[str, Dict[str, Any]]) -> bool:
         """True se sul runner della gamba c'e' almeno un ordine dell'exchange (che l'identita' non attribuisce)."""
@@ -1765,6 +1776,19 @@ class ReconciliationEngine:
                         local_status=current_status, exchange_status=None,
                         resolved_status=current_status, merge_winner="LOCAL",
                         details={"reason": "ordine_non_attribuibile_sulla_selezione"},
+                    )
+                    continue
+                if remote_order is not None and self._leg_identity_spans_orders(leg, remote_orders):
+                    # F-13 (Sol su 95f6752): l'identita' della gamba porta a PIU' ordini dell'exchange (replace con
+                    # risposta persa: originale con la parte abbinata + sostituto col residuo, stesso ref). Chiuderla
+                    # su uno solo lascerebbe l'altro fuori dalla riconciliazione: resta com'e', decisione registrata.
+                    self._log_decision(
+                        batch_id=batch_id, leg_index=leg_index,
+                        case_classification="MULTIPLE_EXCHANGE_ORDERS_FOR_LEG",
+                        reason_code=ReasonCode.LOCAL_WINS_SAGA_PENDING,
+                        local_status=current_status, exchange_status=None,
+                        resolved_status=current_status, merge_winner="LOCAL",
+                        details={"reason": "piu_ordini_per_la_stessa_gamba"},
                     )
                     continue
                 cref = str(leg.get("customer_ref") or "").strip()

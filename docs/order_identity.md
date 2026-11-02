@@ -64,6 +64,11 @@ Se nessuna identità corrisponde ma sul runner della gamba c'è un ordine (`_una
 - la gamba non si chiude FAILED per timeout, perché può essere la sua, piazzata senza ref prima di F-13;
 - resta com'è, con la decisione `UNATTRIBUTED_ORDER_ON_SELECTION` registrata, finché l'identità non si dimostra.
 
+Se invece l'identità porta a **più** ordini distinti (`_leg_identity_spans_orders`), la gamba non si chiude su uno
+solo: anche qui resta com'è, con la decisione `MULTIPLE_EXCHANGE_ORDERS_FOR_LEG`. È il caso di un replace con risposta
+persa, dove l'originale (con la parte abbinata) e il sostituto (col residuo) hanno lo stesso ref e la gamba punta
+ancora al vecchio `bet_id`.
+
 Senza nessun ordine sul runner, il timeout si applica come prima.
 
 Il rilevamento degli ordini fantasma (`_detect_ghost_orders`) usa ancora il runner, ma solo per **non** segnalare

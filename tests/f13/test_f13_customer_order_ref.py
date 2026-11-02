@@ -359,3 +359,27 @@ def test_sim_duplicate_response_carries_the_universal_unknown_outcome_marker():
     broker = _sim()
     _place(broker)
     assert _place(broker)["order_unknown"] is True
+
+
+def test_replace_with_lost_response_never_closes_the_leg_on_the_old_order():
+    # Sol su 95f6752: dopo un replace l'originale (parte abbinata) e il sostituto (residuo) hanno lo stesso ref. La
+    # gamba punta ancora al vecchio bet_id: chiuderla MATCHED su quello lascia il residuo fuori dalla riconciliazione
+    old = _remote("OLD", ref="REF1", matched=2.0)
+    new = dict(_remote("NEW", ref="REF1", matched=0.0), status="EXECUTABLE", sizeRemaining=3.0)
+    leg, engine = _reconcile(_leg(bet_id="OLD"), [old, new])
+    assert leg["status"] == "PLACED" and leg["bet_id"] == "OLD", "gamba chiusa su uno solo dei suoi ordini"
+    assert any(getattr(d, "case_classification", None) == "MULTIPLE_EXCHANGE_ORDERS_FOR_LEG"
+               or (isinstance(d, dict) and d.get("case_classification") == "MULTIPLE_EXCHANGE_ORDERS_FOR_LEG")
+               for d in engine.db.decisions + list(getattr(engine, "_decision_log", []) or []))
+
+
+def test_two_orders_with_the_leg_ref_and_no_bet_id_hold_the_leg():
+    a = _remote("A", ref="REF1", matched=2.0)
+    b = dict(_remote("B", ref="REF1", matched=0.0), status="EXECUTABLE", sizeRemaining=3.0)
+    leg, _ = _reconcile(_leg(), [a, b])
+    assert leg["status"] == "PLACED" and leg.get("bet_id") in (None, "")
+
+
+def test_a_single_order_for_the_leg_identity_is_still_resolved():
+    leg, _ = _reconcile(_leg(bet_id="ONLY"), [_remote("ONLY", ref="REF1")])
+    assert leg["status"] == "MATCHED"

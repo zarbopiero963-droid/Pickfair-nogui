@@ -8036,6 +8036,18 @@
         "tests/f13/test_f13_customer_order_ref.py"
       ],
       "rationale": "F-13 (Codex P2 su 95f6752): duplicato SIM senza order_unknown, il percorso dei segnali lo chiude FAILED e rilascia le protezioni."
+    },
+    {
+      "id": "f13_reconcile_closes_leg_on_one_of_many_orders",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "                if remote_order is not None and self._leg_identity_spans_orders(leg, remote_orders):",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (Sol su 95f6752): replace con risposta persa, gamba chiusa sul vecchio ordine e residuo fuori dalla riconciliazione."
     }
   ]
 }
