@@ -462,6 +462,46 @@ def test_sim_replace_after_partial_match_reconciles_the_leg_partial():
     assert leg["status"] == "PARTIAL" and leg["bet_id"] == new_bet, (leg, rows)
 
 
+def _sim_replaced_then_filled():
+    # ordine 5.00 abbinato per 2.00 a 2.0, replace del residuo a 3.0, poi il sostituto si abbina per intero
+    broker = SimulationBroker(starting_balance=100.0)
+    broker.update_market_book("1.100", {"marketId": "1.100", "status": "OPEN", "runners": [
+        {"selectionId": 7, "ex": {"availableToBack": [{"price": 2.0, "size": 2.0}], "availableToLay": []}}]})
+    placed = broker.place_bet(market_id="1.100", selection_id=7, side="BACK", price=2.0, size=5.0,
+                              customer_ref="REF1", customer_order_ref="REF1")
+    old_bet = placed["instructionReports"][0]["betId"]
+    new_bet = broker.replace_orders(market_id="1.100", bet_id=old_bet, new_price=3.0)["instructionReports"][0]["betId"]
+    broker.update_market_book("1.100", {"marketId": "1.100", "status": "OPEN", "runners": [
+        {"selectionId": 7, "ex": {"availableToBack": [{"price": 3.0, "size": 10.0}], "availableToLay": []}}]})
+    return broker, old_bet, new_bet
+
+
+def test_sim_completed_original_of_a_replace_has_no_remaining_like_betfair():
+    # Codex P1 su 9200468: Betfair riporta il residuo annullato in sizeCancelled, mai in sizeRemaining di un
+    # EXECUTION_COMPLETE
+    broker, old_bet, _ = _sim_replaced_then_filled()
+    row = next(r for r in broker.get_current_orders(["1.100"]) if r["betId"] == old_bet)
+    assert row["status"] == "EXECUTION_COMPLETE"
+    assert row["sizeRemaining"] == 0.0 and row["sizeCancelled"] == 3.0 and row["sizeMatched"] == 2.0
+
+
+def test_replace_with_lost_response_fully_filled_closes_the_leg_matched():
+    # Codex P1 su 9200468: risposta del replace persa (la gamba punta ancora all'originale) e sostituto abbinato per
+    # intero. Tutto e' abbinato (5.00): la gamba e' MATCHED, mai PARTIAL per un residuo annullato
+    broker, old_bet, new_bet = _sim_replaced_then_filled()
+    rows = broker.get_current_orders(["1.100"])
+    leg, _ = _reconcile(_leg(bet_id=old_bet), rows)
+    assert leg["status"] == "MATCHED", (leg, rows)
+
+
+def test_aggregated_view_takes_the_remaining_only_from_live_orders():
+    engine = ReconciliationEngine(db=_DB(), batch_manager=_Batches(_leg()), client_getter=lambda: _Exchange([]))
+    old = dict(_remote("OLD", ref="REF1", matched=2.0), sizeRemaining=3.0)        # completo: il 3.0 non e' vivo
+    new = _remote("NEW", ref="REF1", matched=3.0)
+    view = engine._leg_identity_view(_leg(bet_id="OLD"), [old, new], old)
+    assert view["sizeMatched"] == 5.0 and view["sizeRemaining"] == 0.0, view
+
+
 def test_identity_order_with_unreadable_size_holds_the_leg():
     old = dict(_remote("OLD", ref="REF1", matched=2.0), sizeMatched="n/a")
     new = dict(_remote("NEW", ref="REF1", matched=0.0), status="EXECUTABLE", sizeRemaining=3.0)

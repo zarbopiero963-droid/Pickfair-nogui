@@ -8134,6 +8134,30 @@
       "rationale": "F-13 (Codex su e8015b3): SIM senza averagePriceMatched nei current orders, il replace riuscito resta congelato (parita' SIM/LIVE)."
     },
     {
+      "id": "f13_replace_view_keeps_cancelled_remaining",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "        view[\"sizeRemaining\"] = round(remaining_live, 2)",
+      "mutated": "        pass",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (Codex su 9200468): replace con risposta persa e sostituto abbinato, il residuo annullato dell'originale lascia la gamba PARTIAL per sempre."
+    },
+    {
+      "id": "f13_sim_complete_order_keeps_remaining",
+      "module": "simulation_broker",
+      "area": "reconciliation",
+      "file": "simulation_broker.py",
+      "original": "                out.append(dict(o, status=\"EXECUTION_COMPLETE\", sizeRemaining=0.0, sizeCancelled=cancelled))",
+      "mutated": "                out.append(dict(o, status=\"EXECUTION_COMPLETE\"))",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (Codex su 9200468): EXECUTION_COMPLETE SIM con sizeRemaining del residuo annullato, diverso da Betfair (parita' SIM/LIVE)."
+    },
+    {
       "id": "f13_sim_dedup_not_in_snapshot",
       "module": "simulation_broker",
       "area": "dedupe",

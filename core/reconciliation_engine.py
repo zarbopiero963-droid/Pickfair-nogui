@@ -824,7 +824,7 @@ class ReconciliationEngine:
         - la gamba punta col suo ``bet_id`` a ``selected``, TUTTI gli altri sono ``EXECUTION_COMPLETE`` e stanno sullo
           stesso mercato, runner e lato (replace riuscito, Grok su 95f6752..3774a68) => vista aggregata: ``selected``
           con ``sizeMatched`` = somma degli abbinati, ``averagePriceMatched`` = loro media ponderata (Grok su
-          d5e7f54..b6e82d2) e il residuo di ``selected``, l'unico ancora vivo;
+          d5e7f54..b6e82d2) e ``sizeRemaining`` = residuo dei soli ordini vivi (Codex su 9200468);
         - altrimenti (un altro ordine e' ancora vivo: replace con risposta persa, Sol su 95f6752; gamba senza
           ``bet_id``; stesso ref su un altro mercato, runner o lato; stato, size o prezzo abbinato illeggibili) =>
           ``None``: chiuderla su uno solo, o su ordini estranei, sarebbe falso.
@@ -847,6 +847,7 @@ class ReconciliationEngine:
             return None
         matched_total = 0.0
         matched_notional = 0.0
+        remaining_live = 0.0
         for key, order in hits.items():
             if key != bid and self._extract_order_status(order) != "EXECUTION_COMPLETE":
                 return None
@@ -862,8 +863,18 @@ class ReconciliationEngine:
                 return None
             matched_total += size
             matched_notional += size * avg
+            if self._extract_order_status(order) == "EXECUTABLE":
+                # residuo solo dagli ordini vivi: un EXECUTION_COMPLETE non ne ha (Codex su 9200468)
+                try:
+                    remaining = float(order.get("sizeRemaining", 0) or 0)
+                except (TypeError, ValueError):
+                    return None
+                if not math.isfinite(remaining) or remaining < 0:
+                    return None
+                remaining_live += remaining
         view = dict(selected)
         view["sizeMatched"] = round(matched_total, 2)
+        view["sizeRemaining"] = round(remaining_live, 2)
         if matched_total > 0:
             # abbinato prezzato alla media ponderata di tutti gli ordini dell'identita', mai alla quota del sostituto
             view["averagePriceMatched"] = matched_notional / matched_total

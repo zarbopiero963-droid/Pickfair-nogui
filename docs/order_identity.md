@@ -47,6 +47,8 @@ ne arriva mai uno. Il Microstake LIVE lo inviava già (`core/microstake_live_por
 - il replace conserva il `customerOrderRef` dell'ordine sostituito.
 - i current orders portano `averagePriceMatched`, come il `CurrentOrderSummary` di Betfair: serve alla riconciliazione di un
   replace (§4).
+  Un ordine con parte abbinata e residuo annullato compare `EXECUTION_COMPLETE` con `sizeRemaining` 0 e il residuo in
+  `sizeCancelled`, come su Betfair.
 
 Il duplicato è un **esito ignoto**, come in LIVE: la prima richiesta è viva. La risposta porta
 `order_unknown: True`, il marcatore che ogni consumer riconosce già:
@@ -75,7 +77,8 @@ Se invece l'identità porta a **più** ordini distinti (un replace: originale co
 residuo, stesso ref), decide `_leg_identity_view`:
 - **replace riuscito.** La gamba punta col suo `bet_id` all'ordine vivo. Tutti gli altri ordini dell'identità sono
   `EXECUTION_COMPLETE` e stanno sullo stesso mercato, runner e lato. La gamba si riconcilia su una vista aggregata:
-  - l'ordine della gamba, con il suo residuo;
+  - l'ordine della gamba, con `sizeRemaining` pari al residuo dei soli ordini vivi (`EXECUTABLE`): un ordine completo
+    non ne ha (Codex su `9200468`);
   - `sizeMatched` pari alla somma degli abbinati di tutti gli ordini dell'identità;
   - `averagePriceMatched` pari alla loro media ponderata, mai la sola quota del sostituto (Grok su `d5e7f54..b6e82d2`).
 

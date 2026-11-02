@@ -1771,7 +1771,10 @@ class SimulationBroker:
             if status == "CANCELLED" and float(o.get("sizeMatched") or 0.0) > 0.0:
                 # PF-ALL-F031 (parita' LIVE): su Betfair un ordine con parte abbinata e residuo annullato
                 # resta fra gli ordini correnti (EXECUTION_COMPLETE) fino al settlement: e' una posizione viva.
-                out.append(dict(o, status="EXECUTION_COMPLETE"))
+                # come Betfair (F-13, Codex su 9200468): il residuo annullato sta in sizeCancelled, un ordine
+                # EXECUTION_COMPLETE non ha sizeRemaining
+                cancelled = max(0.0, float(o.get("sizeRemaining") or 0.0))
+                out.append(dict(o, status="EXECUTION_COMPLETE", sizeRemaining=0.0, sizeCancelled=cancelled))
                 continue
             if status not in self._TERMINAL_ORDER_STATUSES:
                 out.append(o)
