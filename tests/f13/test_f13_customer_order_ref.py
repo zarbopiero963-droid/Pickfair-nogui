@@ -479,3 +479,16 @@ def test_concurrent_order_managers_with_the_same_ref_never_double_the_exposure()
     for t in threads:
         t.join(10)
     assert len(out) == 2 and len(broker.state.orders) == 1
+
+
+def test_dedup_map_stays_bounded_to_the_window():
+    # review indipendente su 4881adb: una voce per ordine, mai tolta (ref uuid unici) => la mappa cresceva senza
+    # limiti ed era riscritta in ogni snapshot. Le voci scadute (>= 60 s) si tolgono quando se ne registra una nuova
+    now = [1_000_000.0]
+    broker = _sim()
+    broker._customer_ref_clock = lambda: now[0]
+    for i in range(50):
+        _place(broker, ref=f"r{i}")
+        now[0] += 10.0
+    assert len(broker.state.customer_ref_seen) <= 7, broker.state.customer_ref_seen
+    assert "r49" in broker.state.customer_ref_seen and "r0" not in broker.state.customer_ref_seen
