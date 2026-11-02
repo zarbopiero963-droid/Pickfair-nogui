@@ -3318,6 +3318,29 @@
         "tests/unit/test_simulation_broker_side_parity.py"
       ],
       "max_files": 16
+    },
+    "f13a_customer_order_ref": {
+      "description": "F-13a (#586, ID-01/D-582-01/D1; nessuna dipendenza): customerOrderRef = customer_ref conforme su ogni place diretto (OrderRouter, OrderManager, BetfairService, TradingEngine; core/order_ref.py), mai un rifiuto per ref non conforme; SimulationBroker: customer_order_ref, de-dup della richiesta come Betfair (DUPLICATE_TRANSACTION 60 s, batch = una richiesta) letto come esito ignoto da router e OrderManager; riconciliazione per bet_id poi ref, mai market::selection, ordine non attribuibile sul runner => gamba in attesa. Seguito F-13b: F018 e cashout_router con il ref (estensione DB).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/order_ref.py",
+        "core/order_router.py",
+        "core/reconciliation_engine.py",
+        "core/trading_engine.py",
+        "docs/order_identity.md",
+        "guardrails/contracts/core.trading_engine.json",
+        "guardrails/mutation_catalog.json",
+        "order_manager.py",
+        "services/betfair_service.py",
+        "simulation_broker.py",
+        "tests/core/test_order_router.py",
+        "tests/f13/__init__.py",
+        "tests/f13/test_f13_customer_order_ref.py",
+        "tests/test_microstake_sim_port.py"
+      ],
+      "max_files": 16
     }
   }
 }

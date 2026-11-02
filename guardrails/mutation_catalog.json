@@ -7868,6 +7868,174 @@
         "tests/f06/test_f06_hedge_guard.py"
       ],
       "rationale": "F-06 (Sol su 360aa7d): grafie dell'identificativo in disaccordo risolte scegliendone una, un ordine che copre la posizione sparisce."
+    },
+    {
+      "id": "f13_router_no_customer_order_ref",
+      "module": "core.order_router",
+      "area": "reconciliation",
+      "file": "core/order_router.py",
+      "original": "            \"customer_order_ref\": customer_order_ref(payload.get(\"customer_ref\")),",
+      "mutated": "            \"customer_order_ref\": \"\",",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: il router non invia customerOrderRef, ordine non ritrovabile per identita' dopo una risposta persa."
+    },
+    {
+      "id": "f13_manager_no_customer_order_ref",
+      "module": "order_manager",
+      "area": "reconciliation",
+      "file": "order_manager.py",
+      "original": "            \"customer_order_ref\": customer_order_ref(payload.get(\"customer_ref\")),",
+      "mutated": "            \"customer_order_ref\": \"\",",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: OrderManager non invia customerOrderRef."
+    },
+    {
+      "id": "f13_engine_no_customer_order_ref",
+      "module": "core.trading_engine",
+      "area": "reconciliation",
+      "file": "core/trading_engine.py",
+      "original": "            \"customer_order_ref\": customer_order_ref(payload.get(\"customer_ref\")),",
+      "mutated": "            \"customer_order_ref\": \"\",",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: il percorso dei segnali non invia customerOrderRef."
+    },
+    {
+      "id": "f13_service_no_customer_order_ref",
+      "module": "services.betfair_service",
+      "area": "reconciliation",
+      "file": "services/betfair_service.py",
+      "original": "                customer_order_ref=customer_order_ref(payload.get(\"customer_ref\")),",
+      "mutated": "                customer_order_ref=\"\",",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: BetfairService.place_order non invia customerOrderRef."
+    },
+    {
+      "id": "f13_router_sim_duplicate_as_failure",
+      "module": "core.order_router",
+      "area": "dedupe",
+      "file": "core/order_router.py",
+      "original": "        if str(raw.get(\"errorCode\") or \"\").strip().upper() == \"DUPLICATE_TRANSACTION\":",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: un duplicato SIM letto come FAILURE definitivo (LIVE: esito ignoto)."
+    },
+    {
+      "id": "f13_manager_sim_duplicate_as_failed",
+      "module": "order_manager",
+      "area": "dedupe",
+      "file": "order_manager.py",
+      "original": "        elif isinstance(response, dict) and str(response.get(\"errorCode\") or \"\").strip().upper() == \\",
+      "mutated": "        elif False and \\",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: OrderManager registra FAILED un duplicato SIM (LIVE: AMBIGUOUS)."
+    },
+    {
+      "id": "f13_sim_single_request_not_deduplicated",
+      "module": "simulation_broker",
+      "area": "dedupe",
+      "file": "simulation_broker.py",
+      "original": "            if request_ref and self._customer_ref_duplicate_locked(request_ref):\n                return self._rifiuto_duplicato(order.market_id)",
+      "mutated": "            if False:\n                return self._rifiuto_duplicato(order.market_id)",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: il SIM piazza due volte la stessa richiesta (Betfair: DUPLICATE_TRANSACTION)."
+    },
+    {
+      "id": "f13_sim_batch_not_deduplicated",
+      "module": "simulation_broker",
+      "area": "dedupe",
+      "file": "simulation_broker.py",
+      "original": "        if request_ref and self._customer_ref_duplicate_locked(request_ref):\n            return self._rifiuto_duplicato(str(market_id))",
+      "mutated": "        if False:\n            return self._rifiuto_duplicato(str(market_id))",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: il SIM ripiazza un batch con lo stesso customerRef."
+    },
+    {
+      "id": "f13_sim_dedup_never_expires",
+      "module": "simulation_broker",
+      "area": "dedupe",
+      "file": "simulation_broker.py",
+      "original": "        if self._customer_ref_clock() - seen < self.CUSTOMER_REF_DEDUP_SEC:",
+      "mutated": "        if True:",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: il de-dup SIM non scade dopo 60 s (diverso da Betfair)."
+    },
+    {
+      "id": "f13_sim_dedups_non_conforming_ref",
+      "module": "simulation_broker",
+      "area": "dedupe",
+      "file": "simulation_broker.py",
+      "original": "            request_ref = _conforming_ref(customer_ref) if self._batch_depth == 0 else \"\"",
+      "mutated": "            request_ref = str(customer_ref or \"\") if self._batch_depth == 0 else \"\"",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: il SIM deduplica un ref che LIVE non invierebbe."
+    },
+    {
+      "id": "f13_sim_ignores_customer_order_ref",
+      "module": "simulation_broker",
+      "area": "reconciliation",
+      "file": "simulation_broker.py",
+      "original": "            customer_ref=str(customer_order_ref or customer_ref or \"\"),",
+      "mutated": "            customer_ref=str(customer_ref or \"\"),",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: il SIM non espone il customerOrderRef dell'ordine."
+    },
+    {
+      "id": "f13_reconcile_adopts_by_selection",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "            return by_ref[cref]\n\n        return None\n",
+      "mutated": "            return by_ref[cref]\n\n        return by_sel.get(f\"{leg.get('market_id')}::{leg.get('selection_id')}\")\n",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13 (D-582-01): la gamba adotta l'ordine altrui per market::selection."
+    },
+    {
+      "id": "f13_reconcile_fails_unattributed_leg",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "                if remote_order is None and self._unattributed_on_selection(leg, by_sel):",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: gamba chiusa FAILED con un ordine non attribuibile sul runner."
+    },
+    {
+      "id": "f13_reconcile_ref_before_bet_id",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "        bid = str(leg.get(\"bet_id\") or \"\").strip()\n        if bid and bid in by_bet:\n            return by_bet[bid]\n\n        cref = str(leg.get(\"customer_ref\") or \"\").strip()\n        if cref and cref in by_ref:\n            return by_ref[cref]\n",
+      "mutated": "        cref = str(leg.get(\"customer_ref\") or \"\").strip()\n        if cref and cref in by_ref:\n            return by_ref[cref]\n\n        bid = str(leg.get(\"bet_id\") or \"\").strip()\n        if bid and bid in by_bet:\n            return by_bet[bid]\n",
+      "tests": [
+        "tests/f13/test_f13_customer_order_ref.py"
+      ],
+      "rationale": "F-13: il ref prevale sul bet_id (identita' primaria Betfair)."
     }
   ]
 }

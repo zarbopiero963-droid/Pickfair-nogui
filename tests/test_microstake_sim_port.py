@@ -150,7 +150,9 @@ def test_red_port_find_by_ref_is_none_when_absent_and_raises_on_duplicates():
     b, port = _port()
     assert port.find_by_ref("nessuno") is None
     port.place(market_id="1.8", selection_id=7, side=Side.BACK, size=D("2.00"), price=D("3.00"), customer_ref="dup")
-    b.place_bet(market_id="1.8", selection_id=8, side="BACK", price=3.0, size=2.0, customer_ref="dup")
+    # F-13: due ORDINI con lo stesso customerOrderRef (Betfair non lo deduplica; la stessa RICHIESTA entro 60 s si')
+    b.place_bet(market_id="1.8", selection_id=8, side="BACK", price=3.0, size=2.0, customer_ref="altra-richiesta",
+                customer_order_ref="dup")
     with pytest.raises(RuntimeError):
         port.find_by_ref("dup")
 

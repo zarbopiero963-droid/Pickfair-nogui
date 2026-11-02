@@ -311,3 +311,32 @@ def test_bet_id_is_the_primary_identity_over_the_ref():
     found = engine._lookup_remote_order(_leg(bet_id="B1"), *engine._build_exchange_indices([by_ref_order,
                                                                                               by_bet_order]))
     assert found["betId"] == "B1"
+
+
+def test_ref_pattern_is_the_same_as_the_betfair_client():
+    # un pattern diverso manderebbe un customer_order_ref che BetfairClient rifiuta (ordine perso) o ne ometterebbe uno
+    import betfair_client
+    from core import order_ref
+    assert order_ref.CUSTOMER_REF_RE.pattern == betfair_client._CUSTOMER_REF_RE.pattern
+
+
+def test_trading_engine_adapter_sends_customer_order_ref():
+    # quarto adattatore del contratto wire (guardrails/contracts/core.trading_engine.json): il percorso dei segnali
+    from core.trading_engine import TradingEngine
+    client = _RecordingClient()
+    kwargs = TradingEngine._kwargs_per_place_bet(client.place_bet, _payload())
+    assert kwargs["customer_ref"] == REF and kwargs["customer_order_ref"] == REF
+
+
+def test_trading_engine_minimal_contract_for_an_uninspectable_client_is_unchanged():
+    # firma non ispezionabile: solo il contratto minimo (un kwarg in piu' sarebbe un TypeError, ordine non inviato)
+    from core.trading_engine import TradingEngine
+    class _Opaque:
+        @property
+        def __signature__(self):
+            raise ValueError("firma non ispezionabile")
+
+        def __call__(self, **kw):
+            return kw
+    kwargs = TradingEngine._kwargs_per_place_bet(_Opaque(), _payload())
+    assert set(kwargs) == {"market_id", "selection_id", "side", "price", "size", "customer_ref"}

@@ -797,28 +797,28 @@ class ReconciliationEngine:
         by_bet: Dict[str, Dict[str, Any]],
         by_sel: Dict[str, Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
+        """L'ordine dell'exchange della gamba, solo per IDENTITA' dimostrata (F-13, D-582-01):
+          1. ``bet_id``        (assegnato da Betfair, univoco);
+          2. ``customer_ref``  (= ``customerOrderRef`` inviato con l'ordine, ritrova una risposta persa / un replace).
+        Mai per ``market_id::selection_id``: quell'indice e' last-wins e attribuiva alla gamba l'ordine di qualcun
+        altro sullo stesso runner. ``by_sel`` resta nella firma per il chiamante (vedi ``_unattributed_on_selection``).
         """
-        Multi-key lookup with priority:
-          1. customer_ref  (strongest — user-assigned)
-          2. bet_id        (exchange-assigned, survives replaces)
-          3. market_id+selection_id  (structural — catches replaced orders)
-        """
-        cref = str(leg.get("customer_ref") or "").strip()
-        if cref and cref in by_ref:
-            return by_ref[cref]
-
         bid = str(leg.get("bet_id") or "").strip()
         if bid and bid in by_bet:
             return by_bet[bid]
 
-        mid = str(leg.get("market_id") or "").strip()
-        sid = str(leg.get("selection_id") or "").strip()
-        if mid and sid:
-            compound = f"{mid}::{sid}"
-            if compound in by_sel:
-                return by_sel[compound]
+        cref = str(leg.get("customer_ref") or "").strip()
+        if cref and cref in by_ref:
+            return by_ref[cref]
 
         return None
+
+    @staticmethod
+    def _unattributed_on_selection(leg: Dict[str, Any], by_sel: Dict[str, Dict[str, Any]]) -> bool:
+        """True se sul runner della gamba c'e' almeno un ordine dell'exchange (che l'identita' non attribuisce)."""
+        mid = str(leg.get("market_id") or "").strip()
+        sid = str(leg.get("selection_id") or "").strip()
+        return bool(mid and sid and f"{mid}::{sid}" in by_sel)
 
     # ─────────────────────────────────────────────────────────────
     # DECISION LOG – thread-safe, fail-closed
@@ -1754,6 +1754,19 @@ class ReconciliationEngine:
                 remote_order = self._lookup_remote_order(
                     leg, by_ref, by_bet, by_sel
                 )
+                if remote_order is None and self._unattributed_on_selection(leg, by_sel):
+                    # F-13: sul runner c'e' un ordine non attribuibile alla gamba. Non e' adottato (puo' essere di
+                    # qualcun altro) ma la gamba non si chiude FAILED alla cieca (puo' essere il suo, piazzato senza
+                    # ref): resta com'e', con la decisione registrata, finche' l'identita' non si dimostra.
+                    self._log_decision(
+                        batch_id=batch_id, leg_index=leg_index,
+                        case_classification="UNATTRIBUTED_ORDER_ON_SELECTION",
+                        reason_code=ReasonCode.LOCAL_WINS_SAGA_PENDING,
+                        local_status=current_status, exchange_status=None,
+                        resolved_status=current_status, merge_winner="LOCAL",
+                        details={"reason": "ordine_non_attribuibile_sulla_selezione"},
+                    )
+                    continue
                 cref = str(leg.get("customer_ref") or "").strip()
                 saga_pending = bool(cref and cref in pending_saga_refs)
 

@@ -5,6 +5,7 @@ import math
 import uuid
 from typing import Any, Callable, Dict, Optional, Tuple
 
+from core.order_ref import customer_order_ref
 from core.stake_precision import EXCHANGE_MIN_ORDER
 
 #: Minimo del singolo ordine sull'exchange (EUR), dalla fonte unica `core.stake_precision` (riferimento owner 1 EUR,
@@ -91,6 +92,8 @@ class OrderRouter:
             "price": payload["price"],
             "size": payload["stake"],
             "customer_ref": payload.get("customer_ref", ""),
+            # F-13: identita' dell'ordine sul wire (`customerOrderRef`), ritrovabile dopo una risposta persa
+            "customer_order_ref": customer_order_ref(payload.get("customer_ref")),
             "event_key": payload.get("event_key", ""),
             "table_id": payload.get("table_id"),
             "batch_id": payload.get("batch_id", ""),
@@ -267,6 +270,12 @@ class OrderRouter:
         # segnala che esiste (registra il bet_id => niente orphan/retry
         # duplicato), mentre "ok" richiede l'abbinamento.
         placed = status == "SUCCESS" and bool(reports)
+        if str(raw.get("errorCode") or "").strip().upper() == "DUPLICATE_TRANSACTION":
+            # F-13: stessa richiesta (customerRef) gia' vista entro 60 s. Come in LIVE la prima e' viva: esito ignoto,
+            # riconciliazione per identita' e mai un fallimento definitivo (ne' un retry).
+            return cls._result(
+                ok=False, placed=False, order_unknown=True, status="AMBIGUOUS", matched=0.0,
+                bet_id=None, error="DUPLICATE_TRANSACTION", raw=raw)
         if placed and raw.get("snapshot_persisted") is False:
             # #545: ordine creato in memoria ma snapshot di reload NON scritto: un riavvio lo perderebbe. Esito
             # incerto come un ordine live senza risposta: ne' riuscito ne' fallito, riconciliazione e mai retry.

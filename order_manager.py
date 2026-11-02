@@ -9,6 +9,7 @@ from enum import Enum, unique
 from typing import Any, Dict, FrozenSet, Optional, Set, Tuple
 
 from core import validators
+from core.order_ref import customer_order_ref
 from core.type_helpers import safe_float, safe_int, safe_side
 
 logger = logging.getLogger("OrderManager")
@@ -705,6 +706,8 @@ class OrderManager:
             "price": float(payload["price"]),
             "size": float(payload["stake"]),
             "customer_ref": payload.get("customer_ref", ""),
+            # F-13: identita' dell'ordine sul wire (`customerOrderRef`), ritrovabile dopo una risposta persa
+            "customer_order_ref": customer_order_ref(payload.get("customer_ref")),
             "event_key": payload.get("event_key", ""),
             "table_id": payload.get("table_id"),
             "batch_id": payload.get("batch_id", ""),
@@ -785,6 +788,14 @@ class OrderManager:
                     error=error_text, response=response)
             nested = response.get("result")
             report_source = nested if isinstance(nested, dict) else {}
+        elif isinstance(response, dict) and str(response.get("errorCode") or "").strip().upper() == \
+                "DUPLICATE_TRANSACTION":
+            # F-13: il SimulationBroker restituisce la forma Betfair grezza. Stessa richiesta (customerRef) gia' vista
+            # entro 60 s => come in LIVE la prima e' viva: AMBIGUOUS, mai FAILED definitivo.
+            return self._place_non_riuscito(
+                payload, saga_status=OrderStatus.AMBIGUOUS,
+                rc=ReasonCode.AMBIGUOUS_OUTCOME, ec=ErrorClass.AMBIGUOUS,
+                error="DUPLICATE_TRANSACTION", response=response)
 
         # --- interpret response ---
         instruction_report = self._extract_instruction_report(report_source)
