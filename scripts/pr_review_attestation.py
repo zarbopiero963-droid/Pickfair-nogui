@@ -546,9 +546,11 @@ def verify_prelive(gh: GitHub, head_sha: str) -> Dict[str, Any]:
             and r.get("head_sha") == head_sha]
     if not mine:
         return {"passed": False, "reason": "PRELIVE_MISSING"}
-    latest = max(mine, key=lambda r: str(r.get("completed_at") or r.get("started_at") or ""))
-    if latest.get("status") != "completed":
+    # Qualsiasi certificazione dell'head non conclusa => PENDING: una run in coda non ha ancora orari e un ordinamento
+    # per timestamp sceglierebbe una SUCCESS piu' vecchia (rilievo Codex P1 su #602). Fra le concluse vale l'id piu' alto.
+    if any(r.get("status") != "completed" for r in mine):
         return {"passed": False, "reason": "PRELIVE_PENDING"}
+    latest = max(mine, key=lambda r: int(r.get("id") or 0))
     if latest.get("conclusion") != "success":
         return {"passed": False, "reason": f"PRELIVE_{str(latest.get('conclusion')).upper()}"}
     return {"passed": True, "reason": "", "check_run_id": latest.get("id")}

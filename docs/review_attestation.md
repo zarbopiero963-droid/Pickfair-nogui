@@ -100,7 +100,9 @@ Per leggere gli artefatti del proprio run i workflow hanno `actions: read`.
 
   Le PR da fork e gli errori API danno sempre non PASS.
 - `verify-prelive --repo R --pr N`: il check `pf-betfair-certification` dell'app `pickfair-dedicated` deve essere
-  `completed`/`success` sull'head esatto. `pf-betfair-live-certification` (neutral / LIVE_NOT_RUN) non soddisfa né
+  `completed`/`success` sull'head esatto. Se una qualsiasi run di quel check sull'head non è conclusa, l'esito è
+  `PRELIVE_PENDING`: una run in coda non viene mai nascosta da una SUCCESS più vecchia. Fra le run concluse decide
+  quella con l'id più alto. `pf-betfair-live-certification` (neutral / LIVE_NOT_RUN) non soddisfa né
   blocca questo gate, e non abilita mai operazioni reali.
 
 `pr-merge-readiness.yml` esegue i due controlli dopo il gate esistente (che resta), con permesso `attestations: read`.

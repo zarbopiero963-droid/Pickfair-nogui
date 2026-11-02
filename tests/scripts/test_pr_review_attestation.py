@@ -924,3 +924,32 @@ def test_an_out_of_chain_pass_still_never_counts():
     stray = "9" * 40
     d = _decide([_pair("gpt-6.1-sol", stray, HEAD, run=1), _pair("grok-4.7", run=2)])
     assert not d.passed and "RANGE_NOT_IN_PR:gpt-6.1-sol" in d.reasons
+
+
+def test_a_queued_prelive_run_is_not_masked_by_an_older_success():
+    # Codex P1 su #602 (386fed0): SUCCESS run 100 + run 101 in coda senza orari => PENDING, mai PASS
+    class Two(_API):
+        def __call__(self, url):
+            if "/check-runs" in url:
+                runs = [{"id": 100, "name": A.PRELIVE_CHECK, "app": {"slug": A.PRELIVE_APP}, "head_sha": HEAD,
+                         "status": "completed", "conclusion": "success", "completed_at": "2026-11-02T17:00:00Z"},
+                        {"id": 101, "name": A.PRELIVE_CHECK, "app": {"slug": A.PRELIVE_APP}, "head_sha": HEAD,
+                         "status": "queued", "conclusion": None}]
+                return 200, json.dumps({"check_runs": runs}).encode()
+            return super().__call__(url)
+    out = A.verify_prelive(A.GitHub(REPO, "t", http=Two()), HEAD)
+    assert not out["passed"] and out["reason"] == "PRELIVE_PENDING"
+
+
+def test_the_newest_completed_prelive_decides_by_id():
+    class Two(_API):
+        def __call__(self, url):
+            if "/check-runs" in url:
+                runs = [{"id": 101, "name": A.PRELIVE_CHECK, "app": {"slug": A.PRELIVE_APP}, "head_sha": HEAD,
+                         "status": "completed", "conclusion": "failure", "completed_at": "2026-11-02T17:00:00Z"},
+                        {"id": 100, "name": A.PRELIVE_CHECK, "app": {"slug": A.PRELIVE_APP}, "head_sha": HEAD,
+                         "status": "completed", "conclusion": "success", "completed_at": "2026-11-02T18:00:00Z"}]
+                return 200, json.dumps({"check_runs": runs}).encode()
+            return super().__call__(url)
+    out = A.verify_prelive(A.GitHub(REPO, "t", http=Two()), HEAD)
+    assert not out["passed"] and out["reason"] == "PRELIVE_FAILURE"
