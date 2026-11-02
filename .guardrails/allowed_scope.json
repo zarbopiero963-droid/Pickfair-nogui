@@ -3295,6 +3295,29 @@
         "tests/recovery/test_f10_rst03_crash_debt.py"
       ],
       "max_files": 7
+    },
+    "f06_hedge_guard": {
+      "description": "F-06 (#586, CSH-05/MM-02/NF-01; dopo F-05): l'hedge del cashout deve chiudere la posizione. RiskGate.protective_hedge (lato opposto, stake <= chiusura dell'esposizione abbinata sull'exchange, nessun cap di stake); CashoutExecutor lo applica nel preflight del ledger e anche senza ledger; RiskMiddleware non defaulta piu' il lato a LAY. Test esistenti aggiornati perche' il comando porti la posizione d'ingresso reale (original_pos e ordine abbinato).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "cashout_executor.py",
+        "core/risk_gate.py",
+        "core/risk_middleware.py",
+        "docs/cashout_overview.md",
+        "guardrails/mutation_catalog.json",
+        "tests/acceptance/test_issue437_pr04.py",
+        "tests/acceptance/test_issue437_pr28d_integration_512.py",
+        "tests/acceptance/test_issue536_runtime_authority.py",
+        "tests/f05/test_f05_hedge_ledger_units.py",
+        "tests/f06/__init__.py",
+        "tests/f06/test_f06_hedge_guard.py",
+        "tests/test_microstake_cashout_and_recovery.py",
+        "tests/unit/test_cashout_executor.py",
+        "tests/unit/test_simulation_broker_side_parity.py"
+      ],
+      "max_files": 16
     }
   }
 }

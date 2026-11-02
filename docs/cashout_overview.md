@@ -476,6 +476,46 @@ LAY chiuso in BACK a 2.5 => +1.91, a 1.6 => -2.50; LAY con liability 10 a 3.0 (s
 Su piu' livelli: BACK chiuso con LAY 12 a 1.60 + 1 a 2.50 => 12 a 1.60 + 0.32 a 2.50, netto +2.22 (non -2.00).
 Prima il BACK aveva il segno invertito (una perdita sembrava profitto). Test: `tests/core/test_sl_tp_pnl_sign.py`.
 
+### 7.5 Hedge coerente con la posizione (F-06, CSH-05/MM-02/NF-01)
+
+Prima di F-06 `CashoutExecutor` piazzava qualunque lato e size arrivasse nel comando (un hedge BACK su una posizione
+BACK la raddoppia; un LAY 50 su una posizione da 0.23 apre una nuova esposizione) e `RiskMiddleware` metteva
+`side="LAY"` quando il lato mancava. Ora:
+
+- `RiskMiddleware._cashout_side`: lato solo se dichiarato `BACK`/`LAY`; mancante o invalido => `CASHOUT_FAILED`
+  (`side_mancante_o_invalido`), mai un lato di default. L'auto-close del monitor SL/TP (inerte fino a F-02) dovra'
+  quindi mandare il lato dell'hedge;
+- `CashoutExecutor._hedge_coherence_block`, dentro il preflight del ledger (dopo i controlli sugli hedge precedenti
+  di §7.3, sotto lo stesso lock) e anche senza ledger, decide con `RiskGate.protective_hedge`:
+  - lato della posizione da `original_pos` (`cashout_resolver` lo mette sempre); assente/invalido =>
+    `hedge_non_coerente:posizione_assente`;
+  - lato dell'hedge = opposto della posizione, altrimenti `hedge_non_coerente:lato`;
+  - posizione da chiudere = quella IDENTIFICATA dal comando (`original_pos`: stake x prezzo, illeggibile =>
+    `posizione_assente`), limitata dall'alto dall'esposizione NETTA della selezione sull'exchange
+    (`BetfairService.list_current_orders`, che in LIVE riporta anche gli ordini `EXECUTION_COMPLETE`): tutto l'abbinato
+    del lato della posizione meno tutto l'abbinato del lato opposto, hedge compresi (una coppia gia' chiusa dal suo
+    hedge si annulla, Sol su `73296a3`), `sizeMatched * averagePriceMatched`
+    (se <= 1: `priceSize.price`, come `cashout_resolver._row_matched_price`). Vale il minore dei due: altri ingressi
+    dello stesso lato (manuali, altri tavoli) non allargano mai l'hedge, una coppia gia' neutra non conta e una chiusura
+    gia' abbinata lo riduce (Sol su `a16f0d3`). Esposizione nulla => `posizione_assente`; ordini illeggibili,
+    malformati o in errore, `sizeMatched` assente o non numerico (mai letto come zero, Codex su `73296a3`), una riga
+    che non si puo' escludere con certezza dalla selezione (mercato illeggibile; selezione illeggibile sul mercato
+    target; lato illeggibile sulla selezione target, Codex su `954c2cd`; grafie camelCase/snake_case
+    dell'identificativo presenti e in disaccordo, Sol su `360aa7d`) =>
+    `hedge_non_coerente:posizione_non_verificabile`. Un `original_pos` col lato opposto alla posizione reale ha netto
+    negativo sul lato dichiarato => rifiuto (mai un raddoppio);
+  - stake dell'hedge <= `esposizione / prezzo_hedge + 0.005` (confronto esatto in Decimal: il mezzo centesimo e'
+    il massimo che l'arrotondamento ROUND_HALF_UP del resolver aggiunge), altrimenti `hedge_non_coerente:size`. Un
+    secondo arrotondamento su un float rifiutava green-up legittimi al confine (0.35 x 11.0 / 4.4 = 0.875 => 0.88
+    dal resolver, 0.87 ricalcolato). Nessun cap di stake: Roserpina resta l'unica autorita'
+    sullo stake d'ingresso, qui si verifica solo che l'hedge chiuda (PF-EXEC-03, nessun inseguimento);
+  - senza fonte ordini (doppi di test) l'esposizione e' quella di `original_pos` (`stake * price`): il controllo non
+    si salta mai.
+
+Esempio: BACK 0.23 abbinato a 2.0 (esposizione 0.46), chiusura a 1.8 => hedge LAY massimo 0.26; LAY 50 => rifiuto.
+Limite: ordini manuali del lato opposto sulla stessa selezione riducono il netto e possono far rifiutare il green-up
+del bot (fail-closed: mai un hedge oltre l'esposizione reale). Test: `tests/f06/`; mutazioni `f06_*`.
+
 ---
 
 ## 8. Limiti noti & possibili aggiunte (follow-up)

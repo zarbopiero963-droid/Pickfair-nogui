@@ -369,7 +369,8 @@ def _async_cashout_chain(c, monkeypatch, *, hedges=(("1.234", 11),)):
     def route(router, signal):
         for market_id, selection_id in hedges:
             router.publish("REQ_EXECUTE_CASHOUT", {"market_id": market_id, "selection_id": selection_id,
-                                                   "side": "LAY", "stake": 0.5, "price": 2.0})
+                                                   "side": "LAY", "stake": 0.5, "price": 2.0,
+                                                   "original_pos": {"side": "BACK", "stake": 0.25, "price": 4.0}})  # F-06
         return {"published": len(hedges), "positions": len(hedges), "skipped": 0}
 
     monkeypatch.setattr(cashout_router.CashoutRouter, "route", route)
@@ -544,7 +545,8 @@ def _real_cashout_chain(c, monkeypatch, *, result=None, residual_cancel_ok=True,
 
     def route(router, signal):
         router.publish("REQ_EXECUTE_CASHOUT", {"market_id": "1.234", "selection_id": 11, "side": "LAY",
-                                               "stake": 0.5, "price": 2.0, "green_up": 0.1})
+                                               "stake": 0.5, "price": 2.0, "green_up": 0.1,
+                                               "original_pos": {"side": "BACK", "stake": 0.25, "price": 4.0}})  # F-06: posizione BACK reale
         return {"published": 1, "positions": 1, "skipped": 0}
 
     monkeypatch.setattr(cashout_router.CashoutRouter, "route", route)
@@ -662,7 +664,8 @@ def test_cancel_after_the_grace_timer_started_keeps_the_barrier_until_the_hedge_
     def route_with_cancel_in_between(router, signal):
         c.rc._cancel_pending_auto_green()          # CASHOUT_ALL concorrente mentre il Timer instrada
         router.publish("REQ_EXECUTE_CASHOUT", {"market_id": "1.234", "selection_id": 11, "side": "LAY",
-                                               "stake": 0.5, "price": 2.0})
+                                               "stake": 0.5, "price": 2.0,
+                                               "original_pos": {"side": "BACK", "stake": 0.25, "price": 4.0}})  # F-06
         return {"published": 1}
 
     import cashout_router
