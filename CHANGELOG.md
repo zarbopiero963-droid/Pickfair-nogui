@@ -15,6 +15,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   la verifica (workflow su main, evento, commit, contenuto, diff realmente revisionato, copertura fino all'head) per Merge
   readiness e VPS; Merge readiness richiede anche `pf-betfair-certification` SUCCESS sull'head (LIVE escluso). I gate
   esistenti restano. `docs/review_attestation.md`, spec §0.7; test `tests/scripts/test_pr_review_attestation.py`.
+- **Merge readiness veloce e fail-closed (#586, PF-MERGE-READINESS-FAST-01, PF-CI-PERFORMANCE-FINAL-01):**
+  - ogni chiamata `gh` ha un timeout;
+  - gli errori transitori (timeout, 5xx, rete, rate limit) si ritentano al massimo 3 volte con backoff;
+  - mentre ci sono check pending non si paginano i thread di review;
+  - il polling si allunga a 60 s mentre si aspetta un check lento;
+  - c'è una scadenza complessiva sotto il timeout del job;
+  - un head cambiato durante la verifica rende la PR non pronta;
+  - nuovo stato leggibile `readiness_status`: READY, PENDING_EXTERNAL, BLOCKED, FAILED o TIMEOUT; solo READY rende
+    la PR mergiabile.
+
+  Con `--pending-external-exit-after` la readiness non occupa più il runner per tutto il PRE-LIVE: viene rieseguita da
+  `pr-readiness-retrigger.yml` quando Pickfair Dedicated conclude `pf-betfair-certification`. Lo stato LIVE
+  (`live_certification`, `live_readiness`) è riportato solo come informazione. Documentazione:
+  `docs/merge_readiness_performance.md`.
 
 ### Changed
 - **Governance §0.9-ter (#586, owner 01/11/2026 «TEMPORARY MERGE DELEGATION — ROADMAP V2»):** delega owner

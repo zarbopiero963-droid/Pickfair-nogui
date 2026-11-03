@@ -73,15 +73,43 @@ def validate_command_args(cmd: list[str]) -> None:
             raise ValueError("invalid command argument")
 
 
-def sh(cmd: list[str], *, check: bool = True) -> str:
+# PF-MERGE-READINESS-FAST-01 (#586): nessuna chiamata esterna senza scadenza. Prima `gh` poteva restare appeso
+# fino al timeout del job (120 min); ora ogni chiamata ha un limite configurabile e lo scadere e' un errore esplicito.
+GH_CALL_TIMEOUT_SECONDS = float(os.environ.get("PF_GH_CALL_TIMEOUT_SECONDS", "60"))
+OTHER_CALL_TIMEOUT_SECONDS = float(os.environ.get("PF_CALL_TIMEOUT_SECONDS", "300"))
+GH_RETRIES = max(1, int(os.environ.get("PF_GH_RETRIES", "3")))
+GH_RETRY_BACKOFF_SECONDS = float(os.environ.get("PF_GH_RETRY_BACKOFF_SECONDS", "2"))
+_TRANSIENT_GH_ERRORS = (
+    "timed out", "i/o timeout", "connection reset", "connection refused", "unexpected eof", "eof",
+    "http 500", "http 502", "http 503", "http 504", "502 bad gateway", "503 service", "504 gateway",
+    "something went wrong", "secondary rate limit", "api rate limit exceeded", "tls handshake timeout",
+)
+
+
+class TransientGitHubError(RuntimeError):
+    """Errore di GitHub che vale la pena ritentare (timeout, 5xx, rete, rate limit). Mai un PASS."""
+
+
+def is_transient_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return isinstance(exc, TransientGitHubError) or any(marker in text for marker in _TRANSIENT_GH_ERRORS)
+
+
+def sh(cmd: list[str], *, check: bool = True, timeout: float | None = None) -> str:
     safe_cmd = validate_command(cmd)
-    proc = subprocess.run(  # nosec B603  # nosemgrep
-        safe_cmd,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    limit = timeout if timeout is not None else (
+        GH_CALL_TIMEOUT_SECONDS if safe_cmd and safe_cmd[0].endswith("gh") else OTHER_CALL_TIMEOUT_SECONDS)
+    try:
+        proc = subprocess.run(  # nosec B603  # nosemgrep
+            safe_cmd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=limit,
+        )
+    except subprocess.TimeoutExpired:
+        raise TransientGitHubError(f"command timed out after {limit:g}s: {' '.join(safe_cmd[:3])}") from None
     if check and proc.returncode:
         raise RuntimeError(
             f"command failed: {' '.join(safe_cmd)}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
@@ -90,7 +118,16 @@ def sh(cmd: list[str], *, check: bool = True) -> str:
 
 
 def gh_json(cmd: list[str]) -> Any:
-    return json.loads(sh(cmd))
+    """``gh`` con JSON in uscita. Errori transitori ritentati al massimo ``GH_RETRIES`` volte con backoff
+    esponenziale (2 s, 4 s, ...): l'attesa massima e' limitata e nota. Errori non transitori subito, invariati."""
+    for attempt in range(1, GH_RETRIES + 1):
+        try:
+            return json.loads(sh(cmd))
+        except (RuntimeError, ValueError) as exc:
+            if attempt >= GH_RETRIES or not is_transient_error(exc):
+                raise
+            time.sleep(GH_RETRY_BACKOFF_SECONDS * 2 ** (attempt - 1))
+    raise AssertionError("unreachable")
 
 
 def norm_state(value: Any) -> str:
@@ -629,7 +666,10 @@ def _base_decision_result(can_merge: bool, already_merged: bool) -> dict[str, An
     # PF-REVIEW-RECOVERY-01: UNKNOWN finche' cmd_readiness non lo calcola dai commenti (mai PASS di default).
     return {"next_action": next_action,
             "ai_review_gate": {"gate": {"status": "UNKNOWN", "reason": "non calcolato"}},
-            "ai_review_gate_status": "UNKNOWN"}
+            "ai_review_gate_status": "UNKNOWN",
+            # PF-CI-PERFORMANCE-FINAL-01 / PF-DUAL-CERTIFICATION-01: impostati da cmd_readiness; default mai PASS
+            "readiness_status": "READY" if can_merge else "BLOCKED", "readiness_elapsed_seconds": None,
+            "live_certification": "UNKNOWN", "live_readiness": "UNKNOWN"}
 
 
 def _pr_actor_login(value: Any) -> Any:
@@ -1691,9 +1731,126 @@ def _normalized_issue_field(issue: dict[str, Any], *keys: str) -> str:
 INTERVALLI_STABILI_RICHIESTI = 2
 
 
+def _api_unavailable_decision(pr_number: str, error: BaseException) -> dict[str, Any]:
+    """Decisione quando GitHub non risponde entro i limiti: mai pronta, motivo esplicito."""
+    return {"pr": str(pr_number), "can_merge": False, "already_merged": False, "mergeable": "UNKNOWN",
+            "mergeStateStatus": "UNKNOWN", "pending": [], "checks_seen": 0, "headRefOid": None,
+            "reasons": [f"github_api_unavailable: {type(error).__name__}: {str(error)[:200]}"],
+            "next_action": "retry_readiness"}
+
+
+def _fetch_or_keep(fetch, previous: dict[str, Any] | None, errors: list[str]) -> dict[str, Any] | None:
+    """Una lettura di GitHub; un errore transitorio (gia' ritentato da ``gh_json``) non chiude il gate: si tiene
+    l'ultima lettura buona e si conta l'errore. Un errore non transitorio sale come prima."""
+    try:
+        return fetch()
+    except (RuntimeError, ValueError, OSError) as exc:
+        if not is_transient_error(exc):
+            raise
+        errors.append(f"{type(exc).__name__}: {str(exc)[:160]}")
+        return previous
+
+
+# Check pubblicati da servizi esterni lenti (PRE-LIVE della VPS, Pickfair Dedicated). Con l'uscita anticipata
+# (--pending-external-exit) la readiness non occupa un runner per tutta la certificazione: termina NON pronta con
+# stato PENDING_EXTERNAL e viene rieseguita da .github/workflows/pr-readiness-retrigger.yml quando il check finisce.
+EXTERNAL_CHECKS = {"pf-betfair-certification"}
+READINESS_STATUSES = ("READY", "PENDING_EXTERNAL", "BLOCKED", "FAILED", "TIMEOUT")
+
+
+def readiness_status(decision: dict[str, Any], *, deadline_hit: bool = False) -> str:
+    """Stato leggibile del giudizio. Solo READY corrisponde a ``can_merge``; tutti gli altri sono NON pronti.
+
+    TIMEOUT = scadenza o GitHub non disponibile (nessun giudizio sui check, non un fallimento del codice);
+    PENDING_EXTERNAL = restano solo check esterni lenti ancora in corso; FAILED = un check e' rosso;
+    BLOCKED = qualsiasi altro motivo (review, thread, label manuale, head cambiato, ...)."""
+    if decision.get("can_merge"):
+        return "READY"
+    reasons = [str(r) for r in decision.get("reasons") or []]
+    if deadline_hit or any(r.startswith(("github_api_unavailable", "readiness_deadline_exceeded")) for r in reasons):
+        return "TIMEOUT"
+    pending = {str((p or {}).get("name") if isinstance(p, dict) else p).strip().lower()
+               for p in decision.get("pending") or []}
+    external = {c.lower() for c in EXTERNAL_CHECKS}
+    if pending and pending <= external and not decision.get("blockers"):
+        return "PENDING_EXTERNAL"
+    if decision.get("blockers") or any("FAILURE" in r.upper() for r in reasons):
+        return "FAILED"
+    return "BLOCKED"
+
+
+LIVE_CHECK = "pf-betfair-live-certification"
+LIVE_APP = "pickfair-dedicated"
+_LIVE_READINESS_RE = re.compile(r"\bLIVE_READINESS[_=:\s]*(PASS|BLOCKED)\b")
+
+
+def live_readiness_from_checks(check_runs: list[dict[str, Any]], head_sha: str) -> dict[str, Any]:
+    """PF-DUAL-CERTIFICATION-01: stato LIVE della PR, SOLO informativo (mai un requisito di merge, mai atteso).
+
+    Si legge il check ``pf-betfair-live-certification`` dell'app Pickfair Dedicated sull'head esatto:
+    - ``live_certification``: NOT_RUN (neutral), CERTIFIED (success), FAILED, PENDING o MISSING;
+    - ``live_readiness``: PASS o BLOCKED se il titolo/riepilogo riporta ``LIVE_READINESS_PASS|BLOCKED``,
+      altrimenti UNKNOWN. LIVE_READINESS_PASS non e' LIVE_CERTIFIED.
+    Un check di un'altra app o di un altro head non conta."""
+    mine = [r for r in check_runs if r.get("name") == LIVE_CHECK and ((r.get("app") or {}).get("slug")) == LIVE_APP
+            and r.get("head_sha") == head_sha]
+    if not mine:
+        return {"live_certification": "MISSING", "live_readiness": "UNKNOWN"}
+    run = max(mine, key=lambda r: int(r.get("id") or 0))
+    concl = run.get("conclusion")
+    cert = ("PENDING" if run.get("status") != "completed" else
+            {"neutral": "NOT_RUN", "success": "CERTIFIED"}.get(str(concl), "FAILED"))
+    text = " ".join(str((run.get("output") or {}).get(k) or "") for k in ("title", "summary"))
+    m = _LIVE_READINESS_RE.search(text)
+    return {"live_certification": cert, "live_readiness": m.group(1) if m else "UNKNOWN",
+            "live_check_run_id": run.get("id")}
+
+
+def live_readiness(repo: str, head_sha: Any) -> dict[str, Any]:
+    if not isinstance(head_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+        return {"live_certification": "MISSING", "live_readiness": "UNKNOWN"}
+    try:
+        data = gh_json(["gh", "api", f"repos/{repo}/commits/{head_sha}/check-runs?check_name={LIVE_CHECK}"])
+    except (RuntimeError, ValueError, OSError) as exc:
+        return {"live_certification": "UNKNOWN", "live_readiness": "UNKNOWN",
+                "live_error": f"{type(exc).__name__}: {str(exc)[:120]}"}
+    return live_readiness_from_checks((data or {}).get("check_runs") or [], head_sha)
+
+
+def _only_external_pending(decision: dict[str, Any]) -> bool:
+    pending = decision.get("pending") or []
+    names = {str((p or {}).get("name") if isinstance(p, dict) else p).strip().lower() for p in pending}
+    return bool(names) and names <= {c.lower() for c in EXTERNAL_CHECKS}
+
+
+def _poll_interval(args: argparse.Namespace, waited: float, pending: bool) -> float:
+    """Intervallo di polling: quello base finche' si conta la stabilita' (pending vuoto) o nei primi
+    ``backoff_after_seconds``; poi ``max_poll_seconds`` mentre si aspetta un check lento (es. PRE-LIVE)."""
+    base = float(args.poll_seconds)
+    if pending and waited >= float(getattr(args, "backoff_after_seconds", 300) or 300):
+        return max(base, float(getattr(args, "max_poll_seconds", base) or base))
+    return base
+
+
 def cmd_readiness(args: argparse.Namespace) -> int:
-    deadline = time.time() + args.wait_unknown_seconds
-    decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
+    started = time.time()
+    # Scadenza complessiva (PF-MERGE-READINESS-FAST-01): il gate scrive SEMPRE un giudizio motivato prima che il job
+    # venga ucciso dal timeout di Actions. 0 = nessuna scadenza oltre le attese gia' previste.
+    overall = float(getattr(args, "deadline_seconds", 0) or 0)
+    hard_deadline = started + overall if overall > 0 else float("inf")
+    api_errors: list[str] = []
+    try:
+        decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
+    except (RuntimeError, ValueError, OSError) as exc:
+        if not is_transient_error(exc):
+            raise
+        decision = _api_unavailable_decision(args.pr, exc)
+        api_errors.append(f"{type(exc).__name__}: {str(exc)[:160]}")
+    # Ultima lettura riuscita? Una lettura tenuta per errore transitorio NON e' una verifica: non conta come intervallo
+    # stabile e non puo' essere il giudizio finale (Sol su #603).
+    last_fresh = not api_errors
+    first_head = decision.get("headRefOid")
+    deadline = min(time.time() + args.wait_unknown_seconds, hard_deadline)
 
     while (
         args.wait_unknown_seconds > 0
@@ -1703,7 +1860,11 @@ def cmd_readiness(args: argparse.Namespace) -> int:
         and (decision["mergeable"] == "UNKNOWN" or decision["mergeStateStatus"] == "UNKNOWN")
     ):
         time.sleep(args.poll_seconds)
-        decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
+        n_errors = len(api_errors)
+        decision = _fetch_or_keep(lambda: _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix),
+                                  decision, api_errors)
+        last_fresh = len(api_errors) == n_errors
+        first_head = first_head or decision.get("headRefOid")
 
     # I check dell'head non sono istantanei. La run `pull_request` parte ~20s
     # dopo il push, quando decine di check sono ancora in volo: decidere li'
@@ -1718,7 +1879,7 @@ def cmd_readiness(args: argparse.Namespace) -> int:
     # Fail-closed: scaduto il budget si giudica lo stato REALE. Se i check non
     # sono finiti `can_merge` resta falso e il gate fallisce. L'attesa serve a
     # dare un giudizio vero, non a fabbricare un verde.
-    deadline_pending = time.time() + args.wait_pending_seconds
+    deadline_pending = min(time.time() + args.wait_pending_seconds, hard_deadline)
     # Terza condizione: il rollup non deve piu' CRESCERE.
     #
     # "Ho visto almeno un check" non basta (rilievo di Claude Fable 5 sulla
@@ -1742,10 +1903,21 @@ def cmd_readiness(args: argparse.Namespace) -> int:
             or decision.get("checks_seen", 0) <= 0
             or intervalli_stabili < INTERVALLI_STABILI_RICHIESTI
         )
+        and not (
+            float(getattr(args, "pending_external_exit_after", 0) or 0) > 0
+            and time.time() - started >= float(getattr(args, "pending_external_exit_after", 0) or 0)
+            and _only_external_pending(decision)
+        )
     ):
         visti_prima = decision.get("checks_seen", 0)
-        time.sleep(args.poll_seconds)
-        decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
+        # Il sonno non supera mai la scadenza complessiva (Codex su #603).
+        time.sleep(max(0.0, min(_poll_interval(args, time.time() - started, bool(decision.get("pending"))),
+                                hard_deadline - time.time())))
+        n_errors = len(api_errors)
+        decision = _fetch_or_keep(lambda: _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix),
+                                  decision, api_errors)
+        last_fresh = len(api_errors) == n_errors
+        first_head = first_head or decision.get("headRefOid")
         # Il contatore si aggiorna sulla lettura APPENA FATTA, non su quella
         # precedente. Calcolarlo prima del fetch (come faceva la prima stesura,
         # rilievo di Grok 4.6) significa che la condizione d'uscita consulta un
@@ -1760,7 +1932,8 @@ def cmd_readiness(args: argparse.Namespace) -> int:
         # finestra DOPO. Costa due poll (~30s) su un gate che ne impiega ~300.
         intervalli_stabili = (
             intervalli_stabili + 1
-            if decision.get("checks_seen", 0) == visti_prima
+            if last_fresh
+            and decision.get("checks_seen", 0) == visti_prima
             and not decision.get("pending")
             else 0
         )
@@ -1788,7 +1961,34 @@ def cmd_readiness(args: argparse.Namespace) -> int:
         if motivo not in decision.setdefault("reasons", []):
             decision["reasons"].append(motivo)
 
-    decision["ai_review_gate"] = ai_review_gate(args.repo, args.pr, decision.get("headRefOid"))
+    # L'ultima lettura e' fallita: si terrebbe un giudizio non riverificato. Mai pronta (TIMEOUT, non FAILED).
+    if not last_fresh and not decision.get("already_merged"):
+        decision["can_merge"] = False
+        motivo = "github_api_unavailable: last read failed, decision not re-verified"
+        if motivo not in decision.setdefault("reasons", []):
+            decision["reasons"].append(motivo)
+
+    # Nuovo SHA durante la verifica: il giudizio riguarderebbe un head diverso da quello osservato all'inizio.
+    if first_head and decision.get("headRefOid") and decision.get("headRefOid") != first_head:
+        decision["can_merge"] = False
+        decision.setdefault("reasons", []).append(
+            f"head_changed_during_readiness: {str(first_head)[:12]} -> {str(decision['headRefOid'])[:12]}")
+    if time.time() >= hard_deadline and not decision.get("already_merged"):
+        decision["can_merge"] = False
+        decision.setdefault("reasons", []).append(f"readiness_deadline_exceeded: {overall:g}s")
+    decision.update({"readiness_elapsed_seconds": round(time.time() - started, 1),
+                     "readiness_status": readiness_status(decision, deadline_hit=time.time() >= hard_deadline)}
+                    | ({"github_api_errors": api_errors[-5:]} if api_errors else {}))
+
+    # Informativo: non cambia can_merge e non si attende (la certificazione LIVE transazionale non e' un requisito
+    # di merge delle PR di sviluppo, PF-DUAL-CERTIFICATION-01 §5).
+    # Scadenza superata: nessuna chiamata in piu' prima di scrivere il giudizio (Codex su #603), i campi restano UNKNOWN.
+    if time.time() >= hard_deadline:
+        decision.update({"live_certification": "UNKNOWN", "live_readiness": "UNKNOWN"})
+        decision["ai_review_gate"] = {"gate": {"status": "UNKNOWN", "reason": "readiness_deadline_exceeded"}}
+    else:
+        decision.update(live_readiness(args.repo, decision.get("headRefOid")))
+        decision["ai_review_gate"] = ai_review_gate(args.repo, args.pr, decision.get("headRefOid"))
     decision["ai_review_gate_status"] = str(((decision["ai_review_gate"] or {}).get("gate") or {}).get("status")
                                             or "UNKNOWN")
     print(json.dumps(decision, indent=2, sort_keys=True))
@@ -1818,6 +2018,14 @@ def ai_review_gate(repo: str, pr_number: str, head_sha: Any) -> dict[str, Any]:
 
 
 def _readiness_decision(repo: str, pr_number: str, ignore_self: bool) -> dict[str, Any]:
+    # PF-MERGE-READINESS-FAST-01: con check ancora pending il giudizio e' comunque "non pronta" e i thread di review
+    # non cambiano nulla, quindi non si paginano a ogni giro di attesa (prima: rollup + tutti i thread ogni 15 s per
+    # tutta la durata del PRE-LIVE). Appena i pending sono finiti si legge tutto e si giudica sulla lettura completa.
+    light = build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=None)
+    if light.get("pending") and not light.get("already_merged"):
+        light["can_merge"] = False
+        light["review_threads_deferred"] = True
+        return light
     try:
         review_threads = fetch_all_review_threads(repo, pr_number)
     except (RuntimeError, ValueError, OSError, AttributeError):
@@ -2438,6 +2646,14 @@ def main() -> int:
     p.add_argument("--wait-unknown-seconds", type=int, default=0)
     p.add_argument("--wait-pending-seconds", type=int, default=0)
     p.add_argument("--poll-seconds", type=int, default=10)
+    p.add_argument("--max-poll-seconds", type=int, default=60,
+                   help="intervallo di polling dopo --backoff-after-seconds mentre ci sono check pending")
+    p.add_argument("--backoff-after-seconds", type=int, default=300)
+    p.add_argument("--pending-external-exit-after", type=int, default=0,
+                   help="dopo N s, se restano pending SOLO check esterni (PRE-LIVE), termina NON pronta con stato "
+                        "PENDING_EXTERNAL invece di occupare il runner (0 = disattivato)")
+    p.add_argument("--deadline-seconds", type=int, default=0,
+                   help="scadenza complessiva del gate: oltre, giudizio motivato e mai pronta (0 = nessuna)")
     p.add_argument("--output", default="")
     p.add_argument("--no-fail", action="store_true")
     p.set_defaults(func=cmd_readiness)

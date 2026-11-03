@@ -434,6 +434,8 @@ WORKFLOW_NOT_MIGRATED = {
     "queue-on-pr-closed": "recupero manuale della coda task: scrive sul repository, non e' un controllo",
     "pr-overlap-guard-diagnostic": "diagnostica manuale della lane trusted (overlap-check), non della full-suite",
     "_module-ultra-check": "workflow riusabile: eseguito tramite i moduli (`ultra_check`, `MODULES`)",
+    "pr-readiness-retrigger": "riattivazione della Merge readiness su `check_run` del PRE-LIVE: unica scrittura un rerun, "
+                              "non e' un controllo (PF-CI-PERFORMANCE-FINAL-01)",
 }
 
 #: cio' che la migrazione NON certifica, workflow per workflow: mai dichiarato PASS

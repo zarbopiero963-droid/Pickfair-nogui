@@ -2070,9 +2070,12 @@ def test_cmd_readiness_active_review_thread_blocks_merge(monkeypatch):
         lambda *_args: [{"id": "thread-1", "isResolved": False, "isOutdated": False}],
     )
 
+    calls = []
+
     def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
         ASSERTIONS.assertEqual(ignore_self, True)
-        ASSERTIONS.assertEqual(review_threads, [{"id": "thread-1", "isResolved": False, "isOutdated": False}])
+        # PF-MERGE-READINESS-FAST-01: prima una lettura leggera senza thread; senza pending segue quella completa
+        calls.append(review_threads)
         return {
             "already_merged": False,
             "can_merge": False,
@@ -2097,6 +2100,7 @@ def test_cmd_readiness_active_review_thread_blocks_merge(monkeypatch):
     )
 
     ASSERTIONS.assertEqual(rc, 1)
+    ASSERTIONS.assertEqual(calls[-1], [{"id": "thread-1", "isResolved": False, "isOutdated": False}])
 
 
 def _stub_readiness_fetch_failure(monkeypatch) -> None:
