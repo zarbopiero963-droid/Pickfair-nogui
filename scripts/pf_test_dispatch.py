@@ -401,6 +401,36 @@ def _gh(path: str) -> Any:
     return json.loads(out.stdout or "null")
 
 
+MAX_CHECK_RUN_PAGES = 20
+
+
+def _gh_pages(path: str) -> Any:
+    """Tutte le pagine di un elenco, con ``page=N`` esplicito sullo stesso percorso ``repos/<owner>/<repo>/…``.
+
+    Non si usa ``gh --paginate``: segue i link ``next`` di GitHub, che puntano a ``repositories/<id>/…`` (non sempre
+    raggiungibile, per esempio dietro un proxy). Si chiede la pagina successiva finche' l'ultima e' piena; oltre
+    ``MAX_CHECK_RUN_PAGES`` il risultato non e' verificabile (``Refused``), mai un elenco parziale."""
+    sep = "&" if "?" in path else "?"
+    pages = []
+    for n in range(1, MAX_CHECK_RUN_PAGES + 1):
+        page = _gh(f"{path}{sep}page={n}")
+        pages.append(page)
+        items = page.get("check_runs") if isinstance(page, dict) else None
+        if not isinstance(items, list) or len(items) < 100:
+            return pages
+    raise Refused("GITHUB_API_TOO_MANY_PAGES")
+
+
+def all_check_runs(repo: str, sha: str) -> list:
+    """Check run del commit su tutte le pagine. Forma inattesa => ``Refused``, mai un elenco vuoto (che direbbe
+    ``NOT_REQUESTED`` per suite magari concluse)."""
+    pages = _gh_pages(f"repos/{repo}/commits/{sha}/check-runs?per_page=100")
+    if not isinstance(pages, list) or not all(isinstance(p, dict) and isinstance(p.get("check_runs"), list)
+                                              for p in pages):
+        raise Refused("GITHUB_API_MALFORMED")
+    return [c for p in pages for c in p["check_runs"]]
+
+
 def main(argv: Optional[list] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -453,11 +483,11 @@ def main(argv: Optional[list] = None) -> int:
         if args.dev_key:
             if not re.fullmatch(r"[0-9a-f]{64}", args.dev_key):
                 raise Refused("MALFORMED_KEY")
-            runs = (_gh(f"repos/{args.repo}/commits/{args.sha}/check-runs?per_page=100") or {}).get("check_runs", [])
+            runs = all_check_runs(args.repo, args.sha)
             print(json.dumps(dev_status(args.dev_key, args.sha, runs), sort_keys=True))
             return 0
         suites = resolve_target(validate_catalog(catalog_raw), args.target)
-        runs = (_gh(f"repos/{args.repo}/commits/{args.sha}/check-runs?per_page=100") or {}).get("check_runs", [])
+        runs = all_check_runs(args.repo, args.sha)
         per_suite = [suite_status(s, args.sha, runs) for s in suites]
         print(json.dumps({"target": args.target, "sha": args.sha, "state": campaign_state([p["state"] for p in
                                                                                               per_suite]),

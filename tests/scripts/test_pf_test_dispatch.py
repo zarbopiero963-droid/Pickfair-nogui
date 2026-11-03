@@ -299,7 +299,7 @@ def test_cli_build_writes_a_verifiable_request(monkeypatch, tmp_path, capsys):
 
 def test_cli_status_reports_the_campaign_verdict(monkeypatch, capsys):
     runs = [_cr(1, name="pf-test/recovery")]
-    monkeypatch.setattr(D, "_gh", lambda p: {"check_runs": runs})
+    monkeypatch.setattr(D, "_gh_pages", lambda p: [{"check_runs": runs}])
     assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA]) == 0
     assert json.loads(capsys.readouterr().out)["state"] == "PASS"
 
@@ -419,3 +419,49 @@ def test_cli_dev_build_checks_paths_on_the_pr_code(monkeypatch, tmp_path, capsys
     _env(monkeypatch, PF_REQ_TARGET="dev:tests/missing_test.py")
     assert D.main(["build", "--output", str(tmp_path / "r2.json")]) == 1
     assert json.loads(capsys.readouterr().out)["refused"] == "DEV_PATH_MISSING"
+
+
+# ── Codex P2 su #606: un SHA ha piu' di 100 check run, si leggono TUTTE le pagine ──────────────────────────────
+def test_status_reads_every_page_of_check_runs(monkeypatch, capsys):
+    page1 = [_cr(i, name=f"ci/job-{i}") for i in range(1, 101)]
+    page2 = [_cr(500, name="pf-test/recovery")]
+    seen = []
+    monkeypatch.setattr(D, "_gh_pages", lambda p: seen.append(p) or [{"check_runs": page1}, {"check_runs": page2}])
+    assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA]) == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "PASS"
+    assert seen == [f"repos/{REPO}/commits/{SHA}/check-runs?per_page=100"]
+
+
+def test_dev_status_reads_every_page_of_check_runs(monkeypatch, capsys):
+    key = dev()["idempotency_key"]
+    pages = [{"check_runs": [_cr(i, name=f"ci/{i}") for i in range(100)]},
+             {"check_runs": [_cr(900, name=D.dev_check_name(key))]}]
+    monkeypatch.setattr(D, "_gh_pages", lambda p: pages)
+    assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA, "--dev-key", key]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["state"] == "PASS" and out["certification"] is False
+
+
+@pytest.mark.parametrize("pages", [None, [{"check_runs": "x"}], [{"nope": []}], "garbage"])
+def test_malformed_check_run_pages_are_refused_not_read_as_empty(monkeypatch, capsys, pages):
+    monkeypatch.setattr(D, "_gh_pages", lambda p: pages)
+    assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA]) == 1
+    assert json.loads(capsys.readouterr().out)["refused"] == "GITHUB_API_MALFORMED"
+
+
+def test_pages_are_requested_explicitly_until_a_short_page(monkeypatch):
+    calls = []
+    full = {"check_runs": [_cr(i) for i in range(100)]}
+    short = {"check_runs": [_cr(1000)]}
+    monkeypatch.setattr(D, "_gh", lambda p: calls.append(p) or (full if p.endswith("page=1") else short))
+    runs = D.all_check_runs(REPO, SHA)
+    assert len(runs) == 101
+    assert calls == [f"repos/{REPO}/commits/{SHA}/check-runs?per_page=100&page=1",
+                     f"repos/{REPO}/commits/{SHA}/check-runs?per_page=100&page=2"]
+
+
+def test_too_many_pages_is_unverifiable_never_partial(monkeypatch):
+    full = {"check_runs": [_cr(i) for i in range(100)]}
+    monkeypatch.setattr(D, "_gh", lambda p: full)
+    with pytest.raises(D.Refused, match="^GITHUB_API_TOO_MANY_PAGES$"):
+        D.all_check_runs(REPO, SHA)
