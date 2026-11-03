@@ -999,7 +999,7 @@ def test_the_newest_completed_prelive_decides_by_id():
 
 
 # ── Governance #606: dopo un non-PASS il workflow chiede una review dell'INTERO diff ───────────────────────────
-def _needs_full(path, comments, base=BASE):
+def _needs_full(path, comments, base=BASE, order=None):
     import ast
     import re as _re
     _w, py = _workflow_python(path)
@@ -1010,7 +1010,9 @@ def _needs_full(path, comments, base=BASE):
     assert fns, f"rr_needs_full_review assente in {path}"
     ns = {"re": _re}
     exec(compile(ast.Module(body=assigns + fns, type_ignores=[]), path, "exec"), ns)
-    return ns["rr_needs_full_review"](comments, "gpt56sol" if "sol" in path else "grok46", base)
+    if order is None:                                                    # commit della PR, dal piu' vecchio
+        order = {C1[:12]: 0, C2[:12]: 1, HEAD[:12]: 2}
+    return ns["rr_needs_full_review"](comments, "gpt56sol" if "sol" in path else "grok46", base, order)
 
 
 def _rc(path, frm, to, *states, when="2026-11-03T10:00:00Z", login="github-actions[bot]"):
@@ -1051,6 +1053,35 @@ def test_a_non_pass_after_the_full_diff_pass_requires_another_full_review(path):
 
 
 @pytest.mark.parametrize("path", WFS)
+def test_a_later_full_pass_that_stops_before_the_blocked_head_keeps_the_full_review(path):
+    """Rilievo Sol su #607: BLOCKERS su C1...C2, poi un PASS BASE...C1 piu' recente. Il PASS non arriva all'head
+    bloccato: il verificatore lascia aperto il bloccante, quindi anche il workflow deve chiedere l'intero diff."""
+    comments = [_rc(path, C1, C2, "VALID_BLOCKERS", when="2026-11-03T10:00:00Z"),
+                _rc(path, BASE, C1, "VALID_PASS", when="2026-11-03T11:00:00Z")]
+    assert _needs_full(path, comments) is True
+    reaching = comments + [_rc(path, BASE, C2, "VALID_PASS", when="2026-11-03T12:00:00Z")]
+    assert _needs_full(path, reaching) is False                                 # un PASS fino a C2 (o oltre) chiude
+    beyond = comments + [_rc(path, BASE, HEAD, "VALID_PASS", when="2026-11-03T12:00:00Z")]
+    assert _needs_full(path, beyond) is False
+
+
+@pytest.mark.parametrize("path", WFS)
+def test_a_full_pass_older_than_the_blockers_never_clears_them(path):
+    comments = [_rc(path, BASE, HEAD, "VALID_PASS", when="2026-11-03T10:00:00Z"),
+                _rc(path, C1, C2, "VALID_BLOCKERS", when="2026-11-03T11:00:00Z")]
+    assert _needs_full(path, comments) is True
+
+
+@pytest.mark.parametrize("path", WFS)
+@pytest.mark.parametrize("order", [{}, {"0" * 12: 0}, {HEAD[:12]: 0}, "non-un-dict"])
+def test_an_unknown_commit_order_never_clears_a_non_pass(path, order):
+    """Head non presente nell'ordine (force-push, storico incompleto, ordine illeggibile) => review completa."""
+    comments = [_rc(path, C1, C2, "VALID_BLOCKERS", when="2026-11-03T10:00:00Z"),
+                _rc(path, BASE, HEAD, "VALID_PASS", when="2026-11-03T11:00:00Z")]
+    assert _needs_full(path, comments, order=order) is True
+
+
+@pytest.mark.parametrize("path", WFS)
 def test_only_the_bot_and_this_reviewer_count(path):
     other = "grok46" if "sol" in path else "gpt56sol"
     forged_pass = _rc(path, BASE, C2, "VALID_PASS", when="2026-11-03T12:00:00Z", login="mallory")
@@ -1068,7 +1099,10 @@ def test_resolve_range_falls_back_to_the_full_diff_when_needed_or_unreadable(pat
     req = body[:body.index("def resolve_range():")]
     resolve = body[body.index("def resolve_range():"):]
     # storico illeggibile => review completa (fail-closed)
-    assert "rr_needs_full_review(pr_bot_comments(), REVIEW_ID, BASE_SHA)" in req
+    assert "rr_needs_full_review(pr_bot_comments(), REVIEW_ID, BASE_SHA, pr_commit_order())" in req
+    # ordine dei commit oltre il tetto dell'API => solleva => review completa
+    order_fn = py[py.index("def pr_commit_order():"):py.index("def full_review_required():")]
+    assert "raise RuntimeError" in order_fn and "while page <= 3:" in order_fn
     assert "except Exception" in req and "return True" in req.split("except Exception", 1)[1]
     # il delta si usa SOLO se non serve la review completa; altrimenti base = BASE_SHA
     assert 'good_sha(BEFORE_SHA) and not full_review_required():' in resolve

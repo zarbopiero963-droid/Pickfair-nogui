@@ -381,11 +381,24 @@ jobs:
                   page += 1
               raise RuntimeError("troppi commenti: storico delle review non leggibile per intero")
 
+          def pr_commit_order():
+              """Posizione di ogni commit della PR (prefisso a 12 caratteri, dal piu' vecchio). L'API elenca al massimo
+              250 commit: oltre, l'ordine non e' completo e si solleva (=> review completa, fail-closed)."""
+              order, page = {}, 1
+              while page <= 3:
+                  batch = gh_request("GET", f"/repos/{REPO}/pulls/{PR_NUMBER}/commits?per_page=100&page={page}") or []
+                  for c in batch:
+                      order.setdefault(str((c or {}).get("sha") or "")[:12], len(order))
+                  if len(batch) < 100:
+                      return order
+                  page += 1
+              raise RuntimeError("troppi commit: ordine dei commit della PR non leggibile per intero")
+
           def full_review_required():
               """True se serve la review dell'INTERO diff. Storico illeggibile => True (fail-closed: costa una review
               in piu', non nasconde un bloccante)."""
               try:
-                  return rr_needs_full_review(pr_bot_comments(), REVIEW_ID, BASE_SHA)
+                  return rr_needs_full_review(pr_bot_comments(), REVIEW_ID, BASE_SHA, pr_commit_order())
               except Exception as exc:
                   print(f"::warning::{REVIEW_ID}: storico review non leggibile ({redact(str(exc))[:200]}): review completa")
                   return True
@@ -1063,13 +1076,15 @@ jobs:
               )
           # <<< REVIEW_RECOVERY_CORE <<<
 
-          def rr_needs_full_review(comments, review_id, base_sha):
+          def rr_needs_full_review(comments, review_id, base_sha, commit_order):
               """Governance #606 (decisione owner): dopo un esito non-PASS la review successiva copre l'INTERO diff.
 
               Si guarda l'ULTIMO tentativo di ogni range di QUESTO reviewer, solo nei commenti del bot del workflow
               (un commento forgiato non chiude nulla). Serve la review completa se esiste un range non-PASS piu' recente
               dell'ultimo PASS che parte dalla base attuale della PR. Un PASS sul solo delta non basta: il verificatore
-              (scripts/pr_review_attestation.py) chiude un non-PASS solo con un PASS successivo dalla base."""
+              (scripts/pr_review_attestation.py) chiude un non-PASS solo con un PASS successivo dalla base che arriva
+              ALMENO all'head del range non-PASS: `commit_order` (prefisso 12 -> posizione nella PR) lo misura, e un
+              head assente dall'ordine (force-push, storico incompleto) non chiude niente."""
               ranges = {}
               for c in comments or []:
                   if not isinstance(c, dict) or ((c.get("user") or {}).get("login") or "") != "github-actions[bot]":
@@ -1085,9 +1100,15 @@ jobs:
                   for key, (_n, state) in last.items():
                       ranges[key] = (state, when)
               base12 = str(base_sha)[:12]
-              full_pass = [w for (frm, _to), (st, w) in ranges.items() if frm == base12 and st == "VALID_PASS"]
-              newest_full_pass = max(full_pass) if full_pass else ""
-              return any(st != "VALID_PASS" and w > newest_full_pass for (st, w) in ranges.values())
+              order = commit_order if isinstance(commit_order, dict) else {}
+              full_pass = [(order.get(to), w) for (frm, to), (st, w) in ranges.items()
+                           if frm == base12 and st == "VALID_PASS"]
+
+              def cleared(bad_to, bad_when):
+                  pos = order.get(bad_to)
+                  return pos is not None and any(p is not None and p >= pos and w > bad_when for p, w in full_pass)
+
+              return any(st != "VALID_PASS" and not cleared(to, w) for (_frm, to), (st, w) in ranges.items())
 
 
 

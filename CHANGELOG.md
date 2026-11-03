@@ -13,6 +13,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - se un range precedente di Sol o Grok non è PASS (BLOCKERS, INCONCLUSIVE, ERROR, incompleto), la review della push
     successiva copre l'intera PR `BASE...HEAD` invece del solo delta;
   - il verificatore `scripts/pr_review_attestation.py` chiude un non-PASS solo con un PASS successivo **dalla base**;
+  - il workflow applica la stessa regola: un PASS dalla base chiude un non-PASS solo se è più recente e arriva almeno
+    al suo head, misurato sull'elenco dei commit della PR. Senza questo controllo un PASS `BASE...C1` più recente di
+    un BLOCKERS `C1...C2` riportava le push successive sul delta: il verificatore teneva aperto il bloccante e il gate
+    restava bloccato (rilievo di Sol e Grok sulla #607);
   - prima un PASS sul solo delta lasciava il primo tratto senza copertura (`NOT_COVERED_TO_HEAD` per sempre), oppure
     chiudeva un bloccante senza rivedere la PR intera.
 

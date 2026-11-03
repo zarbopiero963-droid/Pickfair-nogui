@@ -88,9 +88,12 @@ Per leggere gli artefatti del proprio run i workflow hanno `actions: read`.
 
   **Lato workflow** (`rr_needs_full_review`, identica nei workflow di Sol e Grok): sulla push successiva il workflow
   legge l'ultimo tentativo di ogni range di quel reviewer, solo nei commenti di `github-actions[bot]`. Se un range
-  non-PASS è più recente dell'ultimo PASS che parte dalla base attuale, la review copre `BASE_SHA...HEAD` con scope
-  «intera PR (precedente non-PASS)». In caso contrario resta il push range, che costa meno. Se lo storico dei commenti
-  non è leggibile, si fa la review completa: fail-closed, al costo di una review in più.
+  non-PASS non è chiuso da un PASS che parte dalla base attuale, è più recente e arriva almeno all'head di quel range,
+  la review copre `BASE_SHA...HEAD` con scope «intera PR (precedente non-PASS)». La posizione degli head viene
+  dall'elenco dei commit della PR (`pr_commit_order`, al massimo 250 commit). Un head assente dall'elenco, per
+  esempio dopo un force-push, non chiude niente. In caso contrario resta il push range, che costa meno. Se lo storico
+  dei commenti o l'elenco dei commit non sono leggibili, si fa la review completa: fail-closed, al costo di una
+  review in più (rilievo Sol su #607: un PASS `BASE...C1` più recente non chiude un BLOCKERS su `C1...C2`).
 
   «Successivo» vuol dire due cose:
   - è nell'istante di emissione firmato (`generated_at`, strettamente dopo). Non conta il numero del run, perché un
