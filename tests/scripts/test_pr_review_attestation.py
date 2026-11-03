@@ -1212,3 +1212,86 @@ def test_workflow_a_force_pushed_away_blocker_needs_a_later_full_pass_to_the_cur
     full = comments + [_rc(path, BASE, HEAD, "VALID_PASS", when="2026-11-03T12:00:00Z")]
     assert _needs_full(path, full) is False
     assert _needs_full(path, full, head="4" * 40) is True                                # head attuale fuori ordine
+
+
+# ── #607, opzione A (decisione owner): casi limite della revisione indipendente e rilievo Sol su 7a70062...39c74f5 ──
+GONE2 = "8" * 40   # secondo commit uscito dalla storia
+
+
+@pytest.mark.parametrize("stamp", ["non-una-data", None])
+def test_a_force_pushed_away_blocker_with_an_unreadable_time_is_never_cleared(stamp):
+    """Istante illeggibile del non-PASS orfano = +inf: nessun PASS successivo puo' chiuderlo (fail-closed)."""
+    pairs = [_pair("gpt-6.1-sol", BASE, GONE, "BLOCKERS", run=1, generated_at=stamp),
+             _pair("gpt-6.1-sol", BASE, HEAD, run=9), _pair("grok-4.7", run=10)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS_FORCE_PUSHED:gpt-6.1-sol" in d.reasons
+
+
+def test_a_full_pass_at_the_same_second_does_not_clear_a_force_pushed_away_blocker():
+    t = "2026-11-02T10:00:00Z"
+    pairs = [_pair("gpt-6.1-sol", BASE, GONE, "BLOCKERS", run=1, generated_at=t),
+             _pair("gpt-6.1-sol", BASE, HEAD, run=2, generated_at=t), _pair("grok-4.7", run=3)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS_FORCE_PUSHED:gpt-6.1-sol" in d.reasons
+
+
+@pytest.mark.parametrize("owner,other", [("gpt-6.1-sol", "grok-4.7"), ("grok-4.7", "gpt-6.1-sol")])
+def test_one_reviewers_full_pass_never_clears_the_other_reviewers_force_pushed_blocker(owner, other):
+    """Ogni reviewer chiude solo i propri orfani; vale anche per l'orfano di Grok."""
+    pairs = [_pair(owner, BASE, GONE, "BLOCKERS", run=1), _pair(owner, BASE, C1, run=2), _pair(owner, C1, HEAD, run=3),
+             _pair(other, BASE, HEAD, run=4)]
+    d = _decide(pairs)
+    assert not d.passed and f"OPEN_BLOCKERS_FORCE_PUSHED:{owner}" in d.reasons
+    assert _decide(pairs + [_pair(owner, BASE, HEAD, run=5)]).passed
+    # l'orfano di un reviewer non pesa sull'altro: qui l'altro ha solo un PASS completo PRECEDENTE all'orfano
+    early = [_pair(other, BASE, HEAD, run=0), _pair(owner, BASE, GONE, "BLOCKERS", run=1),
+             _pair(owner, BASE, HEAD, run=5)]
+    assert _decide(early).passed
+
+
+def test_a_blocker_whose_both_ends_left_the_history_needs_a_full_pass_to_the_head():
+    pairs = [_pair("gpt-6.1-sol", GONE2, GONE, "BLOCKERS", run=1),
+             _pair("gpt-6.1-sol", BASE, C2, run=2), _pair("gpt-6.1-sol", C2, HEAD, run=3), _pair("grok-4.7", run=4)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS_FORCE_PUSHED:gpt-6.1-sol" in d.reasons
+    assert _decide(pairs + [_pair("gpt-6.1-sol", BASE, HEAD, run=5)]).passed
+
+
+def test_a_full_pass_from_the_signed_old_base_clears_a_force_pushed_away_blocker():
+    """Base avanzata senza cambiare la PR: il PASS dalla base FIRMATA di allora conta come intera PR (digest
+    ricalcolato su quella base, comportamento gia' in uso per la copertura)."""
+    old = "e" * 40
+    pairs = [_pair("gpt-6.1-sol", BASE, GONE, "BLOCKERS", run=1),
+             _pair("gpt-6.1-sol", old, HEAD, run=2, base_sha=old), _pair("grok-4.7", run=3)]
+    assert _decide(pairs).passed
+
+
+@pytest.mark.parametrize("verdict", ["BLOCKERS", "INCONCLUSIVE", "ERROR"])
+def test_sol_finding_on_607_an_out_of_chain_start_ending_on_the_head_is_still_blocking(verdict):
+    """Rilievo Sol sulla review completa 7a70062...39c74f5 (#607): «se start is None ma to e' nella catena il
+    non-PASS viene scartato». FALSO POSITIVO: il ramo preesistente (Codex P1 su #602) gli assegna start=0, quindi
+    entra in open_bad e un PASS completo PRECEDENTE non lo chiude; solo un PASS completo SUCCESSIVO lo chiude."""
+    before = [_pair("gpt-6.1-sol", BASE, HEAD, run=1), _pair("gpt-6.1-sol", GONE, HEAD, verdict, run=2),
+              _pair("grok-4.7", run=3)]
+    d = _decide(before)
+    assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
+    after = [_pair("gpt-6.1-sol", GONE, HEAD, verdict, run=1), _pair("gpt-6.1-sol", BASE, HEAD, run=2),
+             _pair("grok-4.7", run=3)]
+    assert _decide(after).passed
+
+
+def test_historical_blockers_are_never_cleared_by_delta_only_passes_after_a_force_push():
+    """Regressione force-push: bloccante su un commit vivo E bloccante su un commit sparito; i PASS sul delta che
+    coprono la catena attuale non bastano, serve un PASS completo successivo fino all'head."""
+    pairs = [_pair("gpt-6.1-sol", BASE, C1, "BLOCKERS", run=1), _pair("gpt-6.1-sol", C1, GONE, "BLOCKERS", run=2),
+             _pair("gpt-6.1-sol", BASE, C1, run=3), _pair("gpt-6.1-sol", C1, C2, run=4),
+             _pair("gpt-6.1-sol", C2, HEAD, run=5), _pair("grok-4.7", run=6)]
+    d = _decide(pairs)   # il BLOCKERS BASE...C1 e' chiuso dal PASS BASE...C1 successivo; l'orfano no
+    assert not d.passed and "OPEN_BLOCKERS_FORCE_PUSHED:gpt-6.1-sol" in d.reasons
+    assert _decide(pairs + [_pair("gpt-6.1-sol", BASE, HEAD, run=7)]).passed
+    live = [_pair("gpt-6.1-sol", BASE, C1, run=1), _pair("gpt-6.1-sol", C1, C2, "BLOCKERS", run=2),
+            _pair("gpt-6.1-sol", C1, GONE, "BLOCKERS", run=3), _pair("gpt-6.1-sol", C1, C2, run=4),
+            _pair("gpt-6.1-sol", C2, HEAD, run=5), _pair("grok-4.7", run=6)]
+    d = _decide(live)    # bloccante su commit vivo + orfano: il delta non chiude nessuno dei due
+    assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
+    assert _decide(live + [_pair("gpt-6.1-sol", BASE, HEAD, run=7)]).passed
