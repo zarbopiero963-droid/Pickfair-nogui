@@ -478,6 +478,12 @@ def _admit_in_child(args):
         return str(exc)
 
 
+#: i test concorrenti usano processi reali con ``fork`` e il lock ``fcntl``: Linux/POSIX, come la VPS (Sol su #606)
+_POSIX_ONLY = pytest.mark.skipif(not hasattr(__import__("os"), "fork"),
+                                 reason="processi fork e lock fcntl: solo POSIX (la VPS e' Linux)")
+
+
+@_POSIX_ONLY
 def test_concurrent_admissions_of_distinct_requests_are_all_kept(tmp_path):
     import multiprocessing as mp
     path = tmp_path / "ledger.json"
@@ -488,6 +494,7 @@ def test_concurrent_admissions_of_distinct_requests_are_all_kept(tmp_path):
     assert set(json.loads(path.read_text())["admitted"]) == set(keys)          # nessuna ammissione persa
 
 
+@_POSIX_ONLY
 def test_concurrent_admissions_of_the_same_request_admit_exactly_one(tmp_path):
     import multiprocessing as mp
     path = tmp_path / "ledger.json"
@@ -520,3 +527,18 @@ def test_destructive_categories_require_the_ephemeral_sandbox_at_any_risk(catego
         c["suites"][0].update(category=category, risk=risk, environment=env)
     with pytest.raises(D.Refused, match="^DESTRUCTIVE_NOT_ISOLATED"):
         D.validate_catalog(cat_with(mutate))
+
+
+def test_without_fcntl_the_ledger_refuses_instead_of_admitting_unlocked(tmp_path, monkeypatch):
+    """Piattaforma senza ``fcntl`` (Windows): nessuna ammissione senza lock, fail-closed."""
+    import builtins
+    real_import = builtins.__import__
+
+    def no_fcntl(name, *a, **k):
+        if name == "fcntl":
+            raise ImportError("no fcntl")
+        return real_import(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_fcntl)
+    with pytest.raises(D.Refused, match="^LEDGER_LOCK_UNAVAILABLE$"):
+        D.Ledger(tmp_path / "ledger.json").admit(build())
+    assert not (tmp_path / "ledger.json").exists()
