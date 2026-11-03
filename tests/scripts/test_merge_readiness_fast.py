@@ -333,3 +333,48 @@ def test_live_lookup_errors_are_unknown_not_pass(monkeypatch):
     monkeypatch.setattr(flow, "gh_json", lambda cmd: (_ for _ in ()).throw(flow.TransientGitHubError("timeout")))
     out = flow.live_readiness("o/r", H)
     assert out["live_certification"] == "UNKNOWN" and out["live_readiness"] == "UNKNOWN"
+
+
+# ── Sol su #603 (range 5a1e01c...1e2d6ac): una lettura fallita non e' una verifica ────────────────────────────────
+def test_kept_reads_after_a_green_read_never_count_as_stable_intervals(monkeypatch, clock, capsys):
+    """Dopo una lettura verde, fetch falliti tenevano can_merge=True e contavano come intervalli stabili: due errori
+    transitori bastavano per READY senza alcuna verifica finale riuscita."""
+    _sequence(monkeypatch, [_decision(pending=["tests"]), _decision(),
+                            flow.TransientGitHubError("i/o timeout")])
+    rc, d = _run(_args(), capsys)
+    assert rc == 1 and d["can_merge"] is False and d["readiness_status"] == "TIMEOUT"
+    assert any(r.startswith("github_api_unavailable") for r in d["reasons"])
+
+
+def test_a_failed_read_resets_stability_and_a_fresh_green_read_still_decides(monkeypatch, clock, capsys):
+    calls = _sequence(monkeypatch, [_decision(pending=["tests"]), _decision(),
+                                    flow.TransientGitHubError("i/o timeout"), _decision(), _decision(), _decision()])
+    rc, d = _run(_args(), capsys)
+    assert rc == 0 and d["can_merge"] is True
+    assert calls["n"] >= 5                    # l'errore non conta: servono due intervalli stabili su letture vere
+
+
+def test_the_unknown_wait_never_ends_on_a_kept_read(monkeypatch, clock, capsys):
+    unknown = dict(_decision(), mergeable="UNKNOWN")
+    _sequence(monkeypatch, [unknown, flow.TransientGitHubError("502 Bad Gateway")])
+    rc, d = _run(_args(wait_unknown_seconds=60, wait_pending_seconds=0), capsys)
+    assert rc == 1 and d["can_merge"] is False
+
+
+# ── Codex su #603: dopo la scadenza complessiva nessuna chiamata in piu' prima di scrivere il giudizio ─────────────
+def test_past_the_overall_deadline_informational_lookups_are_skipped(monkeypatch, clock, capsys):
+    called = []
+    monkeypatch.setattr(flow, "live_readiness", lambda *a, **k: called.append("live") or {})
+    monkeypatch.setattr(flow, "ai_review_gate", lambda *a, **k: called.append("ai") or {})
+    _sequence(monkeypatch, [_decision(pending=["slow"])])
+    rc, d = _run(_args(wait_pending_seconds=6600, deadline_seconds=900), capsys)
+    assert rc == 1 and called == []
+    assert d["live_certification"] == "UNKNOWN" and d["live_readiness"] == "UNKNOWN"
+    assert d["ai_review_gate_status"] == "UNKNOWN"
+
+
+def test_poll_sleep_never_overshoots_the_overall_deadline(monkeypatch, clock, capsys):
+    _sequence(monkeypatch, [_decision(pending=["slow"])])
+    _run(_args(wait_pending_seconds=6600, deadline_seconds=1000, poll_seconds=15, max_poll_seconds=60,
+               backoff_after_seconds=0), capsys)
+    assert clock.now - 1_000_000.0 <= 1000

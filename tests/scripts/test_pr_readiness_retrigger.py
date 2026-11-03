@@ -118,3 +118,112 @@ def test_workflow_runs_from_default_branch_with_minimal_permissions():
     assert "pickfair-dedicated" in job["if"] and "pf-betfair-certification" in job["if"]
     assert job["timeout-minutes"] <= 10
     assert all("ref" not in (s.get("with") or {}) for s in job["steps"])      # niente checkout del codice della PR
+
+
+# ── Sol su #603: un evento arrivato mentre la readiness chiude non va perso ────────────────────────────────────────
+DONE_AT = "2026-11-02T23:19:13Z"
+
+
+def test_a_readiness_that_started_before_the_prelive_ended_is_awaited_then_rerun():
+    """PRE-LIVE concluso mentre la readiness usciva (PENDING_EXTERNAL): prima READINESS_RUNNING scartava l'unico
+    evento e la run restava rossa. Ora si attende la conclusione (limitata) e poi si decide."""
+    started = dict(run_(status="in_progress", conclusion=None), run_started_at="2026-11-02T23:10:00Z")
+    state = {"runs": [started], "polls": 0}
+    posts = []
+
+    def http(method, url):
+        path = url.split("api.github.com", 1)[1]
+        if method == "POST":
+            posts.append(path)
+            return 201, b"{}"
+        if "/pulls/602" in path:
+            return 200, json.dumps(pr()).encode()
+        state["polls"] += 1
+        if state["polls"] >= 3:
+            state["runs"] = [dict(run_(conclusion="failure"), run_started_at="2026-11-02T23:10:00Z")]
+        return 200, json.dumps({"workflow_runs": state["runs"]}).encode()
+    sleeps = []
+    out = R.run(event(completed_at=DONE_AT), R.GitHub(REPO, "t", http=http), wait_seconds=300, poll_seconds=15,
+                sleep=sleeps.append, clock=lambda: 15.0 * len(sleeps))
+    assert out["actions"][0]["action"] == "RERUN" and posts == [f"/repos/{REPO}/actions/runs/10/rerun"]
+    assert sleeps and sum(sleeps) <= 300
+
+
+def test_a_readiness_still_running_at_the_limit_is_skipped_without_writing():
+    started = dict(run_(status="in_progress", conclusion=None), run_started_at="2026-11-02T23:10:00Z")
+    posts, sleeps = [], []
+
+    def http(method, url):
+        if method == "POST":
+            posts.append(url)
+            return 201, b"{}"
+        if "/pulls/602" in url:
+            return 200, json.dumps(pr()).encode()
+        return 200, json.dumps({"workflow_runs": [started]}).encode()
+    out = R.run(event(completed_at=DONE_AT), R.GitHub(REPO, "t", http=http), wait_seconds=60, poll_seconds=15,
+                sleep=sleeps.append, clock=lambda: 15.0 * len(sleeps))
+    assert out["actions"][0] == {"pr": 602, "action": "SKIP", "reason": "READINESS_RUNNING", "run_id": 10}
+    assert posts == [] and sum(sleeps) <= 60
+
+
+def test_a_readiness_started_after_the_prelive_ended_is_not_awaited():
+    """Una run partita DOPO la conclusione (es. il rerun appena chiesto) legge gia' l'esito: niente attesa."""
+    later = dict(run_(status="queued", conclusion=None, attempt=2), run_started_at="2026-11-02T23:20:00Z")
+    plan = R.plan_reruns(REPO, SHA, {602: pr()}, [later], completed_at=DONE_AT)
+    assert plan[0]["action"] == "SKIP" and plan[0]["reason"] == "READINESS_RUNNING"
+
+
+def test_a_running_readiness_without_timestamps_is_awaited():
+    plan = R.plan_reruns(REPO, SHA, {602: pr()}, [run_(status="in_progress", conclusion=None)],
+                         completed_at=DONE_AT)
+    assert plan[0]["action"] == "WAIT"
+
+
+def test_retrigger_workflow_gives_the_wait_room_inside_the_job_timeout():
+    import yaml
+    w = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows/pr-readiness-retrigger.yml")
+                       .read_text())
+    job = w["jobs"]["retrigger"]
+    run = " ".join(s.get("run", "") for s in job["steps"])
+    assert "--wait-running-seconds" in run
+    wait = int(run.split("--wait-running-seconds", 1)[1].split()[0])
+    assert 0 < wait < job["timeout-minutes"] * 60 - 60
+
+
+# ── Grok su #603: check_run.pull_requests puo' arrivare vuoto ──────────────────────────────────────────────────────
+def _gh_with_commit_pulls(pulls, posts, runs=None):
+    def http(method, url):
+        path = url.split("api.github.com", 1)[1]
+        if method == "POST":
+            posts.append(path)
+            return 201, b"{}"
+        if f"/commits/{SHA}/pulls" in path:
+            return 200, json.dumps(pulls).encode()
+        if "/pulls/602" in path:
+            return 200, json.dumps(pr()).encode()
+        if "/actions/workflows/" in path:
+            return 200, json.dumps({"workflow_runs": runs if runs is not None else [run_()]}).encode()
+        return 404, b""
+    return R.GitHub(REPO, "t", http=http)
+
+
+def test_empty_pull_requests_falls_back_to_the_prs_of_the_commit():
+    posts = []
+    gh = _gh_with_commit_pulls([dict(pr(), number=602)], posts)
+    out = R.run(event(pull_requests=[]), gh)
+    assert out["actions"][0]["action"] == "RERUN" and posts == [f"/repos/{REPO}/actions/runs/10/rerun"]
+
+
+def test_commit_fallback_keeps_only_open_same_repo_prs_whose_head_is_the_sha():
+    posts = []
+    pulls = [dict(pr(head=OLD), number=7), dict(pr(state="closed"), number=8), dict(pr(repo="fork/x"), number=9)]
+    out = R.run(event(pull_requests=[]), _gh_with_commit_pulls(pulls, posts))
+    assert out["actions"] == [] and posts == []
+
+
+def test_readiness_early_exit_is_on_and_never_turns_pending_external_into_ready():
+    import pr_flow_automation as flow
+    text = (Path(__file__).resolve().parents[2] / ".github/workflows/pr-merge-readiness.yml").read_text()
+    assert "--pending-external-exit-after 300" in text
+    pending = {"can_merge": False, "pending": [{"name": "pf-betfair-certification"}], "reasons": []}
+    assert flow.readiness_status(pending) == "PENDING_EXTERNAL"

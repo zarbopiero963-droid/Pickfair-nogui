@@ -89,6 +89,9 @@ jobs:
           # i check sono settled e stabili: il budget lungo costa solo quando
           # qualcosa e' davvero lento. Scaduto il budget si giudica lo stato
           # reale: se i check non sono finiti il gate FALLISCE (fail-closed).
+          # Uscita anticipata PENDING_EXTERNAL (owner PF-POST-602-MASTER-EXECUTION-01 §4: nessun runner occupato
+          # durante le certificazioni esterne). La rivalutazione la fa pr-readiness-retrigger.yml; se non scattasse,
+          # la readiness resta ROSSA (mai un falso PASS) e basta rilanciarla: prova reale dopo il merge.
           python3 scripts/pr_merge_readiness.py \
             --repo "$REPO" \
             --pr "$PR" \

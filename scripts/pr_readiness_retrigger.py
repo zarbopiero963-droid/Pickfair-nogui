@@ -12,9 +12,13 @@ Regole (fail-closed, idempotenti):
 - solo eventi ``completed`` del check ``pf-betfair-certification`` dell'app ``pickfair-dedicated`` (chiunque puo'
   creare check con un'altra app o con un altro nome: non contano);
 - solo PR aperte dello stesso repository (niente fork) il cui head e' ESATTAMENTE lo SHA del check: un risultato
-  vecchio non viene mai attribuito a un head nuovo;
+  vecchio non viene mai attribuito a un head nuovo; se ``check_run.pull_requests`` e' vuoto si usano le PR del commit
+  (``GET /commits/<sha>/pulls``) con gli stessi filtri;
 - si rilancia solo l'ultima run ``pull_request`` di Merge readiness per quello SHA, se e' conclusa e NON e'
   ``success``; una run in corso non si tocca (doppia pubblicazione), una gia' verde non si rilancia;
+- una run in corso partita PRIMA della conclusione del PRE-LIVE (per esempio mentre esce PENDING_EXTERNAL) puo' non
+  averne visto l'esito: si attende che termini, entro ``--wait-running-seconds``, e poi si decide (rilievo di Sol su
+  #603: prima l'unico evento andava perso). Una run partita DOPO legge gia' l'esito e non si attende;
 - al massimo ``MAX_ATTEMPTS`` tentativi per run (anti-loop e anti-replay: un evento ripetuto trova la run in corso
   o al limite);
 - nessuna scrittura oltre al rerun; ogni richiesta ha un timeout; un errore API non produce nulla (nessun verde).
@@ -26,6 +30,7 @@ import json
 import os
 import re
 import sys
+import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 TRUSTED_CHECK = "pf-betfair-certification"
@@ -60,8 +65,10 @@ def validate_event(event: Mapping[str, Any]) -> Tuple[str, List[int]]:
 
 
 def plan_reruns(repository: str, sha: str, prs: Mapping[int, Mapping[str, Any]],
-                runs: List[Mapping[str, Any]]) -> List[Dict[str, Any]]:
-    """Decisioni per ogni PR: ``{"pr", "action": RERUN|SKIP, "reason", "run_id"?}``. Funzione pura."""
+                runs: List[Mapping[str, Any]], completed_at: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Decisioni per ogni PR: ``{"pr", "action": RERUN|SKIP|WAIT, "reason", "run_id"?}``. Funzione pura.
+
+    WAIT = run in corso partita prima della conclusione del PRE-LIVE (o senza orari leggibili): va attesa."""
     out: List[Dict[str, Any]] = []
     candidates = sorted((r for r in runs if r.get("head_sha") == sha and r.get("event") == "pull_request"
                          and str(r.get("path") or "").endswith(READINESS_WORKFLOW)),
@@ -83,7 +90,10 @@ def plan_reruns(repository: str, sha: str, prs: Mapping[int, Mapping[str, Any]],
             continue
         run = mine[0]
         if run.get("status") != "completed":
-            out.append({"pr": number, "action": "SKIP", "reason": "READINESS_RUNNING", "run_id": run.get("id")})
+            started = str(run.get("run_started_at") or "")
+            sees_result = bool(completed_at and started and started >= str(completed_at))   # ISO-8601 UTC
+            out.append({"pr": number, "action": "SKIP" if sees_result else "WAIT", "reason": "READINESS_RUNNING",
+                        "run_id": run.get("id")})
         elif run.get("conclusion") == "success":
             out.append({"pr": number, "action": "SKIP", "reason": "ALREADY_READY", "run_id": run.get("id")})
         elif int(run.get("run_attempt") or 1) >= MAX_ATTEMPTS:
@@ -124,15 +134,37 @@ class GitHub:
         return json.loads(body.decode("utf-8") or "{}")
 
 
-def run(event: Mapping[str, Any], gh: GitHub) -> Dict[str, Any]:
+def run(event: Mapping[str, Any], gh: GitHub, wait_seconds: float = 0, poll_seconds: float = 15,
+        sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic) -> Dict[str, Any]:
     try:
         sha, numbers = validate_event(event)
     except RetriggerError as exc:
         return {"actions": [], "skipped": str(exc)}
-    prs = {n: gh.call("GET", f"/repos/{gh.repository}/pulls/{n}") for n in numbers}
-    runs = gh.call("GET", f"/repos/{gh.repository}/actions/workflows/{READINESS_WORKFLOW}/runs"
-                          f"?head_sha={sha}&event=pull_request&per_page=50").get("workflow_runs", [])
-    plan = plan_reruns(gh.repository, sha, prs, runs)
+    completed_at = str((event.get("check_run") or {}).get("completed_at") or "") or None
+    if not numbers:
+        # GitHub puo' lasciare vuoto ``check_run.pull_requests`` (Grok su #603): si cercano le PR del commit, tenendo
+        # solo quelle aperte, dello stesso repository e con head ESATTAMENTE questo SHA (plan_reruns lo ricontrolla).
+        pulls = gh.call("GET", f"/repos/{gh.repository}/commits/{sha}/pulls?per_page=100")
+        numbers = sorted({int(p["number"]) for p in pulls if isinstance(p, dict) and isinstance(p.get("number"), int)
+                          and p.get("state") == "open"
+                          and ((p.get("head") or {}).get("repo") or {}).get("full_name") == gh.repository
+                          and (p.get("head") or {}).get("sha") == sha})
+
+    def current_plan() -> List[Dict[str, Any]]:
+        # Si rilegge tutto a ogni giro: un head cambiato durante l'attesa diventa STALE_SHA, mai un rerun.
+        prs = {n: gh.call("GET", f"/repos/{gh.repository}/pulls/{n}") for n in numbers}
+        runs = gh.call("GET", f"/repos/{gh.repository}/actions/workflows/{READINESS_WORKFLOW}/runs"
+                              f"?head_sha={sha}&event=pull_request&per_page=50").get("workflow_runs", [])
+        return plan_reruns(gh.repository, sha, prs, runs, completed_at)
+
+    deadline = clock() + max(0.0, float(wait_seconds))
+    plan = current_plan()
+    while any(i["action"] == "WAIT" for i in plan) and clock() + poll_seconds <= deadline:
+        sleep(poll_seconds)
+        plan = current_plan()
+    for item in plan:
+        if item["action"] == "WAIT":                 # ancora in corso al limite: nessuna scrittura, motivo esplicito
+            item["action"] = "SKIP"
     for item in plan:
         if item["action"] == "RERUN":
             gh.call("POST", f"/repos/{gh.repository}/actions/runs/{item['run_id']}/rerun")
@@ -144,11 +176,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Rilancia la Merge readiness al completamento del PRE-LIVE")
     ap.add_argument("--repo", required=True)
     ap.add_argument("--event", default=os.environ.get("GITHUB_EVENT_PATH", ""))
+    ap.add_argument("--wait-running-seconds", type=float, default=0,
+                    help="attesa massima di una readiness ancora in corso partita prima della fine del PRE-LIVE")
+    ap.add_argument("--poll-seconds", type=float, default=15)
     args = ap.parse_args(argv)
     with open(args.event, encoding="utf-8") as fh:
         event = json.load(fh)
     try:
-        result = run(event, GitHub(args.repo, os.environ.get("GH_TOKEN", "")))
+        result = run(event, GitHub(args.repo, os.environ.get("GH_TOKEN", "")),
+                     wait_seconds=args.wait_running_seconds, poll_seconds=args.poll_seconds)
     except (RetriggerError, OSError, ValueError) as exc:
         print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}))
         return 1

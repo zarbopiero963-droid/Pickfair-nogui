@@ -23,7 +23,7 @@ jobs:
       github.event.check_run.name == 'pf-betfair-certification' &&
       github.event.check_run.app.slug == 'pickfair-dedicated'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
       GH_TOKEN: ${{ github.token }}
       PF_GH_CALL_TIMEOUT_SECONDS: "30"
@@ -34,4 +34,7 @@ jobs:
           persist-credentials: false
 
       - name: Rerun Merge readiness for the certified head
-        run: python3 scripts/pr_readiness_retrigger.py --repo "${{ github.repository }}" --event "$GITHUB_EVENT_PATH"
+        # Una readiness ancora in corso partita prima della fine del PRE-LIVE si attende fino a 7 minuti (Sol su #603).
+        run: >-
+          python3 scripts/pr_readiness_retrigger.py --repo "${{ github.repository }}" --event "$GITHUB_EVENT_PATH"
+          --wait-running-seconds 420

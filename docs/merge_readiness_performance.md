@@ -31,13 +31,15 @@ Non c'erano deadlock: il self-check è escluso dai pending.
 | Retry | 3 tentativi (`PF_GH_RETRIES`), backoff 2 s / 4 s (`PF_GH_RETRY_BACKOFF_SECONDS`) | `gh_json()`, solo errori transitori |
 | Polling | 15 s, che diventano 60 s dopo 300 s con check pending; la stabilità si conta sempre a 15 s | `--poll-seconds`, `--max-poll-seconds`, `--backoff-after-seconds` |
 | Attesa dei check | 6600 s (invariata: copre il check più lento) | `--wait-pending-seconds` |
-| Uscita anticipata | dopo 300 s, se restano pending **solo** check esterni (PRE-LIVE) | `--pending-external-exit-after` |
-| Scadenza complessiva | 6900 s, sotto il timeout del job (7200 s) | `--deadline-seconds` |
-| Riattivazione | 5 min di job, 30 s per richiesta, al massimo 3 tentativi per run | `pr-readiness-retrigger.yml` |
+| Uscita anticipata | dopo 300 s, se restano pending **solo** check esterni (PRE-LIVE): nessun runner occupato durante la certificazione (owner PF-POST-602-MASTER-EXECUTION-01 §4) | `--pending-external-exit-after` |
+| Scadenza complessiva | 6900 s, sotto il timeout del job (7200 s); il sonno di polling non la supera e, scaduta, le letture informative (LIVE, gate AI) si saltano (UNKNOWN) | `--deadline-seconds` |
+| Riattivazione | 10 min di job, attesa fino a 420 s di una readiness ancora in corso, 30 s per richiesta, al massimo 3 tentativi per run | `pr-readiness-retrigger.yml` (`--wait-running-seconds`) |
 
 **Errori transitori** (timeout, 5xx, rete interrotta, rate limit, `i/o timeout`): vengono ritentati in modo limitato.
-Durante l'attesa si tiene l'ultima lettura buona. Se all'inizio o alla fine GitHub non risponde, il risultato è
-`github_api_unavailable` e la PR non è pronta.
+Durante l'attesa si tiene l'ultima lettura buona, ma una lettura tenuta **non è una verifica**: non conta come
+intervallo stabile e non può essere il giudizio finale. Se all'inizio o all'ultima lettura GitHub non risponde, il
+risultato è `github_api_unavailable` (TIMEOUT) e la PR non è pronta (rilievo di Sol su #603: prima due errori
+transitori dopo una lettura verde bastavano per READY).
 
 **Errori non transitori** (404, autenticazione, permessi, schema): non vengono ritentati.
 
@@ -71,11 +73,19 @@ Il flusso è questo:
 - conta solo una PR aperta, dello stesso repository, con head uguale allo SHA del check (`STALE_SHA` altrimenti), così
   un risultato vecchio non viene mai attribuito a un head nuovo;
 - una run in corso non si tocca (niente doppia pubblicazione) e una run già verde non si rilancia;
+- una run in corso partita **prima** della conclusione del PRE-LIVE (per esempio mentre esce PENDING_EXTERNAL) può non
+  averne visto l'esito: si attende che termini, fino a 420 s, rileggendo PR e run a ogni giro, poi si decide; una run
+  partita dopo legge già l'esito e non si attende; ancora in corso al limite ⇒ nessuna scrittura (rilievo di Sol su
+  #603: prima l'unico evento andava perso);
 - al massimo 3 tentativi per run, contro loop e replay;
 - l'unica scrittura è `POST …/actions/runs/<id>/rerun`.
 
+Se `check_run.pull_requests` arriva vuoto, le PR si cercano con `GET /commits/<sha>/pulls`, con gli stessi filtri.
+
 **Non verificato:** un rerun richiesto con `GITHUB_TOKEN` da un workflow `check_run` è NOT VERIFIED fino alla prova su
-una PR reale. Se GitHub non lo permettesse, resta il polling leggero con scadenza.
+una PR reale (il workflow gira solo dal branch di default, quindi la prova è possibile solo dopo il merge). Se il
+rerun non scattasse, la readiness resta rossa in PENDING_EXTERNAL, mai un falso PASS, e va rilanciata a mano:
+è un rischio di disponibilità, non di sicurezza (rilievo di Grok su #603).
 
 ## 5. LIVE (PF-DUAL-CERTIFICATION-01, solo informativo)
 

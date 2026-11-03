@@ -1846,6 +1846,9 @@ def cmd_readiness(args: argparse.Namespace) -> int:
             raise
         decision = _api_unavailable_decision(args.pr, exc)
         api_errors.append(f"{type(exc).__name__}: {str(exc)[:160]}")
+    # Ultima lettura riuscita? Una lettura tenuta per errore transitorio NON e' una verifica: non conta come intervallo
+    # stabile e non puo' essere il giudizio finale (Sol su #603).
+    last_fresh = not api_errors
     first_head = decision.get("headRefOid")
     deadline = min(time.time() + args.wait_unknown_seconds, hard_deadline)
 
@@ -1857,8 +1860,10 @@ def cmd_readiness(args: argparse.Namespace) -> int:
         and (decision["mergeable"] == "UNKNOWN" or decision["mergeStateStatus"] == "UNKNOWN")
     ):
         time.sleep(args.poll_seconds)
+        n_errors = len(api_errors)
         decision = _fetch_or_keep(lambda: _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix),
                                   decision, api_errors)
+        last_fresh = len(api_errors) == n_errors
         first_head = first_head or decision.get("headRefOid")
 
     # I check dell'head non sono istantanei. La run `pull_request` parte ~20s
@@ -1905,9 +1910,13 @@ def cmd_readiness(args: argparse.Namespace) -> int:
         )
     ):
         visti_prima = decision.get("checks_seen", 0)
-        time.sleep(_poll_interval(args, time.time() - started, bool(decision.get("pending"))))
+        # Il sonno non supera mai la scadenza complessiva (Codex su #603).
+        time.sleep(max(0.0, min(_poll_interval(args, time.time() - started, bool(decision.get("pending"))),
+                                hard_deadline - time.time())))
+        n_errors = len(api_errors)
         decision = _fetch_or_keep(lambda: _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix),
                                   decision, api_errors)
+        last_fresh = len(api_errors) == n_errors
         first_head = first_head or decision.get("headRefOid")
         # Il contatore si aggiorna sulla lettura APPENA FATTA, non su quella
         # precedente. Calcolarlo prima del fetch (come faceva la prima stesura,
@@ -1923,7 +1932,8 @@ def cmd_readiness(args: argparse.Namespace) -> int:
         # finestra DOPO. Costa due poll (~30s) su un gate che ne impiega ~300.
         intervalli_stabili = (
             intervalli_stabili + 1
-            if decision.get("checks_seen", 0) == visti_prima
+            if last_fresh
+            and decision.get("checks_seen", 0) == visti_prima
             and not decision.get("pending")
             else 0
         )
@@ -1951,6 +1961,13 @@ def cmd_readiness(args: argparse.Namespace) -> int:
         if motivo not in decision.setdefault("reasons", []):
             decision["reasons"].append(motivo)
 
+    # L'ultima lettura e' fallita: si terrebbe un giudizio non riverificato. Mai pronta (TIMEOUT, non FAILED).
+    if not last_fresh and not decision.get("already_merged"):
+        decision["can_merge"] = False
+        motivo = "github_api_unavailable: last read failed, decision not re-verified"
+        if motivo not in decision.setdefault("reasons", []):
+            decision["reasons"].append(motivo)
+
     # Nuovo SHA durante la verifica: il giudizio riguarderebbe un head diverso da quello osservato all'inizio.
     if first_head and decision.get("headRefOid") and decision.get("headRefOid") != first_head:
         decision["can_merge"] = False
@@ -1965,8 +1982,13 @@ def cmd_readiness(args: argparse.Namespace) -> int:
 
     # Informativo: non cambia can_merge e non si attende (la certificazione LIVE transazionale non e' un requisito
     # di merge delle PR di sviluppo, PF-DUAL-CERTIFICATION-01 §5).
-    decision.update(live_readiness(args.repo, decision.get("headRefOid")))
-    decision["ai_review_gate"] = ai_review_gate(args.repo, args.pr, decision.get("headRefOid"))
+    # Scadenza superata: nessuna chiamata in piu' prima di scrivere il giudizio (Codex su #603), i campi restano UNKNOWN.
+    if time.time() >= hard_deadline:
+        decision.update({"live_certification": "UNKNOWN", "live_readiness": "UNKNOWN"})
+        decision["ai_review_gate"] = {"gate": {"status": "UNKNOWN", "reason": "readiness_deadline_exceeded"}}
+    else:
+        decision.update(live_readiness(args.repo, decision.get("headRefOid")))
+        decision["ai_review_gate"] = ai_review_gate(args.repo, args.pr, decision.get("headRefOid"))
     decision["ai_review_gate_status"] = str(((decision["ai_review_gate"] or {}).get("gate") or {}).get("status")
                                             or "UNKNOWN")
     print(json.dumps(decision, indent=2, sort_keys=True))
