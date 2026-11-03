@@ -1086,24 +1086,28 @@ jobs:
               Serve la review completa se un tentativo non-PASS non e' chiuso da un PASS successivo che parte dalla base
               attuale della PR e arriva ALMENO al suo head, come in scripts/pr_review_attestation.py. `commit_order`
               (prefisso 12 -> posizione nella PR) misura l'head; un head assente dall'ordine (force-push, storico
-              incompleto) non chiude niente. «Successivo» = (istante del commento, numero del tentativo): nello stesso
-              commento conta il numero del tentativo. Un non-PASS senza istante non si chiude mai."""
+              incompleto) non chiude niente. «Successivo» = istante del commento strettamente posteriore; il numero del
+              tentativo conta SOLO dentro lo stesso commento (fra commenti diversi i contatori sono indipendenti: rilievo
+              Sol su #607). Un non-PASS senza istante non si chiude mai."""
               events = []
-              for c in comments or []:
+              for idx, c in enumerate(comments or []):
                   if not isinstance(c, dict) or ((c.get("user") or {}).get("login") or "") != "github-actions[bot]":
                       continue
                   when = str(c.get("updated_at") or c.get("created_at") or "")
                   for m in _RR_ATTEMPT_RE.finditer(str(c.get("body") or "")):
                       if m.group(1) == review_id:
-                          events.append((m.group(2), m.group(3), (when, int(m.group(4))), m.group(5)))
+                          events.append((m.group(2), m.group(3), (when, idx, int(m.group(4))), m.group(5)))
               base12 = str(base_sha)[:12]
               order = commit_order if isinstance(commit_order, dict) else {}
               full_pass = [(order.get(to), k) for frm, to, k, st in events if frm == base12 and st == "VALID_PASS"]
 
+              def later(k, bad):
+                  return k[0] > bad[0] or (k[1] == bad[1] and k[2] > bad[2])
+
               def cleared(bad_to, bad_key):
                   pos = order.get(bad_to)
                   return (bool(bad_key[0]) and pos is not None
-                          and any(p is not None and p >= pos and k > bad_key for p, k in full_pass))
+                          and any(p is not None and p >= pos and later(k, bad_key) for p, k in full_pass))
 
               return any(st != "VALID_PASS" and not cleared(to, k) for _frm, to, k, st in events)
 

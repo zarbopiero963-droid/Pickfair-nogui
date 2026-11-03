@@ -1113,6 +1113,9 @@ def test_a_full_pass_at_the_same_instant_is_not_later(path):
     same = "2026-11-03T11:00:00Z"
     comments = [_rc(path, C1, C2, "VALID_BLOCKERS", when=same), _rc(path, BASE, HEAD, "VALID_PASS", when=same)]
     assert _needs_full(path, comments) is True
+    # rilievo Sol su #607: stesso istante, contatori diversi in commenti DIVERSI => il PASS n.2 non e' successivo
+    other = [_rc(path, C1, C2, "VALID_BLOCKERS", when=same), _rc(path, BASE, HEAD, "INCOMPLETE", "VALID_PASS", when=same)]
+    assert _needs_full(path, other) is True
 
 
 @pytest.mark.parametrize("path", WFS)
