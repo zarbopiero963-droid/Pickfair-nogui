@@ -1,0 +1,27 @@
+# Verificatore indipendente delle evidenze (ruolo 3): rilegge e firma con chiave propria, nessuna rete. %i = id operazione del catalogo (validato dal controllore).
+[Unit]
+Description=Pickfair VPS bridge - verify %i
+[Service]
+Type=oneshot
+User=pf-bridge-verify
+Group=pf-bridge-verify
+ExecStart=/usr/bin/python3 -I /opt/pf-bridge/current/bridge/verify.py --op %i
+PrivateNetwork=yes
+ReadWritePaths=/var/lib/pf-bridge/audit
+TimeoutStartSec=900
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+InaccessiblePaths=-/etc/pf-livekey-vault -/root/.ssh -/etc/ssh
+ReadOnlyPaths=/opt/pf-bridge

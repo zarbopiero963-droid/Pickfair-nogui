@@ -1,0 +1,27 @@
+# Operatore di rollback (ruolo 5): solo rollback predefiniti con autorizzazione owner distinta. %i = id operazione del catalogo (validato dal controllore).
+[Unit]
+Description=Pickfair VPS bridge - rollback %i
+[Service]
+Type=oneshot
+User=pf-bridge-rollback
+Group=pf-bridge-rollback
+ExecStart=/usr/bin/python3 -I /opt/pf-bridge/current/bridge/rollback.py --op %i
+PrivateNetwork=yes
+ReadWritePaths=/opt/pf-bridge /var/lib/pf-bridge/audit
+TimeoutStartSec=900
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+InaccessiblePaths=-/etc/pf-livekey-vault -/root/.ssh -/etc/ssh
+ReadOnlyPaths=/opt/pf-bridge

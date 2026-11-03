@@ -1,0 +1,28 @@
+# Controllore delle richieste (ruolo 1): legge GitHub IN USCITA, verifica firma+contratto, accoda. Non esegue test.
+[Unit]
+Description=Pickfair VPS bridge - request controller (outbound poll only)
+[Service]
+Type=oneshot
+User=pf-bridge-ctl
+Group=pf-bridge-ctl
+ExecStart=/usr/bin/python3 -I /opt/pf-bridge/current/bridge/controller.py --once
+ReadWritePaths=/var/lib/pf-bridge
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=localhost
+TimeoutStartSec=120
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+InaccessiblePaths=-/etc/pf-livekey-vault -/root/.ssh -/etc/ssh
+ReadOnlyPaths=/opt/pf-bridge
