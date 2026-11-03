@@ -68,3 +68,17 @@ def test_best_counterparty_price_and_matching_agree_on_zero_size():
     b.update_market_book(_book([(2.0, 0.0)], [(2.02, 0.0)]))
     assert b.best_counterparty_price(MKT, SEL, "BACK") is None
     assert _place(b, "BACK", 1.5, 0.10)["sizeMatched"] == 0
+
+
+def test_matching_never_mutates_the_stored_book():
+    """Il book memorizzato (stato persistito, letto anche da best_counterparty_price) resta quello ricevuto: saltare
+    un livello vuoto non deve rimuoverlo dallo stato condiviso."""
+    b = _broker()
+    b.update_market_book(_book([(2.0, 0.0), (1.9, 5.0)], [(2.02, 0.0), (2.1, 5.0)]))
+    before = [dict(lv) for lv in b.state.market_books[MKT]["runners"][0]["ex"]["availableToBack"]]
+    before_lay = [dict(lv) for lv in b.state.market_books[MKT]["runners"][0]["ex"]["availableToLay"]]
+    _place(b, "BACK", 1.5, 0.10)
+    _place(b, "LAY", 3.0, 0.10)
+    ex = b.state.market_books[MKT]["runners"][0]["ex"]
+    assert [lv["price"] for lv in ex["availableToBack"]] == [lv["price"] for lv in before]
+    assert [lv["price"] for lv in ex["availableToLay"]] == [lv["price"] for lv in before_lay]

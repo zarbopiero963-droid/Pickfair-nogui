@@ -2072,11 +2072,10 @@ class SimulationBroker:
         # eseguibile restava a riposo.
         # CB-586-FI-03Z (#586, P1): un livello con size esplicita <= 0 (delta Betfair = livello rimosso) non offre
         # liquidita' e conta come assente: il migliore e' il livello successivo, come in best_counterparty_price.
-        # Una size assente resta il comportamento storico del SIM (liquidita' non limitata).
+        # Una size assente resta il comportamento storico del SIM (liquidita' non limitata). Si scorre senza toccare
+        # le liste: sono quelle del book memorizzato (stato persistito, letto da best_counterparty_price).
         livelli = backs if order.side == "BACK" else lays
-        while livelli and _livello_svuotato(livelli[0]):
-            livelli.pop(0)
-        best_counter = livelli[0] if livelli else None
+        best_counter = next((lv for lv in livelli if not _livello_svuotato(lv)), None)
 
         if not best_counter:
             order.status = "EXECUTABLE"
