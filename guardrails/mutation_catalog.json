@@ -59,6 +59,18 @@
       "rationale": "CB-586-FI-03Z: un livello con size 0 tornerebbe liquidita' illimitata (fill finto, esposizione abbinata inventata)."
     },
     {
+      "id": "fi03z_quote_reads_first_level_only",
+      "module": "simulation_broker",
+      "area": "exposure",
+      "file": "simulation_broker.py",
+      "original": "            livello = _miglior_livello(ex.get(\"availableToBack\" if str(side).upper() == \"BACK\" else \"availableToLay\"))",
+      "mutated": "            livello = (ex.get(\"availableToBack\" if str(side).upper() == \"BACK\" else \"availableToLay\") or [None])[0]",
+      "tests": [
+        "tests/fi03z/test_sim_zero_size_level.py"
+      ],
+      "rationale": "CB-586-FI-03Z (Codex P1 su #604): la quota del Microstake leggerebbe solo il primo livello mentre il matching salta quelli vuoti: lo stub passivo incrocerebbe e si abbinerebbe interamente."
+    },
+    {
       "id": "side_discordant_aliases_accepted",
       "module": "core.trading_engine",
       "area": "side",

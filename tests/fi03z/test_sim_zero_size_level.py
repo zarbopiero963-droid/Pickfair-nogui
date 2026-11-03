@@ -82,3 +82,25 @@ def test_matching_never_mutates_the_stored_book():
     ex = b.state.market_books[MKT]["runners"][0]["ex"]
     assert [lv["price"] for lv in ex["availableToBack"]] == [lv["price"] for lv in before]
     assert [lv["price"] for lv in ex["availableToLay"]] == [lv["price"] for lv in before_lay]
+
+
+# ── Codex P1 su #604: la quota del Microstake e il matching scelgono lo STESSO livello ───────────────────────────
+@pytest.mark.parametrize("first", [0.0, -1.0, float("nan")])
+def test_best_counterparty_price_skips_empty_levels_like_matching(first):
+    b = _broker()
+    b.update_market_book(_book([(2.0, first), (1.9, 5.0)], [(2.02, first), (2.1, 5.0)]))
+    assert b.best_counterparty_price(MKT, SEL, "BACK") == pytest.approx(1.9)
+    assert b.best_counterparty_price(MKT, SEL, "LAY") == pytest.approx(2.1)
+
+
+def test_microstake_stub_never_crosses_the_level_matching_would_use():
+    """Book back 2.0/-1 poi 1.9/5, BACK target 1.5: prima la quota non vedeva controparte e lo stub da 1 EUR si
+    abbinava interamente a 1.9 (saga AMBIGUOUS con esposizione abbinata sovradimensionata)."""
+    from core.microstake_sim_port import SimulationQuoteProvider
+
+    b = _broker()
+    b.update_market_book(_book([(2.0, -1.0), (1.9, 5.0)], [(2.02, 0.0), (2.1, 5.0)]))
+    quote = SimulationQuoteProvider(b)({"bet_type": "BACK", "price": 1.5, "market_id": MKT, "selection_id": SEL})
+    assert float(quote["best_counterparty_price"]) == pytest.approx(1.9)
+    rep = _place(b, "BACK", float(quote["passive_stub_price"]), 1.0)
+    assert rep["sizeMatched"] == 0                                             # lo stub resta passivo

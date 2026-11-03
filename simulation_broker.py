@@ -291,6 +291,17 @@ def _livello_svuotato(livello: Any) -> bool:
     return not math.isfinite(size) or size <= 0.0
 
 
+def _miglior_livello(livelli: Any) -> Optional[Dict[str, Any]]:
+    """CB-586-FI-03Z: il livello su cui il SIM abbinerebbe (il primo non svuotato), senza toccare la lista del book.
+
+    Unica regola per ``_match_order`` e ``best_counterparty_price``: la quota letta dal Microstake deve descrivere
+    proprio il livello che il matching userebbe (rilievo Codex P1 su #604)."""
+    for livello in livelli or []:
+        if not _livello_svuotato(livello):
+            return livello if isinstance(livello, dict) else None
+    return None
+
+
 def _fill_valido(item: Any) -> Optional[Dict[str, Any]]:
     """Voce del registro dei fill con tutti i campi validi, normalizzata; altrimenti None."""
     if not isinstance(item, dict):
@@ -1707,15 +1718,17 @@ class SimulationBroker:
             if not runner:
                 return None
             ex = runner.get("ex") or {}
-            levels = ex.get("availableToBack" if str(side).upper() == "BACK" else "availableToLay") or []
-            if not levels:
+            # Stesso livello del matching (CB-586-FI-03Z): i livelli con size esplicita <= 0 sono assenti, una size
+            # assente e' liquidita' non limitata come in ``_match_order``. Prima si leggeva solo il primo livello:
+            # con 2.0/-1 seguito da 1.9/5 la quota diceva "nessuna controparte" mentre il matching abbinava a 1.9.
+            livello = _miglior_livello(ex.get("availableToBack" if str(side).upper() == "BACK" else "availableToLay"))
+            if livello is None:
                 return None
             try:
-                price = float((levels[0] or {}).get("price") or 0.0)
-                size = float((levels[0] or {}).get("size") or 0.0)
+                price = float(livello.get("price") or 0.0)
             except (TypeError, ValueError):
                 return None
-            if not math.isfinite(price) or price <= 1.0 or size <= 0.0:
+            if not math.isfinite(price) or price <= 1.0:
                 return None
             return price
 
@@ -2075,7 +2088,7 @@ class SimulationBroker:
         # Una size assente resta il comportamento storico del SIM (liquidita' non limitata). Si scorre senza toccare
         # le liste: sono quelle del book memorizzato (stato persistito, letto da best_counterparty_price).
         livelli = backs if order.side == "BACK" else lays
-        best_counter = next((lv for lv in livelli if not _livello_svuotato(lv)), None)
+        best_counter = _miglior_livello(livelli)
 
         if not best_counter:
             order.status = "EXECUTABLE"
