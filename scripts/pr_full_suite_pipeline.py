@@ -436,6 +436,8 @@ WORKFLOW_NOT_MIGRATED = {
     "_module-ultra-check": "workflow riusabile: eseguito tramite i moduli (`ultra_check`, `MODULES`)",
     "pr-readiness-retrigger": "riattivazione della Merge readiness su `check_run` del PRE-LIVE: unica scrittura un rerun, "
                               "non e' un controllo (PF-CI-PERFORMANCE-FINAL-01)",
+    "pf-test-request": "richiesta firmata di test alla VPS (workflow_dispatch da main): non esegue test, firma una "
+                       "richiesta a schema chiuso (PF-VPS-UNIVERSAL-TEST-AUTOMATION-01)",
 }
 
 #: cio' che la migrazione NON certifica, workflow per workflow: mai dichiarato PASS

@@ -1,0 +1,1277 @@
+{
+ "schema": "pf-test-catalog/1",
+ "version": 1,
+ "note": "PF-VPS-UNIVERSAL-TEST-AUTOMATION-01 (#586). Catalogo versionato delle suite richiedibili: argv fisso, nessun parametro libero. La VPS lo legge da main. Nuove suite solo via PR/review/CI.",
+ "campaigns": {
+  "all": [
+   "acceptance",
+   "agent-checkpoint",
+   "chaos",
+   "controllers",
+   "core",
+   "e2e",
+   "failure",
+   "feature-f001",
+   "feature-f026",
+   "feature-f029",
+   "feature-f05",
+   "feature-f06",
+   "feature-f08",
+   "feature-f09",
+   "feature-f13",
+   "fullscope",
+   "guardrails",
+   "integration",
+   "invariant",
+   "mutation",
+   "mutation-tests",
+   "net",
+   "observability",
+   "packaging",
+   "parsers",
+   "percorsi",
+   "prelive-certify",
+   "property",
+   "reconciliation",
+   "recovery",
+   "replay",
+   "root-modules",
+   "roserpina41",
+   "safety",
+   "scripts",
+   "services",
+   "sim-multitable-certify",
+   "smoke",
+   "stress",
+   "testsuite",
+   "traceability",
+   "unit"
+  ]
+ },
+ "suites": [
+  {
+   "id": "acceptance",
+   "component": "acceptance",
+   "behaviour": "criteri di accettazione delle schede",
+   "category": "acceptance",
+   "runner": "pytest",
+   "args": [
+    "tests/acceptance"
+   ],
+   "environment": "SIM",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "agent-checkpoint",
+   "component": "infrastructure",
+   "behaviour": "checkpoint persistente multi-agente",
+   "category": "infrastructure",
+   "runner": "pytest",
+   "args": [
+    "tests/agent_checkpoint"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "chaos",
+   "component": "resilience",
+   "behaviour": "guasti iniettati (rete, disco, processi)",
+   "category": "chaos",
+   "runner": "pytest",
+   "args": [
+    "tests/chaos"
+   ],
+   "environment": "SANDBOX_EPHEMERAL",
+   "risk": "MEDIUM",
+   "timeout_seconds": 1800,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "controllers",
+   "component": "runtime",
+   "behaviour": "controller di runtime",
+   "category": "unit",
+   "runner": "pytest",
+   "args": [
+    "tests/controllers"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "core",
+   "component": "core",
+   "behaviour": "componenti core (engine, stato, safety layer)",
+   "category": "unit",
+   "runner": "pytest",
+   "args": [
+    "tests/core"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "e2e",
+   "component": "end-to-end",
+   "behaviour": "flussi completi segnale -> ordine -> riconciliazione",
+   "category": "end-to-end",
+   "runner": "pytest",
+   "args": [
+    "tests/e2e"
+   ],
+   "environment": "SIM",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "failure",
+   "component": "resilience",
+   "behaviour": "gestione degli errori e fail-closed",
+   "category": "failure-injection",
+   "runner": "pytest",
+   "args": [
+    "tests/failure"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "feature-f001",
+   "component": "orders",
+   "behaviour": "F-001",
+   "category": "regression",
+   "runner": "pytest",
+   "args": [
+    "tests/f001"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "feature-f026",
+   "component": "orders",
+   "behaviour": "F-026/F-028 unita' ordini",
+   "category": "regression",
+   "runner": "pytest",
+   "args": [
+    "tests/f026"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "feature-f029",
+   "component": "orders",
+   "behaviour": "F-029",
+   "category": "regression",
+   "runner": "pytest",
+   "args": [
+    "tests/f029"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "feature-f05",
+   "component": "cashout",
+   "behaviour": "F-05 hedge del cashout nel ledger",
+   "category": "regression",
+   "runner": "pytest",
+   "args": [
+    "tests/f05"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "feature-f06",
+   "component": "cashout",
+   "behaviour": "F-06 hedge che chiude la posizione",
+   "category": "regression",
+   "runner": "pytest",
+   "args": [
+    "tests/f06"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "feature-f08",
+   "component": "recovery",
+   "behaviour": "F-08 startup orders/outbox",
+   "category": "regression",
+   "runner": "pytest",
+   "args": [
+    "tests/f08"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "feature-f09",
+   "component": "orders",
+   "behaviour": "F-09",
+   "category": "regression",
+   "runner": "pytest",
+   "args": [
+    "tests/f09"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "feature-f13",
+   "component": "orders",
+   "behaviour": "F-13 identita' ordine",
+   "category": "regression",
+   "runner": "pytest",
+   "args": [
+    "tests/f13"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "full-regression",
+   "component": "all",
+   "behaviour": "intera suite offline",
+   "category": "regression",
+   "runner": "pytest",
+   "args": [
+    "tests"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 3600,
+   "resources": {
+    "cpu": 4,
+    "memory_mb": 4096
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "fullscope",
+   "component": "end-to-end",
+   "behaviour": "scenari completi a tutto campo",
+   "category": "end-to-end",
+   "runner": "pytest",
+   "args": [
+    "tests/fullscope"
+   ],
+   "environment": "SIM",
+   "risk": "LOW",
+   "timeout_seconds": 1800,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "guardrails",
+   "component": "security",
+   "behaviour": "guardrail di repository e governance",
+   "category": "security",
+   "runner": "pytest",
+   "args": [
+    "tests/guardrails"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "integration",
+   "component": "integration",
+   "behaviour": "integrazione fra moduli (broker SIM, ledger, ordini)",
+   "category": "integration",
+   "runner": "pytest",
+   "args": [
+    "tests/integration"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 1800,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "invariant",
+   "component": "accounting",
+   "behaviour": "invarianti finanziarie (ledger, P&L, riserve, liability)",
+   "category": "financial-invariants",
+   "runner": "pytest",
+   "args": [
+    "tests/invariant"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "mutation",
+   "component": "all",
+   "behaviour": "catalogo mutazioni (guardrails/mutation_catalog.json)",
+   "category": "mutation",
+   "runner": "python",
+   "args": [
+    "scripts/run_mutation_guardrails.py"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 3600,
+   "resources": {
+    "cpu": 4,
+    "memory_mb": 4096
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "mutation-tests",
+   "component": "infrastructure",
+   "behaviour": "test del runner di mutazione",
+   "category": "infrastructure",
+   "runner": "pytest",
+   "args": [
+    "tests/mutation"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "net",
+   "component": "betfair",
+   "behaviour": "rete e client Betfair con risposte simulate",
+   "category": "contract",
+   "runner": "pytest",
+   "args": [
+    "tests/net"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "observability",
+   "component": "infrastructure",
+   "behaviour": "metriche, log, report di readiness",
+   "category": "integration",
+   "runner": "pytest",
+   "args": [
+    "tests/observability"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "packaging",
+   "component": "packaging",
+   "behaviour": "build e compatibilita' dei pacchetti",
+   "category": "compatibility",
+   "runner": "pytest",
+   "args": [
+    "tests/packaging"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "parsers",
+   "component": "signals",
+   "behaviour": "parser dei segnali Telegram",
+   "category": "unit",
+   "runner": "pytest",
+   "args": [
+    "tests/parsers"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "percorsi",
+   "component": "end-to-end",
+   "behaviour": "percorsi applicativi",
+   "category": "end-to-end",
+   "runner": "pytest",
+   "args": [
+    "tests/percorsi"
+   ],
+   "environment": "SIM",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "prelive-certify",
+   "component": "certification",
+   "behaviour": "certificazione PRE-LIVE dell'orchestratore VPS",
+   "category": "pre-live",
+   "runner": "orchestrator",
+   "args": [
+    "PRELIVE_CERTIFY"
+   ],
+   "environment": "REPLAY_RECORDED",
+   "risk": "HIGH",
+   "timeout_seconds": 3600,
+   "resources": {
+    "cpu": 4,
+    "memory_mb": 4096
+   },
+   "datasets": [
+    "bfsim-recorded"
+   ],
+   "evidence": [
+    "signed-decision",
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "property",
+   "component": "accounting",
+   "behaviour": "proprieta' generative (stake, arrotondamenti, distribuzioni)",
+   "category": "property-based",
+   "runner": "pytest",
+   "args": [
+    "tests/property"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 1800,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "reconciliation",
+   "component": "reconciliation",
+   "behaviour": "riconciliazione ordini e posizioni",
+   "category": "reconciliation",
+   "runner": "pytest",
+   "args": [
+    "tests/reconciliation"
+   ],
+   "environment": "SIM",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "recovery",
+   "component": "recovery",
+   "behaviour": "crash, kill -9, riavvio e ripristino",
+   "category": "crash-restart",
+   "runner": "pytest",
+   "args": [
+    "tests/recovery"
+   ],
+   "environment": "SANDBOX_EPHEMERAL",
+   "risk": "MEDIUM",
+   "timeout_seconds": 1800,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "replay",
+   "component": "markets",
+   "behaviour": "replay di book Betfair registrati",
+   "category": "replay",
+   "runner": "pytest",
+   "args": [
+    "tests/replay"
+   ],
+   "environment": "REPLAY_RECORDED",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [
+    "bfsim-recorded"
+   ],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "root-modules",
+   "component": "money-management",
+   "behaviour": "microstake, telegram, recovery (moduli in tests/)",
+   "category": "regression",
+   "runner": "pytest",
+   "args": [
+    "tests/test_database_telegram_alert_settings.py",
+    "tests/test_microstake_cashout_and_recovery.py",
+    "tests/test_microstake_engine_native.py",
+    "tests/test_microstake_native_integration.py",
+    "tests/test_microstake_safe_recovery.py",
+    "tests/test_microstake_sim_port.py",
+    "tests/test_pr512_codex_034af59.py",
+    "tests/test_pr512_codex_f62f0e3.py",
+    "tests/test_pr512_codex_findings.py",
+    "tests/test_pr512_recovery_fixes.py",
+    "tests/test_pr512_review_cycle4.py",
+    "tests/test_pr512_review_cycle6.py",
+    "tests/test_telegram_module.py"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "roserpina41",
+   "component": "strategies",
+   "behaviour": "strategia Roserpina",
+   "category": "strategy",
+   "runner": "pytest",
+   "args": [
+    "tests/roserpina41"
+   ],
+   "environment": "SIM",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "safety",
+   "component": "security",
+   "behaviour": "safety layer, kill switch, gate LIVE",
+   "category": "security",
+   "runner": "pytest",
+   "args": [
+    "tests/safety"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "scripts",
+   "component": "infrastructure",
+   "behaviour": "script CI, review, readiness, dispatcher",
+   "category": "infrastructure",
+   "runner": "pytest",
+   "args": [
+    "tests/scripts"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "services",
+   "component": "services",
+   "behaviour": "servizi applicativi",
+   "category": "integration",
+   "runner": "pytest",
+   "args": [
+    "tests/services"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "sim-multitable-certify",
+   "component": "certification",
+   "behaviour": "SIM multi-tavolo full-cycle 2/5/10 tavoli",
+   "category": "multi-table",
+   "runner": "orchestrator",
+   "args": [
+    "SIM_MULTITABLE_CERTIFY"
+   ],
+   "environment": "SANDBOX_EPHEMERAL",
+   "risk": "HIGH",
+   "timeout_seconds": 5400,
+   "resources": {
+    "cpu": 4,
+    "memory_mb": 6144
+   },
+   "datasets": [
+    "bfsim-recorded"
+   ],
+   "evidence": [
+    "signed-decision",
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "smoke",
+   "component": "runtime",
+   "behaviour": "avvio e funzioni principali, mini GUI inclusa",
+   "category": "smoke",
+   "runner": "pytest",
+   "args": [
+    "tests/smoke"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "stress",
+   "component": "performance",
+   "behaviour": "carico e prestazioni",
+   "category": "performance",
+   "runner": "pytest",
+   "args": [
+    "tests/stress"
+   ],
+   "environment": "SANDBOX_EPHEMERAL",
+   "risk": "MEDIUM",
+   "timeout_seconds": 2400,
+   "resources": {
+    "cpu": 4,
+    "memory_mb": 4096
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "testsuite",
+   "component": "infrastructure",
+   "behaviour": "autoverifica della suite",
+   "category": "infrastructure",
+   "runner": "pytest",
+   "args": [
+    "tests/testsuite"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "traceability",
+   "component": "infrastructure",
+   "behaviour": "registro di tracciabilita'",
+   "category": "infrastructure",
+   "runner": "pytest",
+   "args": [
+    "tests/traceability"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 900,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  },
+  {
+   "id": "unit",
+   "component": "core",
+   "behaviour": "logica di base di tutti i moduli",
+   "category": "unit",
+   "runner": "pytest",
+   "args": [
+    "tests/unit"
+   ],
+   "environment": "OFFLINE",
+   "risk": "LOW",
+   "timeout_seconds": 1200,
+   "resources": {
+    "cpu": 2,
+    "memory_mb": 2048
+   },
+   "datasets": [],
+   "evidence": [
+    "junit",
+    "log"
+   ],
+   "requires": [],
+   "criteria": {
+    "PASS": "exit 0 e nessun test fallito o in errore",
+    "FAIL": "almeno un test fallito o in errore",
+    "BLOCKED": "prerequisito, isolamento o dataset non disponibile"
+   }
+  }
+ ]
+}

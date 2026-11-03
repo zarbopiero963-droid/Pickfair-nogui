@@ -3391,6 +3391,22 @@
         "tests/fi03z/test_sim_zero_size_level.py"
       ],
       "max_files": 6
+    },
+    "pf_universal_test_automation_01": {
+      "description": "PF-VPS-UNIVERSAL-TEST-AUTOMATION-01 (#586, sostituisce PF-VPS-CERTIFICATION-SELF-SERVICE-01; merge owner: workflow): catalogo versionato delle suite (testing/test_catalog.json, argv fisso), richiesta di test firmata Sigstore da workflow_dispatch solo su main (pf-test-request.yml), libreria di verifica condivisa con la VPS (scripts/pf_test_dispatch.py: verify_request, Ledger, stati QUEUED..INFRA_ERROR), mappa di copertura comportamenti (inventario Gate A NOT_IMPORTED). Modalita' dry-run; nessun segreto, nessun accesso VPS per Claude B.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pf-test-request.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/test_automation.md",
+        "scripts/pf_test_dispatch.py",
+        "scripts/pr_full_suite_pipeline.py",
+        "testing/behaviour_coverage.json",
+        "testing/test_catalog.json",
+        "tests/scripts/test_pf_test_dispatch.py"
+      ],
+      "max_files": 9
     }
   }
 }

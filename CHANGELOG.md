@@ -8,6 +8,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
+  - catalogo versionato delle suite (`testing/test_catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
+  - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;
+  - verifica condivisa con la VPS (`scripts/pf_test_dispatch.py`: richiesta a schema chiuso, catalogo di main,
+    idempotenza persistente, stati QUEUED/RUNNING/PASS/FAIL/BLOCKED/TIMEOUT/CANCELLED/INFRA_ERROR, dove
+    INFRA_ERROR non vale mai PASS);
+  - mappa di copertura dei comportamenti, con inventario Gate A non ancora importato.
+
+  Nessun segreto e nessun accesso alla VPS per Claude B. Documentazione: `docs/test_automation.md`.
 ### Fixed
 - **CB-586-FI-03Z (#586, P1):** il broker SIM abbinava ordini contro livelli del book con size 0. Esempio: un LAY
   0,10@3.0 risultava abbinato a 2.02 su un book senza liquidità, con un matched finto e un'esposizione abbinata
