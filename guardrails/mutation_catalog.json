@@ -38,13 +38,37 @@
       "module": "simulation_broker",
       "area": "side",
       "file": "simulation_broker.py",
-      "original": "            best_counter = backs[0] if backs else None",
-      "mutated": "            best_counter = lays[0] if lays else None",
+      "original": "        livelli = backs if order.side == \"BACK\" else lays",
+      "mutated": "        livelli = lays if order.side == \"BACK\" else backs",
       "tests": [
         "tests/integration/test_simulation_broker_position_ledger_integration.py",
         "tests/f026/test_f028_units.py"
       ],
       "rationale": "Il lato opposto del book viene preso dal lato sbagliato."
+    },
+    {
+      "id": "fi03z_zero_size_level_matches",
+      "module": "simulation_broker",
+      "area": "exposure",
+      "file": "simulation_broker.py",
+      "original": "    return not math.isfinite(size) or size <= 0.0",
+      "mutated": "    return False",
+      "tests": [
+        "tests/fi03z/test_sim_zero_size_level.py"
+      ],
+      "rationale": "CB-586-FI-03Z: un livello con size 0 tornerebbe liquidita' illimitata (fill finto, esposizione abbinata inventata)."
+    },
+    {
+      "id": "fi03z_quote_reads_first_level_only",
+      "module": "simulation_broker",
+      "area": "exposure",
+      "file": "simulation_broker.py",
+      "original": "            livello = _miglior_livello(ex.get(\"availableToBack\" if str(side).upper() == \"BACK\" else \"availableToLay\"))",
+      "mutated": "            livello = (ex.get(\"availableToBack\" if str(side).upper() == \"BACK\" else \"availableToLay\") or [None])[0]",
+      "tests": [
+        "tests/fi03z/test_sim_zero_size_level.py"
+      ],
+      "rationale": "CB-586-FI-03Z (Codex P1 su #604): la quota del Microstake leggerebbe solo il primo livello mentre il matching salta quelli vuoti: lo stub passivo incrocerebbe e si abbinerebbe interamente."
     },
     {
       "id": "side_discordant_aliases_accepted",
