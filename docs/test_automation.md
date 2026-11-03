@@ -10,6 +10,9 @@ Codice:
 
 Test: `tests/scripts/test_pf_test_dispatch.py`.
 
+Addendum PF-UNIVERSAL-TEST-AUTONOMY-365-01: due corsie, **certification** (catalogo di main) e **development**
+(test nuovi scritti nella PR, §4-bis).
+
 **Stato: dry-run.** L'esecuzione reale richiede i gate del §11 del mandato e il GO owner, più una PR a merge owner che
 cambi `PF_TEST_DISPATCH_MODE` e `MODES`.
 
@@ -91,6 +94,39 @@ Il numero di PR e l'attore sono validati **prima** di comporre qualsiasi URL.
 
 **`Ledger.admit` (VPS):** una richiesta già ammessa (`target`, catalogo, repository, PR, SHA) viene rifiutata anche dopo un riavvio. La scrittura è atomica. Un registro illeggibile produce un rifiuto: non si riparte mai da vuoto.
 
+## 4-bis. Corsia development: test nuovi, codice non fidato
+
+Target: `dev:tests/<percorso>[,tests/<percorso>…]`, con al massimo 20 percorsi tutti diversi.
+
+**Percorsi ammessi:**
+- solo file `.py` o cartelle sotto `tests/`;
+- vietati `..`, `//`, i flag (quindi niente `-p`, cioè nessun plugin pytest), gli spazi e i metacaratteri;
+- `build` verifica che ogni percorso **esista nel codice della PR allo SHA** (`contents?ref=<sha>`): un percorso assente, o un'API che non risponde, porta al rifiuto.
+
+Il ciclo è questo:
+1. scrivo il test nella PR;
+2. lo chiedo sulla corsia development e ottengo RED;
+3. correggo, pusho e lo richiedo, ottenendo GREEN;
+4. la regressione pertinente passa sulla corsia certification;
+5. aggiungo la voce al catalogo nella stessa PR: il test di completezza la impone per ogni cartella nuova;
+6. dopo review e merge la suite è ufficiale.
+
+**Sandbox di sviluppo (`DEV_SANDBOX`, lato VPS):**
+- solo `pytest` sui percorsi richiesti;
+- **rete assente** e **nessun segreto**;
+- filesystem in sola lettura, salvo la directory di lavoro effimera;
+- 2 CPU, 2048 MB, 1800 s;
+- niente Docker socket e nessun privilegio host;
+- se l'isolamento manca, l'esito è `BLOCKED`.
+
+**Idempotenza:** ogni dispatch è un'esecuzione nuova, perché la chiave include il `run_id`. Si può quindi ripetere un test fallito, mentre lo stesso run non viene mai eseguito due volte. La certificazione resta una sola esecuzione per (target, catalogo, PR, SHA).
+
+**Separazione dalla certificazione:**
+- i check run hanno il nome `pf-dev-test/<chiave>`, distinto da qualunque suite;
+- `dev_status` restituisce sempre `certification: false`;
+- l'esito non conta per campagne, gate o certificazioni;
+- una richiesta dev non può dichiararsi `certification` né portarsi dietro suite, e una richiesta di certificazione non può contenere `dev_paths`.
+
 ## 5. Stati
 
 Gli stati sono: `QUEUED`, `RUNNING`, `PASS`, `FAIL`, `BLOCKED`, `TIMEOUT`, `CANCELLED`, `INFRA_ERROR`, oltre a `NOT_REQUESTED`.
@@ -127,11 +163,13 @@ Il codice di questa PR copre solo il lato GitHub e la libreria di verifica condi
 | Stati | check run di un'altra app o di un altro SHA; `INFRA_ERROR` con conclusione success; conclusione sconosciuta; run aperto con id più basso; campagna con uno stato non PASS |
 | Workflow | solo `workflow_dispatch`, solo main; permessi minimi; nessun `${{ }}` negli script; nessun `secrets.*`; nessun checkout del codice della PR |
 
-**Prove:** 92 test e 18 mutazioni sui controlli di sicurezza, tutte uccise.
+| Corsia development | percorsi fuori da `tests/`, `..`, assoluti, flag o plugin, metacaratteri, duplicati, più di 20; percorso assente allo SHA o verifica non disponibile; dev travestita da certificazione; certificazione con `dev_paths`; esito dev usato per una suite; replay dello stesso run |
+
+**Prove:** 114 test; 28 mutazioni sui controlli di sicurezza, tutte uccise.
 
 ## 8. Limiti residui (NOT_RUN o da fare)
 
-- **Lato VPS non implementato qui:** esecutore, sandbox, coda, kill switch e pubblicazione degli esiti sono di Grok. La prova E2E richiesta → esecuzione → evidenza è NOT_RUN.
+- **Lato VPS non implementato qui:** esecutore, sandbox (anche `DEV_SANDBOX`), coda, kill switch e pubblicazione degli esiti sono di Grok. Sono quindi NOT_RUN la prova E2E richiesta → esecuzione → evidenza e il test di accettazione dell'addendum §7 (test nuovo, RED, correzione, GREEN, catalogo, certificazione ufficiale). Va eseguita dopo il merge, quando la VPS preleva le richieste.
 - **Inventario Gate A (1.062 comportamenti):** non è nel repository. `testing/behaviour_coverage.json` resta `NOT_IMPORTED` finché non viene importato dalla sua fonte, senza inventare voci.
 - **`TRUSTED_REQUESTERS`:** è l'account owner. Le sessioni Claude B agiscono con quell'identità GitHub, quindi il controllo non distingue Claude B dall'owner. L'autorizzazione è comunque limitata a quello che il catalogo consente.
 - **Nomi dei check:** il nome `pf-sim-multitable-certification` e il prefisso `pf-test/` vanno confermati da Grok.

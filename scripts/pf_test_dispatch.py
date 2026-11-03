@@ -16,6 +16,16 @@ Modello a **pull**, senza endpoint in ingresso sulla VPS e senza segreti su GitH
 4. L'esito torna come check run di Pickfair Dedicated sull'head esatto; ``status`` lo traduce negli stati del mandato.
    Un errore d'infrastruttura e' ``INFRA_ERROR``: mai ``FAIL`` del codice, mai ``PASS``.
 
+Due corsie (PF-UNIVERSAL-TEST-AUTONOMY-365-01):
+
+- ``certification``: ``suite:<id>`` o ``campaign:<nome>`` del catalogo di main; verdetto ufficiale, idempotenza per
+  SHA; e' l'unica corsia che puo' dare un esito certificativo;
+- ``development``: ``dev:<percorso>[,<percorso>…]``, test NUOVI scritti nella PR (codice non fidato). Solo ``pytest``
+  su percorsi ``tests/…`` che esistono allo SHA richiesto, nella sandbox di sviluppo (``DEV_SANDBOX``: nessuna rete,
+  nessun segreto, filesystem di sola lettura salvo la directory di lavoro, limiti fissi). Ogni dispatch e' una nuova
+  esecuzione (si puo' ripetere un test fallito); l'esito e' marcato ``certification: false`` e non conta MAI per
+  campagne, gate o certificazioni.
+
 Fail-closed ovunque. Modalita' ``dry-run`` fissata nel workflow: l'esecuzione reale richiede GO owner e una PR a merge
 owner (gate di attivazione §11).
 """
@@ -44,9 +54,15 @@ TRUSTED_REQUESTERS = frozenset({"zarbopiero963-droid"})
 REQUESTER_PERMISSIONS = frozenset({"admin", "write"})
 MODES = ("dry-run",)                         # l'esecuzione reale arrivera' solo con GO owner (PR a merge owner)
 MAX_AGE_SECONDS = 24 * 3600
-REQUEST_FIELDS = frozenset({"schema", "target", "suites", "catalog_sha256", "catalog_version", "repo", "pr",
-                            "head_sha", "base_sha", "requested_by", "run_id", "run_attempt", "created_at", "mode",
-                            "idempotency_key"})
+REQUEST_FIELDS = frozenset({"schema", "lane", "target", "suites", "dev_paths", "catalog_sha256", "catalog_version",
+                            "repo", "pr", "head_sha", "base_sha", "requested_by", "run_id", "run_attempt",
+                            "created_at", "mode", "idempotency_key"})
+LANES = ("certification", "development")
+#: sandbox della corsia development: codice di test NON fidato (scritto nella PR), mai privilegi
+DEV_SANDBOX = {"runner": "pytest", "environment": "DEV_SANDBOX", "network": "none", "secrets": "none",
+               "filesystem": "read-only except the ephemeral workdir", "timeout_seconds": 1800,
+               "resources": {"cpu": 2, "memory_mb": 2048}, "certification": False}
+MAX_DEV_PATHS = 20
 
 # ── catalogo ─────────────────────────────────────────────────────────────────────────────────────────────────────
 ENVIRONMENTS = frozenset({"OFFLINE", "SIM", "REPLAY_RECORDED", "SANDBOX_EPHEMERAL"})
@@ -150,9 +166,31 @@ def resolve_target(cat: Mapping[str, Any], target: str) -> List[str]:
     raise Refused("TARGET_NOT_IN_CATALOG")
 
 
+def dev_paths_from_target(target: str) -> List[str]:
+    """``dev:a,b`` -> percorsi pytest sotto ``tests/`` (sintassi soltanto: l'esistenza si verifica allo SHA)."""
+    kind, _, rest = str(target).partition(":")
+    if kind != "dev" or not rest:
+        raise Refused("TARGET_NOT_IN_CATALOG")
+    paths = [p for p in rest.split(",")]
+    if not 0 < len(paths) <= MAX_DEV_PATHS or len(set(paths)) != len(paths):
+        raise Refused("DEV_PATHS")
+    for p in paths:
+        if (not _SAFE_ARG.fullmatch(p) or ".." in p or p.startswith(("/", "-")) or "//" in p
+                or not p.startswith("tests/") or not (p.endswith(".py") or "." not in p.rsplit("/", 1)[-1])):
+            raise Refused("DEV_PATH_UNSAFE")
+    return paths
+
+
+def lane_of(target: str) -> str:
+    return "development" if str(target).startswith("dev:") else "certification"
+
+
 # ── richiesta ────────────────────────────────────────────────────────────────────────────────────────────────────
-def idempotency_key(target: str, catalog_sha: str, repo: str, pr: int, sha: str) -> str:
-    return hashlib.sha256(f"{target}|{catalog_sha}|{repo}|{pr}|{sha}".encode()).hexdigest()
+def idempotency_key(target: str, catalog_sha: str, repo: str, pr: int, sha: str, run_id: Optional[int] = None) -> str:
+    """Certificazione: una sola esecuzione per (target, catalogo, PR, SHA). Sviluppo: una per dispatch (``run_id``),
+    cosi' un test sperimentale fallito si puo' ripetere; lo stesso run non viene mai eseguito due volte."""
+    tail = f"|run:{run_id}" if run_id is not None else ""
+    return hashlib.sha256(f"{target}|{catalog_sha}|{repo}|{pr}|{sha}{tail}".encode()).hexdigest()
 
 
 def _check_pr(pr_data: Mapping[str, Any], *, repo: str, sha: str) -> None:
@@ -167,12 +205,19 @@ def _check_pr(pr_data: Mapping[str, Any], *, repo: str, sha: str) -> None:
 
 def build_request(*, target: str, pr: Any, sha: str, repo: str, actor: str, actor_permission: str,
                   pr_data: Mapping[str, Any], catalog_raw: bytes, run_id: Any, run_attempt: Any, mode: str,
-                  now: Optional[_dt.datetime] = None, root: Path = ROOT) -> Dict[str, Any]:
-    """Richiesta a schema chiuso, oppure ``Refused``. I dati di GitHub e il catalogo arrivano gia' letti."""
+                  now: Optional[_dt.datetime] = None, root: Path = ROOT,
+                  path_exists_at_sha: Optional[Any] = None) -> Dict[str, Any]:
+    """Richiesta a schema chiuso, oppure ``Refused``. I dati di GitHub e il catalogo arrivano gia' letti.
+
+    ``path_exists_at_sha(path) -> bool`` (corsia development) controlla i percorsi nel codice della PR allo SHA."""
     if mode not in MODES:
         raise Refused("MODE_NOT_ALLOWED")
     cat = validate_catalog(catalog_raw, root)
-    suites = resolve_target(cat, target)
+    lane = lane_of(target)
+    if lane == "development":
+        suites, dev_paths = [], dev_paths_from_target(target)
+    else:
+        suites, dev_paths = resolve_target(cat, target), []
     try:
         pr_number = int(str(pr).strip())
     except ValueError:
@@ -186,13 +231,18 @@ def build_request(*, target: str, pr: Any, sha: str, repo: str, actor: str, acto
     if actor_permission not in REQUESTER_PERMISSIONS:
         raise Refused("REQUESTER_PERMISSION")
     _check_pr(pr_data, repo=repo, sha=sha)
+    if dev_paths and (path_exists_at_sha is None or not all(path_exists_at_sha(p) for p in dev_paths)):
+        raise Refused("DEV_PATH_MISSING")             # percorsi verificati sul codice della PR allo SHA
     digest = catalog_digest(catalog_raw)
-    return {"schema": REQUEST_SCHEMA, "target": target, "suites": suites, "catalog_sha256": digest,
+    run = int(run_id)
+    return {"schema": REQUEST_SCHEMA, "lane": lane, "target": target, "suites": suites, "dev_paths": dev_paths,
+            "catalog_sha256": digest,
             "catalog_version": cat["version"], "repo": repo, "pr": pr_number, "head_sha": sha,
             "base_sha": str((pr_data.get("base") or {}).get("sha") or ""), "requested_by": actor,
-            "run_id": int(run_id), "run_attempt": int(run_attempt),
+            "run_id": run, "run_attempt": int(run_attempt),
             "created_at": (now or _dt.datetime.now(_dt.timezone.utc)).strftime(_TS), "mode": mode,
-            "idempotency_key": idempotency_key(target, digest, repo, pr_number, sha)}
+            "idempotency_key": idempotency_key(target, digest, repo, pr_number, sha,
+                                               run if lane == "development" else None)}
 
 
 def verify_request(raw: bytes, *, repo: str, pr_data: Mapping[str, Any], signer_run_id: str, catalog_raw: bytes,
@@ -222,10 +272,18 @@ def verify_request(raw: bytes, *, repo: str, pr_data: Mapping[str, Any], signer_
     if req["catalog_sha256"] != catalog_digest(catalog_raw):
         raise Refused("CATALOG_MISMATCH")              # catalogo alterato o diverso da quello di main
     cat = validate_catalog(catalog_raw, root)
-    if req["suites"] != resolve_target(cat, req["target"]) or req["catalog_version"] != cat["version"]:
+    if req["lane"] not in LANES or req["lane"] != lane_of(req["target"]):
+        raise Refused("LANE_MISMATCH")
+    if req["lane"] == "development":
+        if req["suites"] != [] or req["dev_paths"] != dev_paths_from_target(req["target"]):
+            raise Refused("SUITES_MISMATCH")
+    elif req["dev_paths"] != [] or req["suites"] != resolve_target(cat, req["target"]):
+        raise Refused("SUITES_MISMATCH")
+    if req["catalog_version"] != cat["version"]:
         raise Refused("SUITES_MISMATCH")
     if req["idempotency_key"] != idempotency_key(req["target"], req["catalog_sha256"], req["repo"], req["pr"],
-                                                 req["head_sha"]):
+                                                 req["head_sha"],
+                                                 req["run_id"] if req["lane"] == "development" else None):
         raise Refused("KEY_MISMATCH")
     try:
         created = _dt.datetime.strptime(str(req["created_at"]), _TS).replace(tzinfo=_dt.timezone.utc)
@@ -263,8 +321,8 @@ class Ledger:
         key = str(req["idempotency_key"])
         if key in data["admitted"]:
             raise Refused("DUPLICATE_REQUEST")
-        data["admitted"][key] = {"target": req["target"], "pr": req["pr"], "head_sha": req["head_sha"],
-                                 "run_id": req["run_id"]}
+        data["admitted"][key] = {"lane": req["lane"], "target": req["target"], "pr": req["pr"],
+                                 "head_sha": req["head_sha"], "run_id": req["run_id"]}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(self.path.parent), prefix=".ledger-")
         try:
@@ -283,6 +341,24 @@ def check_name(suite_id: str) -> str:
     """Check run con cui la VPS pubblica l'esito di una suite (le due certificazioni storiche tengono il loro nome)."""
     return {"prelive-certify": "pf-betfair-certification",
             "sim-multitable-certify": "pf-sim-multitable-certification"}.get(suite_id, f"pf-test/{suite_id}")
+
+
+def dev_check_name(idempotency_key_: str) -> str:
+    """Esito di un'esecuzione di sviluppo: nome distinto, mai confondibile con una suite certificativa."""
+    return f"pf-dev-test/{str(idempotency_key_)[:12]}"
+
+
+def dev_status(idempotency_key_: str, sha: str, check_runs: list) -> Dict[str, Any]:
+    """Esito sperimentale: stessi stati, ma ``certification: false`` e nessun peso su campagne o gate."""
+    name = dev_check_name(idempotency_key_)
+    mine = [c for c in check_runs if c.get("name") == name and c.get("head_sha") == sha
+            and ((c.get("app") or {}).get("slug")) == TRUSTED_APP]
+    if not mine:
+        return {"lane": "development", "sha": sha, "state": "NOT_REQUESTED", "certification": False}
+    open_runs = [c for c in mine if c.get("status") != "completed"]
+    last = max(open_runs or mine, key=lambda c: int(c.get("id") or 0))
+    return {"lane": "development", "sha": sha, "state": state_from_check_run(last), "certification": False,
+            "check_run_id": last.get("id")}
 
 
 def state_from_check_run(cr: Mapping[str, Any]) -> str:
@@ -335,6 +411,7 @@ def main(argv: Optional[list] = None) -> int:
     s.add_argument("--repo", required=True)
     s.add_argument("--target", required=True)
     s.add_argument("--sha", required=True)
+    s.add_argument("--dev-key", default="", help="corsia development: idempotency_key della richiesta")
     args = ap.parse_args(argv)
     catalog_raw = (ROOT / CATALOG_PATH).read_bytes()
     try:
@@ -350,17 +427,35 @@ def main(argv: Optional[list] = None) -> int:
                 raise Refused("MALFORMED_INPUT")         # validato PRIMA di comporre qualunque URL
             pr_data = _gh(f"repos/{repo}/pulls/{pr}")
             permission = str((_gh(f"repos/{repo}/collaborators/{actor}/permission") or {}).get("permission") or "")
-            req = build_request(target=env("PF_REQ_TARGET", "").strip(), pr=pr, sha=env("PF_REQ_SHA", "").strip(),
+            sha = env("PF_REQ_SHA", "").strip()
+
+            def exists(path: str) -> bool:
+                if not _SHA.fullmatch(sha):
+                    return False
+                try:
+                    return _gh(f"repos/{repo}/contents/{path}?ref={sha}") is not None
+                except Refused:
+                    return False                       # assente, o API non leggibile: mai eseguito
+
+            req = build_request(target=env("PF_REQ_TARGET", "").strip(), pr=pr, sha=sha,
                                 repo=repo, actor=actor, actor_permission=permission, pr_data=pr_data,
                                 catalog_raw=catalog_raw, run_id=env("GITHUB_RUN_ID", "0"),
-                                run_attempt=env("GITHUB_RUN_ATTEMPT", "0"), mode=env("PF_TEST_DISPATCH_MODE", ""))
+                                run_attempt=env("GITHUB_RUN_ATTEMPT", "0"), mode=env("PF_TEST_DISPATCH_MODE", ""),
+                                path_exists_at_sha=exists)
             Path(args.output).write_text(json.dumps(req, sort_keys=True), encoding="utf-8")
-            print(json.dumps({"accepted": True, "target": req["target"], "suites": req["suites"], "pr": req["pr"],
+            print(json.dumps({"accepted": True, "lane": req["lane"], "target": req["target"],
+                              "suites": req["suites"], "dev_paths": req["dev_paths"], "pr": req["pr"],
                               "head_sha": req["head_sha"], "mode": req["mode"],
                               "idempotency_key": req["idempotency_key"]}))
             return 0
         if not _SHA.fullmatch(args.sha):
             raise Refused("MALFORMED_SHA")
+        if args.dev_key:
+            if not re.fullmatch(r"[0-9a-f]{64}", args.dev_key):
+                raise Refused("MALFORMED_KEY")
+            runs = (_gh(f"repos/{args.repo}/commits/{args.sha}/check-runs?per_page=100") or {}).get("check_runs", [])
+            print(json.dumps(dev_status(args.dev_key, args.sha, runs), sort_keys=True))
+            return 0
         suites = resolve_target(validate_catalog(catalog_raw), args.target)
         runs = (_gh(f"repos/{args.repo}/commits/{args.sha}/check-runs?per_page=100") or {}).get("check_runs", [])
         per_suite = [suite_status(s, args.sha, runs) for s in suites]

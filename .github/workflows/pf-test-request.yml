@@ -5,13 +5,14 @@ name: PF test request
 # PR. Nessun segreto, nessun comando: tre input, validati da scripts/pf_test_dispatch.py contro il catalogo e l'API di
 # GitHub (richiedente, permessi, PR aperta e non fork, head == SHA). La richiesta a schema chiuso viene firmata con
 # Sigstore e caricata come artefatto; la VPS (Grok) la preleva, ne verifica firma, stato attuale e catalogo, ed esegue
-# in sandbox SOLO l'argv del catalogo. Modalita' fissata a dry-run: l'esecuzione reale richiede GO owner (§11) e una
+# in sandbox SOLO l'argv del catalogo. Corsia development (dev:tests/...): pytest sui test nuovi della PR allo SHA, nella
+# sandbox di sviluppo senza rete ne' segreti; esito sperimentale, mai certificativo. Modalita' fissata a dry-run: l'esecuzione reale richiede GO owner (§11) e una
 # PR a merge owner.
 on:
   workflow_dispatch:
     inputs:
       target:
-        description: "suite:<id> o campaign:<nome> del catalogo (es. suite:recovery, campaign:all)"
+        description: "suite:<id> o campaign:<nome> del catalogo (certificazione) oppure dev:tests/<percorso>[,...] (test nuovi della PR, sandbox di sviluppo, mai certificativi)"
         required: true
         type: string
       pr:

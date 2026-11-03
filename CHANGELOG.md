@@ -16,6 +16,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     idempotenza persistente, stati QUEUED/RUNNING/PASS/FAIL/BLOCKED/TIMEOUT/CANCELLED/INFRA_ERROR, dove
     INFRA_ERROR non vale mai PASS);
   - mappa di copertura dei comportamenti, con inventario Gate A non ancora importato.
+  - corsia development (PF-UNIVERSAL-TEST-AUTONOMY-365-01): `dev:tests/...` esegue i test nuovi della PR allo SHA in
+    una sandbox senza rete né segreti, ripetibile per dispatch, con esito `certification: false`, mai certificativo.
 
   Nessun segreto e nessun accesso alla VPS per Claude B. Documentazione: `docs/test_automation.md`.
 ### Fixed
