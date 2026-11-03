@@ -999,7 +999,7 @@ def test_the_newest_completed_prelive_decides_by_id():
 
 
 # ── Governance #606: dopo un non-PASS il workflow chiede una review dell'INTERO diff ───────────────────────────
-def _needs_full(path, comments, base=BASE, order=None):
+def _needs_full(path, comments, base=BASE, order=None, head=HEAD):
     import ast
     import re as _re
     _w, py = _workflow_python(path)
@@ -1012,7 +1012,7 @@ def _needs_full(path, comments, base=BASE, order=None):
     exec(compile(ast.Module(body=assigns + fns, type_ignores=[]), path, "exec"), ns)
     if order is None:                                                    # commit della PR, dal piu' vecchio
         order = {C1[:12]: 0, C2[:12]: 1, HEAD[:12]: 2}
-    return ns["rr_needs_full_review"](comments, "gpt56sol" if "sol" in path else "grok46", base, order)
+    return ns["rr_needs_full_review"](comments, "gpt56sol" if "sol" in path else "grok46", base, order, head)
 
 
 def _rc(path, frm, to, *states, when="2026-11-03T10:00:00Z", login="github-actions[bot]"):
@@ -1073,7 +1073,7 @@ def test_a_full_pass_older_than_the_blockers_never_clears_them(path):
 
 
 @pytest.mark.parametrize("path", WFS)
-@pytest.mark.parametrize("order", [{}, {"0" * 12: 0}, {HEAD[:12]: 0}, "non-un-dict"])
+@pytest.mark.parametrize("order", [{}, {"0" * 12: 0}, {C1[:12]: 0}, "non-un-dict"])
 def test_an_unknown_commit_order_never_clears_a_non_pass(path, order):
     """Head non presente nell'ordine (force-push, storico incompleto, ordine illeggibile) => review completa."""
     comments = [_rc(path, C1, C2, "VALID_BLOCKERS", when="2026-11-03T10:00:00Z"),
@@ -1136,7 +1136,7 @@ def test_resolve_range_falls_back_to_the_full_diff_when_needed_or_unreadable(pat
     req = body[:body.index("def resolve_range():")]
     resolve = body[body.index("def resolve_range():"):]
     # storico illeggibile => review completa (fail-closed)
-    assert "rr_needs_full_review(pr_bot_comments(), REVIEW_ID, BASE_SHA, pr_commit_order())" in req
+    assert "rr_needs_full_review(pr_bot_comments(), REVIEW_ID, BASE_SHA, pr_commit_order(), HEAD_SHA)" in req
     # ordine dei commit oltre il tetto dell'API => solleva => review completa
     order_fn = py[py.index("def pr_commit_order():"):py.index("def full_review_required():")]
     assert "raise RuntimeError" in order_fn and "while page <= 3:" in order_fn
@@ -1166,3 +1166,49 @@ def test_a_full_diff_pass_that_stops_before_the_blocked_head_never_clears_it():
              _pair("gpt-6.1-sol", BASE, C2, run=3), _pair("grok-4.7", run=4)]
     d = _decide(pairs)
     assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
+
+
+# ── Decisione owner su #607: bloccanti su commit usciti dalla storia (force-push) ─────────────────────────────────
+GONE = "9" * 40   # commit non piu' nella PR
+
+
+def test_a_force_pushed_away_blocker_is_not_cleared_by_delta_passes():
+    """Il commit bloccato e' sparito, ma la PR attuale e' coperta solo da PASS sul delta: resta BLOCKED."""
+    pairs = [_pair("gpt-6.1-sol", BASE, GONE, "BLOCKERS", run=1),
+             _pair("gpt-6.1-sol", BASE, C1, run=2), _pair("gpt-6.1-sol", C1, C2, run=3), _pair("gpt-6.1-sol", C2, HEAD, run=4),
+             _pair("grok-4.7", run=5)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS_FORCE_PUSHED:gpt-6.1-sol" in d.reasons
+
+
+def test_a_force_pushed_away_blocker_is_cleared_only_by_a_later_full_pass_to_the_exact_head():
+    base = [_pair("gpt-6.1-sol", BASE, GONE, "BLOCKERS", run=1), _pair("grok-4.7", run=9)]
+    assert _decide(base + [_pair("gpt-6.1-sol", BASE, HEAD, run=2)]).passed            # PASS completo successivo
+    stops = base + [_pair("gpt-6.1-sol", BASE, C2, run=2), _pair("gpt-6.1-sol", C2, HEAD, run=3)]
+    d = _decide(stops)                                                                   # completo ma non fino all'head
+    assert not d.passed and "OPEN_BLOCKERS_FORCE_PUSHED:gpt-6.1-sol" in d.reasons
+
+
+def test_a_full_pass_emitted_before_the_force_pushed_blocker_never_clears_it():
+    pairs = [_pair("gpt-6.1-sol", BASE, HEAD, run=1), _pair("gpt-6.1-sol", BASE, GONE, "BLOCKERS", run=2),
+             _pair("grok-4.7", run=3)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS_FORCE_PUSHED:gpt-6.1-sol" in d.reasons
+
+
+def test_a_force_pushed_away_pass_is_simply_ignored():
+    pairs = [_pair("gpt-6.1-sol", BASE, GONE, run=1), _pair("gpt-6.1-sol", BASE, HEAD, run=2), _pair("grok-4.7", run=3)]
+    assert _decide(pairs).passed
+
+
+@pytest.mark.parametrize("path", WFS)
+def test_workflow_a_force_pushed_away_blocker_needs_a_later_full_pass_to_the_current_head(path):
+    comments = [_rc(path, C1, GONE, "VALID_BLOCKERS", when="2026-11-03T10:00:00Z"),
+                _rc(path, BASE, C1, "VALID_PASS", when="2026-11-03T11:00:00Z"),
+                _rc(path, C1, HEAD, "VALID_PASS", when="2026-11-03T11:30:00Z")]
+    assert _needs_full(path, comments) is True                                           # solo delta: serve l'intero diff
+    near = comments + [_rc(path, BASE, C2, "VALID_PASS", when="2026-11-03T12:00:00Z")]
+    assert _needs_full(path, near) is True                                               # completo ma non fino all'head
+    full = comments + [_rc(path, BASE, HEAD, "VALID_PASS", when="2026-11-03T12:00:00Z")]
+    assert _needs_full(path, full) is False
+    assert _needs_full(path, full, head="4" * 40) is True                                # head attuale fuori ordine

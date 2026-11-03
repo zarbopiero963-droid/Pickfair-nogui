@@ -86,6 +86,13 @@ Per leggere gli artefatti del proprio run i workflow hanno `actions: read`.
   intera sia corretta. Il PASS completo passa da tutti i controlli dell'attestazione: firma Sigstore, workflow su
   main, digest del diff ricalcolato, nessun file tagliato. Le attestazioni storiche non vengono riscritte.
 
+  **Force-push (decisione owner su #607).** Un non-PASS autentico il cui head non è più nella PR (commit usciti dalla
+  storia) non blocca per sempre, ma non si cancella da solo: resta `OPEN_BLOCKERS_FORCE_PUSHED` finché un PASS firmato
+  **successivo** non copre l'intera PR dalla base fino all'**head esatto attuale**. Un PASS sui soli delta, o un PASS
+  completo che si ferma prima dell'head, non basta. Togliere un commit dalla storia non fa sparire un rilievo: la
+  review completa del diff corrente deve riconfermare che il problema non c'è più. Il workflow chiede la stessa review
+  completa (head del non-PASS fuori ordine ⇒ serve un PASS dalla base fino a `HEAD_SHA`).
+
   **Lato workflow** (`rr_needs_full_review`, identica nei workflow di Sol e Grok): sulla push successiva il workflow
   legge **ogni** tentativo di ogni range di quel reviewer, solo nei commenti di `github-actions[bot]`: ogni tentativo
   emette un'attestazione firmata, quindi un non-PASS seguito da un PASS sullo stesso range delta resta aperto anche nel

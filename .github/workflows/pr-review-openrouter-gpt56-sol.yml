@@ -399,7 +399,7 @@ jobs:
               """True se serve la review dell'INTERO diff. Storico illeggibile => True (fail-closed: costa una review
               in piu', non nasconde un bloccante)."""
               try:
-                  return rr_needs_full_review(pr_bot_comments(), REVIEW_ID, BASE_SHA, pr_commit_order())
+                  return rr_needs_full_review(pr_bot_comments(), REVIEW_ID, BASE_SHA, pr_commit_order(), HEAD_SHA)
               except Exception as exc:
                   print(f"::warning::{REVIEW_ID}: storico review non leggibile ({redact(str(exc))[:200]}): review completa")
                   return True
@@ -1077,7 +1077,7 @@ jobs:
               )
           # <<< REVIEW_RECOVERY_CORE <<<
 
-          def rr_needs_full_review(comments, review_id, base_sha, commit_order):
+          def rr_needs_full_review(comments, review_id, base_sha, commit_order, head_sha):
               """Governance #606 (decisione owner): dopo un esito non-PASS la review successiva copre l'INTERO diff.
 
               Si guarda OGNI tentativo di ogni range di QUESTO reviewer, solo nei commenti del bot del workflow (un
@@ -1088,7 +1088,9 @@ jobs:
               (prefisso 12 -> posizione nella PR) misura l'head; un head assente dall'ordine (force-push, storico
               incompleto) non chiude niente. «Successivo» = istante del commento strettamente posteriore; il numero del
               tentativo conta SOLO dentro lo stesso commento (fra commenti diversi i contatori sono indipendenti: rilievo
-              Sol su #607). Un non-PASS senza istante non si chiude mai."""
+              Sol su #607). Un non-PASS senza istante non si chiude mai. Un non-PASS il cui head non e' piu' nella PR
+              (force-push, decisione owner su #607) si chiude solo con un PASS successivo dalla base fino all'head
+              ESATTO attuale, come nel verificatore (OPEN_BLOCKERS_FORCE_PUSHED); head attuale fuori ordine => mai."""
               events = []
               for idx, c in enumerate(comments or []):
                   if not isinstance(c, dict) or ((c.get("user") or {}).get("login") or "") != "github-actions[bot]":
@@ -1106,6 +1108,10 @@ jobs:
 
               def cleared(bad_to, bad_key):
                   pos = order.get(bad_to)
+                  if pos is None:   # commit uscito dalla storia: serve la PR intera fino all'head attuale
+                      pos = order.get(str(head_sha)[:12])
+                      return (bool(bad_key[0]) and pos is not None
+                              and any(p == pos and later(k, bad_key) for p, k in full_pass))
                   return (bool(bad_key[0]) and pos is not None
                           and any(p is not None and p >= pos and later(k, bad_key) for p, k in full_pass))
 

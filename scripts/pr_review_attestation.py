@@ -191,6 +191,9 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
     index = {sha: i for i, sha in enumerate(chain)}
     reasons: List[str] = []
     by_reviewer: Dict[str, List[Tuple[int, int, str, str]]] = {}
+    # non-PASS autentici su commit non piu' nella PR (force-push): decisione owner su #607, restano bloccanti finche'
+    # un PASS firmato successivo non copre l'INTERA PR dalla base fino all'head ESATTO attuale
+    orphan_bad: Dict[str, List[float]] = {}
     for raw, signed in attestations:
         att, why = check_attestation(raw, signed, repository=repository, pr=pr, pr_author=pr_author, trusted=trusted,
                                      is_trusted_workflow_commit=is_trusted_workflow_commit,
@@ -214,6 +217,8 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
             start = 0
         if start is None or to not in index or start >= index[to]:
             reasons.append(f"RANGE_NOT_IN_PR:{att['reviewer']}")
+            if att["verdict"] != "PASS" and to not in index:
+                orphan_bad.setdefault(att["reviewer"], []).append(_emitted_at(att, False))
             continue
         by_reviewer.setdefault(att["reviewer"], []).append(
             (start, index[to], att["verdict"], _emitted_at(att, att["verdict"] == "PASS")))
@@ -236,10 +241,17 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
             (b, order) for a, b, verdict, order in ranges if verdict != "PASS"
             and not any(v2 == "PASS" and o2 > order and a2 == 0 and b2 >= b for a2, b2, v2, o2 in ranges)
         ]
+        # force-push (decisione owner su #607): un non-PASS su codice uscito dalla storia non blocca per sempre, ma
+        # solo un PASS completo successivo dalla base all'head esatto lo chiude; un PASS sul delta non basta mai
+        head_idx = len(chain) - 1
+        open_orphans = [o for o in orphan_bad.get(reviewer, [])
+                        if not any(v2 == "PASS" and o2 > o and a2 == 0 and b2 == head_idx for a2, b2, v2, o2 in ranges)]
         if reached != len(chain) - 1:
             reasons.append(f"NOT_COVERED_TO_HEAD:{reviewer}")
         elif open_bad:
             reasons.append(f"OPEN_BLOCKERS:{reviewer}")
+        elif open_orphans:
+            reasons.append(f"OPEN_BLOCKERS_FORCE_PUSHED:{reviewer}")
     passed = not [r for r in reasons if r.startswith(_GATING)]
     return Decision(passed, reasons, covered)
 

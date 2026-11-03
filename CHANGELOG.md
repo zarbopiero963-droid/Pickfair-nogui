@@ -17,6 +17,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     al suo head, misurato sull'elenco dei commit della PR. Senza questo controllo un PASS `BASE...C1` più recente di
     un BLOCKERS `C1...C2` riportava le push successive sul delta: il verificatore teneva aperto il bloccante e il gate
     restava bloccato (rilievo di Sol e Grok sulla #607);
+  - force-push (decisione owner su #607): un non-PASS su commit non più nella PR resta bloccante
+    (`OPEN_BLOCKERS_FORCE_PUSHED`) finché un PASS firmato successivo non copre l'intera PR fino all'head esatto;
   - il workflow considera **ogni** tentativo di un range, non solo l'ultimo: ogni tentativo è attestato, quindi
     un INCOMPLETE seguito da un PASS sullo stesso delta resta aperto nel verificatore e richiede la review completa;
   - prima un PASS sul solo delta lasciava il primo tratto senza copertura (`NOT_COVERED_TO_HEAD` per sempre), oppure
