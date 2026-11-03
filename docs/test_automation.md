@@ -4,8 +4,8 @@ Riferimenti: #586, mandato owner PF-VPS-UNIVERSAL-TEST-AUTOMATION-01, che sostit
 
 Codice:
 - `scripts/pf_test_dispatch.py`;
-- `testing/test_catalog.json`;
-- `testing/behaviour_coverage.json`;
+- `tests/catalog/pf-test-catalog.json`;
+- `tests/catalog/behaviour_coverage.json`;
 - `.github/workflows/pf-test-request.yml`.
 
 Test: `tests/scripts/test_pf_test_dispatch.py`.
@@ -48,7 +48,7 @@ Claude B ── pf_test_dispatch.py status --target … --sha …  → QUEUED…
 - **Nessun segreto su GitHub.** Il workflow ha solo `contents`/`pull-requests: read` e `id-token`/`attestations: write`, e non usa nessun `secrets.*`.
 - **Fiducia mai dal codice della PR.** Il workflow gira solo su `refs/heads/main` (`if:` del job). Il catalogo è quello di main, la firma è legata al workflow di main e la VPS rilegge da sé PR e catalogo.
 
-## 3. Catalogo (`testing/test_catalog.json`)
+## 3. Catalogo (`tests/catalog/pf-test-catalog.json`)
 
 Ogni suite contiene:
 - `id` stabile;
@@ -170,7 +170,7 @@ Il codice di questa PR copre solo il lato GitHub e la libreria di verifica condi
 ## 8. Limiti residui (NOT_RUN o da fare)
 
 - **Lato VPS non implementato qui:** esecutore, sandbox (anche `DEV_SANDBOX`), coda, kill switch e pubblicazione degli esiti sono di Grok. Sono quindi NOT_RUN la prova E2E richiesta → esecuzione → evidenza e il test di accettazione dell'addendum §7 (test nuovo, RED, correzione, GREEN, catalogo, certificazione ufficiale). Va eseguita dopo il merge, quando la VPS preleva le richieste.
-- **Inventario Gate A (1.062 comportamenti):** non è nel repository. `testing/behaviour_coverage.json` resta `NOT_IMPORTED` finché non viene importato dalla sua fonte, senza inventare voci.
+- **Inventario Gate A (1.062 comportamenti):** non è nel repository. `tests/catalog/behaviour_coverage.json` resta `NOT_IMPORTED` finché non viene importato dalla sua fonte, senza inventare voci.
 - **`TRUSTED_REQUESTERS`:** è l'account owner. Le sessioni Claude B agiscono con quell'identità GitHub, quindi il controllo non distingue Claude B dall'owner. L'autorizzazione è comunque limitata a quello che il catalogo consente.
 - **Nomi dei check:** il nome `pf-sim-multitable-certification` e il prefisso `pf-test/` vanno confermati da Grok.
 

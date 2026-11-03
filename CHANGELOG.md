@@ -10,7 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
-  - catalogo versionato delle suite (`testing/test_catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
+  - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;
   - verifica condivisa con la VPS (`scripts/pf_test_dispatch.py`: richiesta a schema chiuso, catalogo di main,
     idempotenza persistente, stati QUEUED/RUNNING/PASS/FAIL/BLOCKED/TIMEOUT/CANCELLED/INFRA_ERROR, dove

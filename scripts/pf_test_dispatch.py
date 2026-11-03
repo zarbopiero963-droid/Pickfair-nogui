@@ -3,7 +3,7 @@
 
 Modello a **pull**, senza endpoint in ingresso sulla VPS e senza segreti su GitHub:
 
-1. ``testing/test_catalog.json`` e' il catalogo versionato delle suite: per ognuna un runner e un argv FISSI
+1. ``tests/catalog/pf-test-catalog.json`` e' il catalogo versionato delle suite: per ognuna un runner e un argv FISSI
    (``validate_catalog``), ambiente, rischio, risorse, timeout, dataset, evidenze e criteri. Nuove suite solo via PR,
    review e CI; la VPS lo legge **da main**, mai dalla PR.
 2. ``.github/workflows/pf-test-request.yml`` (``workflow_dispatch``, solo da ``main``) chiama ``build``: richiedente,
@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
-CATALOG_PATH = "testing/test_catalog.json"
+CATALOG_PATH = "tests/catalog/pf-test-catalog.json"
 CATALOG_SCHEMA = "pf-test-catalog/1"
 REQUEST_SCHEMA = "pf-test-request/1"
 REQUEST_WORKFLOW = ".github/workflows/pf-test-request.yml"
@@ -406,7 +406,7 @@ def main(argv: Optional[list] = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build", help="nel workflow: costruisce la richiesta (input da variabili d'ambiente)")
     b.add_argument("--output", required=True)
-    sub.add_parser("validate-catalog", help="valida testing/test_catalog.json")
+    sub.add_parser("validate-catalog", help="valida tests/catalog/pf-test-catalog.json")
     s = sub.add_parser("status", help="stato delle suite di un target per uno SHA")
     s.add_argument("--repo", required=True)
     s.add_argument("--target", required=True)

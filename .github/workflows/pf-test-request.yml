@@ -1,7 +1,7 @@
 name: PF test request
 
 # PF-VPS-UNIVERSAL-TEST-AUTOMATION-01 (#586): richiesta firmata di test Pickfair alla VPS (modello a pull).
-# Gira SOLO da main (workflow_dispatch), quindi legge il catalogo testing/test_catalog.json di main, mai quello di una
+# Gira SOLO da main (workflow_dispatch), quindi legge il catalogo tests/catalog/pf-test-catalog.json di main, mai quello di una
 # PR. Nessun segreto, nessun comando: tre input, validati da scripts/pf_test_dispatch.py contro il catalogo e l'API di
 # GitHub (richiedente, permessi, PR aperta e non fork, head == SHA). La richiesta a schema chiuso viene firmata con
 # Sigstore e caricata come artefatto; la VPS (Grok) la preleva, ne verifica firma, stato attuale e catalogo, ed esegue

@@ -306,7 +306,7 @@ def test_cli_status_reports_the_campaign_verdict(monkeypatch, capsys):
 
 # ── copertura dei comportamenti ─────────────────────────────────────────────────────────────────────────────────
 def test_behaviour_coverage_is_honest_about_the_inventory():
-    cov = json.loads((ROOT / "testing/behaviour_coverage.json").read_text())
+    cov = json.loads((ROOT / "tests/catalog/behaviour_coverage.json").read_text())
     assert cov["schema"] == "pf-behaviour-coverage/1"
     ids = {s["id"] for s in CATALOG["suites"]}
     for b in cov["behaviours"]:
