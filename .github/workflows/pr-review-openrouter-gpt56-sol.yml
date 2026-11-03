@@ -383,7 +383,8 @@ jobs:
 
           def pr_commit_order():
               """Posizione di ogni commit della PR (prefisso a 12 caratteri, dal piu' vecchio). L'API elenca al massimo
-              250 commit: oltre, l'ordine non e' completo e si solleva (=> review completa, fail-closed)."""
+              250 commit: oltre, gli head mancanti non sono nell'ordine e non chiudono nulla (=> review completa,
+              fail-closed). Il raise copre solo un'API che restituisse piu' pagine piene del previsto."""
               order, page = {}, 1
               while page <= 3:
                   batch = gh_request("GET", f"/repos/{REPO}/pulls/{PR_NUMBER}/commits?per_page=100&page={page}") or []
@@ -1079,36 +1080,32 @@ jobs:
           def rr_needs_full_review(comments, review_id, base_sha, commit_order):
               """Governance #606 (decisione owner): dopo un esito non-PASS la review successiva copre l'INTERO diff.
 
-              Si guarda l'ULTIMO tentativo di ogni range di QUESTO reviewer, solo nei commenti del bot del workflow
-              (un commento forgiato non chiude nulla). Serve la review completa se esiste un range non-PASS piu' recente
-              dell'ultimo PASS che parte dalla base attuale della PR. Un PASS sul solo delta non basta: il verificatore
-              (scripts/pr_review_attestation.py) chiude un non-PASS solo con un PASS successivo dalla base che arriva
-              ALMENO all'head del range non-PASS: `commit_order` (prefisso 12 -> posizione nella PR) lo misura, e un
-              head assente dall'ordine (force-push, storico incompleto) non chiude niente."""
-              ranges = {}
+              Si guarda OGNI tentativo di ogni range di QUESTO reviewer, solo nei commenti del bot del workflow (un
+              commento forgiato non chiude nulla): ogni tentativo emette un'attestazione firmata, quindi anche un
+              non-PASS seguito da un PASS sullo stesso range delta resta aperto nel verificatore (rilievo Sol su #607).
+              Serve la review completa se un tentativo non-PASS non e' chiuso da un PASS successivo che parte dalla base
+              attuale della PR e arriva ALMENO al suo head, come in scripts/pr_review_attestation.py. `commit_order`
+              (prefisso 12 -> posizione nella PR) misura l'head; un head assente dall'ordine (force-push, storico
+              incompleto) non chiude niente. «Successivo» = (istante del commento, numero del tentativo): nello stesso
+              commento conta il numero del tentativo. Un non-PASS senza istante non si chiude mai."""
+              events = []
               for c in comments or []:
                   if not isinstance(c, dict) or ((c.get("user") or {}).get("login") or "") != "github-actions[bot]":
                       continue
                   when = str(c.get("updated_at") or c.get("created_at") or "")
-                  last = {}
                   for m in _RR_ATTEMPT_RE.finditer(str(c.get("body") or "")):
-                      if m.group(1) != review_id:
-                          continue
-                      key, n = (m.group(2), m.group(3)), int(m.group(4))
-                      if n >= last.get(key, (-1, ""))[0]:
-                          last[key] = (n, m.group(5))
-                  for key, (_n, state) in last.items():
-                      ranges[key] = (state, when)
+                      if m.group(1) == review_id:
+                          events.append((m.group(2), m.group(3), (when, int(m.group(4))), m.group(5)))
               base12 = str(base_sha)[:12]
               order = commit_order if isinstance(commit_order, dict) else {}
-              full_pass = [(order.get(to), w) for (frm, to), (st, w) in ranges.items()
-                           if frm == base12 and st == "VALID_PASS"]
+              full_pass = [(order.get(to), k) for frm, to, k, st in events if frm == base12 and st == "VALID_PASS"]
 
-              def cleared(bad_to, bad_when):
+              def cleared(bad_to, bad_key):
                   pos = order.get(bad_to)
-                  return pos is not None and any(p is not None and p >= pos and w > bad_when for p, w in full_pass)
+                  return (bool(bad_key[0]) and pos is not None
+                          and any(p is not None and p >= pos and k > bad_key for p, k in full_pass))
 
-              return any(st != "VALID_PASS" and not cleared(to, w) for (_frm, to), (st, w) in ranges.items())
+              return any(st != "VALID_PASS" and not cleared(to, k) for _frm, to, k, st in events)
 
 
 

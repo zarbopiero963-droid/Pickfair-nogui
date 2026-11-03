@@ -87,7 +87,10 @@ Per leggere gli artefatti del proprio run i workflow hanno `actions: read`.
   main, digest del diff ricalcolato, nessun file tagliato. Le attestazioni storiche non vengono riscritte.
 
   **Lato workflow** (`rr_needs_full_review`, identica nei workflow di Sol e Grok): sulla push successiva il workflow
-  legge l'ultimo tentativo di ogni range di quel reviewer, solo nei commenti di `github-actions[bot]`. Se un range
+  legge **ogni** tentativo di ogni range di quel reviewer, solo nei commenti di `github-actions[bot]`: ogni tentativo
+  emette un'attestazione firmata, quindi un non-PASS seguito da un PASS sullo stesso range delta resta aperto anche nel
+  verificatore (rilievo Sol sulla review completa della #607). «Successivo» = istante del commento, poi numero del
+  tentativo; un non-PASS senza istante non si chiude. Se un range
   non-PASS non è chiuso da un PASS che parte dalla base attuale, è più recente e arriva almeno all'head di quel range,
   la review copre `BASE_SHA...HEAD` con scope «intera PR (precedente non-PASS)». La posizione degli head viene
   dall'elenco dei commit della PR (`pr_commit_order`, al massimo 250 commit). Un head assente dall'elenco, per

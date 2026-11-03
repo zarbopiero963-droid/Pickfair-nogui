@@ -1082,6 +1082,40 @@ def test_an_unknown_commit_order_never_clears_a_non_pass(path, order):
 
 
 @pytest.mark.parametrize("path", WFS)
+@pytest.mark.parametrize("first", ["VALID_BLOCKERS", "INCOMPLETE", "UNKNOWN", "ERROR"])
+def test_a_retried_delta_range_keeps_its_earlier_non_pass_open(path, first):
+    """Rilievo Sol su #607 (review completa di 7a70062...079adb1): ogni tentativo emette un'attestazione, quindi un
+    non-PASS seguito da un PASS sullo STESSO range delta resta aperto nel verificatore. Il workflow non deve guardare
+    solo l'ultimo tentativo: serve ancora la review dell'intero diff."""
+    comments = [_rc(path, BASE, C1, "VALID_PASS", when="2026-11-03T10:00:00Z"),
+                _rc(path, C1, C2, first, "VALID_PASS", when="2026-11-03T11:00:00Z")]
+    assert _needs_full(path, comments) is True
+    closed = comments + [_rc(path, BASE, C2, "VALID_PASS", when="2026-11-03T12:00:00Z")]
+    assert _needs_full(path, closed) is False
+
+
+@pytest.mark.parametrize("path", WFS)
+def test_a_retried_full_range_is_closed_by_its_own_later_pass_attempt(path):
+    """Nello stesso commento conta il numero del tentativo: INCOMPLETE e poi PASS su BASE...C2 chiude il non-PASS."""
+    assert _needs_full(path, [_rc(path, BASE, C2, "INCOMPLETE", "VALID_PASS")]) is False
+    assert _needs_full(path, [_rc(path, BASE, C2, "VALID_PASS", "INCOMPLETE")]) is True   # l'ordine conta
+
+
+@pytest.mark.parametrize("path", WFS)
+def test_a_non_pass_without_timestamp_is_never_cleared(path):
+    bad = _rc(path, C1, C2, "VALID_BLOCKERS", when="")
+    assert _needs_full(path, [bad, _rc(path, BASE, HEAD, "VALID_PASS", when="2026-11-03T12:00:00Z")]) is True
+
+
+@pytest.mark.parametrize("path", WFS)
+def test_a_full_pass_at_the_same_instant_is_not_later(path):
+    """«Successivo» e' stretto, come nel verificatore: un PASS completo con lo stesso istante non chiude il non-PASS."""
+    same = "2026-11-03T11:00:00Z"
+    comments = [_rc(path, C1, C2, "VALID_BLOCKERS", when=same), _rc(path, BASE, HEAD, "VALID_PASS", when=same)]
+    assert _needs_full(path, comments) is True
+
+
+@pytest.mark.parametrize("path", WFS)
 def test_only_the_bot_and_this_reviewer_count(path):
     other = "grok46" if "sol" in path else "gpt56sol"
     forged_pass = _rc(path, BASE, C2, "VALID_PASS", when="2026-11-03T12:00:00Z", login="mallory")
