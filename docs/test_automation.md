@@ -63,7 +63,7 @@ Ogni suite contiene:
   - `python`, solo con gli script in allowlist (`scripts/run_mutation_guardrails.py`);
   - `orchestrator`, solo con i job `PRELIVE_CERTIFY` e `SIM_MULTITABLE_CERTIFY`, che la VPS mappa sul proprio orchestratore.
 - **Argomenti:** solo caratteri `[A-Za-z0-9_./-]`. Sono vietati `..`, i percorsi assoluti, i flag e qualunque metacarattere di shell.
-- **Ambienti:** `OFFLINE`, `SIM`, `REPLAY_RECORDED` (book registrati: nessuna credenziale nel job), `SANDBOX_EPHEMERAL` (processi, disco e rete effimeri; mai il DB operativo). Chaos e crash-restart non sono ammessi in `OFFLINE`.
+- **Ambienti:** `OFFLINE`, `SIM`, `REPLAY_RECORDED` (book registrati: nessuna credenziale nel job), `SANDBOX_EPHEMERAL` (processi, disco e rete effimeri; mai il DB operativo). Le categorie chaos e crash-restart sono ammesse **solo** in `SANDBOX_EPHEMERAL`, qualunque sia il rischio dichiarato (correzione dopo il rilievo di Grok su #606).
 - **Limiti:** timeout fino a 7200 s, CPU fino a 4, memoria fino a 8192 MB. Lo schema delle suite è chiuso.
 - **Completezza:** un test impone che ogni cartella di `tests/` che contiene test, e ogni modulo `tests/test_*.py`, sia raggiunta da una suite. Una funzionalità nuova senza voce nel catalogo fa fallire la CI.
 - **Campagna `all`:** comprende tutte le suite tranne `full-regression`, che è ridondante.
@@ -92,7 +92,7 @@ Il numero di PR e l'attore sono validati **prima** di comporre qualsiasi URL.
 - richiesta più vecchia di 24 h o datata nel futuro;
 - PR riletta diversa, chiusa, fork o con head cambiato.
 
-**`Ledger.admit` (VPS):** una richiesta già ammessa (`target`, catalogo, repository, PR, SHA) viene rifiutata anche dopo un riavvio. La scrittura è atomica. Un registro illeggibile produce un rifiuto: non si riparte mai da vuoto.
+**`Ledger.admit` (VPS):** lettura, controllo e scrittura avvengono sotto un **lock esclusivo interprocesso** (`flock` su `<registro>.lock`). Due consumer concorrenti non ammettono mai la stessa richiesta e non perdono le ammissioni l'uno dell'altro. Se il lock non è disponibile la richiesta viene rifiutata con `LEDGER_LOCK_UNAVAILABLE` (rilievo di Sol e Grok su #606). Una richiesta già ammessa (`target`, catalogo, repository, PR, SHA) viene rifiutata anche dopo un riavvio. La scrittura è atomica. Un registro illeggibile produce un rifiuto: non si riparte mai da vuoto.
 
 ## 4-bis. Corsia development: test nuovi, codice non fidato
 
@@ -130,6 +130,7 @@ Il ciclo è questo:
 ## 5. Stati
 
 Gli stati sono: `QUEUED`, `RUNNING`, `PASS`, `FAIL`, `BLOCKED`, `TIMEOUT`, `CANCELLED`, `INFRA_ERROR`, oltre a `NOT_REQUESTED`.
+- I check run si leggono **tutti**: `filter=all` e tutte le pagine con `page=N` esplicito (non i link `next`), fino a un massimo di 20 pagine. Oltre il limite, o con una forma inattesa, la lettura non è verificabile: mai un elenco parziale. Rilievi di Codex e Sol su #606.
 - Contano solo i check run dell'app `pickfair-dedicated` sullo SHA esatto. Se un run è ancora aperto, conta quello.
 - Un titolo che inizia con `INFRA_ERROR`, o una conclusione sconosciuta (anche `neutral`), dà `INFRA_ERROR`: mai `PASS` e mai `FAIL` del codice.
 - Una campagna è `PASS` solo se **tutte** le sue suite sono `PASS`.

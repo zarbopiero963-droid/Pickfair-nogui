@@ -69,6 +69,7 @@ ENVIRONMENTS = frozenset({"OFFLINE", "SIM", "REPLAY_RECORDED", "SANDBOX_EPHEMERA
 RISKS = frozenset({"LOW", "MEDIUM", "HIGH"})
 #: ambienti in cui un test puo' toccare processi, disco o rete (sempre effimeri, mai il DB operativo)
 DESTRUCTIVE_ENVS = frozenset({"SANDBOX_EPHEMERAL"})
+DESTRUCTIVE_CATEGORIES = frozenset({"chaos", "crash-restart"})
 #: runner ammessi e cosa possono ricevere: nessuna shell, nessun flag, solo percorsi del repository o nomi fissi
 PYTHON_SCRIPTS = frozenset({"scripts/run_mutation_guardrails.py"})
 ORCHESTRATOR_JOBS = frozenset({"PRELIVE_CERTIFY", "SIM_MULTITABLE_CERTIFY"})
@@ -136,7 +137,9 @@ def validate_catalog(raw: bytes, root: Path = ROOT) -> Dict[str, Any]:
         seen.add(s["id"])
         if s["environment"] not in ENVIRONMENTS or s["risk"] not in RISKS:
             raise Refused(f"SUITE_ENV_OR_RISK:{s['id']}")
-        if s["risk"] != "LOW" and s["environment"] == "OFFLINE" and s["category"] in ("chaos", "crash-restart"):
+        # Chaos e crash-restart toccano processi, disco e rete: solo nella sandbox effimera, a QUALUNQUE rischio
+        # dichiarato (rilievo di Grok su #606: prima un chaos "LOW" passava in OFFLINE).
+        if s["category"] in DESTRUCTIVE_CATEGORIES and s["environment"] not in DESTRUCTIVE_ENVS:
             raise Refused(f"DESTRUCTIVE_NOT_ISOLATED:{s['id']}")
         t = s["timeout_seconds"]
         if not isinstance(t, int) or isinstance(t, bool) or not 0 < t <= MAX_TIMEOUT_SECONDS:
@@ -298,9 +301,17 @@ def verify_request(raw: bytes, *, repo: str, pr_data: Mapping[str, Any], signer_
     return req
 
 
+def _lock_file(fh: Any) -> None:
+    """Lock esclusivo interprocesso (POSIX ``flock``, la VPS e' Linux). Senza lock disponibile => eccezione."""
+    import fcntl
+    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+
+
 class Ledger:
-    """Registro persistente delle richieste ammesse (idempotenza, lato VPS). Scrittura atomica; file illeggibile =>
-    ``Refused`` (mai ripartire da vuoto, che riammetterebbe tutto)."""
+    """Registro persistente delle richieste ammesse (idempotenza, lato VPS). Lettura, controllo e scrittura stanno
+    sotto un lock esclusivo interprocesso (``<registro>.lock``): due consumer concorrenti non ammettono mai la stessa
+    richiesta e non si cancellano le ammissioni a vicenda (rilievo di Sol e Grok su #606). Scrittura atomica; file
+    illeggibile o lock non disponibile => ``Refused`` (mai ripartire da vuoto, che riammetterebbe tutto)."""
 
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -317,6 +328,15 @@ class Ledger:
         return data
 
     def admit(self, req: Mapping[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(f"{self.path}.lock", "a+", encoding="utf-8") as lock:
+            try:
+                _lock_file(lock)
+            except (OSError, ImportError):
+                raise Refused("LEDGER_LOCK_UNAVAILABLE") from None
+            self._admit_locked(req)                    # il lock si rilascia alla chiusura del file
+
+    def _admit_locked(self, req: Mapping[str, Any]) -> None:
         data = self._load()
         key = str(req["idempotency_key"])
         if key in data["admitted"]:
@@ -424,7 +444,9 @@ def _gh_pages(path: str) -> Any:
 def all_check_runs(repo: str, sha: str) -> list:
     """Check run del commit su tutte le pagine. Forma inattesa => ``Refused``, mai un elenco vuoto (che direbbe
     ``NOT_REQUESTED`` per suite magari concluse)."""
-    pages = _gh_pages(f"repos/{repo}/commits/{sha}/check-runs?per_page=100")
+    # filter=all: con il default (latest) GitHub nasconde i run piu' vecchi per nome, e un rerun aperto potrebbe non
+    # comparire mentre resta visibile un PASS (rilievo di Sol su #606). suite_status preferisce comunque i run aperti.
+    pages = _gh_pages(f"repos/{repo}/commits/{sha}/check-runs?filter=all&per_page=100")
     if not isinstance(pages, list) or not all(isinstance(p, dict) and isinstance(p.get("check_runs"), list)
                                               for p in pages):
         raise Refused("GITHUB_API_MALFORMED")

@@ -429,7 +429,7 @@ def test_status_reads_every_page_of_check_runs(monkeypatch, capsys):
     monkeypatch.setattr(D, "_gh_pages", lambda p: seen.append(p) or [{"check_runs": page1}, {"check_runs": page2}])
     assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA]) == 0
     assert json.loads(capsys.readouterr().out)["state"] == "PASS"
-    assert seen == [f"repos/{REPO}/commits/{SHA}/check-runs?per_page=100"]
+    assert seen == [f"repos/{REPO}/commits/{SHA}/check-runs?filter=all&per_page=100"]
 
 
 def test_dev_status_reads_every_page_of_check_runs(monkeypatch, capsys):
@@ -456,8 +456,8 @@ def test_pages_are_requested_explicitly_until_a_short_page(monkeypatch):
     monkeypatch.setattr(D, "_gh", lambda p: calls.append(p) or (full if p.endswith("page=1") else short))
     runs = D.all_check_runs(REPO, SHA)
     assert len(runs) == 101
-    assert calls == [f"repos/{REPO}/commits/{SHA}/check-runs?per_page=100&page=1",
-                     f"repos/{REPO}/commits/{SHA}/check-runs?per_page=100&page=2"]
+    assert calls == [f"repos/{REPO}/commits/{SHA}/check-runs?filter=all&per_page=100&page=1",
+                     f"repos/{REPO}/commits/{SHA}/check-runs?filter=all&per_page=100&page=2"]
 
 
 def test_too_many_pages_is_unverifiable_never_partial(monkeypatch):
@@ -465,3 +465,58 @@ def test_too_many_pages_is_unverifiable_never_partial(monkeypatch):
     monkeypatch.setattr(D, "_gh", lambda p: full)
     with pytest.raises(D.Refused, match="^GITHUB_API_TOO_MANY_PAGES$"):
         D.all_check_runs(REPO, SHA)
+
+
+# ── Sol + Grok su #606: Ledger.admit atomico fra processi ──────────────────────────────────────────────────────
+def _admit_in_child(args):
+    path, key = args
+    try:
+        D.Ledger(Path(path)).admit({"idempotency_key": key, "lane": "certification", "target": "suite:unit",
+                                    "pr": 1, "head_sha": SHA, "run_id": 1})
+        return "ADMITTED"
+    except D.Refused as exc:
+        return str(exc)
+
+
+def test_concurrent_admissions_of_distinct_requests_are_all_kept(tmp_path):
+    import multiprocessing as mp
+    path = tmp_path / "ledger.json"
+    keys = [f"{i:064x}" for i in range(24)]
+    with mp.get_context("fork").Pool(8) as pool:
+        out = pool.map(_admit_in_child, [(str(path), k) for k in keys])
+    assert out == ["ADMITTED"] * len(keys)
+    assert set(json.loads(path.read_text())["admitted"]) == set(keys)          # nessuna ammissione persa
+
+
+def test_concurrent_admissions_of_the_same_request_admit_exactly_one(tmp_path):
+    import multiprocessing as mp
+    path = tmp_path / "ledger.json"
+    with mp.get_context("fork").Pool(8) as pool:
+        out = pool.map(_admit_in_child, [(str(path), "f" * 64)] * 16)
+    assert out.count("ADMITTED") == 1 and out.count("DUPLICATE_REQUEST") == 15
+
+
+def test_admit_fails_closed_when_the_lock_cannot_be_taken(tmp_path, monkeypatch):
+    monkeypatch.setattr(D, "_lock_file", lambda fh: (_ for _ in ()).throw(OSError("no locks")))
+    with pytest.raises(D.Refused, match="^LEDGER_LOCK_UNAVAILABLE$"):
+        D.Ledger(tmp_path / "ledger.json").admit(build())
+    assert not (tmp_path / "ledger.json").exists()
+
+
+# ── Sol su #606: tutti i check run, non solo gli ultimi per nome ──────────────────────────────────────────────
+def test_check_runs_are_read_with_filter_all(monkeypatch):
+    calls = []
+    monkeypatch.setattr(D, "_gh", lambda p: calls.append(p) or {"check_runs": []})
+    D.all_check_runs(REPO, SHA)
+    assert calls and all("filter=all" in c for c in calls)
+
+
+# ── Grok su #606: chaos e crash-restart solo in ambiente distruttivo isolato, a qualunque rischio ─────────────
+@pytest.mark.parametrize("category", ["chaos", "crash-restart"])
+@pytest.mark.parametrize("risk", ["LOW", "MEDIUM", "HIGH"])
+@pytest.mark.parametrize("env", ["OFFLINE", "SIM", "REPLAY_RECORDED"])
+def test_destructive_categories_require_the_ephemeral_sandbox_at_any_risk(category, risk, env):
+    def mutate(c):
+        c["suites"][0].update(category=category, risk=risk, environment=env)
+    with pytest.raises(D.Refused, match="^DESTRUCTIVE_NOT_ISOLATED"):
+        D.validate_catalog(cat_with(mutate))
