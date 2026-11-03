@@ -320,10 +320,35 @@ jobs:
           def compare_range(base_sha: str, head_sha: str):
               return gh_request("GET", f"/repos/{REPO}/compare/{base_sha}...{head_sha}")
 
+          def pr_bot_comments():
+              """Commenti della PR (tutte le pagine, tetto 20): servono a rr_needs_full_review."""
+              out, page = [], 1
+              while page <= 20:
+                  batch = gh_request("GET", f"/repos/{REPO}/issues/{PR_NUMBER}/comments?per_page=100&page={page}") or []
+                  out.extend(batch)
+                  if len(batch) < 100:
+                      return out
+                  page += 1
+              raise RuntimeError("troppi commenti: storico delle review non leggibile per intero")
+
+          def full_review_required():
+              """True se serve la review dell'INTERO diff. Storico illeggibile => True (fail-closed: costa una review
+              in piu', non nasconde un bloccante)."""
+              try:
+                  return rr_needs_full_review(pr_bot_comments(), REVIEW_ID, BASE_SHA)
+              except Exception as exc:
+                  print(f"::warning::{REVIEW_ID}: storico review non leggibile ({redact(str(exc))[:200]}): review completa")
+                  return True
+
           def resolve_range():
-              if EVENT_ACTION == "synchronize" and good_sha(BEFORE_SHA):
+              if EVENT_ACTION == "synchronize" and good_sha(BEFORE_SHA) and not full_review_required():
                   base = BEFORE_SHA
                   scope = "push range"
+              elif EVENT_ACTION == "synchronize" and good_sha(BEFORE_SHA):
+                  # Governance #606: un range precedente non e' PASS => si rivede l'INTERO diff aggiornato, cosi' il
+                  # PASS (se arriva) copre la PR dalla base all'head e chiude i bloccanti nel verificatore.
+                  base = BASE_SHA
+                  scope = "intera PR (precedente non-PASS)"
               else:
                   base = BASE_SHA
                   scope = "current PR range"
@@ -1034,6 +1059,33 @@ jobs:
                   "Non copre bloccanti, crediti esauriti, CI rossa, hard verify o altri gate.\n"
               )
           # <<< REVIEW_RECOVERY_CORE <<<
+
+          def rr_needs_full_review(comments, review_id, base_sha):
+              """Governance #606 (decisione owner): dopo un esito non-PASS la review successiva copre l'INTERO diff.
+
+              Si guarda l'ULTIMO tentativo di ogni range di QUESTO reviewer, solo nei commenti del bot del workflow
+              (un commento forgiato non chiude nulla). Serve la review completa se esiste un range non-PASS piu' recente
+              dell'ultimo PASS che parte dalla base attuale della PR. Un PASS sul solo delta non basta: il verificatore
+              (scripts/pr_review_attestation.py) chiude un non-PASS solo con un PASS successivo dalla base."""
+              ranges = {}
+              for c in comments or []:
+                  if not isinstance(c, dict) or ((c.get("user") or {}).get("login") or "") != "github-actions[bot]":
+                      continue
+                  when = str(c.get("updated_at") or c.get("created_at") or "")
+                  last = {}
+                  for m in _RR_ATTEMPT_RE.finditer(str(c.get("body") or "")):
+                      if m.group(1) != review_id:
+                          continue
+                      key, n = (m.group(2), m.group(3)), int(m.group(4))
+                      if n >= last.get(key, (-1, ""))[0]:
+                          last[key] = (n, m.group(5))
+                  for key, (_n, state) in last.items():
+                      ranges[key] = (state, when)
+              base12 = str(base_sha)[:12]
+              full_pass = [w for (frm, _to), (st, w) in ranges.items() if frm == base12 and st == "VALID_PASS"]
+              newest_full_pass = max(full_pass) if full_pass else ""
+              return any(st != "VALID_PASS" and w > newest_full_pass for (st, w) in ranges.values())
+
 
 
           def rr_coverage_summary(files, diff_text, compare_truncated):

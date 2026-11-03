@@ -228,13 +228,13 @@ def decide(attestations: Iterable[Tuple[bytes, Signed]], *, repository: str, pr:
             if verdict == "PASS" and a <= reached < b:
                 reached = b
                 covered.append((reviewer, chain[a], chain[b]))
-        # un non-PASS ``a...b`` resta aperto finche' un PASS emesso DOPO di lui non lo supera: o porta commit nuovi
-        # oltre ``b`` (la correzione, revisionata nella push successiva), o ri-copre tutto ``a...b``. Un PASS successivo
-        # solo su una parte dello STESSO head non basta (rilievo di Grok su #602).
+        # un non-PASS ``a...b`` resta aperto finche' un PASS emesso DOPO di lui non copre l'INTERA PR dalla base fino
+        # almeno a ``b`` (decisione owner su #606, governance): un PASS sul solo delta successivo non prova che la PR
+        # intera sia corretta. Il workflow di review, dopo un non-PASS, chiede proprio quella review completa.
+        # Copertura, firma, identita' e digest del PASS completo restano verificati da ``check_attestation``.
         open_bad = [
             (b, order) for a, b, verdict, order in ranges if verdict != "PASS"
-            and not any(v2 == "PASS" and o2 > order and (b2 > b or (b2 >= b and a2 <= a))
-                        for a2, b2, v2, o2 in ranges)
+            and not any(v2 == "PASS" and o2 > order and a2 == 0 and b2 >= b for a2, b2, v2, o2 in ranges)
         ]
         if reached != len(chain) - 1:
             reasons.append(f"NOT_COVERED_TO_HEAD:{reviewer}")

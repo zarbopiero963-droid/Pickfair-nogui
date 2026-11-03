@@ -80,6 +80,18 @@ Per leggere gli artefatti del proprio run i workflow hanno `actions: read`.
   **Copertura:** per ogni reviewer richiesto (Sol, Grok) i range PASS sono contigui dal base all'head. Un range non
   PASS che non è superato da un PASS successivo dà `OPEN_BLOCKERS` oppure `NOT_COVERED_TO_HEAD`.
 
+  **Dopo un non-PASS serve una review dell'intero diff** (decisione owner sulla #606, governance). Un range BLOCKERS,
+  INCONCLUSIVE, ERROR o incompleto resta aperto finché un PASS **emesso dopo** non copre la PR **dalla base** fino
+  almeno alla fine di quel range. Un PASS sul solo delta successivo non lo chiude più, perché non prova che la PR
+  intera sia corretta. Il PASS completo passa da tutti i controlli dell'attestazione: firma Sigstore, workflow su
+  main, digest del diff ricalcolato, nessun file tagliato. Le attestazioni storiche non vengono riscritte.
+
+  **Lato workflow** (`rr_needs_full_review`, identica nei workflow di Sol e Grok): sulla push successiva il workflow
+  legge l'ultimo tentativo di ogni range di quel reviewer, solo nei commenti di `github-actions[bot]`. Se un range
+  non-PASS è più recente dell'ultimo PASS che parte dalla base attuale, la review copre `BASE_SHA...HEAD` con scope
+  «intera PR (precedente non-PASS)». In caso contrario resta il push range, che costa meno. Se lo storico dei commenti
+  non è leggibile, si fa la review completa: fail-closed, al costo di una review in più.
+
   «Successivo» vuol dire due cose:
   - è nell'istante di emissione firmato (`generated_at`, strettamente dopo). Non conta il numero del run, perché un
     rerun lo conserva: un BLOCKERS del run 10 rilanciato dopo un PASS del run 11 resta aperto;
@@ -112,7 +124,7 @@ più volte per la stessa PR, le attestazioni sono idempotenti: la VPS rivaluta o
 
 ## 4. Test
 `tests/scripts/test_pr_review_attestation.py`:
-- **positivi:** range completo, range di push concatenati, bloccante poi corretto;
+- **positivi:** range completo, range di push concatenati, bloccante poi corretto da un PASS sull'intero diff;
 - **negativi:**
   - firma invalida, issuer sbagliato o digest diverso;
   - evento `pull_request`;

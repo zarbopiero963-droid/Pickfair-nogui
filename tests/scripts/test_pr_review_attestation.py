@@ -81,10 +81,53 @@ def test_push_ranges_chained_to_the_head_pass():
     assert _decide(pairs).passed
 
 
-def test_blockers_on_a_range_later_fixed_by_a_pass_range_pass():
+def test_blockers_on_a_range_are_not_cleared_by_a_later_delta_pass():
+    """Decisione owner (#606, governance): dopo un non-PASS serve un PASS successivo sull'INTERO diff. Un PASS su un
+    singolo delta non prova la correzione dell'intera PR (prima questo caso passava)."""
     pairs = [_pair("gpt-6.1-sol", BASE, C2, run=1), _pair("gpt-6.1-sol", C1, C2, "BLOCKERS", run=2),
              _pair("gpt-6.1-sol", C2, HEAD, run=3), _pair("grok-4.7", run=4)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
+
+
+def test_blockers_on_a_range_cleared_by_a_later_full_diff_pass():
+    pairs = [_pair("gpt-6.1-sol", BASE, C2, run=1), _pair("gpt-6.1-sol", C1, C2, "BLOCKERS", run=2),
+             _pair("gpt-6.1-sol", C2, HEAD, run=3), _pair("gpt-6.1-sol", BASE, HEAD, run=4), _pair("grok-4.7", run=5)]
     assert _decide(pairs).passed
+
+
+def test_the_606_sequence_needs_a_full_diff_pass_after_the_blockers():
+    """#606: BLOCKERS sul primo range e sul secondo, poi PASS solo sull'ultimo delta => mai coperto; un PASS
+    successivo sull'intero diff (quello che il workflow ora richiede) lo chiude."""
+    seq = [_pair("gpt-6.1-sol", BASE, C1, "BLOCKERS", run=1), _pair("gpt-6.1-sol", C1, C2, "BLOCKERS", run=2),
+           _pair("gpt-6.1-sol", C2, HEAD, run=3), _pair("grok-4.7", run=4)]
+    assert not _decide(seq).passed
+    assert _decide(seq + [_pair("gpt-6.1-sol", BASE, HEAD, run=5)]).passed
+
+
+@pytest.mark.parametrize("bad", [
+    dict(sig={"ok": False, "reason": "GH_EXIT_1"}),                           # firma non valida
+    dict(sig={"workflow_sha": "f" * 40}),                                    # workflow non su main
+    dict(files_truncated=1),                                                 # copertura incompleta
+    dict(diff_sha256="0" * 64),                                              # diff diverso da quello revisionato
+])
+def test_a_full_diff_pass_that_is_not_trustworthy_never_clears_blockers(bad):
+    sig = bad.pop("sig", None)
+    pairs = [_pair("gpt-6.1-sol", BASE, C1, "BLOCKERS", run=1), _pair("gpt-6.1-sol", C1, HEAD, run=2),
+             _pair("gpt-6.1-sol", BASE, HEAD, run=3, sig=sig, **bad), _pair("grok-4.7", run=4)]
+    assert not _decide(pairs).passed
+
+
+def test_a_full_diff_pass_on_an_older_head_does_not_clear_blockers_on_the_new_head():
+    pairs = [_pair("gpt-6.1-sol", BASE, C2, run=1), _pair("gpt-6.1-sol", C2, HEAD, "BLOCKERS", run=2),
+             _pair("gpt-6.1-sol", BASE, C2, run=3), _pair("grok-4.7", run=4)]
+    assert not _decide(pairs).passed                                            # mai PASS: head non coperto
+
+
+def test_a_full_diff_pass_emitted_before_the_blockers_does_not_clear_them():
+    pairs = [_pair("gpt-6.1-sol", BASE, HEAD, run=1), _pair("gpt-6.1-sol", C2, HEAD, "BLOCKERS", run=2),
+             _pair("grok-4.7", run=3)]
+    assert not _decide(pairs).passed
 
 
 @pytest.mark.parametrize("verdict", ["BLOCKERS", "INCONCLUSIVE", "ERROR"])
@@ -953,3 +996,102 @@ def test_the_newest_completed_prelive_decides_by_id():
             return super().__call__(url)
     out = A.verify_prelive(A.GitHub(REPO, "t", http=Two()), HEAD)
     assert not out["passed"] and out["reason"] == "PRELIVE_FAILURE"
+
+
+# ── Governance #606: dopo un non-PASS il workflow chiede una review dell'INTERO diff ───────────────────────────
+def _needs_full(path, comments, base=BASE):
+    import ast
+    import re as _re
+    _w, py = _workflow_python(path)
+    tree = ast.parse(py)
+    fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "rr_needs_full_review"]
+    assigns = [n for n in tree.body if isinstance(n, ast.Assign) and any(
+        isinstance(t, ast.Name) and t.id == "_RR_ATTEMPT_RE" for t in n.targets)]
+    assert fns, f"rr_needs_full_review assente in {path}"
+    ns = {"re": _re}
+    exec(compile(ast.Module(body=assigns + fns, type_ignores=[]), path, "exec"), ns)
+    return ns["rr_needs_full_review"](comments, "gpt56sol" if "sol" in path else "grok46", base)
+
+
+def _rc(path, frm, to, *states, when="2026-11-03T10:00:00Z", login="github-actions[bot]"):
+    rid = "gpt56sol" if "sol" in path else "grok46"
+    body = "".join(f"<!-- {rid}-pr-review-attempt:pickfair-nogui:{frm[:12]}...{to[:12]}:{n}:{st} -->"
+                   for n, st in enumerate(states, 1))
+    return {"user": {"login": login}, "body": body + "\n# review", "updated_at": when}
+
+
+WFS = sorted(A.TRUSTED_REVIEW_WORKFLOWS.values())
+
+
+@pytest.mark.parametrize("path", WFS)
+@pytest.mark.parametrize("state", ["VALID_BLOCKERS", "VALID_INCONCLUSIVE", "UNKNOWN", "INCOMPLETE", "ERROR"])
+def test_a_previous_non_pass_range_requires_a_full_diff_review(path, state):
+    assert _needs_full(path, [_rc(path, BASE, C1, state)]) is True
+
+
+@pytest.mark.parametrize("path", WFS)
+def test_clean_delta_reviews_keep_the_cheap_push_range(path):
+    comments = [_rc(path, BASE, C1, "VALID_PASS", when="2026-11-03T10:00:00Z"),
+                _rc(path, C1, C2, "VALID_PASS", when="2026-11-03T11:00:00Z")]
+    assert _needs_full(path, comments) is False
+
+
+@pytest.mark.parametrize("path", WFS)
+def test_a_later_full_diff_pass_closes_the_need_for_a_full_review(path):
+    comments = [_rc(path, BASE, C1, "VALID_BLOCKERS", when="2026-11-03T10:00:00Z"),
+                _rc(path, BASE, C2, "VALID_BLOCKERS", "VALID_PASS", when="2026-11-03T11:00:00Z")]
+    assert _needs_full(path, comments) is False                                 # vale l'ULTIMO tentativo del range
+
+
+@pytest.mark.parametrize("path", WFS)
+def test_a_non_pass_after_the_full_diff_pass_requires_another_full_review(path):
+    comments = [_rc(path, BASE, C1, "VALID_PASS", when="2026-11-03T10:00:00Z"),
+                _rc(path, C1, C2, "VALID_BLOCKERS", when="2026-11-03T11:00:00Z")]
+    assert _needs_full(path, comments) is True
+
+
+@pytest.mark.parametrize("path", WFS)
+def test_only_the_bot_and_this_reviewer_count(path):
+    other = "grok46" if "sol" in path else "gpt56sol"
+    forged_pass = _rc(path, BASE, C2, "VALID_PASS", when="2026-11-03T12:00:00Z", login="mallory")
+    blockers = _rc(path, C1, C2, "VALID_BLOCKERS", when="2026-11-03T11:00:00Z")
+    assert _needs_full(path, [blockers, forged_pass]) is True                   # un PASS forgiato non chiude
+    foreign = {"user": {"login": "github-actions[bot]"}, "updated_at": "2026-11-03T11:00:00Z",
+               "body": f"<!-- {other}-pr-review-attempt:pickfair-nogui:{C1[:12]}...{C2[:12]}:1:VALID_BLOCKERS -->"}
+    assert _needs_full(path, [foreign]) is False                                # bloccanti dell'altro reviewer
+
+
+@pytest.mark.parametrize("path", WFS)
+def test_resolve_range_falls_back_to_the_full_diff_when_needed_or_unreadable(path):
+    _w, py = _workflow_python(path)
+    body = py[py.index("def full_review_required():"):py.index("def solo_file_della_pr(")]
+    req = body[:body.index("def resolve_range():")]
+    resolve = body[body.index("def resolve_range():"):]
+    # storico illeggibile => review completa (fail-closed)
+    assert "rr_needs_full_review(pr_bot_comments(), REVIEW_ID, BASE_SHA)" in req
+    assert "except Exception" in req and "return True" in req.split("except Exception", 1)[1]
+    # il delta si usa SOLO se non serve la review completa; altrimenti base = BASE_SHA
+    assert 'good_sha(BEFORE_SHA) and not full_review_required():' in resolve
+    assert 'scope = "intera PR (precedente non-PASS)"' in resolve
+    branch = resolve.split('scope = "intera PR (precedente non-PASS)"')[0].rsplit("elif", 1)[1]
+    assert "base = BASE_SHA" in branch
+
+
+def test_both_review_workflows_carry_the_same_full_review_logic():
+    import ast
+    srcs = []
+    for path in WFS:
+        _w, py = _workflow_python(path)
+        tree = ast.parse(py)
+        fn = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "rr_needs_full_review"][0]
+        srcs.append(ast.dump(fn))
+    assert srcs[0] == srcs[1]
+
+
+def test_a_full_diff_pass_that_stops_before_the_blocked_head_never_clears_it():
+    """PASS completo fino all'head, poi BLOCKERS sull'ultimo tratto, poi un PASS dalla base ma solo fino a C2: la
+    copertura arriva all'head grazie al primo PASS, ma il bloccante sull'head resta aperto."""
+    pairs = [_pair("gpt-6.1-sol", BASE, HEAD, run=1), _pair("gpt-6.1-sol", C2, HEAD, "BLOCKERS", run=2),
+             _pair("gpt-6.1-sol", BASE, C2, run=3), _pair("grok-4.7", run=4)]
+    d = _decide(pairs)
+    assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
