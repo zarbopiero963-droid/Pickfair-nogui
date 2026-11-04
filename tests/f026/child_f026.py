@@ -12,6 +12,7 @@ SCENARIO_JSON: {"steps": [...]} con passi:
   {"op": "cashout", "m": "1.701"}                                   cashout PARZIALE: solo la posizione di quel mercato
   {"op": "crash_after_reset"}                                       os._exit(1) appena scatta ROSERPINA_AUTO_RESET
   {"op": "mode", "m": "1.701", "mode": "nomatch"}                  book peggiore del prezzo: l'ordine resta non abbinato
+  {"op": "mode", "m": "1.701", "mode": "suspended"}                mercato SUSPENDED nel book all'ingresso (F-23)
   {"op": "book_down"}                                               snapshot del book assente da qui in poi
   {"op": "crash_now"}                                               os._exit(1) subito (stato SIM persistito)
   {"op": "crash_after_settlement"}                                  os._exit(1) appena il settlement e' contabilizzato
@@ -181,7 +182,7 @@ try:
         if BOOK.get(m, {}).get("nomatch"):
             price = round(price - 0.2, 2)        # BACK al prezzo del segnale non trova contropartita
         brk.update_market_book({"marketId": m, "status": status, "inplay": False, "runners": [
-            {"selectionId": s, "status": "ACTIVE" if status == "OPEN" else ("WINNER" if s == winner else "LOSER"),
+            {"selectionId": s, "status": "ACTIVE" if status in ("OPEN", "SUSPENDED") else ("WINNER" if s == winner else "LOSER"),
              "ex": {"availableToBack": [{"price": price, "size": back_size}],
                     "availableToLay": [{"price": round(price + 0.02, 2), "size": 100.0}]}} for s in (11, 12)]})
 
@@ -275,11 +276,14 @@ try:
                 BOOK.setdefault(st["m"], {})["partial"] = True
             if st["mode"] == "nomatch":
                 BOOK.setdefault(st["m"], {})["nomatch"] = True
+            if st["mode"] == "suspended":                       # F-23: mercato SUSPENDED all'ingresso
+                BOOK.setdefault(st["m"], {})["suspended"] = True
             continue
         if op == "signal":
             BOOK[st["m"]] = {"price": st.get("price", 2.0), **BOOK.get(st["m"], {})}
             BOOK[st["m"]]["price"] = st.get("price", 2.0)
-            book(st["m"], back_size=1.0 if BOOK[st["m"]].get("partial") else 100.0)
+            book(st["m"], status="SUSPENDED" if BOOK[st["m"]].get("suspended") else "OPEN",
+                 back_size=1.0 if BOOK[st["m"]].get("partial") else 100.0)
             side = st.get("side", "BACK")
             t_sig = time.time()
             rows_before = order_rows(st["m"])

@@ -426,6 +426,19 @@ class RiskGate:
             return None
         return self._deny(payload, "RISK_LIQUIDITY_INSUFFICIENT")
 
+    def _check_market_tradable(self, payload: Dict[str, Any]) -> _Verdict:
+        """F-23 (PF-EXEC-05): un NUOVO ingresso porta l'esito della verifica di negoziabilita' fatta su una lettura
+        fresca del book (`market_tradability_required`). Motivo non vuoto, o esito mancante / non testuale => NEGA.
+        Le uscite protettive (hedge del cashout) non portano la richiesta: mai ritardate (PF-EXEC-03)."""
+        if payload.get("market_tradability_required") is not True:
+            return None
+        reason = payload.get("market_not_tradable_reason")
+        if isinstance(reason, str) and reason == "":
+            return None
+        if isinstance(reason, str):
+            logger.warning("Ingresso negato: mercato non negoziabile (%s)", reason)
+        return self._deny(payload, "RISK_MARKET_NOT_TRADABLE")
+
     # -- orchestrazione ---------------------------------------------------
     def _check(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
@@ -468,7 +481,8 @@ class RiskGate:
 
         for denial in (self._check_money(payload, side, stake, price),
                        self._check_book(payload),
-                       self._check_liquidity(payload, stake)):
+                       self._check_liquidity(payload, stake),
+                       self._check_market_tradable(payload)):
             if denial is not None:
                 return denial
 

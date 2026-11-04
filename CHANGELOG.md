@@ -27,6 +27,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Nessuna attestazione storica viene riscritta. `docs/review_attestation.md` aggiornato.
 
 ### Fixed
+- **F-23 (#586, NF-11/STR-10/SUP-04, P1): nessun nuovo ingresso su un mercato non negoziabile (PF-EXEC-05 all'ammissione).**
+  Segnale e auto-next controllavano lo stato del mercato solo dentro il Liquidity Guard (guard spento ⇒ mercato
+  SUSPENDED o book assente ⇒ ordine SUBMITTED, riprodotto sul runtime vero); bet manuale e lotto Dutching usavano il
+  book in cache senza guardarne lo stato. Ora una lettura fresca del book all'ammissione decide: mercato OPEN,
+  selezioni ACTIVE, book del mercato richiesto; altrimenti `RISK_MARKET_NOT_TRADABLE` (segnale, auto-next) o rifiuto
+  dell'intero lotto / bet manuale. Nessuna soglia nuova; hedge e uscite protettive invariati. Test
+  `tests/acceptance/test_f23_market_tradable.py`; `docs/market_tradability.md`.
 - **CB-586-FI-03Z (#586, P1):** il broker SIM abbinava ordini contro livelli del book con size 0. Esempio: un LAY
   0,10@3.0 risultava abbinato a 2.02 su un book senza liquidità, con un matched finto e un'esposizione abbinata
   inventata. Ora un livello con size esplicita ≤ 0 è assente, come il delta Betfair che lo rimuove, e il migliore è il

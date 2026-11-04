@@ -113,8 +113,15 @@ class _BetfairService:
     def get_live_client(self):
         return None
 
-    def get_market_book_snapshot(self, _market_id):
-        return None
+    def get_market_book_snapshot(self, market_id, include_prices=False):
+        # Come BetfairService in SIM: il book del broker simulato se c'e'. Senza book caricato, l'harness descrive un
+        # mercato OPEN con le selezioni dei test ACTIVE (F-23: l'ingresso verifica la negoziabilita' su un book fresco;
+        # i casi non negoziabili sono provati in tests/acceptance/test_f23_market_tradable.py).
+        book = self.simulation_broker.get_market_book(str(market_id))
+        if book:
+            return book
+        return {"marketId": str(market_id), "status": "OPEN",
+                "runners": [{"selectionId": sid, "status": "ACTIVE"} for sid in range(1, 201)]}
 
     def ensure_stream_session_ready(self):
         return True

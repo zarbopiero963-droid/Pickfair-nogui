@@ -3405,6 +3405,23 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "d_f23_market_tradable": {
+      "description": "Claude D F-23 (#586, PF-EXEC-05): nuovo ingresso solo su mercato OPEN con selezioni ACTIVE, verificato su un book letto fresco all'ammissione, per segnale, auto-next (RiskGate RISK_MARKET_NOT_TRADABLE), bet manuale e lotto Dutching (rifiuto dell'intero lotto). Nessuna soglia nuova; uscite protettive invariate. Harness di test: stub del book come il servizio SIM, modalita' 'suspended' in child_f026.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "controllers/dutching_controller.py",
+        "core/liquidity.py",
+        "core/risk_gate.py",
+        "core/runtime_controller.py",
+        "docs/market_tradability.md",
+        "tests/acceptance/test_f23_market_tradable.py",
+        "tests/f026/child_f026.py",
+        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py"
+      ],
+      "max_files": 10
     }
   }
 }

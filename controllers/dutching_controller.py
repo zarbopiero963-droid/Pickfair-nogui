@@ -1462,11 +1462,40 @@ class DutchingController:
     # =========================================================
     def _execute_impl(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         funds_read = self._read_entry_funds()       # #546 D2: rete fuori dal lock d'ammissione
+        market_read = self._read_entry_market((payload or {}).get("market_id"))   # F-23: book fresco, fuori dal lock
         return self._locked_entry(
-            lambda body, unlock: self._execute_reserved(body, unlock, funds_read=funds_read), payload)
+            lambda body, unlock: self._execute_reserved(body, unlock, funds_read=funds_read,
+                                                        market_read=market_read), payload)
+
+    def _read_entry_market(self, market_id: Any) -> Optional[Dict[str, Any]]:
+        """F-23 (PF-EXEC-05): lettura fresca del book dell'ingresso FUORI dal lock d'ammissione (rete), come i fondi.
+        Runtime senza la lettura o errore => None: mercato non verificabile, nessun ordine."""
+        read = getattr(self.runtime, "read_market_for_controller_entry", None)
+        if not callable(read):
+            return None
+        try:
+            out = read(market_id)
+        except Exception:
+            logger.exception("Errore lettura del book per l'ingresso del controller")
+            return None
+        return out if isinstance(out, dict) else None
+
+    def _entry_market_reason(self, market_read: Optional[Dict[str, Any]], selection_ids: List[Any]) -> str:
+        """F-23: "" se il mercato letto e' negoziabile per TUTTE le selezioni dell'ingresso (lotto intero o bet
+        manuale), altrimenti il motivo. Runtime senza la verifica o errore => non verificabile (fail-closed)."""
+        check = getattr(self.runtime, "controller_market_tradable_reason", None)
+        if market_read is None or not callable(check):
+            return "mercato_non_verificabile:BOOK_UNAVAILABLE"
+        try:
+            reason = check(market_read, list(selection_ids or []))
+        except Exception:
+            logger.exception("Errore verifica di negoziabilita' dell'ingresso del controller")
+            return "mercato_non_verificabile:BOOK_UNAVAILABLE"
+        return reason if isinstance(reason, str) else "mercato_non_verificabile:BOOK_UNAVAILABLE"
 
     def _execute_reserved(self, payload: Dict[str, Any], unlock,
-                          funds_read: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                          funds_read: Optional[Dict[str, Any]] = None,
+                          market_read: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Controlli, tavolo e ammissione sotto il lock d'ammissione; `unlock()` prima di pubblicare.
         ``funds_read``: lettura fresca del conto fatta prima del lock (#546 D2); assente => fondi non
         verificabili, nessun ordine."""
@@ -1556,6 +1585,16 @@ class DutchingController:
                 batch_id=batch_id,
                 event_key=event_key,
             )
+
+        # F-23 (PF-EXEC-05): l'intero lotto solo su un mercato OPEN con TUTTE le selezioni ACTIVE (book fresco):
+        # mai gambe negate una per una (Dutching parziale). Non negoziabile => nessun ordine, risorse rilasciate.
+        market_reason = self._entry_market_reason(
+            market_read, [s.get("selectionId") for s in (payload.get("selections") or []) if isinstance(s, dict)])
+        if market_reason:
+            self._publish_audit("DUTCHING_BATCH_REJECTED", {"payload": payload, "reason": market_reason})
+            self._release_table_and_key(table_id if allocated_here else None, owned_key)
+            return self._fail(f"Lotto non ammesso: {market_reason}", dry_run=False, preflight=False,
+                              batch_id=batch_id, event_key=event_key, reason=market_reason)
 
         # #546 D2: fondi su lettura fresca contro tutte le riserve non ancora a mercato, compreso questo lotto
         # (il suo tavolo e' appena stato attivato con l'esposizione del lotto). Senza tavolo l'esposizione del
@@ -1729,8 +1768,10 @@ class DutchingController:
     # =========================================================
     def manual_bet(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         funds_read = self._read_entry_funds()       # #546 D2: rete fuori dal lock d'ammissione
+        market_read = self._read_entry_market((payload or {}).get("market_id"))   # F-23: book fresco, fuori dal lock
         return self._locked_entry(
-            lambda body, unlock: self._manual_bet_reserved(body, unlock, funds_read=funds_read), payload)
+            lambda body, unlock: self._manual_bet_reserved(body, unlock, funds_read=funds_read,
+                                                           market_read=market_read), payload)
 
     @staticmethod
     def _canonical_event_id(value: Any) -> Optional[str]:
@@ -1777,7 +1818,8 @@ class DutchingController:
         return value if math.isfinite(value) and value >= 0.0 else float("inf")
 
     def _manual_bet_reserved(self, payload: Dict[str, Any], unlock,
-                             funds_read: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                             funds_read: Optional[Dict[str, Any]] = None,
+                             market_read: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Cap, dedupe, tavolo e ammissione sotto il lock d'ammissione; `unlock()` prima di pubblicare.
         ``funds_read``: lettura fresca del conto fatta prima del lock (#546 D2); assente => fondi non
         verificabili, nessun ordine."""
@@ -1938,6 +1980,16 @@ class DutchingController:
                 if guarded:
                     duplication_guard.release(event_key)
                 return self._fail("Nessun tavolo disponibile per il bet manuale")
+
+            # F-23 (PF-EXEC-05): solo su un mercato OPEN con la selezione ACTIVE (book fresco). Rifiuto => risorse
+            # rilasciate, nessun ordine.
+            market_reason = self._entry_market_reason(market_read, [payload.get("selection_id")])
+            if market_reason:
+                if allocated_here:
+                    self._release_table_and_key(table_id, event_key if guarded else "")
+                elif guarded:
+                    duplication_guard.release(event_key)
+                return self._fail(f"Ingresso non ammesso: {market_reason}", reason=market_reason)
 
             # #546 D2: fondi su lettura fresca contro tutte le riserve non ancora a mercato, compreso questo
             # ordine (sul tavolo appena attivato, o a parte se senza tavolo). Rifiuto => risorse rilasciate.

@@ -4758,7 +4758,7 @@ class RuntimeController:
 
         def _network_window() -> bool:
             attempted = self._apply_direct_best_price(payload)
-            self._attach_single_entry_liquidity(payload)
+            self._read_entry_market(payload)                         # F-23 + F030: un solo book fresco
             entry_funds.update(self._read_funds_for_entry())       # PR28-e: fondi, fuori dal lock
             return attempted
 
@@ -4876,7 +4876,44 @@ class RuntimeController:
             logger.exception("Errore force_unlock table_id=%s", table_id)
         self._reject_signal(signal, reason)
 
-    def _attach_single_entry_liquidity(self, payload: dict) -> None:
+    _BOOK_NOT_READ = object()
+
+    def _read_entry_market(self, payload: dict) -> None:
+        """F-23 (#586; PF-EXEC-05): UNA lettura fresca del book del mercato dell'ingresso (fuori dal lock, rete), da cui
+        derivano la negoziabilita' (sempre) e la liquidita' F030 (se il guard e' attivo). Il payload porta
+        ``market_tradability_required`` e ``market_not_tradable_reason``: il RiskGate nega un mercato non OPEN, una
+        selezione non ACTIVE o un book assente/illeggibile/di un altro mercato. Errore o timeout di lettura =>
+        book assente => non verificabile."""
+        market_id = str(payload.get("market_id") or "")
+        book = None
+        try:
+            book = self.betfair_service.get_market_book_snapshot(market_id, include_prices=True)
+        except Exception as exc:
+            logger.warning("F-23: book del mercato %s non leggibile (%s): ingresso non verificabile", market_id, exc)
+        payload["market_tradability_required"] = True
+        payload["market_not_tradable_reason"] = liquidity.market_tradable_reason(
+            book, market_id, [payload.get("selection_id")])
+        self._attach_single_entry_liquidity(payload, book=book)
+
+    def read_market_for_controller_entry(self, market_id: Any) -> dict:
+        """F-23: lettura fresca del book per un ingresso del DutchingController (bet manuale, lotto), FUORI dal lock
+        d'ammissione come i fondi. ``{"market_id", "book"}``; errore o timeout => book None (non verificabile)."""
+        mid = str(market_id or "")
+        try:
+            book = self.betfair_service.get_market_book_snapshot(mid, include_prices=True)
+        except Exception as exc:
+            logger.warning("F-23: book del mercato %s non leggibile (%s): ingresso non verificabile", mid, exc)
+            book = None
+        return {"market_id": mid, "book": book}
+
+    def controller_market_tradable_reason(self, market_read: Any, selection_ids: Any) -> str:
+        """F-23: "" se il mercato letto da `read_market_for_controller_entry` e' negoziabile per tutte le selezioni
+        dell'ingresso, altrimenti il motivo. Lettura assente o di un altro mercato => non verificabile."""
+        if not isinstance(market_read, dict):
+            return "mercato_non_verificabile:BOOK_UNAVAILABLE"
+        return liquidity.market_tradable_reason(market_read.get("book"), market_read.get("market_id"), selection_ids)
+
+    def _attach_single_entry_liquidity(self, payload: dict, book: Any = _BOOK_NOT_READ) -> None:
         """PF-ALL-F030 (decisione owner, CLOSURE-03): il Liquidity Guard protegge anche gli ingressi singoli.
 
         Snapshot fresco del book del mercato (mai la cache: un dato vecchio non e' attendibile), liquidita'
@@ -4888,12 +4925,13 @@ class RuntimeController:
         if not bool(getattr(self.config, "liquidity_guard_enabled", True)):
             return
         payload["liquidity_required"] = True
-        book = None
-        try:
-            book = self.betfair_service.get_market_book_snapshot(str(payload.get("market_id") or ""),
-                                                                 include_prices=True)
-        except Exception as exc:
-            logger.warning("F030: book del mercato non leggibile (%s)", exc)
+        if book is RuntimeController._BOOK_NOT_READ:                # F-23: di norma il book e' gia' letto una volta
+            book = None
+            try:
+                book = self.betfair_service.get_market_book_snapshot(str(payload.get("market_id") or ""),
+                                                                     include_prices=True)
+            except Exception as exc:
+                logger.warning("F030: book del mercato non leggibile (%s)", exc)
         value, reason = liquidity.single_entry_liquidity(book, payload.get("selection_id"),
                                                          payload.get("bet_type"), payload.get("price"))
         if value is None:
@@ -8164,7 +8202,7 @@ class RuntimeController:
         # (#505) come sul percorso del segnale; un cashout arrivato nel frattempo invalida l'ingresso.
         fence = self._capture_admission_fence(submit_payload)
         config_before = self.config
-        self._call_outside_admission_lock(self._attach_single_entry_liquidity, submit_payload)
+        self._call_outside_admission_lock(self._read_entry_market, submit_payload)   # F-23 + F030
 
         # Recheck kill-switch daily-loss subito prima della submission auto-trade:
         # _risk_allows_auto_trade e' stato valutato sopra, ma un settlement
