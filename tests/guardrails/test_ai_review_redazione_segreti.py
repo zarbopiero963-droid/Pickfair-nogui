@@ -316,3 +316,107 @@ def test_le_cinque_copie_di_redactions_restano_identiche() -> None:
     blocchi = {w: re.search(r"REDACTIONS = \[(.*?)\n          \]", (ROOT / w).read_text(encoding="utf-8"), re.S).group(1)
                for w in sorted(_reviewer_su_disco())}
     assert len(set(blocchi.values())) == 1, "REDACTIONS divergente fra i workflow di review"
+
+
+# Casi limite (owner, GO governance #606): l'eccezione `${{ }}` vale SOLO per riferimenti di contesto senza letterali
+# (`secrets.`, `github.`, `inputs.`, ... uniti da `||`/`&&`). Un'espressione puo' contenere un LETTERALE, che e' un
+# valore: resta redatto. Idem espressioni malformate, testo attaccato e formati reali di token dopo `id-token`.
+_EX = "${" + "{"
+CASI_LIMITE_DA_REDIGERE = (
+    f"  password: {_EX} 'SEGRETISSIMO' }}}}", f'  password: {_EX} "SEGRETISSIMO" }}}}',
+    f"  {_T}: {_EX} format('{{0}}', 'SEGRETISSIMO') }}}}", f"  {_T}: {_EX} secrets.X || 'SEGRETISSIMO' }}}}",
+    f"  {_T}: {_EX} SEGRETISSIMO }}}}", f"  {_T}: {_EX} 1234SEGRETISSIMO }}}}",
+    f'  {_T}: "{_EX} secrets.X }}}}SEGRETISSIMO"', f"  {_T}: {_EX} secrets.X }}}}SEGRETISSIMO",
+    f"  {_T}: {_EX} secrets.X }} SEGRETISSIMO", f"  {_T}: {_EX} inputs.a == SEGRETISSIMO }}}}",
+    f"  api_key: {_EX} 'SEGRETISSIMO' || secrets.X }}}}", f'"password": "{_EX} \'SEGRETISSIMO\' }}}}"',
+    f"  id-{_T}: ghp_SEGRETISSIMOabcdefghijklmnopqrstuv", f"  id-{_T}: eyJhbGciOiJSUzI1NiJ9.SEGRETISSIMO.sig",
+    f'"id-{_T}":"writeSEGRETISSIMO"', f"  id-{_T}: wr1teSEGRETISSIMO",
+    f"export ID_{_T.upper()}=writeSEGRETISSIMO", f"  id-{_T}=SEGRETISSIMO",
+)
+
+
+@pytest.mark.parametrize("workflow", sorted(_reviewer_su_disco()))
+@pytest.mark.parametrize("riga", CASI_LIMITE_DA_REDIGERE)
+def test_block_casi_limite_di_espressioni_e_id_token(workflow: str, riga: str) -> None:
+    redatta = _redazione(workflow)(riga)
+    assert VALORE not in redatta, f"{workflow}: {riga!r} -> {redatta!r}: valore in chiaro"
+
+
+def _redazione_di_main(workflow: str) -> Callable[[str], str]:
+    """La redazione di prima (origin/main): base del confronto differenziale."""
+    import subprocess
+    testo = subprocess.run(["git", "show", f"origin/main:{workflow}"], cwd=ROOT, capture_output=True,
+                           text=True).stdout
+    m = re.search(r"REDACTIONS = \[(.*?)\n          \]", testo, re.S)
+    if not m:
+        pytest.skip("origin/main non disponibile nel checkout")
+    regole = [(re.compile(v.elts[0].args[0].value), v.elts[1].value)
+              for v in ast.parse("X = [" + m.group(1) + "\n]").body[0].value.elts]
+
+    def redigi(t: str) -> str:
+        for regola, sostituto in regole:
+            t = regola.sub(sostituto, t)
+        return t
+    return redigi
+
+
+_FORME_CONSENTITE = re.compile(
+    r"(?:[+\-#*! \t]|export |set )*[\"']?(?:[\w\-]+[.\-_])*(?i:api[_-]?key|app[_-]?key|token|secret|password|passwd|pwd|"
+    r"private[_-]?key|cert)[\w\-]*[\"']?[ \t]*[:=][ \t]*[\"']?(?:\$\{\{[^'\"}]*\}\}|read|write|none)[\"']?[ \t,;}\]]*"
+    r"(?:#.*)?")
+
+
+def test_block_differenziale_nessun_valore_nascosto_prima_diventa_visibile() -> None:
+    """Fuzz deterministico: ~60.000 righe (chiavi x prefissi x separatori x valori, letterali e riferimenti).
+    Proprieta': se la redazione di main nascondeva il valore, la nuova lo nasconde ancora; ogni riga che cambia
+    ha una delle due forme consentite (permesso id-token, riferimento di contesto puro)."""
+    w = ".github/workflows/pr-review-openrouter-gpt56-sol.yml"
+    vecchia, nuova = _redazione_di_main(w), _redazione(w)
+    chiavi = [f"id-{_T}", _T, f"GH_{_T.upper()}", "api_key", "password", "secret", f"github-{_T}", "cert"]
+    prefissi = ["", "+", "-", "  ", "+      ", "export ", "- ", "# ", '"', "'"]
+    separatori = [": ", ":", "=", " = ", '": ', "': "]
+    valori = ["write", "read", "none", "writeSEGRETISSIMO", "write SEGRETISSIMO", "SEGRETISSIMO",
+              '"write"', "'read'", '"SEGRETISSIMO"', f"{_EX} secrets.X }}}}", f"{_EX} secrets.X }}}}SEGRETISSIMO",
+              f"{_EX} 'SEGRETISSIMO' }}}}", f"{_EX} SEGRETISSIMO }}}}", f"{_EX} github.t || 'SEGRETISSIMO' }}}}",
+              f'"{_EX} secrets.X }}}}"', f"{_EX} secrets.X", f"{_EX} env.A && vars.B }}}}",
+              f"{_EX} secrets.X }} SEGRETISSIMO", "ghp_SEGRETISSIMO0123456789abcdefghijklmn"]
+    code = ["", ",", " # nota", "  ", ";", "}", " SEGRETISSIMO"]
+    nuove_fughe, forme_strane, n = [], [], 0
+    for c in chiavi:
+        for p in prefissi:
+            for s in separatori:
+                for v in valori:
+                    for k in code:
+                        riga = f"{p}{c}{s}{v}{k}"
+                        n += 1
+                        a, b = vecchia(riga), nuova(riga)
+                        if VALORE not in a and VALORE in b:
+                            nuove_fughe.append(f"{riga!r} -> {b!r}")
+                        # conta solo cio' che la nuova redazione mostra IN PIU' (meno [REDACTED]); redigere di piu' e' ok
+                        if b.count("[REDACTED") < a.count("[REDACTED") and not _FORME_CONSENTITE.fullmatch(b.strip()):
+                            forme_strane.append(f"{riga!r}: {a!r} -> {b!r}")
+    assert n > 50_000
+    assert not nuove_fughe, f"{len(nuove_fughe)} valori nuovi in chiaro\n" + "\n".join(nuove_fughe[:15])
+    assert not forme_strane, f"{len(forme_strane)} differenze fuori forma\n" + "\n".join(forme_strane[:15])
+
+
+# Residuo PREESISTENTE e dichiarato (DECISIONE-426 P22/P23): valore QUOTATO seguito da altro testo sulla stessa riga.
+# La regola di inizio riga non tocca i valori quotati (li lascia alla generica, che chiude alle virgolette) e vale per
+# ogni chiave, non solo `id-token`. Qui si fissa che non PEGGIORA: la nuova redazione non mostra nulla in piu' di main.
+RESIDUI_PREESISTENTI = (f"  id-{_T}: 'write' SEGRETISSIMO", f'  password: "x" SEGRETISSIMO', f"  {_T}: 'a' SEGRETISSIMO")
+
+
+@pytest.mark.parametrize("riga", RESIDUI_PREESISTENTI)
+def test_residuo_quotato_preesistente_non_peggiora(riga: str) -> None:
+    w = ".github/workflows/pr-review-openrouter-gpt56-sol.yml"
+    a, b = _redazione_di_main(w)(riga), _redazione(w)(riga)
+    assert b.count("[REDACTED") >= a.count("[REDACTED") and len(b.replace("[REDACTED]", "")) <= len(
+        a.replace("[REDACTED]", "")), f"{riga!r}: main {a!r}, ora {b!r}"
+
+
+@pytest.mark.parametrize("workflow", sorted(_reviewer_su_disco()))
+@pytest.mark.parametrize("riga", [f"  password: write", f"  {_T}: read", f'"secret": "none"', f"  access-{_T}: write",
+                                  f"  api_key: {_EX} 'write' }}}}"])
+def test_block_le_parole_di_permesso_valgono_solo_per_id_token(workflow: str, riga: str) -> None:
+    # per ogni altra chiave `read`/`write`/`none` e' un valore come un altro: redatto come prima
+    assert "[REDACTED" in _redazione(workflow)(riga), f"{workflow}: {riga!r} non redatto"

@@ -11,9 +11,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 - **Governance: redazione dei reviewer e run di review saltati (decisione owner sulla #606, merge owner):**
   - la redazione dei segreti dei cinque workflow di review lascia visibili il permesso `id-token: read|write|none`
-    e i riferimenti `${{ ... }}` che occupano tutto il valore. Prima li oscurava, e Sol non poteva certificare il
-    permesso OIDC di `pf-test-request.yml` (VALID_INCONCLUSIVE sulla #606). Ogni altro valore resta redatto;
-    misurate 62 righe diverse su 325.615, tutte di queste due forme;
+    e i riferimenti `${{ ... }}` fatti solo di contesti (`secrets.`, `github.`, `inputs.`...) che occupano tutto
+    il valore. Prima li oscurava, e Sol non poteva certificare il permesso OIDC di `pf-test-request.yml`
+    (VALID_INCONCLUSIVE sulla #606). Ogni altro valore resta redatto. Misurate 59 righe in più visibili su 325.847,
+    tutte di queste due forme;
+  - chiusa una fuga **preesistente**: `password: ${{ 'x' }}` (letterale dentro un'espressione) usciva in chiaro,
+    perché la regola di inizio riga escludeva ogni valore che comincia con `${{`. Ora a inizio riga si redige tutto
+    tranne il riferimento di contesto puro. Fuzz differenziale di oltre 50.000 righe: nessun valore nascosto da main
+    diventa visibile;
   - `scripts/pr_review_attestation.py` esclude un tentativo `skipped` da `RUN_WITHOUT_ATTESTATION` solo con la
     prova dall'API dei job (tutti `completed`/`skipped`, nessuno step, elenco completo). Sulla #606 quattro run
     saltati alla riapertura bloccavano verify-pr senza aver eseguito nulla. Un run ambiguo o non leggibile continua

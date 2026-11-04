@@ -97,11 +97,21 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
   segreto (decisione owner sulla #606, dove Sol risultava INCONCLUSIVE perché il
   permesso OIDC del workflow era oscurato): il permesso Actions `id-token` con
   valore esatto `read`, `write` o `none` (YAML o JSON quotato) e un'espressione
-  di Actions `${{ ... }}` che occupa da sola tutto il valore (ne esce il **nome**
-  del secret, mai il valore, che nel diff non c'è). Qualunque altro valore dopo
-  `id-token`, o testo attaccato all'espressione, viene redatto come prima.
-  Misurato sul repo intero e sul diff della #606: 62 righe su 325.615 cambiano,
-  tutte e sole di queste due forme.
+  di Actions `${{ ... }}` che occupa da sola tutto il valore ed è fatta **solo**
+  di riferimenti di contesto (`secrets.`, `github.`, `inputs.`, `env.`, `vars.`,
+  `steps.`, `needs.`, `matrix.`, `runner.`, `job.`, `strategy.`, uniti da `||` o
+  `&&`): ne esce il **nome** del secret, mai il valore, che nel diff non c'è.
+  Un'espressione con un letterale (`${{ 'x' }}`, `format(...)`, confronti),
+  malformata o con testo attaccato viene redatta: a inizio riga **per intero**.
+  Prima la regola di inizio riga escludeva ogni valore che comincia con `${{`, e
+  la generica ne toglieva solo il primo pezzo: `password: ${{ 'x' }}` usciva in
+  chiaro (fuga preesistente, chiusa). Qualunque altro valore dopo `id-token`
+  viene redatto come prima; le parole di permesso valgono solo per `id-token`.
+  Residuo invariato: il valore quotato seguito da altro testo (P22/P23).
+  Misurato sul repo intero e sul diff della #606: 59 righe su 325.847 diventano
+  visibili, tutte di queste due forme, e 3 vengono redatte più di prima;
+  fuzz differenziale di oltre 50.000 righe: nessun valore che main nascondeva
+  diventa visibile.
 - **Il diff è trattato come contenuto non attendibile**: il prompt istruisce il
   modello a non seguire istruzioni contenute in codice/commenti/stringhe/nomi
   file (anti prompt-injection); i fence ```` ``` ```` nel diff vengono
