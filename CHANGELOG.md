@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Simulazione Roserpina 100 € con report (#586, PF-FINISH-THE-PRODUCT-01, dati SINTETICI):**
+  `tools/sim_report/roserpina_report.py` costruisce in Decimal il report dai dump dell'harness F-026 (capitale
+  iniziale, P&L per tavolo, commissioni, esposizione massima, drawdown, saldo finale, ordini non riconciliati,
+  riavvii) con provenienza obbligatoria (SINTETICO / PDF_MONEYFLOW / REGISTRATO) e funzioni non coperte dichiarate.
+  Scenario multi-tavolo con gol, sospensione, cashout parziale, non abbinato, crash e riavvio verificato contro un
+  oracolo indipendente (`tests/f026/test_roserpina_100_report.py`). Harness: operazioni `price`, `suspend`,
+  `reopen`; flag `hedge` sugli ordini dello snapshot. Documentazione: `docs/testing/roserpina_100_simulation.md`.
+
 ### Changed
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**
   - se un range precedente di Sol o Grok non è PASS (BLOCKERS, INCONCLUSIVE, ERROR, incompleto), la review della push

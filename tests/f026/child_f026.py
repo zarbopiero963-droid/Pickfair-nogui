@@ -19,6 +19,8 @@ SCENARIO_JSON: {"steps": [...]} con passi:
                                                                     che il runtime riceva RUNTIME_CLOSE_POSITION (F-10)
   {"op": "lockdown"} / {"op": "pause"} / {"op": "emergency"}         LOCKDOWN, PAUSED, emergency stop (PF-ALL-F027)
   {"op": "wait", "s": 3}
+  {"op": "price", "m": "1.701", "price": 1.6}                       quota mossa sul book (es. dopo un gol), mercato OPEN
+  {"op": "suspend", "m": "1.701"} / {"op": "reopen", "m": "1.701"}   mercato SUSPENDED / di nuovo OPEN (stessa quota)
   {"op": "replay_cmd", "m": "1.701"}                                ripubblica l'ultimo CMD_QUICK_BET del mercato (PR29-a)
   {"op": "crash_on_next_place"}                                     os._exit(1) appena l'exchange ha accettato il
                                                                     prossimo ordine (ingresso, gamba o hedge di cashout)
@@ -49,6 +51,7 @@ def dump():
 
 try:
     import headless_main
+    from core.hedge_ref import is_hedge_order_ref
     app = headless_main.HeadlessApp(); app.build(start_services=True)
     orig = app.bus.publish
 
@@ -202,7 +205,8 @@ try:
             except Exception:
                 rep = {}
             orders.append({"market_id": p.get("market_id"), "status": r["status"], "reason": r.get("reason"), "stake": p.get("stake"), "price": p.get("price"),
-                           "side": p.get("bet_type"), "matched": rep.get("sizeMatched")})
+                           "side": p.get("bet_type"), "matched": rep.get("sizeMatched"),
+                           "hedge": is_hedge_order_ref(r["customer_ref"])})
         d = rt.risk_desk
         acct = dict(getattr(rt, "_account_snapshot", None) or {})
         exch = [{"bet_id": o.get("betId"), "ref": o.get("customerOrderRef"), "market_id": o.get("marketId"),
@@ -359,6 +363,13 @@ try:
             R["emergency"] = str(rt.emergency_stop("f027_test"))[:200]; time.sleep(0.5)
         elif op == "wait":
             time.sleep(st.get("s", 2))
+        elif op == "price":
+            BOOK.setdefault(st["m"], {})["price"] = float(st["price"])
+            book(st["m"]); time.sleep(0.3); wait_for(f"{i}:price", lambda: True)
+        elif op == "suspend":
+            book(st["m"], status="SUSPENDED"); time.sleep(0.3); wait_for(f"{i}:suspend", lambda: True)
+        elif op == "reopen":
+            book(st["m"]); time.sleep(0.3); wait_for(f"{i}:reopen", lambda: True)
         snap(f"{i}:{op}:{st.get('m', '')}")
     R["stop"] = str(app.stop())[:80]
 except Exception:

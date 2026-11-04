@@ -3405,6 +3405,20 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "d_roserpina_100_sim_report": {
+      "description": "Simulazione Roserpina 100 EUR (dati SINTETICI) sull'harness F-026 con report in Decimal verificato contro un oracolo indipendente; nessun codice di prodotto toccato.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/testing/roserpina_100_simulation.md",
+        "tests/f026/child_f026.py",
+        "tests/f026/test_roserpina_100_report.py",
+        "tools/sim_report/__init__.py",
+        "tools/sim_report/roserpina_report.py"
+      ],
+      "max_files": 7
     }
   }
 }
