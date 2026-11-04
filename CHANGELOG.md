@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Control API v1 di sola lettura (PF-MCP-004/008, preparazione PF-API-1):** nuovo package `control_api/` con
+  `GET /v1/meta`, `GET /v1/status` e `GET /v1/reconciliation/status`, servite da un server HTTP solo su `127.0.0.1`
+  con token Bearer. Le viste leggono lo stato reale del `RuntimeController` senza effetti (non usano `get_status()`,
+  che legge i fondi Betfair e aggiorna lo stato della cassa); un dato assente è `null` ed elencato in `unavailable`.
+  Non cablata in `headless_main`, non nel packaging, nessun comando. `docs/control_api.md`; test
+  `tests/control_api/`; area di mutazione `control_api` (18 mutazioni).
+
 ### Changed
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**
   - se un range precedente di Sol o Grok non è PASS (BLOCKERS, INCONCLUSIVE, ERROR, incompleto), la review della push

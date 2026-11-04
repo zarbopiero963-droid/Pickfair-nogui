@@ -17,7 +17,8 @@
     "check_dedupe",
     "trusted_gate",
     "trusted_dispatcher",
-    "fullscope_tooling"
+    "fullscope_tooling",
+    "control_api"
   ],
   "mutations": [
     {
@@ -8216,6 +8217,222 @@
         "tests/f13/test_f13_customer_order_ref.py"
       ],
       "rationale": "F-13 (review indipendente su 4881adb): la mappa del de-dup SIM cresce di una voce per ordine nello snapshot, senza limiti."
+    },
+    {
+      "id": "cap_host_not_loopback",
+      "module": "control_api.server",
+      "area": "control_api",
+      "file": "control_api/server.py",
+      "original": "        if host != LOOPBACK_HOST:\n            raise ControlApiConfigError(\"HOST_NOT_LOOPBACK_LITERAL\")",
+      "mutated": "        if False:\n            raise ControlApiConfigError(\"HOST_NOT_LOOPBACK_LITERAL\")",
+      "tests": [
+        "tests/control_api/test_server.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: Bind fuori da 127.0.0.1 accettato: Control API esposta in rete."
+    },
+    {
+      "id": "cap_auth_bypass",
+      "module": "control_api.server",
+      "area": "control_api",
+      "file": "control_api/server.py",
+      "original": "        if not self._authorized():\n            return self._error(401, \"UNAUTHORIZED\")",
+      "mutated": "        if False:\n            return self._error(401, \"UNAUTHORIZED\")",
+      "tests": [
+        "tests/control_api/test_server.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: Richieste senza token servite."
+    },
+    {
+      "id": "cap_token_prefix",
+      "module": "control_api.server",
+      "area": "control_api",
+      "file": "control_api/server.py",
+      "original": "        return hmac.compare_digest(presented, self.server.app.token_bytes)",
+      "mutated": "        return presented[:8] == self.server.app.token_bytes[:8]",
+      "tests": [
+        "tests/control_api/test_server.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: Token parziale accettato (confronto non esatto)."
+    },
+    {
+      "id": "cap_host_header",
+      "module": "control_api.server",
+      "area": "control_api",
+      "file": "control_api/server.py",
+      "original": "        if self.headers.get(\"Host\") != app.expected_host:\n            return self._error(400, \"BAD_HOST\")",
+      "mutated": "        if False:\n            return self._error(400, \"BAD_HOST\")",
+      "tests": [
+        "tests/control_api/test_server.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: Host header arbitrario accettato (DNS rebinding)."
+    },
+    {
+      "id": "cap_path_normalized",
+      "module": "control_api.server",
+      "area": "control_api",
+      "file": "control_api/server.py",
+      "original": "        handler = app.routes.get(raw_path) if raw_path == self.path else None",
+      "mutated": "        handler = app.routes.get(self.path)",
+      "tests": [
+        "tests/control_api/test_server.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: Percorsi normalizzati da http.server (//x) serviti come route approvate."
+    },
+    {
+      "id": "cap_body_allowed",
+      "module": "control_api.server",
+      "area": "control_api",
+      "file": "control_api/server.py",
+      "original": "        if self.headers.get(\"Transfer-Encoding\") or (length not in (None, \"0\")):\n            return self._error(400, \"BODY_NOT_ALLOWED\")",
+      "mutated": "        if False:\n            return self._error(400, \"BODY_NOT_ALLOWED\")",
+      "tests": [
+        "tests/control_api/test_server.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: GET con corpo accettato."
+    },
+    {
+      "id": "cap_mutating_method_served",
+      "module": "control_api.server",
+      "area": "control_api",
+      "file": "control_api/server.py",
+      "original": "    def _method_not_allowed(self) -> None:\n        self._error(405, \"METHOD_NOT_ALLOWED\")",
+      "mutated": "    def _method_not_allowed(self) -> None:\n        self.do_GET()",
+      "tests": [
+        "tests/control_api/test_server.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: POST/PUT/PATCH/DELETE serviti come lettura."
+    },
+    {
+      "id": "cap_ephemeral_port",
+      "module": "control_api.server",
+      "area": "control_api",
+      "file": "control_api/server.py",
+      "original": "(port == 0 and not allow_ephemeral_port)",
+      "mutated": "False",
+      "tests": [
+        "tests/control_api/test_server.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: Porta implicita (0) accettata fuori dai test."
+    },
+    {
+      "id": "cap_weak_token",
+      "module": "control_api.server",
+      "area": "control_api",
+      "file": "control_api/server.py",
+      "original": "len(token) < MIN_TOKEN_CHARS",
+      "mutated": "len(token) < 1",
+      "tests": [
+        "tests/control_api/test_server.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: Token debole accettato."
+    },
+    {
+      "id": "cap_token_file_overwrite",
+      "module": "control_api.server",
+      "area": "control_api",
+      "file": "control_api/server.py",
+      "original": "os.O_WRONLY | os.O_CREAT | os.O_EXCL |",
+      "mutated": "os.O_WRONLY | os.O_CREAT | os.O_TRUNC |",
+      "tests": [
+        "tests/control_api/test_server.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: File del token sovrascritto."
+    },
+    {
+      "id": "cap_token_file_mode",
+      "module": "control_api.server",
+      "area": "control_api",
+      "file": "control_api/server.py",
+      "original": "    fd = os.open(path, flags, 0o600)",
+      "mutated": "    fd = os.open(path, flags, 0o644)",
+      "tests": [
+        "tests/control_api/test_server.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: File del token leggibile da altri utenti."
+    },
+    {
+      "id": "cap_command_capability",
+      "module": "control_api.contract",
+      "area": "control_api",
+      "file": "control_api/contract.py",
+      "original": "    \"GET /v1/reconciliation/status\",\n)",
+      "mutated": "    \"GET /v1/reconciliation/status\",\n    \"POST /v1/orders\",\n)",
+      "tests": [
+        "tests/control_api/test_server.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: Capability di comando dichiarata dalla Control API di sola lettura."
+    },
+    {
+      "id": "cap_view_side_effect",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    report = rc.evaluate_live_readiness()  # type: ignore[attr-defined]",
+      "mutated": "    rc.get_status()  # type: ignore[attr-defined]\n    report = rc.evaluate_live_readiness()  # type: ignore[attr-defined]",
+      "tests": [
+        "tests/control_api/test_views_real_runtime.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: La vista chiama get_status(): letture fondi Betfair, stato cassa e monitor perdita giornaliera."
+    },
+    {
+      "id": "cap_free_text_code",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    return head if CODE_RE.fullmatch(head) else UNSTRUCTURED",
+      "mutated": "    return value.strip()",
+      "tests": [
+        "tests/control_api/test_views_real_runtime.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: Testo libero del core esposto (injection/segreti)."
+    },
+    {
+      "id": "cap_wrong_type_defaulted",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if type(value) is not bool:\n        raise _Unavailable(name)\n    return value",
+      "mutated": "    return bool(value)",
+      "tests": [
+        "tests/control_api/test_views_real_runtime.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: Tipo inatteso convertito in un default invece di indisponibile."
+    },
+    {
+      "id": "cap_mode_defaulted_sim",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    mapped = EXECUTION_MODES.get(raw) if isinstance(raw, str) else None",
+      "mutated": "    mapped = EXECUTION_MODES.get(raw, \"SIM\") if isinstance(raw, str) else \"SIM\"",
+      "tests": [
+        "tests/control_api/test_views_real_runtime.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: Modalita sconosciuta dichiarata SIM."
+    },
+    {
+      "id": "cap_not_run_as_ok",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        return {\"state\": \"NOT_RUN\", \"reason\": None, \"recovery_failure\": None}",
+      "mutated": "        return {\"state\": \"OK\", \"reason\": None, \"recovery_failure\": None}",
+      "tests": [
+        "tests/control_api/test_views_real_runtime.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: Riconciliazione mai eseguita dichiarata OK."
+    },
+    {
+      "id": "cap_incoherent_readiness",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if len(codes) > MAX_CODES or ready != (level == \"READY\") or (ready and codes):",
+      "mutated": "    if len(codes) > MAX_CODES:",
+      "tests": [
+        "tests/control_api/test_views_real_runtime.py"
+      ],
+      "rationale": "PF-MCP-004/008 Control API read-only: Readiness incoerente (ready con blocker) esposta."
     }
   ]
 }

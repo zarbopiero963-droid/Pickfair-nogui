@@ -3405,6 +3405,27 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "pf_api1_control_api_readonly": {
+      "description": "PF-MCP-004/008 (roadmap MCP + Control API, GO controllato 03/11/2026): Control API v1 di sola lettura (meta, status, reconciliation/status) su RuntimeController reale, loopback + Bearer, nessun effetto, non cablata in headless_main ne' nel packaging. Area di mutazione nuova 'control_api' aggiunta a optional_areas del catalogo (dichiarato). Estensione dichiarata: scripts/ci_changed_modules.py instrada control_api/ sulla lane mutation-guardrails (test test_il_catalogo_attiva_la_lane_mutation_nel_dynamic).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "control_api/__init__.py",
+        "control_api/contract.py",
+        "control_api/contract_v1_descriptor.json",
+        "control_api/server.py",
+        "control_api/views.py",
+        "docs/control_api.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/ci_changed_modules.py",
+        "tests/control_api/conftest.py",
+        "tests/control_api/test_mcp_chain_crossrepo.py",
+        "tests/control_api/test_server.py",
+        "tests/control_api/test_views_real_runtime.py"
+      ],
+      "max_files": 14
     }
   }
 }

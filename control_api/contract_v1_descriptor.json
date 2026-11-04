@@ -1,0 +1,167 @@
+{
+  "contract_name": "pickfair-control-api",
+  "contract_version": "1.0.0",
+  "routes": [
+    [
+      "read",
+      "GET",
+      "/v1/meta"
+    ],
+    [
+      "read",
+      "GET",
+      "/v1/status"
+    ],
+    [
+      "read",
+      "GET",
+      "/v1/account"
+    ],
+    [
+      "read",
+      "GET",
+      "/v1/exposure"
+    ],
+    [
+      "read",
+      "GET",
+      "/v1/config"
+    ],
+    [
+      "read",
+      "GET",
+      "/v1/events"
+    ],
+    [
+      "read",
+      "GET",
+      "/v1/markets"
+    ],
+    [
+      "read",
+      "GET",
+      "/v1/markets/{id}/book"
+    ],
+    [
+      "read",
+      "GET",
+      "/v1/orders"
+    ],
+    [
+      "read",
+      "GET",
+      "/v1/positions"
+    ],
+    [
+      "read",
+      "GET",
+      "/v1/operations/{id}"
+    ],
+    [
+      "read",
+      "GET",
+      "/v1/operations?status=pending"
+    ],
+    [
+      "read",
+      "GET",
+      "/v1/reconciliation/status"
+    ],
+    [
+      "read",
+      "GET",
+      "/v1/audit/{correlation_id}"
+    ],
+    [
+      "command",
+      "POST",
+      "/v1/preview"
+    ],
+    [
+      "command",
+      "POST",
+      "/v1/orders"
+    ],
+    [
+      "command",
+      "POST",
+      "/v1/dutching"
+    ],
+    [
+      "command",
+      "POST",
+      "/v1/orders/{id}/cancel"
+    ],
+    [
+      "command",
+      "POST",
+      "/v1/orders/{id}/replace"
+    ],
+    [
+      "command",
+      "POST",
+      "/v1/cashout"
+    ],
+    [
+      "command",
+      "POST",
+      "/v1/stop"
+    ],
+    [
+      "command",
+      "POST",
+      "/v1/resume"
+    ],
+    [
+      "command",
+      "POST",
+      "/v1/reconcile"
+    ],
+    [
+      "command",
+      "PATCH",
+      "/v1/config"
+    ],
+    [
+      "command",
+      "POST",
+      "/v1/mode"
+    ]
+  ],
+  "schemas": {
+    "meta_response": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "items": {
+            "pattern": "^(GET|POST|PATCH) /v1/[A-Za-z0-9_{}/?=.-]{1,120}$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "contract_version": {
+          "pattern": "^(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})$",
+          "type": "string"
+        },
+        "git_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "type": "string"
+        },
+        "schema_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "contract_version",
+        "capabilities",
+        "git_sha",
+        "schema_hash"
+      ],
+      "type": "object"
+    }
+  }
+}
