@@ -3428,9 +3428,10 @@
         "tests/integration/test_dutching_max_win_guard.py",
         "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
         "tests/invariant/test_dutching_controller_invariants.py",
-        "tests/unit/test_dutching_controller.py"
+        "tests/unit/test_dutching_controller.py",
+        "tests/unit/test_runtime_controller_best_price_direct.py"
       ],
-      "max_files": 19
+      "max_files": 20
     }
   }
 }

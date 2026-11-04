@@ -325,7 +325,8 @@ def _events(bus, name):
 
 
 def test_seam_flag_off_publishes_master_unchanged():
-    # Flag OFF: nessuno snapshot, nessun re-gate nuovo => CMD_QUICK_BET col master.
+    # Flag OFF: nessuno snapshot di best price, nessun re-gate nuovo => CMD_QUICK_BET col master. Resta UNA lettura
+    # fresca del book per la negoziabilita' del mercato all'ammissione (F-23, PF-EXEC-05), che non tocca il prezzo.
     bf = _Betfair(book=_book(backs=[{"price": 2.52}]))
     rc, bus = _make_active_rc(bf)
     rc._on_signal_received(_signal(price=2.50))
@@ -333,7 +334,7 @@ def test_seam_flag_off_publishes_master_unchanged():
     assert len(cmds) == 1
     assert cmds[0]["price"] == 2.50
     assert "best_price_source" not in cmds[0]
-    assert bf.snapshot_calls == []
+    assert bf.snapshot_calls == ["1.234"]
     assert _events(bus, "SIGNAL_APPROVED")
 
 
