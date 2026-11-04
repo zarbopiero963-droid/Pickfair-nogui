@@ -260,13 +260,14 @@ def collect(reg, fetch=None, token=None):
 def derive(reg, fetch=None, token=None, now=None):
     facts = collect(reg, fetch, token)
     cards = [derive_card(c, facts) for c in reg["cards"]]
+    other = [dict(w, sha=_branch_facts(reg["repo"], w["branch"], fetch, token)["sha"]) for w in reg.get("other_work", [])]
     counts = {}
     for c in cards:
         counts[c["overall"]] = counts.get(c["overall"], 0) + 1
     return {"schema": "pf-roadmap-snapshot/1", "generated_at": (now or datetime.datetime.now(datetime.timezone.utc)
                                                                ).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "total": len(cards), "counts": dict(sorted(counts.items())), "cards": cards,
-            "unlinked_open_prs": facts["unlinked_open_prs"], "open_prs": facts["open_prs"],
+            "unlinked_open_prs": facts["unlinked_open_prs"], "open_prs": facts["open_prs"], "other_work": other,
             "traceability_problems": validate(reg) + [f"{c['id']}:MISSING_LINK:{m}" for c in cards
                                                       for p in c["parts"] for m in p["missing_links"]]}
 
@@ -315,6 +316,9 @@ def render(snap):
         flags = (" ⚠ parziale" if x["partial"] else "") + (" ⚠ da riconciliare" if x["needs_reconciliation"] else "")
         lines.append(f"| {x['id']}{flags} | {x['name']} | {x['priority']} | {x['development']} | {x['integration']} | "
                      f"{x['certification']} | {'<br>'.join(refs) or '—'} | {x['next_action']} |")
+    if snap.get("other_work"):
+        lines += ["", "**Lavori fuori scheda** (branch senza scheda V2):"] + [
+            f"- `{w['branch']}`@`{(w.get('sha') or 'ASSENTE')[:8]}` — {w['what']} ({w['owner']})" for w in snap["other_work"]]
     if snap["unlinked_open_prs"]:
         lines += ["", "**PR aperte senza scheda** (aggiungere `Roadmap-Card: F-xx` o `Roadmap-Card: none <motivo>` nel "
                   "body):"] + [f"- #{p['pr']} {p['title']}" for p in snap["unlinked_open_prs"]]

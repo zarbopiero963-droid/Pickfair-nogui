@@ -66,7 +66,11 @@
     "F-05"
    ],
    "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
-   "links": {},
+   "links": {
+    "branches": [
+     "claude/d-f04-sl-tp-close"
+    ]
+   },
    "blocked_by": null,
    "needs_reconciliation": null,
    "certifications": []
@@ -204,7 +208,7 @@
     ]
    },
    "blocked_by": null,
-   "needs_reconciliation": "il branch usa il sotto-ID non ufficiale F-12a: copertura della scheda da verificare",
+   "needs_reconciliation": "Claude D dichiara che il branch copre i due punti del titolo (drawdown % SIM/LIVE, rilascio chiave dedup); confronto riga per riga con la scheda c.6504942027 ancora da fare",
    "certifications": []
   },
   {
@@ -239,9 +243,13 @@
    "priority": "P1",
    "depends_on": [],
    "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
-   "links": {},
+   "links": {
+    "branches": [
+     "claude/pickfair-core-audit-slu9su"
+    ]
+   },
    "blocked_by": null,
-   "needs_reconciliation": null,
+   "needs_reconciliation": "PARTIAL secondo Claude D (pfab-d-20261104-ack-001): coperto placeOrders senza esito -> AMBIGUOUS con betId conservato; NON coperto il cancel single-shot",
    "certifications": []
   },
   {
@@ -499,6 +507,38 @@
    "blocked_by": null,
    "needs_reconciliation": null,
    "certifications": []
+  }
+ ],
+ "other_work": [
+  {
+   "branch": "claude/d-dutching-command",
+   "owner": "claude-d",
+   "what": "ingresso Dutching",
+   "card": "none (nessuna scheda V2)"
+  },
+  {
+   "branch": "claude/d-order-session-recovery",
+   "owner": "claude-d",
+   "what": "recovery sessione ordini/cashout",
+   "card": "none"
+  },
+  {
+   "branch": "claude/d-streaming-adapter",
+   "owner": "claude-d",
+   "what": "adapter streaming Betfair",
+   "card": "none"
+  },
+  {
+   "branch": "claude/d-read-retry-backoff",
+   "owner": "claude-d",
+   "what": "retry/backoff delle letture (rate limiting)",
+   "card": "none"
+  },
+  {
+   "branch": "claude/d-bf-readonly-probe",
+   "owner": "claude-d",
+   "what": "probe Betfair read-only",
+   "card": "none"
   }
  ]
 }
