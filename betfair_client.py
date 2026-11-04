@@ -54,7 +54,17 @@ _CUSTOMER_REF_RE = re.compile(r"[A-Za-z0-9\-._+*:;~]{1,32}")
 #: POST e' partito, quindi l'esito e' ignoto (`order_unknown`), mai FAILED.
 _RISPOSTA_ILLEGGIBILE_DOPO_L_INVIO = frozenset({
     "INVALID_JSON", "INVALID_JSON_RPC", "BET_NO_REPORT",
+    # Risposta arrivata senza esito leggibile (P0 audit Claude D 04/11/2026): confronto sul CODICE prima dei
+    # due punti, mai per sottostringa del dettaglio.
+    "BET_STATUS_UNRECOGNIZED", "BET_REPORT_STATUS_UNRECOGNIZED",
 })
+
+#: Gli `ExecutionReportStatus` di `placeOrders` (contratto Betfair). Uno status fuori da qui non e' un rifiuto
+#: dichiarato: esito ignoto. FAILURE / PROCESSED_WITH_ERRORS restano rifiuti, TIMEOUT resta ignoto.
+_STATUS_PLACE_RICONOSCIUTI = frozenset({"SUCCESS", "FAILURE", "PROCESSED_WITH_ERRORS", "TIMEOUT"})
+
+#: Gli `InstructionReportStatus` di `placeOrders` (`PLACED` tollerato per compatibilita' con le forme normalizzate).
+_STATUS_REPORT_RICONOSCIUTI = frozenset({"SUCCESS", "PLACED", "FAILURE", "TIMEOUT"})
 
 #: I soli lati che `placeOrders` accetta. Un valore fuori da qui e' un errore
 #: PRIMA dell'invio (`INVALID_SIDE`), mai un BACK di ripiego.
@@ -1706,6 +1716,13 @@ class BetfairClient:
             status = str(result.get("status") or "").upper()
             reports = result.get("instructionReports") or []
 
+            # Risposta ARRIVATA ma senza esito (P0, audit Claude D 04/11/2026): JSON-RPC senza `result`/`error`,
+            # `result` vuoto o senza `status`, oppure uno `status` fuori dal contratto ExecutionReportStatus.
+            # Il POST e' partito e Betfair non ha detto FAILURE: l'ordine PUO' esistere (anche con betId nel
+            # report). Mai un rifiuto definitivo, che libererebbe tavolo, riserva e chiave anti-duplicato.
+            if status not in _STATUS_PLACE_RICONOSCIUTI:
+                raise RuntimeError(f"BET_STATUS_UNRECOGNIZED: {status or '<assente>'}")
+
             if status != "SUCCESS":
                 # errorCode nel testo => la classificazione order_unknown sotto puo'
                 # riconoscere DUPLICATE_TRANSACTION (dedup customerRef, #PR-C/#452):
@@ -1717,8 +1734,14 @@ class BetfairClient:
                 raise RuntimeError("BET_NO_REPORT")
 
             for report in reports:
-                if str(report.get("status") or "").upper() not in {"SUCCESS", "PLACED"}:
-                    raise RuntimeError(f"BET_REJECTED: {report}")
+                report_status = str(report.get("status") or "").upper()
+                if report_status in {"SUCCESS", "PLACED"}:
+                    continue
+                # Solo FAILURE (o TIMEOUT, ignoto per sottostringa) e' un esito dichiarato da Betfair. Un report
+                # senza status o con uno status sconosciuto non prova il rifiuto: esito ignoto.
+                if report_status not in _STATUS_REPORT_RICONOSCIUTI:
+                    raise RuntimeError(f"BET_REPORT_STATUS_UNRECOGNIZED: {report_status or '<assente>'}")
+                raise RuntimeError(f"BET_REJECTED: {report}")
 
             return {
                 "ok": True,
@@ -1750,7 +1773,7 @@ class BetfairClient:
                         "TIMEOUT", "NETWORK_ERROR", "HTTP_5", "UNKNOWN_ERROR",
                         "DUPLICATE_TRANSACTION",
                     )
-                ) or error_text in _RISPOSTA_ILLEGGIBILE_DOPO_L_INVIO,
+                ) or error_text.split(":", 1)[0].strip() in _RISPOSTA_ILLEGGIBILE_DOPO_L_INVIO,
             }
 
     # =========================================================

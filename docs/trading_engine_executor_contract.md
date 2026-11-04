@@ -16,6 +16,8 @@ broker oppure solleva. Non restituisce mai un `concurrent.futures.Future` né un
 | Attesa scaduta con task **avviato**, executor guasto dopo l'avvio | `AMBIGUOUS` + riconciliazione | **no** |
 | Risposta persa / `TimeoutError` del client, `order_unknown`, report discordanti, risposta non-dict | `AMBIGUOUS` + riconciliazione | **no** |
 | Risposta che dichiara esplicitamente `SUCCESS` senza alcun `betId` | `AMBIGUOUS` + riconciliazione | **no** |
+| `placeOrders` LIVE: risposta 2xx arrivata **senza esito** — JSON-RPC senza `result`/`error`, `result` vuoto o senza `status`, `status` fuori da `SUCCESS`/`FAILURE`/`PROCESSED_WITH_ERRORS`/`TIMEOUT`, instruction report senza `status` o con uno status sconosciuto. `BetfairClient.place_bet` la marca `order_unknown` (`BET_STATUS_UNRECOGNIZED`, `BET_REPORT_STATUS_UNRECOGNIZED`) | `AMBIGUOUS` + riconciliazione | **no** |
+| `placeOrders` LIVE: rifiuto **dichiarato** da Betfair (`status` `FAILURE`/`PROCESSED_WITH_ERRORS`, report `FAILURE`, elemento JSON-RPC `error`) | `FAILED` | sì |
 | Esito ignoto, ma la transizione DB `INFLIGHT→AMBIGUOUS` fallisce (#524) | `AMBIGUOUS` non persistito: `is_terminal=False`, `lifecycle_stage="degraded"`, `QUICK_BET_AMBIGUOUS`; la riga resta `INFLIGHT` su DB e dedupe e riconciliazione la ritrovano al riavvio. **Mai** `FAILED` | **no** |
 | Eccezione dopo l'avvio dell'invio (transizione `SUBMITTED` fallita, crash nella costruzione dell'esito, finalize che solleva) (#524) | `AMBIGUOUS` + riconciliazione (`ENGINE_FATAL_AFTER_SEND`), anche con DB indisponibile. **Mai** `FAILED` | **no** |
 | Eccezione sollevata dal client | propagata **invariata**: stessa classificazione del percorso diretto | secondo la classificazione |

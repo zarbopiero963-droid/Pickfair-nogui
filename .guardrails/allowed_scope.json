@@ -3405,6 +3405,18 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "d_place_no_outcome_ambiguous": {
+      "description": "Claude D P0 (#586, P0-B integrita' ordini): placeOrders LIVE con risposta 2xx arrivata senza esito (result assente/vuoto, status assente o fuori contratto, report senza status o sconosciuto) => order_unknown/AMBIGUOUS + riconciliazione, mai FAILED definitivo che libera tavolo, riserva e chiave anti-duplicato. Rifiuti dichiarati da Betfair invariati.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "betfair_client.py",
+        "docs/trading_engine_executor_contract.md",
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py"
+      ],
+      "max_files": 5
     }
   }
 }
