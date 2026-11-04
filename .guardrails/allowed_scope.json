@@ -3405,6 +3405,20 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "d_f11_equity_peak": {
+      "description": "Claude D F-11 (#586, DD-03/DD-04): picco dell'equity (RiskDesk) e picco di cassa persistiti (risk.equity_peaks_state, anche nella transazione dello stato tavoli) e ripristinati all'avvio prima della prima lettura del conto, mai abbassati; picco illeggibile/corrotto/assente con storico => PAUSED senza sblocco automatico (opzione A, #426 c.6145958246 / c.6146717266). Ricostruzione pre-v9 fuori scope (decisione owner).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/risk_desk.py",
+        "core/runtime_controller.py",
+        "docs/roserpina_bankroll_equity.md",
+        "docs/startup_recovery.md",
+        "tests/acceptance/test_f11_equity_peak_persistence.py"
+      ],
+      "max_files": 7
     }
   }
 }

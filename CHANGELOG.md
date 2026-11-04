@@ -27,6 +27,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Nessuna attestazione storica viene riscritta. `docs/review_attestation.md` aggiornato.
 
 ### Fixed
+- **F-11 (#586, DD-03/DD-04, P1): il picco dell'equity sopravvive al riavvio (opzione A, #426 c.6145958246 /
+  c.6146717266).** Picco del RiskDesk e picco di cassa vivevano solo in memoria: dopo una perdita, un riavvio
+  azzerava la base del drawdown (riprodotto sul runtime vero: picco 100 → 97, drawdown 3 % → 0 %), quindi stop sul
+  drawdown, lockdown del MM e auto-reset Roserpina ripartivano da zero. Ora sono persistiti
+  (`risk.equity_peaks_state`, anche nella transazione dello stato tavoli) e ripristinati prima della prima lettura del
+  conto, mai abbassati. Picco illeggibile, corrotto o assente su un'installazione con storico ⇒ avvio in PAUSED,
+  nessuna scrittura, nessuno sblocco automatico. **Nota di migrazione:** un'installazione esistente parte in PAUSED
+  (`EQUITY_PEAKS_MISSING_WITH_HISTORY`) finché un picco ricostruito non è ratificato dall'owner; nessuna modifica di
+  schema. Test `tests/acceptance/test_f11_equity_peak_persistence.py`; `docs/startup_recovery.md` e
+  `docs/roserpina_bankroll_equity.md` aggiornati.
 - **CB-586-FI-03Z (#586, P1):** il broker SIM abbinava ordini contro livelli del book con size 0. Esempio: un LAY
   0,10@3.0 risultava abbinato a 2.02 su un book senza liquidità, con un matched finto e un'esposizione abbinata
   inventata. Ora un livello con size esplicita ≤ 0 è assente, come il delta Betfair che lo rimuove, e il migliore è il

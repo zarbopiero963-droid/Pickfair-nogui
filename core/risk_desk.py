@@ -192,6 +192,19 @@ class RiskDesk:
                 self.equity_peak = max(bankroll_start, self.bankroll_current)
             self._touch()
 
+    def restore_equity_peak(self, peak: Any) -> None:
+        """F-11 (#586, DD-03): picco persistito ripristinato all'avvio, prima della prima lettura del conto.
+
+        Mai abbassato: il picco in memoria resta se piu' alto. Valore non finito o <= 0 => ValueError (il chiamante
+        blocca il rischio, nessun valore inventato)."""
+        value = finite_number(peak)
+        if value is None or value <= 0.0:
+            raise ValueError("EQUITY_PEAK_INVALID")
+        with self._lock:
+            if value > self.equity_peak:
+                self.equity_peak = value
+            self.updated_at = datetime.utcnow().isoformat()
+
     def set_unrealized_pnl(self, pnl: float) -> None:
         with self._lock:
             self.unrealized_pnl = float(pnl or 0.0)

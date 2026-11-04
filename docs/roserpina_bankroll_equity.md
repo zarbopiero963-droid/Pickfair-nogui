@@ -144,6 +144,8 @@ cioè del **regolato**, e mai sul solo disponibile: le puntate aperte non sono p
 - Il reset trattiene i tavoli e le chiavi anti-duplicato delle posizioni **non regolate** e delle riserve incerte
   (F024). Libera solo i mercati con settlement confermato (`_mark_market_settled`).
 - Il reset ribasa anche il picco di cassa, come il picco del RiskDesk (OC-04).
+- I picchi sono persistiti (F-11, chiave `risk.equity_peaks_state`): il ribasamento viaggia nella stessa transazione
+  del marker del reset e sopravvive al riavvio; vedi `docs/startup_recovery.md`.
 - Il payload dell'evento porta `drawdown_basis: cash_equity` e, per confronto, `available_drawdown_pct`.
 
 ## Limiti noti, decisioni owner aperte

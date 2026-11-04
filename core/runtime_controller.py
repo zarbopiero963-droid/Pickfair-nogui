@@ -2626,6 +2626,9 @@ class RuntimeController:
         except Exception as exc:
             self._record_runtime_io(operation="betfair_connect", started_at=start_connect, ok=False, error=str(exc))
             raise
+        # F-11 (#586, DD-03): picchi persistiti ripristinati PRIMA della prima lettura del conto, cosi' il drawdown
+        # resta misurato dal picco vero; non dimostrabile => avvio in PAUSED (`_gate_rebuild_on_equity_peaks`).
+        self._restore_equity_peaks()
         start_funds = time.monotonic()
         try:
             funds = self.betfair_service.get_account_funds()
@@ -2698,6 +2701,7 @@ class RuntimeController:
                 if rebuild.get("ok") else rebuild.get("reason")), microstake=microstake)
         rebuild = self._gate_rebuild_on_startup_recovery(rebuild)     # F-09: recover()/batch non ok => PAUSED
         rebuild = self._gate_rebuild_on_recovery_state(rebuild)       # RSR-12 illeggibile => PAUSED
+        rebuild = self._gate_rebuild_on_equity_peaks(rebuild)         # F-11: picco non dimostrabile => PAUSED
         rebuild = self._reconcile_held_after_rebuild(rebuild)         # #461 PR29-c: held in attesa => PAUSED
         self._last_position_rebuild = dict(rebuild)
         self._reconciliation_required = not rebuild["ok"]
@@ -3062,9 +3066,11 @@ class RuntimeController:
                         "reason": "reconciliation_required:MICROSTAKE_SAGA_PENDING:"
                                   f"{microstake.get('status')}:{','.join(microstake.get('pending') or [])}",
                         "microstake": microstake, "status": self._safe_status_snapshot()}
+            if getattr(self, "_equity_peaks_unverified", ""):
+                self._restore_equity_peaks()             # F-11: sblocca solo un picco valido persistito, mai da solo
             rebuild = self._reconcile_held_after_rebuild(
-                self._gate_rebuild_on_recovery_state(self._gate_rebuild_on_startup_recovery(
-                    self._rebuild_open_positions())))                       # F-09: recover() non ok => resta PAUSED
+                self._gate_rebuild_on_recovery_state(self._gate_rebuild_on_equity_peaks(
+                    self._gate_rebuild_on_startup_recovery(self._rebuild_open_positions()))))   # F-09/F-11 => PAUSED
             self._last_position_rebuild = dict(rebuild)
             if not rebuild["ok"]:
                 return {"resumed": False, "reason": f"reconciliation_required:{rebuild['reason']}",
@@ -6295,6 +6301,8 @@ class RuntimeController:
                 self._account_state = state
                 self._account_state_source = str(source)
             current = str(getattr(self, "_account_state", "") or "")
+        if applied:
+            self._persist_equity_peaks()                                     # F-11: nuovo picco durevole
         if applied and state == self.ACCOUNT_FUNDS_VERIFIED and getattr(self, "_expansion_baseline_deferred", False):
             self._open_deferred_expansion_baseline(funds)
         return {"state": state if applied else current, "applied": bool(applied), "account": account}
@@ -6373,11 +6381,103 @@ class RuntimeController:
             peak = float(getattr(self, "_cash_equity_peak", 0.0) or 0.0)
             if account["cash_equity"] > peak:
                 self._cash_equity_peak = account["cash_equity"]
+                self._persist_equity_peaks()                                 # F-11: nuovo picco di cassa durevole
         return account
 
     # ================================================================= PF-ALL-F032 / RSR-12
     _EXPANSION_KEY = "roserpina.expansion_baseline_state"
     _RECOVERY_KEY = "roserpina.recovery_tables_state"
+    _EQUITY_PEAKS_KEY = "risk.equity_peaks_state"
+
+    # ================================================================= F-11 (#586, DD-03/DD-04)
+    def _restore_equity_peaks(self) -> bool:
+        """Picco dell'equity (`RiskDesk.equity_peak`, base di drawdown % / assoluto e lockdown del MM) e picco di cassa
+        (`_cash_equity_peak`, base dell'auto-reset Roserpina) ripristinati dal DB, mai abbassati.
+
+        Opzione A (#426 c.6145958246 / c.6146717266), nessun valore inventato:
+        - persistiti e validi => ripristinati (max con la memoria), True;
+        - assenti senza alcuno storico (installazione nuova) => True: il primo picco e' la prima lettura verificata;
+        - assenti con storico di trading (stato Roserpina persistito o ordini nel DB: installazione pre-v9),
+          illeggibili o corrotti => False, `_equity_peaks_unverified` = motivo: nessun nuovo rischio
+          (`_gate_rebuild_on_equity_peaks`) e nessuna scrittura che cancelli l'evidenza. Lo sblocco richiede un
+          picco valido persistito: ricostruzione dallo storico Betfair ratificata dall'owner."""
+        self._equity_peaks_unverified = ""
+        self._equity_peaks_restored = False
+        try:
+            settings = self.db.get_settings() or {}
+            raw = settings.get(self._EQUITY_PEAKS_KEY)
+        except Exception as exc:
+            return self._equity_peaks_blocked("EQUITY_PEAKS_UNREADABLE", exc)
+        if raw in (None, ""):
+            history = self._trading_history_present(settings)
+            if history is None:
+                return self._equity_peaks_blocked("EQUITY_PEAKS_UNREADABLE", "storico illeggibile")
+            if history:
+                return self._equity_peaks_blocked("EQUITY_PEAKS_MISSING_WITH_HISTORY", "installazione con storico")
+            self._equity_peaks_restored = True
+            return True
+        try:
+            state = json.loads(raw)
+            if not isinstance(state, dict):
+                raise ValueError("stato non dict")
+            equity_peak = validators.finite_number(state.get("equity_peak"))
+            cash_peak = validators.finite_number(state.get("cash_equity_peak"))
+            if cash_peak is None or cash_peak < 0.0:
+                raise ValueError("picco di cassa non valido")
+            self.risk_desk.restore_equity_peak(equity_peak)       # None, non finito o <= 0 => ValueError
+        except Exception as exc:
+            return self._equity_peaks_blocked("EQUITY_PEAKS_CORRUPT", exc)
+        current_cash = float(getattr(self, "_cash_equity_peak", 0.0) or 0.0)
+        self._cash_equity_peak = max(current_cash, cash_peak) if max(current_cash, cash_peak) > 0.0 else None
+        self._equity_peaks_persisted = (equity_peak, cash_peak)
+        self._equity_peaks_restored = True
+        return True
+
+    def _equity_peaks_blocked(self, reason: str, detail: Any) -> bool:
+        self._equity_peaks_unverified = reason
+        logger.error("F-11: picco dell'equity non dimostrabile (%s: %s): nessun nuovo rischio, sblocco solo con un "
+                     "picco valido persistito (ricostruzione ratificata dall'owner)", reason, detail)
+        return False
+
+    def _trading_history_present(self, settings: dict) -> Optional[bool]:
+        """True se l'installazione ha gia' operato (stato Roserpina persistito o ordini nel DB); None se illeggibile."""
+        for key in (self._EXPANSION_KEY, self._RECOVERY_KEY, self._CYCLE_RESET_KEY):
+            if settings.get(key) not in (None, ""):
+                return True
+        try:
+            row = self.db._execute("SELECT 1 FROM orders LIMIT 1", fetchone=True, commit=False)
+        except Exception:
+            return None
+        return row is not None
+
+    def _equity_peaks_state(self) -> Optional[dict]:
+        """Picchi da persistere, o None se non si deve scrivere: prima del ripristino (lo stato in memoria non e'
+        quello del DB), con il picco non dimostrabile (si conserva l'evidenza) o senza un picco ancora letto."""
+        if not getattr(self, "_equity_peaks_restored", False):  # anche con il picco non dimostrabile (mai ripristinato)
+            return None
+        equity_peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
+        if equity_peak is None or equity_peak <= 0.0:
+            return None
+        cash_peak = validators.finite_number(getattr(self, "_cash_equity_peak", None)) or 0.0
+        return {"equity_peak": equity_peak, "cash_equity_peak": max(0.0, cash_peak),
+                "set_at": datetime.utcnow().isoformat()}
+
+    def _persist_equity_peaks(self) -> bool:
+        """F-11: scrive i picchi se cambiati. Scrittura fallita => False e log: il picco in memoria resta valido per
+        questa sessione; alla prossima lettura si ritenta."""
+        state = self._equity_peaks_state()
+        if state is None:
+            return False
+        pair = (state["equity_peak"], state["cash_equity_peak"])
+        if pair == getattr(self, "_equity_peaks_persisted", None):
+            return True
+        try:
+            self.db.save_settings({self._EQUITY_PEAKS_KEY: json.dumps(state)})
+        except Exception as exc:
+            logger.error("F-11: picchi dell'equity non persistiti (%s): si ritenta alla prossima lettura", exc)
+            return False
+        self._equity_peaks_persisted = pair
+        return True
 
     def _expansion_cycle_state(self, reason: str, funds: Any = None, *, set_at_ts: Optional[float] = None) -> dict:
         """Stato della baseline di un nuovo ciclo (F032), SENZA persisterlo ne' applicarlo: il chiamante lo
@@ -6500,6 +6600,17 @@ class RuntimeController:
             return rebuild
         return dict(rebuild, ok=False, recovery_state_unreadable=True,
                     reason="RECOVERY_STATE_UNREADABLE" if rebuild.get("ok") else rebuild.get("reason"))
+
+    def _gate_rebuild_on_equity_peaks(self, rebuild: dict) -> dict:
+        """F-11 (#586, DD-03/DD-04; opzione A, #426 c.6145958246 / c.6146717266): picco dell'equity non dimostrabile
+        (persistito illeggibile o corrotto, oppure assente su un'installazione che ha gia' operato) => nessun nuovo
+        rischio: ok=False => PAUSED, e resume() non lo scavalca. Nessuno sblocco automatico: serve un picco valido
+        persistito (ricostruzione dallo storico Betfair ratificata dall'owner)."""
+        reason = str(getattr(self, "_equity_peaks_unverified", "") or "")
+        if not reason:
+            return rebuild
+        return dict(rebuild, ok=False, equity_peaks_unverified=reason,
+                    reason=reason if rebuild.get("ok") else rebuild.get("reason"))
 
     @staticmethod
     def _startup_batch_failures(summary: Any) -> Any:
@@ -6638,12 +6749,20 @@ class RuntimeController:
                 payload[self._CYCLE_RESET_KEY] = json.dumps({"at_ts": float(reset_ts)})
             if expansion_state is not None:
                 payload[self._EXPANSION_KEY] = json.dumps(expansion_state)
+            peaks = self._equity_peaks_state()
+            if peaks is not None:
+                # F-11: i picchi viaggiano nella transazione dello stato tavoli (settlement, reset di ciclo: l'auto-reset
+                # ribasa il picco di cassa insieme al marker del reset).
+                payload[self._EQUITY_PEAKS_KEY] = json.dumps(peaks)
+                context["equity_peaks"] = (peaks["equity_peak"], peaks["cash_equity_peak"])
         except Exception as exc:
             self._recovery_persist_aborted(context, exc)
             return None
         return payload, context
 
     def _recovery_persisted(self, context: dict) -> None:
+        if context.get("equity_peaks") is not None:
+            self._equity_peaks_persisted = context["equity_peaks"]          # F-11: picchi scritti con lo stato tavoli
         self._recovery_persist_failed = False                               # scrittura riuscita: ritentata con successo
         self._pending_cycle_reset = None                                    # reset (se c'era) ora durevole
         if context.get("expansion_state") is not None:

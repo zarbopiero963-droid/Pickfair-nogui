@@ -62,3 +62,30 @@ bot sul mercato, una gamba di lotto Dutching, identita' o tavolo non persistiti,
 illeggibili (questi ultimi due sono transitori, riconciliabili). Il registro `settlement_effects` garantisce un solo
 effetto anche per un secondo settlement dello stesso mercato. Mutazioni `f10_*`.
 
+
+## Picco dell'equity persistente (F-11, #586 DD-03/DD-04)
+
+Decisioni owner: opzione A per la migrazione pre-v9 (#426 c.6145958246) e per la ricostruzione del picco
+(#426 c.6146717266).
+
+- **Cosa si persiste.** Il picco del RiskDesk (`equity_peak`, base dello stop sul drawdown % e assoluto e del lockdown
+  del MM) e il picco di cassa (`_cash_equity_peak`, base dell'auto-reset Roserpina). Chiave impostazioni
+  `risk.equity_peaks_state`, JSON `{"equity_peak", "cash_equity_peak", "set_at"}`. Si scrive a ogni nuovo picco letto
+  dal conto e nella stessa transazione dello stato tavoli (settlement, reset di ciclo: il ribasamento del picco di
+  cassa dell'auto-reset viaggia con il marker del reset).
+- **Avvio.** `RuntimeController._restore_equity_peaks` gira prima della prima lettura del conto: il picco ripristinato
+  non viene mai abbassato, quindi una perdita resta perdita anche dopo il riavvio (picco 1000, equity 900 ⇒ drawdown
+  10 %). Prima di questa correzione il picco ripartiva dal saldo corrente a ogni riavvio.
+- **Picco non dimostrabile ⇒ nessun nuovo rischio.** Chiave illeggibile (`EQUITY_PEAKS_UNREADABLE`), corrotta
+  (`EQUITY_PEAKS_CORRUPT`: non JSON, non finita, ≤ 0, booleana) o assente su un'installazione che ha già operato
+  (`EQUITY_PEAKS_MISSING_WITH_HISTORY`: stato Roserpina persistito o ordini nel DB) ⇒ avvio in PAUSED con
+  `RECONCILIATION_REQUIRED:<motivo>`, come per RSR-12. `resume()` rilegge la chiave e non scavalca il blocco. Nessuna
+  scrittura del picco finché il blocco è attivo: l'evidenza resta intatta e non c'è sblocco automatico.
+- **Installazione nuova** (nessuna chiave Roserpina, nessun ordine): nessun blocco, il primo picco è la prima lettura
+  verificata del conto.
+
+**Nota di migrazione.** Nessuna modifica allo schema del DB: una chiave nuova nella tabella delle impostazioni.
+Un'installazione esistente aggiornata a questa versione **parte in PAUSED** (`EQUITY_PEAKS_MISSING_WITH_HISTORY`)
+finché non viene scritto un picco valido. Per decisione owner (opzione A) quel valore va ricostruito dallo storico
+Betfair in sola lettura e ratificato dall'owner: lo strumento di ricostruzione/ratifica non fa parte di questa
+correzione (BLOCKED, decisione owner). Una installazione SIM di prova può ripartire da un DB nuovo.
