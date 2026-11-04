@@ -192,6 +192,7 @@ MODULE_RULES = [
             "guardrails/mutation_catalog.json",
             "scripts/run_mutation_guardrails.py",
             "tools/combi/",  # F-33 (#586): il generatore combinatorio ha mutazioni cg_* nel catalogo
+            "control_api/",  # PF-MCP-004/008: mutazioni cap_* del ponte Control API
 
             "database.py",
             "database_schema.py",  # F-08: mutazione del catalogo sulla DDL di startup_orders

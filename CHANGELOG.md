@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Ponte Control API di sola lettura (PF-MCP-004/008, handoff di Claude C):** `control_api/` legge il
+  `RuntimeController` senza effetti e lo serve tramite `pickfair_control_api` (repository pickfair-mcp-).
+  Avvio opzionale da `headless_main` SOLO con `--control-api-port` e `--control-api-token-file`;
+  senza flag nessuna porta e nessun import. `docs/control_api.md`; test `tests/control_api/`; area di
+  mutazione `control_api` (14 mutazioni). Pin esatto del package (versione 1.1.0 e schema hash):
+  un package diverso non viene usato (`CONTRACT_PIN_MISMATCH`).
+
 ### Changed
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**
   - se un range precedente di Sol o Grok non è PASS (BLOCKERS, INCONCLUSIVE, ERROR, incompleto), la review della push

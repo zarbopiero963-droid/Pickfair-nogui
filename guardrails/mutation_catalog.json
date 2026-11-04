@@ -17,7 +17,8 @@
     "check_dedupe",
     "trusted_gate",
     "trusted_dispatcher",
-    "fullscope_tooling"
+    "fullscope_tooling",
+    "control_api"
   ],
   "mutations": [
     {
@@ -8216,6 +8217,181 @@
         "tests/f13/test_f13_customer_order_ref.py"
       ],
       "rationale": "F-13 (review indipendente su 4881adb): la mappa del de-dup SIM cresce di una voce per ordine nello snapshot, senza limiti."
+    },
+    {
+      "id": "cap_view_side_effect",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    report = rc.evaluate_live_readiness()  # type: ignore[attr-defined]",
+      "mutated": "    rc.get_status()  # type: ignore[attr-defined]\n    report = rc.evaluate_live_readiness()  # type: ignore[attr-defined]",
+      "tests": [
+        "tests/control_api/test_views_real_runtime.py",
+        "tests/control_api/test_side_effects.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): La vista chiama get_status(): fondi Betfair, stato cassa, monitor perdita giornaliera."
+    },
+    {
+      "id": "cap_view_broker_call",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    report = rc.evaluate_live_readiness()  # type: ignore[attr-defined]",
+      "mutated": "    rc.betfair_service.get_client().get_account_funds()  # type: ignore[attr-defined]\n    report = rc.evaluate_live_readiness()  # type: ignore[attr-defined]",
+      "tests": [
+        "tests/control_api/test_views_real_runtime.py",
+        "tests/control_api/test_side_effects.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): La vista interroga il broker."
+    },
+    {
+      "id": "cap_free_text_code",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    return head if CODE_RE.fullmatch(head) else UNSTRUCTURED",
+      "mutated": "    return value.strip()",
+      "tests": [
+        "tests/control_api/test_views_real_runtime.py",
+        "tests/control_api/test_side_effects.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): Testo libero del core esposto."
+    },
+    {
+      "id": "cap_wrong_type_defaulted",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if type(value) is not bool:\n        raise _Unavailable(name)\n    return value",
+      "mutated": "    return bool(value)",
+      "tests": [
+        "tests/control_api/test_views_real_runtime.py",
+        "tests/control_api/test_side_effects.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): Tipo inatteso convertito in default."
+    },
+    {
+      "id": "cap_mode_defaulted_sim",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    mapped = EXECUTION_MODES.get(raw) if isinstance(raw, str) else None",
+      "mutated": "    mapped = EXECUTION_MODES.get(raw, \"SIM\") if isinstance(raw, str) else \"SIM\"",
+      "tests": [
+        "tests/control_api/test_views_real_runtime.py",
+        "tests/control_api/test_side_effects.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): Modalita sconosciuta dichiarata SIM."
+    },
+    {
+      "id": "cap_not_run_as_ok",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        return {\"state\": \"NOT_RUN\", \"reason\": None, \"recovery_failure\": None}",
+      "mutated": "        return {\"state\": \"OK\", \"reason\": None, \"recovery_failure\": None}",
+      "tests": [
+        "tests/control_api/test_views_real_runtime.py",
+        "tests/control_api/test_side_effects.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): Riconciliazione mai eseguita dichiarata OK."
+    },
+    {
+      "id": "cap_incoherent_readiness",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if len(codes) > MAX_CODES or ready != (level == \"READY\") or (ready and codes):",
+      "mutated": "    if len(codes) > MAX_CODES:",
+      "tests": [
+        "tests/control_api/test_views_real_runtime.py",
+        "tests/control_api/test_side_effects.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): Readiness incoerente esposta."
+    },
+    {
+      "id": "cap_launch_default_on",
+      "module": "control_api.launcher",
+      "area": "control_api",
+      "file": "control_api/launcher.py",
+      "original": "    if not requested(argv):\n        return None",
+      "mutated": "    if False:\n        return None",
+      "tests": [
+        "tests/control_api/test_launcher.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): Control API tentata senza flag espliciti."
+    },
+    {
+      "id": "cap_launch_dir_unchecked",
+      "module": "control_api.launcher",
+      "area": "control_api",
+      "file": "control_api/launcher.py",
+      "original": "        check_private_dir(config.token_path.parent)",
+      "mutated": "        pass",
+      "tests": [
+        "tests/control_api/test_launcher.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): Token pubblicato in una cartella scrivibile da altri."
+    },
+    {
+      "id": "cap_launch_sha_unchecked",
+      "module": "control_api.launcher",
+      "area": "control_api",
+      "file": "control_api/launcher.py",
+      "original": "        if SHA_RE.fullmatch(sha):\n            return sha",
+      "mutated": "        if True:\n            return sha",
+      "tests": [
+        "tests/control_api/test_launcher.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): SHA del codice non dimostrato accettato."
+    },
+    {
+      "id": "cap_launch_port_unchecked",
+      "module": "control_api.launcher",
+      "area": "control_api",
+      "file": "control_api/launcher.py",
+      "original": "    if not port_raw.isdigit() or not 1 <= int(port_raw) <= 65535:",
+      "mutated": "    if not port_raw.isdigit():",
+      "tests": [
+        "tests/control_api/test_launcher.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): Porta fuori intervallo accettata."
+    },
+    {
+      "id": "cap_launch_bind_failure",
+      "module": "control_api.launcher",
+      "area": "control_api",
+      "file": "control_api/launcher.py",
+      "original": "        except OSError:\n            raise ControlApiLaunchError(\"BIND_FAILED\") from None",
+      "mutated": "        except ZeroDivisionError:\n            raise ControlApiLaunchError(\"BIND_FAILED\") from None",
+      "tests": [
+        "tests/control_api/test_launcher.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): Errore di bind non classificato."
+    },
+    {
+      "id": "cap_bridge_pin_unchecked",
+      "module": "control_api.bridge",
+      "area": "control_api",
+      "file": "control_api/bridge.py",
+      "original": "    if pickfair_control_api.schema_hash() != EXPECTED_SCHEMA_HASH:\n        raise ControlApiPinMismatch(\"SCHEMA_HASH\")",
+      "mutated": "    if False:\n        raise ControlApiPinMismatch(\"SCHEMA_HASH\")",
+      "tests": [
+        "tests/control_api/test_launcher.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): package con schema hash diverso da quello verificato usato comunque."
+    },
+    {
+      "id": "cap_bridge_partial_listener",
+      "module": "control_api.bridge",
+      "area": "control_api",
+      "file": "control_api/bridge.py",
+      "original": "    try:\n        tokens.publish(token_path)\n    except BaseException:\n        server.stop()\n        raise",
+      "mutated": "    try:\n        tokens.publish(token_path)\n    except BaseException:\n        raise",
+      "tests": [
+        "tests/control_api/test_launcher.py"
+      ],
+      "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): listener lasciato aperto se la pubblicazione del token fallisce (servizio parziale)."
     }
   ]
 }

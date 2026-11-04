@@ -3405,6 +3405,27 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "pf_api1_control_api_bridge": {
+      "description": "PF-MCP-004/008 (handoff di Claude C, roadmap MCP + Control API): ponte di sola lettura RuntimeController -> pickfair_control_api; avvio opzionale da headless_main solo con flag espliciti, disattivato per impostazione predefinita. Area di mutazione control_api aggiunta a optional_areas; ci_changed_modules instrada control_api/ sulla lane mutation.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "control_api/__init__.py",
+        "control_api/bridge.py",
+        "control_api/launcher.py",
+        "control_api/views.py",
+        "docs/control_api.md",
+        "guardrails/mutation_catalog.json",
+        "headless_main.py",
+        "scripts/ci_changed_modules.py",
+        "tests/control_api/conftest.py",
+        "tests/control_api/test_launcher.py",
+        "tests/control_api/test_side_effects.py",
+        "tests/control_api/test_views_real_runtime.py"
+      ],
+      "max_files": 14
     }
   }
 }

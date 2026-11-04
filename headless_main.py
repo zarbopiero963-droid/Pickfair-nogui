@@ -7,6 +7,7 @@ import os
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 from database import Database
@@ -1390,6 +1391,13 @@ class HeadlessApp:
             )
             self._validate_runtime_start_result(result)
             logger.info("Runtime avviato -> %s", result)
+            # Control API di sola lettura: SOLO con --control-api-port/--control-api-token-file
+            # espliciti; altrimenti nessun import, nessuna porta (control_api/launcher.py).
+            from control_api import launcher as _control_api_launcher
+
+            self._control_api = _control_api_launcher.maybe_start(
+                self.runtime, sys.argv[1:], app_root=Path(os.path.dirname(os.path.abspath(__file__)))
+            )
         except Exception as exc:
             logger.exception("Errore avvio runtime: %s", exc)
             self.stop()
@@ -1415,6 +1423,14 @@ class HeadlessApp:
         """
         was_running = self._running
         self._running = False
+
+        # La Control API si ferma per prima: nessuna lettura durante il teardown del runtime.
+        control_api_server = getattr(self, "_control_api", None)
+        self._control_api = None
+        if control_api_server is not None:
+            from control_api import launcher as _control_api_launcher
+
+            _control_api_launcher.stop(control_api_server)
 
         try:
             if self.runtime is not None:
