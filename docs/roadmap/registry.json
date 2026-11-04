@@ -1,0 +1,504 @@
+{
+ "schema": "pf-roadmap-registry/1",
+ "roadmap": "PICKFAIR_MASTER_EXECUTION_ROADMAP_V2",
+ "index": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6505613328",
+ "repo": "zarbopiero963-droid/Pickfair-nogui",
+ "rule": "Campi statici trascritti dalle fonti citate; gli stati NON si scrivono qui: li deriva tools/roadmap/pf_roadmap.py dai fatti di GitHub (PR, merge SHA, branch, check). MERGED != CERTIFIED: CERTIFIED solo con una voce in 'certifications' che cita evidenza firmata e SHA. Dove la fonte manca o confligge: needs_reconciliation.",
+ "cards": [
+  {
+   "id": "F-01",
+   "order": 1,
+   "name": "Formula P&L del monitor SL/TP",
+   "priority": "P0 latente",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {
+    "prs": [
+     596
+    ]
+   },
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-02",
+   "order": 2,
+   "name": "Percorso SL/TP fino al monitor",
+   "priority": "P1",
+   "depends_on": [
+    "F-01"
+   ],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {
+    "branches": [
+     "keep/f02-sl-tp-path-20261103"
+    ]
+   },
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-03",
+   "order": 3,
+   "name": "Trailing stop (K-7)",
+   "priority": "P2",
+   "depends_on": [
+    "F-01",
+    "F-02",
+    "F-04",
+    "F-23"
+   ],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-04",
+   "order": 4,
+   "name": "Auto-close con lato e prezzo sotto barriera",
+   "priority": "P1",
+   "depends_on": [
+    "F-02",
+    "F-05"
+   ],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-05",
+   "order": 5,
+   "name": "Identità e ledger dell'hedge; un solo cashout per posizione",
+   "priority": "P0",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {
+    "prs": [
+     593
+    ]
+   },
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-06",
+   "order": 6,
+   "name": "Guard dell'hedge: lato/size, nessun default LAY",
+   "priority": "P1",
+   "depends_on": [
+    "F-05"
+   ],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {
+    "prs": [
+     600
+    ]
+   },
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-07",
+   "order": 7,
+   "name": "Esposizione e residuo dopo cashout",
+   "priority": "P1/P2",
+   "depends_on": [
+    "F-05"
+   ],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": "il registrar VPS mappa FI-03Z (#604) su F-07; l'audit Claude B c.6608348761 lo dichiara fuori scheda",
+   "certifications": []
+  },
+  {
+   "id": "F-08",
+   "order": 8,
+   "name": "Schema startup_orders/outbox e ghost fail-closed",
+   "priority": "P0",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {
+    "prs": [
+     594
+    ]
+   },
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-09",
+   "order": 9,
+   "name": "Esito di recover() gating",
+   "priority": "P1",
+   "depends_on": [
+    "F-08"
+   ],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {
+    "prs": [
+     597
+    ]
+   },
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-10",
+   "order": 10,
+   "name": "Prova RST-03 (debito dopo crash)",
+   "priority": "P0 da provare",
+   "depends_on": [
+    "F-08",
+    "F-09"
+   ],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {
+    "prs": [
+     599
+    ]
+   },
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-11",
+   "order": 11,
+   "name": "Persistenza equity_peak e migrazione pre-v9",
+   "priority": "P1",
+   "depends_on": [
+    "F-08"
+   ],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {
+    "branches": [
+     "claude/d-f11-equity-peak",
+     "claude/d-f11-peak-reconstruction"
+    ]
+   },
+   "blocked_by": null,
+   "needs_reconciliation": "responsabile: audit 03/11 assegna Claude B, implementata da Claude D il 04/11; nessuna riassegnazione owner",
+   "certifications": []
+  },
+  {
+   "id": "F-12",
+   "order": 12,
+   "name": "Parità drawdown % SIM/LIVE e rilascio guard",
+   "priority": "P1",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {
+    "branches": [
+     "claude/d-f12a-drawdown-parity"
+    ]
+   },
+   "blocked_by": null,
+   "needs_reconciliation": "il branch usa il sotto-ID non ufficiale F-12a: copertura della scheda da verificare",
+   "certifications": []
+  },
+  {
+   "id": "F-13",
+   "order": 13,
+   "name": "customerOrderRef sugli ordini diretti e parità SIM",
+   "priority": "P1",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {
+    "parts": {
+     "F-13a": {
+      "prs": [
+       601
+      ]
+     },
+     "F-13b": {
+      "branches": [
+       "keep/f13b-order-identity-cashout-20261103"
+      ]
+     }
+    }
+   },
+   "blocked_by": null,
+   "needs_reconciliation": "la divisione F-13a/F-13b non e' nell'indice V2 (introdotta nel body di #601)",
+   "certifications": []
+  },
+  {
+   "id": "F-14",
+   "order": 14,
+   "name": "Cancel single-shot, AMBIGUOUS e report per istruzione",
+   "priority": "P1",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-15",
+   "order": 15,
+   "name": "Gateway fail-closed su risposte malformate",
+   "priority": "P2",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-16",
+   "order": 16,
+   "name": "Freschezza fondi 30 s e auto-next",
+   "priority": "P1",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {
+    "branches": [
+     "claude/d-f16-funds-freshness"
+    ]
+   },
+   "blocked_by": null,
+   "needs_reconciliation": "il registrar VPS mappa FI-08B su F-16; l'audit Claude B lo dichiara fuori scheda",
+   "certifications": []
+  },
+  {
+   "id": "F-17",
+   "order": 17,
+   "name": "Commissione etichettata e default Roserpina espliciti",
+   "priority": "P1",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-18",
+   "order": 18,
+   "name": "Validazione al salvataggio e loader fail-closed",
+   "priority": "P1",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {
+    "branches": [
+     "keep/f18-config-validation-20261103"
+    ]
+   },
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-19",
+   "order": 19,
+   "name": "GUI: max_recovery_chase_abs, controlli inerti, round-trip",
+   "priority": "P2",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-20",
+   "order": 20,
+   "name": "Confronti in Decimal",
+   "priority": "P2",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-21",
+   "order": 21,
+   "name": "AEAD e migrazione segreti non distruttiva",
+   "priority": "P1",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-22",
+   "order": 22,
+   "name": "API legacy: esclusione e verifica non raggiungibilità (K-5)",
+   "priority": "P2",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-23",
+   "order": 23,
+   "name": "PF-EXEC-05 all'ammissione",
+   "priority": "P1",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {
+    "branches": [
+     "claude/d-f23-market-tradable"
+    ]
+   },
+   "blocked_by": null,
+   "needs_reconciliation": "responsabile: audit 03/11 assegna Claude B, implementata da Claude D il 04/11; nessuna riassegnazione owner",
+   "certifications": []
+  },
+  {
+   "id": "F-24",
+   "order": 24,
+   "name": "Guard esterna fondi Microstake (C-01 = ALTERNATIVA B)",
+   "priority": "P2",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-25",
+   "order": 25,
+   "name": "Igiene prove e test (TRACE-01)",
+   "priority": "P2",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-26",
+   "order": 26,
+   "name": "Cablaggi mancanti",
+   "priority": "P2",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-27",
+   "order": 27,
+   "name": "Operatività: path DB, log, installer, lockfile",
+   "priority": "P2",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-28",
+   "order": 28,
+   "name": "Pulizia moduli orfani",
+   "priority": "P3",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-29",
+   "order": 29,
+   "name": "Semantica listClearedOrders e riconciliazione commissione (GO-1)",
+   "priority": "P1",
+   "depends_on": [
+    "F-31"
+   ],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504970288",
+   "links": {},
+   "blocked_by": "F-31 e GO-REALDATA (indice V2 §2)",
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-30",
+   "order": 30,
+   "name": "FINAL UNVERIFIED REQUIREMENTS RECONCILIATION & RESIDUAL CERTIFICATION",
+   "priority": "P0..P2",
+   "depends_on": [
+    "F-33",
+    "F-31"
+   ],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6505974575",
+   "links": {},
+   "blocked_by": null,
+   "needs_reconciliation": "titolo V2 'Certificazione delle righe UNVERIFIED' rinominato dalla V2.1 (c.6505974575)",
+   "certifications": []
+  },
+  {
+   "id": "F-31",
+   "order": 31,
+   "name": "Betfair Delayed Real-Data Feed",
+   "priority": "P1",
+   "depends_on": [
+    "F-23",
+    "F-15"
+   ],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6505576503",
+   "links": {},
+   "blocked_by": "gateway attestato + GO-REALDATA owner (indice V2 §2; piano #586 c.6608487966 §7)",
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-32",
+   "order": 32,
+   "name": "Controlled LIVE Certification Campaign",
+   "priority": "UNKNOWN",
+   "depends_on": [
+    "F-31",
+    "F-21",
+    "F-30"
+   ],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6505576503",
+   "links": {},
+   "blocked_by": "mandato finanziario + GO-LIVE-ORDER owner (indice V2 §2)",
+   "needs_reconciliation": null,
+   "certifications": []
+  },
+  {
+   "id": "F-33",
+   "order": 33,
+   "name": "Full-Scope Combinatorial & E2E Test Harness",
+   "priority": "infra test",
+   "depends_on": [],
+   "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6505576503",
+   "links": {
+    "prs": [
+     589
+    ]
+   },
+   "blocked_by": null,
+   "needs_reconciliation": null,
+   "certifications": []
+  }
+ ]
+}
