@@ -19,6 +19,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   verificata, ultimo snapshot dei fondi, desk mode, tavoli Roserpina, esposizione totale e capacità di
   recovery, letti senza effetti sotto i lock dei componenti con attesa massima di 0,25 s. Pin aggiornato
   al contratto 1.2.0; area di mutazione `control_api` a 24 mutazioni. Dipende dalla patch MCP-01d.
+- **Control API: diagnostica, protezioni e posizioni (MCP-01f, handoff di Claude C):** `GET /v1/status`
+  riporta salute del motore, connessione Betfair senza credenziali, feed, I/O, code e 22 protezioni
+  finanziarie (ACTIVE/INACTIVE/TRIGGERED/UNKNOWN/UNAVAILABLE, mai «sicuro» se non verificabile);
+  `GET /v1/positions` riporta le posizioni dal registro Decimal senza perdita. Pin al contratto 1.3.0;
+  area di mutazione `control_api` a 37 mutazioni. Dipende dalle patch MCP-01d e MCP-01e.
 
 ### Changed
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**

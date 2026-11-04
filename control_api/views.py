@@ -150,6 +150,8 @@ def status_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict[s
             "live_enabled": lambda: _bool(rc, "live_enabled"),
             "readiness": lambda: _readiness(rc),
             "stop": lambda: _stop(rc),
+            "engine": lambda: _engine_diagnostics(rc),
+            "protections": lambda: protections_view(rc),
         }
     )
     return {
@@ -473,6 +475,638 @@ def exposure_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict
             "recovery": lambda: _recovery(rc),
         },
     )
+    return {
+        "source": "core",
+        "observed_at": float(clock()),
+        "consistency": SECTION_CONSISTENCY,
+        **values,
+        "unavailable": unavailable,
+    }
+
+
+# ------------------------------------------------- MCP-01f: diagnostica, protezioni, posizioni
+#
+# Contratto 1.3.0. Regole in più:
+# - importi e quote come stringhe decimali canoniche (`decimal_str`): lossless dal Decimal del
+#   core; dal float del core la rappresentazione più corta che lo identifica (repr);
+# - ogni protezione è ACTIVE/INACTIVE/TRIGGERED/UNKNOWN/UNAVAILABLE; una lettura fallita o un
+#   lock occupato diventa UNKNOWN, mai ACTIVE; ciò che il core non espone è UNAVAILABLE;
+# - le regole sono quelle del core, chiamate direttamente (`_entry_funds_reason`,
+#   `validators.risk_pct_reason`, `risk_stop.exposure_stop_reason`, `_session_loss_block_reason`,
+#   `determine_desk_mode`): il ponte non ricalcola soglie e non introduce limiti.
+
+from datetime import datetime, timezone  # noqa: E402
+from decimal import Decimal  # noqa: E402
+
+DECIMAL_RE: Final = re.compile(
+    r"^(?:-?[1-9][0-9]{0,14}(?:\.[0-9]{1,28})?|0(?:\.[0-9]{1,28})?|-0\.[0-9]{0,27}[1-9])$"
+)
+COMPONENT_RE: Final = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+ENGINE_STATES: Final = frozenset({"READY", "DEGRADED", "NOT_READY"})
+CLIENT_KINDS: Final = frozenset({"SIMULATION", "LIVE"})
+MAX_POSITIONS: Final = 512
+
+
+def decimal_str(value: object) -> str:
+    """Stringa decimale canonica (senza esponente, senza zeri finali); errore se non rappresentabile."""
+    if isinstance(value, bool):
+        raise _Unavailable("decimal")
+    if isinstance(value, Decimal):
+        number = value
+    elif isinstance(value, int):
+        number = Decimal(value)
+    elif isinstance(value, float):
+        if not math.isfinite(value):
+            raise _Unavailable("decimal")
+        number = Decimal(repr(value))  # la stringa più corta che identifica il float del core
+    else:
+        raise _Unavailable("decimal")
+    if not number.is_finite():
+        raise _Unavailable("decimal")
+    text = format(number, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    if text in ("-0", ""):
+        text = "0"
+    if not DECIMAL_RE.fullmatch(text):
+        raise _Unavailable("decimal")
+    return text
+
+
+def _code_of(value: object) -> str:
+    """Motivo del core (minuscolo, con dettagli dopo «:») come token MAIUSCOLO."""
+    if not isinstance(value, str) or not value.strip():
+        return UNSTRUCTURED
+    return to_code(value.strip().split(":", 1)[0].upper().replace("-", "_"))
+
+
+def _epoch(value: object) -> float | None:
+    """Istante del core (ISO 8601 UTC senza fuso, oppure epoch) come epoch; None se ignoto."""
+    if type(value) in (int, float) and math.isfinite(value) and 0 < value < 1e11:  # type: ignore[operator]
+        return float(value)  # type: ignore[arg-type]
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        stamp = parsed.timestamp()
+        return stamp if 0 < stamp < 1e11 else None
+    return None
+
+
+# ---------------------------------------------------------------- diagnostica del motore
+
+
+def _trading_engine(rc: object) -> dict[str, Any]:
+    engine = _attr(rc, "trading_engine")
+    if engine is None:
+        raise _Unavailable("trading_engine")
+    report = engine.readiness()  # type: ignore[attr-defined]
+    health = report.get("health") if isinstance(report, dict) else None
+    state = report.get("state") if isinstance(report, dict) else None
+    if state not in ENGINE_STATES or not isinstance(health, dict) or len(health) > 32:
+        raise _Unavailable("trading_engine")
+    components = []
+    for name, entry in sorted(health.items()):
+        if not isinstance(name, str) or not COMPONENT_RE.fullmatch(name):
+            raise _Unavailable("trading_engine")
+        if not isinstance(entry, dict) or entry.get("state") not in ENGINE_STATES:
+            raise _Unavailable("trading_engine")
+        reason = entry.get("reason")
+        components.append(
+            {"name": name, "state": entry["state"],
+             "reason": None if reason is None else _code_of(reason)}
+        )
+    if state == "READY" and any(c["state"] != "READY" for c in components):
+        raise _Unavailable("trading_engine")
+    wired = engine.risk_gate_wired  # type: ignore[attr-defined]
+    if type(wired) is not bool:
+        raise _Unavailable("trading_engine")
+    return {"state": state, "evaluated_at": "ENGINE_START", "risk_gate_wired": wired,
+            "components": components}
+
+
+def _service_state(rc: object) -> tuple[bool, bool, str, bool]:
+    """Stato del servizio Betfair dai suoi attributi (nessun metodo: né rete né `get_client`).
+
+    Stessa logica di `BetfairService.status()` / `get_client()`: in simulazione il cliente è il
+    broker simulato, altrimenti il cliente LIVE; `connected` vale solo con un cliente presente.
+    """
+    service = vars(_attr(rc, "betfair_service"))
+    simulated, connected = service.get("simulation_mode"), service.get("connected")
+    if type(simulated) is not bool or type(connected) is not bool:
+        raise _Unavailable("betfair")
+    client = service.get("simulation_broker") if simulated else service.get("client")
+    has_client = client is not None
+    return connected and has_client, has_client, "SIMULATION" if simulated else "LIVE", bool(
+        service.get("last_error")
+    )
+
+
+def _betfair(rc: object) -> dict[str, Any]:
+    connected, has_client, kind, error_present = _service_state(rc)
+    keep = _attr(rc, "betfair_service").keepalive_status()  # type: ignore[attr-defined]
+    if not isinstance(keep, dict) or type(keep.get("running")) is not bool:
+        raise _Unavailable("betfair")
+    return {
+        "connected": connected,
+        "has_client": has_client,
+        "client_kind": kind,
+        "error_present": error_present,  # il testo dell'errore non esce
+        "keepalive": {
+            "running": keep["running"],
+            "failure_count": _count(keep.get("failure_count")),
+            "last_ok_at": _epoch(keep.get("last_ok_ts")),
+            "error_present": bool(keep.get("last_error")),
+        },
+    }
+
+
+def _stream(rc: object) -> dict[str, Any]:
+    feed = vars(rc).get("streaming_feed")
+    if feed is None:
+        raise _Unavailable("stream")  # il feed esiste solo dopo l'avvio con streaming
+    s = feed.status()
+    if not isinstance(s, dict):
+        raise _Unavailable("stream")
+    flags = [s.get(k) for k in ("running", "connected", "degraded_503", "auth_degraded")]
+    if any(type(f) is not bool for f in flags):
+        raise _Unavailable("stream")
+    return {
+        "running": s["running"],
+        "connected": s["connected"],
+        "degraded": s["degraded_503"],
+        "auth_degraded": s["auth_degraded"],
+        "auth_failure_count": _count(s.get("auth_failure_count")),
+        "keepalive_failure_count": _count(s.get("keepalive_failure_count")),
+        "error_present": bool(s.get("last_auth_error") or s.get("last_transport_error")
+                              or s.get("last_keepalive_error")),
+        "last_message_at": _epoch(s.get("last_message_at")),
+    }
+
+
+def _io(rc: object) -> dict[str, Any]:
+    io = rc.runtime_io_snapshot()  # type: ignore[attr-defined]
+    if not isinstance(io, dict):
+        raise _Unavailable("io")
+    latency = io.get("last_latency_ms")
+    if type(latency) not in (int, float) or not math.isfinite(latency) or not 0 <= latency <= 1e7:
+        raise _Unavailable("io")
+    return {
+        "last_status": _code_of(io.get("last_status")),
+        "total_count": _count(io.get("total_count")),
+        "slow_count": _count(io.get("slow_count")),
+        "degraded_count": _count(io.get("degraded_count")),
+        "unavailable_count": _count(io.get("unavailable_count")),
+        "last_latency_ms": float(latency),
+        "error_present": bool(io.get("last_error")),
+    }
+
+
+def _event_bus(rc: object) -> dict[str, Any]:
+    p = _attr(rc, "bus").pressure_snapshot()
+    if not isinstance(p, dict) or type(p.get("running")) is not bool or type(p.get("accepting")) is not bool:
+        raise _Unavailable("event_bus")
+    since = p.get("seconds_since_last_dequeue")
+    if since is not None and (type(since) not in (int, float) or not 0 <= since <= 1e9):
+        raise _Unavailable("event_bus")
+    return {
+        "queue_depth": _count(p.get("queue_depth")),
+        "queue_high_watermark": _count(p.get("queue_high_watermark")),
+        "enqueued_total": _count(p.get("enqueued_total")),
+        "dequeued_total": _count(p.get("dequeued_total")),
+        "running": p["running"],
+        "accepting": p["accepting"],
+        "seconds_since_last_dequeue": None if since is None else float(since),
+    }
+
+
+def _queues(rc: object) -> dict[str, int]:
+    inflight = _attr(rc, "_cashout_inflight")
+    uncertain = _attr(rc, "_cashout_uncertain")
+    if not isinstance(inflight, dict) or not isinstance(uncertain, set):
+        raise _Unavailable("queues")
+    return {
+        "cashout_inflight": len(inflight),
+        "cashout_uncertain": len(uncertain),
+        "direct_unmatched": len(rc.direct_unmatched_bet_ids),  # type: ignore[attr-defined]  # property
+    }
+
+
+def _modes(rc: object) -> dict[str, Any]:
+    _connected, has_client, kind, _error = _service_state(rc)
+    return {
+        "configured_execution_mode": _execution_mode(rc),
+        "simulation_flag": _bool(rc, "simulation_mode"),
+        "live_enabled": _bool(rc, "live_enabled"),
+        "live_readiness_ok": _bool(rc, "live_readiness_ok"),
+        "client_kind": kind if has_client else "NONE",
+        "read_only_mode": "NOT_IN_CORE",
+    }
+
+
+def _last_signal_at(rc: object) -> float | None:
+    return _epoch(_attr(rc, "last_signal_at"))
+
+
+def _engine_diagnostics(rc: object) -> dict[str, Any]:
+    values, unavailable = _collect(
+        {
+            "trading_engine": lambda: _trading_engine(rc),
+            "betfair": lambda: _betfair(rc),
+            "stream": lambda: _stream(rc),
+            "io": lambda: _io(rc),
+            "event_bus": lambda: _event_bus(rc),
+            "queues": lambda: _queues(rc),
+            "modes": lambda: _modes(rc),
+            "last_signal_at": lambda: _last_signal_at(rc),
+        }
+    )
+    return {**values, "unavailable": unavailable}
+
+
+# ---------------------------------------------------------------- protezioni finanziarie
+
+
+def _p(state: str, reason: str | None = None, *, source: str, limit: str | None = None,
+       as_of: float | None = None) -> dict[str, Any]:
+    return {"state": state, "reason": reason, "source": source, "limit": limit, "as_of": as_of}
+
+
+def _unknown(source: str, reason: str = "READ_FAILED") -> dict[str, Any]:
+    return _p("UNKNOWN", reason, source=source)
+
+
+def _config_value(rc: object, name: str) -> Any:
+    return getattr(_attr(rc, "config"), name)
+
+
+def _optional_cap(rc: object, name: str) -> dict[str, Any]:
+    """Cap opzionale: None = non configurato (INACTIVE); valore illeggibile o <= 0 = UNKNOWN."""
+    raw = _config_value(rc, name)
+    if raw is None:
+        return _p("INACTIVE", "NOT_CONFIGURED", source="CONFIG")
+    from core import validators
+
+    value = validators.finite_number(raw)
+    if value is None or value <= 0:
+        return _p("UNKNOWN", "INVALID_LIMIT", source="CONFIG")
+    return _p("ACTIVE", source="CONFIG", limit=decimal_str(raw))
+
+
+def _risk_pct(rc: object, name: str) -> dict[str, Any]:
+    """Percentuale obbligatoria: il core nega ogni nuova entrata se assente o non valida."""
+    from core import validators
+
+    raw = _config_value(rc, name)
+    reason = validators.risk_pct_reason(name, raw)
+    if reason:
+        return _p("TRIGGERED", _code_of(reason), source="CONFIG")
+    return _p("ACTIVE", source="CONFIG", limit=decimal_str(raw))
+
+
+def _kill_switch(rc: object) -> dict[str, Any]:
+    safe_mode = vars(rc).get("safe_mode")
+    if safe_mode is None:
+        return _p("UNAVAILABLE", "SAFE_MODE_NOT_WIRED", source="NONE")
+    active = rc._is_kill_switch_active()  # type: ignore[attr-defined]
+    info = safe_mode.get_status_info() if callable(getattr(safe_mode, "get_status_info", None)) else {}
+    as_of = _epoch(info.get("triggered_at")) if isinstance(info, dict) else None
+    if type(active) is not bool:
+        return _unknown("SAFE_MODE")
+    if active:
+        return _p("TRIGGERED", "SAFE_MODE_TRIGGERED", source="SAFE_MODE", as_of=as_of)
+    return _p("ACTIVE", source="SAFE_MODE")
+
+
+def _emergency(rc: object) -> dict[str, Any]:
+    stopped = _bool(rc, "_emergency_stopped")
+    if stopped:
+        return _p("TRIGGERED", _code_of(_attr(rc, "_emergency_reason")), source="RUNTIME",
+                  as_of=_epoch(vars(rc).get("_emergency_stopped_at")))
+    return _p("ACTIVE", source="RUNTIME")
+
+
+def _lockdown_reason(rc: object) -> str | None:
+    """Motivo del LOCKDOWN del runtime, oppure None se il runtime non è in LOCKDOWN."""
+    if getattr(_attr(rc, "mode"), "value", None) != "LOCKDOWN":
+        return None
+    return _code_of(vars(rc).get("last_error"))
+
+
+def _runtime_lockdown(rc: object) -> dict[str, Any]:
+    reason = _lockdown_reason(rc)
+    if reason is not None:
+        return _p("TRIGGERED", reason, source="RUNTIME")
+    return _p("ACTIVE", source="RUNTIME")
+
+
+def _desk_lockdown(rc: object) -> dict[str, Any]:
+    desk = _attr(rc, "risk_desk")
+    lock = vars(desk).get("_lock")
+    if not _acquire(lock):
+        return _unknown("MONEY_MANAGEMENT", "LOCK_BUSY")
+    try:
+        bankroll, peak = desk.bankroll_current, desk.equity_peak  # type: ignore[attr-defined]
+    finally:
+        lock.release()  # type: ignore[union-attr]
+    mode = _attr(rc, "mm").determine_desk_mode(bankroll_current=bankroll, equity_peak=peak)
+    limit = decimal_str(_config_value(rc, "lockdown_drawdown_pct"))
+    if getattr(mode, "value", None) == "LOCKDOWN":
+        return _p("TRIGGERED", "DESK_LOCKDOWN", source="MONEY_MANAGEMENT", limit=limit)
+    if getattr(mode, "value", None) not in DESK_MODES:
+        return _unknown("MONEY_MANAGEMENT")
+    return _p("ACTIVE", source="MONEY_MANAGEMENT", limit=limit)
+
+
+def _drawdown_stop(rc: object, name: str, trigger: str, *, live_only: bool) -> dict[str, Any]:
+    cap = _optional_cap(rc, name)
+    if cap["state"] != "ACTIVE":
+        return cap
+    if _lockdown_reason(rc) == trigger:
+        return _p("TRIGGERED", trigger, source="RUNTIME", limit=cap["limit"])
+    if live_only and _execution_mode(rc) != "LIVE":
+        # Il core applica lo stop percentuale solo in LIVE (runtime_controller, Enforcement A1 #320).
+        return _p("INACTIVE", "ENFORCED_ONLY_IN_LIVE", source="CONFIG", limit=cap["limit"])
+    return cap
+
+
+def _session_loss(rc: object) -> dict[str, Any]:
+    raw = _config_value(rc, "max_session_loss")
+    if raw is None:
+        return _p("INACTIVE", "NOT_CONFIGURED", source="CONFIG")
+    reason = rc._session_loss_block_reason()  # type: ignore[attr-defined]
+    limit = decimal_str(raw) if not isinstance(raw, bool) and isinstance(raw, int | float) else None
+    if not isinstance(reason, str):
+        return _unknown("LOSS_LIMITS")
+    if reason.startswith("session_loss_breached"):
+        return _p("TRIGGERED", "SESSION_LOSS_BREACHED", source="LOSS_LIMITS", limit=limit)
+    if reason:
+        return _p("UNKNOWN", _code_of(reason), source="LOSS_LIMITS", limit=limit)
+    return _p("ACTIVE", source="LOSS_LIMITS", limit=limit)
+
+
+def _daily_loss(rc: object) -> dict[str, Any]:
+    from core import loss_limits
+
+    lock = vars(rc).get("_daily_loss_state_lock")
+    if not _acquire(lock):
+        return _unknown("DAILY_LOSS_MONITOR", "LOCK_BUSY")
+    try:
+        state = dict(_attr(rc, "_daily_loss_monitor_state"))
+    finally:
+        lock.release()  # type: ignore[union-attr]
+    threshold = state.get("threshold")
+    as_of = _epoch(state.get("last_checked_at"))
+    if loss_limits.persist_failed(vars(rc).get("_daily_loss_persisted")):
+        return _p("TRIGGERED", "DAILY_LOSS_STATE_NOT_PERSISTED", source="DAILY_LOSS_MONITOR",
+                  as_of=as_of)
+    if threshold is None:
+        return _p("INACTIVE", "NOT_CONFIGURED", source="DAILY_LOSS_MONITOR", as_of=as_of)
+    limit = decimal_str(threshold)
+    if state.get("breached") is True or _bool(rc, "_daily_loss_pending_stop"):
+        return _p("TRIGGERED", _code_of(state.get("last_status")), source="DAILY_LOSS_MONITOR",
+                  limit=limit, as_of=_epoch(state.get("breached_at")) or as_of)
+    if state.get("breached") is not False:
+        return _unknown("DAILY_LOSS_MONITOR")
+    return _p("ACTIVE", source="DAILY_LOSS_MONITOR", limit=limit, as_of=as_of)
+
+
+def _risk_stop(rc: object) -> dict[str, Any]:
+    reason = _attr(rc, "_risk_stop_reason")
+    if not isinstance(reason, str):
+        return _unknown("RUNTIME")
+    if reason:
+        return _p("TRIGGERED", _code_of(reason), source="RUNTIME")
+    return _p("ACTIVE", source="RUNTIME")
+
+
+def _exposure_stop(rc: object) -> dict[str, Any]:
+    from core import risk_stop
+
+    raw = _config_value(rc, "max_exposure_stop")
+    if raw is None:
+        return _p("INACTIVE", "NOT_CONFIGURED", source="CONFIG")
+    tables = _attr(rc, "table_manager")
+    lock = tables.locked()
+    if not _acquire(lock):
+        return _unknown("RISK_STOP", "LOCK_BUSY")
+    try:
+        total = tables.total_exposure()
+    finally:
+        lock.release()
+    reason = risk_stop.exposure_stop_reason(raw, total)
+    limit = decimal_str(raw) if not isinstance(raw, bool) and isinstance(raw, int | float) else None
+    if reason.startswith("exposure_stop_reached"):
+        return _p("TRIGGERED", "EXPOSURE_STOP_REACHED", source="RISK_STOP", limit=limit)
+    if reason:
+        return _p("UNKNOWN", _code_of(reason), source="RISK_STOP", limit=limit)
+    return _p("ACTIVE", source="RISK_STOP", limit=limit)
+
+
+def _funds_freshness(rc: object, monotonic: Callable[[], float]) -> dict[str, Any]:
+    from core.table_manager import TableManager
+
+    account = vars(rc).get("_account_snapshot")
+    read_at = vars(rc).get("_account_snapshot_read_at")
+    limit = decimal_str(TableManager.PLACED_TOMBSTONE_TTL_S)
+    # Regola del core per le nuove entrate (riserve pendenti escluse: lettura pura).
+    reason = rc._entry_funds_reason(account, 0.0, read_at=read_at)  # type: ignore[attr-defined]
+    if not isinstance(reason, str):
+        return _unknown("FUNDS_GATE")
+    as_of = None
+    if type(read_at) in (int, float) and math.isfinite(read_at):
+        as_of_age = max(0.0, float(monotonic()) - float(read_at))
+        as_of = time.time() - as_of_age
+    if reason:
+        return _p("TRIGGERED", _code_of(reason), source="FUNDS_GATE", limit=limit, as_of=as_of)
+    if as_of is None:
+        # Senza l'istante della lettura il core non controlla l'età dei fondi: non verificabile.
+        return _p("UNKNOWN", "FUNDS_READ_TIME_UNKNOWN", source="FUNDS_GATE", limit=limit)
+    return _p("ACTIVE", source="FUNDS_GATE", limit=limit, as_of=as_of)
+
+
+def _book_guard(rc: object) -> dict[str, Any]:
+    from core import validators
+
+    raw = _config_value(rc, "book_block")
+    value = validators.finite_number(raw)
+    if value is None or value <= 0:
+        return _unknown("CONFIG", "INVALID_LIMIT")
+    return _p("ACTIVE", source="CONFIG", limit=decimal_str(raw))
+
+
+def _anti_duplication(rc: object) -> dict[str, Any]:
+    enabled = _config_value(rc, "anti_duplication_enabled")
+    if type(enabled) is not bool:
+        return _unknown("CONFIG")
+    if not enabled:
+        return _p("INACTIVE", "DISABLED_BY_CONFIG", source="CONFIG")
+    return _p("ACTIVE", source="DUPLICATION_GUARD")
+
+
+def _order_breaker(rc: object) -> dict[str, Any]:
+    engine = vars(rc).get("trading_engine")
+    breaker = vars(engine).get("_order_submission_breaker") if engine is not None else None
+    if breaker is None:
+        return _p("UNAVAILABLE", "ENGINE_NOT_WIRED", source="NONE")
+    # Lettura per attributi: `snapshot()`/`is_open()` NON sono puri (OPEN -> HALF_OPEN).
+    state = getattr(vars(breaker).get("state"), "value", None)
+    opened_at = vars(breaker).get("opened_at")
+    if state == "CLOSED":
+        return _p("ACTIVE", source="CIRCUIT_BREAKER")
+    if state in ("OPEN", "HALF_OPEN"):
+        return _p("TRIGGERED", f"BREAKER_{state}", source="CIRCUIT_BREAKER",
+                  as_of=_epoch(opened_at))
+    return _unknown("CIRCUIT_BREAKER")
+
+
+def _recovery_guard(rc: object) -> dict[str, Any]:
+    unreadable = vars(rc).get("_recovery_state_unreadable", False)
+    failed = vars(rc).get("_recovery_persist_failed", _MISSING)
+    if unreadable is True:
+        return _p("TRIGGERED", "RECOVERY_STATE_UNREADABLE", source="RUNTIME")
+    if failed is True:
+        return _p("TRIGGERED", "RECOVERY_STATE_NOT_PERSISTED", source="RUNTIME")
+    if failed is _MISSING:
+        # Nasce solo alla prima scrittura dello stato di recovery: prima non è dimostrabile.
+        return _p("UNKNOWN", "RECOVERY_PERSIST_STATE_NOT_INITIALIZED", source="RUNTIME")
+    if unreadable is not False or failed is not False:
+        return _unknown("RUNTIME")
+    return _p("ACTIVE", source="RUNTIME")
+
+
+PROTECTION_ORDER: Final = (
+    "kill_switch", "emergency_stop", "runtime_lockdown", "desk_lockdown",
+    "drawdown_pct_hard_stop", "drawdown_abs_hard_stop", "session_loss", "daily_loss",
+    "risk_stop", "exposure_stop", "max_open_exposure", "max_order_exposure",
+    "max_market_exposure", "max_event_exposure_abs", "max_total_exposure_pct",
+    "max_event_exposure_pct", "funds_freshness", "book_guard", "market_tradability",
+    "anti_duplication", "order_circuit_breaker", "recovery_state",
+)
+UNVERIFIABLE: Final = frozenset({"UNKNOWN", "UNAVAILABLE"})
+
+
+def protections_view(rc: object, *, monotonic: Callable[[], float] = time.monotonic) -> dict[str, Any]:
+    readers: dict[str, Callable[[], dict[str, Any]]] = {
+        "kill_switch": lambda: _kill_switch(rc),
+        "emergency_stop": lambda: _emergency(rc),
+        "runtime_lockdown": lambda: _runtime_lockdown(rc),
+        "desk_lockdown": lambda: _desk_lockdown(rc),
+        "drawdown_pct_hard_stop": lambda: _drawdown_stop(
+            rc, "max_drawdown_hard_stop_pct", "DRAWDOWN_HARD_STOP_TRIGGERED", live_only=True),
+        "drawdown_abs_hard_stop": lambda: _drawdown_stop(
+            rc, "max_drawdown_abs", "DRAWDOWN_ABS_HARD_STOP_TRIGGERED", live_only=False),
+        "session_loss": lambda: _session_loss(rc),
+        "daily_loss": lambda: _daily_loss(rc),
+        "risk_stop": lambda: _risk_stop(rc),
+        "exposure_stop": lambda: _exposure_stop(rc),
+        "max_open_exposure": lambda: _optional_cap(rc, "max_open_exposure"),
+        "max_order_exposure": lambda: _optional_cap(rc, "max_order_exposure"),
+        "max_market_exposure": lambda: _optional_cap(rc, "max_market_exposure"),
+        "max_event_exposure_abs": lambda: _optional_cap(rc, "max_event_exposure_abs"),
+        "max_total_exposure_pct": lambda: _risk_pct(rc, "max_total_exposure_pct"),
+        "max_event_exposure_pct": lambda: _risk_pct(rc, "max_event_exposure_pct"),
+        "funds_freshness": lambda: _funds_freshness(rc, monotonic),
+        "book_guard": lambda: _book_guard(rc),
+        # Stato negoziabile del mercato: correzione F-23 in corso nel core (Claude D).
+        "market_tradability": lambda: _p("UNAVAILABLE", "CORE_PENDING_F23", source="NONE"),
+        "anti_duplication": lambda: _anti_duplication(rc),
+        "order_circuit_breaker": lambda: _order_breaker(rc),
+        "recovery_state": lambda: _recovery_guard(rc),
+    }
+    items: dict[str, dict[str, Any]] = {}
+    for name in PROTECTION_ORDER:
+        try:
+            item = readers[name]()
+        except Exception:  # noqa: BLE001 - una lettura fallita è UNKNOWN, mai ACTIVE
+            item = _unknown("RUNTIME")
+        if item["state"] == "ACTIVE" and item["reason"] is not None:
+            item = _unknown(item["source"])
+        items[name] = item
+    return {
+        "items": items,
+        "disabled": sorted(n for n, v in items.items() if v["state"] == "INACTIVE"),
+        "unverifiable": sorted(n for n, v in items.items() if v["state"] in UNVERIFIABLE),
+    }
+
+
+# ---------------------------------------------------------------- GET /v1/positions
+
+
+def _position_row(position: object, ledger: object) -> dict[str, Any]:
+    if not isinstance(position, dict):
+        raise _Unavailable("positions")
+    selection = position.get("selection_id")
+    selection = str(selection) if type(selection) is int else selection
+    table_id = position.get("table_id")
+    if table_id is not None and (type(table_id) is not int or not 1 <= table_id <= 10_000):
+        raise _Unavailable("positions")
+    row: dict[str, Any] = {
+        "market_id": _identifier(position.get("market_id")),
+        "selection_id": _identifier(selection),
+        "table_id": table_id,
+        "unrealized_basis": "LAST_MARK",
+    }
+    if row["market_id"] is None or row["selection_id"] is None:
+        raise _Unavailable("positions")
+    if ledger is not None:
+        size = vars(ledger)["_open_size"]
+        side = vars(ledger)["_open_side"]
+        exposure, liability = ledger._residual_exposure_liability()  # type: ignore[attr-defined]
+        if side not in ("BACK", "LAY", "") or not isinstance(size, Decimal):
+            raise _Unavailable("positions")
+        flat = side == "" or size <= 0
+        row.update(
+            side="FLAT" if flat else side,
+            open_size=decimal_str(size),
+            avg_entry_price=decimal_str(ledger._avg_entry_price()),  # type: ignore[attr-defined]
+            realized_pnl=decimal_str(vars(ledger)["_realized_pnl"]),
+            unrealized_pnl=decimal_str(vars(ledger)["_unrealized_pnl"]),
+            exposure=decimal_str(exposure),
+            liability=decimal_str(liability),
+            amounts_source="LEDGER_DECIMAL",
+            unavailable=[],
+        )
+        return row
+    side = position.get("side")
+    if side not in ("BACK", "LAY"):
+        raise _Unavailable("positions")
+    row.update(
+        side=side,
+        open_size=decimal_str(position.get("stake")),
+        avg_entry_price=decimal_str(position.get("price")),
+        realized_pnl=None,
+        unrealized_pnl=None,
+        exposure=None,
+        liability=None,
+        amounts_source="CORE_FLOAT",
+        unavailable=["realized_pnl", "unrealized_pnl", "exposure", "liability"],
+    )
+    return row
+
+
+def _positions(rc: object) -> list[dict[str, Any]]:
+    engine = _attr(rc, "pnl_engine")
+    positions = vars(engine)["_positions"]
+    ledgers = vars(engine)["_position_ledgers"]
+    if not isinstance(positions, dict) or not isinstance(ledgers, dict) or len(positions) > MAX_POSITIONS:
+        raise _Unavailable("positions")
+    # Chiavi interne (event_key, customer_ref, reservation_id, batch_id) non escono.
+    return [_position_row(pos, ledgers.get(key)) for key, pos in positions.items()]
+
+
+def _pnl_lock(rc: object) -> object:
+    try:
+        return vars(_attr(rc, "pnl_engine")).get("_state_lock")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def positions_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict[str, Any]:
+    values, unavailable = _under(_pnl_lock(rc), {"positions": lambda: _positions(rc)})
     return {
         "source": "core",
         "observed_at": float(clock()),

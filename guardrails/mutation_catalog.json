@@ -8513,6 +8513,163 @@
         "tests/control_api/test_finance_views.py"
       ],
       "rationale": "MCP-01e ponte Control API account/exposure (handoff Claude C): conteggio recovery ricalcolato ignorando il fail-closed del core (stato illeggibile)."
+    },
+    {
+      "id": "cap_failed_read_reported_active",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "            item = _unknown(\"RUNTIME\")\n        if item[\"state\"]",
+      "mutated": "            item = _p(\"ACTIVE\", source=\"RUNTIME\")\n        if item[\"state\"]",
+      "tests": [
+        "tests/control_api/test_diagnostics_views.py"
+      ],
+      "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): lettura di una protezione fallita riportata ACTIVE (UNKNOWN convertito in sicuro)."
+    },
+    {
+      "id": "cap_lock_busy_reported_active",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        return _unknown(\"DAILY_LOSS_MONITOR\", \"LOCK_BUSY\")",
+      "mutated": "        return _p(\"ACTIVE\", source=\"DAILY_LOSS_MONITOR\")",
+      "tests": [
+        "tests/control_api/test_diagnostics_views.py"
+      ],
+      "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): perdita giornaliera con lock occupato riportata ACTIVE invece di UNKNOWN."
+    },
+    {
+      "id": "cap_kill_switch_unwired_active",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        return _p(\"UNAVAILABLE\", \"SAFE_MODE_NOT_WIRED\", source=\"NONE\")",
+      "mutated": "        return _p(\"ACTIVE\", source=\"SAFE_MODE\")",
+      "tests": [
+        "tests/control_api/test_diagnostics_views.py"
+      ],
+      "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): kill switch non collegato riportato attivo."
+    },
+    {
+      "id": "cap_funds_time_unknown_active",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        return _p(\"UNKNOWN\", \"FUNDS_READ_TIME_UNKNOWN\", source=\"FUNDS_GATE\", limit=limit)",
+      "mutated": "        return _p(\"ACTIVE\", source=\"FUNDS_GATE\", limit=limit)",
+      "tests": [
+        "tests/control_api/test_diagnostics_views.py"
+      ],
+      "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): freschezza dei fondi non verificabile riportata attiva."
+    },
+    {
+      "id": "cap_mandatory_pct_ignored",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if reason:\n        return _p(\"TRIGGERED\", _code_of(reason), source=\"CONFIG\")",
+      "mutated": "    if False:\n        return _p(\"TRIGGERED\", _code_of(reason), source=\"CONFIG\")",
+      "tests": [
+        "tests/control_api/test_diagnostics_views.py"
+      ],
+      "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): percentuale obbligatoria assente (entrate negate dal core) non segnalata."
+    },
+    {
+      "id": "cap_drawdown_pct_sim_active",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if live_only and _execution_mode(rc) != \"LIVE\":",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/control_api/test_diagnostics_views.py"
+      ],
+      "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): stop drawdown % dichiarato attivo in SIM dove il core non lo applica."
+    },
+    {
+      "id": "cap_unverifiable_list_incomplete",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        \"unverifiable\": sorted(n for n, v in items.items() if v[\"state\"] in UNVERIFIABLE),",
+      "mutated": "        \"unverifiable\": sorted(n for n, v in items.items() if v[\"state\"] == \"UNKNOWN\"),",
+      "tests": [
+        "tests/control_api/test_diagnostics_views.py"
+      ],
+      "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): protezioni UNAVAILABLE omesse dall'elenco delle non verificabili."
+    },
+    {
+      "id": "cap_decimal_via_float",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if isinstance(value, Decimal):\n        number = value",
+      "mutated": "    if isinstance(value, Decimal):\n        number = Decimal(repr(float(value)))",
+      "tests": [
+        "tests/control_api/test_diagnostics_views.py"
+      ],
+      "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): Decimal del ledger convertito via float (perdita di precisione)."
+    },
+    {
+      "id": "cap_missing_amounts_as_zero",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        realized_pnl=None,\n        unrealized_pnl=None,\n        exposure=None,\n        liability=None,\n        amounts_source=\"CORE_FLOAT\",\n        unavailable=[\"realized_pnl\", \"unrealized_pnl\", \"exposure\", \"liability\"],",
+      "mutated": "        realized_pnl=\"0\",\n        unrealized_pnl=\"0\",\n        exposure=\"0\",\n        liability=\"0\",\n        amounts_source=\"CORE_FLOAT\",\n        unavailable=[],",
+      "tests": [
+        "tests/control_api/test_diagnostics_views.py"
+      ],
+      "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): importi assenti (posizione senza registro) riportati come zero."
+    },
+    {
+      "id": "cap_disabled_control_hidden",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        return _p(\"INACTIVE\", \"DISABLED_BY_CONFIG\", source=\"CONFIG\")",
+      "mutated": "        return _p(\"ACTIVE\", source=\"DUPLICATION_GUARD\")",
+      "tests": [
+        "tests/control_api/test_diagnostics_views.py"
+      ],
+      "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): anti-duplicazione disattivata riportata attiva."
+    },
+    {
+      "id": "cap_emergency_hidden",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    stopped = _bool(rc, \"_emergency_stopped\")\n    if stopped:",
+      "mutated": "    stopped = _bool(rc, \"_emergency_stopped\")\n    if False:",
+      "tests": [
+        "tests/control_api/test_diagnostics_views.py"
+      ],
+      "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): emergency stop scattato riportato attivo e non scattato."
+    },
+    {
+      "id": "cap_service_status_call",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    service = vars(_attr(rc, \"betfair_service\"))",
+      "mutated": "    service = _attr(rc, \"betfair_service\").status() and vars(_attr(rc, \"betfair_service\"))",
+      "tests": [
+        "tests/control_api/test_diagnostics_views.py",
+        "tests/control_api/test_views_real_runtime.py"
+      ],
+      "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): stato Betfair letto chiamando metodi del servizio (get_client) invece degli attributi."
+    },
+    {
+      "id": "cap_internal_key_leak",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        \"unrealized_basis\": \"LAST_MARK\",\n    }",
+      "mutated": "        \"unrealized_basis\": \"LAST_MARK\",\n        \"event_key\": str(position.get(\"event_key\", \"\")),\n    }",
+      "tests": [
+        "tests/control_api/test_diagnostics_views.py"
+      ],
+      "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): chiave interna della posizione (nome evento) esposta."
     }
   ]
 }

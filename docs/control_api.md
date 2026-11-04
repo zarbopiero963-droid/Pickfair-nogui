@@ -31,6 +31,27 @@ lettura approvate rispondono `501 NOT_IMPLEMENTED` (mai un dato); ogni metodo di
 | | `total_exposure` | `TableManager.total_exposure()` (valore del cap `max_open_exposure`; non finito ⇒ indisponibile) |
 | | `recovery` | `RuntimeController._active_recovery_count()` (fail-closed del core) + `max_recovery_tables`, `allow_recovery` |
 
+### MCP-01f — diagnostica del motore, protezioni finanziarie, posizioni (contratto 1.3.0)
+
+`GET /v1/status` aggiunge due sezioni; `GET /v1/positions` è nuova. Importi e quote delle nuove
+sezioni sono **stringhe decimali canoniche** (`decimal_str`): lossless dal `Decimal` del core, dal
+float del core la rappresentazione più corta che lo identifica.
+
+| Sezione | Contenuto | Fonte |
+|---|---|---|
+| `engine.trading_engine` | stato e componenti (calcolati dal core all'avvio del motore), risk gate cablato | `TradingEngine.readiness()`, `risk_gate_wired` |
+| `engine.betfair` | connesso, cliente presente, SIMULATION/LIVE, errore presente sì/no, keepalive | attributi del `BetfairService` (nessun metodo che tocchi il cliente) + `keepalive_status()` |
+| `engine.stream`, `io`, `event_bus`, `queues` | feed, I/O del runtime, pressione del bus, cashout in volo/incerti, ordini DIRECT | `streaming_feed.status()`, `runtime_io_snapshot()`, `bus.pressure_snapshot()`, contatori del runtime |
+| `engine.modes` | modalità configurata, flag SIM, LIVE abilitato, readiness LIVE, cliente effettivo; `read_only_mode = NOT_IN_CORE` | attributi del runtime |
+| `protections` | 22 protezioni, ognuna `ACTIVE`/`INACTIVE`/`TRIGGERED`/`UNKNOWN`/`UNAVAILABLE` con motivo, origine, limite, istante; elenchi `disabled` e `unverifiable` | regole del core chiamate direttamente: `_entry_funds_reason`, `validators.risk_pct_reason`, `risk_stop.exposure_stop_reason`, `_session_loss_block_reason`, `determine_desk_mode`, monitor della perdita giornaliera |
+| `/v1/positions` | mercato, selezione, BACK/LAY/FLAT, size, prezzo medio, P&L realizzato e non realizzato (ultimo mark), esposizione, liability | registro `PositionLedger` (Decimal) sotto il lock del `PnLEngine`; senza registro solo prezzo e size (`CORE_FLOAT`) |
+
+Regole: una lettura fallita o un lock occupato (attesa massima 0,25 s) è `UNKNOWN`, mai `ACTIVE`;
+ciò che il core non espone è `UNAVAILABLE` (stato negoziabile del mercato: F-23, Claude D). Lo stop
+drawdown percentuale è `INACTIVE (ENFORCED_ONLY_IN_LIVE)` in SIM perché il core lo applica solo in
+LIVE. Le percentuali obbligatorie assenti sono `TRIGGERED` (il core nega ogni entrata). Nomi di
+eventi, `customer_ref`, `reservation_id`, testi d'errore e credenziali non escono mai.
+
 Consistenza `PER_SECTION_LOCKED`: `bankroll` e `cash` nella stessa acquisizione del lock del
 RiskDesk; `tables`, `total_exposure` e `recovery` nella stessa acquisizione del lock dei tavoli.
 Attesa massima `LOCK_WAIT_S = 0,25 s`: se il runtime tiene il lock più a lungo, quelle sezioni sono

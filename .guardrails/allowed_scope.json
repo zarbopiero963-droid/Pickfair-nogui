@@ -3441,6 +3441,22 @@
         "tests/control_api/test_side_effects.py"
       ],
       "max_files": 8
+    },
+    "pf_api3_control_api_diagnostics_positions": {
+      "description": "MCP-01f (handoff di Claude C): diagnostica del motore e protezioni finanziarie in GET /v1/status, posizioni in GET /v1/positions (Decimal senza perdita), sola lettura; pin al contratto 1.3.0. Dipende da pf_api1_control_api_bridge e pf_api2_control_api_finance_reads.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "control_api/bridge.py",
+        "control_api/views.py",
+        "docs/control_api.md",
+        "guardrails/mutation_catalog.json",
+        "tests/control_api/test_diagnostics_views.py",
+        "tests/control_api/test_side_effects.py",
+        "tests/control_api/test_views_real_runtime.py"
+      ],
+      "max_files": 9
     }
   }
 }

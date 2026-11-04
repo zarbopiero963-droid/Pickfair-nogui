@@ -30,7 +30,10 @@ OBJECTS = ("risk_desk", "table_manager", "duplication_guard", "mm", "reconciliat
 # Ammessi dopo lettura del codice (services/betfair_service.py): `status()` costruisce un dict
 # dallo stato locale e chiama `get_client()`, che restituisce il broker/cliente già creato.
 # Nessuno dei due contatta l'exchange. Ogni altro metodo del servizio e TUTTO il broker sono vietati.
-ALLOWED_BETFAIR = {"status", "get_client"}
+# MCP-01f: `keepalive_status()` legge solo stato locale del thread di keepalive sotto il suo lock
+# (services/betfair_service.py, `keepalive_status`): nessuna rete, nessuna modifica. Lo stato della
+# connessione si legge dagli attributi, senza chiamare `status()`.
+ALLOWED_BETFAIR = {"status", "get_client", "keepalive_status"}
 
 
 def deep_state(rc: Any) -> dict[str, str]:
