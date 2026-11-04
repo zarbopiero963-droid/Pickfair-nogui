@@ -89,3 +89,13 @@ Un'installazione esistente aggiornata a questa versione **parte in PAUSED** (`EQ
 finché non viene scritto un picco valido. Per decisione owner (opzione A) quel valore va ricostruito dallo storico
 Betfair in sola lettura e ratificato dall'owner: lo strumento di ricostruzione/ratifica non fa parte di questa
 correzione (BLOCKED, decisione owner). Una installazione SIM di prova può ripartire da un DB nuovo.
+
+**Strumento di ricostruzione (solo anteprima, decisione owner 04/11/2026).**
+`tools/equity_peak_reconstruction/reconstruct.py` legge un estratto conto Betfair (`getAccountStatement`, esportato in
+sola lettura dal canale autorizzato) e il DB di Pickfair in **sola lettura** (`mode=ro`, solo l'intervallo degli
+ordini). Verifica la catena dei saldi al centesimo, l'unicità dei `refId`, date con fuso, e che lo storico copra tutta
+l'attività di Pickfair; un dato incompleto o incoerente ⇒ `REJECTED` (l'installazione resta PAUSED). Altrimenti
+`RECONSTRUCTED_PENDING_RATIFICATION` con evidenze, SHA-256 dei file e il valore proposto per `risk.equity_peaks_state`
+(picco di cassa = massimo saldo, apertura compresa; picco del disponibile = stesso valore come limite superiore
+prudente, non ricostruibile dallo storico). **Non scrive mai**: la scrittura richiede una procedura approvata
+dall'owner, non inclusa.

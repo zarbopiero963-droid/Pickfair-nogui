@@ -3420,6 +3420,20 @@
         "tests/acceptance/test_issue437_pr28c.py"
       ],
       "max_files": 8
+    },
+    "d_f11_peak_reconstruction": {
+      "description": "Claude D F-11 (decisione owner 04/11/2026): strumento offline di ricostruzione del picco dell'equity dallo storico Betfair, solo anteprima con evidenze e hash, DB in sola lettura, rifiuto di dati incompleti/incoerenti, nessuna scrittura. Dipende da d_f11_equity_peak.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/startup_recovery.md",
+        "tests/equity_peak_reconstruction/__init__.py",
+        "tests/equity_peak_reconstruction/test_reconstruct.py",
+        "tools/equity_peak_reconstruction/__init__.py",
+        "tools/equity_peak_reconstruction/reconstruct.py"
+      ],
+      "max_files": 7
     }
   }
 }

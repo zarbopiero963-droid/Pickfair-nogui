@@ -119,6 +119,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dopo crash (`HEDGE_PENDING` => `HEDGE_AMBIGUOUS`). `core/hedge_ref.py`; test `tests/f05/`;
   mutazioni `f05_*`; `docs/cashout_overview.md` §7.3.
 ### Added
+- **F-11 — anteprima della ricostruzione del picco dell'equity (`tools/equity_peak_reconstruction/`).** Dallo storico
+  Betfair (`getAccountStatement` esportato in sola lettura) e dal DB in sola lettura: catena dei saldi, copertura del
+  periodo, provenienza con hash; dati incompleti ⇒ REJECTED. Solo anteprima e valore proposto per la ratifica owner,
+  nessuna scrittura. Vedi `docs/startup_recovery.md`.
+
 - **F-33 (#586) — harness full-scope di collaudo (solo test e tooling, GO-IMPLEMENT-LOCAL owner 29/10/2026):**
   `tools/combi/` (inventario delle 190 chiavi censite con dominio e classe ATTIVA/LEGACY; generatore pairwise /
   three-way greedy riproducibile con seed, vincoli, tuple non estendibili escluse, report di copertura verificato);
