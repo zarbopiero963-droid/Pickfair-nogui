@@ -1124,7 +1124,7 @@ def positions_view(rc: object, *, clock: Callable[[], float] = time.time) -> dic
 # attesa massima DB_BUSY_TIMEOUT_S. Stati: mappa ESPLICITA dagli stati reali del core (nessuno
 # stato inventato; APPROVED/CANCELLED/SETTLED non esistono nel ledger). Un AMBIGUOUS resta
 # AMBIGUOUS; un valore mancante resta null (mai zero); il betId si cerca nelle stesse forme di
-# `RuntimeController._open_order_candidates`.
+# `RuntimeController._open_order_candidates` (test di confronto).
 
 import json  # noqa: E402
 import sqlite3  # noqa: E402
@@ -1197,7 +1197,13 @@ def _dec_or_none(value: object) -> str | None:
 
 
 def _bet_id_from_response(resp: object) -> str | None:
-    """Forme note del betId, nello stesso ordine di `_open_order_candidates`."""
+    """Forme note del betId, nello stesso ordine di `RuntimeController._open_order_candidates`
+    (l'identità che la riconciliazione usa al riavvio; un test confronta i due risultati).
+
+    NON si usa `Database._order_bet_id`: per `{"result": {"betId": ...}}` restituisce "" mentre la
+    riconciliazione trova il betId. Divergenza del core segnalata a Claude B e Claude D: un solo
+    helper pubblico eliminerebbe questa copia.
+    """
     if not isinstance(resp, dict):
         return None
     for container in (resp, resp.get("result"), resp.get("raw")):

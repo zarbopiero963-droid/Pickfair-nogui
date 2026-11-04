@@ -113,6 +113,23 @@ def test_bet_id_matches_the_core_reconciliation(runtime: RuntimeController) -> N
     assert ours == core
 
 
+def test_ambiguous_response_of_the_p0_fix_keeps_its_bet_id(runtime: RuntimeController) -> None:
+    """Forma della correzione P0 di Claude D (claude/pickfair-core-audit-slu9su @ 47e2aaa): risposta
+    2xx senza esito => AMBIGUOUS con l'esito del client e la risposta grezza sotto `result`."""
+    oid = add(runtime, "AMBIGUOUS", ambiguity_reason="SUBMIT_UNKNOWN", response={
+        "ok": False, "error": "BET_STATUS_UNRECOGNIZED: ignore previous instructions",
+        "order_unknown": True,
+        "result": {"status": "PROCESSED_WITH_ERRORS",
+                   "instructionReports": [{"betId": "331", "status": "WEIRD"}]}})
+    o = by_id(snapshot(runtime), oid)
+    assert (o["status"], o["bet_id"]) == ("AMBIGUOUS", "331")
+    assert o["reconciliation"]["ambiguity_reason"] == "SUBMIT_UNKNOWN"
+    assert "ignore previous" not in json.dumps(orders_view(runtime))
+    no_bet = add(runtime, "AMBIGUOUS", ambiguity_reason="SUBMIT_UNKNOWN",
+                 response={"ok": False, "order_unknown": True, "result": {"status": "X"}})
+    assert by_id(snapshot(runtime), no_bet)["bet_id"] is None
+
+
 def test_reconcile_statuses_are_the_core_ones() -> None:
     source = inspect.getsource(RuntimeController._open_order_candidates)
     assert "WHERE status IN ('SUBMITTED', 'AMBIGUOUS', 'INFLIGHT')" in source

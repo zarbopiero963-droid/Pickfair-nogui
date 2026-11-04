@@ -8796,8 +8796,8 @@
       "module": "control_api.views",
       "area": "control_api",
       "file": "control_api/views.py",
-      "original": "    bet_id = _ident_or_none(_bet_id_from_response(response))",
-      "mutated": "    bet_id = _ident_or_none(_bet_id_from_response(response)) or f\"LOCAL-{local_id}\"",
+      "original": "        if found not in (None, \"\"):\n            return str(found)\n    return None",
+      "mutated": "        if found not in (None, \"\"):\n            return str(found)\n    return \"LOCAL-UNKNOWN\"",
       "tests": [
         "tests/control_api/test_orders_view.py"
       ],
