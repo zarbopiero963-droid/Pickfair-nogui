@@ -19,7 +19,12 @@ import pytest
 pytest.importorskip("pickfair_control_api")
 
 from control_api.bridge import make_providers, start_control_api  # noqa: E402
-from control_api.views import reconciliation_view, status_view  # noqa: E402
+from control_api.views import (  # noqa: E402
+    account_view,
+    exposure_view,
+    reconciliation_view,
+    status_view,
+)
 
 OBJECTS = ("risk_desk", "table_manager", "duplication_guard", "mm", "reconciliation_engine")
 # Ammessi dopo lettura del codice (services/betfair_service.py): `status()` costruisce un dict
@@ -108,8 +113,12 @@ def test_reads_have_no_effect_on_a_started_sim_runtime(
         for _ in range(50):
             status_view(rc)
             reconciliation_view(rc)
+            account_view(rc)
+            exposure_view(rc)
             assert read_http(server.port, token, "/v1/status") == 200
             assert read_http(server.port, token, "/v1/reconciliation/status") == 200
+            assert read_http(server.port, token, "/v1/account") == 200
+            assert read_http(server.port, token, "/v1/exposure") == 200
 
         assert calls == []                                   # 3, 5: nessuna query, nessun monitor
         assert db_digest(tmp_path) == db_before              # 1
@@ -137,6 +146,8 @@ def test_reads_never_wait_on_runtime_locks(sim_runtime: Any) -> None:
         started = time.monotonic()
         status_view(rc)
         reconciliation_view(rc)
+        account = account_view(rc)
+        exposure = exposure_view(rc)
         elapsed = time.monotonic() - started
     finally:
         release.set()
@@ -144,6 +155,12 @@ def test_reads_never_wait_on_runtime_locks(sim_runtime: Any) -> None:
     # Il lock resta tenuto fino a 10 s: se le letture lo attendessero durerebbero ~10 s.
     # Soglia larga e stabile anche sotto carico (mutation testing in parallelo).
     assert elapsed < 2.0  # 6: le letture non attendono i lock di ammissione e dei tavoli
+    # MCP-01e: con il lock dei tavoli tenuto dal runtime le sezioni dei tavoli sono indisponibili
+    # (attesa massima limitata), mai bloccate né stimate; quelle del RiskDesk restano leggibili.
+    assert exposure["tables"] is None and exposure["total_exposure"] is None
+    assert exposure["recovery"] is None
+    assert exposure["unavailable"] == ["tables", "total_exposure", "recovery"]
+    assert account["bankroll"] is not None
 
 
 def test_runtime_operations_are_not_slowed_by_continuous_reads(sim_runtime: Any) -> None:
@@ -155,6 +172,8 @@ def test_runtime_operations_are_not_slowed_by_continuous_reads(sim_runtime: Any)
         while not stop.is_set():
             providers["status"]()
             providers["reconciliation_status"]()
+            providers["account"]()
+            providers["exposure"]()
 
     readers = [threading.Thread(target=hammer) for _ in range(4)]
     for t in readers:

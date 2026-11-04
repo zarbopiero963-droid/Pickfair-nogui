@@ -8392,6 +8392,129 @@
         "tests/control_api/test_launcher.py"
       ],
       "rationale": "PF-MCP-004/008 ponte Control API (handoff Claude C): listener lasciato aperto se la pubblicazione del token fallisce (servizio parziale)."
+    },
+    {
+      "id": "cap_lock_wait_unbounded",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        return {name: None for name in fields}, list(fields)",
+      "mutated": "        return _collect(fields)",
+      "tests": [
+        "tests/control_api/test_finance_views.py",
+        "tests/control_api/test_side_effects.py"
+      ],
+      "rationale": "MCP-01e ponte Control API account/exposure (handoff Claude C): lock non ottenuto ma letture eseguite comunque (attesa non limitata/lettura fuori lock)."
+    },
+    {
+      "id": "cap_lock_not_released",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        return _collect(fields)\n    finally:\n        lock.release()  # type: ignore[attr-defined]",
+      "mutated": "        return _collect(fields)\n    finally:\n        pass",
+      "tests": [
+        "tests/control_api/test_finance_views.py",
+        "tests/control_api/test_side_effects.py"
+      ],
+      "rationale": "MCP-01e ponte Control API account/exposure (handoff Claude C): lock del motore mai rilasciato dopo la lettura (blocco del runtime)."
+    },
+    {
+      "id": "cap_event_name_leak",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "                \"occupied\": bool(event_key),  # il nome dell'evento (testo libero) non esce",
+      "mutated": "                \"occupied\": event_key,  # il nome dell'evento (testo libero) non esce",
+      "tests": [
+        "tests/control_api/test_finance_views.py"
+      ],
+      "rationale": "MCP-01e ponte Control API account/exposure (handoff Claude C): il nome dell'evento (testo libero esterno) esce dalla Control API."
+    },
+    {
+      "id": "cap_identifier_unchecked",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if not isinstance(value, str) or not IDENTIFIER_RE.fullmatch(value):\n        raise _Unavailable(\"identifier\")",
+      "mutated": "    if not isinstance(value, str):\n        raise _Unavailable(\"identifier\")",
+      "tests": [
+        "tests/control_api/test_finance_views.py"
+      ],
+      "rationale": "MCP-01e ponte Control API account/exposure (handoff Claude C): identificativo di mercato non validato: testo libero/iniezione esce come market_id."
+    },
+    {
+      "id": "cap_money_non_finite",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if not math.isfinite(number) or abs(number) > MONEY_LIMIT or (non_negative and number < 0):",
+      "mutated": "    if abs(number) > MONEY_LIMIT or (non_negative and number < 0):",
+      "tests": [
+        "tests/control_api/test_finance_views.py"
+      ],
+      "rationale": "MCP-01e ponte Control API account/exposure (handoff Claude C): importo non finito (stato corrotto) esce come valore."
+    },
+    {
+      "id": "cap_total_exposure_recomputed",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    return _money(_attr(rc, \"table_manager\").total_exposure(), non_negative=True)",
+      "mutated": "    return 0.0",
+      "tests": [
+        "tests/control_api/test_finance_views.py"
+      ],
+      "rationale": "MCP-01e ponte Control API account/exposure (handoff Claude C): esposizione totale non letta dal core (valore inventato/zero)."
+    },
+    {
+      "id": "cap_desk_mode_unlocked_inputs",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        bankroll_current=bankroll[\"bankroll_current\"], equity_peak=bankroll[\"equity_peak\"]",
+      "mutated": "        bankroll_current=bankroll[\"bankroll_current\"], equity_peak=bankroll[\"bankroll_current\"]",
+      "tests": [
+        "tests/control_api/test_finance_views.py"
+      ],
+      "rationale": "MCP-01e ponte Control API account/exposure (handoff Claude C): desk mode calcolato su argomenti diversi da quelli del core (mai LOCKDOWN)."
+    },
+    {
+      "id": "cap_cash_reason_when_verified",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if not verified:\n        raw = vars(desk).get(\"cash_equity_reason\")",
+      "mutated": "    if True:\n        raw = vars(desk).get(\"cash_equity_reason\")",
+      "tests": [
+        "tests/control_api/test_finance_views.py",
+        "tests/control_api/test_side_effects.py"
+      ],
+      "rationale": "MCP-01e ponte Control API account/exposure (handoff Claude C): motivo di cassa non verificata riportato anche con cassa verificata (risposta incoerente)."
+    },
+    {
+      "id": "cap_funds_error_hidden",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    reason = None if ok else (_optional_code(snap.get(\"reason\")) or UNSTRUCTURED)",
+      "mutated": "    reason = None",
+      "tests": [
+        "tests/control_api/test_finance_views.py"
+      ],
+      "rationale": "MCP-01e ponte Control API account/exposure (handoff Claude C): fondi non verificabili riportati senza motivo."
+    },
+    {
+      "id": "cap_recovery_recomputed",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    active = rc._active_recovery_count()  # type: ignore[attr-defined]  # fail-closed del core",
+      "mutated": "    active = len(_attr(rc, \"table_manager\").recovery_state())",
+      "tests": [
+        "tests/control_api/test_finance_views.py"
+      ],
+      "rationale": "MCP-01e ponte Control API account/exposure (handoff Claude C): conteggio recovery ricalcolato ignorando il fail-closed del core (stato illeggibile)."
     }
   ]
 }

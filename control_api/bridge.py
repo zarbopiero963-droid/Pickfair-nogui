@@ -7,12 +7,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from control_api.views import reconciliation_view, status_view
+from control_api.views import account_view, exposure_view, reconciliation_view, status_view
 
 # Pin esatto del package pickfair_control_api (repository pickfair-mcp-). Un package diverso da
 # quello verificato non viene MAI usato: la Control API non parte (CONTRACT_PIN_MISMATCH).
-EXPECTED_CONTROL_API_VERSION = "1.1.0"
-EXPECTED_SCHEMA_HASH = "e9471531792d74337f03a3014e84364994fe76b25e28c6fab4b5ea117df9d4b6"
+EXPECTED_CONTROL_API_VERSION = "1.2.0"
+EXPECTED_SCHEMA_HASH = "bafc77d9623e8af9e233fe71c38f0a34949d73f6ebd0b627b4ce2498c9361528"
 
 
 class ControlApiPinMismatch(Exception):
@@ -34,6 +34,8 @@ def make_providers(
     return {
         "status": lambda: status_view(runtime, clock=clock),
         "reconciliation_status": lambda: reconciliation_view(runtime, clock=clock),
+        "account": lambda: account_view(runtime, clock=clock),
+        "exposure": lambda: exposure_view(runtime, clock=clock),
     }
 
 
