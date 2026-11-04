@@ -370,10 +370,49 @@ jobs:
           def compare_range(base_sha: str, head_sha: str):
               return gh_request("GET", f"/repos/{REPO}/compare/{base_sha}...{head_sha}")
 
+          def pr_bot_comments():
+              """Commenti della PR (tutte le pagine, tetto 20): servono a rr_needs_full_review."""
+              out, page = [], 1
+              while page <= 20:
+                  batch = gh_request("GET", f"/repos/{REPO}/issues/{PR_NUMBER}/comments?per_page=100&page={page}") or []
+                  out.extend(batch)
+                  if len(batch) < 100:
+                      return out
+                  page += 1
+              raise RuntimeError("troppi commenti: storico delle review non leggibile per intero")
+
+          def pr_commit_order():
+              """Posizione di ogni commit della PR (prefisso a 12 caratteri, dal piu' vecchio). L'API elenca al massimo
+              250 commit: oltre, gli head mancanti non sono nell'ordine e non chiudono nulla (=> review completa,
+              fail-closed). Il raise copre solo un'API che restituisse piu' pagine piene del previsto."""
+              order, page = {}, 1
+              while page <= 3:
+                  batch = gh_request("GET", f"/repos/{REPO}/pulls/{PR_NUMBER}/commits?per_page=100&page={page}") or []
+                  for c in batch:
+                      order.setdefault(str((c or {}).get("sha") or "")[:12], len(order))
+                  if len(batch) < 100:
+                      return order
+                  page += 1
+              raise RuntimeError("troppi commit: ordine dei commit della PR non leggibile per intero")
+
+          def full_review_required():
+              """True se serve la review dell'INTERO diff. Storico illeggibile => True (fail-closed: costa una review
+              in piu', non nasconde un bloccante)."""
+              try:
+                  return rr_needs_full_review(pr_bot_comments(), REVIEW_ID, BASE_SHA, pr_commit_order(), HEAD_SHA)
+              except Exception as exc:
+                  print(f"::warning::{REVIEW_ID}: storico review non leggibile ({redact(str(exc))[:200]}): review completa")
+                  return True
+
           def resolve_range():
-              if EVENT_ACTION == "synchronize" and good_sha(BEFORE_SHA):
+              if EVENT_ACTION == "synchronize" and good_sha(BEFORE_SHA) and not full_review_required():
                   base = BEFORE_SHA
                   scope = "push range"
+              elif EVENT_ACTION == "synchronize" and good_sha(BEFORE_SHA):
+                  # Governance #606: un range precedente non e' PASS => si rivede l'INTERO diff aggiornato, cosi' il
+                  # PASS (se arriva) copre la PR dalla base all'head e chiude i bloccanti nel verificatore.
+                  base = BASE_SHA
+                  scope = "intera PR (precedente non-PASS)"
               else:
                   base = BASE_SHA
                   scope = "current PR range"
@@ -1037,6 +1076,47 @@ jobs:
                   "Non copre bloccanti, crediti esauriti, CI rossa, hard verify o altri gate.\n"
               )
           # <<< REVIEW_RECOVERY_CORE <<<
+
+          def rr_needs_full_review(comments, review_id, base_sha, commit_order, head_sha):
+              """Governance #606 (decisione owner): dopo un esito non-PASS la review successiva copre l'INTERO diff.
+
+              Si guarda OGNI tentativo di ogni range di QUESTO reviewer, solo nei commenti del bot del workflow (un
+              commento forgiato non chiude nulla): ogni tentativo emette un'attestazione firmata, quindi anche un
+              non-PASS seguito da un PASS sullo stesso range delta resta aperto nel verificatore (rilievo Sol su #607).
+              Serve la review completa se un tentativo non-PASS non e' chiuso da un PASS successivo che parte dalla base
+              attuale della PR e arriva ALMENO al suo head, come in scripts/pr_review_attestation.py. `commit_order`
+              (prefisso 12 -> posizione nella PR) misura l'head; un head assente dall'ordine (force-push, storico
+              incompleto) non chiude niente. «Successivo» = istante del commento strettamente posteriore; il numero del
+              tentativo conta SOLO dentro lo stesso commento (fra commenti diversi i contatori sono indipendenti: rilievo
+              Sol su #607). Un non-PASS senza istante non si chiude mai. Un non-PASS il cui head non e' piu' nella PR
+              (force-push, decisione owner su #607) si chiude solo con un PASS successivo dalla base fino all'head
+              ESATTO attuale, come nel verificatore (OPEN_BLOCKERS_FORCE_PUSHED); head attuale fuori ordine => mai."""
+              events = []
+              for idx, c in enumerate(comments or []):
+                  if not isinstance(c, dict) or ((c.get("user") or {}).get("login") or "") != "github-actions[bot]":
+                      continue
+                  when = str(c.get("updated_at") or c.get("created_at") or "")
+                  for m in _RR_ATTEMPT_RE.finditer(str(c.get("body") or "")):
+                      if m.group(1) == review_id:
+                          events.append((m.group(2), m.group(3), (when, idx, int(m.group(4))), m.group(5)))
+              base12 = str(base_sha)[:12]
+              order = commit_order if isinstance(commit_order, dict) else {}
+              full_pass = [(order.get(to), k) for frm, to, k, st in events if frm == base12 and st == "VALID_PASS"]
+
+              def later(k, bad):
+                  return k[0] > bad[0] or (k[1] == bad[1] and k[2] > bad[2])
+
+              def cleared(bad_to, bad_key):
+                  pos = order.get(bad_to)
+                  if pos is None:   # commit uscito dalla storia: serve la PR intera fino all'head attuale
+                      pos = order.get(str(head_sha)[:12])
+                      return (bool(bad_key[0]) and pos is not None
+                              and any(p == pos and later(k, bad_key) for p, k in full_pass))
+                  return (bool(bad_key[0]) and pos is not None
+                          and any(p is not None and p >= pos and later(k, bad_key) for p, k in full_pass))
+
+              return any(st != "VALID_PASS" and not cleared(to, k) for _frm, to, k, st in events)
+
 
 
           def rr_coverage_summary(files, diff_text, compare_truncated):

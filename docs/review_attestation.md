@@ -80,6 +80,31 @@ Per leggere gli artefatti del proprio run i workflow hanno `actions: read`.
   **Copertura:** per ogni reviewer richiesto (Sol, Grok) i range PASS sono contigui dal base all'head. Un range non
   PASS che non è superato da un PASS successivo dà `OPEN_BLOCKERS` oppure `NOT_COVERED_TO_HEAD`.
 
+  **Dopo un non-PASS serve una review dell'intero diff** (decisione owner sulla #606, governance). Un range BLOCKERS,
+  INCONCLUSIVE, ERROR o incompleto resta aperto finché un PASS **emesso dopo** non copre la PR **dalla base** fino
+  almeno alla fine di quel range. Un PASS sul solo delta successivo non lo chiude più, perché non prova che la PR
+  intera sia corretta. Il PASS completo passa da tutti i controlli dell'attestazione: firma Sigstore, workflow su
+  main, digest del diff ricalcolato, nessun file tagliato. Le attestazioni storiche non vengono riscritte.
+
+  **Force-push (decisione owner su #607).** Un non-PASS autentico il cui head non è più nella PR (commit usciti dalla
+  storia) non blocca per sempre, ma non si cancella da solo: resta `OPEN_BLOCKERS_FORCE_PUSHED` finché un PASS firmato
+  **successivo** non copre l'intera PR dalla base fino all'**head esatto attuale**. Un PASS sui soli delta, o un PASS
+  completo che si ferma prima dell'head, non basta. Togliere un commit dalla storia non fa sparire un rilievo: la
+  review completa del diff corrente deve riconfermare che il problema non c'è più. Il workflow chiede la stessa review
+  completa (head del non-PASS fuori ordine ⇒ serve un PASS dalla base fino a `HEAD_SHA`).
+
+  **Lato workflow** (`rr_needs_full_review`, identica nei workflow di Sol e Grok): sulla push successiva il workflow
+  legge **ogni** tentativo di ogni range di quel reviewer, solo nei commenti di `github-actions[bot]`: ogni tentativo
+  emette un'attestazione firmata, quindi un non-PASS seguito da un PASS sullo stesso range delta resta aperto anche nel
+  verificatore (rilievo Sol sulla review completa della #607). «Successivo» = istante del commento strettamente
+  posteriore; il numero del tentativo conta solo dentro lo stesso commento. Un non-PASS senza istante non si chiude. Se un range
+  non-PASS non è chiuso da un PASS che parte dalla base attuale, è più recente e arriva almeno all'head di quel range,
+  la review copre `BASE_SHA...HEAD` con scope «intera PR (precedente non-PASS)». La posizione degli head viene
+  dall'elenco dei commit della PR (`pr_commit_order`, al massimo 250 commit). Un head assente dall'elenco, per
+  esempio dopo un force-push, non chiude niente. In caso contrario resta il push range, che costa meno. Se lo storico
+  dei commenti o l'elenco dei commit non sono leggibili, si fa la review completa: fail-closed, al costo di una
+  review in più (rilievo Sol su #607: un PASS `BASE...C1` più recente non chiude un BLOCKERS su `C1...C2`).
+
   «Successivo» vuol dire due cose:
   - è nell'istante di emissione firmato (`generated_at`, strettamente dopo). Non conta il numero del run, perché un
     rerun lo conserva: un BLOCKERS del run 10 rilanciato dopo un PASS del run 11 resta aperto;
@@ -112,7 +137,7 @@ più volte per la stessa PR, le attestazioni sono idempotenti: la VPS rivaluta o
 
 ## 4. Test
 `tests/scripts/test_pr_review_attestation.py`:
-- **positivi:** range completo, range di push concatenati, bloccante poi corretto;
+- **positivi:** range completo, range di push concatenati, bloccante poi corretto da un PASS sull'intero diff;
 - **negativi:**
   - firma invalida, issuer sbagliato o digest diverso;
   - evento `pull_request`;

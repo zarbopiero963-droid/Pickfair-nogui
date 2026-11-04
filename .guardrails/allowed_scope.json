@@ -3407,6 +3407,20 @@
         "tests/scripts/test_pf_test_dispatch.py"
       ],
       "max_files": 9
+    },
+    "gov_full_review_after_non_pass": {
+      "description": "Governance (decisione owner su #606, merge owner: workflow-gate e scripts/pr_*): dopo un esito non-PASS di Sol o Grok la review successiva copre l'intero diff BASE...HEAD (rr_needs_full_review nei due workflow, storico illeggibile => review completa); il verificatore chiude un non-PASS solo con un PASS successivo dalla base che arriva almeno alla fine del range bloccato. Nessuna attestazione storica riscritta, nessun controllo di firma/digest/copertura allentato.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/review_attestation.md",
+        "scripts/pr_review_attestation.py",
+        "tests/scripts/test_pr_review_attestation.py"
+      ],
+      "max_files": 7
     }
   }
 }
