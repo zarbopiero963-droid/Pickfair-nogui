@@ -73,6 +73,30 @@ def _book_summary(book: Any, market_id: str) -> Dict[str, Any]:
             "fields": sorted(k for k in book if isinstance(k, str))[:30]}
 
 
+STATEMENT_PAGE = 100            # recordCount massimo per pagina di getAccountStatement
+STATEMENT_MAX_PAGES = 200       # guardia contro paginazioni infinite (fail-closed: troncato => errore)
+
+
+def export_account_statement(client: Any, *, from_iso: str, to_iso: str) -> Dict[str, Any]:
+    """Esporta l'estratto conto (``getAccountStatement``, sola lettura) nell'intervallo, tutte le pagine.
+
+    Il risultato contiene IMPORTI: e' l'evidenza privata da passare a ``tools/equity_peak_reconstruction`` (F-11), mai
+    al report pubblicabile. Paginazione oltre il limite o risposta malformata => eccezione (mai un estratto parziale
+    presentato come completo)."""
+    items: List[Dict[str, Any]] = []
+    for page in range(STATEMENT_MAX_PAGES):
+        result = client._post_jsonrpc(client.ACCOUNT_URL, "AccountAPING/v1.0/getAccountStatement", {
+            "fromRecord": page * STATEMENT_PAGE, "recordCount": STATEMENT_PAGE,
+            "itemDateRange": {"from": from_iso, "to": to_iso}, "includeItem": "ALL",
+        })
+        if not isinstance(result, dict) or not isinstance(result.get("accountStatement"), list):
+            raise RuntimeError("STATEMENT_MALFORMED")
+        items.extend(result["accountStatement"])
+        if not result.get("moreAvailable"):
+            return {"accountStatement": items, "itemDateRange": {"from": from_iso, "to": to_iso}}
+    raise RuntimeError("STATEMENT_TRUNCATED: pagination cap exceeded")
+
+
 def run_campaign(client: Any, transport: ReadOnlyTransport, *, mode: str, max_markets: int = 3,
                  commit_sha: str = "") -> Dict[str, Any]:
     """Esegue le letture; mai un'eccezione. Il report e' FAIL se la guardia ha registrato una violazione."""

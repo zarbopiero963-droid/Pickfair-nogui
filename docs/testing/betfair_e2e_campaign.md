@@ -43,6 +43,9 @@ Verifiche che il livello B deve chiudere (oggi UNVERIFIED):
 4. Paginazione reale di `listCurrentOrders`/`listClearedOrders` (`moreAvailable`).
 5. Latenza delle letture (il gate fondi richiede conferme ≤ 30 s, F-16).
 6. Stream (MCM/OCM): non coperto dal runner REST; da aggiungere se la lane ha lo stream abilitato.
+7. Estratto conto per la ricostruzione del picco F-11: `export_account_statement(client, from_iso=..., to_iso=...)`
+   (`getAccountStatement`, tutte le pagine; troncato o malformato ⇒ errore). Il file contiene importi: è un'evidenza
+   privata da passare a `tools/equity_peak_reconstruction`, mai al report pubblicabile.
 
 ## Livello C — ordini reali (NON AUTORIZZATO)
 

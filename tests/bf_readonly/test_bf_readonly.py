@@ -171,3 +171,39 @@ def test_campagna_e_fail_se_la_guardia_ha_bloccato_qualcosa() -> None:
     report = run_campaign(c, guardia, mode="OFFLINE_FIXTURE", max_markets=1)
 
     assert report["verdict"] == "FAIL" and report["read_only_violations"], report
+
+
+# ------------------------------------------------------------------ estratto conto per la ricostruzione F-11
+def test_export_estratto_conto_pagina_tutto_in_sola_lettura() -> None:
+    from tools.bf_readonly.campaign import export_account_statement
+
+    pagine = [{"accountStatement": [{"refId": str(i), "balance": i} for i in range(100)], "moreAvailable": True},
+              {"accountStatement": [{"refId": "x", "balance": 1}], "moreAvailable": False}]
+
+    class _ReteStatement(_Rete):
+        def post(self, url, **kw):
+            body = json.loads(kw["data"])
+            self.inviate.append(body[0]["method"])
+            return _Resp([{"jsonrpc": "2.0", "id": 1, "result": pagine[body[0]["params"]["fromRecord"] // 100]}])
+
+    rete = _ReteStatement()
+    c, guardia = _client(rete)
+    out = export_account_statement(c, from_iso="2026-01-01T00:00:00Z", to_iso="2026-11-01T00:00:00Z")
+
+    assert len(out["accountStatement"]) == 101 and guardia.violations == []
+    assert rete.inviate == ["AccountAPING/v1.0/getAccountStatement"] * 2
+
+
+def test_export_estratto_conto_malformato_o_troncato_e_errore() -> None:
+    from tools.bf_readonly import campaign
+
+    class _ReteRotta(_Rete):
+        def post(self, url, **kw):
+            return _Resp([{"jsonrpc": "2.0", "id": 1, "result": {"moreAvailable": True, "accountStatement": []}}])
+
+    c, _g = _client(_ReteRotta())
+    with pytest.raises(RuntimeError, match="STATEMENT_TRUNCATED"):
+        campaign.export_account_statement(c, from_iso="a", to_iso="b")
+    c2, _g2 = _client(_Rete({"AccountAPING/v1.0/getAccountStatement": {"x": 1}}))
+    with pytest.raises(RuntimeError, match="STATEMENT_MALFORMED"):
+        campaign.export_account_statement(c2, from_iso="a", to_iso="b")

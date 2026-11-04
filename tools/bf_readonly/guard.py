@@ -26,6 +26,7 @@ ALLOWED_METHODS = frozenset({
     "SportsAPING/v1.0/listClearedOrders",
     "AccountAPING/v1.0/getAccountFunds",
     "AccountAPING/v1.0/getAccountDetails",
+    "AccountAPING/v1.0/getAccountStatement",     # storico conto: input della ricostruzione del picco (F-11)
 })
 
 #: Metodi che alterano ordini o fondi: elencati per documentazione e test; la guardia rifiuta comunque tutto cio' che non
