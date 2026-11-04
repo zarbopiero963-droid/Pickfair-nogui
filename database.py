@@ -2171,6 +2171,38 @@ class Database:
                         "payload": payload if isinstance(payload, dict) else {}})
         return out
 
+    def find_orders_by_customer_ref(self, customer_ref: str) -> List[Dict[str, Any]]:
+        """F-04: righe ``orders`` di un intento (``customer_ref`` del tavolo) con stato, ``bet_id`` estratto dalla
+        risposta e request persistita. Sola lettura; lista vuota se nessuna o ``customer_ref`` vuoto."""
+        wanted = str(customer_ref or "").strip()
+        if not wanted:
+            return []
+        rows = self._execute(
+            "SELECT status, payload_json, response_json FROM orders WHERE customer_ref = ? ORDER BY id",
+            (wanted,), fetch=True, commit=False)
+        out: List[Dict[str, Any]] = []
+        for row in rows or []:
+            item = dict(row)
+            payload = self._safe_json_loads(item.get("payload_json"), {})
+            out.append({"status": str(item.get("status") or ""),
+                        "bet_id": self._order_bet_id(self._safe_json_loads(item.get("response_json"), {})),
+                        "payload": payload if isinstance(payload, dict) else {}})
+        return out
+
+    def claim_setting_once(self, key: str, value: Any, *, replace_if: Optional[str] = None) -> bool:
+        """F-04: rivendicazione atomica di ``key`` (``True`` = scritta ora). Senza ``replace_if`` scrive SOLO se la
+        chiave e' assente; con ``replace_if`` la sostituisce SOLO se il valore attuale e' esattamente quello
+        (compare-and-set). Una sola rivendicazione anche fra due processi sullo stesso file SQLite."""
+        text = str(value if value is not None else "")
+        with self.transaction() as conn:
+            if replace_if is None:
+                cur = conn.execute("INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO NOTHING",
+                                   (str(key), text))
+            else:
+                cur = conn.execute("UPDATE settings SET value = ? WHERE key = ? AND value = ?",
+                                   (text, str(key), str(replace_if)))
+            return cur.rowcount == 1
+
     def insert_audit_event(self, event: Dict[str, Any]) -> None:
         self._execute(
             "INSERT INTO audit_events(ts, event_json) VALUES (?, ?)",

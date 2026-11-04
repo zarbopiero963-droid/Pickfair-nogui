@@ -3405,6 +3405,22 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "d_f04_sl_tp_close": {
+      "description": "F-04 (#586, CSH-02): chiusura per tavolo allo scatto di SL/TP (eventi F-02 v1), rivendicazione persistente atomica, CASHOUT_TABLE interno nel CashoutRouter con tutti i gate del cashout; nessuna soglia nuova, nessun retry automatico.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "cashout_router.py",
+        "core/runtime_controller.py",
+        "core/sl_tp_close.py",
+        "database.py",
+        "docs/cashout_overview.md",
+        "guardrails/mutation_catalog.json",
+        "tests/acceptance/test_f04_sl_tp_table_close.py"
+      ],
+      "max_files": 9
     }
   }
 }

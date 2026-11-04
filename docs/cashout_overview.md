@@ -24,7 +24,7 @@ copy-pattern (regex)┘                                        │
                                    · gate live: emergency-stop (incl. daily-loss
                                      pending), session-guard, deploy-gate, runtime-active
                                    · guard anti-silent-drop (catena cablata?)
-                                   · branch signal_type ∈ {CASHOUT, CASHOUT_ALL}
+                                   · branch signal_type ∈ {CASHOUT, CASHOUT_ALL, CASHOUT_TABLE (solo interno, F-04 §7.6)}
                                                              │
                                                              ▼
                                    CashoutRouter (A3, query LIVE)
@@ -483,8 +483,8 @@ BACK la raddoppia; un LAY 50 su una posizione da 0.23 apre una nuova esposizione
 `side="LAY"` quando il lato mancava. Ora:
 
 - `RiskMiddleware._cashout_side`: lato solo se dichiarato `BACK`/`LAY`; mancante o invalido => `CASHOUT_FAILED`
-  (`side_mancante_o_invalido`), mai un lato di default. L'auto-close del monitor SL/TP (inerte fino a F-02) dovra'
-  quindi mandare il lato dell'hedge;
+  (`side_mancante_o_invalido`), mai un lato di default. L'auto-close del monitor SL/TP passa da F-04
+  (§7.6), che instrada la chiusura del tavolo nel `CashoutRouter`: il lato dell'hedge e' quello del green-up;
 - `CashoutExecutor._hedge_coherence_block`, dentro il preflight del ledger (dopo i controlli sugli hedge precedenti
   di §7.3, sotto lo stesso lock) e anche senza ledger, decide con `RiskGate.protective_hedge`:
   - lato della posizione da `original_pos` (`cashout_resolver` lo mette sempre); assente/invalido =>
@@ -515,6 +515,58 @@ BACK la raddoppia; un LAY 50 su una posizione da 0.23 apre una nuova esposizione
 Esempio: BACK 0.23 abbinato a 2.0 (esposizione 0.46), chiusura a 1.8 => hedge LAY massimo 0.26; LAY 50 => rifiuto.
 Limite: ordini manuali del lato opposto sulla stessa selezione riducono il netto e possono far rifiutare il green-up
 del bot (fail-closed: mai un hedge oltre l'esposizione reale). Test: `tests/f06/`; mutazioni `f06_*`.
+
+### 7.6 Chiusura per tavolo allo scatto di SL/TP (F-04, CSH-02)
+
+`RuntimeController._on_sl_tp_triggered` consuma gli eventi di F-02 `SL_TRIGGERED` / `TP_TRIGGERED` (contratto v1,
+`core/sl_tp_close.py`) e chiude **solo** la posizione del tavolo che li ha prodotti, mai la partita intera: gli altri
+tavoli sulla stessa partita (anche sullo stesso mercato) restano intatti, compresi i loro ordini non abbinati.
+
+Passi, tutti prima di qualunque ordine (fail-closed, esito sul bus col motivo):
+
+1. **Evento v1 valido** (`parse_trigger`): `reason` coerente col topic, `source == "AUTO_MONITOR"`, `table_id` intero
+   positivo, mercato e selezione validi, `side` `BACK`/`LAY`, `customer_ref` presente, `pnl` finito. Altrimenti
+   `SL_TP_CLOSE_REJECTED` `PAYLOAD_INVALID:<motivo>`.
+2. **Identita' del tavolo** (`table_identity_reason`): il tavolo attivo `table_id` deve avere lo stesso
+   `customer_ref`, mercato, selezione e lato dell'evento (`TABLE_NOT_FOUND`, `TABLE_REF_MISMATCH`,
+   `TABLE_MARKET_MISMATCH`, `TABLE_SELECTION_MISMATCH`, `TABLE_SIDE_MISMATCH`). Un evento arrivato dopo il rilascio o la
+   riassegnazione del tavolo non chiude niente.
+3. **Ordini della posizione** (`Database.find_orders_by_customer_ref` + `position_bet_ids`): i `bet_id` degli ordini
+   dell'intento del tavolo. Un ordine `INFLIGHT`/`AMBIGUOUS`, o inviato senza `bet_id`, blocca la chiusura
+   (`ORDER_STATE_UNCERTAIN:*`: prima la riconciliazione, mai un hedge su una posizione non certa); un ordine con
+   mercato/selezione/lato diversi dal tavolo => `ORDER_IDENTITY_MISMATCH`; nessun ordine piazzato => `NO_PLACED_ORDERS`.
+4. **Rivendicazione persistente** in `settings` (`risk.sl_tp_close.<customer_ref>`, una per posizione: SL e TP della
+   stessa posizione condividono la chiave) con `Database.claim_setting_once`: inserimento solo se assente, oppure
+   compare-and-set dal solo stato `NOT_EXECUTED`. Atomica anche fra due processi. Scrittura fallita =>
+   `CLAIM_NOT_PERSISTED`, nessun ordine; rivendicazione gia' presente => `SL_TP_CLOSE_SKIPPED` `ALREADY_<stato>`.
+5. **Instradamento** come segnale interno `CASHOUT_TABLE` nel percorso cashout esistente (`_on_signal_received`):
+   valgono tutti i gate (emergency stop e perdita giornaliera, sessione LIVE, deploy gate, runtime attivo, autorita'
+   #536, catena cablata), la barriera d'ammissione sulla selezione e tutte le protezioni di `CashoutRouter`
+   (book assente o mercato non OPEN => nessun hedge, cancel confermato del resting prima dell'hedge, profondita' R1,
+   F-06 sulla coerenza dell'hedge). Un `CASHOUT_TABLE` che non nasce dal consumer interno (token sconosciuto) e'
+   rifiutato: `cashout_table_internal_only`.
+
+`CashoutRouter` con `CASHOUT_TABLE`: ambito obbligatorio (mercato, selezione, lato, `bet_ids` non vuoti, senza
+duplicati, tutti ordini del bot), altrimenti `CASHOUT_FAILED` `table_scope_invalid:<motivo>`; posizioni, resting e
+flatten ristretti ai soli `bet_ids` del tavolo e alla sua selezione; lato della posizione diverso da quello del tavolo
+=> `table_scope_invalid:SIDE_MISMATCH` (un hedge sul lato sbagliato aumenterebbe l'esposizione).
+
+Stati persistiti ed esiti pubblicati:
+
+| Stato | Esito sul bus | Significato | Ritentabile da un nuovo scatto |
+|---|---|---|---|
+| `CLAIMED` | — | rivendicata, instradamento in corso o processo caduto prima dell'esito | no |
+| `ROUTED` | `SL_TP_CLOSE_ROUTED` | richiesta d'hedge pubblicata nella catena cashout (esito AMBIGUOUS dell'hedge: catena cashout, F-05) | no |
+| `NOT_EXECUTED` | `SL_TP_CLOSE_NOT_EXECUTED` | nessuna richiesta d'hedge pubblicata (gate, mercato sospeso o chiuso, profondita', nessuna posizione) | si' |
+| `UNCERTAIN` | `SL_TP_CLOSE_UNCERTAIN` | errore durante l'instradamento o esito mancante: un hedge potrebbe essere partito | no (riconciliazione) |
+
+Nessun retry automatico (PF-EXEC-05): `NOT_EXECUTED` si ritenta solo con un nuovo scatto dell'evento. Un riavvio, un
+secondo scatto dello stesso evento o lo scatto di TP dopo SL non producono mai un secondo cashout.
+
+Limiti dichiarati: F-02 (Claude B, branch `keep/f02-sl-tp-path-20261103`) non e' su `main`: senza F-02 nessun evento
+viene pubblicato e il consumer resta inerte. Il latch di F-02 e' in memoria: dopo un riavvio lo scatto si ripete e
+viene assorbito dalla rivendicazione persistente. Test:
+`tests/acceptance/test_f04_sl_tp_table_close.py`; mutazioni `f04_*`.
 
 ---
 

@@ -27,6 +27,7 @@ from core.runtime_authority import RuntimeAuthority, RuntimeAuthorityLost
 from core.state_recovery import StateRecovery
 from core.risk_desk import RiskDesk
 from core import sl_tp_pnl
+from core import sl_tp_close
 from core.safety_layer import assert_live_gate_or_refuse
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
@@ -1507,6 +1508,9 @@ class RuntimeController:
         self.bus.subscribe(CASHOUT_FAILED, self._on_cashout_execution_outcome)
         self.bus.subscribe(CASHOUT_REQUEST_SUPPRESSED, self._on_cashout_execution_outcome)
         self.bus.subscribe(CASHOUT_RESIDUAL_HANDLED, self._on_cashout_residual_handled)
+        # F-04 (#586): SL/TP scattati (F-02) => chiusura del SOLO tavolo interessato
+        self.bus.subscribe(sl_tp_close.SL_TRIGGERED, self._on_sl_triggered)
+        self.bus.subscribe(sl_tp_close.TP_TRIGGERED, self._on_tp_triggered)
 
     # =========================================================
     # CONFIG / MODE
@@ -3125,6 +3129,7 @@ class RuntimeController:
     # SIGNAL FLOW
     # =========================================================
     def _reject_signal(self, signal: dict, reason: str) -> None:
+        RuntimeController._record_sl_tp_route(self, signal, {"rejected": reason})
         self.bus.publish(
             "SIGNAL_REJECTED",
             {
@@ -3672,12 +3677,14 @@ class RuntimeController:
             ctx = getattr(self, "_cashout_route_ctx", None)
             RuntimeController._await_entries_in_flight(self, getattr(ctx, "barrier_id", None))
             result = router.route(signal)
+            RuntimeController._record_sl_tp_route(self, signal, {"result": result})
             logger.info(
                 "[RuntimeController] cashout instradato: type=%s result=%s",
                 signal.get("signal_type"), result,
             )
         except Exception as exc:  # noqa: BLE001 - fail-closed: niente scarto silenzioso
             logger.exception("[RuntimeController] errore routing cashout")
+            RuntimeController._record_sl_tp_route(self, signal, {"error": str(exc)})
             self.bus.publish(CASHOUT_FAILED, {
                 "reason": f"cashout_route_error:{exc}",
                 "status": "ERROR",
@@ -3689,7 +3696,11 @@ class RuntimeController:
 
     def _on_signal_received(self, signal: dict) -> None:
         signal_type = str((signal or {}).get("signal_type") or "").strip().upper()
-        if signal_type in {"CASHOUT", "CASHOUT_ALL"}:
+        if signal_type == "CASHOUT_TABLE" and not RuntimeController._is_internal_sl_tp_route(self, signal):
+            # F-04: la chiusura per tavolo nasce solo dal consumer SL/TP interno, mai da un segnale esterno.
+            self._reject_signal(dict(signal or {}), "cashout_table_internal_only")
+            return
+        if signal_type in {"CASHOUT", "CASHOUT_ALL", "CASHOUT_TABLE"}:
             with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
                 barrier_id, scope = self._begin_cashout_barrier(signal)
             try:
@@ -3870,6 +3881,128 @@ class RuntimeController:
             routed.add(barrier_id)
             return
         RuntimeController._end_cashout_barrier(self, barrier_id)
+
+    # =========================================================
+    # F-04 (#586): CHIUSURA PER TAVOLO ALLO SCATTO DI SL/TP
+    # =========================================================
+    def _on_sl_triggered(self, payload: dict) -> None:
+        RuntimeController._on_sl_tp_triggered(self, sl_tp_close.SL_TRIGGERED, payload)
+
+    def _on_tp_triggered(self, payload: dict) -> None:
+        RuntimeController._on_sl_tp_triggered(self, sl_tp_close.TP_TRIGGERED, payload)
+
+    def _sl_tp_routes(self) -> dict:
+        routes = getattr(self, "_sl_tp_pending_routes", None)
+        if routes is None:
+            routes = self._sl_tp_pending_routes = {}
+        return routes
+
+    def _is_internal_sl_tp_route(self, signal) -> bool:
+        token = (signal or {}).get("sl_tp_route_token") if isinstance(signal, dict) else None
+        return isinstance(token, str) and token in RuntimeController._sl_tp_routes(self)
+
+    def _record_sl_tp_route(self, signal, outcome: dict) -> None:
+        """Primo esito dell'instradamento di una chiusura SL/TP (rifiuto di un gate, risultato del router o errore)."""
+        token = signal.get("sl_tp_route_token") if isinstance(signal, dict) else None
+        box = RuntimeController._sl_tp_routes(self).get(token) if isinstance(token, str) else None
+        if box is not None and not box:
+            box.update(outcome)
+
+    def _publish_sl_tp_close(self, topic: str, trigger, payload: Optional[dict], **extra) -> None:
+        body = trigger.as_payload() if trigger is not None else {
+            "contract_version": sl_tp_close.SL_TP_CLOSE_CONTRACT_VERSION, "event_id": None,
+            "table_id": (payload or {}).get("table_id") if isinstance(payload, dict) else None}
+        body.update(extra)
+        logger.warning("[RuntimeController] %s %s", topic, body)
+        self.bus.publish(topic, body)
+
+    def _on_sl_tp_triggered(self, topic: str, payload: dict) -> None:
+        """F-04: chiude SOLO la posizione del tavolo che ha raggiunto SL/TP.
+
+        Ordine (fail-closed, ogni passo prima di qualunque ordine): evento v1 valido -> tavolo attivo con lo stesso
+        intento/mercato/selezione/lato -> ``bet_id`` certi degli ordini dell'intento (un ordine incerto => prima la
+        riconciliazione) -> rivendicazione PERSISTENTE della chiusura (una per posizione: un riavvio o un secondo
+        scatto non producono un secondo cashout) -> instradamento come ``CASHOUT_TABLE`` nel percorso cashout, con
+        tutti i gate (emergency stop, sessione, deploy gate, autorita', barriera) e le protezioni del router.
+        """
+        trigger, why = sl_tp_close.parse_trigger(topic, payload)
+        if trigger is None:
+            RuntimeController._publish_sl_tp_close(self, sl_tp_close.SL_TP_CLOSE_REJECTED, None, payload,
+                                                   detail=f"PAYLOAD_INVALID:{why}")
+            return
+        prepared = RuntimeController._claim_sl_tp_close(self, trigger)
+        if prepared is None:
+            return
+        bet_ids = prepared
+        token = f"sltp-{uuid.uuid4().hex}"
+        box: dict = {}
+        routes = RuntimeController._sl_tp_routes(self)
+        routes[token] = box
+        try:
+            self._on_signal_received({
+                "signal_type": "CASHOUT_TABLE", "market_id": trigger.market_id,
+                "selection_id": trigger.selection_id, "side": trigger.side, "bet_ids": list(bet_ids),
+                "table_id": trigger.table_id, "sl_tp_event_id": trigger.event_id, "sl_tp_route_token": token,
+                "source": sl_tp_close.TRIGGER_SOURCE,
+            })
+        except Exception as exc:  # noqa: BLE001 - esito ignoto: mai un reinvio, riconciliazione
+            logger.exception("[RuntimeController] chiusura SL/TP: errore d'instradamento")
+            box.setdefault("error", str(exc))
+        finally:
+            routes.pop(token, None)
+        state, detail = sl_tp_close.route_outcome(box)
+        try:
+            self.db.save_settings({trigger.close_key: sl_tp_close.state_record(
+                trigger, state, bet_ids=bet_ids, reason=detail, at=time.time())})
+        except Exception:  # noqa: BLE001 - resta CLAIMED: non ritentabile (prudente)
+            logger.exception("[RuntimeController] chiusura SL/TP: stato finale non persistito (resta CLAIMED)")
+        topic_out = {sl_tp_close.STATE_ROUTED: sl_tp_close.SL_TP_CLOSE_ROUTED,
+                     sl_tp_close.STATE_NOT_EXECUTED: sl_tp_close.SL_TP_CLOSE_NOT_EXECUTED}.get(
+            state, sl_tp_close.SL_TP_CLOSE_UNCERTAIN)
+        RuntimeController._publish_sl_tp_close(self, topic_out, trigger, payload, state=state, detail=detail,
+                                               bet_ids=list(bet_ids))
+
+    def _claim_sl_tp_close(self, trigger):
+        """Identita' verificata + rivendicazione persistente. ``bet_ids`` se si puo' instradare, ``None`` (esito
+        gia' pubblicato) altrimenti. La rivendicazione e' atomica nel database (insert-if-absent, poi compare-and-set
+        da ``NOT_EXECUTED``): due scatti concorrenti, anche da due processi, non instradano due chiusure."""
+        def reject(detail: str, topic: str = sl_tp_close.SL_TP_CLOSE_REJECTED, **extra) -> None:
+            RuntimeController._publish_sl_tp_close(self, topic, trigger, None, detail=detail, **extra)
+
+        table = self.table_manager.get_table(trigger.table_id)
+        why = sl_tp_close.table_identity_reason(trigger, table)
+        if why:
+            reject(why)
+            return None
+        finder = getattr(self.db, "find_orders_by_customer_ref", None)
+        claim = getattr(self.db, "claim_setting_once", None)
+        if not callable(finder) or not callable(claim):
+            reject("CLOSE_STORE_UNAVAILABLE")
+            return None
+        try:
+            rows = finder(trigger.customer_ref)
+        except Exception as exc:  # noqa: BLE001
+            reject(f"ORDERS_UNREADABLE:{exc}")
+            return None
+        bet_ids, why = sl_tp_close.position_bet_ids(trigger, rows)
+        if bet_ids is None:
+            reject(why)
+            return None
+        record = sl_tp_close.state_record(trigger, sl_tp_close.STATE_CLAIMED, bet_ids=bet_ids, at=time.time())
+        try:
+            if not claim(trigger.close_key, record):
+                raw = self.db.get_settings().get(trigger.close_key)
+                prior = sl_tp_close.read_state(raw)
+                if prior not in sl_tp_close.REROUTABLE_STATES:
+                    reject(f"ALREADY_{prior or 'UNREADABLE'}", sl_tp_close.SL_TP_CLOSE_SKIPPED)
+                    return None
+                if not claim(trigger.close_key, record, replace_if=raw):
+                    reject("ALREADY_CLAIMED_CONCURRENTLY", sl_tp_close.SL_TP_CLOSE_SKIPPED)
+                    return None
+        except Exception as exc:  # noqa: BLE001 - senza rivendicazione persistente nessun ordine
+            reject(f"CLAIM_NOT_PERSISTED:{exc}")
+            return None
+        return bet_ids
 
     def _on_cashout_execution_outcome(self, payload: dict) -> None:
         payload = payload if isinstance(payload, dict) else {}
@@ -4452,7 +4585,7 @@ class RuntimeController:
         # pending, session-guard, deploy-gate, runtime-active) sono a monte:
         # un cashout passa di qui solo se l'order entry live è consentito (E1).
         signal_type = str(signal.get("signal_type") or "").strip().upper()
-        if signal_type in {"CASHOUT", "CASHOUT_ALL"}:
+        if signal_type in {"CASHOUT", "CASHOUT_ALL", "CASHOUT_TABLE"}:
             self._route_cashout_signal(signal)
             return
 
