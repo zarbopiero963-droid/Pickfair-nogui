@@ -186,3 +186,38 @@ def test_auto_next_con_snapshot_fondi_fresco_parte(monkeypatch) -> None:
     _rc, bus, esito = _auto_next_con_snapshot_vecchio(monkeypatch, 5.0)
 
     assert len([e for e in bus.events if e[0] == "CMD_QUICK_BET"]) == 1, esito
+
+
+# ------------------------------------------------------------------ manual bet e lotto Dutching (DutchingController reale)
+def _catena_controller_con_lettura(tmp_path, secondi: float):
+    from tests.acceptance.test_issue437_pr27 import _catena as _catena_dc
+
+    c = _catena_dc(tmp_path)
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0, "exposure": 0.0, "total": 1000.0,
+                                                      "simulated": True}
+    _lettura_invecchiata(c, secondi)
+    return c
+
+
+@pytest.mark.parametrize("ingresso", ["manual_bet", "submit_dutching"])
+def test_controller_ingresso_con_lettura_di_31s_rifiutato_senza_effetti(tmp_path, ingresso: str) -> None:
+    from tests.acceptance.test_issue523_dutching_manual_bet import _batch, _dutching, _manual, _no_side_effects
+
+    c = _catena_controller_con_lettura(tmp_path, 31.0)
+    dc = _dutching(c)
+    res = dc.manual_bet(_manual()) if ingresso == "manual_bet" else dc.submit_dutching(_batch())
+
+    assert res["ok"] is False and res["reason"] == "fondi_non_verificabili:FUNDS_STALE", res
+    _no_side_effects(c)
+
+
+@pytest.mark.parametrize("ingresso", ["manual_bet", "submit_dutching"])
+def test_controller_ingresso_con_lettura_di_29s_parte(tmp_path, ingresso: str) -> None:
+    from tests.acceptance.test_issue523_dutching_manual_bet import _batch, _dutching, _manual
+
+    c = _catena_controller_con_lettura(tmp_path, 29.0)
+    dc = _dutching(c)
+    res = dc.manual_bet(_manual(stake=4.0)) if ingresso == "manual_bet" else dc.submit_dutching(
+        _batch(total_stake=10.0))
+
+    assert res["ok"] is True, res
