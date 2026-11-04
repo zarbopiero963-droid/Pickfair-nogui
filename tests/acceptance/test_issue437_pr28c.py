@@ -255,6 +255,9 @@ def test_block_boot_reale_stop_esposizione_con_ordini_aperti(tmp_path):
     motivo = c.rc._risk_stop_reason
     assert motivo.startswith("exposure_stop_reached")
 
+    # F-11: il primo processo, avviato davvero, avrebbe persistito il picco dell'equity; senza, il riavvio di
+    # un'installazione con ordini partirebbe in PAUSED (EQUITY_PEAKS_MISSING_WITH_HISTORY) prima dello stop.
+    c.rc.db.save_settings({"risk.equity_peaks_state": json.dumps({"equity_peak": 1000.0, "cash_equity_peak": 1000.0})})
     riavvio = _catena(tmp_path, max_exposure_stop=1000.0)  # crash + restart
     riavvio.rc.settings_service.load_roserpina_config = lambda: riavvio.rc.config
     assert riavvio.rc.table_manager.total_exposure() == 0.0

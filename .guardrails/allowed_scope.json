@@ -3416,9 +3416,10 @@
         "core/runtime_controller.py",
         "docs/roserpina_bankroll_equity.md",
         "docs/startup_recovery.md",
-        "tests/acceptance/test_f11_equity_peak_persistence.py"
+        "tests/acceptance/test_f11_equity_peak_persistence.py",
+        "tests/acceptance/test_issue437_pr28c.py"
       ],
-      "max_files": 7
+      "max_files": 8
     }
   }
 }
