@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import math
 import uuid
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from core.order_ref import customer_order_ref
 from core.stake_precision import EXCHANGE_MIN_ORDER
+
+logger = logging.getLogger(__name__)
 
 #: Minimo del singolo ordine sull'exchange (EUR), dalla fonte unica `core.stake_precision` (riferimento owner 1 EUR,
 #: PF-MICROSTAKE-OWNER-FINAL-RECTIFICATION-01). Sotto questa soglia il router non chiama MAI il broker
@@ -107,7 +110,28 @@ class OrderRouter:
         # Eventuali eccezioni del broker si propagano: fail-closed, mai
         # mascherate come piazzamento riuscito.
         raw = client.place_bet(**call_kwargs)
+        self._recover_session_if_expired(raw)
         return self._normalize(raw)
+
+    _SESSION_ERRORS = ("SESSION_EXPIRED", "INVALID_SESSION", "NOT_AUTHENTICATED", "NO_SESSION")
+
+    def _recover_session_if_expired(self, raw: Any) -> None:
+        """Come il TradingEngine (trading_engine.py, percorso LIVE): un rifiuto per sessione scaduta avvia il recupero
+        della sessione del servizio, cosi' gli ordini successivi (hedge del cashout) non falliscono per la stessa causa.
+        L'ordine NON viene mai re-inviato: Betfair lo ha rifiutato prima di piazzarlo. Best-effort: un recupero che
+        fallisce o solleva non cambia l'esito dell'ordine."""
+        if not isinstance(raw, dict):
+            return
+        error = str(raw.get("error") or "")
+        if not any(code in error.upper() for code in self._SESSION_ERRORS):
+            return
+        handle = getattr(self.service, "handle_session_expiry", None)
+        if not callable(handle):
+            return
+        try:
+            handle(reason=error)
+        except Exception:  # noqa: BLE001 - il recupero non deve mai mascherare l'esito dell'ordine
+            logger.exception("OrderRouter: recupero della sessione scaduta fallito")
 
     @staticmethod
     def _below_exchange_minimum(raw_stake: Any) -> bool:

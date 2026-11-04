@@ -27,6 +27,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Nessuna attestazione storica viene riscritta. `docs/review_attestation.md` aggiornato.
 
 ### Fixed
+- **Hedge del cashout con sessione Betfair scaduta (PF-BETFAIR-E2E-01).** `OrderRouter.place` (ordini degli hedge del
+  cashout) non avviava il recupero della sessione su `SESSION_EXPIRED`/`INVALID_SESSION`/`NOT_AUTHENTICATED`, a
+  differenza del TradingEngine: gli hedge successivi fallivano per la stessa causa. Ora chiama
+  `handle_session_expiry` come l'engine; l'ordine resta fallito e non viene mai re-inviato. Test
+  `tests/unit/test_order_router_session_recovery.py`.
 - **CB-586-FI-03Z (#586, P1):** il broker SIM abbinava ordini contro livelli del book con size 0. Esempio: un LAY
   0,10@3.0 risultava abbinato a 2.02 su un book senza liquidità, con un matched finto e un'esposizione abbinata
   inventata. Ora un livello con size esplicita ≤ 0 è assente, come il delta Betfair che lo rimuove, e il migliore è il

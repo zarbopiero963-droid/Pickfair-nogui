@@ -3405,6 +3405,17 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "d_order_session_recovery": {
+      "description": "Claude D PF-BETFAIR-E2E-01: OrderRouter (hedge del cashout) avvia il recupero della sessione su SESSION_EXPIRED/INVALID_SESSION/NOT_AUTHENTICATED come il TradingEngine; l'ordine resta fallito, mai re-inviato.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/order_router.py",
+        "tests/unit/test_order_router_session_recovery.py"
+      ],
+      "max_files": 4
     }
   }
 }
