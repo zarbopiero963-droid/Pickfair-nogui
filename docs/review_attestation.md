@@ -139,6 +139,35 @@ Per leggere gli artefatti del proprio run i workflow hanno `actions: read`.
 **Anti-replay:** repo, PR e range sono nel contenuto firmato, quindi un'attestazione non vale per un'altra PR. Rilette
 più volte per la stessa PR, le attestazioni sono idempotenti: la VPS rivaluta ogni 2 minuti.
 
+## 3-bis. Evidenza di teardown del PRE-LIVE (`tools/teardown_evidence/verify_teardown_evidence.py`)
+
+Il gate PRE-LIVE dice se le suite sono passate; non dice che la sandbox di ogni run sia stata davvero distrutta. Da
+PF-TEARDOWN-EVIDENCE-01 (pf-orch `1.4.3+teardown-evidence-1`, installato il 04/11, rapporto firmato #586
+c.6638711409) ogni run pubblica sullo SHA un check informativo `pf-teardown-evidence/<suite>` con due oggetti firmati
+Ed25519 dalla chiave dei risultati: il manifest principale (`pf-cert-result/1`, invariato) e un sidecar
+`pf-teardown-sidecar/1` legato al manifest dal suo sha256, con build, sha dei file del runner e teardown verificato
+della unit (e della base di regressione).
+
+Il verificatore, lanciato da chiunque con `--repo --pr --sha`, legge solo GitHub ed è fail-closed:
+
+- parte dalla tabella del check `pf-betfair-certification` dell'app `pickfair-dedicated` (slug **e** id 5579027) e
+  dal blocco `pf-gate-decision/1`, che devono coincidere su suite, esito, motivo, firma e run;
+- per ogni run VPS richiesto esige un'unica evidenza della stessa app, le due firme con la chiave **fissata**
+  (`SHA256:DLb/jf5wcDUQkabvv1KbGzWQRQbkMvaO6tMRYmmcGBw`), il legame sha256, campi coerenti (run, SHA, PR, suite,
+  esito, repo, environment), build e file del runner autorizzati, teardown pulito del tipo di unit giusto (sandbox
+  `pf-sbx-<run>` con i 7 controlli, probe `pf-probe-<run>` con i 4, solo per `bf-readonly-api`);
+- i NOT_RUN senza unit (`REQUIRES_SEPARATE_GO_LIVE`, `NEEDS_DATA_SUSPENDED_MARKETS`, `SELECTION_ABSENT_NEEDS_TESTS`)
+  sono esenti solo con firma VERIFIED nel PRE-LIVE e, se l'evidenza c'è, con teardown nullo e lo stesso motivo
+  firmato; un PRE-LIVE senza nessuna unit VPS avviata non è mai PASS;
+- non legge mai verdetti, titoli o chiavi forniti dall'evidenza stessa; GitHub non leggibile => `INFRA_ERROR`.
+
+Esiti `PASS` / `FAIL` / `INFRA_ERROR` (exit 0/1/2). Il PASS riguarda **solo** il teardown: la conclusione del
+PRE-LIVE (`prelive_conclusion`, riportata nell'output) resta un gate separato, e un `NEEDS_MANUAL` non diventa PASS.
+Limiti dichiarati: la firma del blocco `pf-gate-decision/1` non è verificata (fiducia su app, SHA e stato); un check
+`pf-teardown-evidence/*` di un'altra app fa fallire la verifica (DoS possibile, mai un falso PASS); i run certificati
+prima dell'installazione non hanno evidenza e non vengono ricostruiti. Test: `tests/teardown_evidence/` (firme vere,
+manomissioni, mutazioni dei predicati).
+
 ## 4. Test
 `tests/scripts/test_pr_review_attestation.py`:
 - **positivi:** range completo, range di push concatenati, bloccante poi corretto da un PASS sull'intero diff;

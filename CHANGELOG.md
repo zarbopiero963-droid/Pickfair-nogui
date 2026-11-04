@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **Governance: verificatore dell'evidenza di teardown del PRE-LIVE (PF-TEARDOWN-EVIDENCE-01, #608):**
+  `tools/teardown_evidence/verify_teardown_evidence.py` verifica da GitHub, per ogni run VPS del PRE-LIVE, le evidenze
+  firmate `pf-teardown-evidence/<suite>` pubblicate da pf-orch `1.4.3+teardown-evidence-1` (doppia firma Ed25519 con
+  chiave fissata, legame sha256 manifest/sidecar, build autorizzata, teardown pulito del tipo di unit giusto).
+  Fail-closed; il PASS copre solo il teardown, non la conclusione del PRE-LIVE. Revisioni indipendenti e test di
+  manomissione in `tests/teardown_evidence/`; `docs/review_attestation.md` §3-bis.
 - **Governance: redazione dei reviewer e run di review saltati (decisione owner sulla #606, merge owner):**
   - la redazione dei segreti dei cinque workflow di review lascia visibili il permesso `id-token: read|write|none`
     e i riferimenti `${{ ... }}` fatti solo di contesti (`secrets.`, `github.`, `inputs.`...) che occupano tutto
