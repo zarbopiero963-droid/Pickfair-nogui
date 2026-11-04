@@ -78,6 +78,20 @@ ledger. Snapshot: OK, PARTIAL (righe illeggibili contate o elenco troncato), STA
 d'avvio non conclusa), UNKNOWN (database occupato), UNAVAILABLE (non leggibile). Nessun importo
 mancante diventa zero; nessun betId viene inventato.
 
+### MCP-01h — SL/TP, settlement, barriere di cashout (contratto 1.5.0)
+
+- `GET /v1/exposure`, ogni tavolo: `sl_tp` dal `meta` del tavolo (solo le chiavi `stop_loss`,
+  `take_profit`, `stop_loss_pct`, `take_profit_pct`, `trailing_stop_pct`, `sl_tp_triggered`): NOT_ARMED,
+  ARMED, TRIGGERED o UNKNOWN (valore presente ma illeggibile o negativo). Sul `main` attuale nessun
+  percorso arma SL/TP, quindi ogni tavolo è NOT_ARMED: è lo stato reale. La forma scritta da F-02
+  (Claude D) è già coperta dai test. Il trailing compare solo come percentuale: il core non lo applica.
+- `GET /v1/reconciliation/status`, sezione `settlement` (solo conteggi): settlement non registrati
+  (`_unrecorded_settlements`, sotto `_settlement_lock`), lotti trattenuti (`_held_batch_ids`, sotto
+  `_risk_admission_lock`), `settlement_effects` per esito e non realizzati, `cycle_recovery_checkpoints`
+  per fase (fase sconosciuta = UNKNOWN), cicli e invii ambigui, settlement del broker SIM (null in LIVE).
+  Lettura del DB con la stessa connessione in sola lettura degli ordini; lock con attesa limitata.
+- `GET /v1/status`, `engine.queues.cashout_barriers`: barriere di cashout attive.
+
 Nota per i test di assenza di effetti: la lettura in WAL aggiorna l'indice `-shm` (marcatori di lettura
 di SQLite, nessun dato); `.db` e `-wal` restano identici byte per byte.
 

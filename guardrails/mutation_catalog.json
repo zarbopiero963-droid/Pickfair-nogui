@@ -8838,6 +8838,138 @@
         "tests/control_api/test_orders_view.py"
       ],
       "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): identificativo interno (customer_ref) esposto."
+    },
+    {
+      "id": "cap_sltp_unreadable_as_not_armed",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "            return unknown  # valore presente ma illeggibile: mai «non armato»",
+      "mutated": "            values[key] = None",
+      "tests": [
+        "tests/control_api/test_settlement_sltp_views.py"
+      ],
+      "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): valore SL/TP illeggibile riportato come non armato."
+    },
+    {
+      "id": "cap_sltp_negative_accepted",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if text.startswith(\"-\"):\n        raise _Unavailable(\"negative\")",
+      "mutated": "    if False:\n        raise _Unavailable(\"negative\")",
+      "tests": [
+        "tests/control_api/test_settlement_sltp_views.py"
+      ],
+      "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): importo SL/TP negativo accettato."
+    },
+    {
+      "id": "cap_sltp_trigger_ignored",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if meta.get(\"sl_tp_triggered\"):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/control_api/test_settlement_sltp_views.py"
+      ],
+      "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): scatto SL/TP registrato dal core non riportato."
+    },
+    {
+      "id": "cap_sltp_meta_leak",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "                \"sl_tp\": _sl_tp(row.get(\"meta\")),  # solo le chiavi SL/TP: il resto del meta non esce",
+      "mutated": "                \"sl_tp\": {**_sl_tp(row.get(\"meta\")), \"meta\": row.get(\"meta\")},",
+      "tests": [
+        "tests/control_api/test_settlement_sltp_views.py"
+      ],
+      "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): meta del tavolo (nomi evento, riferimenti) esposto con lo SL/TP."
+    },
+    {
+      "id": "cap_barriers_not_counted",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        \"cashout_barriers\": len(_attr(rc, \"_cashout_barriers\")),",
+      "mutated": "        \"cashout_barriers\": 0,",
+      "tests": [
+        "tests/control_api/test_settlement_sltp_views.py"
+      ],
+      "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): barriere di cashout attive non contate."
+    },
+    {
+      "id": "cap_held_outcome_lost",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "                \"held\": by_outcome.get(\"HELD\", 0),",
+      "mutated": "                \"held\": 0,",
+      "tests": [
+        "tests/control_api/test_settlement_sltp_views.py"
+      ],
+      "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): settlement trattenuti (held) non contati."
+    },
+    {
+      "id": "cap_not_realized_lost",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "                \"SELECT COUNT(*) FROM settlement_effects WHERE realized_applied = 0\").fetchone()[0]",
+      "mutated": "                \"SELECT 0\").fetchone()[0]",
+      "tests": [
+        "tests/control_api/test_settlement_sltp_views.py"
+      ],
+      "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): settlement non ancora realizzati non contati."
+    },
+    {
+      "id": "cap_unknown_stage_guessed",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "                stage = stage if stage in CHECKPOINT_STAGES else \"UNKNOWN\"",
+      "mutated": "                stage = stage if stage in CHECKPOINT_STAGES else \"NEXT_TRADE_SUBMIT_CONFIRMED\"",
+      "tests": [
+        "tests/control_api/test_settlement_sltp_views.py"
+      ],
+      "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): fase del checkpoint sconosciuta indovinata come confermata."
+    },
+    {
+      "id": "cap_cycle_ambiguous_lost",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "                \"WHERE checkpoint_stage = 'CYCLE_AMBIGUOUS' OR is_ambiguous = 1\").fetchone()[0]",
+      "mutated": "                \"WHERE checkpoint_stage = 'CYCLE_AMBIGUOUS' AND is_ambiguous = 2\").fetchone()[0]",
+      "tests": [
+        "tests/control_api/test_settlement_sltp_views.py"
+      ],
+      "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): cicli ambigui non contati."
+    },
+    {
+      "id": "cap_settlement_lock_unbounded",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "def _locked_len(lock: object, read: Callable[[], Any]) -> int:\n    if not _acquire(lock):\n        raise _Unavailable(\"lock\")",
+      "mutated": "def _locked_len(lock: object, read: Callable[[], Any]) -> int:\n    if not _acquire(lock):\n        return len(read() or ())",
+      "tests": [
+        "tests/control_api/test_settlement_sltp_views.py"
+      ],
+      "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): lock del settlement occupato ma lettura eseguita comunque."
+    },
+    {
+      "id": "cap_sim_settlements_in_live",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if service_vars.get(\"simulation_mode\") is not True or broker is None:\n        return None\n    return _locked_len(",
+      "mutated": "    if broker is None:\n        return None\n    return _locked_len(",
+      "tests": [
+        "tests/control_api/test_settlement_sltp_views.py"
+      ],
+      "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): settlement del broker SIM riportati anche in LIVE."
     }
   ]
 }

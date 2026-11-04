@@ -173,6 +173,8 @@ def test_active_table_is_reported_without_event_names_or_meta(
         "table_id": 2, "status": "ACTIVE", "occupied": True, "in_recovery": False,
         "market_id": "1.234567", "selection_id": "47972", "current_exposure": 12.5,
         "loss_amount": 0.0,
+        "sl_tp": {"state": "NOT_ARMED", "stop_loss": None, "take_profit": None,
+                  "stop_loss_pct": None, "take_profit_pct": None, "trailing_stop_pct": None},
     }
     assert view["total_exposure"] == runtime.table_manager.total_exposure() == 12.5
     text = repr(view)

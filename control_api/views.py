@@ -223,6 +223,7 @@ def reconciliation_view(rc: object, *, clock: Callable[[], float] = time.time) -
             "ghosts": lambda: _ghosts(rc),
             "hedge_registry_unreliable": lambda: _bool(rc, "_hedged_markets_unreliable"),
             "recovery_state": lambda: _recovery_state(rc),
+            "settlement": lambda: _settlement(rc),
         }
     )
     return {
@@ -440,6 +441,7 @@ def _tables(rc: object) -> list[dict[str, Any]]:
                 "selection_id": _identifier(row.get("selection_id")),
                 "current_exposure": _money(row.get("current_exposure")),
                 "loss_amount": _money(row.get("loss_amount")),
+                "sl_tp": _sl_tp(row.get("meta")),  # solo le chiavi SL/TP: il resto del meta non esce
             }
         )
     if len({t["table_id"] for t in tables}) != len(tables):
@@ -691,6 +693,7 @@ def _queues(rc: object) -> dict[str, int]:
     return {
         "cashout_inflight": len(inflight),
         "cashout_uncertain": len(uncertain),
+        "cashout_barriers": len(_attr(rc, "_cashout_barriers")),
         "direct_unmatched": len(rc.direct_unmatched_bet_ids),  # type: ignore[attr-defined]  # property
     }
 
@@ -1391,4 +1394,147 @@ def orders_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict[s
         "observed_at": float(clock()),
         "consistency": "SINGLE_READ_TRANSACTION",
         "snapshot": snapshot,
+    }
+
+
+# ------------------------------------------------- MCP-01h: SL/TP, settlement, barriere di cashout
+#
+# Contratto 1.5.0, estensioni di route esistenti. SL/TP: dal `meta` del tavolo (già nello
+# snapshot sotto il lock dei tavoli), nelle chiavi che il core legge (`stop_loss`, `take_profit`) e
+# in quelle che F-02 di Claude D aggiunge (`*_pct`, `sl_tp_triggered`). Settlement: solo conteggi,
+# mai payload o riferimenti. Strutture create alla prima scrittura (`_unrecorded_settlements`,
+# `_held_batch_ids`): assenti = vuote, come le tratta il core stesso (`getattr(...) or set()`).
+
+_SL_TP_KEYS: Final = ("stop_loss", "take_profit", "stop_loss_pct", "take_profit_pct",
+                      "trailing_stop_pct")
+CHECKPOINT_STAGES: Final = frozenset({
+    "SETTLEMENT_DETECTED", "BANKROLL_SYNC_DONE", "MM_DECISION_DONE", "NEXT_TRADE_SUBMIT_ATTEMPTED",
+    "NEXT_TRADE_SUBMIT_CONFIRMED", "CYCLE_BLOCKED", "CYCLE_AMBIGUOUS",
+})
+
+
+def _non_negative_dec(value: object) -> str:
+    text = decimal_str(value)
+    if text.startswith("-"):
+        raise _Unavailable("negative")
+    return text
+
+
+def _sl_tp(meta: object) -> dict[str, Any]:
+    unknown = {"state": "UNKNOWN", **{k: None for k in _SL_TP_KEYS}}
+    if not isinstance(meta, dict):
+        return unknown
+    values: dict[str, Any] = {}
+    for key in _SL_TP_KEYS:
+        raw = meta.get(key)
+        if raw is None:
+            values[key] = None
+            continue
+        try:
+            values[key] = _non_negative_dec(raw)
+        except _Unavailable:
+            return unknown  # valore presente ma illeggibile: mai «non armato»
+    armed = values["stop_loss"] is not None or values["take_profit"] is not None
+    if meta.get("sl_tp_triggered"):
+        state = "TRIGGERED" if armed else "UNKNOWN"
+        if not armed:
+            return unknown
+    else:
+        state = "ARMED" if armed else "NOT_ARMED"
+    return {"state": state, **values}
+
+
+def _settlement_db(rc: object) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Conteggi di `settlement_effects` e `cycle_recovery_checkpoints` in una sola lettura."""
+    try:
+        conn = _ro_connection(rc)
+    except _SnapshotMissing:
+        return None, None
+    effects = checkpoints = None
+    try:
+        conn.execute("BEGIN")
+        try:
+            rows = conn.execute(
+                "SELECT outcome, COUNT(*) AS n FROM settlement_effects GROUP BY outcome").fetchall()
+            not_realized = conn.execute(
+                "SELECT COUNT(*) FROM settlement_effects WHERE realized_applied = 0").fetchone()[0]
+            by_outcome: dict[str, int] = {}
+            for row in rows:
+                code = to_code(str(row["outcome"] or "").upper())
+                by_outcome[code] = by_outcome.get(code, 0) + int(row["n"])
+            effects = {
+                "held": by_outcome.get("HELD", 0),
+                "not_realized": int(not_realized),
+                "by_outcome": [{"outcome": k, "count": v} for k, v in sorted(by_outcome.items())],
+            }
+        except sqlite3.Error:
+            effects = None
+        try:
+            rows = conn.execute(
+                "SELECT checkpoint_stage, COUNT(*) AS n FROM cycle_recovery_checkpoints "
+                "GROUP BY checkpoint_stage").fetchall()
+            by_stage: dict[str, int] = {}
+            for row in rows:
+                stage = str(row["checkpoint_stage"] or "")
+                stage = stage if stage in CHECKPOINT_STAGES else "UNKNOWN"
+                by_stage[stage] = by_stage.get(stage, 0) + int(row["n"])
+            cycle_amb = conn.execute(
+                "SELECT COUNT(*) FROM cycle_recovery_checkpoints "
+                "WHERE checkpoint_stage = 'CYCLE_AMBIGUOUS' OR is_ambiguous = 1").fetchone()[0]
+            submit_amb = conn.execute(
+                "SELECT COUNT(*) FROM cycle_recovery_checkpoints "
+                "WHERE next_trade_submission_status = 'AMBIGUOUS'").fetchone()[0]
+            checkpoints = {
+                "by_stage": [{"stage": k, "count": v} for k, v in sorted(by_stage.items())],
+                "cycle_ambiguous": int(cycle_amb),
+                "submit_ambiguous": int(submit_amb),
+            }
+        except sqlite3.Error:
+            checkpoints = None
+        conn.execute("COMMIT")
+    except sqlite3.Error:
+        return None, None
+    finally:
+        conn.close()
+    return effects, checkpoints
+
+
+def _locked_len(lock: object, read: Callable[[], Any]) -> int:
+    if not _acquire(lock):
+        raise _Unavailable("lock")
+    try:
+        value = read()
+    finally:
+        lock.release()  # type: ignore[union-attr]
+    if value is None:
+        return 0  # creata alla prima scrittura: assente = vuota (semantica del core)
+    if not isinstance(value, dict | set):
+        raise _Unavailable("type")
+    return len(value)
+
+
+def _sim_settlements(rc: object) -> int | None:
+    service = vars(rc).get("betfair_service")
+    service_vars = vars(service) if service is not None else {}
+    broker = service_vars.get("simulation_broker")
+    if service_vars.get("simulation_mode") is not True or broker is None:
+        return None
+    return _locked_len(vars(broker).get("_lock"), lambda: vars(broker)["state"].settlements)
+
+
+def _settlement(rc: object) -> dict[str, Any]:
+    settlement_lock = vars(rc).get("_settlement_lock")
+    admission_lock = vars(rc).get("_risk_admission_lock")
+    effects, checkpoints = _settlement_db(rc)
+    try:
+        sim = _sim_settlements(rc)
+    except _Unavailable:
+        sim = None
+    values = {"effects": effects, "checkpoints": checkpoints, "sim_settlements": sim}
+    return {
+        "unrecorded_settlements": _locked_len(
+            settlement_lock, lambda: vars(rc).get("_unrecorded_settlements")),
+        "held_batches": _locked_len(admission_lock, lambda: vars(rc).get("_held_batch_ids")),
+        **values,
+        "unavailable": [k for k, v in values.items() if v is None],
     }

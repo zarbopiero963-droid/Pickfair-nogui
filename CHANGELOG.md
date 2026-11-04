@@ -28,6 +28,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   connessione SQLite in sola lettura, mappa esplicita degli stati del core (AMBIGUOUS resta AMBIGUOUS),
   importi in Decimal, stati dello snapshot OK/PARTIAL/STALE/UNKNOWN/UNAVAILABLE. Pin al contratto 1.4.0;
   area di mutazione `control_api` a 51 mutazioni. Dipende dalle patch MCP-01d, MCP-01e e MCP-01f.
+- **Control API: SL/TP, settlement, cashout (MCP-01h, handoff di Claude C):** SL/TP per tavolo in
+  `GET /v1/exposure` (NOT_ARMED/ARMED/TRIGGERED/UNKNOWN), sezione `settlement` in
+  `GET /v1/reconciliation/status` (solo conteggi), barriere di cashout in `GET /v1/status`. Pin al contratto
+  1.5.0; area di mutazione `control_api` a 62 mutazioni. Dipende dalle patch MCP-01d…MCP-01g.
 
 ### Changed
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**

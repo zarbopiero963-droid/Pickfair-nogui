@@ -71,7 +71,7 @@ def test_engine_of_built_runtime_declares_what_is_missing(runtime: RuntimeContro
         "client_kind": engine["modes"]["client_kind"], "read_only_mode": "NOT_IN_CORE",
     }
     assert engine["queues"] == {"cashout_inflight": 0, "cashout_uncertain": 0,
-                                "direct_unmatched": 0}
+                                "cashout_barriers": 0, "direct_unmatched": 0}
     assert engine["event_bus"]["running"] is runtime.bus.pressure_snapshot()["running"]
 
 

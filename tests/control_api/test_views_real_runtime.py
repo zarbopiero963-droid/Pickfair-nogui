@@ -22,7 +22,7 @@ STATUS_KEYS = {
 }
 RECON_KEYS = {
     "source", "observed_at", "consistency", "startup", "ambiguities_pending", "ghosts",
-    "hedge_registry_unreliable", "recovery_state", "unavailable",
+    "hedge_registry_unreliable", "recovery_state", "settlement", "unavailable",
 }
 
 

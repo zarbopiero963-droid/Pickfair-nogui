@@ -3472,6 +3472,23 @@
         "tests/control_api/test_side_effects.py"
       ],
       "max_files": 8
+    },
+    "pf_api5_control_api_sltp_settlement": {
+      "description": "MCP-01h (handoff di Claude C): SL/TP per tavolo in GET /v1/exposure, settlement (conteggi) in GET /v1/reconciliation/status, barriere di cashout in GET /v1/status; sola lettura; pin al contratto 1.5.0. Dipende da pf_api1..4.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "control_api/bridge.py",
+        "control_api/views.py",
+        "docs/control_api.md",
+        "guardrails/mutation_catalog.json",
+        "tests/control_api/test_diagnostics_views.py",
+        "tests/control_api/test_finance_views.py",
+        "tests/control_api/test_settlement_sltp_views.py",
+        "tests/control_api/test_views_real_runtime.py"
+      ],
+      "max_files": 10
     }
   }
 }
