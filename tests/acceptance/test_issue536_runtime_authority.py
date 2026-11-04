@@ -536,9 +536,9 @@ def test_t19_auto_next_rifiutato_se_l_autorita_cade_prima_dell_invio(tmp_path, m
     lp = _lock_path(str(tmp_path / "t19.db"))
     originale = c.rc._attach_single_entry_liquidity
 
-    def _prima_dell_invio(payload):
+    def _prima_dell_invio(payload, **kw):
         os.unlink(lp)                                          # fra ammissione dell'auto-next e CMD_QUICK_BET
-        return originale(payload)
+        return originale(payload, **kw)
 
     monkeypatch.setattr(c.rc, "_attach_single_entry_liquidity", _prima_dell_invio)
     c.rc._on_close_position(_close_payload("batch-t19"))

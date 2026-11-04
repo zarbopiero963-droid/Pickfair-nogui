@@ -130,6 +130,14 @@ class FakeRuntime:
     def controller_entry_funds_reason(self, funds_read, *, extra_exposure=0.0):
         return ""
 
+    def read_market_for_controller_entry(self, market_id):
+        # F-23: la controfigura descrive un mercato OPEN, negoziabile (i casi non negoziabili sono in
+        # tests/acceptance/test_f23_market_tradable.py).
+        return {"market_id": str(market_id), "book": {}}
+
+    def controller_market_tradable_reason(self, market_read, selection_ids):
+        return ""
+
     def admit_controller_entries(self, orders, *, batch_id=""):
         # #523: il controller ammette le gambe tramite il runtime; "" = ammesso
         self.admitted.append((batch_id, list(orders)))

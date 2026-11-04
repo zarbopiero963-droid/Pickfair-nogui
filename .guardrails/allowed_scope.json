@@ -3407,7 +3407,7 @@
       "max_files": 7
     },
     "d_f23_market_tradable": {
-      "description": "Claude D F-23 (#586, PF-EXEC-05): nuovo ingresso solo su mercato OPEN con selezioni ACTIVE, verificato su un book letto fresco all'ammissione, per segnale, auto-next (RiskGate RISK_MARKET_NOT_TRADABLE), bet manuale e lotto Dutching (rifiuto dell'intero lotto). Nessuna soglia nuova; uscite protettive invariate. Harness di test: stub del book come il servizio SIM, modalita' 'suspended' in child_f026.",
+      "description": "Claude D F-23 (#586, PF-EXEC-05): nuovo ingresso solo su mercato OPEN con selezioni ACTIVE, verificato su un book letto fresco all'ammissione, per segnale, auto-next (RiskGate RISK_MARKET_NOT_TRADABLE), bet manuale e lotto Dutching (rifiuto dell'intero lotto). Nessuna soglia nuova; uscite protettive invariate. Harness di test: stub del book come il servizio SIM, modalita' 'suspended' in child_f026. Controfigure di runtime dei test Dutching: mercato OPEN come per i fondi; hook di rete del test #536 con la nuova firma.",
       "allow_tests": true,
       "files": [
         ".guardrails/allowed_scope.json",
@@ -3419,10 +3419,18 @@
         "docs/market_tradability.md",
         "guardrails/mutation_catalog.json",
         "tests/acceptance/test_f23_market_tradable.py",
+        "tests/acceptance/test_issue536_runtime_authority.py",
+        "tests/core/test_dutching_bus_wiring.py",
+        "tests/e2e/test_dutching_controller_e2e.py",
         "tests/f026/child_f026.py",
-        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py"
+        "tests/failure/test_dutching_controller_failures.py",
+        "tests/integration/test_dutching_controller_integration.py",
+        "tests/integration/test_dutching_max_win_guard.py",
+        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
+        "tests/invariant/test_dutching_controller_invariants.py",
+        "tests/unit/test_dutching_controller.py"
       ],
-      "max_files": 11
+      "max_files": 19
     }
   }
 }
