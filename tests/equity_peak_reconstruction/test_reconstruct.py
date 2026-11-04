@@ -142,3 +142,51 @@ def test_valore_proposto_accettato_dal_ripristino_f11(tmp_path) -> None:
 
     assert c.rc._restore_equity_peaks() is True
     assert c.rc._cash_equity_peak == 140.0
+
+
+# ------------------------------------------------------------------ relazione fra picco ricostruito e picco del MM
+def test_picco_ricostruito_e_limite_superiore_e_mai_meno_prudente_per_il_mm() -> None:
+    """Il MM (RiskDesk.equity_peak) misura il picco del DISPONIBILE; l'estratto conto da' il SALDO (disponibile +
+    impegnato, impegnato >= 0). In ogni istante disponibile <= saldo, quindi max(disponibile) <= max(saldo): il picco
+    ricostruito e' un LIMITE SUPERIORE, non un valore equivalente. Prova su 300 storie pseudo-casuali (seed fisso) con
+    le funzioni REALI: il modo del desk calcolato con il picco ricostruito non e' mai meno restrittivo di quello con il
+    picco vero (drawdown >= reale, crescita <= reale)."""
+    import random
+    from decimal import Decimal
+
+    from core.money_management import RoserpinaMoneyManagement
+    from core.risk_desk import RiskDesk
+    from core.system_state import DeskMode
+    from tests.risk_config_fixtures import legacy_test_config
+
+    severita = {DeskMode.EXPANSION: 0, DeskMode.NORMAL: 1, DeskMode.DEFENSE: 2, DeskMode.LOCKDOWN: 3}
+    mm = RoserpinaMoneyManagement(legacy_test_config())
+    rng = random.Random(20261104)
+    verificate = 0
+    for _storia in range(300):
+        desk = RiskDesk()
+        saldo = Decimal(rng.randint(5000, 50000)) / 100
+        righe = []
+        apertura = saldo
+        for i in range(rng.randint(1, 40)):
+            importo = Decimal(rng.randint(-3000, 3000)) / 100
+            if saldo + importo <= 0:
+                importo = Decimal("0.00")
+            saldo += importo
+            impegnato = Decimal(rng.randint(0, int(saldo * 100))) / 100       # 0 <= impegnato <= saldo
+            desk.sync_bankroll(float(saldo - impegnato))                       # il MM vede il DISPONIBILE
+            righe.append(_riga(f"r{i}", f"2026-09-{1 + i // 2:02d}T{10 + i % 2}:00:00Z", str(importo), str(saldo)))
+        out = reconstruct({"accountStatement": righe}, first_order_at=T("2026-09-01T10:30:00"),
+                          last_order_at=T("2026-09-01T10:30:00"))
+        if out["state"] != STATE_OK:                 # storie di una sola riga: non coprono l'attivita'
+            continue
+        verificate += 1
+        picco_vero = Decimal(str(desk.equity_peak))
+        picco_ricostruito = Decimal(out["equity_peak"])
+        assert picco_ricostruito >= picco_vero.quantize(Decimal("0.01")) - Decimal("0.01"), (picco_ricostruito, picco_vero)
+        assert picco_ricostruito >= apertura.quantize(Decimal("0.01")) - Decimal("0.01")
+        attuale = float(desk.bankroll_current)
+        modo_vero = mm.determine_desk_mode(bankroll_current=attuale, equity_peak=float(picco_vero))
+        modo_ric = mm.determine_desk_mode(bankroll_current=attuale, equity_peak=float(picco_ricostruito))
+        assert severita[modo_ric] >= severita[modo_vero], (modo_ric, modo_vero, picco_ricostruito, picco_vero, attuale)
+    assert verificate >= 250, f"solo {verificate} storie verificate: prova troppo debole"

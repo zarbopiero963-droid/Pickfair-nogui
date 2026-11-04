@@ -99,3 +99,9 @@ l'attività di Pickfair; un dato incompleto o incoerente ⇒ `REJECTED` (l'insta
 (picco di cassa = massimo saldo, apertura compresa; picco del disponibile = stesso valore come limite superiore
 prudente, non ricostruibile dallo storico). **Non scrive mai**: la scrittura richiede una procedura approvata
 dall'owner, non inclusa.
+
+Relazione dimostrata fra i due picchi: disponibile = saldo − impegnato con impegnato ≥ 0, quindi in ogni istante
+disponibile ≤ saldo e max(disponibile) ≤ max(saldo). Il picco ricostruito dal saldo è un **limite superiore** del picco
+del Money Management, non un valore equivalente: con esso il drawdown calcolato è ≥ di quello reale e la crescita ≤,
+quindi il modo del desk non è mai meno restrittivo (provato su 300 storie pseudo-casuali con `RiskDesk` e
+`RoserpinaMoneyManagement.determine_desk_mode` reali). La ratifica dell'owner resta obbligatoria.
