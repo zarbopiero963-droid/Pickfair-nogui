@@ -19,6 +19,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - corsia development (PF-UNIVERSAL-TEST-AUTONOMY-365-01): `dev:tests/...` esegue i test nuovi della PR allo SHA in
     una sandbox senza rete né segreti, ripetibile per dispatch, con esito `certification: false`, mai certificativo.
 
+  - isolamento anche per aggregazione: una suite fuori dalla sandbox non esegue percorsi isolati
+    (`AGGREGATE_INCLUDES_ISOLATED`); `full-regression` gira in `SANDBOX_EPHEMERAL`.
+
   Nessun segreto e nessun accesso alla VPS per Claude B. Documentazione: `docs/test_automation.md`.
 
 ### Changed

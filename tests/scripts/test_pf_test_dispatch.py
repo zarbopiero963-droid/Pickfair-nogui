@@ -22,6 +22,13 @@ OWNER = "zarbopiero963-droid"
 CATALOG_RAW = (ROOT / D.CATALOG_PATH).read_bytes()
 CATALOG = json.loads(CATALOG_RAW)
 
+try:  # il Ledger ammette solo con il lock fcntl (POSIX, come la VPS); senza, rifiuta: test a parte (Sol su #606)
+    import fcntl as _fcntl  # noqa: F401
+    _HAS_FCNTL = True
+except ImportError:
+    _HAS_FCNTL = False
+_NEEDS_FCNTL = pytest.mark.skipif(not _HAS_FCNTL, reason="Ledger con lock fcntl: solo POSIX (la VPS e' Linux)")
+
 
 def pr_data(state="open", head=SHA, repo=REPO, number=604):
     return {"number": number, "state": state, "head": {"sha": head, "repo": {"full_name": repo}},
@@ -167,6 +174,7 @@ def test_malformed_requests_are_refused(data):
         verify(data)
 
 
+@_NEEDS_FCNTL
 # ── idempotenza, persistenza, crash ─────────────────────────────────────────────────────────────────────────────
 def test_a_repeated_request_is_refused_even_after_a_restart(tmp_path):
     path = tmp_path / "vps" / "ledger.json"
@@ -177,6 +185,7 @@ def test_a_repeated_request_is_refused_even_after_a_restart(tmp_path):
     assert len(json.loads(path.read_text())["admitted"]) == 2
 
 
+@_NEEDS_FCNTL
 @pytest.mark.parametrize("content", ["{broken", "[]", '{"admitted": []}'])
 def test_an_unreadable_ledger_refuses_instead_of_starting_empty(tmp_path, content):
     path = tmp_path / "ledger.json"
@@ -186,6 +195,7 @@ def test_an_unreadable_ledger_refuses_instead_of_starting_empty(tmp_path, conten
     assert path.read_text() == content
 
 
+@_NEEDS_FCNTL
 def test_a_crash_during_the_write_leaves_the_previous_ledger_intact(tmp_path, monkeypatch):
     path = tmp_path / "ledger.json"
     D.Ledger(path).admit(build())
@@ -335,6 +345,7 @@ def test_a_brand_new_test_not_in_the_catalog_can_be_requested_on_the_development
     assert D.DEV_SANDBOX["certification"] is False
 
 
+@_NEEDS_FCNTL
 def test_a_failed_development_test_can_be_repeated_but_the_same_run_never_twice(tmp_path):
     ledger = D.Ledger(tmp_path / "ledger.json")
     first, again = dev(run_id=77), dev(run_id=78)
@@ -542,3 +553,34 @@ def test_without_fcntl_the_ledger_refuses_instead_of_admitting_unlocked(tmp_path
     with pytest.raises(D.Refused, match="^LEDGER_LOCK_UNAVAILABLE$"):
         D.Ledger(tmp_path / "ledger.json").admit(build())
     assert not (tmp_path / "ledger.json").exists()
+
+
+# ── Sol su #606 (review completa ada4076…006440c): una suite aggregata non deve eseguire fuori dalla sandbox i
+# percorsi che il catalogo isola ───────────────────────────────────────────────────────────────────────────────
+def _suite(c, sid):
+    return next(s for s in c["suites"] if s["id"] == sid)
+
+
+def test_the_real_full_regression_runs_in_the_ephemeral_sandbox():
+    assert _suite(CATALOG, "full-regression")["environment"] in D.DESTRUCTIVE_ENVS
+
+
+@pytest.mark.parametrize("env", ["OFFLINE", "SIM", "REPLAY_RECORDED"])
+def test_an_aggregate_suite_that_includes_isolated_paths_must_itself_be_isolated(env):
+    def mutate(c):
+        _suite(c, "full-regression").update(environment=env, risk="LOW")
+    with pytest.raises(D.Refused, match="^AGGREGATE_INCLUDES_ISOLATED:full-regression$"):
+        D.validate_catalog(cat_with(mutate))
+
+
+@pytest.mark.parametrize("path", ["tests/chaos", "tests/chaos/test_auto_throttle_chaos.py", "tests/recovery"])
+def test_a_non_isolated_suite_cannot_run_part_of_an_isolated_path(path):
+    def mutate(c):
+        _suite(c, "acceptance").update(args=[path])
+    with pytest.raises(D.Refused, match="^AGGREGATE_INCLUDES_ISOLATED:acceptance$"):
+        D.validate_catalog(cat_with(mutate))
+
+
+def test_non_isolated_suites_outside_isolated_paths_stay_valid():
+    cat = D.validate_catalog(CATALOG_RAW)
+    assert _suite(cat, "acceptance")["environment"] == "SIM"

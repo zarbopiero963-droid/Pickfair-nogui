@@ -501,14 +501,14 @@
   {
    "id": "full-regression",
    "component": "all",
-   "behaviour": "intera suite offline",
+   "behaviour": "intera suite (comprende chaos, recovery e stress: sandbox effimera)",
    "category": "regression",
    "runner": "pytest",
    "args": [
     "tests"
    ],
-   "environment": "OFFLINE",
-   "risk": "LOW",
+   "environment": "SANDBOX_EPHEMERAL",
+   "risk": "MEDIUM",
    "timeout_seconds": 3600,
    "resources": {
     "cpu": 4,

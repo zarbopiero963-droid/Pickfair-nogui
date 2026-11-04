@@ -117,6 +117,27 @@ def _check_args(suite: Mapping[str, Any], root: Path) -> None:
         raise Refused(f"RUNNER:{suite['id']}")
 
 
+def _covers(outer: str, inner: str) -> bool:
+    """``outer`` (cartella o file pytest) comprende ``inner``."""
+    return inner == outer or inner.startswith(outer.rstrip("/") + "/")
+
+
+def _check_isolation_coverage(suites: List[Mapping[str, Any]]) -> None:
+    """Una suite fuori dalla sandbox effimera non esegue percorsi che il catalogo isola (rilievo di Sol su #606):
+    ne' aggregandoli (``pytest tests`` comprende ``tests/chaos``) ne' prendendone una parte (``tests/chaos/x.py``).
+    Isolati = argomenti pytest delle suite in ambiente distruttivo, esclusa la radice ``tests``: l'aggregato
+    dell'intero albero e' esso stesso una suite isolata, e il primo controllo vieta di eseguirlo altrove."""
+    isolated = [a for s in suites if s["runner"] == "pytest" and s["environment"] in DESTRUCTIVE_ENVS
+                for a in s["args"]]
+    roots = [a for a in isolated if a.rstrip("/") != "tests"]
+    for s in suites:
+        if s["runner"] != "pytest" or s["environment"] in DESTRUCTIVE_ENVS:
+            continue
+        for a in s["args"]:
+            if any(_covers(a, d) for d in isolated) or any(_covers(d, a) for d in roots):
+                raise Refused(f"AGGREGATE_INCLUDES_ISOLATED:{s['id']}")
+
+
 def validate_catalog(raw: bytes, root: Path = ROOT) -> Dict[str, Any]:
     """Catalogo valido o ``Refused``: schema chiuso, id stabili e unici, argv sicuro, limiti di risorse."""
     try:
@@ -152,6 +173,7 @@ def validate_catalog(raw: bytes, root: Path = ROOT) -> Dict[str, Any]:
         if set(s["criteria"]) != {"PASS", "FAIL", "BLOCKED"} or not s["evidence"]:
             raise Refused(f"SUITE_CRITERIA:{s['id']}")
         _check_args(s, root)
+    _check_isolation_coverage(suites)
     for name, ids in (cat.get("campaigns") or {}).items():
         if not _ID.fullmatch(str(name)) or not isinstance(ids, list) or not ids or not set(ids) <= seen:
             raise Refused(f"CAMPAIGN:{name}")

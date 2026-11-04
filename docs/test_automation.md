@@ -63,7 +63,7 @@ Ogni suite contiene:
   - `python`, solo con gli script in allowlist (`scripts/run_mutation_guardrails.py`);
   - `orchestrator`, solo con i job `PRELIVE_CERTIFY` e `SIM_MULTITABLE_CERTIFY`, che la VPS mappa sul proprio orchestratore.
 - **Argomenti:** solo caratteri `[A-Za-z0-9_./-]`. Sono vietati `..`, i percorsi assoluti, i flag e qualunque metacarattere di shell.
-- **Ambienti:** `OFFLINE`, `SIM`, `REPLAY_RECORDED` (book registrati: nessuna credenziale nel job), `SANDBOX_EPHEMERAL` (processi, disco e rete effimeri; mai il DB operativo). Le categorie chaos e crash-restart sono ammesse **solo** in `SANDBOX_EPHEMERAL`, qualunque sia il rischio dichiarato (correzione dopo il rilievo di Grok su #606).
+- **Ambienti:** `OFFLINE`, `SIM`, `REPLAY_RECORDED` (book registrati: nessuna credenziale nel job), `SANDBOX_EPHEMERAL` (processi, disco e rete effimeri; mai il DB operativo). Le categorie chaos e crash-restart sono ammesse **solo** in `SANDBOX_EPHEMERAL`, qualunque sia il rischio dichiarato (correzione dopo il rilievo di Grok su #606). Inoltre una suite fuori dalla sandbox non può eseguire percorsi che il catalogo isola, né aggregandoli né prendendone una parte (`AGGREGATE_INCLUDES_ISOLATED`, rilievo di Sol su #606): per questo `full-regression` (`pytest tests`, che comprende chaos, recovery e stress) gira in `SANDBOX_EPHEMERAL`.
 - **Limiti:** timeout fino a 7200 s, CPU fino a 4, memoria fino a 8192 MB. Lo schema delle suite è chiuso.
 - **Completezza:** un test impone che ogni cartella di `tests/` che contiene test, e ogni modulo `tests/test_*.py`, sia raggiunta da una suite. Una funzionalità nuova senza voce nel catalogo fa fallire la CI.
 - **Campagna `all`:** comprende tutte le suite tranne `full-regression`, che è ridondante.
