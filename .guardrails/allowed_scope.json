@@ -3405,6 +3405,25 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "gov_review_redaction_skipped_runs": {
+      "description": "Governance (decisione owner su #606 c.6627474499, merge owner: workflow-gate e scripts/pr_*): la redazione dei cinque workflow di review lascia visibili solo il permesso id-token read/write/none e i riferimenti ${{ }} che occupano tutto il valore; il verificatore esclude un tentativo skipped da RUN_WITHOUT_ATTESTATION solo con la prova dei job (tutti completed/skipped, nessuno step, elenco completo). Nessuna attestazione storica riscritta, nessun controllo di firma/digest/copertura allentato.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-claude-fable5.yml",
+        ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+        ".github/workflows/pr-review-openrouter-gpt-astra.yml",
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ai_audit_workflows.md",
+        "docs/review_attestation.md",
+        "scripts/pr_review_attestation.py",
+        "tests/guardrails/test_ai_review_redazione_segreti.py",
+        "tests/scripts/test_pr_review_attestation.py"
+      ],
+      "max_files": 12
     }
   }
 }

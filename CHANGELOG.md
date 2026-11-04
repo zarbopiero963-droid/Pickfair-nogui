@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **Governance: redazione dei reviewer e run di review saltati (decisione owner sulla #606, merge owner):**
+  - la redazione dei segreti dei cinque workflow di review lascia visibili il permesso `id-token: read|write|none`
+    e i riferimenti `${{ ... }}` che occupano tutto il valore. Prima li oscurava, e Sol non poteva certificare il
+    permesso OIDC di `pf-test-request.yml` (VALID_INCONCLUSIVE sulla #606). Ogni altro valore resta redatto;
+    misurate 62 righe diverse su 325.615, tutte di queste due forme;
+  - `scripts/pr_review_attestation.py` esclude un tentativo `skipped` da `RUN_WITHOUT_ATTESTATION` solo con la
+    prova dall'API dei job (tutti `completed`/`skipped`, nessuno step, elenco completo). Sulla #606 quattro run
+    saltati alla riapertura bloccavano verify-pr senza aver eseguito nulla. Un run ambiguo o non leggibile continua
+    a bloccare. `docs/ai_audit_workflows.md` e `docs/review_attestation.md` aggiornati.
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**
   - se un range precedente di Sol o Grok non è PASS (BLOCKERS, INCONCLUSIVE, ERROR, incompleto), la review della push
     successiva copre l'intera PR `BASE...HEAD` invece del solo delta;

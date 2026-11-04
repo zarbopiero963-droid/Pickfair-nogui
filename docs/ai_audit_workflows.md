@@ -93,6 +93,15 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
   o una f-string, una fixture quotata e un'assegnazione temporanea della shell
   prima di un comando. Anche una riga dell'output del modello che comincia con
   una di queste chiavi seguita da `:` viene redatta per intero.
+  Restano **visibili** due sole forme che non possono contenere un valore
+  segreto (decisione owner sulla #606, dove Sol risultava INCONCLUSIVE perché il
+  permesso OIDC del workflow era oscurato): il permesso Actions `id-token` con
+  valore esatto `read`, `write` o `none` (YAML o JSON quotato) e un'espressione
+  di Actions `${{ ... }}` che occupa da sola tutto il valore (ne esce il **nome**
+  del secret, mai il valore, che nel diff non c'è). Qualunque altro valore dopo
+  `id-token`, o testo attaccato all'espressione, viene redatto come prima.
+  Misurato sul repo intero e sul diff della #606: 62 righe su 325.615 cambiano,
+  tutte e sole di queste due forme.
 - **Il diff è trattato come contenuto non attendibile**: il prompt istruisce il
   modello a non seguire istruzioni contenute in codice/commenti/stringhe/nomi
   file (anti prompt-injection); i fence ```` ``` ```` nel diff vengono

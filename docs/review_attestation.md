@@ -29,6 +29,10 @@ trusted: un tentativo che non chiude `success` e non ha la propria attestazione 
 verde. Quel tentativo può aver concluso una review BLOCKERS senza riuscire a pubblicarla, e un PASS di un altro
 tentativo non lo copre. I salti legittimi (dedup, gate di costo,
 range vuoto) chiudono `success` senza artefatto.
+Un tentativo con conclusione `skipped` (job saltato dall'`if:`, per esempio alla riapertura della PR) non ha
+eseguito nessuna review: il verificatore lo esclude **solo** con la prova letta da
+`/actions/runs/<id>/attempts/<n>/jobs` (elenco completo, almeno un job, ogni job `completed`/`skipped` con `steps`
+vuoto). Qualunque altra forma o l'API non leggibile lasciano `RUN_WITHOUT_ATTESTATION` (decisione owner sulla #606).
 
 **Rerun di un range già revisionato.** Se firma o upload falliscono al primo giro, un rerun del workflow trova il
 `done_marker` e non richiama il modello, quindi non ripaga la review. Prima di uscire però ri-emette l'attestazione

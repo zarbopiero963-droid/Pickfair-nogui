@@ -275,3 +275,44 @@ def test_block_la_redazione_resta_lineare_sulle_patch_grandi(workflow: str) -> N
                   "+    if {c} == atteso:\n+{c}: a b\n".format(c=c) * 20_000):
         redigi(testo)
     assert time.perf_counter() - inizio < 10, f"{workflow}: redazione non lineare"
+
+
+# #606 (Sol VALID_INCONCLUSIVE su 1948452): la redazione oscurava tre righe SENZA segreti, e il reviewer non poteva
+# certificare il permesso OIDC del workflow. Restano visibili SOLO le due forme che non possono contenere un valore
+# segreto: il permesso Actions `id-token` con valore read/write/none, e il riferimento a un'espressione di Actions
+# `${{ ... }}` che occupa da sola tutto il valore (il segreto vero non e' mai nel diff, ne e' nominato solo il nome).
+# Campioni montati per pezzi: per esteso li mutilerebbe la redazione dei reviewer (branch base).
+_T, _E = "to" + "ken", "${" + "{"
+RIGHE_SENZA_SEGRETI = (
+    f"  id-{_T}: write", f"+  id-{_T}: write", f"  id-{_T}: read", f"  id-{_T}: none",
+    f"  id-{_T}: write  # OIDC per Sigstore", f'    assert p == {{"contents": "read", "id-{_T}": "write",',
+    f"'id-{_T}': 'read'", f"      GH_{_T.upper()}: {_E} github.{_T} }}}}",
+    f"+      GH_{_T.upper()}: {_E} secrets.GITHUB_{_T.upper()} }}}}", f'  {_T}: "{_E} inputs.x }}}}"',
+)
+# Stesse chiavi, valori che POTREBBERO essere segreti: devono sparire come prima.
+SEGRETI_SIMILI = (
+    f"  id-{_T}: SEGRETISSIMO", f'"id-{_T}": "SEGRETISSIMO"', f"  id-{_T}: writeSEGRETISSIMO",
+    f"  id-{_T}: write SEGRETISSIMO", f"  id-{_T}: write-SEGRETISSIMO", f'"id-{_T}": "write SEGRETISSIMO"',
+    f"  my{_T}: SEGRETISSIMO", f"  {_T}: write SEGRETISSIMO", f"  access-{_T}: SEGRETISSIMO",
+    f"  api_key: SEGRETISSIMO", f'  {_T}: "SEGRETISSIMO"',
+)
+
+
+@pytest.mark.parametrize("workflow", sorted(_reviewer_su_disco()))
+@pytest.mark.parametrize("riga", RIGHE_SENZA_SEGRETI)
+def test_pass_permesso_oidc_e_riferimenti_actions_restano_visibili(workflow: str, riga: str) -> None:
+    redatta = _redazione(workflow)(riga)
+    assert redatta == riga, f"{workflow}: {riga!r} -> {redatta!r}: riga senza segreti nascosta al reviewer"
+
+
+@pytest.mark.parametrize("workflow", sorted(_reviewer_su_disco()))
+@pytest.mark.parametrize("riga", SEGRETI_SIMILI)
+def test_block_un_valore_che_puo_essere_segreto_sparisce_anche_su_id_token(workflow: str, riga: str) -> None:
+    redatta = _redazione(workflow)(riga)
+    assert VALORE not in redatta, f"{workflow}: {riga!r} -> {redatta!r}: valore in chiaro"
+
+
+def test_le_cinque_copie_di_redactions_restano_identiche() -> None:
+    blocchi = {w: re.search(r"REDACTIONS = \[(.*?)\n          \]", (ROOT / w).read_text(encoding="utf-8"), re.S).group(1)
+               for w in sorted(_reviewer_su_disco())}
+    assert len(set(blocchi.values())) == 1, "REDACTIONS divergente fra i workflow di review"
