@@ -9,6 +9,7 @@ from queue import Empty, Queue
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from betfairlightweight import StreamListener
+from betfairlightweight.filters import streaming_market_data_filter, streaming_market_filter
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,7 @@ class StreamingFeed:
         self._stream_reader_thread: Optional[threading.Thread] = None
 
         self._stream: Any = None
+        self._reader_failure = ""
         self._stream_client: Any = None
         self._listener: Any = None
 
@@ -189,6 +191,7 @@ class StreamingFeed:
             raise RuntimeError("STREAMING_INTERFACE_UNAVAILABLE")
 
         self._stream = streaming.create_stream(listener=self._listener)
+        self._reader_failure = ""
 
         subscribe_kwargs = self._build_subscribe_kwargs()
         self._stream.subscribe_to_markets(**subscribe_kwargs)
@@ -202,10 +205,15 @@ class StreamingFeed:
         self._start_keepalive_loop()
 
         while not self._stop_event.is_set():
-            timeout_s = max(0.5, float(self.config.heartbeat_timeout_sec) / 2.0)
+            # Controllo almeno ogni secondo: un lettore morto si rileva subito, non dopo meta' del timeout heartbeat.
+            timeout_s = min(1.0, max(0.5, float(self.config.heartbeat_timeout_sec) / 2.0))
             try:
                 message = output_queue.get(timeout=timeout_s)
             except Empty:
+                if self._reader_failure:
+                    # Lettore morto (chiusura del server, errore di socket): disconnessione subito, non dopo
+                    # il timeout dell'heartbeat (prima il feed restava «connesso» su un socket chiuso).
+                    raise RuntimeError(f"STREAM_READER_FAILED:{self._reader_failure}")
                 if self._is_heartbeat_dead():
                     raise RuntimeError("STREAM_HEARTBEAT_TIMEOUT")
                 continue
@@ -233,8 +241,9 @@ class StreamingFeed:
         def _reader() -> None:
             try:
                 start()
-            except Exception:
+            except Exception as exc:
                 logger.exception("stream reader failed")
+                self._reader_failure = f"{type(exc).__name__}: {exc}"
 
         self._stream_reader_thread = threading.Thread(
             target=_reader,
@@ -823,14 +832,20 @@ class StreamingFeed:
         else:
             fields = [f for f in fields if f != "EX_ALL_OFFERS"]
 
+        # Protocollo ESA (camelCase: marketIds, eventTypeIds, countryCodes, marketTypes, fields, ladderLevels): i filtri
+        # si costruiscono con gli helper di betfairlightweight. Prima viaggiavano chiavi snake_case (market_ids,
+        # ladder_levels, ...) che Betfair non riconosce: la sottoscrizione non filtrava i mercati richiesti.
         kwargs: Dict[str, Any] = {
-            "market_filter": market_filter,
-            "market_data_filter": {
-                "fields": fields,
-                "ladder_levels": int(self.config.ladder_levels),
-                "conflate_ms": int(self.config.conflate_ms),
-                "segmentation_enabled": bool(self.config.segmentation_enabled),
-            },
+            "market_filter": streaming_market_filter(
+                market_ids=market_filter.get("market_ids"),
+                event_type_ids=market_filter.get("event_type_ids"),
+                country_codes=market_filter.get("country_codes"),
+                market_types=market_filter.get("market_types"),
+            ),
+            "market_data_filter": streaming_market_data_filter(
+                fields=fields,
+                ladder_levels=int(self.config.ladder_levels),
+            ),
             "conflate_ms": int(self.config.conflate_ms),
             "heartbeat_ms": int(self.config.heartbeat_ms),
             "segmentation_enabled": bool(self.config.segmentation_enabled),

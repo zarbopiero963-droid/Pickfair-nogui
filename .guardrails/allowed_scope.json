@@ -3405,6 +3405,20 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "d_streaming_adapter": {
+      "description": "Claude D PF-BETFAIR-E2E-01: streaming mercati Betfair (ESA) collegato al BetfairClient (core/betfair_streaming.py, TLS verificato), sottoscrizione nel formato ESA, chiusura del trasporto rilevata subito. Solo dati di mercato; spento di default; ingressi decisi su REST fresco (F-23).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "betfair_client.py",
+        "core/betfair_streaming.py",
+        "docs/market_data_streaming.md",
+        "services/streaming_feed.py",
+        "tests/acceptance/test_streaming_betfair_esa.py"
+      ],
+      "max_files": 7
     }
   }
 }

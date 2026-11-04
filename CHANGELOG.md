@@ -27,6 +27,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Nessuna attestazione storica viene riscritta. `docs/review_attestation.md` aggiornato.
 
 ### Fixed
+- **Streaming dei mercati Betfair in LIVE (PF-BETFAIR-E2E-01, P1).** Non poteva funzionare: il `BetfairClient` non
+  esponeva `streaming` (il feed ricadeva sempre sul REST), la sottoscrizione usava chiavi snake_case non ESA, e la
+  chiusura del socket dal server restava invisibile fino al timeout dell'heartbeat. Ora `BetfairClient.streaming`
+  (`core/betfair_streaming.py`, TLS con verifica del certificato), filtri ESA con gli helper di betfairlightweight,
+  disconnessione rilevata entro un secondo. Spento di default; i nuovi ingressi restano decisi sul book REST fresco
+  (F-23). Test `tests/acceptance/test_streaming_betfair_esa.py` (messaggi ESA sintetici); `docs/market_data_streaming.md`.
 - **CB-586-FI-03Z (#586, P1):** il broker SIM abbinava ordini contro livelli del book con size 0. Esempio: un LAY
   0,10@3.0 risultava abbinato a 2.02 su un book senza liquidità, con un matched finto e un'esposizione abbinata
   inventata. Ora un livello con size esplicita ≤ 0 è assente, come il delta Betfair che lo rimuove, e il migliore è il

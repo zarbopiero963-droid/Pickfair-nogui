@@ -1375,6 +1375,14 @@ class BetfairClient:
             "points_balance": self._safe_float(result.get("pointsBalance"), 0.0),
         }
 
+    @property
+    def streaming(self) -> Any:
+        """Streaming mercati Betfair (ESA) per `services.streaming_feed.StreamingFeed`: lo `Streaming` di
+        betfairlightweight legato ad ``app_key`` e ``session_token`` di questo client, con TLS verificato
+        (`core.betfair_streaming`). Solo dati di mercato, nessun ordine."""
+        from core.betfair_streaming import PickfairStreaming
+        return PickfairStreaming(self)
+
     def keep_alive(self) -> Dict[str, Any]:
         """Estende la sessione betting via l'endpoint Betfair keepAlive.
 
