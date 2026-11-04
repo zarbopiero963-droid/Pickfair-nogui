@@ -3405,6 +3405,19 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "d_f16_funds_freshness": {
+      "description": "Claude D F-16 (#586, FUNDS-01): conferma dei fondi d'ingresso valida al massimo 30 s (decisione owner PF-LIVE-FUNDS-THRESHOLD-01, #426 c.6162806642), orologio monotono, read_at assente/non valido/futuro => fondi_non_verificabili:FUNDS_STALE. Percorsi: segnale, DutchingController, auto-next. Nessuna nuova soglia; invalidazione anticipata (PF-LIVE-FUNDS-INVALIDATE-01) fuori scope.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/runtime_controller.py",
+        "docs/roserpina_bankroll_equity.md",
+        "tests/acceptance/test_f16_funds_freshness.py",
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "max_files": 6
     }
   }
 }

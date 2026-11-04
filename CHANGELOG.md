@@ -27,6 +27,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Nessuna attestazione storica viene riscritta. `docs/review_attestation.md` aggiornato.
 
 ### Fixed
+- **F-16 (#586, FUNDS-01, P1): freschezza della conferma dei fondi a 30 s (decisione owner PF-LIVE-FUNDS-THRESHOLD-01,
+  #426 c.6162806642).** Il gate fondi d'ingresso ammetteva letture fino a 120 s (TTL tecnico delle tracce delle
+  riserve) e saltava il controllo con `read_at` assente. Ora `RuntimeController.LIVE_FUNDS_MAX_AGE_S = 30`, orologio
+  monotono, limite incluso (29,999 s ammessa / 30,001 s rifiutata); lettura scaduta o istante non valido ⇒
+  `fondi_non_verificabili:FUNDS_STALE`, nessun ingresso (segnale, DutchingController, auto-next). Test
+  `tests/acceptance/test_f16_funds_freshness.py`; `docs/roserpina_bankroll_equity.md` aggiornato.
 - **CB-586-FI-03Z (#586, P1):** il broker SIM abbinava ordini contro livelli del book con size 0. Esempio: un LAY
   0,10@3.0 risultava abbinato a 2.02 su un book senza liquidità, con un matched finto e un'esposizione abbinata
   inventata. Ora un livello con size esplicita ≤ 0 è assente, come il delta Betfair che lo rimuove, e il migliore è il

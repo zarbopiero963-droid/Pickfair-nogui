@@ -6219,6 +6219,24 @@ class RuntimeController:
         return self.mm.fresh_caps_reason(cash=cassa_recente, order_exposure=order_exposure,
                                          total_exposure=vista_recente, event_exposure=evento)
 
+    #: F-16 (#586, FUNDS-01) — decisione owner PF-LIVE-FUNDS-THRESHOLD-01 (#426 c.6162806642): una conferma dei fondi
+    #: autorizza un nuovo ingresso solo se la sua eta' e' <= 30 s, misurata con orologio monotono dall'inizio della
+    #: lettura. Separata dal TTL delle tracce delle riserve (`TableManager.PLACED_TOMBSTONE_TTL_S`), che deve restare
+    #: >= di questa soglia perche' le riserve rilasciate restino confrontabili con la lettura.
+    LIVE_FUNDS_MAX_AGE_S = 30.0
+
+    @classmethod
+    def _funds_confirmation_fresh(cls, read_at: Any) -> bool:
+        """True solo se ``read_at`` e' un istante monotonic valido, non nel futuro, e la lettura ha <= 30 s.
+
+        ``read_at`` assente, non numerico, non finito o successivo all'ora monotona => validita' non dimostrata
+        (PF-LIVE-FUNDS-POLICY-01 regola 5): False. Mai l'orologio di sistema."""
+        if isinstance(read_at, bool) or not isinstance(read_at, (int, float)):
+            return False
+        age = time.monotonic() - float(read_at)          # NaN/inf: il confronto qui sotto e' falso => False
+        max_age = min(cls.LIVE_FUNDS_MAX_AGE_S, TableManager.PLACED_TOMBSTONE_TTL_S)
+        return 0.0 <= age <= max_age
+
     def _entry_funds_reason(self, account: Any, pending_exposure: float, *, read_at: Optional[float] = None) -> str:
         """#461 PR28-e (PF-CAP-09 / PF-CAP-19, PF-EXEC-04): '' se le riserve non ancora a mercato, COMPRESA la
         nuova entrata, stanno nel ``available`` del conto; altrimenti il motivo del rifiuto.
@@ -6239,9 +6257,8 @@ class RuntimeController:
             parsed = {"ok": False}
         if not parsed.get("ok"):
             return "fondi_non_verificabili"
-        if read_at is not None and time.monotonic() - float(read_at) > TableManager.PLACED_TOMBSTONE_TTL_S:
-            # Lettura piu' vecchia delle tracce delle riserve rilasciate: non confrontabile in sicurezza.
-            return "fondi_non_verificabili"
+        if not self._funds_confirmation_fresh(read_at):
+            return "fondi_non_verificabili:FUNDS_STALE"
         available = float(parsed["available"])
         pending_exposure = float(pending_exposure)
         if validators.exceeds_cap(pending_exposure, available):
