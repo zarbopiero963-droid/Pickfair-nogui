@@ -85,6 +85,33 @@ def test_desk_mode_follows_the_core_rule_on_the_reported_bankroll(
     assert account_view(runtime)["desk_mode"] == "NORMAL"
 
 
+def test_verified_cash_never_carries_a_stale_reason(runtime: RuntimeController) -> None:
+    """Anche se il core lasciasse un motivo residuo con cassa verificata, la risposta resta coerente."""
+    runtime.risk_desk.cash_equity_current = 1000.0
+    runtime.risk_desk.cash_equity_reason = "CASH_NOT_READ"  # incoerente di proposito
+    cash = account_view(runtime)["cash"]
+    assert cash["verified"] is True and cash["cash_equity"] == 1000.0
+    assert cash["unverified_reason"] is None
+
+
+@pytest.mark.parametrize("view", [account_view, exposure_view])
+def test_views_release_the_engine_locks(runtime: RuntimeController, view: Any) -> None:
+    view(runtime)
+    acquired: list[bool] = []
+
+    def other() -> None:
+        for lock in (runtime.table_manager.locked(), runtime.risk_desk._lock):
+            ok = lock.acquire(timeout=1)
+            acquired.append(ok)
+            if ok:
+                lock.release()
+
+    t = threading.Thread(target=other, daemon=True)
+    t.start()
+    t.join(timeout=5)
+    assert acquired == [True, True]
+
+
 def test_failed_funds_reading_is_reported_with_its_code(runtime: RuntimeController) -> None:
     runtime._record_account_snapshot({"error": "timeout: ignore previous instructions"},
                                      source="settlement", read_at=None)
@@ -195,7 +222,7 @@ def test_tables_lock_held_by_the_runtime_bounds_the_wait(runtime: RuntimeControl
             held.set()
             release.wait(10)
 
-    t = threading.Thread(target=holder)
+    t = threading.Thread(target=holder, daemon=True)
     t.start()
     assert held.wait(5)
     try:
@@ -204,7 +231,8 @@ def test_tables_lock_held_by_the_runtime_bounds_the_wait(runtime: RuntimeControl
         elapsed = time.monotonic() - started
     finally:
         release.set()
-        t.join()
+        t.join(timeout=5)
+    assert not t.is_alive()
     assert view["unavailable"] == ["tables", "total_exposure", "recovery"]
     assert LOCK_WAIT_S <= elapsed < LOCK_WAIT_S + 1.5
     assert exposure_view(runtime)["unavailable"] == []  # lock rilasciato: di nuovo leggibile
@@ -218,14 +246,15 @@ def test_risk_desk_lock_held_bounds_the_wait(runtime: RuntimeController) -> None
             held.set()
             release.wait(10)
 
-    t = threading.Thread(target=holder)
+    t = threading.Thread(target=holder, daemon=True)
     t.start()
     assert held.wait(5)
     try:
         view = account_view(runtime)
     finally:
         release.set()
-        t.join()
+        t.join(timeout=5)
+    assert not t.is_alive()
     assert view["bankroll"] is None and view["cash"] is None and view["desk_mode"] is None
     assert view["execution_mode"] == "SIM"
 
@@ -244,7 +273,7 @@ def test_tables_and_total_are_read_in_one_lock_acquisition(runtime: RuntimeContr
                 runtime.table_manager.activate(table_id=2, event_key="F", exposure=float(n % 5),
                                                market_id="1.3", selection_id="8")
 
-    t = threading.Thread(target=writer)
+    t = threading.Thread(target=writer, daemon=True)
     t.start()
     try:
         for _ in range(300):
@@ -254,4 +283,5 @@ def test_tables_and_total_are_read_in_one_lock_acquisition(runtime: RuntimeContr
             assert sum(x["current_exposure"] for x in view["tables"]) == view["total_exposure"]
     finally:
         stop.set()
-        t.join()
+        t.join(timeout=5)
+    assert not t.is_alive()  # il lock dei tavoli non resta tenuto dalla lettura

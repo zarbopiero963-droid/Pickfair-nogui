@@ -8414,8 +8414,7 @@
       "original": "        return _collect(fields)\n    finally:\n        lock.release()  # type: ignore[attr-defined]",
       "mutated": "        return _collect(fields)\n    finally:\n        pass",
       "tests": [
-        "tests/control_api/test_finance_views.py",
-        "tests/control_api/test_side_effects.py"
+        "tests/control_api/test_finance_views.py"
       ],
       "rationale": "MCP-01e ponte Control API account/exposure (handoff Claude C): lock del motore mai rilasciato dopo la lettura (blocco del runtime)."
     },
@@ -8487,8 +8486,7 @@
       "original": "    if not verified:\n        raw = vars(desk).get(\"cash_equity_reason\")",
       "mutated": "    if True:\n        raw = vars(desk).get(\"cash_equity_reason\")",
       "tests": [
-        "tests/control_api/test_finance_views.py",
-        "tests/control_api/test_side_effects.py"
+        "tests/control_api/test_finance_views.py"
       ],
       "rationale": "MCP-01e ponte Control API account/exposure (handoff Claude C): motivo di cassa non verificata riportato anche con cassa verificata (risposta incoerente)."
     },
