@@ -193,7 +193,6 @@ class CashoutRouter:
                                               "market_id": str(signal.get("market_id") or ""),
                                               "selection_id": signal.get("selection_id"), "source": self.source})
                 return self._summary(0, 0, reason=f"table_scope_invalid:{why}")
-            bot_bet_ids = table_scope["bet_ids"]
 
         # 2. Ordini correnti live (fail-closed: in LIVE solleva su sessione invalida).
         current_orders = self._load_current_orders()
@@ -202,6 +201,15 @@ class CashoutRouter:
 
         def _is_bot_order(row: Dict[str, Any]) -> bool:
             return _bet_id(row) in bot_bet_ids
+
+        # F-04: per CASHOUT_TABLE l'appartenenza e' SOLO per bet_id del tavolo, qualunque altra identita' del bot
+        # (es. per customerOrderRef) aggiunga in futuro `_is_bot_order`: un'identita' piu' larga toccherebbe gli
+        # ordini degli altri tavoli (resting compreso).
+        if table_scope is not None:
+            table_bets = table_scope["bet_ids"]
+
+            def _is_bot_order(row: Dict[str, Any]) -> bool:  # noqa: F811 - ambito ristretto al tavolo
+                return _bet_id(row) in table_bets
 
         # 3. Posizioni nette del bot (solo lato singolo; miste saltate dal resolver).
         positions = reconstruct_open_positions(current_orders, is_bot_order=_is_bot_order)
