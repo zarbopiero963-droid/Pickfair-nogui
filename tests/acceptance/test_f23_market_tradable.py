@@ -315,3 +315,15 @@ def test_block_runtime_vero_sospensione_fra_verifica_e_invio_nessun_ordine_vivo(
                    for o in r["snaps"][-1]["orders"]), "ordine vivo su un mercato sospeso"
     assert all(t["market_id"] != "1.934" for t in r["snaps"][-1]["tables"] if t.get("event_key")), \
         "tavolo trattenuto da un rifiuto certo dell'exchange"
+
+
+def test_broker_sim_con_stato_assente_non_inventa_un_rifiuto() -> None:
+    """Il broker fa la parte dell'exchange: uno stato assente nel book caricato e' «non noto», non «chiuso».
+    Il rifiuto di un book senza stato spetta all'ammissione F-23 (STATUS_MISSING)."""
+    from simulation_broker import SimulationBroker
+
+    b = SimulationBroker(starting_balance=1000.0)
+    b.update_market_book({"marketId": MID, "runners": [{"selectionId": 11, "ex": {
+        "availableToBack": [{"price": 2.0, "size": 100.0}], "availableToLay": [{"price": 2.02, "size": 100.0}]}}]})
+
+    assert b.place_bet(market_id=MID, selection_id=11, side="BACK", price=2.0, size=5.0)["status"] == "SUCCESS"

@@ -664,22 +664,22 @@ class SimulationBroker:
     def _rifiuto_mercato_locked(self, market_id: str, selection_ids: List[int]) -> Optional[Dict[str, Any]]:
         """F-23 (parita' SIM/LIVE, PF-EXEC-05): come Betfair, ``placeOrders`` su un mercato non OPEN o su una selezione
         non ACTIVE e' una richiesta FAILURE, nulla piazzato (``MARKET_SUSPENDED``, ``MARKET_NOT_OPEN_FOR_BETTING``,
-        ``RUNNER_REMOVED`` sull'istruzione). Senza book caricato per il mercato lo stato non e' noto al broker: invariato
-        (l'ammissione F-23 del runtime nega gia' un ingresso senza book). None = mercato e selezioni negoziabili."""
+        ``RUNNER_REMOVED`` sull'istruzione). Senza book caricato, o con lo stato assente nel book, lo stato non e' noto al
+        broker: invariato (l'ammissione F-23 del runtime nega gia' un ingresso senza book o senza stato). None = mercato e selezioni negoziabili."""
         book = self.state.market_books.get(str(market_id))
         if not isinstance(book, dict):
             return None
         n = max(1, len(selection_ids))
         status = str(book.get("status") or "").strip().upper()
-        if status != "OPEN":
+        if status and status != "OPEN":                     # stato assente = non noto al broker (lo nega F-23)
             code = "MARKET_SUSPENDED" if status == "SUSPENDED" else "MARKET_NOT_OPEN_FOR_BETTING"
             return self._rifiuto_esecuzione(market_id, code, [code] * n)
         runner_status = {}
         for runner in book.get("runners") or []:
             if isinstance(runner, dict):
                 runner_status[_to_int(runner.get("selectionId"), 0)] = str(runner.get("status") or "").strip().upper()
-        if any(runner_status.get(int(sid)) not in ("ACTIVE", None) for sid in selection_ids):
-            codes = ["RUNNER_REMOVED" if runner_status.get(int(sid)) not in ("ACTIVE", None) else "ERROR_IN_ORDER"
+        if any(runner_status.get(int(sid)) not in ("ACTIVE", None, "") for sid in selection_ids):
+            codes = ["RUNNER_REMOVED" if runner_status.get(int(sid)) not in ("ACTIVE", None, "") else "ERROR_IN_ORDER"
                      for sid in selection_ids]
             return self._rifiuto_esecuzione(market_id, "BET_ACTION_ERROR", codes)
         return None
