@@ -3405,6 +3405,21 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "d_bf_readonly_probe": {
+      "description": "Claude D PF-BETFAIR-E2E-01 livello B: guardia READ-ONLY sul trasporto del BetfairClient (solo login e metodi JSON-RPC di lettura, ogni mutazione rifiutata prima della rete) e runner della campagna di sola lettura con report redatto. Solo tooling e test; nessun codice di prodotto.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/testing/betfair_e2e_campaign.md",
+        "tests/bf_readonly/__init__.py",
+        "tests/bf_readonly/test_bf_readonly.py",
+        "tools/bf_readonly/__init__.py",
+        "tools/bf_readonly/campaign.py",
+        "tools/bf_readonly/guard.py"
+      ],
+      "max_files": 8
     }
   }
 }

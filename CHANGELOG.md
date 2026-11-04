@@ -109,6 +109,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dopo crash (`HEDGE_PENDING` => `HEDGE_AMBIGUOUS`). `core/hedge_ref.py`; test `tests/f05/`;
   mutazioni `f05_*`; `docs/cashout_overview.md` §7.3.
 ### Added
+- **PF-BETFAIR-E2E-01 livello B — strumento Betfair READ-ONLY (`tools/bf_readonly/`).** `ReadOnlyTransport` come
+  sessione del `BetfairClient` di produzione: passano solo login identitysso e metodi JSON-RPC di lettura;
+  `placeOrders`/`cancelOrders`/`replaceOrders`/`updateOrders`, metodi sconosciuti, URL non noti e altri verbi HTTP sono
+  rifiutati prima della rete. `run_campaign` esegue le letture (fondi, eventi, catalogo, book con prezzi, ordini correnti
+  e cleared) e produce un report senza token, chiavi, importi o id in chiaro. Da eseguire sul canale autorizzato; nelle
+  sessioni di sviluppo `BLOCKED_ACCESS`. `docs/testing/betfair_e2e_campaign.md` (livelli A/B/C).
+
 - **F-33 (#586) — harness full-scope di collaudo (solo test e tooling, GO-IMPLEMENT-LOCAL owner 29/10/2026):**
   `tools/combi/` (inventario delle 190 chiavi censite con dominio e classe ATTIVA/LEGACY; generatore pairwise /
   three-way greedy riproducibile con seed, vincoli, tuple non estendibili escluse, report di copertura verificato);
