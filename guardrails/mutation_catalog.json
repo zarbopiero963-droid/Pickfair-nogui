@@ -976,8 +976,8 @@
       "module": "controllers.dutching_controller",
       "area": "exposure",
       "file": "controllers/dutching_controller.py",
-      "original": "        return self._locked_entry(\n            lambda body, unlock: self._manual_bet_reserved(body, unlock, funds_read=funds_read), payload)",
-      "mutated": "        return self._manual_bet_reserved(payload, lambda: None, funds_read=funds_read)",
+      "original": "        return self._locked_entry(\n            lambda body, unlock: self._manual_bet_reserved(body, unlock, funds_read=funds_read,\n                                                           market_read=market_read), payload)",
+      "mutated": "        return self._manual_bet_reserved(payload, lambda: None, funds_read=funds_read, market_read=market_read)",
       "tests": [
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],

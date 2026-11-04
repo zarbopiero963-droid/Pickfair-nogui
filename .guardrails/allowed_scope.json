@@ -3417,11 +3417,12 @@
         "core/risk_gate.py",
         "core/runtime_controller.py",
         "docs/market_tradability.md",
+        "guardrails/mutation_catalog.json",
         "tests/acceptance/test_f23_market_tradable.py",
         "tests/f026/child_f026.py",
         "tests/integration/test_issue461_pr26a_customer_ref_provenance.py"
       ],
-      "max_files": 10
+      "max_files": 11
     }
   }
 }
