@@ -3414,9 +3414,10 @@
         "CHANGELOG.md",
         "betfair_client.py",
         "docs/trading_engine_executor_contract.md",
-        "tests/acceptance/test_place_bet_risposta_senza_esito.py"
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py",
+        "tests/acceptance/test_place_bet_senza_esito_catena.py"
       ],
-      "max_files": 5
+      "max_files": 6
     }
   }
 }
