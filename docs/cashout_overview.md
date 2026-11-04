@@ -548,7 +548,9 @@ Passi, tutti prima di qualunque ordine (fail-closed, esito sul bus col motivo):
 
 `CashoutRouter` con `CASHOUT_TABLE`: ambito obbligatorio (mercato, selezione, lato, `bet_ids` non vuoti, senza
 duplicati, tutti ordini del bot), altrimenti `CASHOUT_FAILED` `table_scope_invalid:<motivo>`; posizioni, resting e
-flatten ristretti ai soli `bet_ids` del tavolo e alla sua selezione; lato della posizione diverso da quello del tavolo
+flatten ristretti ai soli `bet_ids` del tavolo e alla sua selezione (l'appartenenza e' decisa solo dai `bet_ids`, mai da
+un'identita' del bot piu' larga come il `customerOrderRef` di F-13b: altrimenti si cancellerebbe il resting degli altri
+tavoli, riprodotto sulla fusione di prova con F-02); lato della posizione diverso da quello del tavolo
 => `table_scope_invalid:SIDE_MISMATCH` (un hedge sul lato sbagliato aumenterebbe l'esposizione).
 
 Stati persistiti ed esiti pubblicati:
