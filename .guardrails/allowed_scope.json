@@ -3407,15 +3407,16 @@
       "max_files": 7
     },
     "d_read_retry_backoff": {
-      "description": "Claude D PF-BETFAIR-E2E-01: attesa esponenziale limitata e Retry-After fra i tentativi delle sole chiamate ripetibili del BetfairClient; scritture single_shot invariate (mai ritentate).",
+      "description": "Claude D PF-BETFAIR-E2E-01: attesa esponenziale limitata e Retry-After fra i tentativi delle sole chiamate ripetibili del BetfairClient; scritture single_shot invariate (mai ritentate). Estensione dichiarata: snapshot dell'API pubblica aggiornato con i tre nuovi parametri del costruttore.",
       "allow_tests": true,
       "files": [
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
         "betfair_client.py",
+        "guardrails/public_api_snapshot.json",
         "tests/unit/test_betfair_client_retry_backoff.py"
       ],
-      "max_files": 4
+      "max_files": 5
     }
   }
 }

@@ -219,7 +219,10 @@
             "session",
             "timeout",
             "max_retries",
-            "proxy_config"
+            "proxy_config",
+            "retry_backoff_base_s",
+            "retry_backoff_max_s",
+            "sleep_fn"
           ],
           "login": [
             "password"
