@@ -1114,3 +1114,275 @@ def positions_view(rc: object, *, clock: Callable[[], float] = time.time) -> dic
         **values,
         "unavailable": unavailable,
     }
+
+
+# ------------------------------------------------- MCP-01g: GET /v1/orders
+#
+# Fonte: il ledger durevole `orders` del core, letto con una connessione SQLite DISTINTA e in SOLA
+# LETTURA (`mode=ro` + `PRAGMA query_only`): a livello di database ogni scrittura è impossibile.
+# Una sola transazione di lettura (WAL: istantanea coerente, nessuna attesa sugli scrittori),
+# attesa massima DB_BUSY_TIMEOUT_S. Stati: mappa ESPLICITA dagli stati reali del core (nessuno
+# stato inventato; APPROVED/CANCELLED/SETTLED non esistono nel ledger). Un AMBIGUOUS resta
+# AMBIGUOUS; un valore mancante resta null (mai zero); il betId si cerca nelle stesse forme di
+# `RuntimeController._open_order_candidates`.
+
+import json  # noqa: E402
+import sqlite3  # noqa: E402
+from urllib.parse import quote  # noqa: E402
+
+_ACCEPTED_FAMILY: Final = ("ACCEPTED", "UNMATCHED", "PARTIALLY_MATCHED", "MATCHED")
+ORDER_STATUS_MAP: Final = {
+    "INFLIGHT": ("PENDING",),
+    "HEDGE_PENDING": ("PENDING",),
+    "SUBMITTED": _ACCEPTED_FAMILY,
+    "ACCEPTED_FOR_PROCESSING": _ACCEPTED_FAMILY,
+    "HEDGE_PLACED": _ACCEPTED_FAMILY,
+    "HEDGE_UNMATCHED": ("UNMATCHED",),
+    "COMPLETED": ("MATCHED",),
+    "FAILED": ("FAILED",),
+    "HEDGE_FAILED": ("FAILED",),
+    "DENIED": ("REJECTED",),
+    "DUPLICATE_BLOCKED": ("DUPLICATE_BLOCKED",),
+    "AMBIGUOUS": ("AMBIGUOUS",),
+    "HEDGE_AMBIGUOUS": ("AMBIGUOUS",),
+}
+# Stati non terminali che la riconciliazione d'avvio del core considera aperti
+# (`RuntimeController._open_order_candidates`; un test verifica che coincidano).
+RECONCILE_STATUSES: Final = frozenset({"SUBMITTED", "AMBIGUOUS", "INFLIGHT"})
+MAX_ORDERS: Final = 500
+RECENT_FINALIZED: Final = 100
+DB_BUSY_TIMEOUT_S: Final = 0.25
+ORDER_OPTIONAL: Final = ("bet_id", "market_id", "selection_id", "side", "price", "stake",
+                         "size_matched", "avg_price_matched", "size_remaining", "table_id")
+_ORDERS_SQL: Final = (
+    "SELECT id, customer_ref, status, payload_json, response_json, ambiguity_reason, finalized, "
+    "created_at, updated_at FROM orders "
+    "WHERE finalized = 0 OR id IN (SELECT id FROM orders ORDER BY id DESC LIMIT ?) "
+    "ORDER BY id DESC LIMIT ?"
+)
+
+
+class _SnapshotMissing(Exception):
+    def __init__(self, state: str, reason: str) -> None:
+        super().__init__(reason)
+        self.state, self.reason = state, reason
+
+
+def _ro_connection(rc: object) -> sqlite3.Connection:
+    db = vars(rc).get("db")
+    path = vars(db).get("db_path") if db is not None else None
+    if not isinstance(path, str) or not path or path == ":memory:":
+        raise _SnapshotMissing("UNAVAILABLE", "DB_NOT_CONFIGURED")
+    try:
+        conn = sqlite3.connect(f"file:{quote(path)}?mode=ro", uri=True,
+                               timeout=DB_BUSY_TIMEOUT_S, check_same_thread=False)
+    except sqlite3.Error:
+        raise _SnapshotMissing("UNAVAILABLE", "DB_UNREADABLE") from None
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only=ON")
+    return conn
+
+
+def _dec_or_none(value: object) -> str | None:
+    """Importo/quota del core come Decimal canonico; testo numerico ammesso; altrimenti None."""
+    if isinstance(value, str):
+        try:
+            value = Decimal(value.strip())
+        except ArithmeticError:
+            return None
+    try:
+        return decimal_str(value)
+    except _Unavailable:
+        return None
+
+
+def _bet_id_from_response(resp: object) -> str | None:
+    """Forme note del betId, nello stesso ordine di `_open_order_candidates`."""
+    if not isinstance(resp, dict):
+        return None
+    for container in (resp, resp.get("result"), resp.get("raw")):
+        if not isinstance(container, dict):
+            continue
+        direct = container.get("betId") or container.get("bet_id")
+        reports = container.get("instructionReports") or []
+        first = reports[0] if reports and isinstance(reports[0], dict) else {}
+        found = first.get("betId") or first.get("bet_id") or direct
+        if found not in (None, ""):
+            return str(found)
+    return None
+
+
+def _first_report(resp: object) -> dict[str, Any]:
+    if not isinstance(resp, dict):
+        return {}
+    for container in (resp, resp.get("result"), resp.get("raw")):
+        if isinstance(container, dict):
+            reports = container.get("instructionReports") or []
+            if reports and isinstance(reports[0], dict):
+                return reports[0]
+    return {}
+
+
+def _ident_or_none(value: object) -> str | None:
+    value = str(value) if type(value) is int else value
+    if isinstance(value, str) and IDENTIFIER_RE.fullmatch(value):
+        return value
+    return None
+
+
+def _contract_status(core_status: str, matched: str | None, remaining: str | None) -> str:
+    allowed = ORDER_STATUS_MAP.get(core_status)
+    if allowed is None:
+        return "UNKNOWN"
+    if allowed != _ACCEPTED_FAMILY:
+        return allowed[0]
+    if matched is None or remaining is None:
+        return "ACCEPTED"
+    m, r = Decimal(matched), Decimal(remaining)
+    if r == 0 and m > 0:
+        return "MATCHED"
+    if m == 0 and r > 0:
+        return "UNMATCHED"
+    if m > 0 and r > 0:
+        return "PARTIALLY_MATCHED"
+    return "ACCEPTED"
+
+
+def _order_row(row: sqlite3.Row, queue_ids: set[str], broker_ids: set[str] | None) -> dict[str, Any]:
+    from core.hedge_ref import HEDGE_ROLE, is_hedge_order_ref
+
+    local_id = row["id"]
+    created, updated = row["created_at"], row["updated_at"]
+    if type(local_id) is not int or local_id < 1:
+        raise _Unavailable("order")
+    if type(created) not in (int, float) or type(updated) not in (int, float):
+        raise _Unavailable("order")
+    payload = json.loads(row["payload_json"] or "{}")
+    if not isinstance(payload, dict):
+        raise _Unavailable("order")
+    try:
+        response = json.loads(row["response_json"]) if row["response_json"] else None
+    except ValueError:
+        response = None  # risposta illeggibile: quantità e betId restano indisponibili
+    report = _first_report(response)
+    core_status = to_code(str(row["status"] or "").upper())
+    bet_id = _ident_or_none(_bet_id_from_response(response))
+    side = str(payload.get("bet_type") or payload.get("side") or "").upper()
+    table = payload.get("table_id") if payload.get("table_id") is not None \
+        else payload.get("reservation_table_id")
+    values = {
+        "bet_id": bet_id,
+        "market_id": _ident_or_none(payload.get("market_id")),
+        "selection_id": _ident_or_none(payload.get("selection_id")),
+        "side": side if side in ("BACK", "LAY") else None,
+        "price": _dec_or_none(payload.get("price")),
+        "stake": _dec_or_none(payload.get("stake")),
+        "size_matched": _dec_or_none(report.get("sizeMatched")) if "sizeMatched" in report else None,
+        "avg_price_matched": (_dec_or_none(report.get("averagePriceMatched"))
+                              if "averagePriceMatched" in report else None),
+        "size_remaining": (_dec_or_none(report.get("sizeRemaining"))
+                           if "sizeRemaining" in report else None),
+        "table_id": table if type(table) is int and 1 <= table <= 10_000 else None,
+    }
+    if is_hedge_order_ref(row["customer_ref"]) or payload.get("role") == HEDGE_ROLE:
+        role = "HEDGE"
+    elif payload.get("batch_id"):
+        role = "DUTCHING_LEG"
+    else:
+        role = "ENTRY"
+    reason = row["ambiguity_reason"]
+    if broker_ids is None or bet_id is None:
+        broker_view = "NOT_CHECKED"
+    else:
+        broker_view = "PRESENT" if bet_id in broker_ids else "ABSENT"
+    return {
+        "local_id": local_id,
+        "role": role,
+        "core_status": core_status,
+        "status": _contract_status(core_status, values["size_matched"], values["size_remaining"]),
+        **values,
+        "created_at": float(created),
+        "updated_at": float(updated),
+        "reconciliation": {
+            "in_reconciliation": core_status in RECONCILE_STATUSES or core_status == "HEDGE_AMBIGUOUS",
+            "in_engine_queue": str(local_id) in queue_ids,
+            "finalized": bool(row["finalized"]),
+            "ambiguity_reason": _optional_code(reason.upper()) if isinstance(reason, str) else None,
+        },
+        "broker_view": broker_view,
+        "unavailable": [name for name in ORDER_OPTIONAL if values[name] is None],
+    }
+
+
+def _engine_queue_ids(rc: object) -> set[str]:
+    engine = vars(rc).get("reconciliation_engine")
+    if engine is None:
+        return set()
+    snapshot = engine.ambiguity_snapshot()  # copia sotto il lock del registro
+    return {str(e.get("order_id")) for e in snapshot.values() if isinstance(e, dict)}
+
+
+def _broker_bet_ids(rc: object) -> set[str] | None:
+    """betId degli ordini nel broker SIM (attributi, attesa limitata); None in LIVE o se occupato."""
+    service = vars(rc).get("betfair_service")
+    service_vars = vars(service) if service is not None else {}
+    broker = service_vars.get("simulation_broker")
+    if service_vars.get("simulation_mode") is not True or broker is None:
+        return None
+    lock = vars(broker).get("_lock")
+    if not _acquire(lock):
+        return None
+    try:
+        return {str(o.bet_id) for o in vars(broker)["state"].orders.values() if o.bet_id}
+    finally:
+        lock.release()  # type: ignore[union-attr]
+
+
+def _orders_snapshot(rc: object) -> dict[str, Any]:
+    conn = _ro_connection(rc)
+    try:
+        try:
+            conn.execute("BEGIN")
+            rows = conn.execute(_ORDERS_SQL, (RECENT_FINALIZED, MAX_ORDERS + 1)).fetchall()
+            conn.execute("COMMIT")
+        except sqlite3.OperationalError as exc:
+            text = str(exc).lower()
+            if "locked" in text or "busy" in text:
+                raise _SnapshotMissing("UNKNOWN", "DB_BUSY") from None
+            raise _SnapshotMissing("UNAVAILABLE", "DB_UNREADABLE") from None
+        except sqlite3.Error:
+            raise _SnapshotMissing("UNAVAILABLE", "DB_UNREADABLE") from None
+    finally:
+        conn.close()
+    truncated = len(rows) > MAX_ORDERS
+    queue_ids = _engine_queue_ids(rc)
+    broker_ids = _broker_bet_ids(rc)
+    orders, omitted = [], 0
+    for row in rows[:MAX_ORDERS]:
+        try:
+            orders.append(_order_row(row, queue_ids, broker_ids))
+        except Exception:  # noqa: BLE001 - riga illeggibile: contata, mai nascosta
+            omitted += 1
+    if omitted or truncated:
+        state, reason = "PARTIAL", ("ROWS_UNREADABLE" if omitted else "TRUNCATED")
+    elif vars(rc).get("_reconciliation_required") is True:
+        state, reason = "STALE", "STARTUP_RECONCILIATION_REQUIRED"
+    else:
+        state, reason = "OK", None
+    return {"state": state, "reason": reason, "orders": orders, "omitted": omitted,
+            "truncated": truncated}
+
+
+def orders_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict[str, Any]:
+    try:
+        snapshot = _orders_snapshot(rc)
+    except _SnapshotMissing as missing:
+        snapshot = {"state": missing.state, "reason": missing.reason}
+    except Exception:  # noqa: BLE001 - mai un dato apparentemente valido
+        snapshot = {"state": "UNAVAILABLE", "reason": "READ_FAILED"}
+    return {
+        "source": "core",
+        "observed_at": float(clock()),
+        "consistency": "SINGLE_READ_TRANSACTION",
+        "snapshot": snapshot,
+    }

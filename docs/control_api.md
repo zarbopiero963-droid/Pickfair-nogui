@@ -52,6 +52,35 @@ drawdown percentuale è `INACTIVE (ENFORCED_ONLY_IN_LIVE)` in SIM perché il cor
 LIVE. Le percentuali obbligatorie assenti sono `TRIGGERED` (il core nega ogni entrata). Nomi di
 eventi, `customer_ref`, `reservation_id`, testi d'errore e credenziali non escono mai.
 
+### MCP-01g — ordini (contratto 1.4.0)
+
+`GET /v1/orders` legge il ledger durevole `orders` con una connessione SQLite **distinta e in sola
+lettura** (`mode=ro` + `PRAGMA query_only`): ogni scrittura è impossibile a livello di database. Una
+sola transazione di lettura (istantanea WAL coerente), attesa massima 0,25 s. Righe: tutti gli
+ordini non finalizzati più gli ultimi 100, al massimo 500.
+
+| Campo | Fonte |
+|---|---|
+| `local_id`, `core_status`, `created_at`, `updated_at`, `finalized`, `ambiguity_reason` | colonne del ledger |
+| `bet_id` | risposta salvata, nelle stesse forme di `_open_order_candidates` (test di confronto) |
+| `market_id`, `selection_id`, `side`, `price`, `stake`, `table_id` | payload salvato; importi in Decimal canonico |
+| `size_matched`, `avg_price_matched`, `size_remaining` | primo `instructionReport` della risposta, solo se presenti |
+| `role` | `HEDGE` (`core/hedge_ref.py`), `DUTCHING_LEG` (batch), altrimenti `ENTRY` |
+| `in_engine_queue` | `ReconciliationEngine.ambiguity_snapshot()` |
+| `broker_view` | SIM: betId presente/assente negli ordini del broker simulato (attributi, lock con attesa limitata); LIVE: `NOT_CHECKED` |
+
+Stati: mappa esplicita (`ORDER_STATUS_MAP`, pubblicata nel contratto e confrontata da un test):
+INFLIGHT/HEDGE_PENDING → PENDING; SUBMITTED/ACCEPTED_FOR_PROCESSING/HEDGE_PLACED → ACCEPTED, o
+UNMATCHED/PARTIALLY_MATCHED/MATCHED solo con quantità abbinata e residua esplicite; HEDGE_UNMATCHED →
+UNMATCHED; COMPLETED → MATCHED; FAILED/HEDGE_FAILED → FAILED; DENIED → REJECTED; DUPLICATE_BLOCKED;
+AMBIGUOUS/HEDGE_AMBIGUOUS → AMBIGUOUS; altro → UNKNOWN. APPROVED, CANCELLED e SETTLED non esistono nel
+ledger. Snapshot: OK, PARTIAL (righe illeggibili contate o elenco troncato), STALE (riconciliazione
+d'avvio non conclusa), UNKNOWN (database occupato), UNAVAILABLE (non leggibile). Nessun importo
+mancante diventa zero; nessun betId viene inventato.
+
+Nota per i test di assenza di effetti: la lettura in WAL aggiorna l'indice `-shm` (marcatori di lettura
+di SQLite, nessun dato); `.db` e `-wal` restano identici byte per byte.
+
 Consistenza `PER_SECTION_LOCKED`: `bankroll` e `cash` nella stessa acquisizione del lock del
 RiskDesk; `tables`, `total_exposure` e `recovery` nella stessa acquisizione del lock dei tavoli.
 Attesa massima `LOCK_WAIT_S = 0,25 s`: se il runtime tiene il lock più a lungo, quelle sezioni sono

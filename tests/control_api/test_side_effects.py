@@ -45,8 +45,13 @@ def deep_state(rc: Any) -> dict[str, str]:
 
 
 def db_digest(root: Path) -> str:
+    # MCP-01g: `-shm` (indice del WAL in memoria condivisa) escluso. La lettura degli ordini apre una
+    # connessione SQLite in sola lettura, e ogni lettore in WAL vi scrive il proprio marcatore di
+    # lettura: non sono dati. `.db` e `-wal` restano confrontati byte per byte.
     h = hashlib.sha256()
     for path in sorted(root.glob("pickfair.db*")):
+        if path.name.endswith("-shm"):
+            continue
         h.update(path.name.encode())
         h.update(path.read_bytes())
     return h.hexdigest()
@@ -122,6 +127,7 @@ def test_reads_have_no_effect_on_a_started_sim_runtime(
             assert read_http(server.port, token, "/v1/reconciliation/status") == 200
             assert read_http(server.port, token, "/v1/account") == 200
             assert read_http(server.port, token, "/v1/exposure") == 200
+            assert read_http(server.port, token, "/v1/orders") == 200
 
         assert calls == []                                   # 3, 5: nessuna query, nessun monitor
         assert db_digest(tmp_path) == db_before              # 1
@@ -177,6 +183,7 @@ def test_runtime_operations_are_not_slowed_by_continuous_reads(sim_runtime: Any)
             providers["reconciliation_status"]()
             providers["account"]()
             providers["exposure"]()
+            providers["orders"]()
 
     readers = [threading.Thread(target=hammer) for _ in range(4)]
     for t in readers:

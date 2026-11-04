@@ -3457,6 +3457,21 @@
         "tests/control_api/test_views_real_runtime.py"
       ],
       "max_files": 9
+    },
+    "pf_api4_control_api_orders": {
+      "description": "MCP-01g (handoff di Claude C): GET /v1/orders in sola lettura dal ledger orders (connessione SQLite mode=ro + query_only), mappa esplicita degli stati del core, Decimal, stati dello snapshot; pin al contratto 1.4.0. Dipende da pf_api1/2/3.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "control_api/bridge.py",
+        "control_api/views.py",
+        "docs/control_api.md",
+        "guardrails/mutation_catalog.json",
+        "tests/control_api/test_orders_view.py",
+        "tests/control_api/test_side_effects.py"
+      ],
+      "max_files": 8
     }
   }
 }

@@ -8670,6 +8670,174 @@
         "tests/control_api/test_diagnostics_views.py"
       ],
       "rationale": "MCP-01f ponte Control API diagnostica/protezioni/posizioni (handoff Claude C): chiave interna della posizione (nome evento) esposta."
+    },
+    {
+      "id": "cap_orders_writable_connection",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        conn = sqlite3.connect(f\"file:{quote(path)}?mode=ro\", uri=True,",
+      "mutated": "        conn = sqlite3.connect(f\"file:{quote(path)}?mode=rw\", uri=True,",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): connessione di lettura degli ordini aperta in scrittura."
+    },
+    {
+      "id": "cap_orders_query_only_off",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    conn.execute(\"PRAGMA query_only=ON\")",
+      "mutated": "    conn.execute(\"PRAGMA query_only=OFF\")",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): PRAGMA query_only disattivato sulla connessione di lettura."
+    },
+    {
+      "id": "cap_ambiguous_as_failed",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    \"AMBIGUOUS\": (\"AMBIGUOUS\",),\n    \"HEDGE_AMBIGUOUS\": (\"AMBIGUOUS\",),",
+      "mutated": "    \"AMBIGUOUS\": (\"FAILED\",),\n    \"HEDGE_AMBIGUOUS\": (\"AMBIGUOUS\",),",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): ordine AMBIGUOUS riportato come FAILED."
+    },
+    {
+      "id": "cap_unknown_status_guessed",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if allowed is None:\n        return \"UNKNOWN\"",
+      "mutated": "    if allowed is None:\n        return \"FAILED\"",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): stato del core sconosciuto indovinato invece di UNKNOWN."
+    },
+    {
+      "id": "cap_split_without_sizes",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if matched is None or remaining is None:\n        return \"ACCEPTED\"",
+      "mutated": "    if matched is None or remaining is None:\n        return \"MATCHED\"",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): ordine accettato dichiarato abbinato senza quantità esplicite."
+    },
+    {
+      "id": "cap_missing_amount_zero",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    try:\n        return decimal_str(value)\n    except _Unavailable:\n        return None",
+      "mutated": "    try:\n        return decimal_str(value)\n    except _Unavailable:\n        return \"0\"",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): importo illeggibile riportato come zero."
+    },
+    {
+      "id": "cap_unreadable_row_hidden",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        except Exception:  # noqa: BLE001 - riga illeggibile: contata, mai nascosta\n            omitted += 1",
+      "mutated": "        except Exception:  # noqa: BLE001 - riga illeggibile: contata, mai nascosta\n            pass",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): riga illeggibile nascosta senza dichiarare lo snapshot PARTIAL."
+    },
+    {
+      "id": "cap_truncation_hidden",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    truncated = len(rows) > MAX_ORDERS",
+      "mutated": "    truncated = False",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): elenco troncato presentato come completo."
+    },
+    {
+      "id": "cap_stale_hidden",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    elif vars(rc).get(\"_reconciliation_required\") is True:",
+      "mutated": "    elif False:",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): riconciliazione d'avvio in corso non dichiarata (STALE)."
+    },
+    {
+      "id": "cap_busy_as_empty",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "                raise _SnapshotMissing(\"UNKNOWN\", \"DB_BUSY\") from None",
+      "mutated": "                return {\"state\": \"OK\", \"reason\": None, \"orders\": [], \"omitted\": 0, \"truncated\": False}",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): database occupato presentato come nessun ordine."
+    },
+    {
+      "id": "cap_bet_id_invented",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    bet_id = _ident_or_none(_bet_id_from_response(response))",
+      "mutated": "    bet_id = _ident_or_none(_bet_id_from_response(response)) or f\"LOCAL-{local_id}\"",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): betId mancante sostituito da un identificativo inventato."
+    },
+    {
+      "id": "cap_broker_absent_unchecked",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        broker_view = \"PRESENT\" if bet_id in broker_ids else \"ABSENT\"",
+      "mutated": "        broker_view = \"PRESENT\"",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): ordine assente dal broker SIM dichiarato presente (discrepanza nascosta)."
+    },
+    {
+      "id": "cap_reconcile_flag_lost",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "            \"in_reconciliation\": core_status in RECONCILE_STATUSES or core_status == \"HEDGE_AMBIGUOUS\",",
+      "mutated": "            \"in_reconciliation\": False,",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): ordine aperto non segnalato in riconciliazione."
+    },
+    {
+      "id": "cap_customer_ref_leak",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        \"local_id\": local_id,\n        \"role\": role,",
+      "mutated": "        \"local_id\": local_id,\n        \"customer_ref\": row[\"customer_ref\"],\n        \"role\": role,",
+      "tests": [
+        "tests/control_api/test_orders_view.py"
+      ],
+      "rationale": "MCP-01g ponte Control API ordini (handoff Claude C): identificativo interno (customer_ref) esposto."
     }
   ]
 }

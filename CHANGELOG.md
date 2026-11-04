@@ -24,6 +24,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   finanziarie (ACTIVE/INACTIVE/TRIGGERED/UNKNOWN/UNAVAILABLE, mai «sicuro» se non verificabile);
   `GET /v1/positions` riporta le posizioni dal registro Decimal senza perdita. Pin al contratto 1.3.0;
   area di mutazione `control_api` a 37 mutazioni. Dipende dalle patch MCP-01d e MCP-01e.
+- **Control API: ordini (MCP-01g, handoff di Claude C):** `GET /v1/orders` legge il ledger `orders` con una
+  connessione SQLite in sola lettura, mappa esplicita degli stati del core (AMBIGUOUS resta AMBIGUOUS),
+  importi in Decimal, stati dello snapshot OK/PARTIAL/STALE/UNKNOWN/UNAVAILABLE. Pin al contratto 1.4.0;
+  area di mutazione `control_api` a 51 mutazioni. Dipende dalle patch MCP-01d, MCP-01e e MCP-01f.
 
 ### Changed
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**
