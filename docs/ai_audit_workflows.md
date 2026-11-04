@@ -103,12 +103,17 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
   `&&`): ne esce il **nome** del secret, mai il valore, che nel diff non c'è.
   Un'espressione con un letterale (`${{ 'x' }}`, `format(...)`, confronti),
   malformata o con testo attaccato viene redatta: a inizio riga **per intero**.
+  Il valore deve **finire** lì: un commento dopo il permesso o dopo il
+  riferimento (`id-token: write # ...`) rende la riga redatta come prima, e un
+  riferimento quotato deve chiudere la propria virgoletta subito dopo `}}`
+  (`"${{ secrets.X }}, altro"` resta redatto per intero). Rilievi di Sol sulla
+  #608.
   Prima la regola di inizio riga escludeva ogni valore che comincia con `${{`, e
   la generica ne toglieva solo il primo pezzo: `password: ${{ 'x' }}` usciva in
   chiaro (fuga preesistente, chiusa). Qualunque altro valore dopo `id-token`
   viene redatto come prima; le parole di permesso valgono solo per `id-token`.
   Residuo invariato: il valore quotato seguito da altro testo (P22/P23).
-  Misurato sul repo intero e sul diff della #606: 59 righe su 325.847 diventano
+  Misurato sul repo intero e sul diff della #606: 59 righe su 325.884 diventano
   visibili, tutte di queste due forme, e 3 vengono redatte più di prima;
   fuzz differenziale di oltre 50.000 righe: nessun valore che main nascondeva
   diventa visibile.

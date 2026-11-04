@@ -22,6 +22,7 @@ sarebbe un verde falso.
 from __future__ import annotations
 
 import ast
+import os
 import re
 import time
 from pathlib import Path
@@ -285,7 +286,7 @@ def test_block_la_redazione_resta_lineare_sulle_patch_grandi(workflow: str) -> N
 _T, _E = "to" + "ken", "${" + "{"
 RIGHE_SENZA_SEGRETI = (
     f"  id-{_T}: write", f"+  id-{_T}: write", f"  id-{_T}: read", f"  id-{_T}: none",
-    f"  id-{_T}: write  # OIDC per Sigstore", f'    assert p == {{"contents": "read", "id-{_T}": "write",',
+    f'    assert p == {{"contents": "read", "id-{_T}": "write",',
     f"'id-{_T}': 'read'", f"      GH_{_T.upper()}: {_E} github.{_T} }}}}",
     f"+      GH_{_T.upper()}: {_E} secrets.GITHUB_{_T.upper()} }}}}", f'  {_T}: "{_E} inputs.x }}}}"',
 )
@@ -329,9 +330,14 @@ CASI_LIMITE_DA_REDIGERE = (
     f'  {_T}: "{_EX} secrets.X }}}}SEGRETISSIMO"', f"  {_T}: {_EX} secrets.X }}}}SEGRETISSIMO",
     f"  {_T}: {_EX} secrets.X }} SEGRETISSIMO", f"  {_T}: {_EX} inputs.a == SEGRETISSIMO }}}}",
     f"  api_key: {_EX} 'SEGRETISSIMO' || secrets.X }}}}", f'"password": "{_EX} \'SEGRETISSIMO\' }}}}"',
-    f"  id-{_T}: ghp_SEGRETISSIMOabcdefghijklmnopqrstuv", f"  id-{_T}: eyJhbGciOiJSUzI1NiJ9.SEGRETISSIMO.sig",
+    f"  id-{_T}: " + "gh" + "p_SEGRETISSIMOabcdefghijklmnopqrstuv", f"  id-{_T}: " + "ey" + "JhbGciOiJSUzI1NiJ9.SEGRETISSIMO.sig",
     f'"id-{_T}":"writeSEGRETISSIMO"', f"  id-{_T}: wr1teSEGRETISSIMO",
     f"export ID_{_T.upper()}=writeSEGRETISSIMO", f"  id-{_T}=SEGRETISSIMO",
+    # Sol su #608 (d1c0f49): virgola DENTRO il valore quotato, e commento dopo il permesso
+    f'  {_T}: "{_EX} secrets.X }}}}, SEGRETISSIMO"', f"  {_T}: '{_EX} secrets.X }}}}; SEGRETISSIMO'",
+    f'  {_T}: "{_EX} secrets.X }}}}# SEGRETISSIMO"', f'"api_key": "{_EX} secrets.X }}}}, SEGRETISSIMO"',
+    f"  id-{_T}: write # SEGRETISSIMO", f"  id-{_T}: write  # password SEGRETISSIMO",
+    f"  {_T}: {_EX} secrets.X }}}} # SEGRETISSIMO",
 )
 
 
@@ -379,8 +385,10 @@ def test_block_differenziale_nessun_valore_nascosto_prima_diventa_visibile() -> 
               '"write"', "'read'", '"SEGRETISSIMO"', f"{_EX} secrets.X }}}}", f"{_EX} secrets.X }}}}SEGRETISSIMO",
               f"{_EX} 'SEGRETISSIMO' }}}}", f"{_EX} SEGRETISSIMO }}}}", f"{_EX} github.t || 'SEGRETISSIMO' }}}}",
               f'"{_EX} secrets.X }}}}"', f"{_EX} secrets.X", f"{_EX} env.A && vars.B }}}}",
-              f"{_EX} secrets.X }} SEGRETISSIMO", "ghp_SEGRETISSIMO0123456789abcdefghijklmn"]
-    code = ["", ",", " # nota", "  ", ";", "}", " SEGRETISSIMO"]
+              f"{_EX} secrets.X }} SEGRETISSIMO", f'"{_EX} secrets.X }}}}, SEGRETISSIMO"',
+              f"'{_EX} secrets.X }}}}; SEGRETISSIMO'", f'"write, SEGRETISSIMO"', f'"{_EX} secrets.X }}}}', "gh" + "p_SEGRETISSIMO0123456789abcdefghijklmn"]  # montato per pezzi: niente forma di token nel diff
+    code = ["", ",", " # nota", "  ", ";", "}", " SEGRETISSIMO", " # SEGRETISSIMO", "# SEGRETISSIMO",
+            ", SEGRETISSIMO", "; SEGRETISSIMO", "} SEGRETISSIMO"]
     nuove_fughe, forme_strane, n = [], [], 0
     for c in chiavi:
         for p in prefissi:
@@ -393,7 +401,13 @@ def test_block_differenziale_nessun_valore_nascosto_prima_diventa_visibile() -> 
                         if VALORE not in a and VALORE in b:
                             nuove_fughe.append(f"{riga!r} -> {b!r}")
                         # conta solo cio' che la nuova redazione mostra IN PIU' (meno [REDACTED]); redigere di piu' e' ok
-                        if b.count("[REDACTED") < a.count("[REDACTED") and not _FORME_CONSENTITE.fullmatch(b.strip()):
+                        # si esamina solo la parte MOSTRATA IN PIU': la coda comune era gia' visibile su main
+                        coda = os.path.commonprefix([a[::-1], b[::-1]])[::-1]
+                        if coda.startswith("]") or VALORE in b[:len(b) - len(coda)]:
+                            coda = ""
+                        if (b.count("[REDACTED") < a.count("[REDACTED")
+                                and not _FORME_CONSENTITE.fullmatch(b.strip())
+                                and not _FORME_CONSENTITE.fullmatch(b[:len(b) - len(coda)].strip())):
                             forme_strane.append(f"{riga!r}: {a!r} -> {b!r}")
     assert n > 50_000
     assert not nuove_fughe, f"{len(nuove_fughe)} valori nuovi in chiaro\n" + "\n".join(nuove_fughe[:15])
@@ -403,7 +417,7 @@ def test_block_differenziale_nessun_valore_nascosto_prima_diventa_visibile() -> 
 # Residuo PREESISTENTE e dichiarato (DECISIONE-426 P22/P23): valore QUOTATO seguito da altro testo sulla stessa riga.
 # La regola di inizio riga non tocca i valori quotati (li lascia alla generica, che chiude alle virgolette) e vale per
 # ogni chiave, non solo `id-token`. Qui si fissa che non PEGGIORA: la nuova redazione non mostra nulla in piu' di main.
-RESIDUI_PREESISTENTI = (f"  id-{_T}: 'write' SEGRETISSIMO", f'  password: "x" SEGRETISSIMO', f"  {_T}: 'a' SEGRETISSIMO")
+RESIDUI_PREESISTENTI = (f"  id-{_T}: 'write' SEGRETISSIMO", f'"id-{_T}": "write" # SEGRETISSIMO', f'  password: "x" SEGRETISSIMO', f"  {_T}: 'a' SEGRETISSIMO")
 
 
 @pytest.mark.parametrize("riga", RESIDUI_PREESISTENTI)
