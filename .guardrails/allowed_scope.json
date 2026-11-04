@@ -3418,6 +3418,7 @@
         "core/runtime_controller.py",
         "docs/market_tradability.md",
         "guardrails/mutation_catalog.json",
+        "simulation_broker.py",
         "tests/acceptance/test_f23_market_tradable.py",
         "tests/acceptance/test_issue536_runtime_authority.py",
         "tests/core/test_dutching_bus_wiring.py",
@@ -3431,7 +3432,7 @@
         "tests/unit/test_dutching_controller.py",
         "tests/unit/test_runtime_controller_best_price_direct.py"
       ],
-      "max_files": 20
+      "max_files": 21
     }
   }
 }

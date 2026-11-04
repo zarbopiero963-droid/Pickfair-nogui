@@ -13,6 +13,7 @@ SCENARIO_JSON: {"steps": [...]} con passi:
   {"op": "crash_after_reset"}                                       os._exit(1) appena scatta ROSERPINA_AUTO_RESET
   {"op": "mode", "m": "1.701", "mode": "nomatch"}                  book peggiore del prezzo: l'ordine resta non abbinato
   {"op": "mode", "m": "1.701", "mode": "suspended"}                mercato SUSPENDED nel book all'ingresso (F-23)
+  {"op": "mode", "m": "1.701", "mode": "suspend_on_place"}         OPEN alla verifica, SUSPENDED all'invio (F-23)
   {"op": "book_down"}                                               snapshot del book assente da qui in poi
   {"op": "crash_now"}                                               os._exit(1) subito (stato SIM persistito)
   {"op": "crash_after_settlement"}                                  os._exit(1) appena il settlement e' contabilizzato
@@ -164,6 +165,8 @@ try:
         m = str(k.get("market_id") or "")
         if MODE.get(m) == "lost":
             real(*a, **k); raise TimeoutError("response lost after send")
+        if BOOK.get(m, {}).get("suspend_on_place"):          # F-23: sospeso FRA la verifica e l'invio
+            book(m, status="SUSPENDED")
         out = real(*a, **k)
         crash_if_armed("PLACE_BET:" + m)
         return out
@@ -171,6 +174,9 @@ try:
     real_orders = brk.place_orders
 
     def place_orders(*a, **k):
+        m = str(k.get("market_id") or "")
+        if BOOK.get(m, {}).get("suspend_on_place"):          # F-23: sospeso FRA la verifica e l'invio
+            book(m, status="SUSPENDED")
         out = real_orders(*a, **k)
         crash_if_armed("PLACE_ORDERS:" + str(k.get("market_id") or ""))
         return out
@@ -278,6 +284,8 @@ try:
                 BOOK.setdefault(st["m"], {})["nomatch"] = True
             if st["mode"] == "suspended":                       # F-23: mercato SUSPENDED all'ingresso
                 BOOK.setdefault(st["m"], {})["suspended"] = True
+            if st["mode"] == "suspend_on_place":                # F-23: sospeso fra verifica e placeOrders
+                BOOK.setdefault(st["m"], {})["suspend_on_place"] = True
             continue
         if op == "signal":
             BOOK[st["m"]] = {"price": st.get("price", 2.0), **BOOK.get(st["m"], {})}

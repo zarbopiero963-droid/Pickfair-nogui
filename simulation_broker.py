@@ -661,6 +661,43 @@ class SimulationBroker:
         return {"status": "FAILURE", "errorCode": "DUPLICATE_TRANSACTION", "marketId": str(market_id),
                 "instructionReports": [], "order_unknown": True, "simulated": True}
 
+    def _rifiuto_mercato_locked(self, market_id: str, selection_ids: List[int]) -> Optional[Dict[str, Any]]:
+        """F-23 (parita' SIM/LIVE, PF-EXEC-05): come Betfair, ``placeOrders`` su un mercato non OPEN o su una selezione
+        non ACTIVE e' una richiesta FAILURE, nulla piazzato (``MARKET_SUSPENDED``, ``MARKET_NOT_OPEN_FOR_BETTING``,
+        ``RUNNER_REMOVED`` sull'istruzione). Senza book caricato per il mercato lo stato non e' noto al broker: invariato
+        (l'ammissione F-23 del runtime nega gia' un ingresso senza book). None = mercato e selezioni negoziabili."""
+        book = self.state.market_books.get(str(market_id))
+        if not isinstance(book, dict):
+            return None
+        n = max(1, len(selection_ids))
+        status = str(book.get("status") or "").strip().upper()
+        if status != "OPEN":
+            code = "MARKET_SUSPENDED" if status == "SUSPENDED" else "MARKET_NOT_OPEN_FOR_BETTING"
+            return self._rifiuto_esecuzione(market_id, code, [code] * n)
+        runner_status = {}
+        for runner in book.get("runners") or []:
+            if isinstance(runner, dict):
+                runner_status[_to_int(runner.get("selectionId"), 0)] = str(runner.get("status") or "").strip().upper()
+        if any(runner_status.get(int(sid)) not in ("ACTIVE", None) for sid in selection_ids):
+            codes = ["RUNNER_REMOVED" if runner_status.get(int(sid)) not in ("ACTIVE", None) else "ERROR_IN_ORDER"
+                     for sid in selection_ids]
+            return self._rifiuto_esecuzione(market_id, "BET_ACTION_ERROR", codes)
+        return None
+
+    @staticmethod
+    def _rifiuto_esecuzione(market_id: str, error_code: str, instruction_codes: List[str]) -> Dict[str, Any]:
+        return {
+            "status": "FAILURE",
+            "errorCode": error_code,
+            "marketId": str(market_id),
+            "instructionReports": [
+                {"status": "FAILURE", "errorCode": code, "orderStatus": "", "betId": "",
+                 "sizeMatched": 0.0, "averagePriceMatched": 0.0}
+                for code in instruction_codes
+            ],
+            "simulated": True,
+        }
+
     @staticmethod
     def _rifiuto_fondi(market_id: str, n_istruzioni: int = 1) -> Dict[str, Any]:
         """Risposta come Betfair: richiesta FAILURE con errorCode INSUFFICIENT_FUNDS, nulla piazzato."""
@@ -1449,6 +1486,10 @@ class SimulationBroker:
             request_ref = _conforming_ref(customer_ref) if self._batch_depth == 0 else ""
             if request_ref and self._customer_ref_duplicate_locked(request_ref):
                 return self._rifiuto_duplicato(order.market_id)
+            if self._batch_depth == 0:                       # in un batch lo controlla `place_orders`, una volta
+                rifiuto = self._rifiuto_mercato_locked(order.market_id, [order.selection_id])
+                if rifiuto is not None:
+                    return rifiuto
             # PFC-004: l'ordine intero, come se restasse non abbinato, deve stare
             # nel disponibile; altrimenti INSUFFICIENT_FUNDS e nulla viene
             # memorizzato, abbinato o scritto. Su un mercato gia' regolato
@@ -1545,6 +1586,11 @@ class SimulationBroker:
         request_ref = _conforming_ref(customer_ref)          # F-13: un batch e' UNA richiesta, un solo customerRef
         if request_ref and self._customer_ref_duplicate_locked(request_ref):
             return self._rifiuto_duplicato(str(market_id))
+        rifiuto = self._rifiuto_mercato_locked(str(market_id), [
+            _to_int((item or {}).get("selection_id", (item or {}).get("selectionId")), 0)
+            for item in (instructions or []) if isinstance(item, dict)])
+        if rifiuto is not None:                              # F-23: tutto il batch, come Betfair
+            return rifiuto
         if str(market_id) not in self.state.settlements and not self._fondi_sufficienti_locked(
                 self._candidati_batch(str(market_id), instructions)):
             return self._rifiuto_fondi(str(market_id), len(instructions or []))

@@ -36,6 +36,10 @@ controlla comunque; con il guard acceso, sullo stesso book, restano i motivi di 
 ## Limiti dichiarati
 
 - **Corsa fra verifica e invio**: un mercato sospeso fra la lettura e il `placeOrders` è rifiutato da Betfair
-  (`FAILURE`, esito certo): nessun ordine, risorse rilasciate. L'exchange resta autorevole.
+  (`FAILURE`, esito certo): nessun ordine, risorse rilasciate. L'exchange resta autorevole. **Parità SIM**: il
+  `SimulationBroker` ora rifiuta allo stesso modo (`MARKET_SUSPENDED`, `MARKET_NOT_OPEN_FOR_BETTING`, istruzione
+  `RUNNER_REMOVED`, batch rifiutato intero); prima accettava — e abbinava — ordini su un mercato sospeso. Provato sul
+  runtime vero con un mercato OPEN alla verifica e SUSPENDED all'invio (`suspend_on_place` nell'harness F026).
+  Senza book caricato il broker non conosce lo stato (invariato), ma l'ammissione F-23 nega già l'ingresso.
 - **SIM**: il book del broker simulato esiste solo se caricato (stream/fallback in LIVE, dataset di replay, feed F-31).
   Senza book, in SIM nessun ingresso è ammesso (come già con il Liquidity Guard attivo di default).

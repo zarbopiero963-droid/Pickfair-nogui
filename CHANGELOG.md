@@ -32,7 +32,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   SUSPENDED o book assente ⇒ ordine SUBMITTED, riprodotto sul runtime vero); bet manuale e lotto Dutching usavano il
   book in cache senza guardarne lo stato. Ora una lettura fresca del book all'ammissione decide: mercato OPEN,
   selezioni ACTIVE, book del mercato richiesto; altrimenti `RISK_MARKET_NOT_TRADABLE` (segnale, auto-next) o rifiuto
-  dell'intero lotto / bet manuale. Nessuna soglia nuova; hedge e uscite protettive invariati. Test
+  dell'intero lotto / bet manuale. Il `SimulationBroker` rifiuta come Betfair un `placeOrders` su mercato non OPEN o
+  selezione non ACTIVE (prima accettava e abbinava): una sospensione fra verifica e invio non produce ordini in SIM.
+  Nessuna soglia nuova; hedge e uscite protettive invariati. Test
   `tests/acceptance/test_f23_market_tradable.py`; `docs/market_tradability.md`.
 - **CB-586-FI-03Z (#586, P1):** il broker SIM abbinava ordini contro livelli del book con size 0. Esempio: un LAY
   0,10@3.0 risultava abbinato a 2.02 su un book senza liquidità, con un matched finto e un'esposizione abbinata

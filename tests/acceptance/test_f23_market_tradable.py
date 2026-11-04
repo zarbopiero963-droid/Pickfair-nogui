@@ -239,3 +239,79 @@ def test_auto_next_porta_l_esito_della_verifica_al_risk_gate() -> None:
     assert len(inviati) == 1, esito
     assert inviati[0]["market_tradability_required"] is True
     assert isinstance(inviati[0]["market_not_tradable_reason"], str)
+
+
+# ------------------------------------------------------------------ sospensione FRA verifica e invio (parita' SIM/LIVE)
+def _broker_con_book(status="OPEN", runner_status="ACTIVE"):
+    from simulation_broker import SimulationBroker
+
+    b = SimulationBroker(starting_balance=1000.0)
+    b.update_market_book({"marketId": MID, "status": status, "inplay": False, "runners": [
+        {"selectionId": 11, "status": runner_status,
+         "ex": {"availableToBack": [{"price": 2.0, "size": 100.0}], "availableToLay": [{"price": 2.02, "size": 100.0}]}},
+        {"selectionId": 12, "status": "ACTIVE",
+         "ex": {"availableToBack": [{"price": 3.0, "size": 100.0}], "availableToLay": [{"price": 3.05, "size": 100.0}]}}]})
+    return b
+
+
+@pytest.mark.parametrize("status,codice", [("SUSPENDED", "MARKET_SUSPENDED"), ("CLOSED", "MARKET_NOT_OPEN_FOR_BETTING"),
+                                            ("INACTIVE", "MARKET_NOT_OPEN_FOR_BETTING")])
+def test_block_broker_sim_rifiuta_come_betfair_su_mercato_non_aperto(status: str, codice: str) -> None:
+    """Betfair rifiuta placeOrders su un mercato non OPEN (FAILURE, nessun ordine): il SIM deve fare lo stesso,
+    altrimenti in SIM una sospensione fra il controllo F-23 e l'invio produrrebbe un ordine inesistente in LIVE."""
+    b = _broker_con_book(status)
+    fondi_prima = b.get_account_funds()["available"]
+
+    out = b.place_bet(market_id=MID, selection_id=11, side="BACK", price=2.0, size=5.0)
+
+    assert out["status"] == "FAILURE" and out["errorCode"] == codice, out
+    assert out["instructionReports"][0]["status"] == "FAILURE"
+    assert b.state.orders == {}, "ordine registrato su mercato non aperto"
+    assert b.get_account_funds()["available"] == fondi_prima
+
+
+def test_block_broker_sim_rifiuta_selezione_non_attiva() -> None:
+    b = _broker_con_book(runner_status="REMOVED")
+
+    out = b.place_bet(market_id=MID, selection_id=11, side="BACK", price=2.0, size=5.0)
+
+    assert out["status"] == "FAILURE" and out["instructionReports"][0]["errorCode"] == "RUNNER_REMOVED", out
+    assert b.state.orders == {}
+
+
+def test_block_batch_sim_su_mercato_sospeso_rifiutato_intero() -> None:
+    b = _broker_con_book("SUSPENDED")
+
+    out = b.place_orders(market_id=MID, instructions=[
+        {"selectionId": 11, "side": "BACK", "price": 2.0, "size": 5.0},
+        {"selectionId": 12, "side": "BACK", "price": 3.0, "size": 5.0}])
+
+    assert out["status"] == "FAILURE" and out["errorCode"] == "MARKET_SUSPENDED", out
+    assert len(out["instructionReports"]) == 2 and all(r["status"] == "FAILURE" for r in out["instructionReports"])
+    assert b.state.orders == {}
+
+
+def test_broker_sim_mercato_aperto_accetta_come_prima() -> None:
+    b = _broker_con_book()
+
+    out = b.place_bet(market_id=MID, selection_id=11, side="BACK", price=2.0, size=5.0)
+
+    assert out["status"] == "SUCCESS", out
+
+
+@pytest.mark.safety
+def test_block_runtime_vero_sospensione_fra_verifica_e_invio_nessun_ordine_vivo() -> None:
+    """Runtime vero: il book e' OPEN alla verifica F-23, il mercato viene sospeso subito prima del placeOrders.
+    Esito atteso come su Betfair: rifiuto esplicito dell'exchange (FAILED, esito certo), nessun ordine vivo."""
+    import os, sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "f026"))
+    from test_f026_financial import run
+
+    r = run([{"op": "mode", "m": "1.934", "mode": "suspend_on_place"}, {"op": "signal", "m": "1.934", "price": 2.0}],
+            settings=GUARD_OFF)
+    riga = _riga(r["snaps"][-1], "1.934")
+    assert riga is not None and riga["status"] == "FAILED", riga                 # rifiuto certo dell'exchange
+    assert not any(o["market_id"] == "1.934" and o["status"] in ("SUBMITTED", "AMBIGUOUS")
+                   for o in r["snaps"][-1]["orders"]), "ordine vivo su un mercato sospeso"
+    assert all(t["market_id"] != "1.934" for t in r["snaps"][-1]["tables"] if t.get("event_key")), \
+        "tavolo trattenuto da un rifiuto certo dell'exchange"
