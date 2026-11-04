@@ -152,7 +152,7 @@ Verifica degli esempi indicati come «da verificare»:
 | F-13b, F-18, F-02 «branch locali non pushati» | **falso**: sono sul remoto come `keep/*-20261103` |
 
 Altre PR non di scheda, aperte nel periodo:
-- governance: #592, #595, #598, #602, #603, #607, **#608 (aperta, head `dff58c3c25c5`)**;
+- governance: #592, #595, #598, #602, #603, #607, **#608 (aperta, head `59cf4ac5d97c`; correzione: `dff58c3c25c5` era un commit precedente del branch)**;
 - altre: #591 (fix #590), #604 (FI-03Z), #606 (chiusa senza merge);
 - issue #605 con label `roadmap-v2` (`[PF-DEF][Roadmap V2] ext-mutation`).
 
