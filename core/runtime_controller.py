@@ -3917,6 +3917,28 @@ class RuntimeController:
                     if barrier_id in getattr(self, "_cashout_routed", set()):
                         RuntimeController._end_cashout_barrier(self, barrier_id)
 
+    def _drawdown_pct_stop_reason(self) -> str:
+        """F-12a (#586 DD-01/DD-02; decisione owner F-CFG-04, #582 29/10/2026): stop sul drawdown % del bankroll con la
+        STESSA semantica in SIM e LIVE, per ogni nuovo ingresso (segnale, auto-next, bet manuale, lotto Dutching).
+
+        Non configurato => "" (nessun default). Limite configurato non numerico, non finito, <= 0 o > 100, oppure
+        bankroll/picco non leggibili => "max_drawdown_hard_stop_pct_non_valido" (nega, come `max_drawdown_abs`).
+        Drawdown = (picco - bankroll) / picco x 100; >= limite => LOCKDOWN e "drawdown_hard_stop_active"."""
+        raw = self._configured_optional(self.config, "max_drawdown_hard_stop_pct")
+        if raw is None:
+            return ""
+        limit = validators.finite_number(raw)
+        bankroll = validators.finite_number(getattr(self.risk_desk, "bankroll_current", None))
+        peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
+        if limit is None or limit <= 0.0 or limit > 100.0 or bankroll is None or peak is None:
+            return "max_drawdown_hard_stop_pct_non_valido"
+        if peak > 0.0 and bankroll < peak:
+            drawdown_pct = (peak - bankroll) / peak * 100.0
+            if validators.reaches_limit(drawdown_pct, limit):
+                self.force_lockdown(f"drawdown_hard_stop_triggered:{drawdown_pct:.2f}%")
+                return "drawdown_hard_stop_active"
+        return ""
+
     def absolute_cap_reason_for_orders(self, orders) -> str:
         """Cap monetari assoluti opzionali (PR28-d) per ordini che NON passano dall'ammissione del runtime:
         bet manuale e batch Dutching (rilievo Codex #522). "" se ammessi, altrimenti il motivo del rifiuto.
@@ -3930,6 +3952,9 @@ class RuntimeController:
         market_cap = self._configured_optional(cfg, "max_market_exposure")
         event_cap = self._configured_optional(cfg, "max_event_exposure_abs")
         drawdown_cap = self._configured_optional(cfg, "max_drawdown_abs")
+        drawdown_pct_reason = self._drawdown_pct_stop_reason()       # F-12a: anche bet manuale e lotto Dutching
+        if drawdown_pct_reason:
+            return drawdown_pct_reason
         if order_cap is None and market_cap is None and event_cap is None and drawdown_cap is None:
             return ""
         lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
@@ -4536,6 +4561,8 @@ class RuntimeController:
         if allow_recovery and active_recovery_count >= max_recovery:
             free_exists = any(t.status == "FREE" for t in self.table_manager._tables.values())
             if not free_exists:
+                if self.config.anti_duplication_enabled:
+                    self.duplication_guard.release(event_key)          # F-12b: nessuna chiave trattenuta dal rifiuto
                 self._reject_signal(signal, f"max_recovery_tables_reached:{active_recovery_count}")
                 return
             else:
@@ -4555,18 +4582,14 @@ class RuntimeController:
         event_identity = self._event_identity(signal)
         event_exposure = self._event_current_exposure(signal)
 
-        # Enforcement A1: Drawdown Hard Stop (#320)
-        if str(self.execution_mode).upper() == "LIVE":
-            drawdown_limit = getattr(self.config, "max_drawdown_hard_stop_pct", None)
-            if drawdown_limit is not None:
-                current_bankroll = float(self.risk_desk.bankroll_current)
-                peak = float(self.risk_desk.equity_peak)
-                if peak > 0 and current_bankroll < peak:
-                    current_dd = ((peak - current_bankroll) / peak) * 100.0
-                    if current_dd >= float(drawdown_limit):
-                        self.force_lockdown(f"drawdown_hard_stop_triggered:{current_dd:.2f}%")
-                        self._reject_signal(signal, "drawdown_hard_stop_active")
-                        return
+        # Enforcement A1: Drawdown Hard Stop (#320). F-12a (F-CFG-04): stessa semantica in SIM e LIVE; il rifiuto
+        # rilascia la chiave anti-duplicato come gli altri rifiuti d'ammissione (F-12b).
+        drawdown_pct_reason = self._drawdown_pct_stop_reason()
+        if drawdown_pct_reason:
+            if self.config.anti_duplication_enabled:
+                self.duplication_guard.release(event_key)
+            self._reject_signal(signal, drawdown_pct_reason)
+            return
 
         # PR28-d: drawdown assoluto owner, stessa semantica SIM/LIVE. Un limite
         # configurato ma illeggibile o uno stato equity non verificabile nega.
@@ -8040,6 +8063,8 @@ class RuntimeController:
                                 risk_reason = "max_drawdown_abs_active"
                             else:
                                 risk_reason = "risk_approved"
+                if risk_reason == "risk_approved":
+                    risk_reason = self._drawdown_pct_stop_reason() or "risk_approved"   # F-12a: come i segnali
                 if risk_reason == "risk_approved":
                     # #461 PR28-e: l'auto-next e' una nuova entrata; fondi dallo snapshot appena registrato dal
                     # settlement (nessuna rete sotto il lock) contro le riserve non ancora a mercato + l'ordine.

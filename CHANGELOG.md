@@ -27,6 +27,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Nessuna attestazione storica viene riscritta. `docs/review_attestation.md` aggiornato.
 
 ### Fixed
+- **F-12 (#586, DD-01/DD-02, P1): stop sul drawdown % con la stessa semantica in SIM e LIVE (decisione owner F-CFG-04,
+  #582 29/10/2026).** `max_drawdown_hard_stop_pct` scattava solo per i segnali in LIVE: in SIM un drawdown del 50 % con
+  limite 20 % lasciava partire l'ordine, e bet manuale, lotto Dutching e auto-next non lo applicavano in nessuna
+  modalità; un limite non numerico faceva sollevare l'handler e NaN non scattava mai. Ora un solo controllo
+  (`RuntimeController._drawdown_pct_stop_reason`) per segnale, auto-next, bet manuale e Dutching: drawdown ≥ limite ⇒
+  LOCKDOWN e `drawdown_hard_stop_active`; limite non valido ⇒ `max_drawdown_hard_stop_pct_non_valido`; non configurato ⇒
+  nessuno stop (nessun nuovo default). F-12b: i rifiuti `drawdown_hard_stop_active` e `max_recovery_tables_reached`
+  rilasciano la chiave anti-duplicato. Test `tests/acceptance/test_f12a_drawdown_parity.py`;
+  `docs/roserpina41_parameter_dossier.md` (RSR-20) aggiornato.
 - **CB-586-FI-03Z (#586, P1):** il broker SIM abbinava ordini contro livelli del book con size 0. Esempio: un LAY
   0,10@3.0 risultava abbinato a 2.02 su un book senza liquidità, con un matched finto e un'esposizione abbinata
   inventata. Ora un livello con size esplicita ≤ 0 è assente, come il delta Betfair che lo rimuove, e il migliore è il

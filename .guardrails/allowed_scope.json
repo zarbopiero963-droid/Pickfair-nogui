@@ -3405,6 +3405,18 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "d_f12a_drawdown_parity": {
+      "description": "Claude D F-12 (#586, DD-01/DD-02): stop drawdown % con la stessa semantica in SIM e LIVE (decisione owner F-CFG-04, #582) per segnale, auto-next, bet manuale e lotto Dutching; limite non valido nega; F-12b rilascio della chiave anti-duplicato sui rifiuti drawdown e max_recovery_tables. Nessun nuovo default.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/runtime_controller.py",
+        "docs/roserpina41_parameter_dossier.md",
+        "tests/acceptance/test_f12a_drawdown_parity.py"
+      ],
+      "max_files": 5
     }
   }
 }
