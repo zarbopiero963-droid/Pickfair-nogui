@@ -3405,6 +3405,19 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "d_dutching_command": {
+      "description": "Claude D: comando interno tipizzato per il Dutching (core/dutching_command.py), publisher della corsia REQ_PLACE_DUTCHING esistente, validazione fail-closed con importi Decimal, command_id tracciato fino a DUTCHING_BATCH_APPROVED. Nessun percorso parallelo, nessun limite finanziario nuovo.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "controllers/dutching_controller.py",
+        "core/dutching_command.py",
+        "core/risk_middleware.py",
+        "tests/acceptance/test_dutching_command.py"
+      ],
+      "max_files": 6
     }
   }
 }

@@ -1653,6 +1653,7 @@ class DutchingController:
             self._publish_audit(
                 "DUTCHING_BATCH_APPROVED",
                 {
+                    "command_id": payload.get("command_id"),   # comando tipizzato (core.dutching_command), se c'e'
                     "batch_id": batch_id,
                     "event_key": event_key,
                     "table_id": table_id,

@@ -232,6 +232,11 @@ class RiskMiddleware:
                 "trailing": payload.get("trailing"),
                 "source": str(payload.get("source", "UI")),
             }
+            # Tracciabilita' (comando Dutching tipizzato, core.dutching_command): l'identita' del comando arriva fino
+            # agli eventi del lotto; assente o non testuale => non propagata (nessun id inventato).
+            command_id = payload.get("command_id")
+            if isinstance(command_id, str) and command_id:
+                normalized["command_id"] = command_id
         except Exception as e:
             logger.error(
                 f"[RiskMiddleware] Payload DUTCHING invalido: {e} | payload={payload}"

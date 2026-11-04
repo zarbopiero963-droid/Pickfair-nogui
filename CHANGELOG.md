@@ -109,6 +109,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dopo crash (`HEDGE_PENDING` => `HEDGE_AMBIGUOUS`). `core/hedge_ref.py`; test `tests/f05/`;
   mutazioni `f05_*`; `docs/cashout_overview.md` §7.3.
 ### Added
+- **Comando interno tipizzato per il Dutching (`core/dutching_command.py`).** La corsia
+  `REQ_PLACE_DUTCHING -> RiskMiddleware -> CMD_PLACE_DUTCHING -> DutchingController` era armata ma senza publisher.
+  `submit_dutching_command(bus, raw, simulation_mode=...)` valida il comando (fail-closed: `command_id`, mercato,
+  `total_stake` Decimal > 0, almeno due gambe senza duplicati, quota > 1, lato BACK/LAY esplicito, nessun campo fuori
+  contratto) e lo pubblica sulla stessa corsia: nessun percorso di trading parallelo, nessun limite finanziario nuovo
+  (stake, fondi, cap, idempotenza restano del controller). Il `command_id` attraversa il RiskMiddleware ed è
+  nell'evento `DUTCHING_BATCH_APPROVED`. Pensato per la Control API. Test `tests/acceptance/test_dutching_command.py`.
+
 - **F-33 (#586) — harness full-scope di collaudo (solo test e tooling, GO-IMPLEMENT-LOCAL owner 29/10/2026):**
   `tools/combi/` (inventario delle 190 chiavi censite con dominio e classe ATTIVA/LEGACY; generatore pairwise /
   three-way greedy riproducibile con seed, vincoli, tuple non estendibili escluse, report di copertura verificato);
