@@ -300,3 +300,17 @@ def test_orders_changing_state_during_reads_stay_coherent(runtime: RuntimeContro
         stop.set()
         t.join(timeout=10)
     assert not t.is_alive() and len(seen) >= 2
+
+
+def test_each_write_barrier_holds_on_its_own(runtime: RuntimeController) -> None:
+    """Due difese indipendenti: `query_only` attivo E file aperto in sola lettura (`mode=ro`).
+    Ognuna è provata da sola, così la rimozione di una non resta nascosta dall'altra."""
+    conn = views._ro_connection(runtime)
+    try:
+        assert conn.execute("PRAGMA query_only").fetchone()[0] == 1  # barriera 1
+        conn.execute("PRAGMA query_only=OFF")  # tolta la barriera 1 ...
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):  # ... regge la 2
+            conn.execute("INSERT INTO orders(customer_ref, correlation_id, status, created_at, "
+                         "updated_at) VALUES ('x', 'y', 'SUBMITTED', 1, 1)")
+    finally:
+        conn.close()
