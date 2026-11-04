@@ -953,6 +953,9 @@ class BetfairClient:
         timeout: float = 20.0,
         max_retries: int = 2,
         proxy_config: Optional[Dict[str, Any]] = None,
+        retry_backoff_base_s: float = 0.5,
+        retry_backoff_max_s: float = 5.0,
+        sleep_fn: Optional[Any] = None,
     ):
         self.username = str(username or "").strip()
         self.app_key = str(app_key or "").strip()
@@ -961,6 +964,16 @@ class BetfairClient:
 
         self.timeout = float(timeout or 20.0)
         self.max_retries = max(0, int(max_retries))
+        # Attesa fra i tentativi delle sole chiamate ripetibili (letture, cancel completo): esponenziale e limitata,
+        # rispetta il Retry-After di un HTTP 429 senza superare il massimo. Le scritture (single_shot) non si
+        # ritentano mai. Parametri tecnici, non soglie finanziarie.
+        base = float(retry_backoff_base_s)
+        cap = float(retry_backoff_max_s)
+        if not (math.isfinite(base) and math.isfinite(cap) and 0.0 <= base <= cap):
+            raise ValueError("INVALID_RETRY_BACKOFF")
+        self.retry_backoff_base_s = base
+        self.retry_backoff_max_s = cap
+        self._sleep = sleep_fn if callable(sleep_fn) else time.sleep
 
         self.session = session or requests.Session()
         self._configura_proxy(proxy_config)
@@ -1172,6 +1185,23 @@ class BetfairClient:
     # =========================================================
     # CORE JSON-RPC
     # =========================================================
+    def _retry_delay(self, failed_attempt: int, retry_after: Optional[float]) -> float:
+        """Attesa prima del tentativo successivo: base x 2^n, almeno il Retry-After del 429, mai oltre il massimo."""
+        delay = self.retry_backoff_base_s * (2 ** max(0, int(failed_attempt)))
+        if retry_after is not None:
+            delay = max(delay, retry_after)
+        return min(self.retry_backoff_max_s, delay)
+
+    @staticmethod
+    def _retry_after_seconds(response: Any) -> Optional[float]:
+        """Retry-After in secondi (solo la forma numerica); assente o non valido => None."""
+        headers = getattr(response, "headers", None) or {}
+        try:
+            value = float(str(headers.get("Retry-After", "")).strip())
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None             # un valore negativo vale la sola base
+
     def _post_jsonrpc(self, url: str, method: str, params: Dict[str, Any],
                       *, single_shot: bool = False) -> Any:
         started_at = time.monotonic()
@@ -1198,7 +1228,11 @@ class BetfairClient:
         # Inizializzato PRIMA del try: se _headers() stessa solleva, il
         # branch except lo referenzia senza UnboundLocalError.
         token_snapshot = ""
+        retry_after: Optional[float] = None
         for attempt in range(attempts):
+            if attempt > 0:
+                self._sleep(self._retry_delay(attempt - 1, retry_after))
+                retry_after = None
             try:
                 headers = self._headers()
                 # Snapshot del token del TENTATIVO: la redazione deve coprire
@@ -1245,6 +1279,8 @@ class BetfairClient:
             except HTTPError as exc:
                 code = getattr(exc.response, "status_code", "UNKNOWN")
                 last_error = f"HTTP_{code}"
+                if code == 429:
+                    retry_after = self._retry_after_seconds(exc.response)
                 logger.warning("http error attempt=%s method=%s code=%s", attempt, method, code)
 
             except RequestException as exc:

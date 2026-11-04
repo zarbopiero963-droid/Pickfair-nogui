@@ -27,6 +27,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Nessuna attestazione storica viene riscritta. `docs/review_attestation.md` aggiornato.
 
 ### Fixed
+- **Retry delle letture Betfair senza attesa (PF-BETFAIR-E2E-01, P2).** `BetfairClient._post_jsonrpc` ritentava letture e
+  cancel completo fino a 3 volte senza pausa, anche su HTTP 429. Ora attesa esponenziale limitata fra i tentativi
+  (`retry_backoff_base_s` 0,5 s, `retry_backoff_max_s` 5 s, parametri tecnici del costruttore), `Retry-After` numerico
+  del 429 rispettato fino al massimo e solo per il tentativo successivo. Le scritture (`placeOrders`, `replaceOrders`,
+  riduzione) restano single_shot: mai ritentate, mai attese. Test `tests/unit/test_betfair_client_retry_backoff.py`.
 - **CB-586-FI-03Z (#586, P1):** il broker SIM abbinava ordini contro livelli del book con size 0. Esempio: un LAY
   0,10@3.0 risultava abbinato a 2.02 su un book senza liquidità, con un matched finto e un'esposizione abbinata
   inventata. Ora un livello con size esplicita ≤ 0 è assente, come il delta Betfair che lo rimuove, e il migliore è il

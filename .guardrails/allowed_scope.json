@@ -3405,6 +3405,17 @@
         "tests/scripts/test_pr_review_attestation.py"
       ],
       "max_files": 7
+    },
+    "d_read_retry_backoff": {
+      "description": "Claude D PF-BETFAIR-E2E-01: attesa esponenziale limitata e Retry-After fra i tentativi delle sole chiamate ripetibili del BetfairClient; scritture single_shot invariate (mai ritentate).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "betfair_client.py",
+        "tests/unit/test_betfair_client_retry_backoff.py"
+      ],
+      "max_files": 4
     }
   }
 }
