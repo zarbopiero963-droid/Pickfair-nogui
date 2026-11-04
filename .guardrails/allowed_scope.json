@@ -3414,10 +3414,11 @@
         "CHANGELOG.md",
         "core/runtime_controller.py",
         "docs/roserpina_bankroll_equity.md",
+        "guardrails/mutation_catalog.json",
         "tests/acceptance/test_f16_funds_freshness.py",
         "tests/acceptance/test_issue461_pr28e_funds_gate.py"
       ],
-      "max_files": 6
+      "max_files": 7
     }
   }
 }
