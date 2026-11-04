@@ -9,6 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+### Added
+- **F-04 (#586, CSH-02): chiusura del solo tavolo che raggiunge SL/TP.** `RuntimeController` consuma `SL_TRIGGERED` /
+  `TP_TRIGGERED` di F-02 (contratto v1, `core/sl_tp_close.py`) e chiude solo la posizione di quel tavolo, identificata
+  da tavolo, `customer_ref`, mercato, selezione, lato e `bet_id`, mai dalla sola partita. Ordine incerto (AMBIGUOUS,
+  INFLIGHT, senza `betId`) => nessuna chiusura, riconciliazione; rivendicazione persistente e atomica
+  (`Database.claim_setting_once`, una per posizione) prima dell'instradamento: riavvio, scatto ripetuto o TP dopo SL
+  non producono un secondo cashout; instradamento come `CASHOUT_TABLE` interno con tutti i gate del cashout;
+  `CashoutRouter` ristretto ai `bet_id` del tavolo. Esiti `SL_TP_CLOSE_*` sul bus. Inerte finche' F-02 non e' su
+  `main`. Documentazione: `docs/cashout_overview.md` §7.6.
+
 - **Ponte Control API di sola lettura (PF-MCP-004/008, handoff di Claude C):** `control_api/` legge il
   `RuntimeController` senza effetti e lo serve tramite `pickfair_control_api` (repository pickfair-mcp-).
   Avvio opzionale da `headless_main` SOLO con `--control-api-port` e `--control-api-token-file`;
