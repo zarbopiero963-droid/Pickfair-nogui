@@ -666,6 +666,8 @@ class SimulationBroker:
         non ACTIVE e' una richiesta FAILURE, nulla piazzato (``MARKET_SUSPENDED``, ``MARKET_NOT_OPEN_FOR_BETTING``,
         ``RUNNER_REMOVED`` sull'istruzione). Senza book caricato, o con lo stato assente nel book, lo stato non e' noto al
         broker: invariato (l'ammissione F-23 del runtime nega gia' un ingresso senza book o senza stato). None = mercato e selezioni negoziabili."""
+        if str(market_id) in self.state.settlements:
+            return None                                      # mercato regolato: decade (LAPSED), regola esistente
         book = self.state.market_books.get(str(market_id))
         if not isinstance(book, dict):
             return None
