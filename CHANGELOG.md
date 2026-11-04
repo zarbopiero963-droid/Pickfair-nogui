@@ -32,8 +32,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   da `SUCCESS`/`FAILURE`/`PROCESSED_WITH_ERRORS`/`TIMEOUT`, instruction report senza `status` anche con `betId`)
   veniva chiusa `FAILED` definitivo: zero riconciliazioni e rilascio di tavolo, riserva e chiave anti-duplicato con
   l'ordine forse vivo sull'exchange. Ora `BetfairClient.place_bet` la marca `order_unknown` ⇒ `AMBIGUOUS` +
-  riconciliazione, mai retry. I rifiuti dichiarati da Betfair restano `FAILED`. Test
-  `tests/acceptance/test_place_bet_risposta_senza_esito.py` (RED su `ada4076`, 9/9 mutanti uccisi);
+  riconciliazione, mai retry. I rifiuti dichiarati da Betfair restano `FAILED`. Se la risposta ambigua porta gia' un
+  `betId`, la riga AMBIGUOUS lo conserva (`response_json`): il settlement di quella bet resta attribuibile al suo
+  intento invece di bloccare il tavolo per sempre. Test
+  `tests/acceptance/test_place_bet_risposta_senza_esito.py` e `test_place_bet_senza_esito_catena.py` (RED su
+  `ada4076`, 14/14 mutanti uccisi);
   `docs/trading_engine_executor_contract.md` aggiornato.
 - **CB-586-FI-03Z (#586, P1):** il broker SIM abbinava ordini contro livelli del book con size 0. Esempio: un LAY
   0,10@3.0 risultava abbinato a 2.02 su un book senza liquidità, con un matched finto e un'esposizione abbinata

@@ -202,3 +202,35 @@ def test_block_order_manager_risposta_senza_esito_ambigua(corpo: Any) -> None:
 
     assert esito["status"] == "AMBIGUOUS", esito
     assert len(trasporto.inviati) == 1, "secondo POST su un esito ignoto"
+
+
+CON_BETID = ["status_assente_report_success_con_betid", "report_senza_status_con_betid",
+             "status_non_riconosciuto", "report_status_non_riconosciuto"]
+
+
+@pytest.mark.parametrize("nome", CON_BETID)
+def test_block_betid_della_risposta_ambigua_persistito_e_attribuibile(tmp_path, nome: str) -> None:
+    """Il `betId` che Betfair ha gia' assegnato in una risposta senza esito e' l'unica identita' certa dell'ordine:
+    deve restare nella riga AMBIGUOUS, cosi' il settlement di quella bet si lega al suo intento
+    (`Database.find_orders_by_bet_id`, usato da `_resolve_settlement_reservation`). Lo stato resta AMBIGUOUS."""
+    db = Database(str(tmp_path / "pickfair.sqlite3"))
+
+    esito = _engine(db, _Trasporto(RISPOSTE_SENZA_ESITO[nome]), _Bus(), _Riconciliazione()).submit_quick_bet(
+        _richiesta())
+
+    assert esito["status"] == "AMBIGUOUS"
+    assert db.get_order(esito["order_id"])["status"] == "AMBIGUOUS"
+    righe = db.find_orders_by_bet_id("31415")
+    assert [r["customer_ref"] for r in righe] == [CUSTOMER_REF], "betId della risposta ambigua perso"
+    assert righe[0]["status"] == "AMBIGUOUS"
+
+
+@pytest.mark.parametrize("nome", ["senza_result_ne_error", "result_null", "result_vuoto"])
+def test_risposta_ambigua_senza_betid_non_inventa_identita(tmp_path, nome: str) -> None:
+    db = Database(str(tmp_path / "pickfair.sqlite3"))
+
+    esito = _engine(db, _Trasporto(RISPOSTE_SENZA_ESITO[nome]), _Bus(), _Riconciliazione()).submit_quick_bet(
+        _richiesta())
+
+    assert esito["status"] == "AMBIGUOUS"
+    assert db._order_bet_id(db.get_order(esito["order_id"]).get("response")) == ""

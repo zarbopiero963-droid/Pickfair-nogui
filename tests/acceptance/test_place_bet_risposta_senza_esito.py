@@ -190,6 +190,7 @@ def test_rifiuto_esplicito_resta_definitivo(corpo: Any) -> None:
     assert sessione.post_inviati == 1
     assert esito["ok"] is False
     assert esito["order_unknown"] is False, f"rifiuto esplicito trattato come esito ignoto: {esito!r}"
+    assert "result" not in esito, "un rifiuto dichiarato non deve portare la risposta come se fosse un ordine"
 
 
 def test_timeout_esplicito_di_betfair_resta_ignoto() -> None:

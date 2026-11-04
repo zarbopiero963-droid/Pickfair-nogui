@@ -1701,6 +1701,7 @@ class BetfairClient:
         if ref:
             params["customerRef"] = ref
 
+        result: Any = None
         try:
             result = self._post_jsonrpc(
                 self.BETTING_URL,
@@ -1751,7 +1752,7 @@ class BetfairClient:
         except RuntimeError as exc:
             error_text = str(exc)
             error_upper = error_text.upper()
-            return {
+            esito = {
                 "ok": False,
                 "error": error_text,
                 "classification": self._classify_error(error_text),
@@ -1775,6 +1776,12 @@ class BetfairClient:
                     )
                 ) or error_text.split(":", 1)[0].strip() in _RISPOSTA_ILLEGGIBILE_DOPO_L_INVIO,
             }
+            # Esito ignoto con una risposta arrivata: la risposta grezza resta nell'esito, perche' un `betId` gia'
+            # assegnato da Betfair e' l'unica identita' certa dell'ordine (settlement e riconciliazione per bet).
+            # Mai su un rifiuto dichiarato: non serve e non deve sembrare un ordine.
+            if esito["order_unknown"] and isinstance(result, dict) and result:
+                esito["result"] = result
+            return esito
 
     # =========================================================
     # ORDERS – CANCEL

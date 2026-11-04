@@ -103,10 +103,13 @@ _STATUS_TO_OUTCOME: Dict[str, str] = {
 
 class ExecutionError(Exception):
     def __init__(self, message: str, *, error_type: str = ERROR_PERMANENT,
-                 ambiguity_reason: Optional[str] = None) -> None:
+                 ambiguity_reason: Optional[str] = None, response: Optional[Any] = None) -> None:
         super().__init__(message)
         self.error_type = error_type
         self.ambiguity_reason = ambiguity_reason
+        # Risposta del broker che ha prodotto l'esito ignoto: persistita sulla riga AMBIGUOUS (un `betId` gia'
+        # assegnato e' l'identita' dell'ordine per settlement e riconciliazione).
+        self.response = response
 
 
 class _ErrorePrimaDellInvio(RuntimeError):
@@ -1430,6 +1433,7 @@ class TradingEngine:
                 f"DOWNSTREAM_AMBIGUOUS_RESPONSE:{response}",
                 error_type=ERROR_AMBIGUOUS,
                 ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+                response=response,
             )
 
         # #545: il broker SIM ha eseguito l'operazione in memoria ma NON ha scritto lo snapshot di reload: un
@@ -1487,7 +1491,8 @@ class TradingEngine:
     def _resolve_ambiguity(self, ctx: _ExecutionContext, audit: Dict[str, Any],
                            order_id: Any, *, ambiguity_reason: str,
                            trigger_event: str, trigger_error: str,
-                           extra_fields: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                           extra_fields: Optional[Dict[str, Any]] = None,
+                           response: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         self._assert_valid_ctx(ctx)
         self._metric_inc("quick_bet_ambiguous_total")
         logger.error("Ambiguity: %s – %s", trigger_event, trigger_error)
@@ -1516,7 +1521,7 @@ class TradingEngine:
             return self._complete_order_lifecycle(
                 ctx, audit, order_id=order_id,
                 status=STATUS_AMBIGUOUS, ambiguity_reason=ambiguity_reason,
-                extra_fields=extra_fields)
+                response=response, extra_fields=extra_fields)
         except Exception as exc:
             logger.exception("Finalize AMBIGUOUS fallito per order_id=%s: resta AMBIGUOUS", order_id)
             return self._build_degraded_ambiguous_result(ctx, audit, order_id, ambiguity_reason,
@@ -1577,10 +1582,12 @@ class TradingEngine:
             error_type = ERROR_PERMANENT
 
         if error_type == ERROR_AMBIGUOUS:
+            risposta = getattr(exc, "response", None)
             return self._resolve_ambiguity(ctx, audit, order_id,
                                            ambiguity_reason=ambiguity_reason or AMBIGUITY_SUBMIT_UNKNOWN,
                                            trigger_event="SUBMIT_AMBIGUOUS", trigger_error=str(exc),
-                                           extra_fields=extra_fields)
+                                           extra_fields=extra_fields,
+                                           response=risposta if isinstance(risposta, dict) else None)
 
         payload = {"order_id": order_id, "error": str(exc), "error_type": error_type}
         # #524: rifiuto gia' classificato certo. Se il finalize solleva dopo, l'except esterno resta sul FAILED
