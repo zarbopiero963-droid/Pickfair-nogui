@@ -14,7 +14,29 @@ pickfair-mcp- (solo libreria standard). In questo repository stanno soltanto il 
 | `control_api/launcher.py` | avvio opzionale; **disattivato per impostazione predefinita** |
 | `headless_main.py` | 16 righe: avvio dopo un `runtime.start()` riuscito, arresto per primo nello `stop()` |
 
-Route servite: `GET /v1/meta`, `GET /v1/status`, `GET /v1/reconciliation/status`. Nessun comando.
+Route servite: `GET /v1/meta`, `GET /v1/status`, `GET /v1/reconciliation/status` e, da MCP-01e
+(contratto 1.2.0), `GET /v1/account` e `GET /v1/exposure`. Nessun comando. Le altre route di
+lettura approvate rispondono `501 NOT_IMPLEMENTED` (mai un dato); ogni metodo diverso da GET `405`.
+
+### MCP-01e — bankroll, cassa, fondi, tavoli Roserpina, esposizione
+
+| Route | Sezione | Fonte nel core (una sola chiamata) |
+|---|---|---|
+| `/v1/account` | `execution_mode` | `RuntimeController.execution_mode` (SIM = saldo fittizio del broker simulato) |
+| | `bankroll` | `RiskDesk.debug_snapshot()` |
+| | `cash` | `RiskDesk.cash_basis()` + `cash_equity_reason` se la cassa non è verificata |
+| | `exchange_funds` | ultimo `_account_snapshot` registrato dal runtime (nessuna nuova lettura dell'exchange); `age_s` da `_account_snapshot_read_at` |
+| | `desk_mode` | `RoserpinaMoneyManagement.determine_desk_mode` con gli argomenti di `_desk_mode()`, sui valori della sezione `bankroll` |
+| `/v1/exposure` | `tables` | `TableManager.snapshot()`; esce solo id, stato, occupato sì/no, id di mercato e selezione, esposizione, perdita da recuperare (mai nome dell'evento né `meta`) |
+| | `total_exposure` | `TableManager.total_exposure()` (valore del cap `max_open_exposure`; non finito ⇒ indisponibile) |
+| | `recovery` | `RuntimeController._active_recovery_count()` (fail-closed del core) + `max_recovery_tables`, `allow_recovery` |
+
+Consistenza `PER_SECTION_LOCKED`: `bankroll` e `cash` nella stessa acquisizione del lock del
+RiskDesk; `tables`, `total_exposure` e `recovery` nella stessa acquisizione del lock dei tavoli.
+Attesa massima `LOCK_WAIT_S = 0,25 s`: se il runtime tiene il lock più a lungo, quelle sezioni sono
+indisponibili (null + `unavailable`), mai bloccate né stimate. Metodi esclusi perché non puri:
+`get_status()`, `pending_exposure()`, `read_funds_for_controller_entry()`, `snapshot()` del broker
+SIM (aggiorna cache interne), `duplication_guard.snapshot()`.
 
 ## Attivazione
 
@@ -54,7 +76,9 @@ Il processo che termina chiude la porta (provato: connessione rifiutata dopo SIG
   `HTTPServer.server_bind` è disattivato); Host e token Bearer obbligatori.
 - Letture senza effetti: provato su runtime avviato in SIM (DB, bus, saldi, chiamate a
   Betfair/broker, monitor di rischio, stato profondo invariati) e senza attesa sui lock di ammissione
-  e dei tavoli. Le viste prendono solo per un istante il lock del registro delle ambiguità (copia).
+  e dei tavoli. Le viste di status e riconciliazione prendono solo per un istante il lock del registro
+  delle ambiguità (copia); account ed exposure prendono il lock del RiskDesk e quello dei tavoli con
+  attesa massima di 0,25 s e li rilasciano subito dopo la copia (provato da test e mutazioni).
 - Ogni risposta è validata contro lo schema del contratto prima dell'invio
   (`CONTRACT_SELF_CHECK`).
 - La Control API non può fermare il motore: ogni suo errore all'avvio è registrato e ignorato.
@@ -67,7 +91,11 @@ Il processo che termina chiude la porta (provato: connessione rifiutata dopo SIG
 
 ## Limiti noti
 
-- Lettura non atomica fra campi (`consistency = PER_FIELD_NON_ATOMIC`), istante dichiarato in `observed_at`.
+- Lettura non atomica fra campi per status e riconciliazione (`consistency = PER_FIELD_NON_ATOMIC`),
+  istante dichiarato in `observed_at`; account/exposure per sezione sotto lock (`PER_SECTION_LOCKED`).
+- `desk_mode` di `/v1/account` segue la regola di `get_status` (bankroll rispetto al picco): le
+  decisioni del Money Management per il singolo ordine considerano anche perdita giornaliera e
+  crescita del ciclo e possono differire.
 - `recovery_state` resta indisponibile finché il runtime non scrive per la prima volta lo stato di
   recovery: `_recovery_persist_failed` nasce solo lì (proposta: inizializzarlo nel costruttore).
 - Token bearer locale: chi legge il file come lo stesso utente ottiene l'accesso in lettura.

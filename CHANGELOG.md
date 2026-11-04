@@ -15,6 +15,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   senza flag nessuna porta e nessun import. `docs/control_api.md`; test `tests/control_api/`; area di
   mutazione `control_api` (14 mutazioni). Pin esatto del package (versione 1.1.0 e schema hash):
   un package diverso non viene usato (`CONTRACT_PIN_MISMATCH`).
+- **Control API: `GET /v1/account` e `GET /v1/exposure` (MCP-01e, handoff di Claude C):** bankroll, cassa
+  verificata, ultimo snapshot dei fondi, desk mode, tavoli Roserpina, esposizione totale e capacità di
+  recovery, letti senza effetti sotto i lock dei componenti con attesa massima di 0,25 s. Pin aggiornato
+  al contratto 1.2.0; area di mutazione `control_api` a 24 mutazioni. Dipende dalla patch MCP-01d.
 
 ### Changed
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**

@@ -3426,6 +3426,21 @@
         "tests/control_api/test_views_real_runtime.py"
       ],
       "max_files": 14
+    },
+    "pf_api2_control_api_finance_reads": {
+      "description": "MCP-01e (handoff di Claude C, roadmap MCP + Control API): viste di sola lettura GET /v1/account e GET /v1/exposure (bankroll, cassa, fondi, desk mode, tavoli Roserpina, esposizione, recovery) sul ponte Control API; pin al contratto 1.2.0. Dipende da pf_api1_control_api_bridge.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "control_api/bridge.py",
+        "control_api/views.py",
+        "docs/control_api.md",
+        "guardrails/mutation_catalog.json",
+        "tests/control_api/test_finance_views.py",
+        "tests/control_api/test_side_effects.py"
+      ],
+      "max_files": 8
     }
   }
 }
