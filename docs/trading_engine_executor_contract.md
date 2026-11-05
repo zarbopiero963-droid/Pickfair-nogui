@@ -34,9 +34,34 @@ broker oppure solleva. Non restituisce mai un `concurrent.futures.Future` né un
   - **`QUICK_BET_AMBIGUOUS`**: non rilascia nulla. Tavolo, esposizione, riserva e chiave anti-duplicato restano acquisiti fino a un esito certo. Nessun retry, nessun nuovo ingresso sullo stesso intento.
   - **Esiti certi** (`QUICK_BET_FAILED`, …): rilascio della chiave duplicati e del tavolo tramite `TableManager.force_unlock_if_event(table_id, event_key)`. Il tavolo si libera **solo** se porta ancora la riserva di quell'`event_key`. Controllo e rilascio avvengono sotto lo stesso lock: l'operazione è idempotente e non colpisce mai un tavolo riassegnato.
 - **Reset** (`ROSERPINA_AUTO_RESET` da drawdown, `reset_cycle`): il runtime tiene la mappa delle riserve incerte (`event_key` → `table_id`). Il reset passa da `_reset_reservations_keeping_uncertain`, che chiama `TableManager.reset_all(keep_table_ids=…)` e `DuplicationGuard.clear(keep_keys=…)`, quindi tavolo e chiave di un ordine AMBIGUOUS sopravvivono. Un esito certo successivo per lo stesso `event_key` toglie la marcatura.
-- Il ledger estrae il `betId` dalle forme normalizzate top-level e dagli
-  `instructionReports` top-level o annidati sotto `result`/`raw`; gli ID
-  numerici vengono canonicalizzati a stringa per il confronto al riavvio.
+- Il `betId` di una riga `orders` ha un **solo** estrattore (F-14): `core.order_identity.response_bet_id`, usato da
+  `Database._order_bet_id` (identita' del bot per cashout e F-04) e da `RuntimeController._open_order_candidates`
+  (riconciliazione all'avvio). Raccoglie il `betId`/`bet_id` diretto e quello di ogni `instructionReports` al livello
+  top e sotto `result`/`raw`; gli ID numerici diventano stringhe. Un solo valore distinto => quello; nessuno, oppure
+  piu' di uno (risposta a piu' istruzioni, `betId` diretto diverso dal report) => `""`: la riga non e' attribuita a
+  nessun `betId` e resta alla riconciliazione. Prima i due estrattori avevano precedenze diverse (rilievo Claude C,
+  04/11/2026).
+
+## 2-bis. Cancel single-shot e report per istruzione (F-14)
+
+`BetfairClient.cancel_orders` invia `cancelOrders` **una sola volta** (`single_shot=True`): un timeout non prova che il
+cancel non sia avvenuto. L'esito e' nel campo `outcome`:
+
+| Situazione | `outcome` | `ok` |
+|---|---|---|
+| `status` `SUCCESS` e un report `SUCCESS` per **ogni** `betId` richiesto (cancel di tutto il mercato: nessun report richiesto) | `SUCCESS` | sì |
+| `status` `FAILURE`, oppure `PROCESSED_WITH_ERRORS` con tutti i report `FAILURE`; errore JSON-RPC; 4xx; sessione scaduta; richiesta non inviata | `FAILED` | no |
+| Alcuni report `SUCCESS` e altri `FAILURE` | `PARTIAL` | no |
+| Timeout, errore di rete, 5xx, risposta illeggibile, `status` assente o sconosciuto, report mancante o `TIMEOUT` per un `betId` richiesto | `AMBIGUOUS` | no |
+
+`cancelled_count` e `cancelled_bet_ids` contano solo i report `SUCCESS`; `failed_bet_ids` i `FAILURE`; `bet_ids` i
+richiesti (riconciliazione per `betId`). Un report senza `instruction.betId` e' attribuito per posizione solo se il
+numero dei report coincide con quello delle istruzioni (Betfair li restituisce nello stesso ordine).
+`BetfairClient.cancel_order` (cancel di un ghost) solleva `CANCEL_ORDER_UNCONFIRMED` per `AMBIGUOUS`/`PARTIAL` e
+`CANCEL_ORDER_FAILED` per `FAILED`. `OrderManager.cancel_order`: esito `AMBIGUOUS` del client, o eccezione di
+timeout/rete/5xx/risposta illeggibile => saga `AMBIGUOUS` (terminale: nessuna transizione senza prova, #495) e
+`QUICK_BET_CANCEL_AMBIGUOUS`; mai `FAILED`. Riserva e tavolo restano acquisiti finche' il cancel non e' confermato
+(PF-EXEC-01). Test: `tests/acceptance/test_f14_cancel_single_shot.py`, `tests/acceptance/test_betid_extractor_unico.py`.
 
 ## 3. Fuori da questo contratto (residui tracciati in #453)
 

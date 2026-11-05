@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **F-14 (#586): cancel single-shot, esito ignoto = AMBIGUOUS, report per istruzione.** `BetfairClient.cancel_orders`
+  invia `cancelOrders` una sola volta; timeout/rete/5xx/risposta illeggibile/`status` assente => `outcome`
+  `AMBIGUOUS` (mai FAILED), ogni `betId` richiesto verificato sul proprio report, `cancelled_count` solo SUCCESS.
+  `OrderManager.cancel_order` porta la saga in AMBIGUOUS invece di FAILED. Un solo estrattore del `betId`
+  (`core.order_identity.response_bet_id`) per identita' del bot e riconciliazione; `betId` in conflitto => nessuna
+  identita' (riconciliazione). Documentazione: `docs/trading_engine_executor_contract.md` §2 e §2-bis.
+
 ### Changed
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**
   - se un range precedente di Sol o Grok non è PASS (BLOCKERS, INCONCLUSIVE, ERROR, incompleto), la review della push

@@ -1810,7 +1810,10 @@ class BetfairClient:
             if bet_ids else []
         )
 
+        requested = [i["betId"] for i in instructions]
         try:
+            # F-14 (#586): un solo invio. Un timeout o una risposta persa non provano che il cancel non sia avvenuto:
+            # esito AMBIGUOUS, riconciliazione per bet_id, mai un secondo POST.
             result = self._post_jsonrpc(
                 self.BETTING_URL,
                 "SportsAPING/v1.0/cancelOrders",
@@ -1818,31 +1821,74 @@ class BetfairClient:
                     "marketId": market_id_s,
                     "instructions": instructions,
                 },
+                single_shot=True,
             )
-
-            status = str(result.get("status") or "").upper()
-            reports = result.get("instructionReports") or []
-
-            if status == "FAILURE":
-                err = str(result.get("errorCode") or "UNKNOWN")
-                raise RuntimeError(f"CANCEL_FAILED: {err}")
-
-            return {
-                "ok": True,
-                "market_id": market_id_s,
-                "status": status or "SUCCESS",
-                "cancelled_count": len(reports),
-                "result": result,
-            }
-
         except RuntimeError as exc:
             error_text = str(exc)
             return {
                 "ok": False,
                 "market_id": market_id_s,
                 "error": error_text,
+                "outcome": "AMBIGUOUS" if self._cancel_outcome_unknown(error_text) else "FAILED",
+                "bet_ids": requested,
                 "classification": self._classify_error(error_text),
             }
+        return self._cancel_result(market_id_s, requested, result)
+
+    @staticmethod
+    def _cancel_outcome_unknown(error_text: str) -> bool:
+        """F-14: errore dopo che la richiesta potrebbe essere arrivata (timeout, rete, 5xx, risposta illeggibile)."""
+        e = str(error_text or "").upper()
+        if not e.startswith("REQUEST_FAILED") and "INVALID_JSON" not in e:
+            return False                     # non inviata (NOT_AUTHENTICATED, breaker) o rifiutata (API_ERROR, sessione)
+        return any(k in e for k in ("TIMEOUT", "NETWORK_ERROR", "HTTP_5", "UNKNOWN_ERROR", "INVALID_JSON"))
+
+    @staticmethod
+    def _cancel_result(market_id_s: str, requested: List[str], result: Any) -> Dict[str, Any]:
+        """F-14: esito verificato PER ISTRUZIONE. ``ok`` solo se lo status complessivo e' SUCCESS e ogni bet_id
+        richiesto ha il suo report SUCCESS; ``cancelled_count`` conta solo i report SUCCESS. Status assente o
+        illeggibile => AMBIGUOUS (la risposta e' arrivata ma non dice l'esito)."""
+        result = result if isinstance(result, dict) else {}
+        status = str(result.get("status") or "").strip().upper()
+        reports = result.get("instructionReports")
+        reports = [r for r in reports if isinstance(r, dict)] if isinstance(reports, list) else []
+        cancelled: List[str] = []
+        failed: List[str] = []
+        positional = len(reports) == len(requested)       # Betfair: un report per istruzione, nello stesso ordine
+        for idx, r in enumerate(reports):
+            instr = r.get("instruction") if isinstance(r.get("instruction"), dict) else {}
+            bid = str(instr.get("betId") or r.get("betId") or (requested[idx] if positional else "")).strip()
+            report_status = str(r.get("status") or "").strip().upper()
+            if report_status == "SUCCESS":
+                cancelled.append(bid)
+            elif report_status == "FAILURE":
+                failed.append(bid)
+            # TIMEOUT o stato ignoto per l'istruzione: esito non noto => resta fra i mancanti (AMBIGUOUS)
+        missing = [b for b in requested if b not in cancelled and b not in failed]
+        if status not in ("SUCCESS", "FAILURE", "PROCESSED_WITH_ERRORS"):
+            outcome = "AMBIGUOUS"
+        elif not cancelled and (status == "FAILURE" or (status == "PROCESSED_WITH_ERRORS" and not missing)):
+            outcome = "FAILED"                # rifiuto certo: Betfair dichiara che nessuna istruzione e' eseguita
+        elif status == "SUCCESS" and not failed and not missing:
+            outcome = "SUCCESS"
+        else:
+            outcome = "AMBIGUOUS" if missing else "PARTIAL"
+        out: Dict[str, Any] = {
+            "ok": outcome == "SUCCESS",
+            "market_id": market_id_s,
+            "status": status or "UNKNOWN",
+            "outcome": outcome,
+            "cancelled_count": len(cancelled),
+            "cancelled_bet_ids": [b for b in cancelled if b],
+            "failed_bet_ids": [b for b in failed if b],
+            "bet_ids": list(requested),
+            "result": result,
+        }
+        if outcome == "FAILED":
+            out["error"] = f"CANCEL_FAILED: {result.get('errorCode') or 'UNKNOWN'}"
+        elif outcome != "SUCCESS":
+            out["error"] = f"CANCEL_{outcome}"
+        return out
 
     def reduce_order(
         self,
@@ -2274,6 +2320,9 @@ class BetfairClient:
         # that is still live on the exchange would be logged as cancelled
         # (fail-open).
         if isinstance(result, dict) and not result.get("ok"):
+            if str(result.get("outcome") or "").upper() in ("AMBIGUOUS", "PARTIAL"):
+                # F-14: esito non confermato (timeout, report mancante o TIMEOUT per istruzione)
+                raise RuntimeError(f"CANCEL_ORDER_UNCONFIRMED: {result.get('error') or 'UNKNOWN'}")
             raise RuntimeError(
                 f"CANCEL_ORDER_FAILED: {result.get('error') or 'UNKNOWN'}"
             )

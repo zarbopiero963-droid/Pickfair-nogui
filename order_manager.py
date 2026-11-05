@@ -124,6 +124,7 @@ VALID_TRANSITIONS: Dict[OrderStatus, FrozenSet[OrderStatus]] = {
     OrderStatus.CANCEL_PENDING: frozenset({
         OrderStatus.CANCELLED,
         OrderStatus.FAILED,              # cancel rejected
+        OrderStatus.AMBIGUOUS,           # F-14: esito del cancel ignoto (timeout/rete): riconciliazione, mai retry
         OrderStatus.MATCHED,             # filled before cancel
         OrderStatus.PARTIALLY_MATCHED,   # partial cancel
     }),
@@ -346,6 +347,12 @@ class ValidationError(OrderError):
 # =============================================================
 # 7. ORDER MANAGER
 # =============================================================
+def _cancel_error_unknown(error_text: str) -> bool:
+    """F-14: eccezione del broker dopo un possibile invio (timeout, rete, 5xx, risposta illeggibile)."""
+    e = str(error_text or "").upper()
+    return any(k in e for k in ("TIMEOUT", "NETWORK_ERROR", "HTTP_5", "INVALID_JSON", "UNKNOWN_ERROR"))
+
+
 class OrderManager:
     """
     Headless order manager — real / simulated.
@@ -957,6 +964,8 @@ class OrderManager:
             response = cancel_fn(**self._kwargs_cancel_singolo(
                 cancel_fn, market_id, str(bet_id).strip()))
         except Exception as exc:
+            if _cancel_error_unknown(str(exc)):
+                return self._cancel_ambiguous(customer_ref, bet_id, str(exc))
             self._transition_saga(
                 customer_ref=customer_ref,
                 new_status=OrderStatus.FAILED,
@@ -968,6 +977,10 @@ class OrderManager:
             })
             return {"ok": False, "status": OrderStatus.FAILED.value,
                     "error": str(exc), "reason_code": ReasonCode.CANCEL_REJECTED.value}
+
+        # F-14 (#586): esito ignoto dichiarato dal client (timeout, rete, status assente) => AMBIGUOUS, mai FAILED.
+        if isinstance(response, dict) and str(response.get("outcome") or "").upper() == "AMBIGUOUS":
+            return self._cancel_ambiguous(customer_ref, bet_id, str(response.get("error") or "CANCEL_AMBIGUOUS"))
 
         # Busta BetfairClient: `ok` False => rifiuto; i report stanno in `result`.
         report_source = response if isinstance(response, dict) else {}
@@ -1010,6 +1023,19 @@ class OrderManager:
             return {"ok": False, "status": OrderStatus.FAILED.value,
                     "reason_code": ReasonCode.CANCEL_REJECTED.value,
                     "response": response}
+
+    def _cancel_ambiguous(self, customer_ref: str, bet_id: str, error: str) -> Dict[str, Any]:
+        """F-14: il cancel potrebbe essere avvenuto. Saga AMBIGUOUS (terminale: nessuna transizione senza prova) e
+        riconciliazione per bet_id; nessun re-invio."""
+        self._transition_saga(
+            customer_ref=customer_ref,
+            new_status=OrderStatus.AMBIGUOUS,
+            error_text=error,
+            reason_code=ReasonCode.AMBIGUOUS_OUTCOME,
+        )
+        self._publish("QUICK_BET_CANCEL_AMBIGUOUS", {"customer_ref": customer_ref, "bet_id": bet_id, "error": error})
+        return {"ok": False, "status": OrderStatus.AMBIGUOUS.value, "error": error,
+                "reason_code": ReasonCode.AMBIGUOUS_OUTCOME.value}
 
     # ---------------------------------------------------------
     # REPLACE ORDER  (cancel + re-place, same customer_ref saga)
