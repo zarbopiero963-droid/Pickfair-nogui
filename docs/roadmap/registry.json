@@ -546,5 +546,28 @@
    "what": "probe Betfair read-only",
    "card": "none"
   }
+ ],
+ "governance_prs": [
+  {
+   "pr": 608,
+   "status": "MERGED",
+   "merge_sha": "53e744e96e286c4d025835cca7a262bc1003d00f",
+   "head_sha": "ddc82f9f57594df4e6b0fe57e3e845e8c71b1b83",
+   "tree_identical_to_head": true,
+   "merged_at": "2026-11-05T09:48:04Z",
+   "merged_by": "owner",
+   "verdict": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/608#issuecomment-6654771125",
+   "prelive": "check 126793540206: action_required (6/6 VPS PASS)",
+   "teardown": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/608#issuecomment-6639859969",
+   "review_gate": "PASS_WITH_OWNER_WAIVER (grok, c.6654758761)",
+   "certification": "NOT_APPLICABLE (governance)"
+  },
+  {
+   "pr": 606,
+   "status": "PR_OPEN",
+   "head_sha": "d27d4762da917a21ac810fa97b50ac0128889747",
+   "note": "riaperta 05/11 dopo merge di main (#608)",
+   "evidence": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/606#issuecomment-6654949165"
+  }
  ]
 }
