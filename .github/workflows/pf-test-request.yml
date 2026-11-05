@@ -1,0 +1,69 @@
+name: PF test request
+
+# PF-VPS-UNIVERSAL-TEST-AUTOMATION-01 (#586): richiesta firmata di test Pickfair alla VPS (modello a pull).
+# Gira SOLO da main (workflow_dispatch), quindi legge il catalogo tests/catalog/pf-test-catalog.json di main, mai quello di una
+# PR. Nessun segreto, nessun comando: tre input, validati da scripts/pf_test_dispatch.py contro il catalogo e l'API di
+# GitHub (richiedente, permessi, PR aperta e non fork, head == SHA). La richiesta a schema chiuso viene firmata con
+# Sigstore e caricata come artefatto; la VPS (Grok) la preleva, ne verifica firma, stato attuale e catalogo, ed esegue
+# in sandbox SOLO l'argv del catalogo. Corsia development (dev:tests/...): pytest sui test nuovi della PR allo SHA, nella
+# sandbox di sviluppo senza rete ne' segreti; esito sperimentale, mai certificativo. Modalita' fissata a dry-run: l'esecuzione reale richiede GO owner (§11) e una
+# PR a merge owner.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "suite:<id> o campaign:<nome> del catalogo (certificazione) oppure dev:tests/<percorso>[,...] (test nuovi della PR, sandbox di sviluppo, mai certificativi)"
+        required: true
+        type: string
+      pr:
+        description: "Numero della PR"
+        required: true
+        type: string
+      sha:
+        description: "Head SHA completo della PR (deve essere l'head attuale)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: pf-test-request-${{ inputs.pr }}-${{ inputs.sha }}
+  cancel-in-progress: false
+
+jobs:
+  request:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PF_TEST_DISPATCH_MODE: dry-run
+      # input passati SOLO come variabili d'ambiente, mai interpolati nello script della shell
+      PF_REQ_TARGET: ${{ inputs.target }}
+      PF_REQ_PR: ${{ inputs.pr }}
+      PF_REQ_SHA: ${{ inputs.sha }}
+    steps:
+      - name: Checkout (main)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build and validate the request
+        run: python3 scripts/pf_test_dispatch.py build --output test-request.json
+
+      - name: Sign the request (Sigstore)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: test-request.json
+
+      - name: Upload the request
+        uses: actions/upload-artifact@v4
+        with:
+          name: pf-test-request
+          path: test-request.json
+          if-no-files-found: error
+          retention-days: 7
