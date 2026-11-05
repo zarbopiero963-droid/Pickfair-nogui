@@ -104,7 +104,9 @@ def catalog_digest(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def _check_args(suite: Mapping[str, Any], root: Path) -> None:
+def _check_args(suite: Mapping[str, Any], root: Optional[Path]) -> None:
+    """argv sicuro; con ``root`` anche l'esistenza dei percorsi in quell'albero. ``root=None`` (solo ``status``,
+    che non esegue nulla) salta l'esistenza: il catalogo di main puo' citare suite assenti dal checkout locale."""
     runner, args = suite["runner"], suite["args"]
     if not isinstance(args, list) or not args or not all(isinstance(a, str) for a in args):
         raise Refused(f"BAD_ARGS:{suite['id']}")
@@ -113,10 +115,10 @@ def _check_args(suite: Mapping[str, Any], root: Path) -> None:
             raise Refused(f"UNSAFE_ARG:{suite['id']}")              # niente shell, flag, percorsi assoluti o risalite
     if runner == "pytest":
         for a in args:
-            if not (a == "tests" or a.startswith("tests/")) or not (root / a).exists():
+            if not (a == "tests" or a.startswith("tests/")) or (root is not None and not (root / a).exists()):
                 raise Refused(f"PYTEST_PATH:{suite['id']}")
     elif runner == "python":
-        if len(args) != 1 or args[0] not in PYTHON_SCRIPTS or not (root / args[0]).is_file():
+        if len(args) != 1 or args[0] not in PYTHON_SCRIPTS or (root is not None and not (root / args[0]).is_file()):
             raise Refused(f"PYTHON_SCRIPT:{suite['id']}")
     elif runner == "orchestrator":
         if len(args) != 1 or args[0] not in ORCHESTRATOR_JOBS:
@@ -146,8 +148,9 @@ def _check_isolation_coverage(suites: List[Mapping[str, Any]]) -> None:
                 raise Refused(f"AGGREGATE_INCLUDES_ISOLATED:{s['id']}")
 
 
-def validate_catalog(raw: bytes, root: Path = ROOT) -> Dict[str, Any]:
-    """Catalogo valido o ``Refused``: schema chiuso, id stabili e unici, argv sicuro, limiti di risorse."""
+def validate_catalog(raw: bytes, root: Optional[Path] = ROOT) -> Dict[str, Any]:
+    """Catalogo valido o ``Refused``: schema chiuso, id stabili e unici, argv sicuro, limiti di risorse.
+    ``root=None``: solo struttura, senza esistenza dei percorsi (vedi ``_check_args``)."""
     try:
         cat = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
@@ -595,7 +598,9 @@ def main(argv: Optional[list] = None) -> int:
             print(json.dumps(dev_status(args.dev_key, args.sha, runs), sort_keys=True))
             return 0
         catalog_raw = main_catalog(args.repo)
-        suites = resolve_target(validate_catalog(catalog_raw), args.target)
+        # solo struttura: l'esistenza dei percorsi si verifica sulla VPS (verify_request) contro main, non qui
+        # contro un checkout locale che puo' non avere le suite nuove (rilievo di Codex su #606)
+        suites = resolve_target(validate_catalog(catalog_raw, root=None), args.target)
         runs = all_check_runs(args.repo, args.sha)
         digest = catalog_digest(catalog_raw)
         per_suite = [suite_status(s, args.sha, runs, digest) for s in suites]

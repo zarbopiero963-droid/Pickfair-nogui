@@ -801,3 +801,37 @@ def test_a_directory_created_by_another_process_is_still_made_durable(tmp_path, 
     synced = _dir_fsync_recorder(monkeypatch)
     D.Ledger(path).admit(build())
     assert {_ident(tmp_path), _ident(tmp_path / "a"), _ident(tmp_path / "a" / "b")} <= set(synced), synced
+
+
+# Codex P2 su #606 (5a34dde4): il catalogo di main puo' citare una suite nuova assente dal checkout locale; lo stato di
+# una suite invariata non deve fallire per questo (la validazione strutturale resta, l'esistenza si prova sulla VPS).
+def _catalog_with_new_suite():
+    cat = json.loads(CATALOG_RAW)
+    new = dict(next(s for s in cat["suites"] if s["id"] == "recovery"), id="zz-new-suite",
+               args=["tests/zz_not_in_this_checkout"])
+    cat["suites"].append(new)
+    return json.dumps(cat).encode()
+
+
+def test_status_works_when_main_has_a_suite_missing_from_the_local_checkout(monkeypatch, capsys):
+    raw = _catalog_with_new_suite()
+    with pytest.raises(D.Refused, match="^PYTEST_PATH:zz-new-suite$"):
+        D.validate_catalog(raw)                                     # contro l'albero locale il percorso manca
+    monkeypatch.setattr(D, "_gh", _main_catalog_api(raw))
+    monkeypatch.setattr(D, "_gh_pages", lambda p: [{"check_runs": [_cr(1, catalog=D.catalog_digest(raw))]}])
+    assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA]) == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "PASS"
+
+
+def test_status_still_refuses_an_unsafe_main_catalog(monkeypatch, capsys):
+    cat = json.loads(_catalog_with_new_suite())
+    cat["suites"][-1]["args"] = ["tests/../etc"]
+    monkeypatch.setattr(D, "_gh", _main_catalog_api(json.dumps(cat).encode()))
+    monkeypatch.setattr(D, "_gh_pages", lambda p: [{"check_runs": [_cr(1)]}])
+    assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA]) == 1
+    assert json.loads(capsys.readouterr().out)["refused"] == "UNSAFE_ARG:zz-new-suite"
+
+
+def test_execution_side_validation_still_checks_paths_exist():
+    with pytest.raises(D.Refused, match="^PYTEST_PATH:zz-new-suite$"):
+        D.validate_catalog(_catalog_with_new_suite(), ROOT)
