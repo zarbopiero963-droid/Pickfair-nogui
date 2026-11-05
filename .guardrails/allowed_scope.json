@@ -3414,11 +3414,12 @@
         "CHANGELOG.md",
         "docs/testing/roserpina_100_simulation.md",
         "tests/f026/child_f026.py",
+        "tests/f026/test_roserpina_100_campagna2.py",
         "tests/f026/test_roserpina_100_report.py",
         "tools/sim_report/__init__.py",
         "tools/sim_report/roserpina_report.py"
       ],
-      "max_files": 7
+      "max_files": 8
     }
   }
 }

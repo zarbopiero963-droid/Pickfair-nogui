@@ -116,4 +116,24 @@ def build_report(dumps: List[Dict[str, Any]], *, provenance: str, scenario: str,
         "final_available": _c(final_available),
         "unreconciled_orders": unreconciled,
         "restarts": max(0, len(dumps) - 1),
+        "protections": _protections(dumps),
     }
+
+
+_TRIGGERS = ("SL_TRIGGERED", "TP_TRIGGERED", "TRAILING_TRIGGERED")
+_CLOSES = ("SL_TP_CLOSE_ROUTED", "SL_TP_CLOSE_NOT_EXECUTED", "SL_TP_CLOSE_REJECTED", "SL_TP_CLOSE_SKIPPED",
+           "SL_TP_CLOSE_UNCERTAIN")
+
+
+def _protections(dumps: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Scatti SL/TP/trailing (F-02/F-03) ed esiti delle chiusure F-04, per esecuzione e per mercato."""
+    out: Dict[str, Any] = {"triggers": [], "closes": []}
+    for run_idx, run in enumerate(dumps):
+        for ev in run.get("events") or []:
+            name = str(ev.get("e") or "")
+            row = {"run": run_idx, "event": name, "market_id": ev.get("market_id"), "table_id": ev.get("table_id")}
+            if name in _TRIGGERS:
+                out["triggers"].append(row)
+            elif name in _CLOSES:
+                out["closes"].append(row)
+    return out

@@ -44,7 +44,8 @@ def dump():
                     "reason": d.get("reason"), "pnl": d.get("pnl"),
                     "bankroll_after": d.get("bankroll_after"), "drawdown_pct": d.get("drawdown_pct")}
                    for t, e, d in EV if e.startswith(("QUICK_BET", "SETTLEMENT_", "EMERGENCY", "RUNTIME_LOCK", "SIGNAL_REJ", "RUNTIME_CLOSE", "ROSERPINA", "BANKROLL_SYNC",
-                                                      "RISK_STOP", "CASHOUT", "REQ_EXECUTE", "CMD_QUICK"))]
+                                                      "RISK_STOP", "CASHOUT", "REQ_EXECUTE", "CMD_QUICK",
+                                                      "SL_TRIGGERED", "TP_TRIGGERED", "TRAILING_TRIGGERED", "SL_TP_CLOSE"))]
     json.dump(R, open(OUT, "w"), indent=1, default=str)
     sys.stdout.flush()
 
@@ -293,6 +294,9 @@ try:
                    "simulation_mode": True, "source": "F026"}
             if "stake" in st:
                 sig["stake"] = st["stake"]          # stake fisso del segnale (es. Telegram), deciso dal produttore
+            for key in ("stop_loss_pct", "take_profit_pct", "trailing_stop_pct"):   # protezioni del segnale (F-02/F-03)
+                if key in st:
+                    sig[key] = st[key]
             app.bus.publish("SIGNAL_RECEIVED", sig)
             # Il segnale e' concluso quando il suo ordine ha lasciato INFLIGHT (un ordine SIM a mercato resta SUBMITTED e
             # non pubblica un evento terminale), oppure c'e' un esito o un rifiuto esplicito; in ogni caso a bus fermo.
