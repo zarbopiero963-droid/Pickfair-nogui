@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import base64
 import json
 import os
 import re
@@ -211,6 +212,15 @@ def test_a_crash_during_the_write_leaves_the_previous_ledger_intact(tmp_path, mo
 CAT_SHA = D.catalog_digest(CATALOG_RAW)
 
 
+def _main_catalog_api(raw=CATALOG_RAW, seen=None):
+    """Risposta dell'API contents per il catalogo di main (base64, come GitHub)."""
+    def gh(p):
+        if seen is not None:
+            seen.append(p)
+        return {"encoding": "base64", "content": base64.b64encode(raw).decode()}
+    return gh
+
+
 def _cr(i, name="pf-test/recovery", sha=SHA, slug="pickfair-dedicated", status="completed", conclusion="success",
         title="OK", catalog=CAT_SHA):
     return {"id": i, "name": name, "head_sha": sha, "app": {"slug": slug}, "status": status,
@@ -314,6 +324,7 @@ def test_cli_build_writes_a_verifiable_request(monkeypatch, tmp_path, capsys):
 def test_cli_status_reports_the_campaign_verdict(monkeypatch, capsys):
     runs = [_cr(1, name="pf-test/recovery")]
     monkeypatch.setattr(D, "_gh_pages", lambda p: [{"check_runs": runs}])
+    monkeypatch.setattr(D, "_gh", _main_catalog_api())
     assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA]) == 0
     assert json.loads(capsys.readouterr().out)["state"] == "PASS"
 
@@ -442,6 +453,7 @@ def test_status_reads_every_page_of_check_runs(monkeypatch, capsys):
     page2 = [_cr(500, name="pf-test/recovery")]
     seen = []
     monkeypatch.setattr(D, "_gh_pages", lambda p: seen.append(p) or [{"check_runs": page1}, {"check_runs": page2}])
+    monkeypatch.setattr(D, "_gh", _main_catalog_api())
     assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA]) == 0
     assert json.loads(capsys.readouterr().out)["state"] == "PASS"
     assert seen == [f"repos/{REPO}/commits/{SHA}/check-runs?filter=all&per_page=100"]
@@ -460,6 +472,7 @@ def test_dev_status_reads_every_page_of_check_runs(monkeypatch, capsys):
 @pytest.mark.parametrize("pages", [None, [{"check_runs": "x"}], [{"nope": []}], "garbage"])
 def test_malformed_check_run_pages_are_refused_not_read_as_empty(monkeypatch, capsys, pages):
     monkeypatch.setattr(D, "_gh_pages", lambda p: pages)
+    monkeypatch.setattr(D, "_gh", _main_catalog_api())
     assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA]) == 1
     assert json.loads(capsys.readouterr().out)["refused"] == "GITHUB_API_MALFORMED"
 
@@ -633,11 +646,13 @@ def test_admission_fsyncs_the_ledger_directory_after_the_rename(tmp_path, monkey
 @_NEEDS_FCNTL
 def test_a_failed_directory_fsync_is_never_reported_as_admitted(tmp_path, monkeypatch):
     path = tmp_path / "ledger" / "admitted.json"
-    path.parent.mkdir()                                            # albero gia' esistente: si prova la sola rinomina
+    path.parent.mkdir()
     real_fsync = os.fsync
+    ledger_dir = _ident(path.parent)
 
-    def fsync(fd):
-        if os.fstat(fd).st_mode & 0o170000 == 0o040000:
+    def fsync(fd):                                                 # fallisce solo il fsync DOPO la rinomina
+        st = os.fstat(fd)
+        if (st.st_dev, st.st_ino) == ledger_dir and path.exists():
             raise OSError("EIO")
         return real_fsync(fd)
     monkeypatch.setattr(D.os, "fsync", fsync)
@@ -707,3 +722,82 @@ def test_a_failed_fsync_of_a_new_parent_directory_admits_nothing(tmp_path, monke
     with pytest.raises(OSError):
         D.Ledger(path).admit(build())
     assert not path.exists()                                     # nessuna ammissione senza albero durevole
+
+
+# Sol su #606 (66062ec3, VALID_BLOCKERS): lo stato usa il catalogo corrente di main letto da GitHub, mai il checkout
+# locale; e ogni ammissione rende durevole l'intera catena di directory, anche dopo una creazione con fsync fallito.
+def test_status_uses_the_main_catalog_not_a_stale_local_checkout(monkeypatch, capsys):
+    newer = CATALOG_RAW + b"\n"                                   # main e' andato avanti: digest diverso
+    new_sha = D.catalog_digest(newer)
+    assert new_sha != CAT_SHA
+    seen = []
+    monkeypatch.setattr(D, "_gh", _main_catalog_api(newer, seen))
+    monkeypatch.setattr(D, "_gh_pages", lambda p: [{"check_runs": [_cr(1)]}])          # PASS del catalogo locale
+    assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["catalog_sha256"] == new_sha and out["state"] == "NOT_REQUESTED"
+    assert seen == [f"repos/{REPO}/contents/{D.CATALOG_PATH}?ref=main"]
+    monkeypatch.setattr(D, "_gh_pages", lambda p: [{"check_runs": [_cr(1, catalog=new_sha)]}])
+    assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA]) == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "PASS"
+
+
+@pytest.mark.parametrize("answer", [None, [], {"encoding": "none", "content": ""}, {"encoding": "base64"},
+                                    {"encoding": "base64", "content": ""}, {"encoding": "base64", "content": 7}])
+def test_status_refuses_when_the_main_catalog_is_unreadable(monkeypatch, capsys, answer):
+    pages = []
+    monkeypatch.setattr(D, "_gh", lambda p: answer)
+    monkeypatch.setattr(D, "_gh_pages", lambda p: pages.append(p) or [{"check_runs": [_cr(1)]}])
+    assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA]) == 1
+    assert json.loads(capsys.readouterr().out)["refused"] == "MAIN_CATALOG_UNAVAILABLE"
+    assert pages == []                                              # nessuno stato senza il catalogo di main
+
+
+def test_status_refuses_when_github_is_unreachable_for_the_catalog(monkeypatch, capsys):
+    def gh(p):
+        raise D.Refused("GITHUB_API_UNAVAILABLE")
+    monkeypatch.setattr(D, "_gh", gh)
+    assert D.main(["status", "--repo", REPO, "--target", "suite:recovery", "--sha", SHA]) == 1
+    assert json.loads(capsys.readouterr().out)["refused"] == "GITHUB_API_UNAVAILABLE"
+
+
+def _dir_fsync_recorder(monkeypatch, fail_first=0):
+    synced, state = [], {"left": fail_first}
+    real_fsync = os.fsync
+
+    def fsync(fd):
+        st = os.fstat(fd)
+        if st.st_mode & 0o170000 == 0o040000:
+            if state["left"] > 0:
+                state["left"] -= 1
+                raise OSError("EIO")
+            synced.append((st.st_dev, st.st_ino))
+        return real_fsync(fd)
+    monkeypatch.setattr(D.os, "fsync", fsync)
+    return synced
+
+
+def _ident(p):
+    st = os.stat(p)
+    return (st.st_dev, st.st_ino)
+
+
+@_NEEDS_FCNTL
+def test_a_retry_after_a_failed_parent_fsync_syncs_the_parent_again(tmp_path, monkeypatch):
+    path = tmp_path / "a" / "admitted.json"
+    _dir_fsync_recorder(monkeypatch, fail_first=1)
+    with pytest.raises(OSError):
+        D.Ledger(path).admit(build())                               # mkdir riuscito, fsync del genitore fallito
+    assert (tmp_path / "a").is_dir() and not path.exists()
+    synced = _dir_fsync_recorder(monkeypatch)
+    D.Ledger(path).admit(build())
+    assert _ident(tmp_path) in synced, synced                       # la directory "gia' esistente" non e' saltata
+
+
+@_NEEDS_FCNTL
+def test_a_directory_created_by_another_process_is_still_made_durable(tmp_path, monkeypatch):
+    path = tmp_path / "a" / "b" / "admitted.json"
+    path.parent.mkdir(parents=True)                                  # creata da altri, durabilita' non nota
+    synced = _dir_fsync_recorder(monkeypatch)
+    D.Ledger(path).admit(build())
+    assert {_ident(tmp_path), _ident(tmp_path / "a"), _ident(tmp_path / "a" / "b")} <= set(synced), synced

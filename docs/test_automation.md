@@ -92,7 +92,7 @@ Il numero di PR e l'attore sono validati **prima** di comporre qualsiasi URL.
 - richiesta più vecchia di 24 h o datata nel futuro;
 - PR riletta diversa, chiusa, fork o con head cambiato.
 
-**`Ledger.admit` (VPS):** lettura, controllo e scrittura avvengono sotto un **lock esclusivo interprocesso** (`flock` su `<registro>.lock`). Due consumer concorrenti non ammettono mai la stessa richiesta e non perdono le ammissioni l'uno dell'altro. Se il lock non è disponibile la richiesta viene rifiutata con `LEDGER_LOCK_UNAVAILABLE` (rilievo di Sol e Grok su #606). Una richiesta già ammessa (`target`, catalogo, repository, PR, SHA) viene rifiutata anche dopo un riavvio. La scrittura è atomica e durevole: `fsync` del file temporaneo, `os.replace` e poi `fsync` della directory; ogni directory creata per il registro viene resa durevole con `fsync` del suo genitore (rilievi di Sol su #606); se la sincronizzazione fallisce l'ammissione non viene dichiarata. Un registro illeggibile produce un rifiuto: non si riparte mai da vuoto.
+**`Ledger.admit` (VPS):** lettura, controllo e scrittura avvengono sotto un **lock esclusivo interprocesso** (`flock` su `<registro>.lock`). Due consumer concorrenti non ammettono mai la stessa richiesta e non perdono le ammissioni l'uno dell'altro. Se il lock non è disponibile la richiesta viene rifiutata con `LEDGER_LOCK_UNAVAILABLE` (rilievo di Sol e Grok su #606). Una richiesta già ammessa (`target`, catalogo, repository, PR, SHA) viene rifiutata anche dopo un riavvio. La scrittura è atomica e durevole: `fsync` del file temporaneo, `os.replace` e poi `fsync` della directory; a ogni ammissione l'intera catena di directory del registro, fino alla radice, viene resa durevole con `fsync` del genitore di ogni componente, anche se la directory esisteva già (creazione con `fsync` fallito o fatta da un altro processo) (rilievi di Sol su #606); se la sincronizzazione fallisce l'ammissione non viene dichiarata. Un registro illeggibile produce un rifiuto: non si riparte mai da vuoto.
 
 ## 4-bis. Corsia development: test nuovi, codice non fidato
 
@@ -131,7 +131,7 @@ Il ciclo è questo:
 
 Gli stati sono: `QUEUED`, `RUNNING`, `PASS`, `FAIL`, `BLOCKED`, `TIMEOUT`, `CANCELLED`, `INFRA_ERROR`, oltre a `NOT_REQUESTED`.
 - I check run si leggono **tutti**: `filter=all` e tutte le pagine con `page=N` esplicito (non i link `next`), fino a un massimo di 20 pagine. Oltre il limite, o con una forma inattesa, la lettura non è verificabile: mai un elenco parziale. Rilievi di Codex e Sol su #606.
-- Contano solo i check run dell'app `pickfair-dedicated` sullo SHA esatto e sul catalogo vigente: `external_id` deve iniziare con `<catalog_sha256>:` del catalogo letto da main. Se la definizione di una suite cambia senza cambiarne l'id, un PASS del catalogo precedente non conta e la suite torna `NOT_REQUESTED` (rilievo di Sol su #606). Se un run è ancora aperto, conta quello.
+- Contano solo i check run dell'app `pickfair-dedicated` sullo SHA esatto e sul catalogo vigente: `external_id` deve iniziare con `<catalog_sha256>:` del catalogo corrente di main, che `status` legge da GitHub (`contents/…?ref=main`) e mai dal checkout locale; catalogo di main non leggibile => `MAIN_CATALOG_UNAVAILABLE`. Se la definizione di una suite cambia senza cambiarne l'id, un PASS del catalogo precedente non conta e la suite torna `NOT_REQUESTED` (rilievo di Sol su #606). Se un run è ancora aperto, conta quello.
 - Un titolo che inizia con `INFRA_ERROR`, o una conclusione sconosciuta (anche `neutral`), dà `INFRA_ERROR`: mai `PASS` e mai `FAIL` del codice.
 - Una campagna è `PASS` solo se **tutte** le sue suite sono `PASS`.
 
@@ -141,7 +141,7 @@ Il codice di questa PR copre solo il lato GitHub e la libreria di verifica condi
 1. prelevare gli artefatti `pf-test-request` dei run conclusi di `pf-test-request.yml`;
 2. verificare la firma con `gh attestation verify --signer-workflow <repo>/.github/workflows/pf-test-request.yml@refs/heads/main --source-ref refs/heads/main --cert-oidc-issuer https://token.actions.githubusercontent.com`;
 3. chiamare `verify_request` con il `run_id` del certificato, la PR riletta e il catalogo letto da main;
-4. registrare la richiesta con `Ledger.admit` (registro, rinomina e ogni directory creata resi durevoli con `fsync`);
+4. registrare la richiesta con `Ledger.admit` (registro, rinomina e intera catena di directory resi durevoli con `fsync`);
 5. eseguire **solo** `runner` e `args` del catalogo in una sandbox con queste caratteristiche:
    - nessun segreto, niente Docker socket, nessun privilegio host;
    - filesystem di sola lettura, tranne la directory di lavoro effimera;

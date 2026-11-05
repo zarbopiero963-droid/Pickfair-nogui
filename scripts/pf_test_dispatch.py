@@ -32,6 +32,8 @@ owner (gate di attivazione §11).
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import datetime as _dt
 import hashlib
 import json
@@ -344,24 +346,22 @@ def _fsync_dir(path: Path) -> None:
 
 
 def _durable_makedirs(path: Path) -> None:
-    """Crea ``path`` e i genitori mancanti rendendo durevole ogni creazione: dopo ogni ``mkdir`` si sincronizza la
-    directory genitore (rilievo di Sol su #606). Senza, un crash dell'host puo' perdere l'albero appena creato insieme
-    al registro e riammettere richieste gia' confermate. Una directory gia' esistente non viene toccata; un errore si
-    propaga (nessuna ammissione dichiarata)."""
-    path = Path(path)
-    missing = []
-    cur = path
-    while not cur.exists():
-        missing.append(cur)
-        if cur.parent == cur:
-            break
-        cur = cur.parent
-    for d in reversed(missing):
-        try:
-            os.mkdir(str(d))
-        except FileExistsError:
-            pass                                       # creata in concorrenza: la si sincronizza comunque
-        _fsync_dir(d.parent)
+    """Crea ``path`` e i genitori mancanti e rende durevole l'intera catena: a ogni chiamata si sincronizza il
+    genitore di ogni componente, fino alla radice (rilievi di Sol su #606). Non dipende dal sapere chi ha creato una
+    directory: una creazione riuscita con ``fsync`` fallito, o fatta da un processo concorrente, viene sincronizzata
+    al tentativo successivo invece di essere saltata perche' "gia' esistente". Un errore si propaga: nessuna
+    ammissione dichiarata."""
+    path = Path(os.path.abspath(str(path)))
+    chain = [path, *path.parents]                       # dalla directory del registro fino alla radice
+    for d in reversed(chain):
+        if not d.exists():
+            try:
+                os.mkdir(str(d))
+            except FileExistsError:
+                pass                                   # creata in concorrenza: la si sincronizza comunque
+    for d in chain:
+        if d.parent != d:
+            _fsync_dir(d.parent)
 
 
 class Ledger:
@@ -523,6 +523,22 @@ def all_check_runs(repo: str, sha: str) -> list:
     return [c for p in pages for c in p["check_runs"]]
 
 
+def main_catalog(repo: str) -> bytes:
+    """Catalogo corrente di ``main`` letto da GitHub, mai dal checkout locale (rilievo di Sol su #606): un checkout
+    obsoleto darebbe il digest di un catalogo superato e farebbe contare i PASS di definizioni ormai cambiate.
+    Risposta assente, non base64 o non decodificabile => ``Refused``, mai il catalogo locale come ripiego."""
+    data = _gh(f"repos/{repo}/contents/{CATALOG_PATH}?ref=main")
+    if not isinstance(data, dict) or data.get("encoding") != "base64" or not isinstance(data.get("content"), str):
+        raise Refused("MAIN_CATALOG_UNAVAILABLE")
+    try:
+        raw = base64.b64decode(data["content"], validate=False)
+    except (binascii.Error, ValueError):
+        raise Refused("MAIN_CATALOG_UNAVAILABLE") from None
+    if not raw:
+        raise Refused("MAIN_CATALOG_UNAVAILABLE")
+    return raw
+
+
 def main(argv: Optional[list] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -578,6 +594,7 @@ def main(argv: Optional[list] = None) -> int:
             runs = all_check_runs(args.repo, args.sha)
             print(json.dumps(dev_status(args.dev_key, args.sha, runs), sort_keys=True))
             return 0
+        catalog_raw = main_catalog(args.repo)
         suites = resolve_target(validate_catalog(catalog_raw), args.target)
         runs = all_check_runs(args.repo, args.sha)
         digest = catalog_digest(catalog_raw)
