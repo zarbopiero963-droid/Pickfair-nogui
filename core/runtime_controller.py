@@ -6210,6 +6210,29 @@ class RuntimeController:
         return self.mm.fresh_caps_reason(cash=cassa_recente, order_exposure=order_exposure,
                                          total_exposure=vista_recente, event_exposure=evento)
 
+    #: F-16 (#586, FUNDS-01) — decisione owner PF-LIVE-FUNDS-THRESHOLD-01 (#426 c.6162806642): una conferma dei fondi
+    #: autorizza un nuovo ingresso solo se la sua eta' e' <= 30 s, misurata con orologio monotono dall'inizio della
+    #: lettura. Separata dal TTL delle tracce delle riserve (`TableManager.PLACED_TOMBSTONE_TTL_S`), che deve restare
+    #: >= di questa soglia perche' le riserve rilasciate restino confrontabili con la lettura.
+    LIVE_FUNDS_MAX_AGE_S = 30.0
+
+    @classmethod
+    def funds_max_age_s(cls) -> float:
+        """F-16: soglia EFFETTIVA di freschezza della conferma dei fondi, in secondi. Accessore unico (Control API/MCP):
+        la stessa regola che applica `_funds_confirmation_fresh`, mai replicata altrove."""
+        return float(min(cls.LIVE_FUNDS_MAX_AGE_S, TableManager.PLACED_TOMBSTONE_TTL_S))
+
+    @classmethod
+    def _funds_confirmation_fresh(cls, read_at: Any) -> bool:
+        """True solo se ``read_at`` e' un istante monotonic valido, non nel futuro, e la lettura ha <= 30 s.
+
+        ``read_at`` assente, non numerico, non finito o successivo all'ora monotona => validita' non dimostrata
+        (PF-LIVE-FUNDS-POLICY-01 regola 5): False. Mai l'orologio di sistema."""
+        if isinstance(read_at, bool) or not isinstance(read_at, (int, float)):
+            return False
+        age = time.monotonic() - float(read_at)          # NaN/inf: il confronto qui sotto e' falso => False
+        return 0.0 <= age <= cls.funds_max_age_s()
+
     def _entry_funds_reason(self, account: Any, pending_exposure: float, *, read_at: Optional[float] = None) -> str:
         """#461 PR28-e (PF-CAP-09 / PF-CAP-19, PF-EXEC-04): '' se le riserve non ancora a mercato, COMPRESA la
         nuova entrata, stanno nel ``available`` del conto; altrimenti il motivo del rifiuto.
@@ -6221,7 +6244,11 @@ class RuntimeController:
         del conto) NON coprono nulla: possono essere di posizioni esterne al bot (rilievo Sol su #531).
         Solo NUOVE entrate (segnale, auto-next): mai hedge o uscite protettive (PF-EXEC-03). `account` e' il
         payload del conto o uno snapshot (`_account_from_funds`); un payload con `error`, non valido o assente
-        => fondi non verificabili. Nessun ridimensionamento: rifiuto esplicito con gli importi."""
+        => fondi non verificabili. Nessun ridimensionamento: rifiuto esplicito con gli importi.
+
+        F-16: la conferma dei fondi vale solo se ``read_at`` (istante monotonic d'inizio della lettura) ha eta' <=
+        `funds_max_age_s()` al momento di questo gate; altrimenti (o se assente, non valido o nel futuro)
+        ``fondi_non_verificabili:FUNDS_STALE``."""
         if isinstance(account, dict) and "cash_equity" in account and "ok" in account:
             parsed = account if not account.get("error") else {"ok": False}
         elif isinstance(account, dict) and not account.get("error"):
@@ -6230,9 +6257,8 @@ class RuntimeController:
             parsed = {"ok": False}
         if not parsed.get("ok"):
             return "fondi_non_verificabili"
-        if read_at is not None and time.monotonic() - float(read_at) > TableManager.PLACED_TOMBSTONE_TTL_S:
-            # Lettura piu' vecchia delle tracce delle riserve rilasciate: non confrontabile in sicurezza.
-            return "fondi_non_verificabili"
+        if not self._funds_confirmation_fresh(read_at):
+            return "fondi_non_verificabili:FUNDS_STALE"
         available = float(parsed["available"])
         pending_exposure = float(pending_exposure)
         if validators.exceeds_cap(pending_exposure, available):

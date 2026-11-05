@@ -65,6 +65,20 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   `fondi_non_verificabili`. Rifiuto ⇒ nessun `CMD_QUICK_BET`, tavolo e chiave rilasciati. Prima l'unico freno con
   una cassa vecchia era il rifiuto a valle dell'exchange. I tre cap percentuali restano calcolati sulla cassa
   registrata (a differenza del segnale, che li ricontrolla anche sulla lettura fresca).
+- **Freschezza della conferma dei fondi (F-16, decisione owner PF-LIVE-FUNDS-THRESHOLD-01, #426 c.6162806642):** il
+  gate fondi d'ingresso (`RuntimeController._entry_funds_reason`, usato da segnale, DutchingController e auto-next)
+  ammette una lettura solo se ha al massimo `LIVE_FUNDS_MAX_AGE_S` = 30 s (soglia effettiva esposta da un solo
+  accessore, `RuntimeController.funds_max_age_s()`, per la Control API), misurati con orologio monotono
+  dall'inizio della lettura (29,999 s ammessa, 30,001 s rifiutata). Lettura più vecchia, `read_at` assente, non
+  numerico, non finito o nel futuro (anche di 1 ms) ⇒ `fondi_non_verificabili:FUNDS_STALE`, nessun ingresso, tavolo
+  e chiave rilasciati. Per un segnale (o un lotto Dutching) il rifiuto è ritentabile con un nuovo segnale e una nuova
+  lettura. L'auto-next usa lo snapshot del settlement: se il settlement è stato elaborato oltre 30 s dopo la lettura,
+  l'ingresso è rifiutato, mai eseguito su fondi scaduti, e il rifiuto è **definitivo per quel settlement** (la sua
+  chiave entra in `_processed_auto_trade_keys`: lo stesso settlement non riprova). L'età si misura **al gate**
+  d'ingresso, non all'invio dell'ordine. Prima il limite
+  era il TTL tecnico delle tracce delle riserve (120 s) e `read_at` assente saltava il controllo. Vale anche in SIM
+  (parità decisionale PF-OD12-12). L'invalidazione anticipata su eventi (PF-LIVE-FUNDS-INVALIDATE-01) non fa parte di
+  questa correzione.
 - **Cap evento di lotto Dutching e bet manuale, misura unica (#549, #554):** `precheck` del lotto e `manual_bet`
   applicano `max_event_exposure_pct` (cassa verificata·%) con la STESSA misura dei segnali,
   `RuntimeController.controller_event_exposure(entry, event_key=…)`. Conta i tavoli attivi:
