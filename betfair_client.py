@@ -1752,15 +1752,20 @@ class BetfairClient:
             if not reports:
                 raise RuntimeError("BET_NO_REPORT")
 
-            for report in reports:
-                report_status = str(report.get("status") or "").upper()
-                if report_status in {"SUCCESS", "PLACED"}:
-                    continue
-                # Solo FAILURE (o TIMEOUT, ignoto per sottostringa) e' un esito dichiarato da Betfair. Un report
-                # senza status o con uno status sconosciuto non prova il rifiuto: esito ignoto.
-                if report_status not in _STATUS_REPORT_RICONOSCIUTI:
-                    raise RuntimeError(f"BET_REPORT_STATUS_UNRECOGNIZED: {report_status or '<assente>'}")
-                raise RuntimeError(f"BET_REJECTED: {report}")
+            # Tutti i report si valutano PRIMA di decidere (rilievo di Sol su #609): un FAILURE seguito da un SUCCESS
+            # con betId non e' un rifiuto, e il primo report non puo' scartare gli altri.
+            report_statuses = [str(report.get("status") or "").upper() for report in reports]
+            # Un report senza status o con uno status sconosciuto non prova nulla: esito ignoto.
+            ignoti = [st for st in report_statuses if st not in _STATUS_REPORT_RICONOSCIUTI]
+            if ignoti:
+                raise RuntimeError(f"BET_REPORT_STATUS_UNRECOGNIZED: {ignoti[0] or '<assente>'}")
+            riusciti = [st for st in report_statuses if st in {"SUCCESS", "PLACED"}]
+            non_riusciti = [rep for rep, st in zip(reports, report_statuses) if st not in {"SUCCESS", "PLACED"}]
+            if riusciti and non_riusciti:
+                raise RuntimeError(f"BET_OUTCOME_MIXED: {status}")
+            if non_riusciti:
+                # Solo FAILURE (o TIMEOUT, ignoto per sottostringa) e' un esito dichiarato da Betfair.
+                raise RuntimeError(f"BET_REJECTED: {non_riusciti[0]}")
 
             return {
                 "ok": True,
@@ -1902,7 +1907,13 @@ class BetfairClient:
         # PROCESSED_WITH_ERRORS senza report non esclude un'esecuzione parziale (rilievo di Sol su #609).
         uncertain = bool(missing or unknown or reports_unreadable
                          or (status == "PROCESSED_WITH_ERRORS" and not reports))
-        if status not in ("SUCCESS", "FAILURE", "PROCESSED_WITH_ERRORS") or reports_unreadable:
+        # Status complessivo in conflitto con i report (rilievo di Grok su #609): FAILURE con un report SUCCESS,
+        # PROCESSED_WITH_ERRORS senza alcun errore, SUCCESS con un report FAILURE. Nessuna delle due fonti prova
+        # l'esito: AMBIGUOUS, mai un PARTIAL che confermi cancellazioni non provate.
+        in_conflitto = ((status == "FAILURE" and bool(cancelled))
+                        or (status == "PROCESSED_WITH_ERRORS" and bool(reports) and not failed and not unknown)
+                        or (status == "SUCCESS" and bool(failed)))
+        if status not in ("SUCCESS", "FAILURE", "PROCESSED_WITH_ERRORS") or reports_unreadable or in_conflitto:
             outcome = "AMBIGUOUS"
         elif not cancelled and not unknown and (
                 status == "FAILURE" or (status == "PROCESSED_WITH_ERRORS" and reports and not missing)):

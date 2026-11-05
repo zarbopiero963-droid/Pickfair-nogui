@@ -337,3 +337,28 @@ def test_engine_grezzo_malformato_o_timeout_e_ambiguo(grezza: Any) -> None:
     with pytest.raises(ExecutionError) as exc:
         engine._raise_if_failed_semantic_response(dict(grezza))
     assert exc.value.error_type == ERROR_AMBIGUOUS
+
+
+# Sol su #609 (911562a..3bebc03): con status SUCCESS i report si valutano TUTTI prima del rifiuto definitivo.
+MISTI_SU_SUCCESS = {
+    "failure_poi_success_con_betid": {"status": "SUCCESS", "instructionReports": [
+        {"status": "FAILURE", "errorCode": "INVALID_ODDS"}, {"status": "SUCCESS", "betId": "31415"}]},
+    "success_poi_failure": {"status": "SUCCESS", "instructionReports": [
+        {"status": "SUCCESS", "betId": "31415"}, {"status": "FAILURE", "errorCode": "INVALID_ODDS"}]},
+    "failure_poi_senza_status": {"status": "SUCCESS", "instructionReports": [
+        {"status": "FAILURE"}, {"betId": "31415"}]},
+}
+
+
+@pytest.mark.parametrize("risultato", list(MISTI_SU_SUCCESS.values()), ids=list(MISTI_SU_SUCCESS))
+def test_client_report_discordanti_su_success_sono_order_unknown(risultato: Any) -> None:
+    esito = _place(_client(_SessioneContaInvii([{"result": risultato}])))
+
+    assert esito["ok"] is False and esito["order_unknown"] is True, esito
+    assert esito["result"] == risultato                  # il betId resta attribuibile
+
+
+def test_client_tutti_i_report_failure_su_success_resta_rifiuto() -> None:
+    risultato = {"status": "SUCCESS", "instructionReports": [{"status": "FAILURE", "errorCode": "INVALID_ODDS"}]}
+    esito = _place(_client(_SessioneContaInvii([{"result": risultato}])))
+    assert esito["ok"] is False and esito["order_unknown"] is False, esito

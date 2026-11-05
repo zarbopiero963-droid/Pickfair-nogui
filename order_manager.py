@@ -992,7 +992,9 @@ class OrderManager:
                     "error": str(exc), "reason_code": ReasonCode.CANCEL_REJECTED.value}
 
         # F-14 (#586): esito ignoto dichiarato dal client (timeout, rete, status assente) => AMBIGUOUS, mai FAILED.
-        if isinstance(response, dict) and str(response.get("outcome") or "").upper() == "AMBIGUOUS":
+        # Anche PARTIAL: per un cancel singolo non conferma il betId (rilievo di Grok su #609, come
+        # BetfairClient.cancel_order che solleva CANCEL_ORDER_UNCONFIRMED). Solo FAILED e' un rifiuto certo.
+        if isinstance(response, dict) and str(response.get("outcome") or "").upper() in ("AMBIGUOUS", "PARTIAL"):
             return self._cancel_ambiguous(customer_ref, bet_id, str(response.get("error") or "CANCEL_AMBIGUOUS"))
 
         # Busta BetfairClient: `ok` False => rifiuto; i report stanno in `result`.

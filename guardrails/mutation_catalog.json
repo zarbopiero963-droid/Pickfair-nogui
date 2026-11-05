@@ -8274,7 +8274,7 @@
       "module": "order_manager",
       "area": "ambiguous",
       "file": "order_manager.py",
-      "original": "        if isinstance(response, dict) and str(response.get(\"outcome\") or \"\").upper() == \"AMBIGUOUS\":",
+      "original": "        if isinstance(response, dict) and str(response.get(\"outcome\") or \"\").upper() in (\"AMBIGUOUS\", \"PARTIAL\"):",
       "mutated": "        if False:",
       "tests": [
         "tests/acceptance/test_f14_cancel_single_shot.py",
@@ -8348,6 +8348,43 @@
         "tests/acceptance/test_f14_cancel_single_shot.py"
       ],
       "rationale": "P1-1: corpo grezzo con esito misto letto come rifiuto certo dall'engine."
+    },
+    {
+      "id": "f14_place_success_mixed_reports_rejected",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "            if riusciti and non_riusciti:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py",
+        "tests/acceptance/test_place_bet_senza_esito_catena.py"
+      ],
+      "rationale": "Sol su #609: status SUCCESS con report discordanti (FAILURE + SUCCESS con betId) letto come rifiuto definitivo, betId scartato."
+    },
+    {
+      "id": "f14_cancel_status_report_conflict_partial",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "        if status not in (\"SUCCESS\", \"FAILURE\", \"PROCESSED_WITH_ERRORS\") or reports_unreadable or in_conflitto:",
+      "mutated": "        if status not in (\"SUCCESS\", \"FAILURE\", \"PROCESSED_WITH_ERRORS\") or reports_unreadable:",
+      "tests": [
+        "tests/acceptance/test_f14_cancel_single_shot.py"
+      ],
+      "rationale": "Grok su #609: status del cancel in conflitto con i report chiuso come PARTIAL, cancellazione confermata senza prova."
+    },
+    {
+      "id": "f14_om_partial_failed",
+      "module": "order_manager",
+      "area": "ambiguous",
+      "file": "order_manager.py",
+      "original": "        if isinstance(response, dict) and str(response.get(\"outcome\") or \"\").upper() in (\"AMBIGUOUS\", \"PARTIAL\"):",
+      "mutated": "        if isinstance(response, dict) and str(response.get(\"outcome\") or \"\").upper() in (\"AMBIGUOUS\",):",
+      "tests": [
+        "tests/acceptance/test_f14_cancel_single_shot.py"
+      ],
+      "rationale": "Grok su #609: PARTIAL del cancel singolo chiude la saga FAILED/CANCEL_REJECTED invece di AMBIGUOUS."
     },
     {
       "id": "f14_cancel_unknown_report_ignored",

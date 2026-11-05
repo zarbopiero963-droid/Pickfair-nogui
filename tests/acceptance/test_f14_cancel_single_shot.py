@@ -336,3 +336,36 @@ def test_cancel_di_mercato_success_senza_report_resta_confermato() -> None:
     """BLOCK: il comportamento documentato del cancel di tutto il mercato con status SUCCESS e nessun report resta."""
     out = _client(_Rete([_ok({"status": "SUCCESS"})])).cancel_orders(market_id="1.2")
     assert out["ok"] is True and out["outcome"] == "SUCCESS", out
+
+
+# ------------------------------------------------------------------ revisione Grok su #609 (911562a..3bebc03, VALID_BLOCKERS)
+@pytest.mark.parametrize("risultato,richiesti", [
+    ({"status": "FAILURE", "instructionReports": [_report("B1")]}, ["B1"]),                      # status vs report
+    ({"status": "FAILURE", "instructionReports": [_report("B1"), _report("B2", "FAILURE")]}, ["B1", "B2"]),
+    ({"status": "PROCESSED_WITH_ERRORS", "instructionReports": [_report("B1")]}, ["B1"]),         # nessun errore
+    ({"status": "SUCCESS", "instructionReports": [_report("B1"), _report("B2", "FAILURE")]}, ["B1", "B2"]),
+], ids=["failure_report_success", "failure_misto", "pwe_tutti_success", "success_con_failure"])
+def test_status_in_conflitto_con_i_report_e_ambiguous(risultato, richiesti) -> None:
+    out = _client(_Rete([_ok(risultato)])).cancel_orders(market_id="1.2", bet_ids=richiesti)
+
+    assert out["ok"] is False and out["outcome"] == "AMBIGUOUS", out
+
+
+def test_partial_coerente_resta_partial() -> None:
+    """BLOCK: PROCESSED_WITH_ERRORS con un SUCCESS e un FAILURE, ognuno sul suo betId, e' un PARTIAL dichiarato."""
+    risultato = {"status": "PROCESSED_WITH_ERRORS", "instructionReports": [_report("B1"), _report("B2", "FAILURE")]}
+    out = _client(_Rete([_ok(risultato)])).cancel_orders(market_id="1.2", bet_ids=["B1", "B2"])
+    assert out["outcome"] == "PARTIAL" and out["cancelled_bet_ids"] == ["B1"], out
+
+
+@pytest.mark.parametrize("outcome", ["PARTIAL", "AMBIGUOUS"])
+def test_order_manager_esito_non_certo_del_client_e_ambiguous(outcome) -> None:
+    """Grok su #609: solo FAILED e' un rifiuto certo; PARTIAL (non confermato per il betId singolo) => AMBIGUOUS."""
+    out, saga, eventi = _cancel_with({"ok": False, "outcome": outcome, "error": f"CANCEL_{outcome}"})
+    assert out["status"] == "AMBIGUOUS" and saga == "AMBIGUOUS", (outcome, out)
+    assert "QUICK_BET_CANCEL_FAILED" not in eventi
+
+
+def test_order_manager_failed_del_client_resta_failed() -> None:
+    out, saga, _ev = _cancel_with({"ok": False, "outcome": "FAILED", "error": "CANCEL_FAILED: X"})
+    assert out["status"] == "FAILED" and saga == "FAILED", out
