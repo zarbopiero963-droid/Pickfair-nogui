@@ -835,3 +835,23 @@ def test_status_still_refuses_an_unsafe_main_catalog(monkeypatch, capsys):
 def test_execution_side_validation_still_checks_paths_exist():
     with pytest.raises(D.Refused, match="^PYTEST_PATH:zz-new-suite$"):
         D.validate_catalog(_catalog_with_new_suite(), ROOT)
+
+
+# Sol su #606 (5a34dde4, VALID_BLOCKERS): senza fcntl (Windows) il rifiuto arriva prima di qualunque accesso alle
+# directory: aprire una directory per il fsync li' solleva PermissionError, che non e' LEDGER_LOCK_UNAVAILABLE.
+def test_without_fcntl_the_ledger_refuses_before_touching_directories(tmp_path, monkeypatch):
+    import builtins
+    real_import = builtins.__import__
+
+    def no_fcntl(name, *a, **k):
+        if name == "fcntl":
+            raise ImportError("no fcntl")
+        return real_import(name, *a, **k)
+
+    def windows_dir_open(path):
+        raise PermissionError("directory non apribile (Windows)")
+    monkeypatch.setattr(builtins, "__import__", no_fcntl)
+    monkeypatch.setattr(D, "_fsync_dir", windows_dir_open)
+    with pytest.raises(D.Refused, match="^LEDGER_LOCK_UNAVAILABLE$"):
+        D.Ledger(tmp_path / "new" / "ledger.json").admit(build())
+    assert not (tmp_path / "new").exists()                         # nessuna directory creata

@@ -388,6 +388,12 @@ class Ledger:
         return data
 
     def admit(self, req: Mapping[str, Any]) -> None:
+        # supporto del lock verificato PRIMA di toccare il filesystem (rilievo di Sol su #606): su una piattaforma
+        # senza fcntl (Windows) aprire una directory per il fsync solleva PermissionError invece di LEDGER_LOCK_UNAVAILABLE
+        try:
+            import fcntl  # noqa: F401
+        except ImportError:
+            raise Refused("LEDGER_LOCK_UNAVAILABLE") from None
         _durable_makedirs(self.path.parent)
         with open(f"{self.path}.lock", "a+", encoding="utf-8") as lock:
             try:
