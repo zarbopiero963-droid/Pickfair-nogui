@@ -12,7 +12,7 @@ sull'exchange nell'ultimo snapshot prima della chiusura e dall'esito dichiarato:
 from __future__ import annotations
 
 import json
-from decimal import Decimal as D
+from decimal import ROUND_HALF_UP, Decimal as D
 
 import pytest
 
@@ -47,7 +47,8 @@ PHASE_2 = [
 
 
 def _q(x) -> D:
-    return D(str(x)).quantize(CENT)
+    # stesso arrotondamento del report (ROUND_HALF_UP): 2,865 => 2,87 da entrambe le parti
+    return D(str(x)).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 def _oracle_net(snaps, market: str, win: bool) -> D:
