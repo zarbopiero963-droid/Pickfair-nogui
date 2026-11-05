@@ -3501,6 +3501,43 @@
         "tests/f03/test_f03_trailing_stop.py"
       ],
       "max_files": 10
+    },
+    "pf_universal_test_automation_01": {
+      "description": "PF-VPS-UNIVERSAL-TEST-AUTOMATION-01 (#586, sostituisce PF-VPS-CERTIFICATION-SELF-SERVICE-01; merge owner: workflow): catalogo versionato delle suite (tests/catalog/pf-test-catalog.json, argv fisso), richiesta di test firmata Sigstore da workflow_dispatch solo su main (pf-test-request.yml), libreria di verifica condivisa con la VPS (scripts/pf_test_dispatch.py: verify_request, Ledger, stati QUEUED..INFRA_ERROR), mappa di copertura comportamenti (inventario Gate A NOT_IMPORTED). Modalita' dry-run; nessun segreto, nessun accesso VPS per Claude B.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pf-test-request.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/test_automation.md",
+        "scripts/pf_test_dispatch.py",
+        "scripts/pr_full_suite_pipeline.py",
+        "tests/catalog/behaviour_coverage.json",
+        "tests/catalog/pf-test-catalog.json",
+        "tests/scripts/test_pf_test_dispatch.py"
+      ],
+      "max_files": 9
+    },
+    "gov_review_redaction_skipped_runs": {
+      "description": "Governance (decisione owner su #606 c.6627474499, merge owner: workflow-gate e scripts/pr_*): la redazione dei cinque workflow di review lascia visibili solo il permesso id-token read/write/none e i riferimenti ${{ }} che occupano tutto il valore; il verificatore esclude un tentativo skipped da RUN_WITHOUT_ATTESTATION solo con la prova dei job (tutti completed/skipped, nessuno step, elenco completo). Nessuna attestazione storica riscritta, nessun controllo di firma/digest/copertura allentato. ESTENSIONE DICHIARATA (owner, blocco PRE-LIVE #608, 04/11): aggiunto il verificatore GitHub dell'evidenza di teardown tools/teardown_evidence/verify_teardown_evidence.py con i suoi test, perche' la prova di teardown e' condizione owner per il merge di questa PR.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-claude-fable5.yml",
+        ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+        ".github/workflows/pr-review-openrouter-gpt-astra.yml",
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ai_audit_workflows.md",
+        "docs/review_attestation.md",
+        "scripts/pr_review_attestation.py",
+        "tests/guardrails/test_ai_review_redazione_segreti.py",
+        "tests/scripts/test_pr_review_attestation.py",
+        "tests/teardown_evidence/test_verify_teardown_evidence.py",
+        "tools/teardown_evidence/verify_teardown_evidence.py"
+      ],
+      "max_files": 14
     }
   }
 }
