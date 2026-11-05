@@ -1,207 +1,121 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 17,
- "mandate_id": "Claude B — OWNER DIRECTIVE GOVERNANCE AUTO-MERGE CERTIFICATO + ROADMAP V2",
- "previous_checkpoint_sha": "51d5352e828e78026603bd171ff283d7c0249103",
+ "seq": 18,
+ "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
+ "previous_checkpoint_sha": "2176e92acb82a84d1a7eb6afea44d059688f8628",
  "code": {
-  "branch": "f01-sltp-pnl",
-  "sha": "aa184a2886201c3113d229410e19b5ea436aa6b3",
-  "patch": {
-   "head": "aa184a2886201c3113d229410e19b5ea436aa6b3",
-   "tree": "1c12b186b4eb98af5f3ec46b0f7cb80a1f2cdc5d",
-   "captured_at": "2026-11-01T13:38:40+00:00",
-   "modified": [],
-   "untracked": [],
-   "files": [
-    "code_patch/BASELINE.json"
-   ],
-   "skipped_symlinks": {}
-  }
+  "branch": "claude/pickfair-core-audit-slu9su",
+  "sha": "69765cff06b69696b218bfc21e7bdc87dbb3a2fa"
  },
- "lotto_corrente": "PR #596 F-01 (f01-sltp-pnl @aa184a2) unica PR aperta, READY_FOR_OWNER_MANUAL_MERGE; #593 F-05, #594 F-08, #595 governance mergiate.",
+ "lotto_corrente": "PR #609 F-14 @69765cff (fix loop 1/10): gate in corso (CI, Sol, Grok, Codex, PRE-LIVE, teardown). Unica PR aperta del repository.",
  "lotti_completati": [
-  "F-33 implementazione locale + hardening (6 commit)",
-  "PR #589 aperta (d46e6da)",
-  "fix review Sol/Grok/Codex (3873eaa, pushato)",
-  "F-05 Phase 0 (results/F05_PHASE0.md)",
-  "fix review Sol/Grok su 3873eaa: boundary starting_balance=0 senza xfail statico (a721e09, pushato)",
-  "#589 fix Codex/Sol: de1c980, 0d9e091, 31d5364, e655a5b, 0c2822e (7/10 cicli); Sol/Grok/Codex puliti su 0c2822e",
-  "#590 fix locale fix-590-tg-guard-sigpipe 73c3da7 (patches/590), mutation fsp 8/8 killed",
-  "F-05 RED b7adb5c + implementazione 59b05ae + mutazioni/test 7876d64 (patches/f05, results/F05_CONSUMERS.md)",
-  "#586 rapporto PICKFAIR_V2_AUTONOMOUS_EXECUTION_OWNER_GO c.6547651160",
-  "#589 CLAUDE_PR_FINAL_CERTIFICATION c.6548104640; 13 thread risolti; full-suite BK 51 52/53 (appimagetool VPS, c.6548092593)",
-  "F-05 docs §7.3 + CHANGELOG + task key f05_cashout_hedge_ledger (212d299)",
-  "F-08 locale: RED b416efb, fix ce06aac, docs/scope 889b9a9 (patches/f08)",
-  "F-01 locale: RED 04f54f7, fix dde85a5, docs/scope 3eadf2e+3cf7e2b (patches/f01)",
-  "F-05 idempotenza (duplicate_cashout_request, hedge_outcome_uncertain, lock) + riavvio HEDGE_PENDING->HEDGE_AMBIGUOUS (e1da865, docs 1dc265b)",
-  "#589 overlap-check rerun verde dopo chiusura #587 (c.6548949811)",
-  "#590 branch remoto fix-590-tg-guard-sigpipe f73a790 (docs, CHANGELOG, task key), nessuna PR",
-  "#590 mutazione fsp_m2_telegram_guard_sigpipe (proposta Claude A), 9/9 killed; branch remoto 641d04b; Claude A concorda: PR dalla variante Claude B",
-  "#589 chiusa DEFERRED (c.6549214225)",
-  "PR #591 aperta per #590",
-  "governance Buildkite deferred 2cdfe8a (branch remoto)",
-  "#591 test-core-components: flake preesistente test TTL poller (uptime<30s) riprodotto, patch proposta c.6549279913, rerun",
-  "#586 OWNER_DECISION_GITHUB_ACTIONS_PRIMARY_BUILDKITE_DEFERRED c.6549283349",
-  "seq 12: #591 chiusa DEFERRED_GOVERNANCE_DEPENDENCY (branch fix-590-tg-guard-sigpipe 0d1f466 preservato); #592 governance aperta head 990b99d con audit Claude A integrato (pending_checks_from_pr); readiness su 990b99d: Buildkite full-suite/overlap-check ignored deferred, pending vuoto; thread Codex PRRT_kwDORumVCM6yVDZ0 risolto con evidenza; blocco residuo: mutation-lanes rosse per fsp_* INCONCLUSIVE (#590 non su main) -> decisione owner #586 c.6549919101",
-  "seq 14: #592 merged owner 986bebd; #591 riallineata e merged owner b2c0947; F-33 #589 GO-MERGE condizionato 8de659b; F-05 PR #593 READY_FOR_OWNER_MANUAL_MERGE @84fd4f7 (fix loop 3/10, 11027 passed, mutation 15/15)",
-  "seq 16: #593 F-05 merged 71ff2ab, #594 F-08 merged 1eed2fd, #595 governance merged bb8d028; #596 F-01 aperta, fix loop 3/10 (abfd2ed 1.01+profondita', f1de646 livelli al proprio prezzo, e52018c/aa184a2 TP su profitto garantito), READY_FOR_OWNER_MANUAL_MERGE c.6558690366; #586 c.6558691367",
-  "seq 17: rettifica del seq 16 (51d5352, readback fallito: code.sha del branch F-05 cancellato); code = f01-sltp-pnl @aa184a2"
+  "#596 F-01 merged dc83b06",
+  "#597 F-09 0d16693",
+  "#598 governance e139a5d",
+  "#599 F-10 4531c63",
+  "#600 F-06 c7eff15",
+  "#601 F-13a a7b73ef",
+  "#602 5a1e01c",
+  "#603 df14cd9",
+  "#604 FI-03Z 7a70062",
+  "#607 ada4076",
+  "#608 53e744e9",
+  "#606 merged owner 911562ad (albero = 11a38662, approvazione ext-review owner c.6656683842, verdetto c.6656694691)",
+  "F-14 verificato FIT fino a a38f827 (registro docs/roadmap/reviews/f14_*), PR #609 aperta",
+  "F-16 4250f97 verificato FIT (registro f16_review_4250f97); fix D @64e965b da verificare",
+  "Roadmap PF-UNIVERSAL-360-TESTING registrata (pf-gov-persistent-roadmap-01 @eacba405)"
  ],
- "next_atomic_action": "1) #596 F-01 READY_FOR_OWNER_MANUAL_MERGE @aa184a2 (GHA verde, Sol/Grok/Codex puliti, 0 thread, fix loop 3/10): attendere merge owner. 2) Dopo il merge: verificare CI post-merge su main. 3) Poi F-10, quindi F-06, una PR alla volta (auto-merge certificato #595 solo se idonea). Debito: max_files 43->44 della task key F-33 alla prossima PR che tocca il registro.",
+ "next_atomic_action": "1) #609: attendere CI/Sol/Grok/Codex/PRE-LIVE su 69765cff; triage; teardown verify; review-gate; verdetto. 2) Merge: secondo la governance vigente confermata dall'owner (PF-AUTO-MERGE-ALL-01 in attesa di chiarimento: il messaggio contiene anche 'nessun merge autonomo'). 3) Dopo il merge: verifica main + checkpoint; poi F-16 (head D 64e965b). 4) In parallelo offline: kit G1-G2 dry-run e campagna G7.",
  "dependencies": {
-  "overlap_check_589": "#587 chiusa o mergiata (eccezione due PR, nessun bypass)",
-  "betfair_tests": "runner trusted BETFAIR_VPS_TRUSTED_TEST_RUNNER (non installato)"
+  "f16": "dopo merge #609",
+  "g1_g2_install": "GO owner specifico",
+  "f02_f04_f03": "dopo F-16/F-11/F-12/F-23 secondo roadmap"
  },
  "blocks": [
-  "#591: merge owner",
-  "governance PR: dopo #591, merge owner",
-  "test Betfair: BLOCKED_EXTERNAL_DEPENDENCY",
-  "Buildkite/VPS differiti",
-  "LIVE NO-GO"
+  "LIVE NO-GO",
+  "VPS: nessuna installazione/modifica senza GO owner",
+  "G1-G2: certd non collegato (dry-run)",
+  "Gate A: 0 comportamenti mappati"
  ],
  "owner_authorizations": {
-  "push_code_branch": "f33-full-scope-harness",
-  "push_state_branch": "agent-state/pf-claude-b, directory checkpoint/pf-claude-b-f33, senza force",
-  "pr": "solo #589 (eccezione massimo due PR: #587 + #589)",
-  "merge": "GO-MERGE condizionato F-33 solo con tutti i gate verdi (overlap compreso); F-05/F-08/F-01 merge owner; NO bypass",
-  "live": false,
-  "betfair": false,
-  "vps": false,
-  "modify_587": false,
-  "ruleset": false,
-  "source": "#586 mandati owner 31/10/2026",
-  "f05": "implementazione locale autorizzata; NO push/PR prima del merge di F-33",
-  "pr_590": "non aperta: decisione owner"
+  "merge_606": "eseguito dall'owner 911562ad",
+  "ext_review_606": "c.6656683842 (head 11a38662)",
+  "f14": "aprire la PR e avviare tutti i gate (owner 05/11)",
+  "g1_g2_g7": "solo preparazione e test offline (owner 05/11); nessun deploy VPS, nessuna modifica certd, polling, KS, uscita dry-run",
+  "auto_merge_all_01": "messaggio owner 05/11 contraddittorio (autorizza e vieta il merge autonomo): NON applicato finche' non chiarito",
+  "live": "NO"
  },
  "tests_executed": [
   {
-   "name": "tests/core/test_sl_tp_pnl_sign.py 67/67 PASS (RED->GREEN di ogni fix)",
+   "name": "#609 merge main: 5 file F-14 + tests/scripts + tests/guardrails",
    "status": "PASS",
-   "sha": "aa184a2886201c3113d229410e19b5ea436aa6b3",
-   "result": "67 passed"
+   "sha": "a8659e40967479fe05bcae3839f3e5bca16efbf0",
+   "result": "4921 passed, 11 skipped, 0 failed"
   },
   {
-   "name": "mutation core.sl_tp_pnl + core.runtime_controller, f01_* 8/8 KILLED",
+   "name": "#609 fix Sol: 4 acceptance F-14",
    "status": "PASS",
-   "sha": "aa184a2886201c3113d229410e19b5ea436aa6b3",
-   "result": "GATE PASS entrambi"
+   "sha": "69765cff06b69696b218bfc21e7bdc87dbb3a2fa",
+   "result": "171 passed (6 RED su a8659e40)"
   },
   {
-   "name": "suite completa -n 4 tests",
+   "name": "#609 fix Sol: 26 file cancel/mutation_catalog + tests/guardrails",
    "status": "PASS",
-   "sha": "aa184a2886201c3113d229410e19b5ea436aa6b3",
-   "result": "11211 passed, 16 skipped, 56 xfailed, 0 failed"
+   "sha": "69765cff06b69696b218bfc21e7bdc87dbb3a2fa",
+   "result": "2212 passed, 11 skipped, 0 failed"
+  },
+  {
+   "name": "#606 teardown evidence verifier 888e20f7",
+   "status": "PASS",
+   "sha": "911562addbea88fa981f151a2c388b1bbd23f145",
+   "result": "7/7 run coperti",
+   "sha_note": "eseguito sull'head 11a38662 della #606 (branch cancellato dopo il merge); 911562ad su main ha albero identico (ae189be9)"
+  },
+  {
+   "name": "#606 tests/scripts+tests/catalog",
+   "status": "PASS",
+   "sha": "911562addbea88fa981f151a2c388b1bbd23f145",
+   "result": "3406 passed, 1 skipped",
+   "sha_note": "eseguito sull'head 11a38662 della #606 (branch cancellato dopo il merge); 911562ad su main ha albero identico (ae189be9)"
   }
  ],
  "tests_missing": [
-  "CI e review Sol/Grok/Codex sul push 3873eaa",
-  "corsa L2/L3 completa (PF_COMBI_CASES=all, ~70 min)",
-  "scenari SIM-TRAIL-004, FAULT-006, CFG-007 GUI, GUI-008, SEC-009, PKG-010, MICRO-011, SETTLE-012, REALDATA-013",
-  "test Betfair reali (BLOCKED_EXTERNAL_DEPENDENCY)",
-  "F-05: test RED (non scritti)"
+  "#609: CI/review/PRE-LIVE su 69765cff",
+  "#609 regressione completa sul nuovo head (CI)",
+  "F-16 delta 4250f97..64e965b"
  ],
  "missing_historical_evidence": [],
- "gate_a": "NON PASS (#506), invariato",
+ "gate_a": "NON PASS: behaviour_coverage.json 0 comportamenti mappati",
  "pr_505": "non toccata",
  "certification_verdict": "NOT VERIFIED",
  "pr": {
-  "596": {
+  "609": {
    "state": "open",
-   "head": "aa184a2886201c3113d229410e19b5ea436aa6b3",
-   "status": "READY_FOR_OWNER_MANUAL_MERGE"
+   "head": "69765cff06b69696b218bfc21e7bdc87dbb3a2fa",
+   "status": "CHECKS_PENDING",
+   "fix_loop": "1/10"
   },
-  "595": {
+  "606": {
    "state": "merged",
-   "sha": "bb8d028"
+   "sha": "911562addbea88fa981f151a2c388b1bbd23f145"
   },
-  "594": {
+  "608": {
    "state": "merged",
-   "sha": "1eed2fd"
-  },
-  "593": {
-   "state": "merged",
-   "sha": "71ff2ab"
-  },
-  "592": {
-   "state": "merged",
-   "sha": "986bebd"
-  },
-  "591": {
-   "state": "merged",
-   "sha": "b2c0947"
-  },
-  "589": {
-   "state": "merged",
-   "sha": "8de659b"
+   "sha": "53e744e96e286c4d025835cca7a262bc1003d00f"
   }
  },
  "worktrees": {
-  "wt-f01": "f01-sltp-pnl @ aa184a2 (pubblicato, PR #596)"
+  "wt-f14d": "claude/pickfair-core-audit-slu9su @69765cff (pubblicato, PR #609)",
+  "wt-roadmap": "pf-gov-persistent-roadmap-01 @eacba405 (pubblicato)"
  },
  "agent": {
   "last_writer": "claude-b",
   "lease_status_at_write": "MINE"
  },
  "checkpoint_location_note": "Checkpoint di Claude B su agent-state/pf-claude-b (directory checkpoint/pf-claude-b-f33). Il seq 1 era stato scritto per errore anche su agent-state/pf-full-delivery (2bde7fd), riparato con f40c5f3 (seq 100 di Claude A, contenuto invariato).",
- "local_work": {
-  "note": "commit solo locali (push/PR F-05 vietati fino al merge di F-33; #590 PR in attesa dell'owner): codice in patches/, esiti in results/LOCAL_TESTS.md. Non verificabili sul remoto finche' non pubblicati.",
-  "f05": {
-   "branch": "f05-hedge-ledger",
-   "base": "6fa29b2",
-   "commits": [
-    "b7adb5c",
-    "59b05ae",
-    "7876d64",
-    "212d299",
-    "e1da865",
-    "1dc265b"
-   ],
-   "patches": "patches/f05"
-  },
-  "590": {
-   "branch": "fix-590-tg-guard-sigpipe (remoto)",
-   "base": "6fa29b2",
-   "commits": [
-    "73c3da7",
-    "f73a790",
-    "d8c512b",
-    "641d04b"
-   ],
-   "patches": "patches/590"
-  },
-  "f08": {
-   "branch": "f08-startup-orders",
-   "base": "6fa29b2",
-   "commits": [
-    "b416efb",
-    "ce06aac",
-    "889b9a9"
-   ],
-   "patches": "patches/f08"
-  },
-  "f01": {
-   "branch": "f01-sltp-pnl",
-   "base": "6fa29b2",
-   "commits": [
-    "04f54f7",
-    "dde85a5",
-    "3eadf2e",
-    "3cf7e2b"
-   ],
-   "patches": "patches/f01"
-  },
-  "gov": {
-   "branch": "gov-gha-primary-buildkite-deferred (remoto)",
-   "base": "6fa29b2",
-   "commits": [
-    "2cdfe8a"
-   ],
-   "patches": "patches/gov"
-  }
- },
  "tests_historical_merged": {
-  "note": "SHA di branch cancellati dopo il merge (F-33 #589 -> 8de659b, #590/#591 -> b2c0947, #592 -> 986bebd): non piu' raggiungibili dal remoto, conservati come storico; F-05 #593 -> 71ff2ab",
+  "note": "SHA di branch cancellati dopo il merge (F-33 #589 -> 8de659b, #590/#591 -> b2c0947, #592 -> 986bebd): non piu' raggiungibili dal remoto, conservati come storico; F-05 #593 -> 71ff2ab | seq 18: aggiunte le voci di seq 17 su aa184a2 (#596, squash-merge dc83b06, branch cancellato)",
   "entries": [
    {
     "name": "pytest tests/fullscope -n 3 (PF_COMBI_CASES=1)",
@@ -278,7 +192,35 @@
     "status": "PASS",
     "sha": "84fd4f7baa603ab308ed8eb30d2abe4f2c61ff05",
     "result": "11027 passed, 16 skipped, 56 xfailed, 0 failed"
+   },
+   {
+    "name": "tests/core/test_sl_tp_pnl_sign.py 67/67 PASS (RED->GREEN di ogni fix)",
+    "status": "PASS",
+    "sha": "aa184a2886201c3113d229410e19b5ea436aa6b3",
+    "result": "67 passed"
+   },
+   {
+    "name": "mutation core.sl_tp_pnl + core.runtime_controller, f01_* 8/8 KILLED",
+    "status": "PASS",
+    "sha": "aa184a2886201c3113d229410e19b5ea436aa6b3",
+    "result": "GATE PASS entrambi"
+   },
+   {
+    "name": "suite completa -n 4 tests",
+    "status": "PASS",
+    "sha": "aa184a2886201c3113d229410e19b5ea436aa6b3",
+    "result": "11211 passed, 16 skipped, 56 xfailed, 0 failed"
    }
   ]
- }
+ },
+ "registry": {
+  "branch": "pf-gov-persistent-roadmap-01",
+  "sha": "eacba405",
+  "files": [
+   "docs/roadmap/registry.json",
+   "docs/roadmap/pf_universal_360_testing.md",
+   "docs/roadmap/reviews/"
+  ]
+ },
+ "checkpoint_gap_20261105": "Catena seq 17 invalida per il verify: code.sha aa184a2 (#596) non piu' raggiungibile dopo squash-merge e cancellazione del branch. Tra seq 17 (01/11) e seq 18 (05/11) i progressi sono stati registrati solo nel registro roadmap e nei commenti GitHub, non nel checkpoint. Rimedio: ogni checkpoint punta a SHA pubblicati e raggiungibili (head PR aperta o main); le voci su branch cancellati vanno in tests_historical_merged."
 }

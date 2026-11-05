@@ -1,54 +1,41 @@
 {
  "blocks": [
-  "#591: merge owner",
-  "governance PR: dopo #591, merge owner",
-  "test Betfair: BLOCKED_EXTERNAL_DEPENDENCY",
-  "Buildkite/VPS differiti",
-  "LIVE NO-GO"
+  "LIVE NO-GO",
+  "VPS: nessuna installazione/modifica senza GO owner",
+  "G1-G2: certd non collegato (dry-run)",
+  "Gate A: 0 comportamenti mappati"
  ],
  "dependencies": {
-  "betfair_tests": "runner trusted BETFAIR_VPS_TRUSTED_TEST_RUNNER (non installato)",
-  "overlap_check_589": "#587 chiusa o mergiata (eccezione due PR, nessun bypass)"
+  "f02_f04_f03": "dopo F-16/F-11/F-12/F-23 secondo roadmap",
+  "f16": "dopo merge #609",
+  "g1_g2_install": "GO owner specifico"
  },
- "gate_a": "NON PASS (#506), invariato",
+ "gate_a": "NON PASS: behaviour_coverage.json 0 comportamenti mappati",
  "lotti_completati": [
-  "F-33 implementazione locale + hardening (6 commit)",
-  "PR #589 aperta (d46e6da)",
-  "fix review Sol/Grok/Codex (3873eaa, pushato)",
-  "F-05 Phase 0 (results/F05_PHASE0.md)",
-  "fix review Sol/Grok su 3873eaa: boundary starting_balance=0 senza xfail statico (a721e09, pushato)",
-  "#589 fix Codex/Sol: de1c980, 0d9e091, 31d5364, e655a5b, 0c2822e (7/10 cicli); Sol/Grok/Codex puliti su 0c2822e",
-  "#590 fix locale fix-590-tg-guard-sigpipe 73c3da7 (patches/590), mutation fsp 8/8 killed",
-  "F-05 RED b7adb5c + implementazione 59b05ae + mutazioni/test 7876d64 (patches/f05, results/F05_CONSUMERS.md)",
-  "#586 rapporto PICKFAIR_V2_AUTONOMOUS_EXECUTION_OWNER_GO c.6547651160",
-  "#589 CLAUDE_PR_FINAL_CERTIFICATION c.6548104640; 13 thread risolti; full-suite BK 51 52/53 (appimagetool VPS, c.6548092593)",
-  "F-05 docs \u00a77.3 + CHANGELOG + task key f05_cashout_hedge_ledger (212d299)",
-  "F-08 locale: RED b416efb, fix ce06aac, docs/scope 889b9a9 (patches/f08)",
-  "F-01 locale: RED 04f54f7, fix dde85a5, docs/scope 3eadf2e+3cf7e2b (patches/f01)",
-  "F-05 idempotenza (duplicate_cashout_request, hedge_outcome_uncertain, lock) + riavvio HEDGE_PENDING->HEDGE_AMBIGUOUS (e1da865, docs 1dc265b)",
-  "#589 overlap-check rerun verde dopo chiusura #587 (c.6548949811)",
-  "#590 branch remoto fix-590-tg-guard-sigpipe f73a790 (docs, CHANGELOG, task key), nessuna PR",
-  "#590 mutazione fsp_m2_telegram_guard_sigpipe (proposta Claude A), 9/9 killed; branch remoto 641d04b; Claude A concorda: PR dalla variante Claude B",
-  "#589 chiusa DEFERRED (c.6549214225)",
-  "PR #591 aperta per #590",
-  "governance Buildkite deferred 2cdfe8a (branch remoto)",
-  "#591 test-core-components: flake preesistente test TTL poller (uptime<30s) riprodotto, patch proposta c.6549279913, rerun",
-  "#586 OWNER_DECISION_GITHUB_ACTIONS_PRIMARY_BUILDKITE_DEFERRED c.6549283349",
-  "seq 12: #591 chiusa DEFERRED_GOVERNANCE_DEPENDENCY (branch fix-590-tg-guard-sigpipe 0d1f466 preservato); #592 governance aperta head 990b99d con audit Claude A integrato (pending_checks_from_pr); readiness su 990b99d: Buildkite full-suite/overlap-check ignored deferred, pending vuoto; thread Codex PRRT_kwDORumVCM6yVDZ0 risolto con evidenza; blocco residuo: mutation-lanes rosse per fsp_* INCONCLUSIVE (#590 non su main) -> decisione owner #586 c.6549919101",
-  "seq 14: #592 merged owner 986bebd; #591 riallineata e merged owner b2c0947; F-33 #589 GO-MERGE condizionato 8de659b; F-05 PR #593 READY_FOR_OWNER_MANUAL_MERGE @84fd4f7 (fix loop 3/10, 11027 passed, mutation 15/15)",
-  "seq 16: #593 F-05 merged 71ff2ab, #594 F-08 merged 1eed2fd, #595 governance merged bb8d028; #596 F-01 aperta, fix loop 3/10 (abfd2ed 1.01+profondita', f1de646 livelli al proprio prezzo, e52018c/aa184a2 TP su profitto garantito), READY_FOR_OWNER_MANUAL_MERGE c.6558690366; #586 c.6558691367",
-  "seq 17: rettifica del seq 16 (51d5352, readback fallito: code.sha del branch F-05 cancellato); code = f01-sltp-pnl @aa184a2"
+  "#596 F-01 merged dc83b06",
+  "#597 F-09 0d16693",
+  "#598 governance e139a5d",
+  "#599 F-10 4531c63",
+  "#600 F-06 c7eff15",
+  "#601 F-13a a7b73ef",
+  "#602 5a1e01c",
+  "#603 df14cd9",
+  "#604 FI-03Z 7a70062",
+  "#607 ada4076",
+  "#608 53e744e9",
+  "#606 merged owner 911562ad (albero = 11a38662, approvazione ext-review owner c.6656683842, verdetto c.6656694691)",
+  "F-14 verificato FIT fino a a38f827 (registro docs/roadmap/reviews/f14_*), PR #609 aperta",
+  "F-16 4250f97 verificato FIT (registro f16_review_4250f97); fix D @64e965b da verificare",
+  "Roadmap PF-UNIVERSAL-360-TESTING registrata (pf-gov-persistent-roadmap-01 @eacba405)"
  ],
- "lotto_corrente": "PR #596 F-01 (f01-sltp-pnl @aa184a2) unica PR aperta, READY_FOR_OWNER_MANUAL_MERGE; #593 F-05, #594 F-08, #595 governance mergiate.",
- "mandate_id": "Claude B \u2014 OWNER DIRECTIVE GOVERNANCE AUTO-MERGE CERTIFICATO + ROADMAP V2",
- "next_atomic_action": "1) #596 F-01 READY_FOR_OWNER_MANUAL_MERGE @aa184a2 (GHA verde, Sol/Grok/Codex puliti, 0 thread, fix loop 3/10): attendere merge owner. 2) Dopo il merge: verificare CI post-merge su main. 3) Poi F-10, quindi F-06, una PR alla volta (auto-merge certificato #595 solo se idonea). Debito: max_files 43->44 della task key F-33 alla prossima PR che tocca il registro.",
+ "lotto_corrente": "PR #609 F-14 @69765cff (fix loop 1/10): gate in corso (CI, Sol, Grok, Codex, PRE-LIVE, teardown). Unica PR aperta del repository.",
+ "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
+ "next_atomic_action": "1) #609: attendere CI/Sol/Grok/Codex/PRE-LIVE su 69765cff; triage; teardown verify; review-gate; verdetto. 2) Merge: secondo la governance vigente confermata dall'owner (PF-AUTO-MERGE-ALL-01 in attesa di chiarimento: il messaggio contiene anche 'nessun merge autonomo'). 3) Dopo il merge: verifica main + checkpoint; poi F-16 (head D 64e965b). 4) In parallelo offline: kit G1-G2 dry-run e campagna G7.",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
-  "CI e review Sol/Grok/Codex sul push 3873eaa",
-  "corsa L2/L3 completa (PF_COMBI_CASES=all, ~70 min)",
-  "scenari SIM-TRAIL-004, FAULT-006, CFG-007 GUI, GUI-008, SEC-009, PKG-010, MICRO-011, SETTLE-012, REALDATA-013",
-  "test Betfair reali (BLOCKED_EXTERNAL_DEPENDENCY)",
-  "F-05: test RED (non scritti)"
+  "#609: CI/review/PRE-LIVE su 69765cff",
+  "#609 regressione completa sul nuovo head (CI)",
+  "F-16 delta 4250f97..64e965b"
  ]
 }

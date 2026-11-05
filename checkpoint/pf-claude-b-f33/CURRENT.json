@@ -2,12 +2,12 @@
  "certification_verdict": "NOT VERIFIED",
  "checkpoint_commit": null,
  "code": {
-  "branch": "f01-sltp-pnl",
-  "sha": "aa184a2886201c3113d229410e19b5ea436aa6b3"
+  "branch": "claude/pickfair-core-audit-slu9su",
+  "sha": "69765cff06b69696b218bfc21e7bdc87dbb3a2fa"
  },
- "mandate_id": "Claude B \u2014 OWNER DIRECTIVE GOVERNANCE AUTO-MERGE CERTIFICATO + ROADMAP V2",
- "next_atomic_action": "1) #596 F-01 READY_FOR_OWNER_MANUAL_MERGE @aa184a2 (GHA verde, Sol/Grok/Codex puliti, 0 thread, fix loop 3/10): attendere merge owner. 2) Dopo il merge: verificare CI post-merge su main. 3) Poi F-10, quindi F-06, una PR alla volta (auto-merge certificato #595 solo se idonea). Debito: max_files 43->44 della task key F-33 alla prossima PR che tocca il registro.",
- "previous_checkpoint_sha": "51d5352e828e78026603bd171ff283d7c0249103",
+ "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
+ "next_atomic_action": "1) #609: attendere CI/Sol/Grok/Codex/PRE-LIVE su 69765cff; triage; teardown verify; review-gate; verdetto. 2) Merge: secondo la governance vigente confermata dall'owner (PF-AUTO-MERGE-ALL-01 in attesa di chiarimento: il messaggio contiene anche 'nessun merge autonomo'). 3) Dopo il merge: verifica main + checkpoint; poi F-16 (head D 64e965b). 4) In parallelo offline: kit G1-G2 dry-run e campagna G7.",
+ "previous_checkpoint_sha": "2176e92acb82a84d1a7eb6afea44d059688f8628",
  "schema": "pf-current/1",
- "seq": 17
+ "seq": 18
 }
