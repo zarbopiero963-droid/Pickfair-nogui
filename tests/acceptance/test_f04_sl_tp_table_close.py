@@ -581,3 +581,28 @@ def test_claim_compare_and_set(tmp_path) -> None:
     assert db.get_settings()["k"] == "a"
     assert db.claim_setting_once("k", "b", replace_if="a") is True
     assert db.get_settings()["k"] == "b"
+
+
+def test_record_di_chiusura_lega_il_tavolo_alla_riga_dell_hedge(tmp_path) -> None:
+    """Richiesta Claude C (MCP-01k): il record `risk.sl_tp_close.*` porta i `cashout_request_id` delle richieste d'hedge,
+    gli stessi scritti dal CashoutExecutor nella riga `orders` dell'hedge: la Control API attribuisce l'hedge al tavolo."""
+    c = _chain(tmp_path)
+    a, _b, _c = _three_tables(c)
+    c.bus.publish(sl_tp_close.SL_TRIGGERED, _trigger(a))
+
+    rec = _state(c, a)
+    req = c.bus.payloads("REQ_EXECUTE_CASHOUT")[0]
+    assert rec["cashout_request_ids"] == [req["cashout_request_id"]]
+    assert _outcomes(c)[-1][1]["cashout_request_ids"] == [req["cashout_request_id"]]
+    rows = c.db._execute("SELECT payload_json FROM orders", fetch=True, commit=False)
+    hedge = [json.loads(r["payload_json"]) for r in rows
+             if json.loads(r["payload_json"]).get("cashout_request_id") == req["cashout_request_id"]]
+    assert len(hedge) == 1, rows
+
+
+def test_chiusura_non_eseguita_non_ha_richieste(tmp_path) -> None:
+    c = _chain(tmp_path)
+    a, _b, _c = _three_tables(c)
+    _book(c.broker, "SUSPENDED")
+    c.bus.publish(sl_tp_close.SL_TRIGGERED, _trigger(a))
+    assert _state(c, a)["cashout_request_ids"] == []
