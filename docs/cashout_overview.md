@@ -594,6 +594,35 @@ viene pubblicato e il consumer resta inerte. Il latch di F-02 e' in memoria: dop
 viene assorbito dalla rivendicazione persistente. Test:
 `tests/acceptance/test_f04_sl_tp_table_close.py`; mutazioni `f04_*`.
 
+### 7.7 Trailing stop (F-03, K-7, CSH-04)
+
+Decisione owner K-7 (#586 c.6504686680): configurabile, **OFF di default**, sul P&L liquidabile del cashout (F-01),
+persistito, restart-safe, chiuso tramite F-04, mai su quote assenti o mercato non negoziabile. Chiave:
+`roserpina.trailing_stop_pct` (dominio (0, 100], validata da F-18; anche dal segnale con `trailing_stop_pct`),
+portata nel meta del tavolo da F-02. Nessuna soglia monetaria: solo la percentuale configurata.
+
+Regole (`core/trailing_stop.py`, Decimal; cablaggio in `RuntimeController._evaluate_trailing`):
+- **picco** = massimo del P&L **garantito** e liquidabile per intero (stessa funzione del TP, `guaranteed=True`, book
+  che copre tutta la posizione); armato solo con picco > 0; non scende mai;
+- **soglia** = picco × (1 − pct/100), al centesimo per difetto; **scatta** quando il P&L garantito ≤ soglia.
+  Esempio della scheda: 10 → 15 → 12 con 20 % ⇒ soglia 12, scatta a 12;
+- **precedenza** hard-stop > SL > trailing > TP: lo SL è valutato prima; il trailing prima del TP;
+- **persistenza**: `risk.trailing_peak.<customer_ref>` = `{"v": 1, "peak", "pct", "at"}`, scritto **prima** di usare
+  il nuovo picco. Scrittura fallita ⇒ il picco nuovo non si usa (resta l'ultimo persistito): un processo che cade fra
+  aggiornamento e scrittura riparte con un picco ≤ ultimo persistito, mai maggiore. Al riavvio il picco si rilegge;
+  stato illeggibile o corrotto ⇒ nessuna decisione (non sovrascritto); posizione senza `customer_ref` ⇒ nessun trailing;
+- **fail-closed**: mercato non OPEN, selezione non ACTIVE (stato assente compreso), quote assenti, book che non copre
+  la posizione, P&L non calcolabile ⇒ nessun aggiornamento del picco e nessuno scatto. Nessuna soglia d'età: il monitor
+  riceve un book fresco dal poller di F-02 o dallo stream sano (la salute dello stream decide chi lo esegue);
+- **scatto**: evento `TRAILING_TRIGGERED` (forma v1 di F-02, `reason` `TRAILING_STOP_REACHED`, `threshold` = soglia),
+  una volta per posizione (latch di F-02); F-04 lo consuma come SL/TP (stessa chiave di chiusura per posizione: dopo un
+  riavvio lo scatto ripetuto è `SL_TP_CLOSE_SKIPPED`, nessun secondo hedge) e chiude solo quel tavolo;
+- il poller SIM/poll di F-02 include anche i tavoli con il solo trailing armato.
+
+Test: `tests/f03/test_f03_trailing_stop.py` (RED della scheda `test_trailing_moves_with_profit_and_never_back`,
+`test_trailing_restart_keeps_peak`); mutazioni `f03_*`. Limite: il P&L è quello della gamba d'ingresso, come per
+SL/TP (F-01); l'esposizione residua dopo hedge parziali resta F-07.
+
 ---
 
 ## 8. Limiti noti & possibili aggiunte (follow-up)

@@ -30,6 +30,7 @@ from core.risk_desk import RiskDesk
 from core import sl_tp_pnl
 from core import config_validation as cfg_rules
 from core import sl_tp_close
+from core import trailing_stop
 from core.safety_layer import assert_live_gate_or_refuse
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
@@ -1513,6 +1514,7 @@ class RuntimeController:
         # F-04 (#586): SL/TP scattati (F-02) => chiusura del SOLO tavolo interessato
         self.bus.subscribe(sl_tp_close.SL_TRIGGERED, self._on_sl_triggered)
         self.bus.subscribe(sl_tp_close.TP_TRIGGERED, self._on_tp_triggered)
+        self.bus.subscribe(trailing_stop.TRAILING_TRIGGERED, self._on_trailing_triggered)
 
     # =========================================================
     # CONFIG / MODE
@@ -3899,6 +3901,9 @@ class RuntimeController:
 
     def _on_tp_triggered(self, payload: dict) -> None:
         RuntimeController._on_sl_tp_triggered(self, sl_tp_close.TP_TRIGGERED, payload)
+
+    def _on_trailing_triggered(self, payload: dict) -> None:
+        RuntimeController._on_sl_tp_triggered(self, sl_tp_close.TRAILING_TRIGGERED, payload)
 
     def _sl_tp_routes(self) -> dict:
         routes = getattr(self, "_sl_tp_pending_routes", None)
@@ -7112,7 +7117,8 @@ class RuntimeController:
             meta = table.meta or {}
             if table.status != "ACTIVE" or meta.get("sl_tp_triggered"):
                 continue
-            if meta.get("stop_loss") is None and meta.get("take_profit") is None:
+            if meta.get("stop_loss") is None and meta.get("take_profit") is None \
+                    and trailing_stop.trailing_pct(meta.get("trailing_stop_pct")) is None:
                 continue
             if table.market_id and table.market_id not in markets:
                 markets.append(table.market_id)
@@ -7199,7 +7205,8 @@ class RuntimeController:
                 continue                        # gia' scattato: nessun evento ripetuto a ogni book (F-02)
             sl = meta.get("stop_loss")
             tp = meta.get("take_profit")
-            if sl is None and tp is None:
+            trail_pct = trailing_stop.trailing_pct(meta.get("trailing_stop_pct"))   # F-03: None = OFF
+            if sl is None and tp is None and trail_pct is None:
                 continue
                 
             # F-01 (#586, CSH-01): P&L NETTO LIQUIDABILE = green-up del cashout al prezzo di chiusura del book
@@ -7229,14 +7236,73 @@ class RuntimeController:
             tp_d = sl_tp_pnl.to_decimal(tp) if tp is not None else None
             if sl_d is not None and pnl <= -abs(sl_d):
                 self._trigger_auto_close_table(table, "STOP_LOSS_REACHED", float(pnl))
+                continue
+            # F-03 (K-7): precedenza hard-stop > SL > trailing > TP. Il trailing decide solo su mercato negoziabile e
+            # profitto garantito liquidabile per intero (book che copre tutta la posizione).
+            if trail_pct is not None and covered and RuntimeController._market_book_tradable(market_book, table):
+                if RuntimeController._evaluate_trailing(self, table, side, stake, legs, trail_pct):
+                    continue
             # TP solo su profitto LIQUIDABILE per intero; lo SL (chiusura protettiva, PF-EXEC-03) scatta anche con book
             # insufficiente: il residuo non coperto e' valutato all'ultimo livello disponibile.
             # Il TP confronta il netto dell'esito PEGGIORE sulle gambe arrotondate (profitto garantito, Sol su f1de646).
-            elif tp_d is not None and covered:
+            if tp_d is not None and covered:
                 tp_pnl = sl_tp_pnl.liquidable_pnl_legs(side, stake, meta.get("price"), legs,
                                                        BETFAIR_ITALY_COMMISSION_PCT, guaranteed=True)
                 if tp_pnl is not None and tp_pnl >= abs(tp_d):
                     self._trigger_auto_close_table(table, "TAKE_PROFIT_REACHED", float(tp_pnl))
+
+    @staticmethod
+    def _market_book_tradable(market_book: dict, table) -> bool:
+        """F-03/PF-EXEC-05: decisione del trailing solo con mercato OPEN e selezione ACTIVE (stato assente = no)."""
+        if str((market_book or {}).get("status") or "").strip().upper() != "OPEN":
+            return False
+        runner = next((r for r in (market_book or {}).get("runners") or []
+                       if isinstance(r, dict) and str(r.get("selectionId")) == str(table.selection_id)), None)
+        return runner is not None and str(runner.get("status") or "").strip().upper() == "ACTIVE"
+
+    def _evaluate_trailing(self, table, side: str, stake, legs, pct) -> bool:
+        """F-03 (#586, K-7): un tick del trailing per il tavolo. ``True`` se e' scattato (evento pubblicato).
+
+        Picco = massimo del P&L GARANTITO liquidabile (stessa funzione del cashout, F-01), persistito per posizione in
+        ``risk.trailing_peak.<customer_ref>`` PRIMA di essere usato: un processo che cade fra il calcolo e la scrittura
+        riparte con un picco <= l'ultimo persistito, mai maggiore. Stato persistito illeggibile, posizione senza
+        ``customer_ref`` o P&L non calcolabile => nessuna decisione (fail-closed)."""
+        meta = table.meta if isinstance(table.meta, dict) else {}
+        ref = str(meta.get("customer_ref") or "").strip()
+        if not ref:
+            return False
+        key = trailing_stop.PEAK_KEY_PREFIX + ref
+        if "trailing_peak" not in meta:
+            try:
+                peak, why = trailing_stop.read_peak(self.db.get_settings().get(key))
+            except Exception:  # noqa: BLE001 - stato non leggibile: nessuna decisione
+                logger.exception("F-03: picco del trailing di %s non leggibile", ref)
+                return False
+            if why:
+                logger.error("F-03: picco del trailing di %s non valido (%s): nessuna decisione", ref, why)
+                return False
+            meta["trailing_peak"] = str(peak) if peak is not None else None
+        try:
+            pnl = sl_tp_pnl.liquidable_pnl_legs(side, stake, meta.get("price"), legs, BETFAIR_ITALY_COMMISSION_PCT,
+                                                guaranteed=True)
+        except Exception:  # noqa: BLE001
+            logger.exception("F-03: P&L garantito del tavolo %s non calcolabile", table.table_id)
+            return False
+        decision = trailing_stop.evaluate(meta.get("trailing_peak"), pnl, pct)
+        if decision is None or decision.peak is None:
+            return False
+        if decision.peak_raised:
+            try:
+                self.db.save_settings({key: trailing_stop.state_record(decision.peak, pct, time.time())})
+            except Exception:  # noqa: BLE001 - picco non persistito => non usato (resta l'ultimo persistito)
+                logger.exception("F-03: picco del trailing di %s non persistito: resta il precedente", ref)
+                return False
+            meta["trailing_peak"] = str(decision.peak)
+        meta["trailing_threshold"] = float(decision.threshold)
+        if decision.triggered:
+            self._trigger_auto_close_table(table, trailing_stop.TRAILING_REASON, float(pnl))
+            return True
+        return False
 
     def _trigger_auto_close_table(self, table, reason: str, pnl: float) -> None:
         """F-02 (#586): lo scatto di SL/TP e' un EVENTO (``SL_TRIGGERED``/``TP_TRIGGERED``), una sola volta per
@@ -7246,7 +7312,8 @@ class RuntimeController:
         if meta.get("sl_tp_triggered"):
             return
         meta["sl_tp_triggered"] = reason
-        event = "SL_TRIGGERED" if reason == "STOP_LOSS_REACHED" else "TP_TRIGGERED"
+        event = {"STOP_LOSS_REACHED": "SL_TRIGGERED", trailing_stop.TRAILING_REASON: trailing_stop.TRAILING_TRIGGERED}.get(
+            reason, "TP_TRIGGERED")
         logger.warning("[RuntimeController] %s tavolo %s mercato %s pnl=%.2f", event, table.table_id, table.market_id, pnl)
         self.bus.publish(event, {
             "table_id": table.table_id,
@@ -7255,7 +7322,8 @@ class RuntimeController:
             "side": str(meta.get("bet_type") or "").upper(),
             "stake": meta.get("stake"),
             "price": meta.get("price"),
-            "threshold": meta.get("stop_loss" if event == "SL_TRIGGERED" else "take_profit"),
+            "threshold": meta.get({"SL_TRIGGERED": "stop_loss", trailing_stop.TRAILING_TRIGGERED: "trailing_threshold"}.get(
+                event, "take_profit")),
             "pnl": pnl,
             "reason": reason,
             "customer_ref": meta.get("customer_ref") or "",

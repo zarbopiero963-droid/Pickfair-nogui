@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **F-03 (#586, K-7): trailing stop.** Con `roserpina.trailing_stop_pct` (OFF di default) il monitor segue il picco
+  del P&L garantito liquidabile, lo persiste prima di usarlo (`risk.trailing_peak.<customer_ref>`) e scatta a
+  picco × (1 − pct/100) con `TRAILING_TRIGGERED`, chiuso da F-04 sul solo tavolo. Precedenza hard-stop > SL >
+  trailing > TP; nessuna decisione su mercato non negoziabile, quote assenti, book insufficiente o stato illeggibile.
+  Documentazione: `docs/cashout_overview.md` §7.7.
+
+### Added
 - **F-04 (#586, CSH-02): chiusura del solo tavolo che raggiunge SL/TP.** `RuntimeController` consuma `SL_TRIGGERED` /
   `TP_TRIGGERED` di F-02 (contratto v1, `core/sl_tp_close.py`) e chiude solo la posizione di quel tavolo, identificata
   da tavolo, `customer_ref`, mercato, selezione, lato e `bet_id`, mai dalla sola partita. Ordine incerto (AMBIGUOUS,

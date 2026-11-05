@@ -3484,6 +3484,22 @@
         "tests/acceptance/test_f04_sl_tp_table_close.py"
       ],
       "max_files": 9
+    },
+    "d_f03_trailing_stop": {
+      "description": "F-03 (#586, K-7): trailing stop sul P&L garantito liquidabile, picco persistito prima dell'uso, precedenza hard-stop > SL > trailing > TP, scatto chiuso da F-04 sul solo tavolo. Impilato su F-02 (keep/f02-sl-tp-path-20261103) + F-04: i file elencati sono il delta di F-03 rispetto a quella base.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/runtime_controller.py",
+        "core/sl_tp_close.py",
+        "core/trailing_stop.py",
+        "docs/cashout_overview.md",
+        "guardrails/mutation_catalog.json",
+        "tests/f03/__init__.py",
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "max_files": 9
     }
   }
 }

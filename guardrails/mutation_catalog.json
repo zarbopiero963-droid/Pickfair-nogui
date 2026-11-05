@@ -8529,6 +8529,78 @@
         "tests/acceptance/test_f04_sl_tp_table_close.py"
       ],
       "rationale": "F-04: rivendicazione non atomica (sovrascrive)."
+    },
+    {
+      "id": "f03_peak_can_fall",
+      "module": "core.trailing_stop",
+      "area": "cashout",
+      "file": "core/trailing_stop.py",
+      "original": "    if pnl_d > 0 and (peak is None or pnl_d.quantize(CENT, rounding=ROUND_DOWN) > peak):",
+      "mutated": "    if pnl_d > 0:",
+      "tests": [
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "rationale": "F-03: il picco del trailing torna indietro."
+    },
+    {
+      "id": "f03_pct_over_100",
+      "module": "core.trailing_stop",
+      "area": "cashout",
+      "file": "core/trailing_stop.py",
+      "original": "    if pct is None or pct <= 0 or pct > HUNDRED:",
+      "mutated": "    if pct is None or pct <= 0:",
+      "tests": [
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "rationale": "F-03: percentuale fuori dominio accettata."
+    },
+    {
+      "id": "f03_market_unchecked",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "            if trail_pct is not None and covered and RuntimeController._market_book_tradable(market_book, table):",
+      "mutated": "            if trail_pct is not None and covered:",
+      "tests": [
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "rationale": "F-03: decisione del trailing su mercato sospeso/chiuso."
+    },
+    {
+      "id": "f03_peak_not_persisted",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                self.db.save_settings({key: trailing_stop.state_record(decision.peak, pct, time.time())})",
+      "mutated": "                pass",
+      "tests": [
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "rationale": "F-03: picco non persistito (riavvio senza picco)."
+    },
+    {
+      "id": "f03_sl_after_trailing",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                self._trigger_auto_close_table(table, \"STOP_LOSS_REACHED\", float(pnl))",
+      "mutated": "                pass",
+      "tests": [
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "rationale": "F-03: lo SL non ha la precedenza sul trailing."
+    },
+    {
+      "id": "f03_f04_ignores_trailing",
+      "module": "core.sl_tp_close",
+      "area": "cashout",
+      "file": "core/sl_tp_close.py",
+      "original": "                   TRAILING_TRIGGERED: \"TRAILING_STOP_REACHED\"}",
+      "mutated": "                   }",
+      "tests": [
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "rationale": "F-03: lo scatto del trailing non chiude la posizione."
     }
   ]
 }
