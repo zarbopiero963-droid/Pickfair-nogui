@@ -17,7 +17,8 @@ broker oppure solleva. Non restituisce mai un `concurrent.futures.Future` né un
 | Risposta persa / `TimeoutError` del client, `order_unknown`, report discordanti, risposta non-dict | `AMBIGUOUS` + riconciliazione | **no** |
 | Risposta che dichiara esplicitamente `SUCCESS` senza alcun `betId` | `AMBIGUOUS` + riconciliazione | **no** |
 | `placeOrders` LIVE: risposta 2xx arrivata **senza esito** — JSON-RPC senza `result`/`error`, `result` vuoto o senza `status`, `status` fuori da `SUCCESS`/`FAILURE`/`PROCESSED_WITH_ERRORS`/`TIMEOUT`, instruction report senza `status` o con uno status sconosciuto. `BetfairClient.place_bet` la marca `order_unknown` (`BET_STATUS_UNRECOGNIZED`, `BET_REPORT_STATUS_UNRECOGNIZED`) e conserva la risposta grezza in `result`; l'engine la persiste nel `response_json` della riga AMBIGUOUS, cosi' un `betId` gia' assegnato resta l'identita' dell'ordine (`Database.find_orders_by_bet_id`, settlement per bet). Lo stato resta AMBIGUOUS | `AMBIGUOUS` + riconciliazione | **no** |
-| `placeOrders` LIVE: rifiuto **dichiarato** da Betfair (`status` `FAILURE`/`PROCESSED_WITH_ERRORS`, report `FAILURE`, elemento JSON-RPC `error`) | `FAILED` | sì |
+| `placeOrders` LIVE: rifiuto **dichiarato** da Betfair: `status` `FAILURE`/`PROCESSED_WITH_ERRORS` **senza report o con tutti i report `FAILURE`**, `status` `SUCCESS` con report `FAILURE`, elemento JSON-RPC `error` | `FAILED` | sì |
+| `placeOrders`: `status` `FAILURE`/`PROCESSED_WITH_ERRORS` con **almeno un report non `FAILURE`** (`SUCCESS` con `betId`, `TIMEOUT`, senza status). `BetfairClient` lo marca `order_unknown` (`BET_OUTCOME_MIXED`, risposta conservata); l'engine riconosce lo stesso caso anche nel corpo grezzo di un altro broker (`DOWNSTREAM_MIXED_OUTCOME`). Revisione Claude B del 05/11/2026 (P1-1): prima era FAILED e liberava tavolo, riserva e chiave mentre l'ordine poteva essere vivo | `AMBIGUOUS` + riconciliazione | **no** |
 | Esito ignoto, ma la transizione DB `INFLIGHT→AMBIGUOUS` fallisce (#524) | `AMBIGUOUS` non persistito: `is_terminal=False`, `lifecycle_stage="degraded"`, `QUICK_BET_AMBIGUOUS`; la riga resta `INFLIGHT` su DB e dedupe e riconciliazione la ritrovano al riavvio. **Mai** `FAILED` | **no** |
 | Eccezione dopo l'avvio dell'invio (transizione `SUBMITTED` fallita, crash nella costruzione dell'esito, finalize che solleva) (#524) | `AMBIGUOUS` + riconciliazione (`ENGINE_FATAL_AFTER_SEND`), anche con DB indisponibile. **Mai** `FAILED` | **no** |
 | Eccezione sollevata dal client | propagata **invariata**: stessa classificazione del percorso diretto | secondo la classificazione |
@@ -50,9 +51,9 @@ cancel non sia avvenuto. L'esito e' nel campo `outcome`:
 | Situazione | `outcome` | `ok` |
 |---|---|---|
 | `status` `SUCCESS` e un report `SUCCESS` per **ogni** `betId` richiesto (cancel di tutto il mercato: nessun report richiesto) | `SUCCESS` | sì |
-| `status` `FAILURE`, oppure `PROCESSED_WITH_ERRORS` con tutti i report `FAILURE`; errore JSON-RPC; 4xx; sessione scaduta; richiesta non inviata | `FAILED` | no |
+| `status` `FAILURE` senza report `SUCCESS`/ignoti, oppure `PROCESSED_WITH_ERRORS` con tutti i report `FAILURE`; errore JSON-RPC; 4xx; sessione scaduta; richiesta non inviata | `FAILED` | no |
 | Alcuni report `SUCCESS` e altri `FAILURE` | `PARTIAL` | no |
-| Timeout, errore di rete, 5xx, risposta illeggibile, `status` assente o sconosciuto, report mancante o `TIMEOUT` per un `betId` richiesto | `AMBIGUOUS` | no |
+| Timeout, errore di rete, 5xx, risposta illeggibile, `status` assente o sconosciuto, report mancante per un `betId` richiesto, report `TIMEOUT` o con stato ignoto (anche nel cancel di tutto il mercato, senza `betId` richiesti) | `AMBIGUOUS` | no |
 
 `cancelled_count` e `cancelled_bet_ids` contano solo i report `SUCCESS`; `failed_bet_ids` i `FAILURE`; `bet_ids` i
 richiesti (riconciliazione per `betId`). Un report senza `instruction.betId` e' attribuito per posizione solo se il

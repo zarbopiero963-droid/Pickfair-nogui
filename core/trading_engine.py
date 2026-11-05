@@ -1449,6 +1449,18 @@ class TradingEngine:
                 ambiguity_reason=AMBIGUITY_PERSISTED_NOT_CONFIRMED,
             )
 
+        # P1-1 (revisione Claude B, 05/11/2026): status FAILURE/PROCESSED_WITH_ERRORS con almeno un report che non e'
+        # FAILURE (SUCCESS con betId, TIMEOUT, senza status) non prova il rifiuto: l'ordine puo' esistere => AMBIGUOUS.
+        if status in {"FAILURE", "PROCESSED_WITH_ERRORS"} and any(
+                not isinstance(r, dict) or str(r.get("status") or "").upper() != "FAILURE"
+                for r in self._instruction_reports(response)):
+            raise ExecutionError(
+                f"DOWNSTREAM_MIXED_OUTCOME:{response}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+                response=response,
+            )
+
         semantic_failure = (
             response.get("ok") is False
             or status in {STATUS_FAILED, STATUS_DENIED, "REJECTED", "ERROR", "FAILURE"}

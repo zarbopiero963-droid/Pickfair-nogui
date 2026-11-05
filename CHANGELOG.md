@@ -15,6 +15,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `OrderManager.cancel_order` porta la saga in AMBIGUOUS invece di FAILED. Un solo estrattore del `betId`
   (`core.order_identity.response_bet_id`) per identita' del bot e riconciliazione; `betId` in conflitto => nessuna
   identita' (riconciliazione). Documentazione: `docs/trading_engine_executor_contract.md` §2 e §2-bis.
+  Revisione Claude B (05/11/2026): `placeOrders` con status `FAILURE`/`PROCESSED_WITH_ERRORS` e almeno un report
+  non `FAILURE` => AMBIGUOUS (client e engine, P1-1); cancel di mercato con report `TIMEOUT` => AMBIGUOUS (P2-1).
 
 ### Changed
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**

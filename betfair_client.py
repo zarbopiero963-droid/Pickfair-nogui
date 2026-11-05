@@ -57,6 +57,8 @@ _RISPOSTA_ILLEGGIBILE_DOPO_L_INVIO = frozenset({
     # Risposta arrivata senza esito leggibile (P0 audit Claude D 04/11/2026): confronto sul CODICE prima dei
     # due punti, mai per sottostringa del dettaglio.
     "BET_STATUS_UNRECOGNIZED", "BET_REPORT_STATUS_UNRECOGNIZED",
+    # Status FAILURE/PROCESSED_WITH_ERRORS con almeno un report non FAILURE (P1-1, revisione Claude B 05/11/2026).
+    "BET_OUTCOME_MIXED",
 })
 
 #: Gli `ExecutionReportStatus` di `placeOrders` (contratto Betfair). Uno status fuori da qui non e' un rifiuto
@@ -1724,6 +1726,15 @@ class BetfairClient:
             if status not in _STATUS_PLACE_RICONOSCIUTI:
                 raise RuntimeError(f"BET_STATUS_UNRECOGNIZED: {status or '<assente>'}")
 
+            if status in ("FAILURE", "PROCESSED_WITH_ERRORS"):
+                # P1-1 (revisione Claude B, 05/11/2026): il rifiuto e' certo solo se nessun report dice altro. Un
+                # report non FAILURE (SUCCESS con betId, TIMEOUT, senza status) => l'ordine puo' esistere: esito
+                # ignoto con la risposta conservata, mai un FAILED che libererebbe tavolo, riserva e chiave.
+                mixed = [r for r in reports if not isinstance(r, dict)
+                         or str(r.get("status") or "").upper() != "FAILURE"]
+                if mixed:
+                    raise RuntimeError(f"BET_OUTCOME_MIXED: {status}")
+
             if status != "SUCCESS":
                 # errorCode nel testo => la classificazione order_unknown sotto puo'
                 # riconoscere DUPLICATE_TRANSACTION (dedup customerRef, #PR-C/#452):
@@ -1854,6 +1865,7 @@ class BetfairClient:
         reports = [r for r in reports if isinstance(r, dict)] if isinstance(reports, list) else []
         cancelled: List[str] = []
         failed: List[str] = []
+        unknown: List[str] = []
         positional = len(reports) == len(requested)       # Betfair: un report per istruzione, nello stesso ordine
         for idx, r in enumerate(reports):
             instr = r.get("instruction") if isinstance(r.get("instruction"), dict) else {}
@@ -1863,16 +1875,20 @@ class BetfairClient:
                 cancelled.append(bid)
             elif report_status == "FAILURE":
                 failed.append(bid)
-            # TIMEOUT o stato ignoto per l'istruzione: esito non noto => resta fra i mancanti (AMBIGUOUS)
+            else:
+                # TIMEOUT o stato ignoto per l'istruzione: esito non noto (AMBIGUOUS), anche nel cancel di tutto il
+                # mercato senza betId richiesti (P2-1, revisione Claude B 05/11/2026)
+                unknown.append(bid)
         missing = [b for b in requested if b not in cancelled and b not in failed]
+        uncertain = bool(missing or unknown)
         if status not in ("SUCCESS", "FAILURE", "PROCESSED_WITH_ERRORS"):
             outcome = "AMBIGUOUS"
-        elif not cancelled and (status == "FAILURE" or (status == "PROCESSED_WITH_ERRORS" and not missing)):
+        elif not cancelled and not unknown and (status == "FAILURE" or (status == "PROCESSED_WITH_ERRORS" and not missing)):
             outcome = "FAILED"                # rifiuto certo: Betfair dichiara che nessuna istruzione e' eseguita
-        elif status == "SUCCESS" and not failed and not missing:
+        elif status == "SUCCESS" and not failed and not uncertain:
             outcome = "SUCCESS"
         else:
-            outcome = "AMBIGUOUS" if missing else "PARTIAL"
+            outcome = "AMBIGUOUS" if uncertain else "PARTIAL"
         out: Dict[str, Any] = {
             "ok": outcome == "SUCCESS",
             "market_id": market_id_s,

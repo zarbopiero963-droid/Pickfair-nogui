@@ -8235,8 +8235,8 @@
       "module": "betfair_client",
       "area": "ambiguous",
       "file": "betfair_client.py",
-      "original": "        elif status == \"SUCCESS\" and not failed and not missing:",
-      "mutated": "        elif status == \"SUCCESS\" and not failed:",
+      "original": "        uncertain = bool(missing or unknown)",
+      "mutated": "        uncertain = bool(unknown)",
       "tests": [
         "tests/acceptance/test_f14_cancel_single_shot.py",
         "tests/acceptance/test_betid_extractor_unico.py"
@@ -8320,6 +8320,48 @@
         "tests/acceptance/test_betid_extractor_unico.py"
       ],
       "rationale": "F-14: True letto come betId."
+    },
+    {
+      "id": "f14_place_mixed_failed",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "                    raise RuntimeError(f\"BET_OUTCOME_MIXED: {status}\")",
+      "mutated": "                    raise RuntimeError(f\"BET_FAILED: {status}\")",
+      "tests": [
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py",
+        "tests/acceptance/test_place_bet_senza_esito_catena.py",
+        "tests/acceptance/test_f14_cancel_single_shot.py"
+      ],
+      "rationale": "P1-1: placeOrders FAILURE/PROCESSED_WITH_ERRORS con report non FAILURE letto come rifiuto certo (secondo ordine possibile)."
+    },
+    {
+      "id": "f14_engine_mixed_failed",
+      "module": "core.trading_engine",
+      "area": "ambiguous",
+      "file": "core/trading_engine.py",
+      "original": "        if status in {\"FAILURE\", \"PROCESSED_WITH_ERRORS\"} and any(",
+      "mutated": "        if False and any(",
+      "tests": [
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py",
+        "tests/acceptance/test_place_bet_senza_esito_catena.py",
+        "tests/acceptance/test_f14_cancel_single_shot.py"
+      ],
+      "rationale": "P1-1: corpo grezzo con esito misto letto come rifiuto certo dall'engine."
+    },
+    {
+      "id": "f14_cancel_unknown_report_ignored",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "                unknown.append(bid)",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py",
+        "tests/acceptance/test_place_bet_senza_esito_catena.py",
+        "tests/acceptance/test_f14_cancel_single_shot.py"
+      ],
+      "rationale": "P2-1: report TIMEOUT del cancel di mercato letto come successo."
     }
   ]
 }

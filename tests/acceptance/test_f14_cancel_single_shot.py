@@ -191,3 +191,46 @@ def test_report_senza_betid_e_conteggio_diverso_non_attribuiti() -> None:
     out = _client(_Rete([_ok(risultato)])).cancel_orders(market_id="1.2", bet_ids=["B1", "B2"])
 
     assert out["ok"] is False and out["outcome"] == "AMBIGUOUS"
+
+
+# ------------------------------------------------------------------ revisione Claude B su db11a86 (P2-1, M10, M11, M22)
+@pytest.mark.parametrize("risultato,atteso", [
+    ({"status": "SUCCESS", "instructionReports": [{"status": "SUCCESS"}, {"status": "TIMEOUT"}]}, "AMBIGUOUS"),
+    ({"status": "PROCESSED_WITH_ERRORS", "instructionReports": [{"status": "TIMEOUT"}]}, "AMBIGUOUS"),
+    ({"status": "FAILURE", "instructionReports": [{"status": "TIMEOUT"}]}, "AMBIGUOUS"),
+    ({"status": "PROCESSED_WITH_ERRORS", "instructionReports": [{"status": "FAILURE"}]}, "FAILED"),
+    ({"status": "SUCCESS", "instructionReports": [{"status": "SUCCESS"}]}, "SUCCESS"),
+])
+def test_cancel_di_mercato_report_timeout_e_ambiguous(risultato, atteso) -> None:
+    """P2-1: cancel di tutto il mercato (nessun betId richiesto): un report TIMEOUT/ignoto non e' mai un successo
+    (emergency stop) ne' un rifiuto certo."""
+    out = _client(_Rete([_ok(risultato)])).cancel_orders(market_id="1.2")
+
+    assert out["outcome"] == atteso, out
+    assert out["ok"] is (atteso == "SUCCESS")
+
+
+def test_status_sconosciuto_con_report_success_e_ambiguous() -> None:
+    """M11: status complessivo fuori contratto, anche con report SUCCESS => AMBIGUOUS, mai PARTIAL/FAILED."""
+    risultato = {"status": "PENDING", "instructionReports": [_report("B1"), _report("B2", "FAILURE")]}
+    out = _client(_Rete([_ok(risultato)])).cancel_orders(market_id="1.2", bet_ids=["B1", "B2"])
+
+    assert out["ok"] is False and out["outcome"] == "AMBIGUOUS"
+    om_out, saga, _ev = _cancel_with({"ok": False, "outcome": out["outcome"], "error": out.get("error")})
+    assert om_out["status"] == "AMBIGUOUS" and saga == "AMBIGUOUS"
+
+
+def test_betid_esplicito_prevale_sulla_posizione() -> None:
+    """M10: con betId espliciti nei report l'ordine dei report non conta."""
+    risultato = {"status": "PROCESSED_WITH_ERRORS", "instructionReports": [_report("B2"), _report("B1", "FAILURE")]}
+    out = _client(_Rete([_ok(risultato)])).cancel_orders(market_id="1.2", bet_ids=["B1", "B2"])
+
+    assert out["cancelled_bet_ids"] == ["B2"] and out["failed_bet_ids"] == ["B1"] and out["outcome"] == "PARTIAL"
+
+
+@pytest.mark.parametrize("errore", ["REQUEST_FAILED: HTTP_503", "REQUEST_FAILED: HTTP_502",
+                                     "REQUEST_FAILED: INVALID_JSON", "REQUEST_FAILED: UNKNOWN_ERROR: x"])
+def test_order_manager_eccezione_dopo_invio_e_ambiguous(errore) -> None:
+    """M22: 5xx o risposta illeggibile dopo l'invio, sollevati dal broker => saga AMBIGUOUS."""
+    out, saga, _ev = _cancel_with(RuntimeError(errore))
+    assert out["status"] == "AMBIGUOUS" and saga == "AMBIGUOUS", (errore, out)

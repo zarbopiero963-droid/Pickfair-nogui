@@ -120,6 +120,27 @@ RISPOSTE_SENZA_ESITO = {
     "report_status_non_riconosciuto": [
         {"result": {"status": "SUCCESS", "instructionReports": [{"status": "PENDING", "betId": "31415"}]}}
     ],
+    # P1-1 (revisione Claude B su db11a86): status FAILURE/PROCESSED_WITH_ERRORS con un report che NON e' FAILURE.
+    # L'ordine puo' esistere: mai FAILED (tavolo, riserva e chiave anti-duplicato liberati => secondo ordine).
+    "processed_with_errors_report_timeout": [
+        {"result": {"status": "PROCESSED_WITH_ERRORS", "instructionReports": [{"status": "TIMEOUT"}]}}
+    ],
+    "processed_with_errors_report_success_con_betid": [
+        {"result": {"status": "PROCESSED_WITH_ERRORS",
+                    "instructionReports": [{"status": "SUCCESS", "betId": "31415", "sizeMatched": 0.0}]}}
+    ],
+    "processed_with_errors_report_senza_status": [
+        {"result": {"status": "PROCESSED_WITH_ERRORS", "instructionReports": [{"betId": "31415"}]}}
+    ],
+    "failure_con_report_success": [
+        {"result": {"status": "FAILURE", "instructionReports": [{"status": "SUCCESS", "betId": "31415"}]}}
+    ],
+}
+
+#: Le stesse risposte miste come le restituisce un broker che NON e' BetfairClient (corpo grezzo all'engine).
+RISPOSTE_MISTE_GREZZE = {
+    nome: corpo[0]["result"] for nome, corpo in RISPOSTE_SENZA_ESITO.items()
+    if nome.startswith(("processed_with_errors_", "failure_con_"))
 }
 
 
@@ -212,3 +233,31 @@ def test_successo_completo_resta_successo() -> None:
 
     assert esito["ok"] is True
     assert esito["result"]["instructionReports"][0]["betId"] == "271828"
+
+
+@pytest.mark.parametrize("grezza", list(RISPOSTE_MISTE_GREZZE.values()), ids=list(RISPOSTE_MISTE_GREZZE))
+def test_block_engine_risposta_mista_grezza_ambigua(grezza: Any) -> None:
+    """P1-1: anche un corpo grezzo (broker diverso da BetfairClient) con status FAILURE/PROCESSED_WITH_ERRORS e un
+    report non FAILURE e' esito ignoto, mai un rifiuto."""
+    from core.trading_constants import ERROR_AMBIGUOUS
+    from core.trading_engine import ExecutionError, TradingEngine
+
+    engine = TradingEngine.__new__(TradingEngine)
+    with pytest.raises(ExecutionError) as exc:
+        engine._raise_if_failed_semantic_response(dict(grezza))
+    assert exc.value.error_type == ERROR_AMBIGUOUS
+
+
+@pytest.mark.parametrize("grezza", [
+    {"status": "FAILURE", "errorCode": "MARKET_SUSPENDED"},
+    {"status": "FAILURE", "instructionReports": [{"status": "FAILURE", "errorCode": "INVALID_ODDS"}]},
+    {"status": "PROCESSED_WITH_ERRORS", "instructionReports": [{"status": "FAILURE"}, {"status": "FAILURE"}]},
+])
+def test_engine_rifiuto_grezzo_tutti_failure_resta_definitivo(grezza: Any) -> None:
+    from core.trading_constants import ERROR_AMBIGUOUS
+    from core.trading_engine import ExecutionError, TradingEngine
+
+    engine = TradingEngine.__new__(TradingEngine)
+    with pytest.raises(Exception) as exc:
+        engine._raise_if_failed_semantic_response(dict(grezza))
+    assert not (isinstance(exc.value, ExecutionError) and exc.value.error_type == ERROR_AMBIGUOUS), exc.value
