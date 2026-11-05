@@ -3442,6 +3442,18 @@
         "tools/teardown_evidence/verify_teardown_evidence.py"
       ],
       "max_files": 14
+    },
+    "d_market_book_age": {
+      "description": "Istante monotono di ricezione e eta' del book per mercato nel MarketTracker (richiesta Control API, Claude C); nessuna soglia, nessuna decisione di trading cambiata.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/market_tracker.py",
+        "docs/market_book_age.md",
+        "tests/acceptance/test_market_book_age.py"
+      ],
+      "max_files": 5
     }
   }
 }

@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Età del book per mercato (richiesta Control API):** `MarketTracker.received_at` / `book_age_s` con orologio
+  monotono; età non dimostrabile => `None`. Nessuna decisione di trading cambia. Documentazione:
+  `docs/market_book_age.md`.
+
+### Added
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Callable, Dict, Optional
 
 
 logger = logging.getLogger(__name__)
@@ -20,10 +21,14 @@ class MarketTracker:
     Non contiene logica di chiusura automatica posizioni.
     """
 
-    def __init__(self, bus=None, betfair_service=None):
+    def __init__(self, bus=None, betfair_service=None, *, monotonic: Callable[[], float] = time.monotonic):
         self.bus = bus
         self.betfair_service = betfair_service
         self._markets: Dict[str, Dict[str, Any]] = {}
+        # Istante MONOTONO di ricezione dell'ultimo book per mercato: la freschezza del book e' dimostrabile senza
+        # dipendere da `lastMatchTime` dell'exchange (richiesta Control API). Mai l'orologio di sistema.
+        self._monotonic = monotonic
+        self._received_at: Dict[str, float] = {}
 
     # =========================================================
     # HELPERS
@@ -59,6 +64,7 @@ class MarketTracker:
             return
 
         self._markets[market_id] = normalized
+        self._received_at[market_id] = float(self._monotonic())
 
         self._forward_to_simulation(normalized)
         self._publish_market_update(normalized)
@@ -106,8 +112,22 @@ class MarketTracker:
     def get_market(self, market_id: str) -> Optional[Dict[str, Any]]:
         return self._markets.get(str(market_id))
 
+    def received_at(self, market_id: str) -> Optional[float]:
+        """Istante monotono di ricezione dell'ultimo book del mercato, ``None`` se mai ricevuto."""
+        return self._received_at.get(str(market_id))
+
+    def book_age_s(self, market_id: str) -> Optional[float]:
+        """Eta' in secondi dell'ultimo book del mercato; ``None`` se mai ricevuto o se l'orologio non e' coerente
+        (eta' negativa): un'eta' non dimostrabile non vale mai "fresco"."""
+        at = self.received_at(market_id)
+        if at is None:
+            return None
+        age = float(self._monotonic()) - at
+        return age if age >= 0.0 else None
+
     def snapshot(self) -> Dict[str, Any]:
         return {
             "tracked_markets": len(self._markets),
             "market_ids": list(self._markets.keys()),
+            "received_at": dict(self._received_at),
         }
