@@ -92,7 +92,7 @@ Il numero di PR e l'attore sono validati **prima** di comporre qualsiasi URL.
 - richiesta più vecchia di 24 h o datata nel futuro;
 - PR riletta diversa, chiusa, fork o con head cambiato.
 
-**`Ledger.admit` (VPS):** lettura, controllo e scrittura avvengono sotto un **lock esclusivo interprocesso** (`flock` su `<registro>.lock`). Due consumer concorrenti non ammettono mai la stessa richiesta e non perdono le ammissioni l'uno dell'altro. Se il lock non è disponibile la richiesta viene rifiutata con `LEDGER_LOCK_UNAVAILABLE` (rilievo di Sol e Grok su #606). Una richiesta già ammessa (`target`, catalogo, repository, PR, SHA) viene rifiutata anche dopo un riavvio. La scrittura è atomica. Un registro illeggibile produce un rifiuto: non si riparte mai da vuoto.
+**`Ledger.admit` (VPS):** lettura, controllo e scrittura avvengono sotto un **lock esclusivo interprocesso** (`flock` su `<registro>.lock`). Due consumer concorrenti non ammettono mai la stessa richiesta e non perdono le ammissioni l'uno dell'altro. Se il lock non è disponibile la richiesta viene rifiutata con `LEDGER_LOCK_UNAVAILABLE` (rilievo di Sol e Grok su #606). Una richiesta già ammessa (`target`, catalogo, repository, PR, SHA) viene rifiutata anche dopo un riavvio. La scrittura è atomica e durevole: `fsync` del file temporaneo, `os.replace` e poi `fsync` della directory (rilievo di Sol su #606); se la sincronizzazione fallisce l'ammissione non viene dichiarata. Un registro illeggibile produce un rifiuto: non si riparte mai da vuoto.
 
 ## 4-bis. Corsia development: test nuovi, codice non fidato
 

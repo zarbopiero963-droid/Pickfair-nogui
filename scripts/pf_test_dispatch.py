@@ -382,6 +382,14 @@ class Ledger:
         except BaseException:
             Path(tmp).unlink(missing_ok=True)
             raise
+        # la rinomina diventa durevole solo con la directory sincronizzata (rilievo di Sol su #606): senza, un crash
+        # dell'host puo' perdere un'ammissione gia' confermata e riammettere la stessa richiesta. Un errore qui si
+        # propaga: l'ammissione non viene dichiarata (la riga, se scritta, rifiuta comunque un secondo tentativo).
+        dfd = os.open(str(self.path.parent), os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
 
 
 # ── stato ────────────────────────────────────────────────────────────────────────────────────────────────────────

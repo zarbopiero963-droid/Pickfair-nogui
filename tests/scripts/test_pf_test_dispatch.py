@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -602,3 +603,39 @@ def test_non_canonical_catalog_paths_are_refused_before_the_isolation_check(path
 def test_non_canonical_development_paths_are_refused(target):
     with pytest.raises(D.Refused, match="^DEV_PATH_UNSAFE$"):
         dev(target=target, path_exists_at_sha=lambda p: True)
+
+
+# Sol su #606 (8fadc8c8, VALID_BLOCKERS): dopo os.replace va sincronizzata anche la DIRECTORY, altrimenti un crash
+# dell'host puo' perdere la rinomina: l'ammissione gia' confermata sparisce e la stessa richiesta viene riammessa.
+def test_admission_fsyncs_the_ledger_directory_after_the_rename(tmp_path, monkeypatch):
+    path = tmp_path / "ledger" / "admitted.json"
+    events = []
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def fsync(fd):
+        events.append(("fsync", os.fstat(fd).st_mode & 0o170000 == 0o040000))
+        return real_fsync(fd)
+
+    def replace(a, b):
+        events.append(("replace", None))
+        return real_replace(a, b)
+    monkeypatch.setattr(D.os, "fsync", fsync)
+    monkeypatch.setattr(D.os, "replace", replace)
+    D.Ledger(path).admit(build())
+    after = events[events.index(("replace", None)) + 1:]
+    assert ("fsync", True) in after, events                      # la directory e' sincronizzata DOPO la rinomina
+
+
+def test_a_failed_directory_fsync_is_never_reported_as_admitted(tmp_path, monkeypatch):
+    path = tmp_path / "ledger" / "admitted.json"
+    real_fsync = os.fsync
+
+    def fsync(fd):
+        if os.fstat(fd).st_mode & 0o170000 == 0o040000:
+            raise OSError("EIO")
+        return real_fsync(fd)
+    monkeypatch.setattr(D.os, "fsync", fsync)
+    with pytest.raises(OSError):
+        D.Ledger(path).admit(build())                              # nessun "ammesso" se la durabilita' non e' provata
+    with pytest.raises(D.Refused, match="^DUPLICATE_REQUEST$"):
+        D.Ledger(path).admit(build())                              # e comunque mai una seconda esecuzione
