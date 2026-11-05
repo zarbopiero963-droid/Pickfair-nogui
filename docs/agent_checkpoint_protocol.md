@@ -262,9 +262,18 @@ Regole di `verify`:
 3. **`DURABLE`** (handoff pubblicato e verificato) richiede tutte queste condizioni:
    - `handoff_branch`, `handoff_sha`, `handoff_tree` e `base_sha` presenti;
    - `handoff_sha` e `base_sha` risolvibili nel `target_repo`;
-   - `handoff_sha` pubblicato su `handoff_branch`;
-   - la patch inclusa e integra;
-   - tree(patch applicata su `base_sha`) == `handoff_tree` == tree(`handoff_sha`).
+   - `handoff_sha` pubblicato su `handoff_branch` e `base_sha` raggiungibile dallo stesso branch;
+   - tree(`handoff_sha`) == `handoff_tree`;
+   - una delle due prove di contenuto:
+     - **patch inclusa** (`artifact`): integra, e tree(patch applicata su `base_sha`) == `handoff_tree`;
+     - **senza artefatto** (PF-CKPT-CROSS-REPO-PROOF-02, per esempio una catena in pickfair-mcp-, dove il codice
+       del motore non può stare): sha256 di `git diff --binary --full-index base_sha handoff_sha`, ricalcolato nel
+       `target_repo`, == `patch_sha256`. Il diff usa la configurazione di default di git resa esplicita (rename
+       detection, prefissi `a/` `b/`, algoritmo myers, niente colore, diff esterni o textconv), quindi non dipende
+       dalla config del clone. Un digest registrato in un'altra forma (per esempio indici abbreviati) non
+       coincide: la prova fallisce, mai il contrario.
+
+   Un `artifact` dichiarato ma assente o alterato resta un errore: non si ripiega mai sul digest ricalcolato.
 
    Un `source_sha` non pubblicato non è mai la prova: la prova è il commit di handoff.
 4. **`INTEGRATED_VERIFIED`** si prova in uno di due modi:

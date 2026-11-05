@@ -357,6 +357,22 @@ def handoff_verify(repo, source, patch, base, integration, **meta):
     return rec
 
 
+# Forma canonica del digest di una patch di handoff: `git diff --binary --full-index base head` con la configurazione
+# di default di git resa esplicita (rename detection attiva, prefissi a/ b/, algoritmo myers, niente colore, niente
+# diff esterni o textconv), cosi' il risultato non dipende dalla config locale. Una forma diversa => digest diverso
+# => prova fallita (fail-closed), mai una prova accettata per errore.
+_CANONICAL_DIFF_CFG = ("-c", "diff.renames=true", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
+                       "-c", "diff.algorithm=myers", "-c", "diff.relative=false", "-c", "diff.indentHeuristic=true",
+                       "-c", "core.quotePath=true")
+
+
+def canonical_diff_sha256(repo, base_sha, head_sha):
+    """sha256 di `git diff --binary --full-index base_sha head_sha` in forma canonica; None se git fallisce."""
+    p = subprocess.run(["git", "-C", repo, *_CANONICAL_DIFF_CFG, "diff", "--no-color", "--no-ext-diff",
+                        "--no-textconv", "--binary", "--full-index", base_sha, head_sha, "--"], capture_output=True)
+    return hashlib.sha256(p.stdout).hexdigest() if p.returncode == 0 else None
+
+
 def parse_repo_paths(items):
     """`--repo-path NAME=PATH` (ripetibile) -> {NAME: PATH}. Un NAME ripetuto o senza PATH e' un errore."""
     paths = {}
@@ -461,14 +477,22 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None):
         hsha, base = resolved(tgt, "handoff_sha", "target_repo"), resolved(tgt, "base_sha", "target_repo")
         if hsha and not _published_on(tgt, hsha, h["handoff_branch"]):
             refp.append(f"{label}: handoff_sha non pubblicato sul branch {h['handoff_branch']!r} del target")
+        if base and not _published_on(tgt, base, h["handoff_branch"]):
+            refp.append(f"{label}: base_sha non raggiungibile dal branch {h['handoff_branch']!r} del target")
         if not (hsha and base):
             return problems, refp, info
         why = None
         htree = tree_of(tgt, hsha)
         if htree != h["handoff_tree"]:
             why = "tree(handoff_sha) != handoff_tree"
-        elif patch is None:
+        elif patch is None and art is not None:
             why = "patch non inclusa o non integra nel checkpoint"
+        elif patch is None:
+            # nessun artefatto (es. catena in un repository dove il codice del target e' vietato): la prova e' il
+            # digest canonico ricalcolato dai due commit pubblicati nel target, legato a patch_sha256
+            if canonical_diff_sha256(tgt, base, hsha) != h["patch_sha256"]:
+                why = ("digest canonico (git diff --binary --full-index base_sha handoff_sha) != patch_sha256; "
+                       "patch non inclusa nel checkpoint")
         else:
             applied = apply_patch_tree(tgt, base, patch)
             if applied is None:

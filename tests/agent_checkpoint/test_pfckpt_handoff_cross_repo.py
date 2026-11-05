@@ -230,3 +230,129 @@ def test_handoff_branch_deleted_before_reconciliation_is_needs_reconciliation(wo
     err = expect(2, pfckpt.bootstrap, world["url"], BR, str(world["tmp"] / "f"), D, CODE_BR, repo_paths=paths)
     assert err.reason == "NEEDS_RECONCILIATION"
     assert pfckpt.remote_head(a, "origin", BR) is not None
+
+
+# ================================================================== DURABLE senza artefatto: digest canonico
+def canonical_patch(tg, hsha):
+    """`git diff --binary --full-index base handoff` nel target: la forma che la catena di C registra."""
+    return _git("-C", tg["work"], "diff", "--binary", "--full-index", tg["base"], hsha).stdout
+
+
+def rec_no_artifact(world, tg, status, digest, **kw):
+    r = {k: v for k, v in rec(world, tg, status, **kw).items() if k != "artifact"}
+    r["patch_sha256"] = digest
+    return r
+
+
+def test_durable_without_artifact_is_proven_by_the_canonical_digest(world, target):
+    hsha, htree = publish_handoff(target)
+    digest = hashlib.sha256(canonical_patch(target, hsha)).hexdigest()
+    r = rec_no_artifact(world, target, "DURABLE", digest, handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    a = chain_ckpt(world, target, "c", [r], push=True)
+    paths = {TARGET: target_clone(target)}
+    rep = pfckpt.verify(a, "HEAD", D, repo_paths=paths)
+    assert rep["handoffs"][0]["handoff_proven"] is True and rep["handoffs"][0]["verified"] is False
+    rep = pfckpt.bootstrap(world["url"], BR, str(world["tmp"] / "f"), D, CODE_BR, repo_paths=paths)
+    assert rep["status"] == "READY"
+    # INTEGRATED_VERIFIED senza artefatto, attraverso il commit di handoff pubblicato
+    isha, itree = integrate(target)
+    paths = {TARGET: target_clone(target, "t2")}
+    r2 = dict(r, status="INTEGRATED_VERIFIED", integration_sha=isha, integration_tree=itree)
+    b = chain_ckpt(world, target, "c2", [r2])
+    assert pfckpt.verify(b, "HEAD", D, repo_paths=paths)["handoffs"][0]["verified"] is True
+
+
+def test_canonical_digest_ignores_local_diff_config(world, target):
+    hsha, htree = publish_handoff(target)
+    digest = hashlib.sha256(canonical_patch(target, hsha)).hexdigest()
+    clone = target_clone(target)
+    for k, v in (("diff.noprefix", "true"), ("diff.mnemonicPrefix", "true"), ("diff.algorithm", "patience"),
+                 ("color.diff", "always"), ("diff.renames", "false")):
+        sh(clone, "config", k, v)
+    r = rec_no_artifact(world, target, "DURABLE", digest, handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    a = chain_ckpt(world, target, "c", [r])
+    assert pfckpt.verify(a, "HEAD", D, repo_paths={TARGET: clone})["handoffs"][0]["handoff_proven"] is True
+
+
+def test_durable_without_artifact_blocks_on_wrong_digest_form_or_extra_change(world, target):
+    hsha, htree = publish_handoff(target)
+    good = hashlib.sha256(canonical_patch(target, hsha)).hexdigest()
+    short = hashlib.sha256(target["patch"]).hexdigest()           # forma non canonica (indici abbreviati)
+    assert short != good
+    paths = {TARGET: target_clone(target, "t1")}
+    for name, digest in (("short", short), ("zero", "0" * 64)):
+        r = rec_no_artifact(world, target, "DURABLE", digest, handoff_branch=HBRANCH, handoff_sha=hsha,
+                            handoff_tree=htree)
+        err = expect(2, pfckpt.verify, chain_ckpt(world, target, f"c_{name}", [r]), "HEAD", D, repo_paths=paths)
+        assert any("DURABLE non provato" in p and "digest canonico" in p for p in err.detail["problems"])
+        assert not _only_reference_problems(err), "integrita', non riferimento"
+    # commit di handoff con una modifica in piu' rispetto alla patch consegnata: il digest non coincide
+    hsha2, htree2 = publish_handoff(target, extra="extra.py")
+    r = rec_no_artifact(world, target, "DURABLE", good, handoff_branch=HBRANCH, handoff_sha=hsha2, handoff_tree=htree2)
+    err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c_extra", [r]), "HEAD", D,
+                 repo_paths={TARGET: target_clone(target, "t2")})
+    assert any("digest canonico" in p for p in err.detail["problems"])
+
+
+def test_declared_but_corrupt_artifact_never_falls_back_to_the_digest(world, target):
+    hsha, htree = publish_handoff(target)
+    good = hashlib.sha256(canonical_patch(target, hsha)).hexdigest()
+    r = rec(world, target, "DURABLE", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree, patch_sha256=good)
+    err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c", [r]), "HEAD", D,
+                 repo_paths={TARGET: target_clone(target)})
+    assert any("patch non inclusa o non integra" in p for p in err.detail["problems"])
+
+
+# ================================================================== PF-CKPT-CROSS-REPO-PROOF-02: casi negativi
+def _durable_no_artifact(world, target, name, **over):
+    hsha, htree = publish_handoff(target)
+    digest = hashlib.sha256(canonical_patch(target, hsha)).hexdigest()
+    kw = dict(handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    kw.update(over)
+    return chain_ckpt(world, target, name, [rec_no_artifact(world, target, "DURABLE", digest, **kw)], push=True)
+
+
+def test_missing_handoff_commit_is_never_ready(world, target):
+    a = _durable_no_artifact(world, target, "c", handoff_sha="1" * 40)
+    paths = {TARGET: target_clone(target)}
+    err = expect(2, pfckpt.verify, a, "HEAD", D, repo_paths=paths)
+    assert any("handoff_sha irrisolto" in p for p in err.detail["problems"])
+    err = expect(2, pfckpt.bootstrap, world["url"], BR, str(world["tmp"] / "f"), D, CODE_BR, repo_paths=paths)
+    assert err.reason == "NEEDS_RECONCILIATION"
+
+
+def test_wrong_repository_is_never_ready(world, target):
+    a = _durable_no_artifact(world, target, "c")
+    other = str(target["tmp"] / "other")                          # repository estraneo, senza gli oggetti del target
+    _git("init", "-q", other); _cfg(other)
+    open(os.path.join(other, "x"), "w").write("x\n")
+    sh(other, "add", "-A"); sh(other, "commit", "-q", "-m", "altro")
+    err = expect(2, pfckpt.verify, a, "HEAD", D, repo_paths={TARGET: other})
+    assert _only_reference_problems(err)
+    err = expect(2, pfckpt.verify, a, "HEAD", D, repo_paths={"altro/repo": target_clone(target)})
+    assert any("non disponibile" in p for p in err.detail["problems"])
+    err = expect(2, pfckpt.bootstrap, world["url"], BR, str(world["tmp"] / "f"), D, CODE_BR,
+                 repo_paths={TARGET: other})
+    assert err.reason == "NEEDS_RECONCILIATION"
+
+
+def test_base_not_on_the_handoff_branch_is_never_ready(world, target):
+    w = target["work"]                                            # un base pubblicato altrove, non sul branch di handoff
+    sh(w, "checkout", "-q", "-B", "side", target["base"])
+    open(os.path.join(w, "side.py"), "w").write("s\n")
+    sh(w, "add", "-A"); sh(w, "commit", "-q", "-m", "side")
+    sh(w, "push", "-q", "origin", "HEAD:refs/heads/side")
+    side = sh(w, "rev-parse", "HEAD")
+    a = _durable_no_artifact(world, target, "c", base_sha=side)
+    err = expect(2, pfckpt.verify, a, "HEAD", D, repo_paths={TARGET: target_clone(target)})
+    assert any("base_sha non raggiungibile" in p for p in err.detail["problems"])
+
+
+def test_handoff_branch_deleted_without_alternative_ref_no_artifact(world, target):
+    _durable_no_artifact(world, target, "c")
+    sh(target["bare"], "update-ref", "-d", f"refs/heads/{HBRANCH}")
+    sh(target["bare"], "reflog", "expire", "--expire=now", "--all")
+    sh(target["bare"], "gc", "-q", "--prune=now")
+    err = expect(2, pfckpt.bootstrap, world["url"], BR, str(world["tmp"] / "f"), D, CODE_BR,
+                 repo_paths={TARGET: target_clone(target)})
+    assert err.reason == "NEEDS_RECONCILIATION"

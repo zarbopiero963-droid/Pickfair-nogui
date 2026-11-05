@@ -30,6 +30,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Nuovo stato `DURABLE`: il commit di handoff è pubblicato su `handoff_branch` e la patch su `base_sha` dà il suo
   tree. `INTEGRATED_VERIFIED` richiede in più tree(`integration_sha`) == `handoff_tree`. Una sorgente non
   pubblicata (`source_published: false`) non è mai la prova.
+- **Checkpoint multi-agente: prova `DURABLE` senza copia della patch (PF-CKPT-CROSS-REPO-PROOF-02).** Una catena che
+  non può contenere il codice del target (pickfair-mcp-) prova `DURABLE` ricalcolando nel `target_repo`
+  sha256(`git diff --binary --full-index base_sha handoff_sha`), in forma canonica indipendente dalla config locale,
+  e confrontandolo con `patch_sha256`. Restano obbligatori tree(`handoff_sha`) == `handoff_tree` e `handoff_sha` su
+  `handoff_branch`; ora anche `base_sha` deve essere raggiungibile da quel branch. Un `artifact` dichiarato ma
+  assente o alterato non ripiega mai sul digest. Checkpoint precedenti non modificati.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;
