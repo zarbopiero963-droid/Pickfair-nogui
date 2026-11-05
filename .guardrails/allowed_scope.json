@@ -3533,6 +3533,17 @@
         "tests/control_api/test_side_effects.py"
       ],
       "max_files": 8
+    },
+    "pf_api10_control_api_security": {
+      "description": "MCP-SEC-01 (handoff di Claude C): pin del ponte al package pickfair_control_api 1.9.0 irrobustito (token deboli rifiutati, rotazioni serializzate, connessioni limitate, errori fissi). Dipende da pf_api1..9.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "control_api/bridge.py",
+        "docs/control_api.md"
+      ],
+      "max_files": 4
     }
   }
 }

@@ -21,8 +21,8 @@ from control_api.views import (
 
 # Pin esatto del package pickfair_control_api (repository pickfair-mcp-). Un package diverso da
 # quello verificato non viene MAI usato: la Control API non parte (CONTRACT_PIN_MISMATCH).
-EXPECTED_CONTROL_API_VERSION = "1.8.0"
-EXPECTED_SCHEMA_HASH = "0bb7355fc5476f80f2e5c2c6865bba97eac2c9cc7bcab96620c8ddf347991309"
+EXPECTED_CONTROL_API_VERSION = "1.9.0"
+EXPECTED_SCHEMA_HASH = "5a5c912cf2eaba5cab676eb7f35538fd90b78f06be9cebbd8e6405959b7fffaa"
 
 
 class ControlApiPinMismatch(Exception):

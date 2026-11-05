@@ -130,6 +130,14 @@ mancante diventa zero; nessun betId viene inventato.
 - Lo stato del book non è un giudizio di negoziabilità (F-23, protezione `market_tradability`). Il tracker non
   registra l'istante di ricezione: l'età del book è nota solo tramite `lastMatchTime`.
 
+### MCP-SEC-01 — irrobustimento del package (contratto 1.9.0)
+
+Solo il pin cambia nel ponte: le correzioni sono nel package `pickfair_control_api`, dopo una revisione di
+sicurezza indipendente (05/11/2026). Token vuoti, corti o fuori alfabeto rifiutati alla costruzione; rotazioni
+serializzate per intero; al più 16 connessioni servite insieme, ognuna chiusa entro 10 s (anche senza token);
+errori di protocollo in JSON fisso (`BAD_REQUEST`, `METHOD_NOT_ALLOWED`) senza eco dell'input; nessun traceback
+per richiesta su stderr del processo Pickfair.
+
 Nota per i test di assenza di effetti: la lettura in WAL aggiorna l'indice `-shm` (marcatori di lettura
 di SQLite, nessun dato); `.db` e `-wal` restano identici byte per byte.
 
