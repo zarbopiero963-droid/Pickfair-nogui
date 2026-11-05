@@ -217,7 +217,7 @@ try:
         exch = [{"bet_id": o.get("betId"), "ref": o.get("customerOrderRef"), "market_id": o.get("marketId"),
                  "selection_id": o.get("selectionId"), "side": o.get("side"),
                  "price": (o.get("priceSize") or {}).get("price"), "size": (o.get("priceSize") or {}).get("size"),
-                 "matched": o.get("sizeMatched"), "status": o.get("status")}
+                 "matched": o.get("sizeMatched"), "avg_price": o.get("averagePriceMatched"), "status": o.get("status")}
                 for o in (brk.list_current_orders().get("currentOrders") or [])]
         settled = [{"market_id": x.get("market_id"), "settlement_id": x.get("settlement_id"),
                     "gross_pnl": x.get("gross_pnl"), "net_pnl": x.get("net_pnl")}
