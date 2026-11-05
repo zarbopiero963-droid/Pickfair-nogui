@@ -218,3 +218,21 @@ def test_a6_crash_dopo_l_accettazione_dell_ingresso_mai_ripiazzato() -> None:
     assert "1.993" not in {t["market_id"] for t in finale["tables"] if t["market_id"]}
     rep = build_report([r1, r2], provenance="SINTETICO", scenario="roserpina-100-crash-ingresso-v1")
     _oracle_ok(rep, r1["snaps"] + r2["snaps"], {"1.993": True})
+
+
+# ------------------------------------------------------------------ G7-R05: ordine esterno mai adottato
+def test_a7_ordine_esterno_mai_adottato_ne_chiuso() -> None:
+    """Un ordine piazzato sull'exchange FUORI dal bot (nessuna riga `orders`, ref non del bot) sullo stesso mercato di un
+    tavolo del bot: al riavvio F018 non lo adotta (nessun tavolo), lo SL del tavolo del bot non lo cancella ne' lo
+    copre, e non viene mai ripiazzato."""
+    r1 = run([{"op": "signal", "m": "1.994", "price": 2.0, "stop_loss_pct": 10},
+              {"op": "external", "m": "1.994", "sel": 12, "price": 2.0, "size": 5.0}, {"op": "crash_now"}])
+    r2 = run([{"op": "wait", "s": 2}, {"op": "price", "m": "1.994", "price": 3.0}, POLL], home=r1["_home"])
+    riavvio = r2["snaps"][0]
+    tavoli = [t for t in riavvio["tables"] if t["market_id"] == "1.994"]
+    assert len(tavoli) == 1, ("ordine esterno adottato come tavolo", tavoli)
+    finale = r2["snaps"][-1]
+    ext = [o for o in finale["exch_orders"] if str(o["market_id"]) == "1.994" and str(o["selection_id"]) == "12"]
+    assert len(ext) == 1 and ext[0]["ref"] == "EXTERNAL-MANUAL" and ext[0]["status"] != "CANCELLED", ext
+    hedges = [o for o in finale["exch_orders"] if str(o["market_id"]) == "1.994" and o["side"] == "LAY"]
+    assert all(str(o["selection_id"]) == "11" for o in hedges), ("hedge sull'ordine esterno", hedges)
