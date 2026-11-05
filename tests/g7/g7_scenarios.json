@@ -252,6 +252,16 @@
       ],
       "seeds": [],
       "requires": "F-03"
+    },
+    {
+      "id": "G7-S26",
+      "test": "tests/f026/test_roserpina_100_campagna4.py::test_b5_sl_su_ingresso_parziale_hedge_microstake_sotto_il_minimo_exchange",
+      "requirements": [
+        "G7-R09",
+        "G7-R10"
+      ],
+      "seeds": [],
+      "requires": "F-03"
     }
   ]
 }
