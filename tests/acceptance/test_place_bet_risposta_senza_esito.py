@@ -347,6 +347,11 @@ MISTI_SU_SUCCESS = {
         {"status": "SUCCESS", "betId": "31415"}, {"status": "FAILURE", "errorCode": "INVALID_ODDS"}]},
     "failure_poi_senza_status": {"status": "SUCCESS", "instructionReports": [
         {"status": "FAILURE"}, {"betId": "31415"}]},
+    # Sol su #609 (911562a..bd56f20): un TIMEOUT fra i report non riusciti rende l'esito ignoto, anche dopo un FAILURE.
+    "failure_poi_timeout": {"status": "SUCCESS", "instructionReports": [
+        {"status": "FAILURE", "errorCode": "INVALID_ODDS"}, {"status": "TIMEOUT"}]},
+    "timeout_poi_failure": {"status": "SUCCESS", "instructionReports": [
+        {"status": "TIMEOUT"}, {"status": "FAILURE", "errorCode": "INVALID_ODDS"}]},
 }
 
 

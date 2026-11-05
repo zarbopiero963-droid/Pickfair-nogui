@@ -8354,7 +8354,7 @@
       "module": "betfair_client",
       "area": "ambiguous",
       "file": "betfair_client.py",
-      "original": "            if riusciti and non_riusciti:",
+      "original": "            if non_riusciti and (riusciti or any(st == \"TIMEOUT\" for st in report_statuses)):",
       "mutated": "            if False:",
       "tests": [
         "tests/acceptance/test_place_bet_risposta_senza_esito.py",

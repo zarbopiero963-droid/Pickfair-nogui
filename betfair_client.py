@@ -1761,10 +1761,11 @@ class BetfairClient:
                 raise RuntimeError(f"BET_REPORT_STATUS_UNRECOGNIZED: {ignoti[0] or '<assente>'}")
             riusciti = [st for st in report_statuses if st in {"SUCCESS", "PLACED"}]
             non_riusciti = [rep for rep, st in zip(reports, report_statuses) if st not in {"SUCCESS", "PLACED"}]
-            if riusciti and non_riusciti:
+            # Rifiuto certo SOLO se ogni report e' FAILURE. Un report riuscito o un TIMEOUT in qualsiasi posizione
+            # (rilievo di Sol su #609: [FAILURE, TIMEOUT]) rende l'esito ignoto.
+            if non_riusciti and (riusciti or any(st == "TIMEOUT" for st in report_statuses)):
                 raise RuntimeError(f"BET_OUTCOME_MIXED: {status}")
             if non_riusciti:
-                # Solo FAILURE (o TIMEOUT, ignoto per sottostringa) e' un esito dichiarato da Betfair.
                 raise RuntimeError(f"BET_REJECTED: {non_riusciti[0]}")
 
             return {
