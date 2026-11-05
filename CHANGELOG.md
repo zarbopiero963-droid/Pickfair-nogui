@@ -70,6 +70,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Control API: trailing F-03, F-02, F-18 (MCP-01m, handoff di Claude C):** stato del trailing per tavolo, trigger
   `TRAILING_STOP`, percentuali F-02 e impostazioni non valide F-18 in `GET /v1/config`, protezione `config_validity`.
   Pin al contratto 1.11.0. Dipende da F-03 (con F-02 e F-04) e dalle patch MCP-01d…MCP-01i.
+- **Età del book per mercato (richiesta Control API):** `MarketTracker.received_at` / `book_age_s` con orologio
+  monotono; età non dimostrabile => `None`. Nessuna decisione di trading cambia. Documentazione:
+  `docs/market_book_age.md`.
+
+### Added
+- **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
+  - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
+  - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;
+  - verifica condivisa con la VPS (`scripts/pf_test_dispatch.py`: richiesta a schema chiuso, catalogo di main,
+    idempotenza persistente, stati QUEUED/RUNNING/PASS/FAIL/BLOCKED/TIMEOUT/CANCELLED/INFRA_ERROR, dove
+    INFRA_ERROR non vale mai PASS);
+  - mappa di copertura dei comportamenti, con inventario Gate A non ancora importato.
+  - corsia development (PF-UNIVERSAL-TEST-AUTONOMY-365-01): `dev:tests/...` esegue i test nuovi della PR allo SHA in
+    una sandbox senza rete né segreti, ripetibile per dispatch, con esito `certification: false`, mai certificativo.
+
+  - isolamento anche per aggregazione: una suite fuori dalla sandbox non esegue percorsi isolati
+    (`AGGREGATE_INCLUDES_ISOLATED`); `full-regression` gira in `SANDBOX_EPHEMERAL`.
+
+  Nessun segreto e nessun accesso alla VPS per Claude B. Documentazione: `docs/test_automation.md`.
+
+### Changed
+- **Governance: verificatore dell'evidenza di teardown del PRE-LIVE (PF-TEARDOWN-EVIDENCE-01, #608):**
+  `tools/teardown_evidence/verify_teardown_evidence.py` verifica da GitHub, per ogni run VPS del PRE-LIVE, le evidenze
+  firmate `pf-teardown-evidence/<suite>` pubblicate da pf-orch `1.4.3+teardown-evidence-1` (doppia firma Ed25519 con
+  chiave fissata, legame sha256 manifest/sidecar, build autorizzata, teardown pulito del tipo di unit giusto).
+  Fail-closed; il PASS copre solo il teardown, non la conclusione del PRE-LIVE. Revisioni indipendenti e test di
+  manomissione in `tests/teardown_evidence/`; `docs/review_attestation.md` §3-bis.
+- **Governance: redazione dei reviewer e run di review saltati (decisione owner sulla #606, merge owner):**
+  - la redazione dei segreti dei cinque workflow di review lascia visibili il permesso `id-token: read|write|none`
+    e i riferimenti `${{ ... }}` fatti solo di contesti (`secrets.`, `github.`, `inputs.`...) che occupano tutto
+    il valore. Prima li oscurava, e Sol non poteva certificare il permesso OIDC di `pf-test-request.yml`
+    (VALID_INCONCLUSIVE sulla #606). Ogni altro valore resta redatto. Misurate 59 righe in più visibili su 325.884,
+    tutte di queste due forme;
+  - chiusa una fuga **preesistente**: `password: ${{ 'x' }}` (letterale dentro un'espressione) usciva in chiaro,
+    perché la regola di inizio riga escludeva ogni valore che comincia con `${{`. Ora a inizio riga si redige tutto
+    tranne il riferimento di contesto puro. Fuzz differenziale di oltre 50.000 righe: nessun valore nascosto da main
+    diventa visibile;
+  - il valore consentito deve chiudere la riga o il campo: un commento dopo il permesso o dopo il riferimento, oppure
+    un riferimento quotato non chiuso subito dopo `}}` (`"${{ secrets.X }}, altro"`), restano redatti come su main
+    (rilievi di Sol sulla #608);
+  - `scripts/pr_review_attestation.py` esclude un tentativo `skipped` da `RUN_WITHOUT_ATTESTATION` solo con la
+    prova dall'API dei job (tutti `completed`/`skipped`, nessuno step, elenco completo). Sulla #606 quattro run
+    saltati alla riapertura bloccavano verify-pr senza aver eseguito nulla. Un run ambiguo o non leggibile continua
+    a bloccare. `docs/ai_audit_workflows.md` e `docs/review_attestation.md` aggiornati.
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**
   - se un range precedente di Sol o Grok non è PASS (BLOCKERS, INCONCLUSIVE, ERROR, incompleto), la review della push
     successiva copre l'intera PR `BASE...HEAD` invece del solo delta;
