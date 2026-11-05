@@ -258,7 +258,7 @@
    "blocked_by": null,
    "needs_reconciliation": null,
    "certifications": [],
-   "notes": "@7daf592 (Claude D): fix P1-1/P2 della revisione db11a86 (414047e) + vincolo MCP-01k (report di righe incerte = solo identita'); verifica indipendente del delta in corso. Revisione precedente: docs/roadmap/reviews/f14_review_db11a86_20261105.md."
+   "notes": "@7daf592 REVIEWED: FIT per aprire la PR (0 P0/P1/P2, 3 NIT); docs/roadmap/reviews/f14_delta_review_7daf592_20261105.md. Regressione 8282 passed (414047e) + 2441 (7daf592), 0 failed. Prima PR finanziaria dopo #606."
   },
   {
    "id": "F-15",
