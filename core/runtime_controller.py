@@ -5352,7 +5352,7 @@ class RuntimeController:
         # del settlement), anche se la sua riga e' rimasta AMBIGUOUS/INFLIGHT: non si ricostruisce una riserva fantasma
         # su un mercato regolato. Registro illeggibile => nessuna prova, la riga resta incerta (fail-closed).
         settled: dict = {}
-        finder = getattr(self.db, "settled_customer_refs", None)
+        finder = getattr(getattr(self, "db", None), "settled_customer_refs", None)
         if callable(finder):
             try:
                 settled = dict(finder([c["customer_ref"] for c in candidates]) or {})
