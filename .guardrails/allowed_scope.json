@@ -3504,6 +3504,20 @@
         "tests/control_api/test_side_effects.py"
       ],
       "max_files": 8
+    },
+    "pf_api7_control_api_compat": {
+      "description": "MCP-01k (handoff di Claude C): importi mai esposti sugli ordini con esito non confermato (forma del fix P0 di Claude D); limite della freschezza dei fondi non ricalcolato (F-16); pin al contratto 1.7.0. Dipende da pf_api1..6.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "control_api/bridge.py",
+        "control_api/views.py",
+        "docs/control_api.md",
+        "guardrails/mutation_catalog.json",
+        "tests/control_api/test_compat_views.py"
+      ],
+      "max_files": 7
     }
   }
 }

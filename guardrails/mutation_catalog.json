@@ -9126,6 +9126,54 @@
         "tests/control_api/test_config_view.py"
       ],
       "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): lettura ripetuta del riferimento invece della copia unica (stessa versione non garantita)."
+    },
+    {
+      "id": "cap_unconfirmed_amounts_exposed",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    report = {} if core_status in UNCONFIRMED_STATUSES else _first_report(response)",
+      "mutated": "    report = _first_report(response)",
+      "tests": [
+        "tests/control_api/test_compat_views.py"
+      ],
+      "rationale": "MCP-01k ponte Control API, compatibilità con P0 e F-16 di Claude D (handoff Claude C): importi di un report non confermato esposti su una riga AMBIGUOUS."
+    },
+    {
+      "id": "cap_unconfirmed_hedge_amounts_exposed",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "UNCONFIRMED_STATUSES: Final = frozenset({\"AMBIGUOUS\", \"HEDGE_AMBIGUOUS\", \"INFLIGHT\", \"HEDGE_PENDING\"})",
+      "mutated": "UNCONFIRMED_STATUSES: Final = frozenset({\"AMBIGUOUS\", \"INFLIGHT\"})",
+      "tests": [
+        "tests/control_api/test_compat_views.py"
+      ],
+      "rationale": "MCP-01k ponte Control API, compatibilità con P0 e F-16 di Claude D (handoff Claude C): importi non confermati esposti sugli hedge incerti."
+    },
+    {
+      "id": "cap_funds_limit_f16_replicated",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if hasattr(cls, \"LIVE_FUNDS_MAX_AGE_S\"):\n        return None",
+      "mutated": "    if hasattr(cls, \"LIVE_FUNDS_MAX_AGE_S\"):\n        return decimal_str(ttl)",
+      "tests": [
+        "tests/control_api/test_compat_views.py"
+      ],
+      "rationale": "MCP-01k ponte Control API, compatibilità con P0 e F-16 di Claude D (handoff Claude C): limite fondi dichiarato 120 s quando F-16 ne applica un altro."
+    },
+    {
+      "id": "cap_funds_limit_accessor_ignored",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if callable(accessor):\n        return decimal_str(accessor())",
+      "mutated": "    if False:\n        return decimal_str(accessor())",
+      "tests": [
+        "tests/control_api/test_compat_views.py"
+      ],
+      "rationale": "MCP-01k ponte Control API, compatibilità con P0 e F-16 di Claude D (handoff Claude C): accessore unico del core ignorato."
     }
   ]
 }

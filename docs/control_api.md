@@ -106,6 +106,17 @@ mancante diventa zero; nessun betId viene inventato.
   (`core.redaction.is_sensitive_key` o un frammento del contratto) o non canonico è soltanto contato in
   `redacted`. Nessun valore fuori allowlist esce mai.
 
+### MCP-01k — compatibilità con le correzioni di Claude D (contratto 1.7.0)
+
+- `GET /v1/orders`: per le righe con esito non confermato (`AMBIGUOUS`, `HEDGE_AMBIGUOUS`, `INFLIGHT`,
+  `HEDGE_PENDING`, `UNCONFIRMED_STATUSES`) gli importi abbinati/residui non si leggono dal report conservato
+  nella risposta (il fix P0 di Claude D persiste la risposta senza esito, che può avere `sizeMatched`): restano
+  null. Il betId resta, perché è l'identità usata dalla riconciliazione.
+- `GET /v1/status`, `protections.funds_freshness.limit`: non si ricalcola la regola del core. Con l'accessore
+  unico `funds_max_age_s()` (richiesto a Claude D) il suo valore; con la soglia F-16 `LIVE_FUNDS_MAX_AGE_S` ma
+  senza accessore, limite null; sul `main` attuale il TTL delle riserve (120 s). Lo stato viene sempre dalla
+  regola del core.
+
 Nota per i test di assenza di effetti: la lettura in WAL aggiorna l'indice `-shm` (marcatori di lettura
 di SQLite, nessun dato); `.db` e `-wal` restano identici byte per byte.
 

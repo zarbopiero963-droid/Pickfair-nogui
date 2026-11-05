@@ -36,6 +36,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `RoserpinaConfig` in sola lettura da un'allowlist di 42 chiavi (SET/NOT_SET/INVALID, mai zero);
   credenziali, token e certificati mai letti; campi fuori allowlist solo per nome, nomi sensibili solo
   contati. Pin al contratto 1.6.0. Dipende dalle patch MCP-01d…MCP-01h.
+- **Control API: compatibilità con P0 e F-16 (MCP-01k, handoff di Claude C):** gli ordini con esito non
+  confermato non espongono gli importi del report conservato (forma del fix P0); il limite della freschezza
+  dei fondi non viene ricalcolato (null con la soglia F-16 senza accessore unico). Pin al contratto 1.7.0.
+  Dipende dalle patch MCP-01d…MCP-01j.
 
 ### Changed
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**
