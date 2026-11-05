@@ -9943,6 +9943,102 @@
         "tests/control_api/test_trailing_view.py"
       ],
       "rationale": "MCP-01m ponte Control API, trailing F-03 / F-02 / F-18 (handoff Claude C): core senza F-18 presentato come nessuna impostazione non valida."
+    },
+    {
+      "id": "cap_book_age_ignores_tracker",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    age_of = getattr(tracker, \"book_age_s\", None)",
+      "mutated": "    age_of = None",
+      "tests": [
+        "tests/control_api/test_book_age_view.py"
+      ],
+      "rationale": "MCP-01n ponte Control API età del book (handoff Claude C): età del tracker mai riportata."
+    },
+    {
+      "id": "cap_book_age_none_as_zero",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "            ages[str(market_id)] = decimal_str(age) if age is not None else None",
+      "mutated": "            ages[str(market_id)] = decimal_str(age) if age is not None else \"0\"",
+      "tests": [
+        "tests/control_api/test_book_age_view.py"
+      ],
+      "rationale": "MCP-01n ponte Control API età del book (handoff Claude C): età ignota mostrata come fresca."
+    },
+    {
+      "id": "cap_book_age_error_as_zero",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "            ages[str(market_id)] = None\n    return ages",
+      "mutated": "            ages[str(market_id)] = \"0\"\n    return ages",
+      "tests": [
+        "tests/control_api/test_book_age_view.py"
+      ],
+      "rationale": "MCP-01n ponte Control API età del book (handoff Claude C): errore del tracker mostrato come book fresco."
+    },
+    {
+      "id": "cap_book_age_after_books_list",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    ages = _book_ages(rc)  # prima dei book: età mai sottostimata\n    try:\n        books = _tracked_books(rc)",
+      "mutated": "    try:\n        books = _tracked_books(rc)\n        ages = _book_ages(rc)",
+      "tests": [
+        "tests/control_api/test_book_age_view.py"
+      ],
+      "rationale": "MCP-01n ponte Control API età del book (handoff Claude C): età letta dopo i book (può risultare sottostimata)."
+    },
+    {
+      "id": "cap_book_age_after_book_one",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    ages = _book_ages(rc)  # prima del book: età mai sottostimata\n    try:\n        book = _tracked_books(rc).get(market_id)",
+      "mutated": "    try:\n        book = _tracked_books(rc).get(market_id)\n        ages = _book_ages(rc)",
+      "tests": [
+        "tests/control_api/test_book_age_view.py"
+      ],
+      "rationale": "MCP-01n ponte Control API età del book (handoff Claude C): età del singolo book letta dopo il book."
+    },
+    {
+      "id": "cap_book_age_markets_dropped",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "\"runners\": len(runners),\n                        \"book_age_s\": ages.get(market_id)})",
+      "mutated": "\"runners\": len(runners),\n                        \"book_age_s\": None})",
+      "tests": [
+        "tests/control_api/test_book_age_view.py"
+      ],
+      "rationale": "MCP-01n ponte Control API età del book (handoff Claude C): età omessa nella lista mercati."
+    },
+    {
+      "id": "cap_book_age_book_dropped",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "\"omitted_runners\": omitted,\n                                  \"book_age_s\": ages.get(market_id)})",
+      "mutated": "\"omitted_runners\": omitted,\n                                  \"book_age_s\": None})",
+      "tests": [
+        "tests/control_api/test_book_age_view.py"
+      ],
+      "rationale": "MCP-01n ponte Control API età del book (handoff Claude C): età omessa nel book."
+    },
+    {
+      "id": "cap_book_age_no_received_guard",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if not callable(age_of) or not isinstance(received, dict):",
+      "mutated": "    if not callable(age_of):",
+      "tests": [
+        "tests/control_api/test_book_age_view.py"
+      ],
+      "rationale": "MCP-01n ponte Control API età del book (handoff Claude C): tracker senza istanti di ricezione trattato come leggibile."
     }
   ]
 }

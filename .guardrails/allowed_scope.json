@@ -3722,6 +3722,20 @@
         "tests/acceptance/test_market_book_age.py"
       ],
       "max_files": 5
+    },
+    "pf_api12_control_api_book_age": {
+      "description": "MCP-01n (handoff di Claude C): età del book (book_age_s) in GET /v1/markets e GET /v1/markets/{id}/book da MarketTracker.book_age_s; pin al contratto 1.12.0. Dipende da d_market_book_age e da pf_api1..11.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "control_api/bridge.py",
+        "control_api/views.py",
+        "docs/control_api.md",
+        "guardrails/mutation_catalog.json",
+        "tests/control_api/test_book_age_view.py"
+      ],
+      "max_files": 7
     }
   }
 }

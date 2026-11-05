@@ -232,3 +232,10 @@ Il processo che termina chiude la porta (provato: connessione rifiutata dopo SIG
   recovery: `_recovery_persist_failed` nasce solo lì (proposta: inizializzarlo nel costruttore).
 - Token bearer locale: chi legge il file come lo stesso utente ottiene l'accesso in lettura.
 - Packaging non incluso: `pyproject.toml` e `pickfair.spec` non distribuiscono `control_api/`.
+
+### MCP-01n — età del book (contratto 1.12.0)
+
+- `GET /v1/markets` (`markets[].book_age_s`) e `GET /v1/markets/{id}/book` (`book.book_age_s`): secondi dall'ultima
+  ricezione del book, da `MarketTracker.book_age_s` (istante monotono, nessuna regola replicata). Letta **prima** della
+  copia dei book: un aggiornamento concorrente può solo farla sembrare più vecchia. `null` se il tracker non la
+  fornisce, se manca l'istante di ricezione, se l'orologio torna indietro o se il tracker fallisce.

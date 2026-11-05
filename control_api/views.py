@@ -1850,10 +1850,31 @@ def _runner(raw: object) -> dict[str, Any]:
     }
 
 
+def _book_ages(rc: object) -> dict[str, str | None]:
+    """MCP-01n: età (s) dell'ultimo book per mercato da `MarketTracker.book_age_s` (Claude D, monotono).
+
+    Letta PRIMA della copia dei book: un aggiornamento concorrente (il tracker scrive book e istante in due passi)
+    può solo far sembrare un book più vecchio del reale, mai più fresco. Tracker senza età => {} (età ignota)."""
+    tracker = vars(rc).get("market_tracker")
+    age_of = getattr(tracker, "book_age_s", None)
+    received = vars(tracker).get("_received_at") if tracker is not None else None
+    if not callable(age_of) or not isinstance(received, dict):
+        return {}
+    ages: dict[str, str | None] = {}
+    for market_id in list(received):
+        try:
+            age = age_of(market_id)
+            ages[str(market_id)] = decimal_str(age) if age is not None else None
+        except Exception:  # noqa: BLE001 - età non dimostrabile: ignota, mai «fresco»
+            ages[str(market_id)] = None
+    return ages
+
+
 def markets_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict[str, Any]:
     body: dict[str, Any] = {"source": "core", "observed_at": float(clock()),
                             "consistency": "SINGLE_REFERENCE_READ", "markets": None, "omitted": 0,
                             "truncated": False, "unavailable": ["markets"]}
+    ages = _book_ages(rc)  # prima dei book: età mai sottostimata
     try:
         books = _tracked_books(rc)
     except Exception:  # noqa: BLE001 - tracker assente: indisponibile, mai una lista vuota
@@ -1867,7 +1888,8 @@ def markets_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict[
         if not isinstance(runners, list):
             omitted += 1
             continue
-        markets.append({"market_id": market_id, **_book_header(book), "runners": len(runners)})
+        markets.append({"market_id": market_id, **_book_header(book), "runners": len(runners),
+                        "book_age_s": ages.get(market_id)})
     body.update(markets=markets, omitted=omitted, truncated=len(ids) > MAX_MARKETS, unavailable=[])
     return body
 
@@ -1879,6 +1901,7 @@ def market_book_view(rc: object, market_id: str, *,
                             "state": "UNAVAILABLE", "book": None}
     if not isinstance(market_id, str) or not MARKET_ID_RE.fullmatch(market_id):
         raise ValueError("market_id")  # il server valida già il percorso: qui è una seconda barriera
+    ages = _book_ages(rc)  # prima del book: età mai sottostimata
     try:
         book = _tracked_books(rc).get(market_id)
     except Exception:  # noqa: BLE001
@@ -1900,7 +1923,8 @@ def market_book_view(rc: object, market_id: str, *,
             omitted += 1
             continue
         runners.append(runner)
-    body.update(state="OK", book={**_book_header(book), "runners": runners, "omitted_runners": omitted})
+    body.update(state="OK", book={**_book_header(book), "runners": runners, "omitted_runners": omitted,
+                                  "book_age_s": ages.get(market_id)})
     return body
 # ------------------------------------------------- MCP-01i: stato della chiusura SL/TP (F-04)
 #

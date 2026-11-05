@@ -67,6 +67,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   per id di richiesta. Pin al contratto 1.10.0. Dipende da F-04 e dalle patch MCP-01d…MCP-01l e MCP-SEC-01.
 
 ### Changed
+- **Control API: età del book (MCP-01n, handoff di Claude C):** `book_age_s` in `GET /v1/markets` e
+  `GET /v1/markets/{id}/book` da `MarketTracker.book_age_s`, letta prima dei book; `null` quando non dimostrabile.
+  Pin al contratto 1.12.0. Dipende da `d_market_book_age` e dalle patch MCP-01d…MCP-01m.
 - **Control API: trailing F-03, F-02, F-18 (MCP-01m, handoff di Claude C):** stato del trailing per tavolo, trigger
   `TRAILING_STOP`, percentuali F-02 e impostazioni non valide F-18 in `GET /v1/config`, protezione `config_validity`.
   Pin al contratto 1.11.0. Dipende da F-03 (con F-02 e F-04) e dalle patch MCP-01d…MCP-01i.
