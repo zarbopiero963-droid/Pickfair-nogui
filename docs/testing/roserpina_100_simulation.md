@@ -42,3 +42,19 @@ settlement, D +2,66); commissioni 0,16; esposizione massima 10,50; drawdown di c
 Esecuzione: `python3 -m pytest -q tests/f026/test_roserpina_100_report.py -s` (stampa il report).
 
 Operazioni aggiunte all'harness per lo scenario: `price` (quota del book mossa, mercato OPEN), `suspend` / `reopen`.
+
+## Campagna 2 `roserpina-100-protezioni-v1` (SINTETICO): SL, TP, trailing
+
+`tests/f026/test_roserpina_100_campagna2.py`. Gira solo dove esistono F-02 + F-04 + F-03 (`core.trailing_stop`,
+branch `claude/d-f03-trailing-stop`); altrove è **saltata** con il motivo (le protezioni non sono su `main`).
+Quattro mercati, BACK @2.0 con stake del MM: 1.901 SL 10 % (quota a 3.0), 1.902 TP 10 % (quota a 1.6), 1.903
+trailing 20 % (1.4 → 1.3 → 1.6), 1.904 senza protezioni (quota a 3.0); il poller di F-02 (2 s) valuta i book; crash;
+al riavvio un giro del poller (gli scatti si ripetono) e i settlement. Il report ha la sezione `protections`
+(scatti F-02/F-03 ed esiti F-04 per esecuzione).
+
+Esito osservato il 05/11/2026 sull'albero `claude/d-f03-trailing-stop` + questo branch: SL, TP e trailing scattano
+una volta ciascuno e sono instradati (`SL_TP_CLOSE_ROUTED`), un hedge per tavolo; il tavolo senza protezioni non è
+toccato; dopo il riavvio solo `SL_TP_CLOSE_SKIPPED`, nessun hedge duplicato. Capitale iniziale 100,00; P&L netto
++3,20 (1.901 −1,01, 1.902 +0,67, 1.903 +0,67, 1.904 +2,87); commissioni 0,20; esposizione massima 12,00; drawdown di
+cassa massimo 1,01 %; saldo finale 103,20; nessun ordine non riconciliato; 1 riavvio. Coerente al centesimo con
+l'oracolo indipendente (arrotondamento HALF_UP come il report). Valori di uno scenario sintetico.
