@@ -199,3 +199,22 @@ def test_a5_sl_di_un_tavolo_non_tocca_l_altro_tavolo_dello_stesso_mercato() -> N
     hedges = {o["ref"] for o in last["exch_orders"] if str(o["market_id"]) == "1.995" and o["side"] == "LAY"
               and str(o["selection_id"]) == "11"}
     assert len(hedges) == 1, hedges
+
+
+# ------------------------------------------------------------------ G7-R04 / G7-R05: crash all'invio dell'ingresso
+def test_a6_crash_dopo_l_accettazione_dell_ingresso_mai_ripiazzato() -> None:
+    """Il processo cade appena l'exchange ha accettato l'ingresso (riga ancora INFLIGHT). Al riavvio l'ordine e'
+    attribuito al suo intento per identita' (riserva trattenuta), mai ripiazzato; il settlement si attribuisce allo
+    stesso intento e il realizzato viene dal solo abbinato confermato."""
+    r1 = run([{"op": "crash_on_next_place"}, {"op": "signal", "m": "1.993", "price": 2.0}])
+    assert r1.get("crashed_at", "").startswith("PLACE_BET:1.993"), r1.get("crashed_at")
+    r2 = run([{"op": "wait", "s": 3}, {"op": "settle", "m": "1.993", "win": True}], home=r1["_home"])
+    riavvio = r2["snaps"][0]
+    backs = [o for o in riavvio["exch_orders"] if str(o["market_id"]) == "1.993" and o["side"] == "BACK"]
+    assert len(backs) == 1, ("ingresso ripiazzato dopo il riavvio", backs)
+    assert [o["status"] for o in riavvio["orders"] if o["market_id"] == "1.993"] == ["INFLIGHT"]
+    assert "1.993" in {t["market_id"] for t in riavvio["tables"]}, "riserva non trattenuta su esito incerto"
+    finale = r2["snaps"][-1]
+    assert "1.993" not in {t["market_id"] for t in finale["tables"] if t["market_id"]}
+    rep = build_report([r1, r2], provenance="SINTETICO", scenario="roserpina-100-crash-ingresso-v1")
+    _oracle_ok(rep, r1["snaps"] + r2["snaps"], {"1.993": True})
