@@ -3670,7 +3670,8 @@ class RuntimeController:
                     market_id, include_prices=True
                 ),
                 cancel_orders=adapter.cancel,
-                publish=lambda topic, payload=None: RuntimeController._publish_from_cashout_router(self, topic, payload),
+                publish=lambda topic, payload=None: RuntimeController._publish_from_cashout_router(
+                    self, topic, payload, origin=signal),
                 commission_pct=commission,
                 source="TELEGRAM",
             )
@@ -3855,7 +3856,7 @@ class RuntimeController:
             selection = str(raw_selection if raw_selection is not None else "").strip()
         return market_id, selection
 
-    def _publish_from_cashout_router(self, topic, payload=None):
+    def _publish_from_cashout_router(self, topic, payload=None, origin=None):
         """``publish`` del CashoutRouter: ogni REQ_EXECUTE_CASHOUT riceve un ``cashout_request_id`` ed e'
         registrata sulla barriera corrente PRIMA di essere pubblicata (un esito sincrono la trova gia')."""
         ctx = getattr(self, "_cashout_route_ctx", None)
@@ -3870,6 +3871,8 @@ class RuntimeController:
                     if inflight is None:
                         inflight = self._cashout_inflight = {}
                     inflight.setdefault(barrier_id, {})[request_id] = RuntimeController._cashout_leg_key(payload)
+                    # F-04: la richiesta d'hedge di una chiusura SL/TP e' legata al suo record (request id persistito)
+                    RuntimeController._record_sl_tp_request(self, origin, request_id)
         return self.bus.publish(topic, payload)
 
     def _finish_cashout_route(self, barrier_id: int) -> None:
@@ -3900,6 +3903,12 @@ class RuntimeController:
     def _is_internal_sl_tp_route(self, signal) -> bool:
         token = (signal or {}).get("sl_tp_route_token") if isinstance(signal, dict) else None
         return isinstance(token, str) and token in RuntimeController._sl_tp_routes(self)
+
+    def _record_sl_tp_request(self, signal, request_id: str) -> None:
+        token = signal.get("sl_tp_route_token") if isinstance(signal, dict) else None
+        requests = getattr(self, "_sl_tp_route_requests", {}).get(token) if isinstance(token, str) else None
+        if requests is not None:
+            requests.append(request_id)
 
     def _record_sl_tp_route(self, signal, outcome: dict) -> None:
         """Primo esito dell'instradamento di una chiusura SL/TP (rifiuto di un gate, risultato del router o errore)."""
@@ -3938,6 +3947,11 @@ class RuntimeController:
         box: dict = {}
         routes = RuntimeController._sl_tp_routes(self)
         routes[token] = box
+        requests: list = []
+        req_map = getattr(self, "_sl_tp_route_requests", None)
+        if req_map is None:
+            req_map = self._sl_tp_route_requests = {}
+        req_map[token] = requests
         try:
             self._on_signal_received({
                 "signal_type": "CASHOUT_TABLE", "market_id": trigger.market_id,
@@ -3950,17 +3964,18 @@ class RuntimeController:
             box.setdefault("error", str(exc))
         finally:
             routes.pop(token, None)
+            req_map.pop(token, None)
         state, detail = sl_tp_close.route_outcome(box)
         try:
             self.db.save_settings({trigger.close_key: sl_tp_close.state_record(
-                trigger, state, bet_ids=bet_ids, reason=detail, at=time.time())})
+                trigger, state, bet_ids=bet_ids, reason=detail, at=time.time(), request_ids=requests)})
         except Exception:  # noqa: BLE001 - resta CLAIMED: non ritentabile (prudente)
             logger.exception("[RuntimeController] chiusura SL/TP: stato finale non persistito (resta CLAIMED)")
         topic_out = {sl_tp_close.STATE_ROUTED: sl_tp_close.SL_TP_CLOSE_ROUTED,
                      sl_tp_close.STATE_NOT_EXECUTED: sl_tp_close.SL_TP_CLOSE_NOT_EXECUTED}.get(
             state, sl_tp_close.SL_TP_CLOSE_UNCERTAIN)
         RuntimeController._publish_sl_tp_close(self, topic_out, trigger, payload, state=state, detail=detail,
-                                               bet_ids=list(bet_ids))
+                                               bet_ids=list(bet_ids), cashout_request_ids=list(requests))
 
     def _claim_sl_tp_close(self, trigger):
         """Identita' verificata + rivendicazione persistente. ``bet_ids`` se si puo' instradare, ``None`` (esito
