@@ -38,6 +38,12 @@ def _lays(snaps, market):
     return [o for o in last["exch_orders"] if str(o["market_id"]) == market and o["side"] == "LAY"]
 
 
+def _hedges(snaps, market):
+    """Hedge distinti (per customerOrderRef): un hedge sotto il minimo exchange passa dal Microstake nativo e lascia
+    piu' ordini (stub + ordine economico) con lo STESSO riferimento."""
+    return {o["ref"] for o in _lays(snaps, market)}
+
+
 def _closes(rep, market, event=None):
     return [c for c in rep["protections"]["closes"]
             if c["market_id"] == market and (event is None or c["event"] == event)]
@@ -80,12 +86,13 @@ def guasti():
 def test_a1_ingresso_parziale_un_solo_hedge_sull_abbinato_confermato(guasti) -> None:
     r1, _r2, rep = guasti
     lays = _lays(r1["snaps"], "1.951")
-    assert len(lays) == 1, lays
+    assert len(_hedges(r1["snaps"], "1.951")) == 1, lays
     backs = [o for o in r1["snaps"][-1]["exch_orders"] if str(o["market_id"]) == "1.951" and o["side"] == "BACK"]
     matched_back = sum(D(str(o["matched"] or 0)) for o in backs)
     assert matched_back == D("1"), backs
     # green-up di 1 EUR @2.0 chiuso @3.02: hedge ~0.66, mai sullo stake intero richiesto
-    assert D(str(lays[0]["size"])) <= matched_back, lays
+    hedge_matched = sum(D(str(o["matched"] or 0)) for o in lays)
+    assert D("0") < hedge_matched <= matched_back, lays          # green-up dell'abbinato confermato, mai dello stake
     # il residuo non abbinato del BACK e' cancellato PRIMA dell'hedge: non puo' abbinarsi dopo e riaprire la posizione
     assert all(not (o.get("status") == "EXECUTABLE" and D(str(o["size"])) > D(str(o["matched"] or 0)))
                for o in backs), backs
@@ -94,8 +101,8 @@ def test_a1_ingresso_parziale_un_solo_hedge_sull_abbinato_confermato(guasti) -> 
 
 def test_a2_hedge_con_esito_ignoto_mai_ripetuto(guasti) -> None:
     r1, r2, rep = guasti
-    assert len(_lays(r1["snaps"], "1.952")) == 1, "hedge non partito o duplicato"
-    assert len(_lays(r2["snaps"], "1.952")) == 1, "secondo hedge dopo il riavvio"
+    assert len(_hedges(r1["snaps"], "1.952")) == 1, "hedge non partito o duplicato"
+    assert _hedges(r2["snaps"], "1.952") == _hedges(r1["snaps"], "1.952"), "secondo hedge dopo il riavvio"
     assert len(_closes(rep, "1.952", "SL_TP_CLOSE_ROUTED")) == 1
     assert all(c["event"] == "SL_TP_CLOSE_SKIPPED" for c in _closes(rep, "1.952") if c["run"] == 1)
 
@@ -140,8 +147,8 @@ def test_campagna_con_seed_invarianti_e_oracolo(seed: int) -> None:
         assert len(_closes(rep, m, "SL_TP_CLOSE_ROUTED")) <= 1, (seed, m, rep["protections"])
         before_settle = [s for s in snaps if s["tag"].endswith(f":settle:{m}")]
         idx = snaps.index(before_settle[0]) if before_settle else len(snaps)
-        lays = [o for o in snaps[idx - 1]["exch_orders"] if str(o["market_id"]) == m and o["side"] == "LAY"]
-        assert len(lays) <= 1, (seed, m, lays)
+        refs = {o["ref"] for o in snaps[idx - 1]["exch_orders"] if str(o["market_id"]) == m and o["side"] == "LAY"}
+        assert len(refs) <= 1, (seed, m, refs)
     _oracle_ok(rep, snaps, outcomes)
     assert rep["unreconciled_orders"] == [], (seed, rep["unreconciled_orders"])
     assert rep["restarts"] == 1
