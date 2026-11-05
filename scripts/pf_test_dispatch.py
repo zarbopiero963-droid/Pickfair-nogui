@@ -335,6 +335,35 @@ def _lock_file(fh: Any) -> None:
     fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
 
 
+def _fsync_dir(path: Path) -> None:
+    dfd = os.open(str(path), os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
+def _durable_makedirs(path: Path) -> None:
+    """Crea ``path`` e i genitori mancanti rendendo durevole ogni creazione: dopo ogni ``mkdir`` si sincronizza la
+    directory genitore (rilievo di Sol su #606). Senza, un crash dell'host puo' perdere l'albero appena creato insieme
+    al registro e riammettere richieste gia' confermate. Una directory gia' esistente non viene toccata; un errore si
+    propaga (nessuna ammissione dichiarata)."""
+    path = Path(path)
+    missing = []
+    cur = path
+    while not cur.exists():
+        missing.append(cur)
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    for d in reversed(missing):
+        try:
+            os.mkdir(str(d))
+        except FileExistsError:
+            pass                                       # creata in concorrenza: la si sincronizza comunque
+        _fsync_dir(d.parent)
+
+
 class Ledger:
     """Registro persistente delle richieste ammesse (idempotenza, lato VPS). Lettura, controllo e scrittura stanno
     sotto un lock esclusivo interprocesso (``<registro>.lock``): due consumer concorrenti non ammettono mai la stessa
@@ -356,7 +385,7 @@ class Ledger:
         return data
 
     def admit(self, req: Mapping[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        _durable_makedirs(self.path.parent)
         with open(f"{self.path}.lock", "a+", encoding="utf-8") as lock:
             try:
                 _lock_file(lock)
@@ -371,7 +400,7 @@ class Ledger:
             raise Refused("DUPLICATE_REQUEST")
         data["admitted"][key] = {"lane": req["lane"], "target": req["target"], "pr": req["pr"],
                                  "head_sha": req["head_sha"], "run_id": req["run_id"]}
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        _durable_makedirs(self.path.parent)
         fd, tmp = tempfile.mkstemp(dir=str(self.path.parent), prefix=".ledger-")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -385,11 +414,7 @@ class Ledger:
         # la rinomina diventa durevole solo con la directory sincronizzata (rilievo di Sol su #606): senza, un crash
         # dell'host puo' perdere un'ammissione gia' confermata e riammettere la stessa richiesta. Un errore qui si
         # propaga: l'ammissione non viene dichiarata (la riga, se scritta, rifiuta comunque un secondo tentativo).
-        dfd = os.open(str(self.path.parent), os.O_RDONLY)
-        try:
-            os.fsync(dfd)
-        finally:
-            os.close(dfd)
+        _fsync_dir(self.path.parent)
 
 
 # ── stato ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -428,10 +453,19 @@ def state_from_check_run(cr: Mapping[str, Any]) -> str:
     return _CONCLUSION_STATE.get(str(cr.get("conclusion")), "INFRA_ERROR")   # sconosciuto => mai PASS
 
 
-def suite_status(suite_id: str, sha: str, check_runs: list) -> Dict[str, Any]:
-    """Esito di una suite: solo l'app fidata, solo lo SHA esatto; se un run e' ancora aperto, conta quello."""
+def suite_status(suite_id: str, sha: str, check_runs: list, catalog_sha: str) -> Dict[str, Any]:
+    """Esito di una suite: solo l'app fidata, solo lo SHA esatto, solo il catalogo vigente; se un run e' ancora
+    aperto, conta quello.
+
+    Il check run deve portare ``external_id`` che inizia con ``<catalog_sha256>:`` del catalogo letto da main
+    (rilievo di Sol su #606): se la definizione di una suite cambia senza cambiarne l'id, un PASS ottenuto con il
+    catalogo precedente non certifica la definizione nuova, e la suite torna ``NOT_REQUESTED``."""
+    if not re.fullmatch(r"[0-9a-f]{64}", str(catalog_sha)):
+        raise Refused("MALFORMED_CATALOG_SHA")
+    prefix = f"{catalog_sha}:"
     mine = [c for c in check_runs if c.get("name") == check_name(suite_id) and c.get("head_sha") == sha
-            and ((c.get("app") or {}).get("slug")) == TRUSTED_APP]
+            and ((c.get("app") or {}).get("slug")) == TRUSTED_APP
+            and str(c.get("external_id") or "").startswith(prefix)]
     if not mine:
         return {"suite": suite_id, "sha": sha, "state": "NOT_REQUESTED"}
     open_runs = [c for c in mine if c.get("status") != "completed"]
@@ -546,10 +580,11 @@ def main(argv: Optional[list] = None) -> int:
             return 0
         suites = resolve_target(validate_catalog(catalog_raw), args.target)
         runs = all_check_runs(args.repo, args.sha)
-        per_suite = [suite_status(s, args.sha, runs) for s in suites]
-        print(json.dumps({"target": args.target, "sha": args.sha, "state": campaign_state([p["state"] for p in
-                                                                                              per_suite]),
-                          "suites": per_suite}, sort_keys=True))
+        digest = catalog_digest(catalog_raw)
+        per_suite = [suite_status(s, args.sha, runs, digest) for s in suites]
+        print(json.dumps({"target": args.target, "sha": args.sha, "catalog_sha256": digest,
+                          "state": campaign_state([p["state"] for p in per_suite]), "suites": per_suite},
+                         sort_keys=True))
         return 0
     except Refused as exc:
         print(json.dumps({"accepted": False, "refused": str(exc)}))

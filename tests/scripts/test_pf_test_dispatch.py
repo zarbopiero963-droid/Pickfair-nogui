@@ -208,10 +208,13 @@ def test_a_crash_during_the_write_leaves_the_previous_ledger_intact(tmp_path, mo
 
 
 # ── stati ───────────────────────────────────────────────────────────────────────────────────────────────────────
+CAT_SHA = D.catalog_digest(CATALOG_RAW)
+
+
 def _cr(i, name="pf-test/recovery", sha=SHA, slug="pickfair-dedicated", status="completed", conclusion="success",
-        title="OK"):
+        title="OK", catalog=CAT_SHA):
     return {"id": i, "name": name, "head_sha": sha, "app": {"slug": slug}, "status": status,
-            "conclusion": conclusion, "output": {"title": title}}
+            "conclusion": conclusion, "output": {"title": title}, "external_id": f"{catalog}:{'k' * 64}"}
 
 
 @pytest.mark.parametrize("runs,state", [
@@ -234,7 +237,7 @@ def _cr(i, name="pf-test/recovery", sha=SHA, slug="pickfair-dedicated", status="
     ([_cr(2, conclusion="failure"), _cr(3)], "PASS"),
 ])
 def test_status_maps_only_trusted_check_runs_of_the_exact_head(runs, state):
-    assert D.suite_status("recovery", SHA, runs)["state"] == state
+    assert D.suite_status("recovery", SHA, runs, CAT_SHA)["state"] == state
 
 
 def test_certifications_keep_their_historical_check_names():
@@ -408,7 +411,7 @@ def test_development_results_never_count_as_certification():
     runs = [_cr(1, name=D.dev_check_name(key)), _cr(2, name="pf-test/recovery", conclusion="failure")]
     st = D.dev_status(key, SHA, runs)
     assert st["state"] == "PASS" and st["certification"] is False
-    assert D.suite_status("recovery", SHA, runs)["state"] == "FAIL"           # il PASS dev non copre la suite
+    assert D.suite_status("recovery", SHA, runs, CAT_SHA)["state"] == "FAIL"           # il PASS dev non copre la suite
     assert D.dev_check_name(key).startswith("pf-dev-test/")
     assert not any(D.check_name(s["id"]).startswith("pf-dev-test/") for s in CATALOG["suites"])
     assert D.dev_status(key, SHA, [_cr(1, name=D.dev_check_name(key), slug="evil-app")])["state"] == "NOT_REQUESTED"
@@ -630,6 +633,7 @@ def test_admission_fsyncs_the_ledger_directory_after_the_rename(tmp_path, monkey
 @_NEEDS_FCNTL
 def test_a_failed_directory_fsync_is_never_reported_as_admitted(tmp_path, monkeypatch):
     path = tmp_path / "ledger" / "admitted.json"
+    path.parent.mkdir()                                            # albero gia' esistente: si prova la sola rinomina
     real_fsync = os.fsync
 
     def fsync(fd):
@@ -641,3 +645,65 @@ def test_a_failed_directory_fsync_is_never_reported_as_admitted(tmp_path, monkey
         D.Ledger(path).admit(build())                              # nessun "ammesso" se la durabilita' non e' provata
     with pytest.raises(D.Refused, match="^DUPLICATE_REQUEST$"):
         D.Ledger(path).admit(build())                              # e comunque mai una seconda esecuzione
+
+
+# Sol su #606 (76665766, VALID_BLOCKERS): un check run vale solo per il catalogo con cui la suite e' stata eseguita.
+# Se la definizione cambia su main senza cambiare l'id, il PASS vecchio non certifica la definizione nuova.
+_OTHER_CAT = "0" * 64
+
+
+@pytest.mark.parametrize("runs", [
+    [_cr(1, catalog=_OTHER_CAT)],                                               # PASS su un catalogo precedente
+    [dict(_cr(1), external_id=None)],                                           # nessun legame col catalogo
+    [dict(_cr(1), external_id=CAT_SHA)],                                        # manca il separatore
+    [dict(_cr(1), external_id=f"x{CAT_SHA}:k")],                                # prefisso non esatto
+])
+def test_a_pass_from_another_catalog_never_counts(runs):
+    assert D.suite_status("recovery", SHA, runs, CAT_SHA)["state"] == "NOT_REQUESTED"
+
+
+def test_a_stale_catalog_pass_does_not_mask_the_current_catalog_result():
+    runs = [_cr(9, catalog=_OTHER_CAT), _cr(3, conclusion="failure")]           # il PASS vecchio ha l'id piu' alto
+    assert D.suite_status("recovery", SHA, runs, CAT_SHA)["state"] == "FAIL"
+
+
+@pytest.mark.parametrize("bad", ["", "abc", "G" * 64, CAT_SHA.upper(), None])
+def test_status_refuses_a_malformed_catalog_digest(bad):
+    with pytest.raises(D.Refused, match="^MALFORMED_CATALOG_SHA$"):
+        D.suite_status("recovery", SHA, [_cr(1)], bad)
+
+
+# Sol su #606 (76665766, VALID_BLOCKERS): mkdir(parents=True) senza fsync dei genitori puo' perdere, in un crash
+# dell'host, l'albero appena creato insieme al registro, e riammettere una richiesta gia' confermata.
+@_NEEDS_FCNTL
+def test_every_created_ledger_directory_is_made_durable_in_its_parent(tmp_path, monkeypatch):
+    path = tmp_path / "a" / "b" / "admitted.json"
+    synced = []
+    real_fsync = os.fsync
+
+    def fsync(fd):
+        st = os.fstat(fd)
+        if st.st_mode & 0o170000 == 0o040000:
+            synced.append((st.st_dev, st.st_ino))
+        return real_fsync(fd)
+    monkeypatch.setattr(D.os, "fsync", fsync)
+    D.Ledger(path).admit(build())
+    ident = lambda p: (os.stat(p).st_dev, os.stat(p).st_ino)
+    assert ident(tmp_path) in synced, synced                    # genitore di "a"
+    assert ident(tmp_path / "a") in synced, synced              # genitore di "b"
+    assert ident(tmp_path / "a" / "b") in synced, synced        # directory del registro (rinomina)
+
+
+@_NEEDS_FCNTL
+def test_a_failed_fsync_of_a_new_parent_directory_admits_nothing(tmp_path, monkeypatch):
+    path = tmp_path / "a" / "admitted.json"
+    real_fsync = os.fsync
+
+    def fsync(fd):
+        if os.fstat(fd).st_mode & 0o170000 == 0o040000:
+            raise OSError("EIO")
+        return real_fsync(fd)
+    monkeypatch.setattr(D.os, "fsync", fsync)
+    with pytest.raises(OSError):
+        D.Ledger(path).admit(build())
+    assert not path.exists()                                     # nessuna ammissione senza albero durevole
