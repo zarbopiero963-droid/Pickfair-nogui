@@ -586,7 +586,10 @@ Stati persistiti ed esiti pubblicati:
 | `NOT_EXECUTED` | `SL_TP_CLOSE_NOT_EXECUTED` | nessuna richiesta d'hedge pubblicata (gate, mercato sospeso o chiuso, profondita', nessuna posizione) | si' |
 | `UNCERTAIN` | `SL_TP_CLOSE_UNCERTAIN` | errore durante l'instradamento o esito mancante: un hedge potrebbe essere partito | no (riconciliazione) |
 
-Nessun retry automatico (PF-EXEC-05): `NOT_EXECUTED` si ritenta solo con un nuovo scatto dell'evento. Un riavvio, un
+Il record persistito porta anche `cashout_request_ids`: gli id delle richieste d'hedge pubblicate per la chiusura,
+gli stessi che il `CashoutExecutor` scrive nella riga `orders` dell'hedge (`payload_json.cashout_request_id`), cosi'
+l'hedge e' attribuibile al tavolo chiuso (richiesta Control API, MCP-01k). Nessun retry automatico (PF-EXEC-05):
+`NOT_EXECUTED` si ritenta solo con un nuovo scatto dell'evento. Un riavvio, un
 secondo scatto dello stesso evento o lo scatto di TP dopo SL non producono mai un secondo cashout.
 
 Limiti dichiarati: F-02 (Claude B, branch `keep/f02-sl-tp-path-20261103`) non e' su `main`: senza F-02 nessun evento

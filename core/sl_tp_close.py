@@ -153,9 +153,11 @@ def position_bet_ids(trigger: SlTpTrigger, rows: Iterable[Dict[str, Any]]) -> Tu
 
 
 def state_record(trigger: SlTpTrigger, state: str, *, bet_ids: List[str], reason: str = "",
-                 at: float = 0.0) -> str:
+                 at: float = 0.0, request_ids: Iterable[str] = ()) -> str:
+    """Record persistito della chiusura. ``cashout_request_ids``: le richieste d'hedge pubblicate per questa chiusura,
+    lo stesso id che il CashoutExecutor scrive nella riga `orders` dell'hedge (legame tavolo -> hedge verificabile)."""
     return json.dumps({**trigger.as_payload(), "state": state, "bet_ids": list(bet_ids), "detail": reason,
-                       "at": at}, sort_keys=True)
+                       "at": at, "cashout_request_ids": list(request_ids)}, sort_keys=True)
 
 
 def read_state(raw: Any) -> Optional[str]:
