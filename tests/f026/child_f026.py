@@ -2,7 +2,7 @@
 
 argv: TREE OUT SCENARIO_JSON HOME
 SCENARIO_JSON: {"steps": [...]} con passi:
-  {"op": "signal", "m": "1.701", "price": 2.0, "side": "BACK"}       segnale reale (Roserpina decide lo stake;
+  {"op": "signal", "m": "1.701", "price": 2.0, "side": "BACK"}       ("sel": 12 per la seconda selezione; default 11)       segnale reale (Roserpina decide lo stake;
                                                                     con "stake" lo stake fisso del segnale)
   {"op": "mode", "m": "1.701", "mode": "lost"|"partial"|"ok"}       comportamento del trasporto (SIM)
   {"op": "settle", "m": "1.701", "win": true}                       mercato CLOSED (settlement reale via poller)
@@ -288,7 +288,7 @@ try:
             side = st.get("side", "BACK")
             t_sig = time.time()
             rows_before = order_rows(st["m"])
-            sig = {"market_id": st["m"], "selection_id": 11, "price": st.get("price", 2.0),
+            sig = {"market_id": st["m"], "selection_id": int(st.get("sel", 11)), "price": st.get("price", 2.0),
                    "side": side, "bet_type": side, "event_name": st.get("event", f"Ev{st['m']} v X"),
                    "market_name": "Match Odds", "runner_name": f"Ev{st['m']}",
                    "simulation_mode": True, "source": "F026"}

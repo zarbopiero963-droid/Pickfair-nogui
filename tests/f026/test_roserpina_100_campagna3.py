@@ -184,3 +184,17 @@ def test_stesso_seed_stesso_esito_e_stesso_dump() -> None:
         rep["protections"] = {k: sorted(v, key=lambda x: (x["run"], x["event"], str(x["market_id"])))
                               for k, v in rep["protections"].items()}
     assert primo == secondo
+
+
+# ------------------------------------------------------------------ G7-R13: due tavoli sullo stesso mercato
+def test_a5_sl_di_un_tavolo_non_tocca_l_altro_tavolo_dello_stesso_mercato() -> None:
+    """Tavolo X (selezione 11, abbinato, SL) e tavolo Y (selezione 12, BACK @50 non abbinato) sullo STESSO mercato. Lo SL
+    di X chiude solo X: il resting di Y resta vivo sull'exchange (nessuna contaminazione fra tavoli)."""
+    r1 = run([{"op": "signal", "m": "1.995", "price": 2.0, "stop_loss_pct": 10},
+              {"op": "signal", "m": "1.995", "price": 50.0, "sel": 12},
+              {"op": "price", "m": "1.995", "price": 3.0}, POLL])
+    last = r1["snaps"][-1]
+    y = [o for o in last["exch_orders"] if str(o["market_id"]) == "1.995" and str(o["selection_id"]) == "12"]
+    assert y and all(o["status"] == "EXECUTABLE" for o in y), ("resting dell'altro tavolo cancellato", y)
+    lays = {o["ref"] for o in last["exch_orders"] if str(o["market_id"]) == "1.995" and o["side"] == "LAY"}
+    assert len(lays) == 1, lays
