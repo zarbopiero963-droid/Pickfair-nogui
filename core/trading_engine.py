@@ -1392,6 +1392,16 @@ class TradingEngine:
                         reports.append(report)
         return reports
 
+    @staticmethod
+    def _raw_instruction_reports(response: Dict[str, Any]) -> list:
+        """Come ``_instruction_reports`` ma senza scartare le voci illeggibili: servono a decidere se un rifiuto e'
+        provato (una voce non oggetto non e' un FAILURE dichiarato)."""
+        reports: list = []
+        for container in (response, response.get("result"), response.get("raw")):
+            if isinstance(container, dict) and isinstance(container.get("instructionReports"), list):
+                reports.extend(container["instructionReports"])
+        return reports
+
     @classmethod
     def _response_bet_ids(cls, response: Dict[str, Any]) -> list:
         """Identita' d'ordine esplicite nelle shape broker supportate."""
@@ -1451,9 +1461,12 @@ class TradingEngine:
 
         # P1-1 (revisione Claude B, 05/11/2026): status FAILURE/PROCESSED_WITH_ERRORS con almeno un report che non e'
         # FAILURE (SUCCESS con betId, TIMEOUT, senza status) non prova il rifiuto: l'ordine puo' esistere => AMBIGUOUS.
-        if status in {"FAILURE", "PROCESSED_WITH_ERRORS"} and any(
-                not isinstance(r, dict) or str(r.get("status") or "").upper() != "FAILURE"
-                for r in self._instruction_reports(response)):
+        # Sol su #609: i report si leggono GREZZI (un report illeggibile non e' un FAILURE) e PROCESSED_WITH_ERRORS senza
+        # report non prova il fallimento dell'istruzione.
+        raw_reports = self._raw_instruction_reports(response)
+        if status in {"FAILURE", "PROCESSED_WITH_ERRORS"} and (
+                any(not isinstance(r, dict) or str(r.get("status") or "").upper() != "FAILURE" for r in raw_reports)
+                or (status == "PROCESSED_WITH_ERRORS" and not raw_reports)):
             raise ExecutionError(
                 f"DOWNSTREAM_MIXED_OUTCOME:{response}",
                 error_type=ERROR_AMBIGUOUS,

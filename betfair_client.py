@@ -1732,7 +1732,9 @@ class BetfairClient:
                 # ignoto con la risposta conservata, mai un FAILED che libererebbe tavolo, riserva e chiave.
                 mixed = [r for r in reports if not isinstance(r, dict)
                          or str(r.get("status") or "").upper() != "FAILURE"]
-                if mixed:
+                # Sol su #609: PROCESSED_WITH_ERRORS senza report non prova il fallimento dell'istruzione (solo FAILURE
+                # dichiara il rifiuto dell'intera richiesta): esito ignoto, mai un FAILED che libera riserva e dedupe.
+                if mixed or (status == "PROCESSED_WITH_ERRORS" and not reports):
                     raise RuntimeError(f"BET_OUTCOME_MIXED: {status}")
 
             if status != "SUCCESS":

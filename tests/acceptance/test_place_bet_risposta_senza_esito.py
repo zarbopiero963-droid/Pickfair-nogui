@@ -139,6 +139,17 @@ RISPOSTE_SENZA_ESITO = {
     "failure_con_report_success": [
         {"result": {"status": "FAILURE", "instructionReports": [{"status": "SUCCESS", "betId": "31415"}]}}
     ],
+    # Sol su #609 (911562a..5f9ddee): PROCESSED_WITH_ERRORS senza report non prova il fallimento dell'istruzione
+    # (con FAILURE e' Betfair a dichiarare il rifiuto dell'intera richiesta); un report illeggibile non e' un FAILURE.
+    "processed_with_errors_senza_report": [
+        {"result": {"status": "PROCESSED_WITH_ERRORS", "errorCode": "PROCESSED_WITH_ERRORS"}}
+    ],
+    "processed_with_errors_report_vuoti": [
+        {"result": {"status": "PROCESSED_WITH_ERRORS", "instructionReports": []}}
+    ],
+    "failure_con_report_non_oggetto": [
+        {"result": {"status": "FAILURE", "instructionReports": [None]}}
+    ],
 }
 
 #: Le stesse risposte miste come le restituisce un broker che NON e' BetfairClient (corpo grezzo all'engine).

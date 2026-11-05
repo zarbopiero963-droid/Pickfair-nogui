@@ -8340,8 +8340,8 @@
       "module": "core.trading_engine",
       "area": "ambiguous",
       "file": "core/trading_engine.py",
-      "original": "        if status in {\"FAILURE\", \"PROCESSED_WITH_ERRORS\"} and any(",
-      "mutated": "        if False and any(",
+      "original": "        if status in {\"FAILURE\", \"PROCESSED_WITH_ERRORS\"} and (",
+      "mutated": "        if False and (",
       "tests": [
         "tests/acceptance/test_place_bet_risposta_senza_esito.py",
         "tests/acceptance/test_place_bet_senza_esito_catena.py",
