@@ -1,6 +1,6 @@
-# HANDOFF Claude B — seq 20 (05/11/2026)
+# HANDOFF Claude B — seq 21 (05/11/2026)
 
-- #609 F-14 MERGED (owner) 89af178e, CI post-merge 14/14.
-- Nessuna PR aperta. Prossima: F-16 (branch claude/d-f16-funds-freshness, merge main locale 7fae18d4).
-- Poi F-R06 (1d8ca01) e hardening pfckpt (pfckpt-squash-durable b449f359).
+- F-16 pubblicato su claude/d-f16-funds-freshness @ 7fae18d4; PR in apertura.
+- Handoff C: handoff/claude-c/mcp-core-20261105 @ f22d6bfb (DURABLE da provare con pfckpt de40d0cd).
+- pfckpt-squash-durable @ de40d0cd: PR dopo F-16.
 - LIVE OFF.

@@ -26,14 +26,16 @@
   "F-14 verificato FIT fino a a38f827 (registro docs/roadmap/reviews/f14_*), PR #609 aperta",
   "F-16 4250f97 verificato FIT (registro f16_review_4250f97); fix D @64e965b da verificare",
   "Roadmap PF-UNIVERSAL-360-TESTING registrata (pf-gov-persistent-roadmap-01 @eacba405)",
-  "#609 F-14 merged owner 89af178e (decisione c.6662355106, verifica c.6662369024)"
+  "#609 F-14 merged owner 89af178e (decisione c.6662355106, verifica c.6662369024)",
+  "Handoff C pubblicato handoff/claude-c/mcp-core-20261105 @ f22d6bfb (verificato da C)",
+  "PF-CKPT-CROSS-REPO-PROOF-02: pfckpt-squash-durable @ de40d0cd (117 test, 12/12 digest reali)"
  ],
- "lotto_corrente": "#609 F-14 MERGED owner 89af178e (tree = 1b2b5024, CI post-merge 14/14). Prossima PR: F-16.",
+ "lotto_corrente": "F-16: head 7fae18d4 pubblicato (merge main 89af178e su 64e965b). PR in apertura.",
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "next_atomic_action": "F-16: test sul branch f16-pr (merge main 7fae18d4), push su claude/d-f16-funds-freshness, PR, gate, auto-merge se tutti PASS. Poi F-R06 (1d8ca01), poi pfckpt hardening (b449f359, rebase su main).",
+ "next_atomic_action": "Aprire PR F-16 [TASK: d_f16_funds_freshness], subscribe, attendere gate; auto-merge solo con tutti PASS sullo stesso SHA. Issue per test_issue437_pr02 (preesistente su main). Attendere verifica C su de40d0cd.",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
-  "F-16 gate su nuovo head"
+  "gate CI/review/PRE-LIVE su 7fae18d4"
  ]
 }
