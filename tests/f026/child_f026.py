@@ -282,9 +282,10 @@ try:
                 BOOK.setdefault(st["m"], {})["nomatch"] = True
             continue
         if op == "signal":
-            BOOK[st["m"]] = {"price": st.get("price", 2.0), **BOOK.get(st["m"], {})}
-            BOOK[st["m"]]["price"] = st.get("price", 2.0)
-            book(st["m"], back_size=1.0 if BOOK[st["m"]].get("partial") else 100.0)
+            if not st.get("keep_book"):         # "keep_book": secondo tavolo sullo stesso mercato, book invariato
+                BOOK[st["m"]] = {"price": st.get("price", 2.0), **BOOK.get(st["m"], {})}
+                BOOK[st["m"]]["price"] = st.get("price", 2.0)
+                book(st["m"], back_size=1.0 if BOOK[st["m"]].get("partial") else 100.0)
             side = st.get("side", "BACK")
             t_sig = time.time()
             rows_before = order_rows(st["m"])
