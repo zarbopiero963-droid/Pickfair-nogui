@@ -19,6 +19,7 @@ SCENARIO_JSON: {"steps": [...]} con passi:
                                                                     che il runtime riceva RUNTIME_CLOSE_POSITION (F-10)
   {"op": "lockdown"} / {"op": "pause"} / {"op": "emergency"}         LOCKDOWN, PAUSED, emergency stop (PF-ALL-F027)
   {"op": "wait", "s": 3}
+  {"op": "funds_max_age", "s": 0}                                   soglia F-16 forzata (G7-R12)
   {"op": "price", "m": "1.701", "price": 1.6}                       quota mossa sul book (es. dopo un gol), mercato OPEN
   {"op": "suspend", "m": "1.701"} / {"op": "reopen", "m": "1.701"}   mercato SUSPENDED / di nuovo OPEN (stessa quota)
   {"op": "replay_cmd", "m": "1.701"}                                ripubblica l'ultimo CMD_QUICK_BET del mercato (PR29-a)
@@ -368,6 +369,9 @@ try:
             R["emergency"] = str(rt.emergency_stop("f027_test"))[:200]; time.sleep(0.5)
         elif op == "wait":
             time.sleep(st.get("s", 2))
+        elif op == "funds_max_age":
+            # G7-R12: soglia di freschezza dei fondi (F-16) forzata; 0 => ogni lettura e' gia' vecchia al gate
+            type(rt).LIVE_FUNDS_MAX_AGE_S = float(st["s"]); continue
         elif op == "price":
             BOOK.setdefault(st["m"], {})["price"] = float(st["price"])
             # mercato "partial": nessuna contropartita per il BACK (il residuo resta non abbinato), lay disponibile
