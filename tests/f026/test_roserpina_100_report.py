@@ -62,9 +62,8 @@ def _oracle_net(snaps, market: str, win: bool) -> D:
         if str(o["market_id"]) != market or not o.get("matched"):
             continue
         m = D(str(o["matched"]))
-        # prezzo medio non esposto nello snapshot: la quota del prezzo richiesto e' quella abbinata nel broker SIM
-        # (il book offre esattamente quel prezzo; nessun miglioramento modellato).
-        p = D(str(o["price"]))
+        # prezzo medio CONFERMATO dall'exchange (averagePriceMatched); senza, la quota richiesta (SIM: book esatto)
+        p = D(str(o.get("avg_price") or o["price"]))
         mine = str(o["selection_id"]) == "11"
         sel_wins = win if mine else not win
         if o["side"] == "BACK":
