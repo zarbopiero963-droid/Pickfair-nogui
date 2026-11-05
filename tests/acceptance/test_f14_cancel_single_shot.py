@@ -290,3 +290,28 @@ def test_report_non_dict_con_due_istruzioni_resta_ambiguous_e_attribuisce_solo_p
 
     assert out["outcome"] == "AMBIGUOUS" and out["ok"] is False, out
     assert out["cancelled_bet_ids"] == ["B2"], out          # B2 e' alla sua posizione reale; B1 resta ignoto
+
+
+# ------------------------------------------------------------------ revisione Sol su #609 (911562a..69765cf, VALID_BLOCKERS)
+@pytest.mark.parametrize("errore", [
+    TimeoutError(),                                                   # senza messaggio: il testo e' vuoto
+    ConnectionError(),
+    Timeout(),                                                        # requests, senza messaggio
+    ReqConnectionError(),
+    RuntimeError("CANCEL_ORDER_UNCONFIRMED: CANCEL_AMBIGUOUS"),       # wrapper del cancel singolo
+    RuntimeError("CANCEL_ORDER_UNCONFIRMED: status=UNKNOWN reports=[]"),
+])
+def test_order_manager_eccezione_ad_esito_ignoto_per_tipo_o_codice_e_ambiguous(errore) -> None:
+    """Il tipo dell'eccezione o il codice UNCONFIRMED provano un esito ignoto anche senza i marcatori nel testo."""
+    out, saga, eventi = _cancel_with(errore)
+    assert out["status"] == "AMBIGUOUS" and saga == "AMBIGUOUS", (repr(errore), out)
+    assert "QUICK_BET_CANCEL_AMBIGUOUS" in eventi and "QUICK_BET_CANCEL_FAILED" not in eventi
+
+
+@pytest.mark.parametrize("errore", [
+    RuntimeError("API_ERROR: INVALID_INPUT_DATA"), RuntimeError("SESSION_EXPIRED"),
+    RuntimeError("CANCEL_ORDER_FAILED: CANCEL_FAILED: BET_TAKEN_OR_LAPSED"), ValueError("bad"),
+])
+def test_order_manager_rifiuto_certo_resta_failed(errore) -> None:
+    out, saga, _ev = _cancel_with(errore)
+    assert out["status"] == "FAILED" and saga == "FAILED", (repr(errore), out)

@@ -83,7 +83,8 @@ numero dei report coincide con quello delle istruzioni (Betfair li restituisce n
 entrano anche i report illeggibili, che restano esito ignoto (rilievo di Sol su #609).
 `BetfairClient.cancel_order` (cancel di un ghost) solleva `CANCEL_ORDER_UNCONFIRMED` per `AMBIGUOUS`/`PARTIAL` e
 `CANCEL_ORDER_FAILED` per `FAILED`. `OrderManager.cancel_order`: esito `AMBIGUOUS` del client, o eccezione di
-timeout/rete/5xx/risposta illeggibile => saga `AMBIGUOUS` (terminale: nessuna transizione senza prova, #495) e
+timeout/rete/5xx/risposta illeggibile (riconosciuta prima dal tipo: `TimeoutError`, `ConnectionError`, eccezioni
+`requests`, anche senza messaggio; poi dal testo, compreso `CANCEL_ORDER_UNCONFIRMED`) => saga `AMBIGUOUS` (terminale: nessuna transizione senza prova, #495) e
 `QUICK_BET_CANCEL_AMBIGUOUS`; mai `FAILED`. Riserva e tavolo restano acquisiti finche' il cancel non e' confermato
 (PF-EXEC-01). Test: `tests/acceptance/test_f14_cancel_single_shot.py`, `tests/acceptance/test_betid_extractor_unico.py`.
 

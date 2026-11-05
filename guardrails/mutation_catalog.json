@@ -8287,7 +8287,7 @@
       "module": "order_manager",
       "area": "ambiguous",
       "file": "order_manager.py",
-      "original": "            if _cancel_error_unknown(str(exc)):",
+      "original": "            if _cancel_error_unknown(exc):",
       "mutated": "            if False:",
       "tests": [
         "tests/acceptance/test_f14_cancel_single_shot.py",

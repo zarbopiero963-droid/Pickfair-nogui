@@ -347,10 +347,23 @@ class ValidationError(OrderError):
 # =============================================================
 # 7. ORDER MANAGER
 # =============================================================
-def _cancel_error_unknown(error_text: str) -> bool:
-    """F-14: eccezione del broker dopo un possibile invio (timeout, rete, 5xx, risposta illeggibile)."""
-    e = str(error_text or "").upper()
-    return any(k in e for k in ("TIMEOUT", "NETWORK_ERROR", "HTTP_5", "INVALID_JSON", "UNKNOWN_ERROR"))
+def _cancel_error_unknown(exc: Any) -> bool:
+    """F-14: eccezione del broker dopo un possibile invio (timeout, rete, 5xx, risposta illeggibile).
+
+    Decide prima il TIPO (rilievo di Sol su #609): un ``TimeoutError()`` o un errore di connessione senza messaggio
+    ha testo vuoto ma resta un esito ignoto. Poi il testo: marcatori di trasporto e il codice
+    ``CANCEL_ORDER_UNCONFIRMED`` del cancel singolo (esito AMBIGUOUS/PARTIAL non confermato)."""
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    try:
+        from requests.exceptions import RequestException
+    except ImportError:                                  # pragma: no cover - requests e' una dipendenza del runtime
+        RequestException = ()                            # type: ignore[assignment]
+    if RequestException and isinstance(exc, RequestException):
+        return True
+    e = str(exc or "").upper()
+    return any(k in e for k in ("TIMEOUT", "NETWORK_ERROR", "HTTP_5", "INVALID_JSON", "UNKNOWN_ERROR",
+                                "CANCEL_ORDER_UNCONFIRMED"))
 
 
 class OrderManager:
@@ -964,7 +977,7 @@ class OrderManager:
             response = cancel_fn(**self._kwargs_cancel_singolo(
                 cancel_fn, market_id, str(bet_id).strip()))
         except Exception as exc:
-            if _cancel_error_unknown(str(exc)):
+            if _cancel_error_unknown(exc):
                 return self._cancel_ambiguous(customer_ref, bet_id, str(exc))
             self._transition_saga(
                 customer_ref=customer_ref,
