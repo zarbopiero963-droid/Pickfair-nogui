@@ -1,0 +1,10 @@
+{
+ "schema": "pf-behaviour-coverage/1",
+ "note": "PF-VPS-UNIVERSAL-TEST-AUTOMATION-01 (#586) §3. Mappa comportamento -> suite del catalogo. Un comportamento inventariato NON equivale a un test esistente: ogni voce e' COVERED, PARTIAL, NOT_COVERED o NOT_APPLICABLE con motivazione verificabile.",
+ "inventory": {
+  "source": "Gate A #506 (1062 comportamenti)",
+  "status": "NOT_IMPORTED",
+  "reason": "L'inventario non e' presente nel repository: va importato dalla sua fonte (#506 / VPS) senza inventare voci."
+ },
+ "behaviours": []
+}

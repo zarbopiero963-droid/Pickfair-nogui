@@ -250,7 +250,7 @@ jobs:
               # sulla #483). Misurato sul repo intero: 18 righe su 219.588
               # redatte piu' di prima (commenti, esempi, percorsi di test con
               # `/`), nessuna di codice di produzione.
-              (re.compile(r"(?im)^([+\- ]?[ \t]*(?:(?:--|[-*!]|#+|//+|;+|/\*+|<!--)[ \t]*)?(?:(?:export|set)[ \t]+)?[\"']?(?:[\w\-]+\.)*[\w\-]*?)(api[_-]?key|app[_-]?key|token|secret|password|passwd|pwd|private[_-]?key|cert)[\"']?[ \t]*(?:=(?![=>])[ \t]*(?!\(|(?:lambda|await)\b|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:[(\[]|[ \t]*[,;][ \t]*$))|:(?!=)[ \t]*(?!\(|(?:lambda|await)\b|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:[(\[]|[ \t]*[,;][ \t]*$)|(?:str|int|float|bool|bytes|dict|list|tuple|set|object|Any)[ \t]+(?:=(?!=)|\|)[ \t]))(?!\$\{\{)(?=[^\"'\s])[^\n]*"), r"\1\2=[REDACTED]"),
+              (re.compile(r"(?im)^([+\- ]?[ \t]*(?:(?:--|[-*!]|#+|//+|;+|/\*+|<!--)[ \t]*)?(?:(?:export|set)[ \t]+)?[\"']?(?:[\w\-]+\.)*[\w\-]*?)(api[_-]?key|app[_-]?key|token|secret|password|passwd|pwd|private[_-]?key|cert)(?!(?<=id-token)[\"']?[ \t]*:[ \t]*(?:read|write|none)[ \t]*$)[\"']?[ \t]*(?:=(?![=>])[ \t]*(?!\(|(?:lambda|await)\b|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:[(\[]|[ \t]*[,;][ \t]*$))|:(?!=)[ \t]*(?!\(|(?:lambda|await)\b|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:[(\[]|[ \t]*[,;][ \t]*$)|(?:str|int|float|bool|bytes|dict|list|tuple|set|object|Any)[ \t]+(?:=(?!=)|\|)[ \t]))(?!\$\{\{[ \t]*(?:secrets|github|inputs|env|vars|steps|needs|matrix|runner|job|strategy)\.[\w.\-]+(?:[ \t]*(?:\|\||&&)[ \t]*(?:secrets|github|inputs|env|vars|steps|needs|matrix|runner|job|strategy)\.[\w.\-]+)*[ \t]*\}\}[ \t]*$)(?=[^\"'\s])[^\n]*"), r"\1\2=[REDACTED]"),
               # Regola generica chiave/valore. Copre: valore nudo, quotato,
               # con spazi, con delimitatore escapato, e quotato NON chiuso
               # (li' il ramo quotato consuma fino a fine riga — `\n` escluso
@@ -260,7 +260,7 @@ jobs:
               # codice (argomenti, confronti, firme), e redigere fino a fine riga
               # lo toglierebbe al reviewer. Residuo dichiarato, con i valori su
               # righe successive (blocchi YAML `|`) e le tabelle senza separatore.
-              (re.compile(r"(?i)(api[_-]?key|app[_-]?key|token|secret|password|passwd|pwd|private[_-]?key|cert)[\"']?\s*[:=]\s*(?:\"(?:\\.|[^\"\\\n])*\"?|'(?:\\.|[^'\\\n])*'?|[^\"'\s,;]+)"), r"\1=[REDACTED]"),
+              (re.compile(r"(?i)(api[_-]?key|app[_-]?key|token|secret|password|passwd|pwd|private[_-]?key|cert)(?!(?<=id-token)[\"']?\s*:\s*(?:\"(?:read|write|none)\"|'(?:read|write|none)'|(?:read|write|none)(?![^\s,;}\]]))(?=[ \t]*(?:$|[\n,;}\]])))[\"']?\s*[:=]\s*(?!(?:\"\$\{\{[ \t]*(?:secrets|github|inputs|env|vars|steps|needs|matrix|runner|job|strategy)\.[\w.\-]+(?:[ \t]*(?:\|\||&&)[ \t]*(?:secrets|github|inputs|env|vars|steps|needs|matrix|runner|job|strategy)\.[\w.\-]+)*[ \t]*\}\}\"|'\$\{\{[ \t]*(?:secrets|github|inputs|env|vars|steps|needs|matrix|runner|job|strategy)\.[\w.\-]+(?:[ \t]*(?:\|\||&&)[ \t]*(?:secrets|github|inputs|env|vars|steps|needs|matrix|runner|job|strategy)\.[\w.\-]+)*[ \t]*\}\}'|\$\{\{[ \t]*(?:secrets|github|inputs|env|vars|steps|needs|matrix|runner|job|strategy)\.[\w.\-]+(?:[ \t]*(?:\|\||&&)[ \t]*(?:secrets|github|inputs|env|vars|steps|needs|matrix|runner|job|strategy)\.[\w.\-]+)*[ \t]*\}\})[ \t]*(?:$|[\n,;}\]]))(?:\"(?:\\.|[^\"\\\n])*\"?|'(?:\\.|[^'\\\n])*'?|[^\"'\s,;]+)"), r"\1=[REDACTED]"),
           ]
 
           def redact(text: str) -> str:
