@@ -86,6 +86,9 @@ def test_a1_ingresso_parziale_un_solo_hedge_sull_abbinato_confermato(guasti) -> 
     assert matched_back == D("1"), backs
     # green-up di 1 EUR @2.0 chiuso @3.02: hedge ~0.66, mai sullo stake intero richiesto
     assert D(str(lays[0]["size"])) <= matched_back, lays
+    # il residuo non abbinato del BACK e' cancellato PRIMA dell'hedge: non puo' abbinarsi dopo e riaprire la posizione
+    assert all(not (o.get("status") == "EXECUTABLE" and D(str(o["size"])) > D(str(o["matched"] or 0)))
+               for o in backs), backs
     assert len(_closes(rep, "1.951", "SL_TP_CLOSE_ROUTED")) == 1
 
 

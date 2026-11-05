@@ -369,7 +369,9 @@ try:
             time.sleep(st.get("s", 2))
         elif op == "price":
             BOOK.setdefault(st["m"], {})["price"] = float(st["price"])
-            book(st["m"]); time.sleep(0.3); wait_for(f"{i}:price", lambda: True)
+            # mercato "partial": nessuna contropartita per il BACK (il residuo resta non abbinato), lay disponibile
+            book(st["m"], back_size=0.0 if BOOK[st["m"]].get("partial") else 100.0)
+            time.sleep(0.3); wait_for(f"{i}:price", lambda: True)
         elif op == "suspend":
             book(st["m"], status="SUSPENDED"); time.sleep(0.3); wait_for(f"{i}:suspend", lambda: True)
         elif op == "reopen":
