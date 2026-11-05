@@ -9,6 +9,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **Governance: verificatore dell'evidenza di teardown del PRE-LIVE (PF-TEARDOWN-EVIDENCE-01, #608):**
+  `tools/teardown_evidence/verify_teardown_evidence.py` verifica da GitHub, per ogni run VPS del PRE-LIVE, le evidenze
+  firmate `pf-teardown-evidence/<suite>` pubblicate da pf-orch `1.4.3+teardown-evidence-1` (doppia firma Ed25519 con
+  chiave fissata, legame sha256 manifest/sidecar, build autorizzata, teardown pulito del tipo di unit giusto).
+  Fail-closed; il PASS copre solo il teardown, non la conclusione del PRE-LIVE. Revisioni indipendenti e test di
+  manomissione in `tests/teardown_evidence/`; `docs/review_attestation.md` §3-bis.
+- **Governance: redazione dei reviewer e run di review saltati (decisione owner sulla #606, merge owner):**
+  - la redazione dei segreti dei cinque workflow di review lascia visibili il permesso `id-token: read|write|none`
+    e i riferimenti `${{ ... }}` fatti solo di contesti (`secrets.`, `github.`, `inputs.`...) che occupano tutto
+    il valore. Prima li oscurava, e Sol non poteva certificare il permesso OIDC di `pf-test-request.yml`
+    (VALID_INCONCLUSIVE sulla #606). Ogni altro valore resta redatto. Misurate 59 righe in più visibili su 325.884,
+    tutte di queste due forme;
+  - chiusa una fuga **preesistente**: `password: ${{ 'x' }}` (letterale dentro un'espressione) usciva in chiaro,
+    perché la regola di inizio riga escludeva ogni valore che comincia con `${{`. Ora a inizio riga si redige tutto
+    tranne il riferimento di contesto puro. Fuzz differenziale di oltre 50.000 righe: nessun valore nascosto da main
+    diventa visibile;
+  - il valore consentito deve chiudere la riga o il campo: un commento dopo il permesso o dopo il riferimento, oppure
+    un riferimento quotato non chiuso subito dopo `}}` (`"${{ secrets.X }}, altro"`), restano redatti come su main
+    (rilievi di Sol sulla #608);
+  - `scripts/pr_review_attestation.py` esclude un tentativo `skipped` da `RUN_WITHOUT_ATTESTATION` solo con la
+    prova dall'API dei job (tutti `completed`/`skipped`, nessuno step, elenco completo). Sulla #606 quattro run
+    saltati alla riapertura bloccavano verify-pr senza aver eseguito nulla. Un run ambiguo o non leggibile continua
+    a bloccare. `docs/ai_audit_workflows.md` e `docs/review_attestation.md` aggiornati.
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**
   - se un range precedente di Sol o Grok non è PASS (BLOCKERS, INCONCLUSIVE, ERROR, incompleto), la review della push
     successiva copre l'intera PR `BASE...HEAD` invece del solo delta;

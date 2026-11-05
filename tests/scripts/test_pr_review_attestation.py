@@ -1295,3 +1295,73 @@ def test_historical_blockers_are_never_cleared_by_delta_only_passes_after_a_forc
     d = _decide(live)    # bloccante su commit vivo + orfano: il delta non chiude nessuno dei due
     assert not d.passed and "OPEN_BLOCKERS:gpt-6.1-sol" in d.reasons
     assert _decide(live + [_pair("gpt-6.1-sol", BASE, HEAD, run=7)]).passed
+
+
+# #606 (owner, c.6627474499): un run di review SALTATO dall'`if:` del job (riapertura della PR, 0 step eseguiti) non
+# ha prodotto nessuna review, quindi non lascia un esito sconosciuto. Si esclude SOLO con la prova dall'API dei job di
+# QUEL tentativo: almeno un job, elenco completo, ogni job `completed`/`skipped` e senza step. Qualunque altra forma,
+# o l'API non leggibile, resta RUN_WITHOUT_ATTESTATION (fail-closed).
+class _SkippedRunAPI(_RunsAPI):
+    def __init__(self, jobs, attempt=1, attempt_conclusions=None, jobs_status=200, total=None):
+        run = {"id": 500, "status": "completed", "conclusion": "skipped", "run_attempt": attempt,
+               "pull_requests": [{"number": PR}]}
+        super().__init__(run, [], attempt_conclusions=attempt_conclusions)
+        self.jobs, self.jobs_status, self.total = jobs, jobs_status, total
+        self.jobs_urls = []
+
+    def __call__(self, url):
+        p = url.split(f"/repos/{REPO}", 1)[1]
+        if p.startswith("/actions/runs/500/attempts/") and "/jobs" in p:
+            self.jobs_urls.append(p)
+            if self.jobs_status != 200:
+                return self.jobs_status, b""
+            total = len(self.jobs) if self.total is None else self.total
+            return 200, json.dumps({"total_count": total, "jobs": self.jobs}).encode()
+        return super().__call__(url)
+
+
+_SKIPPED_JOB = {"name": "GPT-6.1 Sol push-range review", "status": "completed", "conclusion": "skipped", "steps": []}
+
+
+def test_a_run_skipped_by_the_job_condition_with_no_steps_does_not_block():
+    api = _SkippedRunAPI([_SKIPPED_JOB])
+    out = _verify(api)
+    assert out["passed"], out
+    assert api.jobs_urls == ["/actions/runs/500/attempts/1/jobs?per_page=100"]
+
+
+@pytest.mark.parametrize("jobs,total,status", [
+    ([], None, 200),                                                                # nessun job: nessuna prova
+    ([dict(_SKIPPED_JOB, conclusion="success")], None, 200),                       # un job e' girato
+    ([dict(_SKIPPED_JOB, conclusion="failure")], None, 200),
+    ([dict(_SKIPPED_JOB, status="in_progress", conclusion=None)], None, 200),
+    ([dict(_SKIPPED_JOB, steps=[{"name": "Set up job", "conclusion": "success"}])], None, 200),   # step eseguiti
+    ([dict(_SKIPPED_JOB, steps=[{"name": "x", "conclusion": "skipped"}])], None, 200),           # step presenti
+    ([{k: v for k, v in _SKIPPED_JOB.items() if k != "steps"}], None, 200),       # step non dichiarati
+    ([_SKIPPED_JOB, dict(_SKIPPED_JOB, conclusion="success")], None, 200),         # uno saltato, uno no
+    ([_SKIPPED_JOB], 2, 200),                                                       # elenco incompleto
+    ([_SKIPPED_JOB], None, 500),                                                    # API non leggibile
+    ([_SKIPPED_JOB], None, 404),
+])
+def test_a_skipped_run_without_verifiable_proof_of_no_execution_still_blocks(jobs, total, status):
+    out = _verify(_SkippedRunAPI(jobs, total=total, jobs_status=status))
+    assert not out["passed"] and "RUN_WITHOUT_ATTESTATION:gpt-6.1-sol:500:1" in out["reasons"], out
+    assert "UNVERIFIED_ATTESTATION" in out["reasons"]
+
+
+def test_an_earlier_skipped_attempt_needs_its_own_proof():
+    # tentativo 1 saltato con prova, tentativo 2 (l'ultimo) saltato con la stessa prova: nessun esito sconosciuto
+    api = _SkippedRunAPI([_SKIPPED_JOB], attempt=2, attempt_conclusions={1: "skipped"})
+    assert _verify(api)["passed"]
+    assert sorted(api.jobs_urls) == ["/actions/runs/500/attempts/1/jobs?per_page=100",
+                                     "/actions/runs/500/attempts/2/jobs?per_page=100"]
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "cancelled", "timed_out", "neutral", "action_required", None, ""])
+def test_only_the_skipped_conclusion_can_use_the_job_proof(conclusion):
+    # un run fallito con job tutti "saltati" non diventa un salto: la prova si cerca solo per `skipped`
+    api = _SkippedRunAPI([_SKIPPED_JOB])
+    api.extra_run = dict(api.extra_run, conclusion=conclusion)
+    out = _verify(api)
+    assert not out["passed"] and "RUN_WITHOUT_ATTESTATION:gpt-6.1-sol:500:1" in out["reasons"]
+    assert api.jobs_urls == []

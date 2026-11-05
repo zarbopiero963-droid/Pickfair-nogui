@@ -93,6 +93,30 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
   o una f-string, una fixture quotata e un'assegnazione temporanea della shell
   prima di un comando. Anche una riga dell'output del modello che comincia con
   una di queste chiavi seguita da `:` viene redatta per intero.
+  Restano **visibili** due sole forme che non possono contenere un valore
+  segreto (decisione owner sulla #606, dove Sol risultava INCONCLUSIVE perché il
+  permesso OIDC del workflow era oscurato): il permesso Actions `id-token` con
+  valore esatto `read`, `write` o `none` (YAML o JSON quotato) e un'espressione
+  di Actions `${{ ... }}` che occupa da sola tutto il valore ed è fatta **solo**
+  di riferimenti di contesto (`secrets.`, `github.`, `inputs.`, `env.`, `vars.`,
+  `steps.`, `needs.`, `matrix.`, `runner.`, `job.`, `strategy.`, uniti da `||` o
+  `&&`): ne esce il **nome** del secret, mai il valore, che nel diff non c'è.
+  Un'espressione con un letterale (`${{ 'x' }}`, `format(...)`, confronti),
+  malformata o con testo attaccato viene redatta: a inizio riga **per intero**.
+  Il valore deve **finire** lì: un commento dopo il permesso o dopo il
+  riferimento (`id-token: write # ...`) rende la riga redatta come prima, e un
+  riferimento quotato deve chiudere la propria virgoletta subito dopo `}}`
+  (`"${{ secrets.X }}, altro"` resta redatto per intero). Rilievi di Sol sulla
+  #608.
+  Prima la regola di inizio riga escludeva ogni valore che comincia con `${{`, e
+  la generica ne toglieva solo il primo pezzo: `password: ${{ 'x' }}` usciva in
+  chiaro (fuga preesistente, chiusa). Qualunque altro valore dopo `id-token`
+  viene redatto come prima; le parole di permesso valgono solo per `id-token`.
+  Residuo invariato: il valore quotato seguito da altro testo (P22/P23).
+  Misurato sul repo intero e sul diff della #606: 59 righe su 325.884 diventano
+  visibili, tutte di queste due forme, e 3 vengono redatte più di prima;
+  fuzz differenziale di oltre 50.000 righe: nessun valore che main nascondeva
+  diventa visibile.
 - **Il diff è trattato come contenuto non attendibile**: il prompt istruisce il
   modello a non seguire istruzioni contenute in codice/commenti/stringhe/nomi
   file (anti prompt-injection); i fence ```` ``` ```` nel diff vengono
