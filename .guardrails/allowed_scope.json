@@ -3497,9 +3497,10 @@
         "docs/cashout_overview.md",
         "guardrails/mutation_catalog.json",
         "tests/f03/__init__.py",
+        "tests/f03/test_f02_f04_f03_cumulativo.py",
         "tests/f03/test_f03_trailing_stop.py"
       ],
-      "max_files": 9
+      "max_files": 10
     }
   }
 }
