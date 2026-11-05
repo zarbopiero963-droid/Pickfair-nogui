@@ -27,10 +27,14 @@ broker oppure solleva. Non restituisce mai un `concurrent.futures.Future` né un
   `HEDGE_AMBIGUOUS` o `HEDGE_PENDING` il `response_json` conservato **non e' un dato confermato**: serve solo come
   identita' (`betId`, tramite `core.order_identity.response_bet_id`). Nessun consumatore tratta i suoi importi
   (`sizeMatched`, `averagePriceMatched`, `sizeRemaining`) come eseguiti: le quantita' abbinate si leggono solo
-  dall'exchange (`listCurrentOrders`/settlement) dopo la riconciliazione. Nel core le uniche letture del `response_json`
-  di `orders` sono l'estrazione del `betId` (`Database._order_bet_id`, `find_orders_by_bet_id`,
-  `RuntimeController._open_order_candidates`); il candidato di riconciliazione non porta importi abbinati (test
-  `test_riga_incerta_non_espone_importi_del_report`).
+  dall'exchange (`listCurrentOrders`/settlement) dopo la riconciliazione. Lettori del `response_json` di `orders` nel
+  core, tutti **solo identita'**: `Database._order_bet_id` (via `_live_bot_orders`/`get_bot_active_orders`),
+  `Database.find_orders_by_bet_id`, `Database.get_order` (restituisce la risposta grezza, nessun calcolo),
+  `RuntimeController._open_order_candidates`, `CashoutExecutor._hedge_rows`/`_hedge_block` (solo il `bet_id` dell'hedge;
+  quantita' e residuo dagli ordini correnti dell'exchange). Il candidato di riconciliazione non porta importi abbinati
+  (test `test_riga_incerta_non_espone_importi_del_report`). Il `matched` che `OrderRouter._normalize_live` mette su un
+  esito `AMBIGUOUS` (`order_unknown`) viene dai report ed e' **non confermato**: l'esito porta
+  `matched_confirmed: false` e quel valore finisce solo in audit/notifica, mai in un calcolo di esposizione.
 - **Attesa.** Il tempo di attesa vale `executor.default_timeout`. Se il valore manca o non è valido si usano 30 s (`ExecutorManager` di produzione: 30 s). Deve restare **maggiore** del timeout HTTP del `BetfairClient` (20 s), altrimenti si producono AMBIGUOUS evitabili. Il valore per LIVE resta un'ipotesi da validare (decisione owner).
 - **Thread.** L'attesa avviene nel worker dell'EventBus che esegue l'handler, mai nel thread della GUI. Un engine invocato da un worker dello stesso pool dell'executor rifiuta prima dell'invio (`EXECUTOR_REENTRANT_SUBMIT_REFUSED`), per evitare il deadlock.
 - **Messaggi pre-invio.** Non contengono la parola "timeout": `_handle_submit_exception` la legge come ambiguità, mentre la classificazione pre-invio è per **tipo**.

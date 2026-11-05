@@ -234,3 +234,12 @@ def test_order_manager_eccezione_dopo_invio_e_ambiguous(errore) -> None:
     """M22: 5xx o risposta illeggibile dopo l'invio, sollevati dal broker => saga AMBIGUOUS."""
     out, saga, _ev = _cancel_with(RuntimeError(errore))
     assert out["status"] == "AMBIGUOUS" and saga == "AMBIGUOUS", (errore, out)
+
+
+
+def test_report_senza_betid_piu_numerosi_delle_istruzioni_non_attribuiti() -> None:
+    """M10 originale: piu' report che istruzioni, senza betId espliciti => nessuna attribuzione per posizione."""
+    risultato = {"status": "SUCCESS", "instructionReports": [{"status": "SUCCESS"}, {"status": "FAILURE"}]}
+    out = _client(_Rete([_ok(risultato)])).cancel_orders(market_id="1.2", bet_ids=["B1"])
+
+    assert out["ok"] is False and out["outcome"] == "AMBIGUOUS" and out["cancelled_bet_ids"] == []

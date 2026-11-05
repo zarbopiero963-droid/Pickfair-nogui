@@ -132,6 +132,10 @@ RISPOSTE_SENZA_ESITO = {
     "processed_with_errors_report_senza_status": [
         {"result": {"status": "PROCESSED_WITH_ERRORS", "instructionReports": [{"betId": "31415"}]}}
     ],
+    "processed_with_errors_failure_e_timeout": [                       # N05: un TIMEOUT basta a non provare il rifiuto
+        {"result": {"status": "PROCESSED_WITH_ERRORS",
+                    "instructionReports": [{"status": "FAILURE", "errorCode": "INVALID_ODDS"}, {"status": "TIMEOUT"}]}}
+    ],
     "failure_con_report_success": [
         {"result": {"status": "FAILURE", "instructionReports": [{"status": "SUCCESS", "betId": "31415"}]}}
     ],
@@ -261,3 +265,26 @@ def test_engine_rifiuto_grezzo_tutti_failure_resta_definitivo(grezza: Any) -> No
     with pytest.raises(Exception) as exc:
         engine._raise_if_failed_semantic_response(dict(grezza))
     assert not (isinstance(exc.value, ExecutionError) and exc.value.error_type == ERROR_AMBIGUOUS), exc.value
+
+
+@pytest.mark.parametrize("grezza", list(RISPOSTE_MISTE_GREZZE.values()), ids=list(RISPOSTE_MISTE_GREZZE))
+def test_esito_misto_conserva_la_risposta(grezza: Any) -> None:
+    """N11: l'AMBIGUOUS dell'esito misto porta la risposta (betId) fino alla riga persistita."""
+    from core.trading_engine import ExecutionError, TradingEngine
+
+    engine = TradingEngine.__new__(TradingEngine)
+    with pytest.raises(ExecutionError) as exc:
+        engine._raise_if_failed_semantic_response(dict(grezza))
+    assert exc.value.response == grezza
+
+
+def test_order_router_matched_di_esito_ignoto_non_confermato() -> None:
+    """MCP-01k: il `matched` dei report su un esito ignoto e' marcato non confermato."""
+    from core.order_router import OrderRouter
+
+    ignoto = OrderRouter._normalize_live({"ok": False, "order_unknown": True, "error": "BET_OUTCOME_MIXED: X",
+                                          "result": {"instructionReports": [{"betId": "9", "sizeMatched": 5.0}]}})
+    certo = OrderRouter._normalize_live({"ok": True, "result": {"status": "SUCCESS", "instructionReports": [
+        {"status": "SUCCESS", "betId": "9", "sizeMatched": 5.0}]}})
+    assert ignoto["status"] == "AMBIGUOUS" and ignoto["matched_confirmed"] is False
+    assert certo["matched_confirmed"] is True

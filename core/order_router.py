@@ -303,6 +303,7 @@ class OrderRouter:
             "order_unknown": order_unknown,
             "status": status,
             "matched": matched,
+            "matched_confirmed": not order_unknown,   # MCP-01k: su esito ignoto `matched` viene dal report, NON confermato
             "bet_id": bet_id,
             "error": error,
             "raw": raw,
