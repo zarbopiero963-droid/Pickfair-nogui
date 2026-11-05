@@ -56,6 +56,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Control API: irrobustimento di sicurezza (MCP-SEC-01, handoff di Claude C):** pin al package 1.9.0 (token
   deboli rifiutati, rotazioni serializzate, connessioni limitate con scadenza, errori di protocollo fissi, nessun
   traceback per richiesta). Dipende dalle patch MCP-01d…MCP-01l.
+- **Control API: stato della chiusura SL/TP (MCP-01i, handoff di Claude C):** sezione `sl_tp_closes` in
+  `GET /v1/exposure` dai record persistiti da F-04, con ordini della posizione, esposizione residua e hedge legati
+  per id di richiesta. Pin al contratto 1.10.0. Dipende da F-04 e dalle patch MCP-01d…MCP-01l e MCP-SEC-01.
 
 ### Changed
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**

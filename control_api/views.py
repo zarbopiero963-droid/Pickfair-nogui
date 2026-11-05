@@ -475,14 +475,18 @@ def exposure_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict
             "tables": lambda: _tables(rc),
             "total_exposure": lambda: _total_exposure(rc),
             "recovery": lambda: _recovery(rc),
+            "_table_refs": lambda: _table_refs(rc),  # stessa acquisizione del lock: uso interno
         },
     )
+    table_refs = values.pop("_table_refs")
+    unavailable = [name for name in unavailable if name != "_table_refs"]
     return {
         "source": "core",
         "observed_at": float(clock()),
         "consistency": SECTION_CONSISTENCY,
         **values,
         "unavailable": unavailable,
+        "sl_tp_closes": _sl_tp_closes(rc, table_refs),  # MCP-01i
     }
 
 
@@ -1369,12 +1373,14 @@ def _broker_bet_ids(rc: object) -> set[str] | None:
         lock.release()  # type: ignore[union-attr]
 
 
-def _orders_snapshot(rc: object) -> dict[str, Any]:
+def _ro_transaction(rc: object, read: Callable[[sqlite3.Connection], Any]) -> Any:
+    """Una transazione di lettura sulla connessione in sola lettura; DB occupato => UNKNOWN, altrimenti
+    illeggibile => UNAVAILABLE. Usata da `/v1/orders` e dalle chiusure SL/TP (MCP-01i)."""
     conn = _ro_connection(rc)
     try:
         try:
             conn.execute("BEGIN")
-            rows = conn.execute(_ORDERS_SQL, (RECENT_FINALIZED, MAX_ORDERS + 1)).fetchall()
+            result = read(conn)
             conn.execute("COMMIT")
         except sqlite3.OperationalError as exc:
             text = str(exc).lower()
@@ -1385,6 +1391,12 @@ def _orders_snapshot(rc: object) -> dict[str, Any]:
             raise _SnapshotMissing("UNAVAILABLE", "DB_UNREADABLE") from None
     finally:
         conn.close()
+    return result
+
+
+def _orders_snapshot(rc: object) -> dict[str, Any]:
+    rows = _ro_transaction(
+        rc, lambda conn: conn.execute(_ORDERS_SQL, (RECENT_FINALIZED, MAX_ORDERS + 1)).fetchall())
     truncated = len(rows) > MAX_ORDERS
     queue_ids = _engine_queue_ids(rc)
     broker_ids = _broker_bet_ids(rc)
@@ -1810,3 +1822,175 @@ def market_book_view(rc: object, market_id: str, *,
         runners.append(runner)
     body.update(state="OK", book={**_book_header(book), "runners": runners, "omitted_runners": omitted})
     return body
+# ------------------------------------------------- MCP-01i: stato della chiusura SL/TP (F-04)
+#
+# Solo dati PERSISTITI dal core: il record di F-04 `risk.sl_tp_close.<customer_ref>` nella tabella
+# `settings` (stato CLAIMED/ROUTED/NOT_EXECUTED/UNCERTAIN, tavolo, posizione, betId, dettaglio), gli ordini
+# della posizione nel ledger `orders` e le righe d'hedge del ledger, tutti nella STESSA transazione di sola
+# lettura; l'esposizione residua dal tavolo, nella stessa acquisizione del lock dei tavoli di `tables`.
+# Costanti e stati vengono da `core.sl_tp_close` (nessuna regola replicata). Le chiusure respinte PRIMA
+# della rivendicazione (es. ORDER_STATE_UNCERTAIN) non sono persistite dal core: escono solo sul bus e qui
+# non compaiono. Hedge della chiusura: legati dal record (`cashout_request_ids`) alla riga del ledger
+# (`payload_json.cashout_request_id`), mai per selezione.
+
+MAX_CLOSES: Final = 64
+MAX_CLOSE_BETS: Final = 32
+HEDGE_COUNT_KEYS: Final = {"HEDGE_PENDING": "pending", "HEDGE_PLACED": "placed",
+                           "HEDGE_UNMATCHED": "unmatched", "HEDGE_AMBIGUOUS": "ambiguous",
+                           "HEDGE_FAILED": "failed"}
+
+
+def _close_module() -> Any:
+    try:
+        from core import sl_tp_close
+    except ImportError:
+        raise _SnapshotMissing("UNAVAILABLE", "CORE_PENDING_F04") from None
+    return sl_tp_close
+
+
+def _close_rows(rc: object, prefix: str) -> tuple[list[Any], dict[str, list[Any]], list[Any]]:
+    def read(conn: sqlite3.Connection) -> tuple[list[Any], dict[str, list[Any]], list[Any]]:
+        records = conn.execute(
+            "SELECT key, value FROM settings WHERE substr(key, 1, ?) = ? ORDER BY key LIMIT ?",
+            (len(prefix), prefix, MAX_CLOSES + 1)).fetchall()
+        positions: dict[str, list[Any]] = {}
+        for record in records[:MAX_CLOSES]:
+            ref = str(record["key"])[len(prefix):]
+            positions[ref] = conn.execute(
+                "SELECT id, customer_ref, status, payload_json, response_json, ambiguity_reason, "
+                "finalized, created_at, updated_at FROM orders WHERE customer_ref = ? ORDER BY id",
+                (ref,)).fetchall()
+        hedges = conn.execute(
+            "SELECT status, payload_json FROM orders WHERE substr(customer_ref, 1, 6) = 'hedge:'"
+        ).fetchall()
+        return records, positions, hedges
+
+    return _ro_transaction(rc, read)
+
+
+def _position_summary(rows: list[Any]) -> dict[str, int]:
+    counts = {"orders": 0, "partially_matched": 0, "in_reconciliation": 0, "ambiguous": 0,
+              "unreadable": 0}
+    for row in rows:
+        try:
+            order = _order_row(row, set(), None)  # stessa mappa degli stati di GET /v1/orders
+        except Exception:  # noqa: BLE001
+            counts["unreadable"] += 1
+            continue
+        counts["orders"] += 1
+        counts["partially_matched"] += order["status"] == "PARTIALLY_MATCHED"
+        counts["ambiguous"] += order["status"] == "AMBIGUOUS"
+        counts["in_reconciliation"] += order["reconciliation"]["in_reconciliation"]
+    return counts
+
+
+def _close_hedges(hedges: list[Any], request_ids: object) -> dict[str, Any] | None:
+    """Righe d'hedge della chiusura: quelle con ``cashout_request_id`` registrato nel record di F-04.
+
+    Record senza ``cashout_request_ids`` (forma precedente di F-04): legame non dimostrabile, None.
+    ``not_in_ledger``: richieste pubblicate senza una riga d'hedge nel ledger (non ancora scritta o soppressa).
+    """
+    if not isinstance(request_ids, list) or not all(isinstance(r, str) and r for r in request_ids):
+        return None
+    wanted = set(request_ids)
+    counts: dict[str, Any] = {"requests": len(wanted), **{k: 0 for k in HEDGE_COUNT_KEYS.values()}}
+    seen: set[str] = set()
+    for row in hedges:
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except ValueError:
+            continue
+        rid = payload.get("cashout_request_id") if isinstance(payload, dict) else None
+        if rid not in wanted:
+            continue
+        seen.add(rid)
+        key = HEDGE_COUNT_KEYS.get(str(row["status"] or "").upper())
+        if key:
+            counts[key] += 1
+    counts["not_in_ledger"] = len(wanted - seen)
+    return counts
+
+
+def _residual(table_refs: dict[int, tuple[str, object]] | None, table_id: object,
+              ref: str) -> tuple[str | None, str]:
+    if table_refs is None:
+        return None, "UNAVAILABLE"
+    entry = table_refs.get(table_id) if type(table_id) is int else None
+    if entry is None or entry[0] != ref:
+        return None, "TABLE_RELEASED"  # il tavolo non porta più questa posizione
+    try:
+        return decimal_str(_money(entry[1], non_negative=True)), "TABLE"
+    except _Unavailable:
+        return None, "UNAVAILABLE"
+
+
+def _close_item(mod: Any, raw: object, ref: str, positions: dict[str, list[Any]], hedges: list[Any],
+                table_refs: dict[int, tuple[str, object]] | None) -> dict[str, Any]:
+    data = json.loads(raw) if isinstance(raw, str) else None
+    if not isinstance(data, dict) or str(data.get("customer_ref") or "") != ref:
+        raise _Unavailable("close")
+    table_id = data.get("table_id")
+    market_id, selection_id = _identifier(data.get("market_id")), _identifier(data.get("selection_id"))
+    side = data.get("side")
+    if type(table_id) is not int or not 1 <= table_id <= 10_000 or market_id is None \
+            or selection_id is None or side not in ("BACK", "LAY"):
+        raise _Unavailable("close")
+    states = {mod.STATE_CLAIMED, mod.STATE_ROUTED, mod.STATE_NOT_EXECUTED, mod.STATE_UNCERTAIN}
+    state = mod.read_state(raw)
+    close_state = state if state in states else "UNKNOWN"
+    trigger = {mod.SL_TRIGGERED: "STOP_LOSS", mod.TP_TRIGGERED: "TAKE_PROFIT"}.get(
+        data.get("trigger"), "UNKNOWN")
+    raw_bets = data.get("bet_ids")
+    bets = [b for b in (_ident_or_none(x) for x in raw_bets) if b] if isinstance(raw_bets, list) else []
+    if not isinstance(raw_bets, list) or len(bets) != len(raw_bets) or len(bets) > MAX_CLOSE_BETS:
+        raise _Unavailable("close")
+    residual, residual_source = _residual(table_refs, table_id, ref)
+    detail = data.get("detail")
+    return {
+        "table_id": table_id, "market_id": market_id, "selection_id": selection_id, "side": side,
+        "trigger": trigger, "close_state": close_state,
+        "retryable": close_state in mod.REROUTABLE_STATES,
+        "detail": _code_of(detail) if isinstance(detail, str) and detail else None,
+        "recorded_at": _epoch(data.get("at")),
+        "bet_ids": bets,
+        "position": _position_summary(positions.get(ref, [])),
+        "residual_exposure": residual, "residual_source": residual_source,
+        "hedges": _close_hedges(hedges, data.get("cashout_request_ids")),
+    }
+
+
+def _sl_tp_closes(rc: object, table_refs: dict[int, tuple[str, object]] | None) -> dict[str, Any]:
+    try:
+        mod = _close_module()
+        prefix = mod.CLOSE_KEY_PREFIX
+        records, positions, hedges = _close_rows(rc, prefix)
+    except _SnapshotMissing as missing:
+        return {"state": missing.state, "reason": missing.reason}
+    except Exception:  # noqa: BLE001 - mai un dato apparentemente valido
+        return {"state": "UNAVAILABLE", "reason": "READ_FAILED"}
+    truncated = len(records) > MAX_CLOSES
+    closes, omitted = [], 0
+    for record in records[:MAX_CLOSES]:
+        ref = str(record["key"])[len(prefix):]
+        try:
+            closes.append(_close_item(mod, record["value"], ref, positions, hedges, table_refs))
+        except Exception:  # noqa: BLE001 - record illeggibile: contato, mai nascosto
+            omitted += 1
+    if omitted or truncated:
+        state, reason = "PARTIAL", ("RECORDS_UNREADABLE" if omitted else "TRUNCATED")
+    else:
+        state, reason = "OK", None
+    closes.sort(key=lambda c: (c["table_id"], c["recorded_at"] or 0.0))
+    return {"state": state, "reason": reason, "closes": closes, "omitted": omitted,
+            "truncated": truncated}
+
+
+def _table_refs(rc: object) -> dict[int, tuple[str, object]]:
+    """Tavolo → (customer_ref, esposizione) dei tavoli occupati; solo uso interno, mai esposto."""
+    refs: dict[int, tuple[str, object]] = {}
+    for row in _attr(rc, "table_manager").snapshot():
+        meta = row.get("meta") if isinstance(row, dict) else None
+        ref = meta.get("customer_ref") if isinstance(meta, dict) else None
+        if isinstance(ref, str) and ref and row.get("status") in ("ACTIVE", "RECOVERY"):
+            refs[row["table_id"]] = (ref, row.get("current_exposure"))
+    return refs

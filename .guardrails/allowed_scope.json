@@ -3560,6 +3560,21 @@
         "tests/acceptance/test_f04_sl_tp_table_close.py"
       ],
       "max_files": 9
+    },
+    "pf_api8_control_api_sl_tp_close": {
+      "description": "MCP-01i (handoff di Claude C): stato della chiusura SL/TP persistito da F-04 in GET /v1/exposure (sl_tp_closes), sola lettura; pin al contratto 1.10.0. Dipende da d_f04_sl_tp_close, pf_api1..7, pf_api9 e pf_api10.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "control_api/bridge.py",
+        "control_api/views.py",
+        "docs/control_api.md",
+        "guardrails/mutation_catalog.json",
+        "tests/control_api/test_finance_views.py",
+        "tests/control_api/test_sl_tp_close_view.py"
+      ],
+      "max_files": 8
     }
   }
 }

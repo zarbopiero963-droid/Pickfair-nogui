@@ -137,6 +137,18 @@ sicurezza indipendente (05/11/2026). Token vuoti, corti o fuori alfabeto rifiuta
 serializzate per intero; al più 16 connessioni servite insieme, ognuna chiusa entro 10 s (anche senza token);
 errori di protocollo in JSON fisso (`BAD_REQUEST`, `METHOD_NOT_ALLOWED`) senza eco dell'input; nessun traceback
 per richiesta su stderr del processo Pickfair.
+### MCP-01i — stato della chiusura SL/TP (contratto 1.10.0, dipende da F-04)
+
+- `GET /v1/exposure`, sezione `sl_tp_closes`: i record persistiti da F-04 (`risk.sl_tp_close.<customer_ref>` in
+  `settings`) letti nella stessa transazione di sola lettura degli ordini della posizione e delle righe d'hedge.
+  Per ogni chiusura: tavolo, mercato, selezione, lato, evento (STOP_LOSS/TAKE_PROFIT), stato
+  (CLAIMED/ROUTED/NOT_EXECUTED/UNCERTAIN, illeggibile UNKNOWN), ritentabile come decide il core
+  (`REROUTABLE_STATES`), dettaglio come codice, betId della posizione, riepilogo degli ordini (stessa mappa di
+  `/v1/orders`), esposizione residua solo dal tavolo che porta ancora la posizione (stessa acquisizione del lock
+  di `tables`), hedge della chiusura legati dal record (`cashout_request_ids`) alla riga del ledger
+  (`cashout_request_id`), con le richieste senza riga in `not_in_ledger`; null se il record non porta il legame.
+- Le chiusure respinte prima della rivendicazione non sono persistite dal core e non compaiono. Il
+  `customer_ref` non esce mai. Senza F-04 la sezione è `UNAVAILABLE` `CORE_PENDING_F04`.
 
 Nota per i test di assenza di effetti: la lettura in WAL aggiorna l'indice `-shm` (marcatori di lettura
 di SQLite, nessun dato); `.db` e `-wal` restano identici byte per byte.

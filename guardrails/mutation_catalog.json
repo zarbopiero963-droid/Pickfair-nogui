@@ -9414,6 +9414,138 @@
         "tests/acceptance/test_f04_sl_tp_table_close.py"
       ],
       "rationale": "F-04: rivendicazione non atomica (sovrascrive)."
+    },
+    {
+      "id": "cap_close_unknown_state_trusted",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    close_state = state if state in states else \"UNKNOWN\"",
+      "mutated": "    close_state = state or \"UNKNOWN\"",
+      "tests": [
+        "tests/control_api/test_sl_tp_close_view.py"
+      ],
+      "rationale": "MCP-01i ponte Control API, stato della chiusura SL/TP di F-04 (handoff Claude C): stato di chiusura sconosciuto riportato come valido."
+    },
+    {
+      "id": "cap_close_retry_everything",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        \"retryable\": close_state in mod.REROUTABLE_STATES,",
+      "mutated": "        \"retryable\": close_state != \"ROUTED\",",
+      "tests": [
+        "tests/control_api/test_sl_tp_close_view.py"
+      ],
+      "rationale": "MCP-01i ponte Control API, stato della chiusura SL/TP di F-04 (handoff Claude C): chiusura incerta dichiarata ritentabile."
+    },
+    {
+      "id": "cap_close_unreadable_hidden",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        except Exception:  # noqa: BLE001 - record illeggibile: contato, mai nascosto\n            omitted += 1",
+      "mutated": "        except Exception:  # noqa: BLE001 - record illeggibile: contato, mai nascosto\n            pass",
+      "tests": [
+        "tests/control_api/test_sl_tp_close_view.py"
+      ],
+      "rationale": "MCP-01i ponte Control API, stato della chiusura SL/TP di F-04 (handoff Claude C): record illeggibile nascosto."
+    },
+    {
+      "id": "cap_close_ref_not_checked",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if not isinstance(data, dict) or str(data.get(\"customer_ref\") or \"\") != ref:",
+      "mutated": "    if not isinstance(data, dict):",
+      "tests": [
+        "tests/control_api/test_sl_tp_close_view.py"
+      ],
+      "rationale": "MCP-01i ponte Control API, stato della chiusura SL/TP di F-04 (handoff Claude C): record di un'altra posizione accettato."
+    },
+    {
+      "id": "cap_close_residual_any_table",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if entry is None or entry[0] != ref:",
+      "mutated": "    if entry is None:",
+      "tests": [
+        "tests/control_api/test_sl_tp_close_view.py"
+      ],
+      "rationale": "MCP-01i ponte Control API, stato della chiusura SL/TP di F-04 (handoff Claude C): esposizione di un tavolo riassegnato attribuita alla chiusura."
+    },
+    {
+      "id": "cap_close_residual_without_lock",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if table_refs is None:\n        return None, \"UNAVAILABLE\"",
+      "mutated": "    if table_refs is None:\n        return None, \"TABLE_RELEASED\"",
+      "tests": [
+        "tests/control_api/test_sl_tp_close_view.py"
+      ],
+      "rationale": "MCP-01i ponte Control API, stato della chiusura SL/TP di F-04 (handoff Claude C): lock dei tavoli occupato presentato come tavolo liberato."
+    },
+    {
+      "id": "cap_close_trigger_guessed",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        data.get(\"trigger\"), \"UNKNOWN\")",
+      "mutated": "        data.get(\"trigger\"), \"STOP_LOSS\")",
+      "tests": [
+        "tests/control_api/test_sl_tp_close_view.py"
+      ],
+      "rationale": "MCP-01i ponte Control API, stato della chiusura SL/TP di F-04 (handoff Claude C): evento sconosciuto presentato come stop loss."
+    },
+    {
+      "id": "cap_close_no_f04_empty",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        raise _SnapshotMissing(\"UNAVAILABLE\", \"CORE_PENDING_F04\") from None",
+      "mutated": "        return None",
+      "tests": [
+        "tests/control_api/test_sl_tp_close_view.py"
+      ],
+      "rationale": "MCP-01i ponte Control API, stato della chiusura SL/TP di F-04 (handoff Claude C): core senza F-04 presentato come nessuna chiusura."
+    },
+    {
+      "id": "cap_close_hedges_unlinked",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        if rid not in wanted:\n            continue",
+      "mutated": "        if False:\n            continue",
+      "tests": [
+        "tests/control_api/test_sl_tp_close_view.py"
+      ],
+      "rationale": "MCP-01i ponte Control API, stato della chiusura SL/TP di F-04 (handoff Claude C): hedge di altre chiusure contati."
+    },
+    {
+      "id": "cap_close_hedges_missing_hidden",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    counts[\"not_in_ledger\"] = len(wanted - seen)",
+      "mutated": "    counts[\"not_in_ledger\"] = 0",
+      "tests": [
+        "tests/control_api/test_sl_tp_close_view.py"
+      ],
+      "rationale": "MCP-01i ponte Control API, stato della chiusura SL/TP di F-04 (handoff Claude C): richieste senza riga d'hedge nascoste."
+    },
+    {
+      "id": "cap_close_hedges_guessed_without_link",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if not isinstance(request_ids, list) or not all(isinstance(r, str) and r for r in request_ids):\n        return None",
+      "mutated": "    if not isinstance(request_ids, list) or not all(isinstance(r, str) and r for r in request_ids):\n        request_ids = []",
+      "tests": [
+        "tests/control_api/test_sl_tp_close_view.py"
+      ],
+      "rationale": "MCP-01i ponte Control API, stato della chiusura SL/TP di F-04 (handoff Claude C): legame assente presentato come nessun hedge."
     }
   ]
 }

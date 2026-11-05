@@ -23,6 +23,7 @@ ACCOUNT_KEYS = {
 }
 EXPOSURE_KEYS = {
     "source", "observed_at", "consistency", "tables", "total_exposure", "recovery", "unavailable",
+    "sl_tp_closes",  # MCP-01i: sempre presente (OK/PARTIAL o UNKNOWN/UNAVAILABLE), mai null
 }
 
 
