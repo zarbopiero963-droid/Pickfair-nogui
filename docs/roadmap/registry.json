@@ -570,5 +570,18 @@
    "note": "riaperta 05/11 dopo merge di main (#608)",
    "evidence": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/606#issuecomment-6654949165"
   }
+ ],
+ "infrastructure": [
+  {
+   "id": "PF-AUTONOMOUS-TEST-EXECUTION-01",
+   "status": "BLOCKED",
+   "owner": "claude-b",
+   "facts": "VPS: certd.py presente (tick/execute_v1, contratto t177), ingestione solo fixture (GITHUB_INGESTION_NOT_ENABLED_IN_T177); nessun servizio di polling attivo; CERTD kill switch presenti; qa/dispatcher.py = dispatcher roadmap, non test",
+   "missing": "ingestione GitHub in certd.tick() con pf_test_dispatch di main + pubblicazione check pf-test/<suite>",
+   "blocked_by": "merge #606, poi GO owner: kit, abilitazione ingestione GitHub, uscita dry-run, kill switch/real_runs",
+   "evidence": [
+    "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6655250700"
+   ]
+  }
  ]
 }
