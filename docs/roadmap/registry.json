@@ -568,8 +568,8 @@
   {
    "pr": 606,
    "status": "PR_OPEN",
-   "head_sha": "d27d4762da917a21ac810fa97b50ac0128889747",
-   "note": "riaperta 05/11 dopo merge di main (#608)",
+   "head_sha": "766657669258d571bbee85c98f0473fd0ee8fd92",
+   "note": "riaperta 05/11; fix Sol: catalogo teardown-evidence, percorsi canonici, fsync directory ledger, skip POSIX test (4 cicli)",
    "evidence": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/606#issuecomment-6654949165"
   }
  ],
