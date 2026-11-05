@@ -315,3 +315,24 @@ def test_order_manager_eccezione_ad_esito_ignoto_per_tipo_o_codice_e_ambiguous(e
 def test_order_manager_rifiuto_certo_resta_failed(errore) -> None:
     out, saga, _ev = _cancel_with(errore)
     assert out["status"] == "FAILED" and saga == "FAILED", (repr(errore), out)
+
+
+# ------------------------------------------------------------------ revisione Sol su #609 (911562a..dce8070, VALID_BLOCKERS)
+@pytest.mark.parametrize("risultato", [
+    {"status": "SUCCESS", "instructionReports": {"status": "TIMEOUT"}},        # campo non lista: illeggibile
+    {"status": "SUCCESS", "instructionReports": "x"},
+    {"status": "FAILURE", "instructionReports": {"status": "SUCCESS"}},
+    {"status": "PROCESSED_WITH_ERRORS"},                                       # nessun esito per istruzione
+    {"status": "PROCESSED_WITH_ERRORS", "instructionReports": []},
+], ids=["success_dict", "success_str", "failure_dict", "pwe_senza_report", "pwe_report_vuoti"])
+def test_cancel_di_mercato_con_report_illeggibili_o_assenti_su_pwe_e_ambiguous(risultato) -> None:
+    out = _client(_Rete([_ok(risultato)])).cancel_orders(market_id="1.2")
+
+    assert out["ok"] is False and out["outcome"] == "AMBIGUOUS", out
+    assert out["cancelled_count"] == 0
+
+
+def test_cancel_di_mercato_success_senza_report_resta_confermato() -> None:
+    """BLOCK: il comportamento documentato del cancel di tutto il mercato con status SUCCESS e nessun report resta."""
+    out = _client(_Rete([_ok({"status": "SUCCESS"})])).cancel_orders(market_id="1.2")
+    assert out["ok"] is True and out["outcome"] == "SUCCESS", out

@@ -8235,8 +8235,8 @@
       "module": "betfair_client",
       "area": "ambiguous",
       "file": "betfair_client.py",
-      "original": "        uncertain = bool(missing or unknown)",
-      "mutated": "        uncertain = bool(unknown)",
+      "original": "        uncertain = bool(missing or unknown or reports_unreadable",
+      "mutated": "        uncertain = bool(unknown or reports_unreadable",
       "tests": [
         "tests/acceptance/test_f14_cancel_single_shot.py",
         "tests/acceptance/test_betid_extractor_unico.py"

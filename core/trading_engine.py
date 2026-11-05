@@ -1398,8 +1398,11 @@ class TradingEngine:
         provato (una voce non oggetto non e' un FAILURE dichiarato)."""
         reports: list = []
         for container in (response, response.get("result"), response.get("raw")):
-            if isinstance(container, dict) and isinstance(container.get("instructionReports"), list):
-                reports.extend(container["instructionReports"])
+            if not isinstance(container, dict) or container.get("instructionReports") is None:
+                continue
+            value = container["instructionReports"]
+            # campo presente ma non lista: una voce illeggibile (mai un FAILURE dichiarato)
+            reports.extend(value if isinstance(value, list) else [None])
         return reports
 
     @classmethod
@@ -1469,6 +1472,17 @@ class TradingEngine:
                 or (status == "PROCESSED_WITH_ERRORS" and not raw_reports)):
             raise ExecutionError(
                 f"DOWNSTREAM_MIXED_OUTCOME:{response}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+                response=response,
+            )
+
+        # TIMEOUT dichiarato (status o report di istruzione) in un corpo grezzo: Betfair stesso non sa se l'ordine e'
+        # passato => AMBIGUOUS, mai un successo senza identita' ne' un rifiuto (sweep dopo il rilievo di Sol su #609).
+        if status == "TIMEOUT" or any(isinstance(r, dict) and str(r.get("status") or "").upper() == "TIMEOUT"
+                                      for r in raw_reports):
+            raise ExecutionError(
+                f"DOWNSTREAM_TIMEOUT_OUTCOME:{response}",
                 error_type=ERROR_AMBIGUOUS,
                 ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
                 response=response,

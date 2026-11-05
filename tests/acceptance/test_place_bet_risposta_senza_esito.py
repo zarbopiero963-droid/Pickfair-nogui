@@ -299,3 +299,41 @@ def test_order_router_matched_di_esito_ignoto_non_confermato() -> None:
         {"status": "SUCCESS", "betId": "9", "sizeMatched": 5.0}]}})
     assert ignoto["status"] == "AMBIGUOUS" and ignoto["matched_confirmed"] is False
     assert certo["matched_confirmed"] is True
+
+
+# --------------------------------------------------------------------------
+# Sol su #609 (911562a..dce8070) e sweep dei casi malformati: instructionReports non lista, report non oggetto e
+# TIMEOUT grezzo non provano ne' l'esito ne' il rifiuto => esito ignoto, mai FAILED e mai un'eccezione non gestita.
+# --------------------------------------------------------------------------
+MALFORMATI_PLACE = {
+    "success_report_dict": {"status": "SUCCESS", "instructionReports": {"status": "SUCCESS", "betId": "1"}},
+    "success_report_none": {"status": "SUCCESS", "instructionReports": [None]},
+    "success_report_stringa": {"status": "SUCCESS", "instructionReports": "x"},
+    "failure_report_dict": {"status": "FAILURE", "instructionReports": {"status": "SUCCESS", "betId": "1"}},
+}
+
+
+@pytest.mark.parametrize("risultato", list(MALFORMATI_PLACE.values()), ids=list(MALFORMATI_PLACE))
+def test_client_report_malformati_sono_order_unknown_senza_eccezioni(risultato: Any) -> None:
+    sessione = _SessioneContaInvii([{"result": risultato}])
+
+    esito = _place(_client(sessione))                    # mai un AttributeError fuori da place_bet
+
+    assert sessione.post_inviati == 1
+    assert esito["ok"] is False and esito["order_unknown"] is True, esito
+
+
+@pytest.mark.parametrize("grezza", [
+    {"status": "FAILURE", "instructionReports": {"status": "SUCCESS", "betId": "1"}},
+    {"status": "TIMEOUT"},
+    {"status": "SUCCESS", "instructionReports": [{"status": "TIMEOUT"}]},
+    {"status": "PROCESSED_WITH_ERRORS", "instructionReports": "x"},
+], ids=["failure_report_dict", "timeout_senza_report", "report_timeout", "pwe_report_stringa"])
+def test_engine_grezzo_malformato_o_timeout_e_ambiguo(grezza: Any) -> None:
+    from core.trading_constants import ERROR_AMBIGUOUS
+    from core.trading_engine import ExecutionError, TradingEngine
+
+    engine = TradingEngine.__new__(TradingEngine)
+    with pytest.raises(ExecutionError) as exc:
+        engine._raise_if_failed_semantic_response(dict(grezza))
+    assert exc.value.error_type == ERROR_AMBIGUOUS

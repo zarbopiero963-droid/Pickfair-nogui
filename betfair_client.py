@@ -1725,6 +1725,11 @@ class BetfairClient:
             # report). Mai un rifiuto definitivo, che libererebbe tavolo, riserva e chiave anti-duplicato.
             if status not in _STATUS_PLACE_RICONOSCIUTI:
                 raise RuntimeError(f"BET_STATUS_UNRECOGNIZED: {status or '<assente>'}")
+            # Report malformati (campo non lista, voce non oggetto) non dicono l'esito: esito ignoto, mai un
+            # AttributeError fuori da place_bet (sweep dopo il rilievo di Sol su #609).
+            if (result.get("instructionReports") is not None and not isinstance(result.get("instructionReports"), list)) \
+                    or any(not isinstance(r, dict) for r in reports if status == "SUCCESS"):
+                raise RuntimeError("BET_REPORT_STATUS_UNRECOGNIZED: instructionReports illeggibili")
 
             if status in ("FAILURE", "PROCESSED_WITH_ERRORS"):
                 # P1-1 (revisione Claude B, 05/11/2026): il rifiuto e' certo solo se nessun report dice altro. Un
@@ -1868,8 +1873,10 @@ class BetfairClient:
         illeggibile => AMBIGUOUS (la risposta e' arrivata ma non dice l'esito)."""
         result = result if isinstance(result, dict) else {}
         status = str(result.get("status") or "").strip().upper()
-        reports = result.get("instructionReports")
-        reports = list(reports) if isinstance(reports, list) else []
+        raw_reports = result.get("instructionReports")
+        # Campo presente ma non lista (rilievo di Sol su #609): i report ci sono ma sono illeggibili, esito ignoto.
+        reports_unreadable = raw_reports is not None and not isinstance(raw_reports, list)
+        reports = list(raw_reports) if isinstance(raw_reports, list) else []
         cancelled: List[str] = []
         failed: List[str] = []
         unknown: List[str] = []
@@ -1892,10 +1899,13 @@ class BetfairClient:
                 # mercato senza betId richiesti (P2-1, revisione Claude B 05/11/2026)
                 unknown.append(bid)
         missing = [b for b in requested if b not in cancelled and b not in failed]
-        uncertain = bool(missing or unknown)
-        if status not in ("SUCCESS", "FAILURE", "PROCESSED_WITH_ERRORS"):
+        # PROCESSED_WITH_ERRORS senza report non esclude un'esecuzione parziale (rilievo di Sol su #609).
+        uncertain = bool(missing or unknown or reports_unreadable
+                         or (status == "PROCESSED_WITH_ERRORS" and not reports))
+        if status not in ("SUCCESS", "FAILURE", "PROCESSED_WITH_ERRORS") or reports_unreadable:
             outcome = "AMBIGUOUS"
-        elif not cancelled and not unknown and (status == "FAILURE" or (status == "PROCESSED_WITH_ERRORS" and not missing)):
+        elif not cancelled and not unknown and (
+                status == "FAILURE" or (status == "PROCESSED_WITH_ERRORS" and reports and not missing)):
             outcome = "FAILED"                # rifiuto certo: Betfair dichiara che nessuna istruzione e' eseguita
         elif status == "SUCCESS" and not failed and not uncertain:
             outcome = "SUCCESS"
