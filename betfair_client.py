@@ -1850,8 +1850,13 @@ class BetfairClient:
     def _cancel_outcome_unknown(error_text: str) -> bool:
         """F-14: errore dopo che la richiesta potrebbe essere arrivata (timeout, rete, 5xx, risposta illeggibile)."""
         e = str(error_text or "").upper()
+        if e.startswith("API_ERROR"):
+            # Eccezioni APING che NON provano il mancato cancel (rilievo di Sol su #609): Betfair ha ricevuto la
+            # richiesta ma non sa dire se l'ha eseguita. Gli altri codici (input, quota, accesso, servizio occupato)
+            # sono rifiuti dichiarati prima dell'esecuzione: FAILED invariato.
+            return any(k in e for k in ("TIMEOUT_ERROR", "UNEXPECTED_ERROR"))
         if not e.startswith("REQUEST_FAILED") and "INVALID_JSON" not in e:
-            return False                     # non inviata (NOT_AUTHENTICATED, breaker) o rifiutata (API_ERROR, sessione)
+            return False                     # non inviata (NOT_AUTHENTICATED, breaker) o rifiutata (sessione)
         return any(k in e for k in ("TIMEOUT", "NETWORK_ERROR", "HTTP_5", "UNKNOWN_ERROR", "INVALID_JSON"))
 
     @staticmethod
@@ -1862,12 +1867,17 @@ class BetfairClient:
         result = result if isinstance(result, dict) else {}
         status = str(result.get("status") or "").strip().upper()
         reports = result.get("instructionReports")
-        reports = [r for r in reports if isinstance(r, dict)] if isinstance(reports, list) else []
+        reports = list(reports) if isinstance(reports, list) else []
         cancelled: List[str] = []
         failed: List[str] = []
         unknown: List[str] = []
-        positional = len(reports) == len(requested)       # Betfair: un report per istruzione, nello stesso ordine
+        # Betfair: un report per istruzione, nello stesso ordine. Il confronto usa TUTTI i report, anche quelli
+        # illeggibili (rilievo di Sol su #609): scartarli prima farebbe attribuire per posizione un report superstite.
+        positional = len(reports) == len(requested)
         for idx, r in enumerate(reports):
+            if not isinstance(r, dict):
+                unknown.append(requested[idx] if positional else "")   # report illeggibile: esito ignoto
+                continue
             instr = r.get("instruction") if isinstance(r.get("instruction"), dict) else {}
             bid = str(instr.get("betId") or r.get("betId") or (requested[idx] if positional else "")).strip()
             report_status = str(r.get("status") or "").strip().upper()

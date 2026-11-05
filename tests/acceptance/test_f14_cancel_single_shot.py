@@ -243,3 +243,50 @@ def test_report_senza_betid_piu_numerosi_delle_istruzioni_non_attribuiti() -> No
     out = _client(_Rete([_ok(risultato)])).cancel_orders(market_id="1.2", bet_ids=["B1"])
 
     assert out["ok"] is False and out["outcome"] == "AMBIGUOUS" and out["cancelled_bet_ids"] == []
+
+
+# ------------------------------------------------------------------ revisione Sol su #609 (911562a..a8659e4, VALID_BLOCKERS)
+def _api_error(code: str) -> _Resp:
+    return _Resp(200, [{"jsonrpc": "2.0", "id": 1, "error": {
+        "code": -32099, "message": "ANGX-0007", "data": {"APINGException": {"errorCode": code}}}}])
+
+
+@pytest.mark.parametrize("codice", ["TIMEOUT_ERROR", "UNEXPECTED_ERROR"])
+def test_errore_api_ad_esito_ignoto_e_ambiguous(codice) -> None:
+    """Betfair risponde con un'eccezione che NON prova il mancato cancel: AMBIGUOUS e riconciliazione, mai FAILED."""
+    rete = _Rete([_api_error(codice)])
+    out = _client(rete).cancel_orders(market_id="1.2", bet_ids=["B1"])
+
+    assert out["ok"] is False and out["outcome"] == "AMBIGUOUS", out
+    assert out["bet_ids"] == ["B1"] and len(rete.invii) == 1
+
+
+@pytest.mark.parametrize("codice", ["INVALID_INPUT_DATA", "TOO_MANY_REQUESTS", "SERVICE_BUSY", "ACCESS_DENIED"])
+def test_errore_api_di_rifiuto_resta_failed(codice) -> None:
+    """Rifiuto dichiarato da Betfair prima di eseguire: FAILED invariato (il blocco non diventa permissivo)."""
+    out = _client(_Rete([_api_error(codice)])).cancel_orders(market_id="1.2", bet_ids=["B1"])
+
+    assert out["ok"] is False and out["outcome"] == "FAILED", out
+
+
+@pytest.mark.parametrize("reports", [
+    [None, {"status": "SUCCESS"}],
+    ["x", {"status": "SUCCESS"}],
+    [{"status": "SUCCESS"}, 7],
+])
+def test_report_non_dict_non_rende_attribuibile_il_report_superstite(reports) -> None:
+    """Un report illeggibile conta nel confronto con le istruzioni: niente attribuzione per posizione, esito AMBIGUOUS."""
+    out = _client(_Rete([_ok({"status": "SUCCESS", "instructionReports": reports})])).cancel_orders(
+        market_id="1.2", bet_ids=["B1"])
+
+    assert out["ok"] is False and out["outcome"] == "AMBIGUOUS", out
+    assert out["cancelled_bet_ids"] == [], out
+
+
+def test_report_non_dict_con_due_istruzioni_resta_ambiguous_e_attribuisce_solo_per_posizione_vera() -> None:
+    reports = [None, {"status": "SUCCESS"}]
+    out = _client(_Rete([_ok({"status": "SUCCESS", "instructionReports": reports})])).cancel_orders(
+        market_id="1.2", bet_ids=["B1", "B2"])
+
+    assert out["outcome"] == "AMBIGUOUS" and out["ok"] is False, out
+    assert out["cancelled_bet_ids"] == ["B2"], out          # B2 e' alla sua posizione reale; B1 resta ignoto

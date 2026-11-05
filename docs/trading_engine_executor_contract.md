@@ -73,13 +73,14 @@ cancel non sia avvenuto. L'esito e' nel campo `outcome`:
 | Situazione | `outcome` | `ok` |
 |---|---|---|
 | `status` `SUCCESS` e un report `SUCCESS` per **ogni** `betId` richiesto (cancel di tutto il mercato: nessun report richiesto) | `SUCCESS` | sì |
-| `status` `FAILURE` senza report `SUCCESS`/ignoti, oppure `PROCESSED_WITH_ERRORS` con tutti i report `FAILURE`; errore JSON-RPC; 4xx; sessione scaduta; richiesta non inviata | `FAILED` | no |
+| `status` `FAILURE` senza report `SUCCESS`/ignoti, oppure `PROCESSED_WITH_ERRORS` con tutti i report `FAILURE`; errore JSON-RPC di rifiuto; 4xx; sessione scaduta; richiesta non inviata; eccezione APING di rifiuto (`INVALID_INPUT_DATA`, `TOO_MANY_REQUESTS`, `SERVICE_BUSY`, `ACCESS_DENIED`, …) | `FAILED` | no |
 | Alcuni report `SUCCESS` e altri `FAILURE` | `PARTIAL` | no |
-| Timeout, errore di rete, 5xx, risposta illeggibile, `status` assente o sconosciuto, report mancante per un `betId` richiesto, report `TIMEOUT` o con stato ignoto (anche nel cancel di tutto il mercato, senza `betId` richiesti) | `AMBIGUOUS` | no |
+| Timeout, errore di rete, 5xx, risposta illeggibile, `status` assente o sconosciuto, report mancante per un `betId` richiesto, report `TIMEOUT`, con stato ignoto o illeggibile (non oggetto) (anche nel cancel di tutto il mercato, senza `betId` richiesti); eccezione APING `TIMEOUT_ERROR` o `UNEXPECTED_ERROR` | `AMBIGUOUS` | no |
 
 `cancelled_count` e `cancelled_bet_ids` contano solo i report `SUCCESS`; `failed_bet_ids` i `FAILURE`; `bet_ids` i
 richiesti (riconciliazione per `betId`). Un report senza `instruction.betId` e' attribuito per posizione solo se il
-numero dei report coincide con quello delle istruzioni (Betfair li restituisce nello stesso ordine).
+numero dei report coincide con quello delle istruzioni (Betfair li restituisce nello stesso ordine); nel conteggio
+entrano anche i report illeggibili, che restano esito ignoto (rilievo di Sol su #609).
 `BetfairClient.cancel_order` (cancel di un ghost) solleva `CANCEL_ORDER_UNCONFIRMED` per `AMBIGUOUS`/`PARTIAL` e
 `CANCEL_ORDER_FAILED` per `FAILED`. `OrderManager.cancel_order`: esito `AMBIGUOUS` del client, o eccezione di
 timeout/rete/5xx/risposta illeggibile => saga `AMBIGUOUS` (terminale: nessuna transizione senza prova, #495) e
