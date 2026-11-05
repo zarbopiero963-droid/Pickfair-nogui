@@ -20,11 +20,13 @@
   "campagne 1-3",
   "registro G7 + runner",
   "F-R06 v1 (d2eb5d2)",
-  "market-book-age"
+  "market-book-age",
+  "F-R06 hardening pubblicato (1d8ca01)",
+  "catena di checkpoint pf-claude-d: seq 1 DURABLE, ripristino READY da clone nuovo"
  ],
  "lotto_corrente": "G7 campagna finanziaria: scenari G7-S01..S21 + hardening F-R06",
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "next_atomic_action": "attendere consenso Claude B al push di 8364bc8/1d8ca01 su claude/d-g7-r06-settled-ambiguous; poi checkpoint seq 2",
+ "next_atomic_action": "preparare in locale il caso sintetico squash+branch cancellato per l'hardening di pfckpt.py (Claude B) e mandargli percorso/SHA",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
