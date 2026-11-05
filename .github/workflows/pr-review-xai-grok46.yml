@@ -22,6 +22,11 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
+  # PF-REVIEW-ATTESTATION v2 (#586): firma Sigstore dell'esito della review (OIDC del workflow, nessun segreto nuovo)
+  id-token: write
+  attestations: write
+  # sola lettura: il rerun controlla se il run ha gia' un'attestazione pubblicata da un tentativo precedente
+  actions: read
 
 concurrency:
   group: pr-review-grok46-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
@@ -47,6 +52,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
       EVENT_ACTION: ${{ github.event.action }}
       BEFORE_SHA: ${{ github.event.before }}
       AFTER_SHA: ${{ github.event.after }}
@@ -314,10 +320,49 @@ jobs:
           def compare_range(base_sha: str, head_sha: str):
               return gh_request("GET", f"/repos/{REPO}/compare/{base_sha}...{head_sha}")
 
+          def pr_bot_comments():
+              """Commenti della PR (tutte le pagine, tetto 20): servono a rr_needs_full_review."""
+              out, page = [], 1
+              while page <= 20:
+                  batch = gh_request("GET", f"/repos/{REPO}/issues/{PR_NUMBER}/comments?per_page=100&page={page}") or []
+                  out.extend(batch)
+                  if len(batch) < 100:
+                      return out
+                  page += 1
+              raise RuntimeError("troppi commenti: storico delle review non leggibile per intero")
+
+          def pr_commit_order():
+              """Posizione di ogni commit della PR (prefisso a 12 caratteri, dal piu' vecchio). L'API elenca al massimo
+              250 commit: oltre, gli head mancanti non sono nell'ordine e non chiudono nulla (=> review completa,
+              fail-closed). Il raise copre solo un'API che restituisse piu' pagine piene del previsto."""
+              order, page = {}, 1
+              while page <= 3:
+                  batch = gh_request("GET", f"/repos/{REPO}/pulls/{PR_NUMBER}/commits?per_page=100&page={page}") or []
+                  for c in batch:
+                      order.setdefault(str((c or {}).get("sha") or "")[:12], len(order))
+                  if len(batch) < 100:
+                      return order
+                  page += 1
+              raise RuntimeError("troppi commit: ordine dei commit della PR non leggibile per intero")
+
+          def full_review_required():
+              """True se serve la review dell'INTERO diff. Storico illeggibile => True (fail-closed: costa una review
+              in piu', non nasconde un bloccante)."""
+              try:
+                  return rr_needs_full_review(pr_bot_comments(), REVIEW_ID, BASE_SHA, pr_commit_order(), HEAD_SHA)
+              except Exception as exc:
+                  print(f"::warning::{REVIEW_ID}: storico review non leggibile ({redact(str(exc))[:200]}): review completa")
+                  return True
+
           def resolve_range():
-              if EVENT_ACTION == "synchronize" and good_sha(BEFORE_SHA):
+              if EVENT_ACTION == "synchronize" and good_sha(BEFORE_SHA) and not full_review_required():
                   base = BEFORE_SHA
                   scope = "push range"
+              elif EVENT_ACTION == "synchronize" and good_sha(BEFORE_SHA):
+                  # Governance #606: un range precedente non e' PASS => si rivede l'INTERO diff aggiornato, cosi' il
+                  # PASS (se arriva) copre la PR dalla base all'head e chiude i bloccanti nel verificatore.
+                  base = BASE_SHA
+                  scope = "intera PR (precedente non-PASS)"
               else:
                   base = BASE_SHA
                   scope = "current PR range"
@@ -1029,6 +1074,47 @@ jobs:
               )
           # <<< REVIEW_RECOVERY_CORE <<<
 
+          def rr_needs_full_review(comments, review_id, base_sha, commit_order, head_sha):
+              """Governance #606 (decisione owner): dopo un esito non-PASS la review successiva copre l'INTERO diff.
+
+              Si guarda OGNI tentativo di ogni range di QUESTO reviewer, solo nei commenti del bot del workflow (un
+              commento forgiato non chiude nulla): ogni tentativo emette un'attestazione firmata, quindi anche un
+              non-PASS seguito da un PASS sullo stesso range delta resta aperto nel verificatore (rilievo Sol su #607).
+              Serve la review completa se un tentativo non-PASS non e' chiuso da un PASS successivo che parte dalla base
+              attuale della PR e arriva ALMENO al suo head, come in scripts/pr_review_attestation.py. `commit_order`
+              (prefisso 12 -> posizione nella PR) misura l'head; un head assente dall'ordine (force-push, storico
+              incompleto) non chiude niente. «Successivo» = istante del commento strettamente posteriore; il numero del
+              tentativo conta SOLO dentro lo stesso commento (fra commenti diversi i contatori sono indipendenti: rilievo
+              Sol su #607). Un non-PASS senza istante non si chiude mai. Un non-PASS il cui head non e' piu' nella PR
+              (force-push, decisione owner su #607) si chiude solo con un PASS successivo dalla base fino all'head
+              ESATTO attuale, come nel verificatore (OPEN_BLOCKERS_FORCE_PUSHED); head attuale fuori ordine => mai."""
+              events = []
+              for idx, c in enumerate(comments or []):
+                  if not isinstance(c, dict) or ((c.get("user") or {}).get("login") or "") != "github-actions[bot]":
+                      continue
+                  when = str(c.get("updated_at") or c.get("created_at") or "")
+                  for m in _RR_ATTEMPT_RE.finditer(str(c.get("body") or "")):
+                      if m.group(1) == review_id:
+                          events.append((m.group(2), m.group(3), (when, idx, int(m.group(4))), m.group(5)))
+              base12 = str(base_sha)[:12]
+              order = commit_order if isinstance(commit_order, dict) else {}
+              full_pass = [(order.get(to), k) for frm, to, k, st in events if frm == base12 and st == "VALID_PASS"]
+
+              def later(k, bad):
+                  return k[0] > bad[0] or (k[1] == bad[1] and k[2] > bad[2])
+
+              def cleared(bad_to, bad_key):
+                  pos = order.get(bad_to)
+                  if pos is None:   # commit uscito dalla storia: serve la PR intera fino all'head attuale
+                      pos = order.get(str(head_sha)[:12])
+                      return (bool(bad_key[0]) and pos is not None
+                              and any(p == pos and later(k, bad_key) for p, k in full_pass))
+                  return (bool(bad_key[0]) and pos is not None
+                          and any(p is not None and p >= pos and later(k, bad_key) for p, k in full_pass))
+
+              return any(st != "VALID_PASS" and not cleared(to, k) for _frm, to, k, st in events)
+
+
 
           def rr_coverage_summary(files, diff_text, compare_truncated):
               """Riga del commento (PF-569): payload davvero inviato al modello, con le regole di rr_coverage_gaps."""
@@ -1103,6 +1189,99 @@ jobs:
                   page += 1
               return False
 
+          # PF-REVIEW-ATTESTATION v2 (#586 c.6582617372): esito della review in forma verificabile. Il file viene
+          # firmato (Sigstore, identita' OIDC di QUESTO workflow su main) e caricato come artefatto dai passi
+          # successivi; Merge readiness e VPS lo verificano con scripts/pr_review_attestation.py. Il verdetto e'
+          # quello classificato dal workflow, mai lo stato `success` del job. canonical_range_digest = stessa funzione
+          # dello script (test di parita'). Definite PRIMA della dedup, cosi' un rerun di un range gia' revisionato
+          # (firma o upload falliti al primo giro) ri-emette l'attestazione senza ripagare il modello.
+          import hashlib as _hl
+          def canonical_range_digest(files):
+              rows = sorted([str(f.get("filename") or ""), str(f.get("patch") or "")]
+                            for f in files if isinstance(f, dict) and f.get("patch"))
+              return _hl.sha256(json.dumps(rows, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+          def write_attestation(state, emitted_at, reemitted=False):
+              """Scrive review-attestation.json; True se scritto. Solo dentro GitHub Actions (run_id/attempt reali). Il
+              commento della review resta pubblicato anche se qui qualcosa fallisce; il chiamante chiude allora il job
+              ROSSO, cosi' il verificatore vede un run senza attestazione e nega il PASS (Codex P1 su #602)."""
+              if os.environ.get("GITHUB_ACTIONS") != "true":
+                  return False
+              try:
+                  _verdicts = {RR_VALID_PASS: "PASS", RR_VALID_BLOCKERS: "BLOCKERS", RR_VALID_INCONCLUSIVE: "INCONCLUSIVE"}
+                  _gaps = rr_coverage_gaps(files, diff_text, compare_truncated)
+                  attestation = {
+                      "schema": "pf-review-attestation/1", "repo": REPO, "pr": int(PR_NUMBER),
+                      "head_sha": range_head, "base_sha": BASE_SHA, "range": {"from": range_base, "to": range_head},
+                      "pr_author": os.environ.get("PR_AUTHOR", ""), "reviewer": "grok-4.7", "provider": "xai",
+                      "model": os.environ.get("XAI_MODEL", ""),
+                      "workflow_path": ".github/workflows/pr-review-xai-grok46.yml",
+                      "run_id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+                      "verdict": _verdicts.get(state, "ERROR"), "classification": state,
+                      "files_sent": diff_text.count("\n\n### FILE: "), "files_truncated": len(_gaps),
+                      "coverage_gaps": list(_gaps), "diff_sha256": canonical_range_digest(files),
+                      "comment_marker": marker,
+                      "generated_at": emitted_at, "reemitted": bool(reemitted),
+                  }
+                  with open(os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), "review-attestation.json"), "w",
+                            encoding="utf-8") as _fh:
+                      json.dump(attestation, _fh, sort_keys=True, separators=(",", ":"))
+                  return True
+              except Exception as _exc:  # noqa: BLE001
+                  print(f"::error::{REVIEW_ID}: attestazione non scritta ({type(_exc).__name__}): la review non conta per i gate")
+                  return False
+
+          def reemit_from_done_review():
+              """Range gia' revisionato (done_marker): ri-emette l'attestazione dal commento del bot, con il verdetto
+              classificato allora e il suo istante (``updated_at`` del commento), senza nuova chiamata al modello.
+
+              SOLO verdetti non PASS: chi ha accesso in scrittura puo' modificare un commento del bot senza cambiarne
+              l'autore (rilievo Sol su #602), quindi il commento non e' una fonte autenticata. Un BLOCKERS ri-emesso puo'
+              soltanto bloccare; un PASS ri-emesso da un commento modificato sarebbe un PASS falso firmato. Un PASS
+              perso resta non coperto (fail-closed). Commento o stato non leggibili => nessuna attestazione."""
+              try:
+                  page = 1
+                  while page <= 20:
+                      comments = gh_request(
+                          "GET", f"/repos/{REPO}/issues/{PR_NUMBER}/comments?per_page=100&page={page}") or []
+                      for c in comments:
+                          body = c.get("body") or ""
+                          if ((c.get("user") or {}).get("login") or "") == "github-actions[bot]" and done_marker in body:
+                              states = rr_attempts(body.partition("\n")[0], REVIEW_ID, range_base, range_head)
+                              when = str(c.get("updated_at") or "")
+                              if states and states[-1] in (RR_VALID_BLOCKERS, RR_VALID_INCONCLUSIVE) and re.fullmatch(
+                                      r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", when):
+                                  return write_attestation(states[-1], when, reemitted=True)
+                              return False
+                      if len(comments) < 100:
+                          return False
+                      page += 1
+              except Exception as _exc:  # noqa: BLE001
+                  print(f"::warning::{REVIEW_ID}: attestazione non ri-emessa ({type(_exc).__name__})")
+              return False
+
+          def run_has_attestation():
+              """True se un tentativo precedente di QUESTO run ha pubblicato un'attestazione. Errore => False (rosso)."""
+              try:
+                  arts = (gh_request("GET", f"/repos/{REPO}/actions/runs/{os.environ['GITHUB_RUN_ID']}/artifacts"
+                                            "?per_page=100") or {}).get("artifacts", [])
+                  return any(str(a.get("name", "")).startswith("review-attestation-") and not a.get("expired")
+                             for a in arts)
+              except Exception as _exc:  # noqa: BLE001
+                  print(f"::warning::{REVIEW_ID}: artefatti del run non leggibili ({type(_exc).__name__})")
+                  return False
+
+          def dedup_exit():
+              """Uscita per range gia' revisionato. Sul RERUN di un run (attempt > 1) che non riesce a ri-emettere
+              (PASS, che non si ri-emette mai, o commento illeggibile) il job chiude ROSSO se il run non ha gia'
+              un'attestazione da un tentativo precedente: l'esito del primo tentativo e' sconosciuto e il verificatore
+              nega il PASS. Se l'attestazione precedente c'e', questo tentativo chiude verde e quella resta valida."""
+              if (not reemit_from_done_review() and os.environ.get("GITHUB_ACTIONS") == "true"
+                      and int(os.environ.get("GITHUB_RUN_ATTEMPT") or 1) > 1 and not run_has_attestation()):
+                  print(f"::error::{REVIEW_ID}: rerun di un range gia' revisionato senza attestazione ri-emettibile.")
+                  sys.exit(1)
+              sys.exit(0)
+
           try:
               _already_reviewed = comment_exists(done_marker)
           except Exception as exc:
@@ -1122,7 +1301,7 @@ jobs:
                   f"{REVIEW_ID}: review già presente per {range_base[:12]}...{range_head[:12]} "
                   "→ salto la chiamata AI a pagamento."
               )
-              sys.exit(0)
+              dedup_exit()
 
           # PF-REVIEW-RECOVERY-01: i tentativi di QUESTO range stanno nel commento
           # del bot per il range. Al massimo RR_MAX_ATTEMPTS chiamate in totale:
@@ -1164,7 +1343,7 @@ jobs:
               if manual_files or compare_truncated:
                   try_add_label()
               print(f"{REVIEW_ID}: review gia' completata per {range_base[:12]}...{range_head[:12]} → nessuna chiamata.")
-              sys.exit(0)
+              dedup_exit()
           run_url = (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{REPO}/actions/runs/"
                      f"{os.environ.get('GITHUB_RUN_ID', '?')}")
           if rr_next_action(previous_attempts, False) == "OWNER_DECISION":
@@ -1377,5 +1556,31 @@ jobs:
           Nota: questa review AI è un filtro tecnico economico, non sostituisce il controllo umano.
           """
 
-          upsert_comment(marker, body[:64000])
+          _published = upsert_comment(marker, body[:64000])
+
+          if os.environ.get("GITHUB_ACTIONS") == "true":
+              # Nessuna attestazione per una review che non e' stata pubblicata: sulla PR resterebbe solo il commento
+              # "in corso", senza marker ne' testo leggibile (rilievo Codex P1 su #602). Job rosso => il verificatore
+              # vede un run senza attestazione e nega il PASS.
+              if not _published:
+                  print(f"::error::{REVIEW_ID}: review non pubblicata: nessuna attestazione.")
+                  sys.exit(1)
+              if not write_attestation(attempt_state, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())):
+                  sys.exit(1)   # review pubblicata ma non attestata: job rosso, il verificatore nega il PASS
           PY
+
+      # PF-REVIEW-ATTESTATION v2: firma Sigstore dell'attestazione (provenance SLSA, identita' del workflow su main)
+      - name: Sign review attestation
+        if: ${{ hashFiles('review-attestation.json') != '' }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: review-attestation.json
+
+      - name: Upload review attestation
+        if: ${{ hashFiles('review-attestation.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-attestation-${{ github.run_attempt }}
+          path: review-attestation.json
+          if-no-files-found: error
+          retention-days: 90

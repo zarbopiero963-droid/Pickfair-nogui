@@ -180,7 +180,7 @@ class CashoutRouter:
         log/test: ``{published, positions, skipped, reason?}``."""
         signal = dict(signal or {})
         signal_type = str(signal.get("signal_type") or "").strip().upper()
-        if signal_type not in {"CASHOUT", "CASHOUT_ALL"}:
+        if signal_type not in {"CASHOUT", "CASHOUT_ALL", "CASHOUT_TABLE"}:
             return self._summary(0, 0, reason="not_cashout")
 
         # 1. Ordini del bot dal DB (identità I1) → set bet_id + mappa market→event.
@@ -191,6 +191,18 @@ class CashoutRouter:
         if not bot_bet_ids and not bot_refs:
             logger.info("[cashout_router] nessun ordine del bot: niente da chiudere")
             return self._summary(0, 0, reason="no_bot_orders")
+
+        # F-04: CASHOUT_TABLE chiude SOLO la posizione di un tavolo, identificata dai bet_id dei suoi ordini (mai per
+        # evento: altri tavoli sulla stessa partita restano intatti). Ambito non verificabile => nessuna chiusura.
+        table_scope = None
+        if signal_type == "CASHOUT_TABLE":
+            table_scope, why = self._table_scope(signal, bot_bet_ids)
+            if table_scope is None:
+                logger.warning("[cashout_router] CASHOUT_TABLE rifiutato (fail-closed): %s", why)
+                self.publish(CASHOUT_FAILED, {"reason": f"table_scope_invalid:{why}", "status": "REJECTED",
+                                              "market_id": str(signal.get("market_id") or ""),
+                                              "selection_id": signal.get("selection_id"), "source": self.source})
+                return self._summary(0, 0, reason=f"table_scope_invalid:{why}")
 
         # 2. Ordini correnti live (fail-closed: in LIVE solleva su sessione invalida).
         current_orders = self._load_current_orders()
@@ -203,6 +215,15 @@ class CashoutRouter:
             ref = _order_ref(row)
             return bool(ref) and ref in bot_refs
 
+        # F-04: per CASHOUT_TABLE l'appartenenza e' SOLO per bet_id del tavolo, qualunque altra identita' del bot
+        # (es. per customerOrderRef) aggiunga in futuro `_is_bot_order`: un'identita' piu' larga toccherebbe gli
+        # ordini degli altri tavoli (resting compreso).
+        if table_scope is not None:
+            table_bets = table_scope["bet_ids"]
+
+            def _is_bot_order(row: Dict[str, Any]) -> bool:  # noqa: F811 - ambito ristretto al tavolo
+                return _bet_id(row) in table_bets
+
         # 3. Posizioni nette del bot (solo lato singolo; miste saltate dal resolver).
         positions = reconstruct_open_positions(current_orders, is_bot_order=_is_bot_order)
 
@@ -211,6 +232,16 @@ class CashoutRouter:
             positions = self._restrict_to_event(signal, positions, market_event)
             if positions is None:  # senza event_name non si chiude nulla (fail-closed).
                 return self._summary(0, 0, reason="no_event_name")
+        elif table_scope is not None:
+            positions = [p for p in positions if str(p["market_id"]) == table_scope["market_id"]
+                         and str(p["selection_id"]) == str(table_scope["selection_id"])]
+            if any(str(p.get("side") or "").upper() != table_scope["side"] for p in positions):
+                # Lato della posizione diverso da quello del tavolo: un hedge sul lato sbagliato aumenterebbe
+                # l'esposizione. Nessuna chiusura.
+                self.publish(CASHOUT_FAILED, {"reason": "table_scope_invalid:SIDE_MISMATCH", "status": "REJECTED",
+                                              "market_id": table_scope["market_id"],
+                                              "selection_id": table_scope["selection_id"], "source": self.source})
+                return self._summary(0, 0, reason="table_scope_invalid:SIDE_MISMATCH")
 
         published, skipped, cancelled = self._close_positions(positions, current_orders, _is_bot_order)
         # L147: dopo le posizioni, cancella anche il resting "puro" del bot (ordini
@@ -218,9 +249,34 @@ class CashoutRouter:
         # così non si abbina dopo il cashout del master riaprendo esposizione.
         # ``cancelled`` esclude i bet_id già cancellati dal close per-posizione (no
         # doppio cancel / falso warning quando un ordine puro condivide market+sel).
-        in_scope = self._in_scope_markets(signal_type, signal, market_event)
+        in_scope = ({table_scope["market_id"]} if table_scope is not None
+                    else self._in_scope_markets(signal_type, signal, market_event))
         self._flatten_pure_resting(current_orders, _is_bot_order, in_scope, exclude=cancelled)
         return self._summary(published, skipped)
+
+    @staticmethod
+    def _table_scope(signal: Dict[str, Any], bot_bet_ids: Set[str]) -> Tuple[Optional[Dict[str, Any]], str]:
+        """Ambito di un CASHOUT_TABLE: mercato, selezione, lato e bet_id del tavolo, tutti obbligatori; ogni bet_id
+        deve essere un ordine del bot (identita' I1). ``(None, motivo)`` se non verificabile."""
+        market_id = str(signal.get("market_id") or "").strip()
+        if not market_id:
+            return None, "MARKET_MISSING"
+        selection_id = signal.get("selection_id")
+        if isinstance(selection_id, bool) or str(selection_id or "").strip() in ("", "0"):
+            return None, "SELECTION_MISSING"
+        side = str(signal.get("side") or "").strip().upper()
+        if side not in ("BACK", "LAY"):
+            return None, "SIDE_INVALID"
+        raw = signal.get("bet_ids")
+        if not isinstance(raw, (list, tuple)) or not raw:
+            return None, "BET_IDS_MISSING"
+        bet_ids = {str(b).strip() for b in raw if isinstance(b, (str, int)) and not isinstance(b, bool)}
+        if not bet_ids or "" in bet_ids or len(bet_ids) != len(raw):
+            return None, "BET_IDS_INVALID"
+        if not bet_ids <= set(bot_bet_ids):
+            return None, "BET_IDS_NOT_BOT"
+        return {"market_id": market_id, "selection_id": str(selection_id).strip(), "side": side,
+                "bet_ids": bet_ids}, ""
 
     # ------------------------------------------------------------------
     @staticmethod

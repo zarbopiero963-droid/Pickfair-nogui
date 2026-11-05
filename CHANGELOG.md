@@ -8,6 +8,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **F-04 (#586, CSH-02): chiusura del solo tavolo che raggiunge SL/TP.** `RuntimeController` consuma `SL_TRIGGERED` /
+  `TP_TRIGGERED` di F-02 (contratto v1, `core/sl_tp_close.py`) e chiude solo la posizione di quel tavolo, identificata
+  da tavolo, `customer_ref`, mercato, selezione, lato e `bet_id`, mai dalla sola partita. Ordine incerto (AMBIGUOUS,
+  INFLIGHT, senza `betId`) => nessuna chiusura, riconciliazione; rivendicazione persistente e atomica
+  (`Database.claim_setting_once`, una per posizione) prima dell'instradamento: riavvio, scatto ripetuto o TP dopo SL
+  non producono un secondo cashout; instradamento come `CASHOUT_TABLE` interno con tutti i gate del cashout;
+  `CashoutRouter` ristretto ai `bet_id` del tavolo. Esiti `SL_TP_CLOSE_*` sul bus. Inerte finche' F-02 non e' su
+  `main`. Documentazione: `docs/cashout_overview.md` §7.6.
+
+### Changed
+- **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**
+  - se un range precedente di Sol o Grok non è PASS (BLOCKERS, INCONCLUSIVE, ERROR, incompleto), la review della push
+    successiva copre l'intera PR `BASE...HEAD` invece del solo delta;
+  - il verificatore `scripts/pr_review_attestation.py` chiude un non-PASS solo con un PASS successivo **dalla base**;
+  - il workflow applica la stessa regola: un PASS dalla base chiude un non-PASS solo se è più recente e arriva almeno
+    al suo head, misurato sull'elenco dei commit della PR. Senza questo controllo un PASS `BASE...C1` più recente di
+    un BLOCKERS `C1...C2` riportava le push successive sul delta: il verificatore teneva aperto il bloccante e il gate
+    restava bloccato (rilievo di Sol e Grok sulla #607);
+  - force-push (decisione owner su #607): un non-PASS su commit non più nella PR resta bloccante
+    (`OPEN_BLOCKERS_FORCE_PUSHED`) finché un PASS firmato successivo non copre l'intera PR fino all'head esatto;
+  - il workflow considera **ogni** tentativo di un range, non solo l'ultimo: ogni tentativo è attestato, quindi
+    un INCOMPLETE seguito da un PASS sullo stesso delta resta aperto nel verificatore e richiede la review completa;
+  - prima un PASS sul solo delta lasciava il primo tratto senza copertura (`NOT_COVERED_TO_HEAD` per sempre), oppure
+    chiudeva un bloccante senza rivedere la PR intera.
+
+  Nessuna attestazione storica viene riscritta. `docs/review_attestation.md` aggiornato.
+
+### Fixed
+- **CB-586-FI-03Z (#586, P1):** il broker SIM abbinava ordini contro livelli del book con size 0. Esempio: un LAY
+  0,10@3.0 risultava abbinato a 2.02 su un book senza liquidità, con un matched finto e un'esposizione abbinata
+  inventata. Ora un livello con size esplicita ≤ 0 è assente, come il delta Betfair che lo rimuove, e il migliore è il
+  livello successivo, coerente con `best_counterparty_price`. Una size assente resta invariata. Test
+  `tests/fi03z/`; mutazione `fi03z_zero_size_level_matches`.
+
+### Changed
+- **Governance PF-REVIEW-ATTESTATION v2 (#586) — review firmate e PRE-LIVE nei gate:** i workflow di Sol e Grok
+  firmano (Sigstore, `actions/attest-build-provenance`) un'attestazione dell'esito della review (verdetto dalla
+  classificazione, range, file inviati, impronta delle patch) e la caricano come artefatto; `scripts/pr_review_attestation.py`
+  la verifica (workflow su main, evento, commit, contenuto, diff realmente revisionato, copertura fino all'head) per Merge
+  readiness e VPS; Merge readiness richiede anche `pf-betfair-certification` SUCCESS sull'head (LIVE escluso). I gate
+  esistenti restano. `docs/review_attestation.md`, spec §0.7; test `tests/scripts/test_pr_review_attestation.py`.
+- **Merge readiness veloce e fail-closed (#586, PF-MERGE-READINESS-FAST-01, PF-CI-PERFORMANCE-FINAL-01):**
+  - ogni chiamata `gh` ha un timeout;
+  - gli errori transitori (timeout, 5xx, rete, rate limit) si ritentano al massimo 3 volte con backoff;
+  - mentre ci sono check pending non si paginano i thread di review;
+  - il polling si allunga a 60 s mentre si aspetta un check lento;
+  - c'è una scadenza complessiva sotto il timeout del job;
+  - un head cambiato durante la verifica rende la PR non pronta;
+  - nuovo stato leggibile `readiness_status`: READY, PENDING_EXTERNAL, BLOCKED, FAILED o TIMEOUT; solo READY rende
+    la PR mergiabile.
+
+  Con `--pending-external-exit-after` la readiness non occupa più il runner per tutto il PRE-LIVE: viene rieseguita da
+  `pr-readiness-retrigger.yml` quando Pickfair Dedicated conclude `pf-betfair-certification`. Lo stato LIVE
+  (`live_certification`, `live_readiness`) è riportato solo come informazione. Documentazione:
+  `docs/merge_readiness_performance.md`.
+
 ### Changed
 - **Governance §0.9-ter (#586, owner 01/11/2026 «TEMPORARY MERGE DELEGATION — ROADMAP V2»):** delega owner
   temporanea di merge per le 33 schede della roadmap V2, registrata in `OWNER_MERGE_DELEGATIONS` di

@@ -38,8 +38,8 @@
       "module": "simulation_broker",
       "area": "side",
       "file": "simulation_broker.py",
-      "original": "            best_counter = backs[0] if backs else None",
-      "mutated": "            best_counter = lays[0] if lays else None",
+      "original": "        livelli = backs if order.side == \"BACK\" else lays",
+      "mutated": "        livelli = lays if order.side == \"BACK\" else backs",
       "tests": [
         "tests/integration/test_simulation_broker_position_ledger_integration.py",
         "tests/f026/test_f028_units.py"
@@ -259,8 +259,8 @@
       "module": "core.runtime_controller",
       "area": "recovery",
       "file": "core/runtime_controller.py",
-      "original": "                if (c[\"bet_id\"] and c[\"bet_id\"] in live_bets) or (own_ref and own_ref in live_refs):",
-      "mutated": "                if (c[\"bet_id\"] and c[\"bet_id\"] not in live_bets) or (own_ref and own_ref in live_refs):",
+      "original": "                if c[\"bet_id\"] and c[\"bet_id\"] in live_bets:",
+      "mutated": "                if c[\"bet_id\"] and c[\"bet_id\"] not in live_bets:",
       "tests": [
         "tests/f026/test_f018_rebuild_units.py",
         "tests/test_pr512_recovery_fixes.py"
@@ -8397,6 +8397,138 @@
         "tests/f13/test_f13_customer_order_ref.py"
       ],
       "rationale": "F-13 (review indipendente su 4881adb): la mappa del de-dup SIM cresce di una voce per ordine nello snapshot, senza limiti."
+    },
+    {
+      "id": "fi03z_zero_size_level_matches",
+      "module": "simulation_broker",
+      "area": "exposure",
+      "file": "simulation_broker.py",
+      "original": "    return not math.isfinite(size) or size <= 0.0",
+      "mutated": "    return False",
+      "tests": [
+        "tests/fi03z/test_sim_zero_size_level.py"
+      ],
+      "rationale": "CB-586-FI-03Z: un livello con size 0 tornerebbe liquidita' illimitata (fill finto, esposizione abbinata inventata)."
+    },
+    {
+      "id": "fi03z_quote_reads_first_level_only",
+      "module": "simulation_broker",
+      "area": "exposure",
+      "file": "simulation_broker.py",
+      "original": "            livello = _miglior_livello(ex.get(\"availableToBack\" if str(side).upper() == \"BACK\" else \"availableToLay\"))",
+      "mutated": "            livello = (ex.get(\"availableToBack\" if str(side).upper() == \"BACK\" else \"availableToLay\") or [None])[0]",
+      "tests": [
+        "tests/fi03z/test_sim_zero_size_level.py"
+      ],
+      "rationale": "CB-586-FI-03Z (Codex P1 su #604): la quota del Microstake leggerebbe solo il primo livello mentre il matching salta quelli vuoti: lo stub passivo incrocerebbe e si abbinerebbe interamente."
+    },
+    {
+      "id": "f04_uncertain_order_ignored",
+      "module": "core.sl_tp_close",
+      "area": "cashout",
+      "file": "core/sl_tp_close.py",
+      "original": "        if status in _UNCERTAIN_STATUSES:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_f04_sl_tp_table_close.py"
+      ],
+      "rationale": "F-04: hedge su una posizione con ordine AMBIGUOUS/INFLIGHT invece della riconciliazione."
+    },
+    {
+      "id": "f04_claimed_reroutable",
+      "module": "core.sl_tp_close",
+      "area": "cashout",
+      "file": "core/sl_tp_close.py",
+      "original": "REROUTABLE_STATES = frozenset({STATE_NOT_EXECUTED})",
+      "mutated": "REROUTABLE_STATES = frozenset({STATE_NOT_EXECUTED, STATE_CLAIMED})",
+      "tests": [
+        "tests/acceptance/test_f04_sl_tp_table_close.py"
+      ],
+      "rationale": "F-04: dopo un crash a chiusura rivendicata, secondo cashout al riavvio."
+    },
+    {
+      "id": "f04_route_error_reroutable",
+      "module": "core.sl_tp_close",
+      "area": "cashout",
+      "file": "core/sl_tp_close.py",
+      "original": "        return STATE_UNCERTAIN, f\"ROUTE_ERROR:{box['error']}\"",
+      "mutated": "        return STATE_NOT_EXECUTED, f\"ROUTE_ERROR:{box['error']}\"",
+      "tests": [
+        "tests/acceptance/test_f04_sl_tp_table_close.py"
+      ],
+      "rationale": "F-04: esito ignoto ritentato (possibile secondo hedge)."
+    },
+    {
+      "id": "f04_close_key_per_reason",
+      "module": "core.sl_tp_close",
+      "area": "cashout",
+      "file": "core/sl_tp_close.py",
+      "original": "        return CLOSE_KEY_PREFIX + self.customer_ref",
+      "mutated": "        return CLOSE_KEY_PREFIX + self.customer_ref + self.reason",
+      "tests": [
+        "tests/acceptance/test_f04_sl_tp_table_close.py"
+      ],
+      "rationale": "F-04: SL e TP della stessa posizione producono due cashout."
+    },
+    {
+      "id": "f04_table_ref_unchecked",
+      "module": "core.sl_tp_close",
+      "area": "cashout",
+      "file": "core/sl_tp_close.py",
+      "original": "    if str(meta.get(\"customer_ref\") or \"\") != trigger.customer_ref:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/acceptance/test_f04_sl_tp_table_close.py"
+      ],
+      "rationale": "F-04: chiusura di un tavolo diverso da quello dell'evento."
+    },
+    {
+      "id": "f04_external_cashout_table",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "        if signal_type == \"CASHOUT_TABLE\" and not RuntimeController._is_internal_sl_tp_route(self, signal):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_f04_sl_tp_table_close.py"
+      ],
+      "rationale": "F-04: CASHOUT_TABLE accettato da un segnale esterno."
+    },
+    {
+      "id": "f04_claim_skipped",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "            if not claim(trigger.close_key, record):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/acceptance/test_f04_sl_tp_table_close.py"
+      ],
+      "rationale": "F-04: nessuna rivendicazione persistente, cashout ripetuto."
+    },
+    {
+      "id": "f04_reclaim_without_cas",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                if not claim(trigger.close_key, record, replace_if=raw):",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/acceptance/test_f04_sl_tp_table_close.py"
+      ],
+      "rationale": "F-04: ri-rivendicazione concorrente vinta da due processi."
+    },
+    {
+      "id": "f04_claim_overwrites",
+      "module": "database",
+      "area": "cashout",
+      "file": "database.py",
+      "original": "            cur = conn.execute(\"INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO NOTHING\",",
+      "mutated": "            cur = conn.execute(\"INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value\",",
+      "tests": [
+        "tests/acceptance/test_f04_sl_tp_table_close.py"
+      ],
+      "rationale": "F-04: rivendicazione non atomica (sovrascrive)."
     }
   ]
 }

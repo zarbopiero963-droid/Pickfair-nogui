@@ -169,6 +169,21 @@ bloccante [evidente]»; sezioni duplicate → UNKNOWN); è leggibile (non un err
 Quota/crediti (incluso `credit_balance_exhausted`) → STOP (P41, CREDITI
 ESAURITI). Prima del merge: zero thread irrisolti.
 
+**Attestazione firmata (PF-REVIEW-ATTESTATION v2, #586).** In aggiunta alle regole sopra, che restano: una review
+di Sol o di Grok conta per i gate solo con un'attestazione `review-attestation.json` del suo run, firmata con Sigstore
+(`actions/attest-build-provenance`) dall'identità OIDC del workflow di review **su `refs/heads/main`** con evento
+`pull_request_target`. Il verificatore unico è `scripts/pr_review_attestation.py`, usato da Merge readiness e dalla
+VPS. Controlla:
+- firma, workflow in allowlist e commit del workflow su main;
+- repo, PR e autore;
+- verdetto dalla classificazione, mai lo stato `success` del job;
+- file inviati > 0, buchi di copertura = 0, impronta canonica delle patch uguale a quella ricalcolata dalla Compare API;
+- copertura PASS contigua dal base all'head per ogni reviewer richiesto.
+
+Ogni condizione non dimostrata → non PASS. Un marker nel commento da solo non conta. Il check
+`pf-betfair-certification` (PRE-LIVE) di Pickfair Dedicated deve essere `success` sull'head esatto;
+`pf-betfair-live-certification` non è un gate delle PR di sviluppo. Dettaglio: `docs/review_attestation.md`.
+
 **Recupero delle review (PF-REVIEW-RECOVERY-01, #550).** Il workflow classifica
 ogni tentativo PRIMA di scrivere marker: `VALID_PASS` / `VALID_BLOCKERS` /
 `VALID_INCONCLUSIVE` / `INCOMPLETE` / `TIMEOUT` / `PROVIDER_ERROR` / `CREDITS_EXHAUSTED` / `UNKNOWN`

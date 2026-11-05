@@ -1,0 +1,40 @@
+name: Merge readiness retrigger
+
+# PF-CI-PERFORMANCE-FINAL-01 (#586): quando Pickfair Dedicated conclude il PRE-LIVE (`pf-betfair-certification`)
+# su uno SHA, rilancia la run di Merge readiness gia' esistente per quell'head (scripts/pr_readiness_retrigger.py).
+# Gira dal branch di default: nessun codice della PR viene eseguito. Unica scrittura: il rerun della run esistente.
+on:
+  check_run:
+    types: [completed]
+
+permissions:
+  actions: write          # rerun della run di Merge readiness
+  contents: read
+  pull-requests: read
+  checks: read
+
+concurrency:
+  group: readiness-retrigger-${{ github.event.check_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  retrigger:
+    if: >-
+      github.event.check_run.name == 'pf-betfair-certification' &&
+      github.event.check_run.app.slug == 'pickfair-dedicated'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PF_GH_CALL_TIMEOUT_SECONDS: "30"
+    steps:
+      - name: Checkout (default branch)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Rerun Merge readiness for the certified head
+        # Una readiness ancora in corso partita prima della fine del PRE-LIVE si attende fino a 7 minuti (Sol su #603).
+        run: >-
+          python3 scripts/pr_readiness_retrigger.py --repo "${{ github.repository }}" --event "$GITHUB_EVENT_PATH"
+          --wait-running-seconds 420

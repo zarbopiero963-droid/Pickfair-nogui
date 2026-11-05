@@ -3406,6 +3406,84 @@
         "tools/combi/inventory.json"
       ],
       "max_files": 19
+    },
+    "gov_review_attestation": {
+      "description": "Governance PF-REVIEW-ATTESTATION v2 (#586, mandato owner PF-FINAL-AUTONOMOUS-CERTIFICATION-01; merge owner: workflow e scripts/pr_*): attestazione Sigstore dell'esito della review nei workflow di Sol e Grok, verificatore condiviso scripts/pr_review_attestation.py (Merge readiness e VPS), gate PRE-LIVE pf-betfair-certification in Merge readiness (LIVE escluso), spec §0.7 e docs. Nessun gate esistente rimosso. Estensione dichiarata (ciclo 11, deroga owner su #602): tests/scripts/test_pr_review_recovery.py, harness run_review isolato da GITHUB_ACTIONS.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-merge-readiness.yml",
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/auto_pr_flow_spec.md",
+        "docs/review_attestation.md",
+        "scripts/pr_review_attestation.py",
+        "tests/scripts/test_pr_review_attestation.py",
+        "tests/scripts/test_pr_review_recovery.py"
+      ],
+      "max_files": 10
+    },
+    "pf_merge_readiness_fast_01": {
+      "description": "PF-MERGE-READINESS-FAST-01 + PF-CI-PERFORMANCE-FINAL-01 + PF-DUAL-CERTIFICATION-01 §5 (#586, merge owner: workflow e scripts/pr_*): timeout per chiamata gh, retry limitati solo su errori transitori, polling leggero e adattivo, scadenza complessiva, head cambiato, readiness_status (READY/PENDING_EXTERNAL/BLOCKED/FAILED/TIMEOUT), uscita anticipata PENDING_EXTERNAL e riattivazione event-driven (pr-readiness-retrigger.yml), LIVE_READINESS informativo. Nessun gate rimosso, nessun nuovo required check.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-merge-readiness.yml",
+        ".github/workflows/pr-readiness-retrigger.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/merge_readiness_performance.md",
+        "scripts/pr_flow_automation.py",
+        "scripts/pr_full_suite_pipeline.py",
+        "scripts/pr_readiness_retrigger.py",
+        "tests/scripts/test_merge_readiness_fast.py",
+        "tests/scripts/test_pr_flow_automation.py",
+        "tests/scripts/test_pr_readiness_retrigger.py"
+      ],
+      "max_files": 11
+    },
+    "cb586_fi03z_sim_zero_size": {
+      "description": "CB-586-FI-03Z (#586 c.6588978024, P1): SimulationBroker._match_order non abbina contro livelli del book con size esplicita <= 0 (delta Betfair = livello rimosso), coerente con best_counterparty_price; catalogo mutazioni riallineato + mutazione fi03z. Estensione dichiarata (#604, richiesta owner): tests/fi03z/test_microstake_empty_levels.py, saga microstake 0,10 EUR su livelli vuoti, parziale e residuo.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "guardrails/mutation_catalog.json",
+        "simulation_broker.py",
+        "tests/fi03z/test_microstake_empty_levels.py",
+        "tests/fi03z/test_sim_zero_size_level.py"
+      ],
+      "max_files": 6
+    },
+    "gov_full_review_after_non_pass": {
+      "description": "Governance (decisione owner su #606, merge owner: workflow-gate e scripts/pr_*): dopo un esito non-PASS di Sol o Grok la review successiva copre l'intero diff BASE...HEAD (rr_needs_full_review nei due workflow, storico illeggibile => review completa); il verificatore chiude un non-PASS solo con un PASS successivo dalla base che arriva almeno alla fine del range bloccato. Nessuna attestazione storica riscritta, nessun controllo di firma/digest/copertura allentato.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/review_attestation.md",
+        "scripts/pr_review_attestation.py",
+        "tests/scripts/test_pr_review_attestation.py"
+      ],
+      "max_files": 7
+    },
+    "d_f04_sl_tp_close": {
+      "description": "F-04 (#586, CSH-02): chiusura per tavolo allo scatto di SL/TP (eventi F-02 v1), rivendicazione persistente atomica, CASHOUT_TABLE interno nel CashoutRouter con tutti i gate del cashout; nessuna soglia nuova, nessun retry automatico.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "cashout_router.py",
+        "core/runtime_controller.py",
+        "core/sl_tp_close.py",
+        "database.py",
+        "docs/cashout_overview.md",
+        "guardrails/mutation_catalog.json",
+        "tests/acceptance/test_f04_sl_tp_table_close.py"
+      ],
+      "max_files": 9
     }
   }
 }

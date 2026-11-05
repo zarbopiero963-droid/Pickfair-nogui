@@ -129,3 +129,12 @@ nessun rilascio sbagliato, al più un rilascio ritardato.
 Prova LIVE del ref restituito da Betfair: BLOCKED (serve un GO D specifico, scheda F-13 §14).
 
 Test: `tests/f13/`, `tests/f13b/`; mutazioni `f13_*`, `f13b_*` in `guardrails/mutation_catalog.json`.
+## 5. Seguito (F-13b)
+
+F018 (`RuntimeController._rebuild_open_positions`) e `cashout_router` (identità I1) usano il solo `bet_id`. Il
+`customerOrderRef` come chiave secondaria richiede di estendere `Database.get_bot_active_orders` (oggi solo righe con
+`bet_id`) ed è la PR successiva della scheda.
+
+Prova LIVE del ref restituito da Betfair: BLOCKED (serve un GO D specifico, scheda F-13 §14).
+
+Test: `tests/f13/`; mutazioni `f13_*` in `guardrails/mutation_catalog.json`.

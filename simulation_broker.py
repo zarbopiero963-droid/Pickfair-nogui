@@ -280,6 +280,28 @@ def _chiave_liquidita(market_id: str, selection_id: int, lato: str, price: float
     return f"{market_id}|{int(selection_id)}|{lato}|{float(price):.6f}"
 
 
+def _livello_svuotato(livello: Any) -> bool:
+    """CB-586-FI-03Z: livello del book con size esplicita nulla, negativa o non numerica (nessuna liquidita')."""
+    if not isinstance(livello, dict) or livello.get("size") is None:
+        return False
+    try:
+        size = float(livello["size"])
+    except (TypeError, ValueError):
+        return True
+    return not math.isfinite(size) or size <= 0.0
+
+
+def _miglior_livello(livelli: Any) -> Optional[Dict[str, Any]]:
+    """CB-586-FI-03Z: il livello su cui il SIM abbinerebbe (il primo non svuotato), senza toccare la lista del book.
+
+    Unica regola per ``_match_order`` e ``best_counterparty_price``: la quota letta dal Microstake deve descrivere
+    proprio il livello che il matching userebbe (rilievo Codex P1 su #604)."""
+    for livello in livelli or []:
+        if not _livello_svuotato(livello):
+            return livello if isinstance(livello, dict) else None
+    return None
+
+
 def _fill_valido(item: Any) -> Optional[Dict[str, Any]]:
     """Voce del registro dei fill con tutti i campi validi, normalizzata; altrimenti None."""
     if not isinstance(item, dict):
@@ -314,6 +336,8 @@ class SimulationBroker:
       e' >= di quel prezzo, e prende il prezzo del book;
     - solo il primo livello; un ordine rimasto a riposo si abbina (anche in
       parte) quando un book APERTO successivo lo raggiunge (PFC-005);
+    - un livello con size esplicita 0 (o negativa) e' assente, come il delta
+      Betfair che lo rimuove: il migliore e' il successivo (CB-586-FI-03Z);
     - nessun auto-close
     - stato persistibile
     """
@@ -1694,15 +1718,17 @@ class SimulationBroker:
             if not runner:
                 return None
             ex = runner.get("ex") or {}
-            levels = ex.get("availableToBack" if str(side).upper() == "BACK" else "availableToLay") or []
-            if not levels:
+            # Stesso livello del matching (CB-586-FI-03Z): i livelli con size esplicita <= 0 sono assenti, una size
+            # assente e' liquidita' non limitata come in ``_match_order``. Prima si leggeva solo il primo livello:
+            # con 2.0/-1 seguito da 1.9/5 la quota diceva "nessuna controparte" mentre il matching abbinava a 1.9.
+            livello = _miglior_livello(ex.get("availableToBack" if str(side).upper() == "BACK" else "availableToLay"))
+            if livello is None:
                 return None
             try:
-                price = float((levels[0] or {}).get("price") or 0.0)
-                size = float((levels[0] or {}).get("size") or 0.0)
+                price = float(livello.get("price") or 0.0)
             except (TypeError, ValueError):
                 return None
-            if not math.isfinite(price) or price <= 1.0 or size <= 0.0:
+            if not math.isfinite(price) or price <= 1.0:
                 return None
             return price
 
@@ -2057,10 +2083,12 @@ class SimulationBroker:
         # LAY sul miglior availableToLay. Fino a F6 era il contrario: il SIM
         # abbinava dal lato opposto dello spread, e un BACK al prezzo davvero
         # eseguibile restava a riposo.
-        if order.side == "BACK":
-            best_counter = backs[0] if backs else None
-        else:
-            best_counter = lays[0] if lays else None
+        # CB-586-FI-03Z (#586, P1): un livello con size esplicita <= 0 (delta Betfair = livello rimosso) non offre
+        # liquidita' e conta come assente: il migliore e' il livello successivo, come in best_counterparty_price.
+        # Una size assente resta il comportamento storico del SIM (liquidita' non limitata). Si scorre senza toccare
+        # le liste: sono quelle del book memorizzato (stato persistito, letto da best_counterparty_price).
+        livelli = backs if order.side == "BACK" else lays
+        best_counter = _miglior_livello(livelli)
 
         if not best_counter:
             order.status = "EXECUTABLE"
