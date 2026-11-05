@@ -1,9 +1,9 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 4,
+ "seq": 5,
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "previous_checkpoint_sha": "36428c140fae489898ebf14b18ce945662e9de2f",
+ "previous_checkpoint_sha": "230eb0ddb528055d70bcccc19126855111f0b13f",
  "updated_at": "2026-11-05T14:22:51Z",
  "agent": {
   "identity": "claude-d",
@@ -136,8 +136,9 @@
  "tests_executed": [
   {
    "id": "F-14 suite su PR #609 head 5f9ddee (187 test)",
-   "status": "PASS",
-   "sha": "5f9ddeec20438d2e8dfe780de6af6d9ce9e5a14f"
+   "status": "NOT VERIFIED",
+   "sha": "5f9ddeec20438d2e8dfe780de6af6d9ce9e5a14f",
+   "note": "head #609 5f9ddee squash-mergiato in 89af178e: sha non raggiungibile da un clone pulito; evidenza sostituita da 'G7 S01-S05 (F-14) su main pubblicato' sha 89af178e"
   },
   {
    "id": "F-16 regressione 152 file + runner GATE PASS (125) su fusione locale con main",
@@ -231,6 +232,9 @@
  "pr_505": "non toccata",
  "certification_verdict": "NOT VERIFIED",
  "handoffs": [
-  "pfab-d-20261105-ckpt-squash-case-001 (caso sintetico + script a Claude B)"
+  "pfab-d-20261105-ckpt-squash-case-001 (caso sintetico + script a Claude B)",
+  {
+   "note": "seq 4 (230eb0d) pubblicato ma readback FALLITO (sha 5f9ddee non risolvibile dopo squash): NON DURABLE; sostituito da seq 5"
+  }
  ]
 }

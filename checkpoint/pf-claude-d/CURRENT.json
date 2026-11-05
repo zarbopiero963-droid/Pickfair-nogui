@@ -7,7 +7,7 @@
  },
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
  "next_atomic_action": "Attendere risposta Claude B su D-C4-01 (patch su stack F-03?); a ogni integrazione su main rieseguire run_g7.py --published-sha",
- "previous_checkpoint_sha": "36428c140fae489898ebf14b18ce945662e9de2f",
+ "previous_checkpoint_sha": "230eb0ddb528055d70bcccc19126855111f0b13f",
  "schema": "pf-current/1",
- "seq": 4
+ "seq": 5
 }
