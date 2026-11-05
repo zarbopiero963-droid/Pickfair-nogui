@@ -226,13 +226,14 @@ def test_a7_ordine_esterno_mai_adottato_ne_chiuso() -> None:
     tavolo del bot: al riavvio F018 non lo adotta (nessun tavolo), lo SL del tavolo del bot non lo cancella ne' lo
     copre, e non viene mai ripiazzato."""
     r1 = run([{"op": "signal", "m": "1.994", "price": 2.0, "stop_loss_pct": 10},
-              {"op": "external", "m": "1.994", "sel": 12, "price": 2.0, "size": 5.0}, {"op": "crash_now"}])
+              {"op": "external", "m": "1.994", "sel": 12, "price": 50.0, "size": 5.0}, {"op": "crash_now"}])
     r2 = run([{"op": "wait", "s": 2}, {"op": "price", "m": "1.994", "price": 3.0}, POLL], home=r1["_home"])
     riavvio = r2["snaps"][0]
     tavoli = [t for t in riavvio["tables"] if t["market_id"] == "1.994"]
     assert len(tavoli) == 1, ("ordine esterno adottato come tavolo", tavoli)
     finale = r2["snaps"][-1]
     ext = [o for o in finale["exch_orders"] if str(o["market_id"]) == "1.994" and str(o["selection_id"]) == "12"]
-    assert len(ext) == 1 and ext[0]["ref"] == "EXTERNAL-MANUAL" and ext[0]["status"] != "CANCELLED", ext
+    assert len(ext) == 1 and ext[0]["ref"] == "EXTERNAL-MANUAL" and ext[0]["status"] == "EXECUTABLE", ext
     hedges = [o for o in finale["exch_orders"] if str(o["market_id"]) == "1.994" and o["side"] == "LAY"]
-    assert all(str(o["selection_id"]) == "11" for o in hedges), ("hedge sull'ordine esterno", hedges)
+    assert {o["ref"] for o in hedges} and all(str(o["selection_id"]) == "11" for o in hedges), \
+        ("SL del bot non scattato o hedge sull'ordine esterno", hedges)
