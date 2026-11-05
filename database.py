@@ -1883,6 +1883,18 @@ class Database:
                             fetchone=True, commit=False)
         return dict(row) if row else None
 
+    def settled_customer_refs(self, customer_refs: Iterable[str]) -> Dict[str, str]:
+        """G7-R06: ``{customer_ref: settlement_key}`` degli intenti con un effetto di settlement APPLICATO (esito diverso
+        da ``held``): la prova dell'exchange che la posizione e' chiusa. Sola lettura; ref vuoti ignorati."""
+        refs = sorted({str(r).strip() for r in (customer_refs or []) if str(r or "").strip()})
+        if not refs:
+            return {}
+        marks = ",".join("?" for _ in refs)
+        rows = self._execute(
+            f"SELECT customer_ref, settlement_key FROM settlement_effects WHERE outcome != 'held' "
+            f"AND customer_ref IN ({marks}) ORDER BY recorded_at", tuple(refs), fetch=True, commit=False)
+        return {str(dict(r)["customer_ref"]): str(dict(r)["settlement_key"]) for r in rows or []}
+
     def record_settlement_effect(self, settlement_key: str, record: Dict[str, Any],
                                  settings: Optional[Dict[str, Any]] = None, *,
                                  recovery_merge: Optional[Tuple[str, Dict[str, float], List[str]]] = None) -> bool:

@@ -8216,6 +8216,30 @@
         "tests/f13/test_f13_customer_order_ref.py"
       ],
       "rationale": "F-13 (review indipendente su 4881adb): la mappa del de-dup SIM cresce di una voce per ordine nello snapshot, senza limiti."
+    },
+    {
+      "id": "g7r06_held_as_proof",
+      "module": "database",
+      "area": "recovery",
+      "file": "database.py",
+      "original": "            f\"SELECT customer_ref, settlement_key FROM settlement_effects WHERE outcome != 'held' \"",
+      "mutated": "            f\"SELECT customer_ref, settlement_key FROM settlement_effects WHERE 1=1 \"",
+      "tests": [
+        "tests/acceptance/test_g7_r06_rebuild_settled.py"
+      ],
+      "rationale": "G7-R06: un settlement trattenuto (held) letto come prova di chiusura."
+    },
+    {
+      "id": "g7r06_settled_not_filtered",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            candidates = [c for c in candidates if c[\"customer_ref\"] not in settled]",
+      "mutated": "            candidates = candidates",
+      "tests": [
+        "tests/acceptance/test_g7_r06_rebuild_settled.py"
+      ],
+      "rationale": "G7-R06: riserva fantasma ricostruita su un mercato gia' regolato."
     }
   ]
 }

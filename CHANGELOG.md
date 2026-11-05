@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **G7-R06 (#586): AMBIGUOUS gia' regolato non rinasce come riserva al riavvio.** La ricostruzione F018 chiude gli
+  intenti con un effetto di settlement applicato (`Database.settled_customer_refs`, prova = chiave del settlement)
+  invece di ricrearne il tavolo come posizione incerta su un mercato gia' chiuso. Senza prova o con registro
+  illeggibile la riga resta incerta (fail-closed). Documentazione: `docs/startup_recovery.md`.
+
 ### Added
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);

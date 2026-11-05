@@ -3442,6 +3442,21 @@
         "tools/teardown_evidence/verify_teardown_evidence.py"
       ],
       "max_files": 14
+    },
+    "d_g7_r06_settled_ambiguous": {
+      "description": "G7-R06 (#586): la ricostruzione F018 chiude gli intenti AMBIGUOUS/INFLIGHT con un effetto di settlement applicato (prova = chiave del settlement), invece di ricrearne la riserva su un mercato regolato; registro illeggibile => incerto.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/runtime_controller.py",
+        "database.py",
+        "docs/startup_recovery.md",
+        "guardrails/mutation_catalog.json",
+        "tests/acceptance/test_g7_r06_rebuild_settled.py",
+        "tests/f026/test_g7_r06_settled_ambiguous.py"
+      ],
+      "max_files": 8
     }
   }
 }

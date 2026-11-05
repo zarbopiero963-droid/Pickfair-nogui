@@ -5348,6 +5348,25 @@ class RuntimeController:
         candidates = [c for c in candidates if c["event_key"] not in held]
         if not candidates:
             return result
+        # G7-R06 (#586): un intento con un effetto di settlement gia' APPLICATO e' chiuso dall'exchange (prova: la chiave
+        # del settlement), anche se la sua riga e' rimasta AMBIGUOUS/INFLIGHT: non si ricostruisce una riserva fantasma
+        # su un mercato regolato. Registro illeggibile => nessuna prova, la riga resta incerta (fail-closed).
+        settled: dict = {}
+        finder = getattr(self.db, "settled_customer_refs", None)
+        if callable(finder):
+            try:
+                settled = dict(finder([c["customer_ref"] for c in candidates]) or {})
+            except Exception:
+                logger.exception("F018: registro dei settlement illeggibile, nessuna chiusura per settlement")
+                settled = {}
+        if settled:
+            result["settled"] = {ref: key for ref, key in settled.items()}
+            for c in candidates:
+                if c["customer_ref"] in settled:
+                    result["closed"].append(c["customer_ref"])
+            candidates = [c for c in candidates if c["customer_ref"] not in settled]
+            if not candidates:
+                return result
         current = None
         try:
             current = list(self.betfair_service.list_current_orders() or [])
