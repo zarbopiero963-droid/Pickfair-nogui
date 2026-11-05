@@ -584,3 +584,21 @@ def test_a_non_isolated_suite_cannot_run_part_of_an_isolated_path(path):
 def test_non_isolated_suites_outside_isolated_paths_stay_valid():
     cat = D.validate_catalog(CATALOG_RAW)
     assert _suite(cat, "acceptance")["environment"] == "SIM"
+
+
+# Sol su #606 (d27d4762, VALID_BLOCKERS): `tests/.` superava _check_args e sfuggiva al confronto testuale di _covers,
+# quindi una suite OFFLINE/SIM avrebbe raccolto chaos, recovery e stress fuori dalla sandbox. Ogni percorso deve essere
+# gia' canonico: nessun segmento `.`, vuoto o `..`, nessuna barra finale.
+@pytest.mark.parametrize("path", ["tests/.", "tests/./chaos", "tests/chaos/.", "tests/chaos/", "tests//chaos",
+                                  "tests/./recovery/", "tests/./chaos/test_auto_throttle_chaos.py"])
+def test_non_canonical_catalog_paths_are_refused_before_the_isolation_check(path):
+    def mutate(c):
+        _suite(c, "acceptance").update(args=[path])
+    with pytest.raises(D.Refused, match="^UNSAFE_ARG:acceptance$"):
+        D.validate_catalog(cat_with(mutate))
+
+
+@pytest.mark.parametrize("target", ["dev:tests/.", "dev:tests/./chaos", "dev:tests/chaos/", "dev:tests/./x.py"])
+def test_non_canonical_development_paths_are_refused(target):
+    with pytest.raises(D.Refused, match="^DEV_PATH_UNSAFE$"):
+        dev(target=target, path_exists_at_sha=lambda p: True)

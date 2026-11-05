@@ -79,6 +79,12 @@ SUITE_FIELDS = frozenset({"id", "component", "behaviour", "category", "runner", 
                           "timeout_seconds", "resources", "datasets", "evidence", "requires", "criteria"})
 _ID = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 _SAFE_ARG = re.compile(r"[A-Za-z0-9_./-]+")
+
+
+def _canonical(path: str) -> bool:
+    """Percorso gia' in forma canonica: nessun segmento vuoto, `.` o `..` (quindi niente barra finale ne' doppia).
+    `tests/.` o `tests/./chaos` sfuggirebbero al confronto testuale di _covers (rilievo di Sol su #606)."""
+    return all(seg not in ("", ".", "..") for seg in path.split("/"))
 _SHA = re.compile(r"[0-9a-f]{40}")
 _TS = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -101,7 +107,7 @@ def _check_args(suite: Mapping[str, Any], root: Path) -> None:
     if not isinstance(args, list) or not args or not all(isinstance(a, str) for a in args):
         raise Refused(f"BAD_ARGS:{suite['id']}")
     for a in args:
-        if not _SAFE_ARG.fullmatch(a) or ".." in a or a.startswith(("/", "-")):
+        if not _SAFE_ARG.fullmatch(a) or ".." in a or a.startswith(("/", "-")) or not _canonical(a):
             raise Refused(f"UNSAFE_ARG:{suite['id']}")              # niente shell, flag, percorsi assoluti o risalite
     if runner == "pytest":
         for a in args:
@@ -200,7 +206,7 @@ def dev_paths_from_target(target: str) -> List[str]:
     if not 0 < len(paths) <= MAX_DEV_PATHS or len(set(paths)) != len(paths):
         raise Refused("DEV_PATHS")
     for p in paths:
-        if (not _SAFE_ARG.fullmatch(p) or ".." in p or p.startswith(("/", "-")) or "//" in p
+        if (not _SAFE_ARG.fullmatch(p) or ".." in p or p.startswith(("/", "-")) or "//" in p or not _canonical(p)
                 or not p.startswith("tests/") or not (p.endswith(".py") or "." not in p.rsplit("/", 1)[-1])):
             raise Refused("DEV_PATH_UNSAFE")
     return paths
