@@ -3,11 +3,12 @@
 Orchestra la chiusura delle posizioni del bot quando arriva un segnale
 ``CASHOUT`` / ``CASHOUT_ALL``:
 
-1. carica gli ordini **del bot** dal suo DB (identità I1: il ``betId`` di un
-   ordine corrente è "del bot" se sta nei record del bot — il ``customerOrderRef``
-   NON è inviato a Betfair sul piazzamento, quindi non è affidabile); i record DB
-   danno anche la mappa ``market_id → event_name`` per restringere un ``CASHOUT``
-   singolo alla **sua partita**;
+1. carica gli ordini **del bot** dal suo DB (identità I1: un ordine corrente è
+   "del bot" se il suo ``betId`` sta nei record del bot **oppure**, F-13b, se il
+   suo ``customerOrderRef`` è il ref di una riga del bot: dopo F-13a il ref è
+   inviato con ogni place diretto e sopravvive a un replace e a una risposta
+   persa); i record DB danno anche la mappa ``market_id → event_name`` per
+   restringere un ``CASHOUT`` singolo alla **sua partita**;
 2. legge gli ordini correnti live (``list_current_orders``) per lo stato abbinato;
 3. ricostruisce le posizioni (``cashout_resolver`` — solo bot, lato singolo,
    miste saltate);
@@ -28,6 +29,7 @@ import math
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from cashout_resolver import build_cashout_request, reconstruct_open_positions
+from core.order_ref import customer_order_ref
 from core.trading_constants import CASHOUT_FAILED, REQ_EXECUTE_CASHOUT
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,11 @@ def _norm(value: Any) -> str:
 
 def _bet_id(row: Dict[str, Any]) -> str:
     return str(row.get("betId") or row.get("bet_id") or "").strip()
+
+
+def _order_ref(row: Dict[str, Any]) -> str:
+    """``customerOrderRef`` di un ordine corrente, solo se conforme ai vincoli Betfair ('' altrimenti)."""
+    return customer_order_ref(row.get("customerOrderRef") or row.get("customer_order_ref"))
 
 
 def _market_is_open(book: Dict[str, Any]) -> bool:
@@ -156,9 +163,12 @@ class CashoutRouter:
         publish: Callable[[str, Dict[str, Any]], None],
         commission_pct: float = 4.5,
         source: str = "TELEGRAM",
+        fetch_bot_refs: Optional[Callable[[], Any]] = None,
     ) -> None:
         self.fetch_current_orders = fetch_current_orders
         self.fetch_bot_orders = fetch_bot_orders
+        # F-13b: ``Database.get_bot_order_refs`` (ref conformi, anche delle righe senza betId). Assente => solo betId.
+        self.fetch_bot_refs = fetch_bot_refs
         self.fetch_market_book = fetch_market_book
         self.cancel_orders = cancel_orders
         self.publish = publish
@@ -177,8 +187,8 @@ class CashoutRouter:
         bot = self._load_bot_orders()
         if bot is None:  # lettura DB fallita: CASHOUT_FAILED già pubblicato (fail-closed).
             return self._summary(0, 0, reason="bot_orders_error")
-        bot_bet_ids, market_event = bot
-        if not bot_bet_ids:
+        bot_bet_ids, bot_refs, market_event = bot
+        if not bot_bet_ids and not bot_refs:
             logger.info("[cashout_router] nessun ordine del bot: niente da chiudere")
             return self._summary(0, 0, reason="no_bot_orders")
 
@@ -200,7 +210,19 @@ class CashoutRouter:
             return self._summary(0, 0, reason="current_orders_error")
 
         def _is_bot_order(row: Dict[str, Any]) -> bool:
-            return _bet_id(row) in bot_bet_ids
+            if _bet_id(row) in bot_bet_ids:
+                return True
+            ref = _order_ref(row)
+            return bool(ref) and ref in bot_refs
+
+        # F-04: per CASHOUT_TABLE l'appartenenza e' SOLO per bet_id del tavolo, qualunque altra identita' del bot
+        # (es. per customerOrderRef) aggiunga in futuro `_is_bot_order`: un'identita' piu' larga toccherebbe gli
+        # ordini degli altri tavoli (resting compreso).
+        if table_scope is not None:
+            table_bets = table_scope["bet_ids"]
+
+            def _is_bot_order(row: Dict[str, Any]) -> bool:  # noqa: F811 - ambito ristretto al tavolo
+                return _bet_id(row) in table_bets
 
         # F-04: per CASHOUT_TABLE l'appartenenza e' SOLO per bet_id del tavolo, qualunque altra identita' del bot
         # (es. per customerOrderRef) aggiunga in futuro `_is_bot_order`: un'identita' piu' larga toccherebbe gli
@@ -275,8 +297,8 @@ class CashoutRouter:
         return out
 
     def _load_bot_orders(self):
-        """``(bot_bet_ids, market_event)`` dal DB del bot, o ``None`` se la lettura
-        fallisce.
+        """``(bot_bet_ids, bot_refs, market_event)`` dal DB del bot, o ``None`` se la
+        lettura fallisce (ordini **o** ref: F-13b).
 
         Fail-closed: una lettura DB che solleva (es. SQLite lockato) pubblica
         ``CASHOUT_FAILED`` e aborta, così l'operatore riceve la notifica invece di
@@ -284,25 +306,28 @@ class CashoutRouter:
         """
         try:
             bot_orders = list(self.fetch_bot_orders() or [])
+            ref_rows = list(self.fetch_bot_refs() or []) if self.fetch_bot_refs is not None else []
         except Exception as exc:  # noqa: BLE001 - fail-closed: non si chiude alla cieca
             logger.warning("[cashout_router] lettura ordini bot fallita, abort: %s", exc)
             self.publish(CASHOUT_FAILED, {"reason": f"fetch_bot_orders:{exc}",
                                           "status": "ERROR", "source": self.source})
             return None
         bot_bet_ids = {_bet_id(o) for o in bot_orders if _bet_id(o)}
+        bot_refs = {ref for ref in (customer_order_ref(r.get("customer_ref")) for r in ref_rows
+                                    if isinstance(r, dict)) if ref}
         # Mappa market→event: tieni il PRIMO event_name non vuoto per mercato. Una
         # riga successiva con event_name mancante (il DB lo default a '') NON deve
         # sovrascrivere una mappatura valida, altrimenti un CASHOUT singolo non
         # troverebbe più la partita e non chiuderebbe nulla (Codex P2).
         market_event: Dict[str, str] = {}
-        for o in bot_orders:
+        for o in [*bot_orders, *(r for r in ref_rows if isinstance(r, dict))]:
             market_id = str(o.get("market_id") or o.get("marketId") or "")
             if not market_id:
                 continue
             event = _norm(o.get("event_name"))
             if event and not market_event.get(market_id):
                 market_event[market_id] = event
-        return bot_bet_ids, market_event
+        return bot_bet_ids, bot_refs, market_event
 
     def _load_current_orders(self):
         """Ordini correnti live, o ``None`` se la fetch fallisce (pubblica

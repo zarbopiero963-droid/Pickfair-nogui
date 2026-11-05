@@ -20,6 +20,7 @@ if ROOT not in sys.path:
 
 from database import Database  # noqa: E402
 from services.settings_service import SettingsService  # noqa: E402
+from services.setting_service import InvalidSettingsError  # noqa: E402
 from tools.combi.generator import load_inventory  # noqa: E402
 
 pytestmark = [pytest.mark.fullscope, pytest.mark.integration]
@@ -118,11 +119,17 @@ def test_invalid_numeric_value_is_not_silently_replaced_by_a_default(tmp_path, p
     attr = _config_attr(key)
     payload = dict(REQUIRED)
     payload[key] = bad
-    svc.save_settings(payload)
+    # F-18: il service rifiuta il salvataggio di un valore illeggibile; qui si collauda il caricamento di un DB
+    # legacy/corrotto che lo contiene (scrittura raw)
+    with pytest.raises(InvalidSettingsError):
+        svc.save_settings(payload)
+    svc.db.save_settings(payload)
     cfg = svc.load_roserpina_config()
     got = getattr(cfg, attr)
     if got is None or (isinstance(got, float) and math.isnan(got)):
         return                                          # fail-closed: il validatore a valle nega (contratto atteso)
+    if key in cfg.invalid_settings:
+        return                                          # F-18: chiave registrata invalida => ogni ingresso negato
     if isinstance(got, float) and math.isinf(got):
         pytest.xfail(f"F-18 (NF-16): {key}={bad!r} caricato come {got!r}: infinito accettato dal loader (fail-open)")
     import re
@@ -140,7 +147,7 @@ def test_legacy_key_present_in_settings_does_not_break_loading(tmp_path, param):
     key = param["key"].split(":", 1)[-1]
     payload = dict(REQUIRED)
     payload[key] = "legacy-value"
-    svc.save_settings(payload)
+    svc.db.save_settings(payload)                       # raw: un valore legacy gia' nel DB (il service lo rifiuterebbe)
     cfg = svc.load_roserpina_config()
     sim = svc.load_simulation_config()
     assert cfg is not None and isinstance(sim, dict)

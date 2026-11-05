@@ -98,6 +98,37 @@ Senza nessun ordine sul runner, il timeout si applica come prima.
 Il rilevamento degli ordini fantasma (`_detect_ghost_orders`) usa ancora il runner, ma solo per **non** segnalare
 come fantasma un ordine sostituito. Non attribuisce nulla.
 
+## 5. Il ref come identità del bot (F-13b)
+
+Il `customerOrderRef` sopravvive a un replace (nuovo `betId`) e a una risposta persa (riga `orders` senza `betId`).
+Fino a F-13b il bot riconosceva i propri ordini solo dal `betId` registrato. Il ref è ora la **seconda chiave**:
+- **`Database.get_bot_order_refs`.** Restituisce i ref conformi di ogni riga `orders`, in qualunque stato, anche
+  `INFLIGHT`, con mercato ed evento. Un ref non conforme non è mai stato inviato, quindi non identifica niente.
+  `get_bot_active_orders` (solo `betId`) è invariato.
+- **Cashout (identità I1, `cashout_router`).** Un ordine corrente è del bot se il suo `betId` è nei record del bot
+  oppure se il suo `customerOrderRef` è un ref del bot. Prima, un ordine sostituito o con risposta persa restava
+  fuori: hedge sottodimensionato, resting non cancellato, oppure `no_bot_orders` con la posizione aperta. Ora entra
+  nella posizione e nella cancellazione. Il `CASHOUT` singolo trova l'evento anche dalle righe senza `betId`. Se i
+  ref non sono leggibili il cashout non parte (`CASHOUT_FAILED`). Un ordine con un ref diverso, o senza ref, non
+  viene mai adottato.
+- **Ricostruzione al riavvio (F018, `RuntimeController._rebuild_open_positions`).** Una riga `SUBMITTED` il cui
+  ref è vivo sull'exchange viene ricostruita come certa: tavolo, esposizione e chiave anti-duplicato. Vale anche con
+  il `betId` vecchio (replace) o senza `betId` (risposta persa). Prima la prima veniva chiusa e il segnale poteva
+  ripetersi; la seconda restava incerta. Un ordine con un altro ref sullo stesso mercato lascia la riga incerta, come
+  prima.
+- **Hedge del cashout (`CashoutExecutor._previous_hedge_block`).** Un hedge precedente sostituito, con lo stesso ref
+  `hedge:…` e un nuovo `betId`, ancora vivo blocca un secondo hedge (`previous_hedge_still_live`). Prima risultava
+  sparito e il secondo hedge sovracopriva la posizione. Un hedge senza `betId` resta
+  `hedge_liveness_unverifiable`, come prima.
+
+Fuori da F-13b, perché fail-closed già oggi: il rilascio per settlement (`_market_has_foreign_cleared_legs`)
+considera estranea una bet regolata con un `betId` sconosciuto, quindi tiene il tavolo, non lo rilascia mai per
+errore. Il polling dei settlement per `betId` non vede il `betId` di un sostituto. Entrambi restano limiti noti:
+nessun rilascio sbagliato, al più un rilascio ritardato.
+
+Prova LIVE del ref restituito da Betfair: BLOCKED (serve un GO D specifico, scheda F-13 §14).
+
+Test: `tests/f13/`, `tests/f13b/`; mutazioni `f13_*`, `f13b_*` in `guardrails/mutation_catalog.json`.
 ## 5. Seguito (F-13b)
 
 F018 (`RuntimeController._rebuild_open_positions`) e `cashout_router` (identità I1) usano il solo `bet_id`. Il

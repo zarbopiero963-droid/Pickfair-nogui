@@ -9,6 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **F-03 (#586, K-7): trailing stop.** Con `roserpina.trailing_stop_pct` (OFF di default) il monitor segue il picco
+  del P&L garantito liquidabile, lo persiste prima di usarlo (`risk.trailing_peak.<customer_ref>`) e scatta a
+  picco × (1 − pct/100) con `TRAILING_TRIGGERED`, chiuso da F-04 sul solo tavolo. Precedenza hard-stop > SL >
+  trailing > TP; nessuna decisione su mercato non negoziabile, quote assenti, book insufficiente o stato illeggibile.
+  Documentazione: `docs/cashout_overview.md` §7.7.
+
 ### Added
 - **F-04 (#586, CSH-02): chiusura del solo tavolo che raggiunge SL/TP.** `RuntimeController` consuma `SL_TRIGGERED` /
   `TP_TRIGGERED` di F-02 (contratto v1, `core/sl_tp_close.py`) e chiude solo la posizione di quel tavolo, identificata
@@ -118,6 +124,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `tests/scripts/test_roadmap_merge_delegation.py`; mutazioni `pap_delegation_*`, `pap_live_removed_lines_ignored`.
 
 ### Fixed
+- **F-02 (#586, CSH-02/NF-03, F-CFG-01) — SL/TP arrivano fino al monitor:** nessuna chiave SL/TP esisteva, la meta del
+  tavolo non portava mai `stop_loss`/`take_profit` (il monitor non agiva mai), il monitor girava solo con lo stream e lo
+  scatto mandava un cashout senza lato né quota (R3-01, sempre rifiutato). Ora `roserpina.stop_loss_pct`/`take_profit_pct`
+  /`trailing_stop_pct` (OFF di default, validate), importi sul rischio della gamba nel meta (segnale o config,
+  persistiti per F018 e auto-next), monitor anche in SIM/poll, evento `SL_TRIGGERED`/`TP_TRIGGERED` una volta per
+  posizione, nessun ordine fino a F-04. Tab Roserpina: due campi. `docs/cashout_overview.md` §7.4-bis; test `tests/f02/`.
+- **F-18 (#586, CFG-01/02/04, NF-16, NF-17) — impostazioni Roserpina validate al salvataggio, loader fail-closed:**
+  un valore illeggibile (`"abc"`, NaN, inf) o fuori dominio (commissione -5, percentuale 150, `table_count` 2.5) veniva
+  salvato e al caricamento ricadeva in silenzio sul default di codice. Ora `core/config_validation.py` definisce i domini;
+  `SettingsService.save_settings` rifiuta l'intero salvataggio (config precedente intatta); un DB corrotto si carica
+  senza crash con NaN/valore protettivo e `RoserpinaConfig.invalid_settings`, che nega ogni nuova entrata
+  (`configurazione_non_valida:<chiave>`). Nessun cap monetario attivo di default; `min_stake` solo > 0 (0,10 € valido,
+  mai alzato). 36 xfail NF-16 ora verdi. `docs/config_validation.md`; test `tests/f18/`; mutazioni `f18_*`.
+- **F-13b (#586, ID-01) — il ref è identità del bot nel cashout, al riavvio e negli hedge:** un ordine sostituito
+  (nuovo `betId`) o con risposta persa era invisibile al cashout (hedge sottodimensionato, resting vivo, `no_bot_orders`),
+  veniva chiuso alla ricostruzione F018 e un hedge sostituito non bloccava il secondo. Ora il `customerOrderRef`
+  (`Database.get_bot_order_refs`) è la seconda chiave I1 in `cashout_router`, F018 e `CashoutExecutor`; ref estranei o
+  assenti mai adottati, ref illeggibili => `CASHOUT_FAILED`. `docs/order_identity.md` §5; test `tests/f13b/`;
+  mutazioni `f13b_*`.
 - **F-13a (#586, ID-01/D-582-01/D1) — identità degli ordini:**
   - Ogni place diretto (router, OrderManager, BetfairService, engine) invia `customerOrderRef` = `customer_ref` se conforme (≤32, charset Betfair); un ref non conforme viene omesso, mai rifiutato.
   - Il SIM rifiuta la stessa richiesta entro 60 s (`DUPLICATE_TRANSACTION`), che OrderRouter e OrderManager trattano come esito ignoto (AMBIGUOUS) come in LIVE; il replace conserva il ref.

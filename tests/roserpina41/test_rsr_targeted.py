@@ -59,12 +59,16 @@ NUMERIC_WITH_DEFAULT = [p for p in PARAMS if isinstance(p[1], float) and p[2] is
 
 
 @pytest.mark.parametrize("key,_v,default", NUMERIC_WITH_DEFAULT, ids=[p[0] for p in NUMERIC_WITH_DEFAULT])
-def test_rsr_unreadable_numeric_value_falls_back_to_code_default(tmp_path, key, _v, default):
-    """Comportamento ATTUALE del loader (documentato nella scheda): un valore illeggibile torna al default di codice.
-    I range ammessi (Q1/Q2) sono decisioni owner aperte: qui non si inventa una policy."""
+def test_rsr_unreadable_numeric_value_is_never_the_code_default(tmp_path, key, _v, default):
+    """F-18 (NF-16): un valore illeggibile persistito NON torna al default di codice in silenzio. Il salvataggio lo
+    rifiuta (tests/f18); un DB legacy/corrotto che lo contiene viene caricato con NaN e la chiave registrata: ogni nuova
+    entrata e' negata. (Prima di F-18 questo test fissava il fallback al default, il difetto NF-16.)"""
     db = tmp_path / "rsr.db"
-    _svc(db).save_settings({f"roserpina.{key}": "abc"})
-    assert _value(_svc(db).load_roserpina_config(), key) == pytest.approx(default)
+    Database(str(db)).save_settings({f"roserpina.{key}": "abc"})       # scrittura raw: DB legacy/corrotto
+    cfg = _svc(db).load_roserpina_config()
+    got = _value(cfg, key)
+    assert isinstance(got, float) and math.isnan(got), (key, got)
+    assert f"roserpina.{key}" in cfg.invalid_settings
 
 
 HARD_STOPS = ["max_daily_loss", "max_open_exposure", "max_session_loss", "max_exposure_stop",
@@ -77,16 +81,18 @@ HARD_STOPS = ["max_daily_loss", "max_open_exposure", "max_session_loss", "max_ex
 def test_rsr_hard_stop_unreadable_is_never_silently_disabled(tmp_path, key):
     """Hard stop illeggibile: non deve diventare «non configurato» (None) in silenzio."""
     db = tmp_path / "rsr.db"
-    _svc(db).save_settings({f"roserpina.{key}": "abc"})
+    Database(str(db)).save_settings({f"roserpina.{key}": "abc"})       # scrittura raw: il service la rifiuta (F-18)
     v = getattr(_svc(db).load_roserpina_config(), key)
     assert v is not None, f"{key} illeggibile caricato come non configurato (fail-open)"
     assert not (isinstance(v, float) and math.isfinite(v) and v > 0), f"{key} illeggibile caricato come valido: {v}"
 
 
-def test_rsr_unknown_risk_profile_falls_back_to_balanced(tmp_path):
+def test_rsr_unknown_risk_profile_loads_balanced_and_is_registered_invalid(tmp_path):
+    # F-18: il profilo resta BALANCED (nessun profilo inventato), ma la chiave e' registrata e l'ingresso negato
     db = tmp_path / "rsr.db"
-    _svc(db).save_settings({"roserpina.risk_profile": "YOLO"})
-    assert _svc(db).load_roserpina_config().risk_profile is RiskProfile.BALANCED
+    Database(str(db)).save_settings({"roserpina.risk_profile": "YOLO"})
+    cfg = _svc(db).load_roserpina_config()
+    assert cfg.risk_profile is RiskProfile.BALANCED and "roserpina.risk_profile" in cfg.invalid_settings
 
 
 # ------------------------------------------------------------------ attivazione nel money management

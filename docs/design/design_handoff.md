@@ -156,6 +156,9 @@ Entry (label verbatim): `Target Profit Cycle %`, `Max Single Bet %`,
 `Hard-stop: Perdita Giornaliera Max (€, vuoto=non impostato)`,
 `Hard-stop: Esposizione Aperta Max (€, vuoto=non impostato)`,
 `Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)`,
+`Stop-loss % del rischio (0-100, vuoto = OFF)`, `Take-profit % del rischio (0-100, vuoto = OFF)` (F-02: percentuale
+del rischio della gamba, BACK stake / LAY liability; vuoto = protezione spenta, il default; valore non valido =>
+salvataggio rifiutato; il trailing stop non ha ancora un campo: arriva con F-03),
 `Book Warning % (avviso over-round)`,
 `Book Block % (blocca submit se book >= soglia)`,
 `Liquidity avviso: Moltiplicatore (richiesta = stake x N)`,

@@ -744,6 +744,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_max_event_exposure_abs_var = self._make_string_var("")
         self.rs_max_drawdown_abs_var = self._make_string_var("")
         self.rs_max_session_loss_var = self._make_string_var("")  # P37 (#461 PR28)
+        # F-02 (#586): SL/TP in % del rischio della gamba; vuoto = OFF (default). Il trailing arriva con F-03.
+        self.rs_stop_loss_pct_var = self._make_string_var("")
+        self.rs_take_profit_pct_var = self._make_string_var("")
         self.rs_max_exposure_stop_var = self._make_string_var("")  # P37/P38 (#461 PR28-c)
         self.rs_max_drawdown_hard_stop_var = self._make_string_var("")
         # Book % (over-round): soglie avviso/blocco, applicate al submit dutching.
@@ -1189,6 +1192,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Stop: Perdita Sessione Max (€, vuoto=non impostato)", self.rs_max_session_loss_var)
         self._labeled_entry(outer, "Stop: Esposizione Complessiva (€, vuoto=non impostato)", self.rs_max_exposure_stop_var)
         self._labeled_entry(outer, "Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)", self.rs_max_drawdown_hard_stop_var)
+        self._labeled_entry(outer, "Stop-loss % del rischio (0-100, vuoto = OFF)", self.rs_stop_loss_pct_var)
+        self._labeled_entry(outer, "Take-profit % del rischio (0-100, vuoto = OFF)", self.rs_take_profit_pct_var)
         self._labeled_entry(outer, "Book Warning % (avviso over-round)", self.rs_book_warning_var)
         self._labeled_entry(outer, "Book Block % (blocca submit se book >= soglia)", self.rs_book_block_var)
         self._labeled_entry(outer, "Liquidity avviso: Moltiplicatore (richiesta = stake x N)", self.rs_liq_multiplier_var)
@@ -1685,6 +1690,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_max_event_exposure_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_event_exposure_abs", None)))
                 self.rs_max_drawdown_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_abs", None)))
                 self.rs_max_session_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_session_loss", None)))
+                self.rs_stop_loss_pct_var.set(self._hard_stop_to_str(getattr(rs, "stop_loss_pct", None)))
+                self.rs_take_profit_pct_var.set(self._hard_stop_to_str(getattr(rs, "take_profit_pct", None)))
                 self.rs_max_exposure_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_exposure_stop", None)))
                 self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
                 self.rs_book_warning_var.set(str(getattr(rs, "book_warning", trading_config.BOOK_WARNING)))
@@ -2130,6 +2137,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 max_session_loss=self._parse_hard_stop(self.rs_max_session_loss_var.get(), "Perdita sessione max"),
                 max_exposure_stop=self._parse_hard_stop(self.rs_max_exposure_stop_var.get(), "Stop esposizione complessiva"),
                 max_drawdown_hard_stop_pct=self._parse_hard_stop(self.rs_max_drawdown_hard_stop_var.get(), "Drawdown max %", is_pct=True),
+                stop_loss_pct=self._parse_hard_stop(self.rs_stop_loss_pct_var.get(), "Stop-loss %", is_pct=True),
+                take_profit_pct=self._parse_hard_stop(self.rs_take_profit_pct_var.get(), "Take-profit %", is_pct=True),
                 book_warning=book_warning,
                 book_block=book_block,
                 liquidity_guard_enabled=bool(self.rs_liq_guard_enabled_var.get()),
@@ -2248,6 +2257,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self.rs_max_event_exposure_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_event_exposure_abs", None)))
             self.rs_max_drawdown_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_abs", None)))
             self.rs_max_session_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_session_loss", None)))
+            self.rs_stop_loss_pct_var.set(self._hard_stop_to_str(getattr(rs, "stop_loss_pct", None)))
+            self.rs_take_profit_pct_var.set(self._hard_stop_to_str(getattr(rs, "take_profit_pct", None)))
             self.rs_max_exposure_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_exposure_stop", None)))
             self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
         except Exception:

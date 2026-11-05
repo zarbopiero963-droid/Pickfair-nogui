@@ -111,14 +111,15 @@ def test_parameter_validation():
 
 def test_inventory_counts_and_classes():
     inv = G.load_inventory()
-    assert inv["count"] == len(inv["parameters"]) == 190
+    # F-02: +3 chiavi SL/TP/trailing (ATTIVE, round-trip; non fanno parte delle 42 Roserpina storiche)
+    assert inv["count"] == len(inv["parameters"]) == 193
     classes = {}
     for p in inv["parameters"]:
         classes[p["test_class"]] = classes.get(p["test_class"], 0) + 1
-    assert classes == {"ATTIVA": 139, "LEGACY": 51}
+    assert classes == {"ATTIVA": 142, "LEGACY": 51}
     assert sum(1 for p in inv["parameters"] if p["roserpina42"]) == 42
     keys = [p["key"] for p in inv["parameters"]]
-    assert len(set(keys)) == 190
+    assert len(set(keys)) == 193
     for p in inv["parameters"]:
         assert p["l1_mode"] in {"settings_roundtrip", "load_only", "static_or_manual"}
         if p["l1_mode"] == "settings_roundtrip":

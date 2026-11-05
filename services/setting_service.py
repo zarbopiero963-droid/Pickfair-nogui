@@ -11,6 +11,7 @@ from typing import Any, Dict
 
 import trading_config
 
+from core import config_validation as cv
 from core.system_state import (
     BetfairConfig,
     RiskProfile,
@@ -19,6 +20,14 @@ from core.system_state import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class InvalidSettingsError(ValueError):
+    """F-18: salvataggio rifiutato per intero, la configurazione precedente resta intatta."""
+
+    def __init__(self, reasons):
+        self.reasons = list(reasons)
+        super().__init__("; ".join(self.reasons))
 
 
 class SettingsService:
@@ -45,8 +54,18 @@ class SettingsService:
         return {}
 
     def save_settings(self, data: Dict[str, Any]) -> None:
+        """Salva ``data``. F-18: un valore Roserpina illeggibile, non finito o fuori dominio (``core.config_validation``),
+        o una coppia incoerente con quanto gia' salvato, rifiuta il salvataggio PER INTERO prima di qualsiasi scrittura
+        (``InvalidSettingsError``): la configurazione precedente resta intatta."""
+        data = data or {}
+        reasons = [r for r in (cv.invalid_reason(k, v) for k, v in data.items()) if r]
+        if not reasons and any(k in cv.SPECS for k in data):
+            reasons = cv.coherence_reasons({**self.get_all_settings(), **data})
+        if reasons:
+            logger.warning("Salvataggio impostazioni rifiutato (F-18): %s", "; ".join(reasons))
+            raise InvalidSettingsError(reasons)
         if hasattr(self.db, "save_settings"):
-            self.db.save_settings(data or {})
+            self.db.save_settings(data)
 
     def _f(self, data: Dict[str, Any], key: str, default: float) -> float:
         try:
@@ -300,14 +319,54 @@ class SettingsService:
     # =========================================================
     def load_roserpina_config(self) -> RoserpinaConfig:
         data = self.get_all_settings()
+        # F-18: una chiave presente ma illeggibile o fuori dominio non diventa mai il default di codice in silenzio.
+        invalid: list[str] = []
+
+        def num(key: str, default: float) -> float:
+            value = data.get(key)
+            if cv.is_unset(value):
+                return float(default)
+            if cv.invalid_reason(key, value):
+                invalid.append(key)
+                return float("nan")
+            return float(cv.parse_number(value))
+
+        def whole(key: str, default: int) -> int:
+            value = data.get(key)
+            if cv.is_unset(value):
+                return int(default)
+            if cv.invalid_reason(key, value):
+                invalid.append(key)
+                return int(default)            # il conteggio resta utilizzabile, l'ingresso e' comunque negato
+            return int(cv.parse_int(value))
+
+        def optional_pct(key: str):
+            value = data.get(key)
+            if cv.is_unset(value):
+                return None                    # OFF: nessuna protezione attiva di default
+            if cv.invalid_reason(key, value):
+                invalid.append(key)            # presente ma invalida: mai OFF in silenzio, ingresso negato
+                return float("nan")
+            return float(cv.parse_number(value))
+
+        def flag(key: str, default: bool, protective: bool) -> bool:
+            value = data.get(key)
+            if cv.is_unset(value):
+                return bool(default)
+            parsed = cv.parse_bool(value)
+            if parsed is None:
+                invalid.append(key)
+                return protective              # booleano di sicurezza illeggibile => il valore che protegge
+            return parsed
 
         risk_profile_raw = str(
             data.get("roserpina.risk_profile", "BALANCED") or "BALANCED"
-        ).upper()
+        ).strip().upper()
         if risk_profile_raw not in {p.value for p in RiskProfile}:
+            invalid.append("roserpina.risk_profile")
             risk_profile_raw = RiskProfile.BALANCED.value
 
-        return RoserpinaConfig(
+        config = RoserpinaConfig(
             # PFC-008 (M019): percentuali di rischio obbligatorie, mai un default di codice.
             target_profit_cycle_pct=self._required_pct(data, "roserpina.target_profit_cycle_pct"),
             max_single_bet_pct=self._required_pct(data, "roserpina.max_single_bet_pct"),
@@ -368,39 +427,50 @@ class SettingsService:
                 "roserpina.max_recovery_chase_abs",
                 fallback_key="max_recovery_chase_abs",
             ),
-            auto_reset_drawdown_pct=self._f(data, "roserpina.auto_reset_drawdown_pct", 15.0),
-            defense_drawdown_pct=self._f(data, "roserpina.defense_drawdown_pct", 7.5),
-            lockdown_drawdown_pct=self._f(data, "roserpina.lockdown_drawdown_pct", 20.0),
-            expansion_profit_pct=self._f(data, "roserpina.expansion_profit_pct", 5.0),
-            expansion_multiplier=self._f(data, "roserpina.expansion_multiplier", 1.10),
-            defense_multiplier=self._f(data, "roserpina.defense_multiplier", 0.80),
+            stop_loss_pct=optional_pct("roserpina.stop_loss_pct"),
+            take_profit_pct=optional_pct("roserpina.take_profit_pct"),
+            trailing_stop_pct=optional_pct("roserpina.trailing_stop_pct"),
+            auto_reset_drawdown_pct=num("roserpina.auto_reset_drawdown_pct", 15.0),
+            defense_drawdown_pct=num("roserpina.defense_drawdown_pct", 7.5),
+            lockdown_drawdown_pct=num("roserpina.lockdown_drawdown_pct", 20.0),
+            expansion_profit_pct=num("roserpina.expansion_profit_pct", 5.0),
+            expansion_multiplier=num("roserpina.expansion_multiplier", 1.10),
+            defense_multiplier=num("roserpina.defense_multiplier", 0.80),
             risk_profile=RiskProfile(risk_profile_raw),
-            table_count=self._i(data, "roserpina.table_count", 5),
+            table_count=whole("roserpina.table_count", 5),
             # PFC-008 (M019): chiavi recovery assenti => nessun recovery.
-            max_recovery_tables=self._i(data, "roserpina.max_recovery_tables", 0),
-            allow_recovery=self._b(data, "roserpina.allow_recovery", False),
-            anti_duplication_enabled=self._b(data, "roserpina.anti_duplication_enabled", True),
-            commission_pct=self._f(data, "roserpina.commission_pct", 4.5),
-            min_stake=self._f(data, "roserpina.min_stake", trading_config.MIN_STAKE),
+            max_recovery_tables=whole("roserpina.max_recovery_tables", 0),
+            allow_recovery=flag("roserpina.allow_recovery", False, protective=False),
+            anti_duplication_enabled=flag("roserpina.anti_duplication_enabled", True, protective=True),
+            commission_pct=num("roserpina.commission_pct", 4.5),
+            min_stake=num("roserpina.min_stake", trading_config.MIN_STAKE),
             max_stake_abs=self._rectified_monetary_cap(data, "roserpina.max_stake_abs"),
-            book_warning=self._f(data, "roserpina.book_warning", trading_config.BOOK_WARNING),
-            book_block=self._f(data, "roserpina.book_block", trading_config.BOOK_BLOCK),
-            liquidity_guard_enabled=self._b(data, "roserpina.liquidity_guard_enabled", trading_config.LIQUIDITY_GUARD_ENABLED),
-            liquidity_multiplier=self._f(data, "roserpina.liquidity_multiplier", trading_config.LIQUIDITY_MULTIPLIER),
-            min_liquidity_absolute=self._f(data, "roserpina.min_liquidity_absolute", trading_config.MIN_LIQUIDITY_ABSOLUTE),
-            liquidity_warning_only=self._b(data, "roserpina.liquidity_warning_only", trading_config.LIQUIDITY_WARNING_ONLY),
-            min_price=self._f(data, "roserpina.min_price", trading_config.MIN_PRICE),
+            book_warning=num("roserpina.book_warning", trading_config.BOOK_WARNING),
+            book_block=num("roserpina.book_block", trading_config.BOOK_BLOCK),
+            liquidity_guard_enabled=flag("roserpina.liquidity_guard_enabled", trading_config.LIQUIDITY_GUARD_ENABLED, protective=True),
+            liquidity_multiplier=num("roserpina.liquidity_multiplier", trading_config.LIQUIDITY_MULTIPLIER),
+            min_liquidity_absolute=num("roserpina.min_liquidity_absolute", trading_config.MIN_LIQUIDITY_ABSOLUTE),
+            liquidity_warning_only=flag("roserpina.liquidity_warning_only", trading_config.LIQUIDITY_WARNING_ONLY, protective=False),
+            min_price=num("roserpina.min_price", trading_config.MIN_PRICE),
             max_win=self._rectified_monetary_cap(data, "roserpina.max_win"),
-            max_win_warning_only=self._b(data, "roserpina.max_win_warning_only", True),
+            max_win_warning_only=flag("roserpina.max_win_warning_only", True, protective=False),
             # Scala percentuale (0-100): la costante MAX_STAKE_PCT e' frazione => *100.
-            max_stake_pct=self._f(data, "roserpina.max_stake_pct", trading_config.MAX_STAKE_PCT * 100.0),
+            max_stake_pct=num("roserpina.max_stake_pct", trading_config.MAX_STAKE_PCT * 100.0),
             # Tolleranza WARNING varianza profitto netto tra esiti, in € (G5).
-            profit_epsilon=self._f(data, "roserpina.profit_epsilon", trading_config.PROFIT_EPSILON),
-            profit_epsilon_enabled=self._b(data, "roserpina.profit_epsilon_enabled", True),
+            profit_epsilon=num("roserpina.profit_epsilon", trading_config.PROFIT_EPSILON),
+            profit_epsilon_enabled=flag("roserpina.profit_epsilon_enabled", True, protective=True),
             # Grace auto-green OPT-IN (G5): default disarmato; sec default = costante.
-            auto_green_delay_enabled=self._b(data, "roserpina.auto_green_delay_enabled", False),
-            auto_green_delay_sec=self._f(data, "roserpina.auto_green_delay_sec", trading_config.AUTO_GREEN_DELAY_SEC),
+            auto_green_delay_enabled=flag("roserpina.auto_green_delay_enabled", False, protective=False),
+            auto_green_delay_sec=num("roserpina.auto_green_delay_sec", trading_config.AUTO_GREEN_DELAY_SEC),
         )
+        # Percentuali obbligatorie e cap opzionali non passano di qui: il loro loader dedicato rende gia' NaN un valore
+        # illeggibile e il consumer runtime nega ogni valore non finito o <= 0 con il proprio motivo
+        # (`<chiave>_non_valido`); al salvataggio sono comunque rifiutati (save_settings).
+        invalid += [r.split(":", 1)[0] for r in cv.coherence_reasons(data) if r.split(":", 1)[0] not in invalid]
+        if invalid:
+            logger.error("Configurazione Roserpina non valida, nessuna nuova entrata (F-18): %s", ", ".join(invalid))
+            config.invalid_settings = tuple(invalid)
+        return config
 
     def save_roserpina_config(self, config: RoserpinaConfig) -> None:
         payload = {
@@ -439,6 +509,9 @@ class SettingsService:
             "roserpina.profit_epsilon_enabled": int(bool(config.profit_epsilon_enabled)),
             "roserpina.auto_green_delay_enabled": int(bool(config.auto_green_delay_enabled)),
             "roserpina.auto_green_delay_sec": config.auto_green_delay_sec,
+            # F-02: vuoto = OFF, scritto "" per disattivare davvero un valore gia' salvato
+            "roserpina.stop_loss_pct": "" if config.stop_loss_pct is None else config.stop_loss_pct,
+            "roserpina.take_profit_pct": "" if config.take_profit_pct is None else config.take_profit_pct,
         }
 
         # Preserve previously persisted hard-stop limits when caller omits these optional fields.
@@ -463,7 +536,12 @@ class SettingsService:
         if config.max_recovery_chase_abs is not None:
             payload["roserpina.max_recovery_chase_abs"] = config.max_recovery_chase_abs
 
-        self.db.save_settings(payload)
+        # F-02: il trailing non ha ancora un campo nella GUI (F-03): None preserva il valore salvato
+        if config.trailing_stop_pct is not None:
+            payload["roserpina.trailing_stop_pct"] = config.trailing_stop_pct
+
+        # F-18: stesso controllo del salvataggio generico (la tab Roserpina della GUI passa di qui)
+        self.save_settings(payload)
 
     # Rettifica owner 18/10/2026, chiarimento definitivo 19/10: anche i tetti monetari preesistenti
     # (max_stake_abs RSR-15, max_win RSR-26) sono opzionali e DISATTIVATI di default. Il vecchio default

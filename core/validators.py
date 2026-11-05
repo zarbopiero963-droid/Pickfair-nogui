@@ -317,7 +317,14 @@ def risk_pct_reason(name, raw) -> str:
 
 
 def risk_pcts_reason(config, names=RISK_PCT_FIELDS) -> str:
-    """Primo motivo di rifiuto fra le percentuali `names` di `config`, oppure ""."""
+    """Primo motivo di rifiuto fra le percentuali `names` di `config`, oppure "".
+
+    F-18: prima di tutto, una configurazione con chiavi illeggibili o fuori dominio
+    (`RoserpinaConfig.invalid_settings`) nega ogni nuova entrata con
+    `configurazione_non_valida:<chiave>`: nessun default di codice al posto del valore scelto."""
+    invalid = getattr(config, "invalid_settings", ()) or ()
+    if invalid:
+        return f"configurazione_non_valida:{invalid[0]}"
     for name in names:
         reason = risk_pct_reason(name, getattr(config, name, None))
         if reason:

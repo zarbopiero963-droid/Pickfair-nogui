@@ -452,8 +452,7 @@ Test: `tests/f05/` (unita' e HeadlessApp reale in SIM), mutazioni `f05_*` in `gu
 
 ### 7.4 P&L del monitor SL/TP (F-01, CSH-01/CSH-10)
 
-`RuntimeController._monitor_sl_tp_trailing` (inerte fino a F-02: nessuna sorgente SL/TP nei meta dei tavoli)
-confronta SL/TP con il **netto liquidabile** della posizione (decisione owner #426 c.6112703848), calcolato da
+`RuntimeController._monitor_sl_tp_trailing` (cablato da F-02, §7.4-bis) confronta SL/TP con il **netto liquidabile** della posizione (decisione owner #426 c.6112703848), calcolato da
 `core/sl_tp_pnl.py` in Decimal con la stessa formula del cashout (`dutching.dynamic_cashout_single`), estesa a piu'
 livelli del book:
 
@@ -475,6 +474,31 @@ Esempi (stake 10, ingresso 2.0, commissione 4.5 %): BACK chiuso in LAY a 2.5 => 
 LAY chiuso in BACK a 2.5 => +1.91, a 1.6 => -2.50; LAY con liability 10 a 3.0 (stake 5) chiuso a 4.0 => +1.19.
 Su piu' livelli: BACK chiuso con LAY 12 a 1.60 + 1 a 2.50 => 12 a 1.60 + 0.32 a 2.50, netto +2.22 (non -2.00).
 Prima il BACK aveva il segno invertito (una perdita sembrava profitto). Test: `tests/core/test_sl_tp_pnl_sign.py`.
+
+### 7.4-bis Percorso SL/TP fino al monitor (F-02, CSH-02/NF-03, F-CFG-01)
+
+- **Impostazioni:** `roserpina.stop_loss_pct`, `roserpina.take_profit_pct` e `roserpina.trailing_stop_pct` (F-03),
+  in percentuale del **rischio della gamba** (BACK: stake; LAY: liability). Assenti = OFF, che è il default.
+  Dominio (0, 100]: NaN, -5, 150 o 0 rifiutano il salvataggio, e un valore corrotto nel DB nega ogni ingresso (F-18,
+  `docs/config_validation.md`). Tab Roserpina: `Stop-loss % del rischio` e `Take-profit % del rischio`.
+- **Posizione:** un segnale può portare le proprie `stop_loss_pct`/`take_profit_pct`/`trailing_stop_pct`, altrimenti
+  valgono quelle della configurazione (`RuntimeController._sl_tp_settings`). Un valore invalido rifiuta il segnale
+  (`<chiave>_non_valido`).
+- **Tavolo:** all'apertura `_sl_tp_meta` mette in meta gli importi `stop_loss`/`take_profit` (percentuale × rischio,
+  Decimal al centesimo, ROUND_HALF_EVEN) e lo stake reale. Esempi: BACK 3,00 con SL 20 % → 0,60; LAY 2,00 a 3,0
+  (liability 4,00) con SL 20 % → 0,80; microstake 0,10 con SL 25 % → 0,02.
+- **Persistenza:** le percentuali viaggiano nel payload dell'ordine (tabella `orders`). La ricostruzione F018 le
+  rimette sul tavolo dopo un riavvio, e l'auto-next le eredita come ogni nuova posizione.
+- **Monitor:** con lo stream sano gira nel callback dello stream; altrimenti, in SIM, in poll o con lo stream giù o
+  degradato, gira un poller (`_sl_tp_poll_once`, ogni `sl_tp_poll_sec`, default 2 s). Il poller legge lo snapshot
+  del book solo dei mercati con una protezione armata.
+- **Scatto:** l'evento `SL_TRIGGERED` / `TP_TRIGGERED` (tavolo, mercato, lato, stake, quota, soglia, P&L, ref) parte
+  **una sola volta** per posizione. Nessun ordine parte dal trigger finché F-04 non costruisce la chiusura con lato,
+  prezzo e barriera. La richiesta precedente (`REQ_EXECUTE_CASHOUT` senza lato né prezzo, R3-01) veniva sempre
+  rifiutata dal bridge (`side_invalido`).
+
+Test: `tests/f02/`, `tests/core/test_sl_tp_pnl_sign.py`, SIM end-to-end
+`tests/fullscope/scenarios/test_sim_combo_001.py::test_stop_loss_leg_triggers_on_adverse_price` (prima xfail strict).
 
 ### 7.5 Hedge coerente con la posizione (F-06, CSH-05/MM-02/NF-01)
 
@@ -572,6 +596,35 @@ Limiti dichiarati: F-02 (Claude B, branch `keep/f02-sl-tp-path-20261103`) non e'
 viene pubblicato e il consumer resta inerte. Il latch di F-02 e' in memoria: dopo un riavvio lo scatto si ripete e
 viene assorbito dalla rivendicazione persistente. Test:
 `tests/acceptance/test_f04_sl_tp_table_close.py`; mutazioni `f04_*`.
+
+### 7.7 Trailing stop (F-03, K-7, CSH-04)
+
+Decisione owner K-7 (#586 c.6504686680): configurabile, **OFF di default**, sul P&L liquidabile del cashout (F-01),
+persistito, restart-safe, chiuso tramite F-04, mai su quote assenti o mercato non negoziabile. Chiave:
+`roserpina.trailing_stop_pct` (dominio (0, 100], validata da F-18; anche dal segnale con `trailing_stop_pct`),
+portata nel meta del tavolo da F-02. Nessuna soglia monetaria: solo la percentuale configurata.
+
+Regole (`core/trailing_stop.py`, Decimal; cablaggio in `RuntimeController._evaluate_trailing`):
+- **picco** = massimo del P&L **garantito** e liquidabile per intero (stessa funzione del TP, `guaranteed=True`, book
+  che copre tutta la posizione); armato solo con picco > 0; non scende mai;
+- **soglia** = picco × (1 − pct/100), al centesimo per difetto; **scatta** quando il P&L garantito ≤ soglia.
+  Esempio della scheda: 10 → 15 → 12 con 20 % ⇒ soglia 12, scatta a 12;
+- **precedenza** hard-stop > SL > trailing > TP: lo SL è valutato prima; il trailing prima del TP;
+- **persistenza**: `risk.trailing_peak.<customer_ref>` = `{"v": 1, "peak", "pct", "at"}`, scritto **prima** di usare
+  il nuovo picco. Scrittura fallita ⇒ il picco nuovo non si usa (resta l'ultimo persistito): un processo che cade fra
+  aggiornamento e scrittura riparte con un picco ≤ ultimo persistito, mai maggiore. Al riavvio il picco si rilegge;
+  stato illeggibile o corrotto ⇒ nessuna decisione (non sovrascritto); posizione senza `customer_ref` ⇒ nessun trailing;
+- **fail-closed**: mercato non OPEN, selezione non ACTIVE (stato assente compreso), quote assenti, book che non copre
+  la posizione, P&L non calcolabile ⇒ nessun aggiornamento del picco e nessuno scatto. Nessuna soglia d'età: il monitor
+  riceve un book fresco dal poller di F-02 o dallo stream sano (la salute dello stream decide chi lo esegue);
+- **scatto**: evento `TRAILING_TRIGGERED` (forma v1 di F-02, `reason` `TRAILING_STOP_REACHED`, `threshold` = soglia),
+  una volta per posizione (latch di F-02); F-04 lo consuma come SL/TP (stessa chiave di chiusura per posizione: dopo un
+  riavvio lo scatto ripetuto è `SL_TP_CLOSE_SKIPPED`, nessun secondo hedge) e chiude solo quel tavolo;
+- il poller SIM/poll di F-02 include anche i tavoli con il solo trailing armato.
+
+Test: `tests/f03/test_f03_trailing_stop.py` (RED della scheda `test_trailing_moves_with_profit_and_never_back`,
+`test_trailing_restart_keeps_peak`); mutazioni `f03_*`. Limite: il P&L è quello della gamba d'ingresso, come per
+SL/TP (F-01); l'esposizione residua dopo hedge parziali resta F-07.
 
 ---
 

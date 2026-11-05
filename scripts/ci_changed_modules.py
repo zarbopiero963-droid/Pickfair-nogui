@@ -201,6 +201,7 @@ MODULE_RULES = [
             "controllers/dutching_controller.py",  # #523: mutazioni del catalogo su Dutching e bet manuale
             "cashout_executor.py",
             "cashout_residual_handler.py",
+            "cashout_router.py",  # F-13b: mutazioni dell'identita' I1 per ref
             "scripts/live_gate.py",
             "scripts/ci/trusted_pr_guard.py",  # #562: mutazioni dei controlli della lane trusted
             "scripts/pr_automation_controller.py",  # #566: mutazioni della deduplica dei check run

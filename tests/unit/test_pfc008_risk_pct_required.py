@@ -106,7 +106,7 @@ def test_loader_db_vuoto_nessun_default_di_rischio_e_nessun_recovery(tmp_path):
 @pytest.mark.parametrize("valore", ["abc", True, "", None])
 def test_loader_valore_illeggibile_o_vuoto_mai_un_default(tmp_path, valore):
     svc = _svc(tmp_path)
-    svc.save_settings({"roserpina.max_single_bet_pct": valore})
+    svc.db.save_settings({"roserpina.max_single_bet_pct": valore})     # raw: un valore illeggibile persistito (F-18)
     v = svc.load_roserpina_config().max_single_bet_pct
     assert v is None or math.isnan(v)
 
@@ -119,7 +119,8 @@ def test_loader_valore_illeggibile_o_vuoto_mai_un_default(tmp_path, valore):
 ])
 def test_loader_poi_mm_nega_con_motivo_esplicito(tmp_path, valore, motivo):
     svc = _svc(tmp_path)
-    svc.save_settings({"roserpina.target_profit_cycle_pct": 3.0, "roserpina.max_single_bet_pct": 18.0,
+    # raw: il service rifiuta il salvataggio di questi valori (F-18), qui si collauda il caricamento di un DB che li ha
+    svc.db.save_settings({"roserpina.target_profit_cycle_pct": 3.0, "roserpina.max_single_bet_pct": 18.0,
                        "roserpina.max_event_exposure_pct": 18.0, "roserpina.max_total_exposure_pct": valore,
                        "roserpina.min_stake": 0.01})
     d = _calc(svc.load_roserpina_config())

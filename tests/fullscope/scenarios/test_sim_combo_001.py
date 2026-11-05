@@ -110,8 +110,6 @@ def test_phase2_restart_keeps_state_then_settles_and_reconciles(combo):
     assert o.pnl_market(M_PARTIAL) < 0
 
 
-@pytest.mark.xfail(strict=True, reason="F-01/F-02: il monitor SL/TP e' inerte su main (CSH-01/CSH-02, #586 parte 4); "
-                                       "nessun evento SL_TRIGGERED puo' essere osservato finche' F-02 non cabla il percorso")
 def test_stop_loss_leg_triggers_on_adverse_price():
     home = tempfile.mkdtemp(prefix="pf_combo001_sl_")
     r = H.run([{"op": "signal", "m": "1.811", "price": 2.0, "side": "BACK", "stake": 3.0},

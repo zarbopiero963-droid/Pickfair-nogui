@@ -1,24 +1,24 @@
 {
   "description": "Mutazioni reali a livello sorgente sulle aree finanziarie critiche. Ogni 'original' e' una riga intera che deve comparire esattamente una volta nel file; 'mutated' la sostituisce. Usato da scripts/run_mutation_guardrails.py.",
   "required_areas": [
-    "side",
-    "lay_liability",
-    "exposure",
-    "dedupe",
     "ambiguous",
-    "recovery",
-    "reconciliation",
     "cashout",
+    "dedupe",
+    "exposure",
     "funds",
+    "lay_liability",
+    "live_safety",
     "money_management",
-    "live_safety"
+    "reconciliation",
+    "recovery",
+    "side"
   ],
   "optional_areas": [
     "check_dedupe",
-    "trusted_gate",
-    "trusted_dispatcher",
+    "control_api",
     "fullscope_tooling",
-    "control_api"
+    "trusted_dispatcher",
+    "trusted_gate"
   ],
   "mutations": [
     {
@@ -9546,6 +9546,283 @@
         "tests/control_api/test_sl_tp_close_view.py"
       ],
       "rationale": "MCP-01i ponte Control API, stato della chiusura SL/TP di F-04 (handoff Claude C): legame assente presentato come nessun hedge."
+    },
+    {
+      "id": "f13b_router_ignores_bot_refs",
+      "module": "cashout_router",
+      "area": "cashout",
+      "file": "cashout_router.py",
+      "original": "            return bool(ref) and ref in bot_refs",
+      "mutated": "            return False",
+      "tests": [
+        "tests/f13b/test_f13b_order_identity.py"
+      ],
+      "rationale": "F-13b: replace o risposta persa, l'ordine vivo del bot e' invisibile al cashout (hedge sottodimensionato, resting vivo)."
+    },
+    {
+      "id": "f13b_router_no_bot_orders_without_bet_ids",
+      "module": "cashout_router",
+      "area": "cashout",
+      "file": "cashout_router.py",
+      "original": "        if not bot_bet_ids and not bot_refs:",
+      "mutated": "        if not bot_bet_ids:",
+      "tests": [
+        "tests/f13b/test_f13b_order_identity.py"
+      ],
+      "rationale": "F-13b: solo ordini con risposta persa, il cashout risponde no_bot_orders e lascia aperta la posizione."
+    },
+    {
+      "id": "f13b_db_refs_non_conforming_accepted",
+      "module": "database",
+      "area": "reconciliation",
+      "file": "database.py",
+      "original": "            ref = customer_order_ref(item.get(\"customer_ref\"))",
+      "mutated": "            ref = str(item.get(\"customer_ref\") or \"\")",
+      "tests": [
+        "tests/f13b/test_f13b_order_identity.py"
+      ],
+      "rationale": "F-13b: un ref mai inviato (non conforme) diventa identita' del bot."
+    },
+    {
+      "id": "f13b_f018_ignores_live_ref",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "                if (c[\"bet_id\"] and c[\"bet_id\"] in live_bets) or (own_ref and own_ref in live_refs):",
+      "mutated": "                if c[\"bet_id\"] and c[\"bet_id\"] in live_bets:",
+      "tests": [
+        "tests/f13b/test_f13b_order_identity.py"
+      ],
+      "rationale": "F-13b: al riavvio un ordine sostituito (betId vecchio) e' chiuso e la chiave anti-duplicato non e' ripresa."
+    },
+    {
+      "id": "f13b_hedge_ignores_ref",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "            if bid not in bet_ids and not (ref and ref in refs):",
+      "mutated": "            if bid not in bet_ids:",
+      "tests": [
+        "tests/f13b/test_f13b_order_identity.py"
+      ],
+      "rationale": "F-13b: hedge precedente sostituito ancora vivo, secondo hedge che sovracopre la posizione."
+    },
+    {
+      "id": "f18_invalid_config_not_gated",
+      "module": "core.validators",
+      "area": "exposure",
+      "file": "core/validators.py",
+      "original": "    if invalid:\n        return f\"configurazione_non_valida:{invalid[0]}\"",
+      "mutated": "    if False:\n        return f\"configurazione_non_valida:{invalid[0]}\"",
+      "tests": [
+        "tests/f18/test_f18_config_validation.py"
+      ],
+      "rationale": "F-18: configurazione con chiavi invalide non nega le nuove entrate."
+    },
+    {
+      "id": "f18_non_finite_number_accepted",
+      "module": "core.config_validation",
+      "area": "exposure",
+      "file": "core/config_validation.py",
+      "original": "    return number if math.isfinite(number) else None",
+      "mutated": "    return number",
+      "tests": [
+        "tests/f18/test_f18_config_validation.py"
+      ],
+      "rationale": "F-18: NaN/inf accettati al salvataggio e al caricamento."
+    },
+    {
+      "id": "f18_lower_bound_not_checked",
+      "module": "core.config_validation",
+      "area": "exposure",
+      "file": "core/config_validation.py",
+      "original": "    if low is not None and (number < low or (number == low and not low_inc)):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/f18/test_f18_config_validation.py"
+      ],
+      "rationale": "F-18: valori negativi o zero salvati (commissione -5, min_stake 0, quota < 1.01)."
+    },
+    {
+      "id": "f18_any_number_is_a_bool",
+      "module": "core.config_validation",
+      "area": "exposure",
+      "file": "core/config_validation.py",
+      "original": "    if isinstance(value, (int, float)) and value in (0, 1):",
+      "mutated": "    if isinstance(value, (int, float)):",
+      "tests": [
+        "tests/f18/test_f18_config_validation.py"
+      ],
+      "rationale": "F-18: 2 letto come booleano valido per un interruttore di sicurezza."
+    },
+    {
+      "id": "f18_fractional_int_accepted",
+      "module": "core.config_validation",
+      "area": "exposure",
+      "file": "core/config_validation.py",
+      "original": "    if number is None or number != int(number):",
+      "mutated": "    if number is None:",
+      "tests": [
+        "tests/f18/test_f18_config_validation.py"
+      ],
+      "rationale": "F-18: table_count 2.5 accettato e troncato."
+    },
+    {
+      "id": "f18_book_coherence_not_checked",
+      "module": "core.config_validation",
+      "area": "exposure",
+      "file": "core/config_validation.py",
+      "original": "    if warning is not None and block is not None and block < warning:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/f18/test_f18_config_validation.py"
+      ],
+      "rationale": "F-18: soglia di blocco del book inferiore a quella di avviso accettata."
+    },
+    {
+      "id": "f02_signal_sl_tp_not_on_table",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                **self._sl_tp_meta(sl_tp, order_exposure, payload[\"stake\"]),",
+      "mutated": "                **{},",
+      "tests": [
+        "tests/f02/test_f02_sl_tp_path.py",
+        "tests/fullscope/scenarios/test_sim_combo_001.py"
+      ],
+      "rationale": "F-02 (F-CFG-01): SL/TP persi fra segnale e tavolo, il monitor non agisce mai."
+    },
+    {
+      "id": "f02_sl_on_stake_not_liability",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                meta[target] = float((risk * pct / sl_tp_pnl.Decimal(\"100\")).quantize(sl_tp_pnl.CENT))",
+      "mutated": "                meta[target] = float((stake_d * pct / sl_tp_pnl.Decimal(\"100\")).quantize(sl_tp_pnl.CENT))",
+      "tests": [
+        "tests/f02/test_f02_sl_tp_path.py"
+      ],
+      "rationale": "F-02: SL/TP del LAY calcolati sullo stake invece che sulla liability."
+    },
+    {
+      "id": "f02_invalid_sl_accepted",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "            if cfg_rules.invalid_reason(f\"roserpina.{name}\", raw):\n                return {}, f\"{name}_non_valido\"",
+      "mutated": "            if False:\n                return {}, f\"{name}_non_valido\"",
+      "tests": [
+        "tests/f02/test_f02_sl_tp_path.py"
+      ],
+      "rationale": "F-02: SL invalido dal segnale accettato (parse_number None => crash o protezione spenta)."
+    },
+    {
+      "id": "f02_trigger_repeats",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "        if meta.get(\"sl_tp_triggered\"):\n            return\n        meta[\"sl_tp_triggered\"] = reason",
+      "mutated": "        meta[\"sl_tp_triggered\"] = reason",
+      "tests": [
+        "tests/f02/test_f02_sl_tp_path.py"
+      ],
+      "rationale": "F-02: evento SL ripetuto a ogni book."
+    },
+    {
+      "id": "f02_poller_ignores_broken_stream",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "            streaming = feed is not None and bool(feed.healthy())",
+      "mutated": "            streaming = feed is not None",
+      "tests": [
+        "tests/f02/test_f02_sl_tp_path.py"
+      ],
+      "rationale": "F-02: con lo stream giu' il monitor SL/TP non gira piu'."
+    },
+    {
+      "id": "f02_rebuild_drops_sl_tp",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "                meta.update(self._sl_tp_meta(c.get(\"sl_tp\") or {}, exposure, c[\"stake\"]))",
+      "mutated": "                pass",
+      "tests": [
+        "tests/f02/test_f02_sl_tp_path.py"
+      ],
+      "rationale": "F-02: SL/TP persi al riavvio (F018)."
+    },
+    {
+      "id": "f03_peak_can_fall",
+      "module": "core.trailing_stop",
+      "area": "cashout",
+      "file": "core/trailing_stop.py",
+      "original": "    if pnl_d > 0 and (peak is None or pnl_d.quantize(CENT, rounding=ROUND_DOWN) > peak):",
+      "mutated": "    if pnl_d > 0:",
+      "tests": [
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "rationale": "F-03: il picco del trailing torna indietro."
+    },
+    {
+      "id": "f03_pct_over_100",
+      "module": "core.trailing_stop",
+      "area": "cashout",
+      "file": "core/trailing_stop.py",
+      "original": "    if pct is None or pct <= 0 or pct > HUNDRED:",
+      "mutated": "    if pct is None or pct <= 0:",
+      "tests": [
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "rationale": "F-03: percentuale fuori dominio accettata."
+    },
+    {
+      "id": "f03_market_unchecked",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "            if trail_pct is not None and covered and RuntimeController._market_book_tradable(market_book, table):",
+      "mutated": "            if trail_pct is not None and covered:",
+      "tests": [
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "rationale": "F-03: decisione del trailing su mercato sospeso/chiuso."
+    },
+    {
+      "id": "f03_peak_not_persisted",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                self.db.save_settings({key: trailing_stop.state_record(decision.peak, pct, time.time())})",
+      "mutated": "                pass",
+      "tests": [
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "rationale": "F-03: picco non persistito (riavvio senza picco)."
+    },
+    {
+      "id": "f03_sl_after_trailing",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                self._trigger_auto_close_table(table, \"STOP_LOSS_REACHED\", float(pnl))",
+      "mutated": "                pass",
+      "tests": [
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "rationale": "F-03: lo SL non ha la precedenza sul trailing."
+    },
+    {
+      "id": "f03_f04_ignores_trailing",
+      "module": "core.sl_tp_close",
+      "area": "cashout",
+      "file": "core/sl_tp_close.py",
+      "original": "                   TRAILING_TRIGGERED: \"TRAILING_STOP_REACHED\"}",
+      "mutated": "                   }",
+      "tests": [
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "rationale": "F-03: lo scatto del trailing non chiude la posizione."
     }
   ]
 }

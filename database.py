@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from core.order_ref import customer_order_ref
 from core.secret_cipher import SecretCipher
 from core.type_helpers import safe_float, safe_int, safe_bool_int, safe_json_dumps, safe_json_loads
 from database_schema import SCHEMA_DDL
@@ -2365,19 +2366,11 @@ class Database:
 
         È la **sorgente d'identità I1** e continua a riconoscere il bot dai propri
         ``bet_id`` registrati (**deduplicato** per ``bet_id``, univoco su Betfair).
-        NB (#PR-C): da PR-C ``place_bet`` invia il ``customerRef`` a Betfair —
-        chiave di de-dup a **livello di richiesta** (finestra 60s) contro la
-        doppia-bet. NON è il ``customerOrderRef`` **per-istruzione** (il campo che
-        Betfair riporta sull'ordine in ``listCurrentOrders``): quello NON viene
-        inviato, quindi il ``customerOrderRef`` degli ordini remoti (live) resta
-        vuoto — popolarlo è rimandato al follow-up ``customerStrategyRef``/
-        ``customerOrderRef``. Questa sorgente I1 NON cambia comunque: resta
-        ancorata al ``bet_id``. Il ``reconciliation_engine`` legge
-        ``customerOrderRef`` come segnale OPZIONALE quando presente (es. il lato
-        SIM lo valorizza), ma la correlazione di un esito ``order_unknown``
-        (incluso un ``DUPLICATE_TRANSACTION`` da de-dup) NON dipende da esso: usa
-        il ``bet_id`` + gli attributi dell'ordine, come per ogni altro esito
-        incerto. Solo righe con ``bet_id`` e ``market_id`` valorizzati.
+        F-13a/F-13b (#586, ID-01): ogni place diretto invia anche il
+        ``customerOrderRef`` (= ``customer_ref`` conforme). Il ref, che sopravvive
+        a un replace e a una risposta persa, e' la seconda chiave d'identita' I1 ed
+        e' servito da :meth:`get_bot_order_refs`: questa lista resta quella dei
+        ``bet_id``, invariata. Solo righe con ``bet_id`` e ``market_id`` valorizzati.
         **Read-only.**
 
         La liveness effettiva è ri-verificata a valle dal ``CashoutRouter`` contro
@@ -2401,6 +2394,37 @@ class Database:
                 # event_name (la saga piazza via porta SIM); la riga `orders` dello STESSO bet e mercato porta la
                 # partita. Senza, un CASHOUT della partita non trovava la posizione. L'identita' resta il bet_id.
                 seen["event_name"] = order["event_name"]
+        return out
+
+    def get_bot_order_refs(self) -> List[Dict[str, str]]:
+        """F-13b (#586, ID-01): i ``customerOrderRef`` degli ordini del bot, seconda chiave d'identita' I1.
+
+        Dopo F-13a ogni place diretto invia ``customerOrderRef`` = ``customer_ref`` se conforme (``core.order_ref``).
+        Il ref resta sull'ordine dopo un replace (nuovo ``betId``) ed esiste anche quando la risposta del place e'
+        andata persa (riga senza ``betId``): e' l'identita' che ``get_bot_active_orders`` (solo ``betId``) non vede.
+
+        Una voce ``{"customer_ref", "market_id", "event_name"}`` per riga di ``orders``, in **ogni** stato: anche
+        ``INFLIGHT`` (l'ordine puo' esistere sull'exchange senza conferma). I ref non conformi sono esclusi: non sono
+        mai stati inviati, quindi non identificano niente. Un ref stale e' innocuo, come un ``betId`` stale: la
+        vivacita' la decide l'exchange. **Read-only.**
+        """
+        rows = self._execute("SELECT customer_ref, payload_json FROM orders", fetch=True, commit=False)
+        out: List[Dict[str, str]] = []
+        seen: set = set()
+        for row in rows or []:
+            item = dict(row)
+            ref = customer_order_ref(item.get("customer_ref"))
+            if not ref or ref in seen:
+                continue
+            seen.add(ref)
+            payload = self._safe_json_loads(item.get("payload_json"), {})
+            if not isinstance(payload, dict):
+                payload = {}
+            out.append({
+                "customer_ref": ref,
+                "market_id": str(payload.get("market_id") or payload.get("marketId") or ""),
+                "event_name": str(payload.get("event_name") or ""),
+            })
         return out
 
     def _sim_bot_orders(self) -> List[Dict[str, str]]:

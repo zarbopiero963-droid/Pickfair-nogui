@@ -52,6 +52,7 @@ import uuid
 from typing import Any, Callable, Dict, Optional
 
 from core import hedge_ref as _hedge
+from core.order_ref import customer_order_ref
 from core.trading_constants import (
     CASHOUT_FAILED,
     CASHOUT_SUCCESS,
@@ -182,6 +183,8 @@ class CashoutExecutor:
     def _previous_hedge_block(self, accepted: list) -> str:
         """'' se nessuno degli hedge accettati sulla selezione e' ancora abbinabile sull'exchange."""
         bet_ids = {str(row["response"].get("bet_id") or "").strip() for row in accepted}
+        # F-13b: il ref hedge:... e' inviato come customerOrderRef e resta sull'ordine dopo un replace (nuovo betId)
+        refs = {ref for ref in (customer_order_ref(row.get("customer_ref")) for row in accepted) if ref}
         if "" in bet_ids or self.fetch_current_orders is None:
             return "hedge_liveness_unverifiable"        # hedge senza betId o nessuna fonte: non dimostrabile chiuso
         try:
@@ -201,7 +204,8 @@ class CashoutExecutor:
             return "hedge_liveness_unverifiable"
         for order in current:
             bid = str(order.get("betId") or order.get("bet_id") or "").strip()
-            if bid not in bet_ids:
+            ref = customer_order_ref(order.get("customerOrderRef") or order.get("customer_order_ref"))
+            if bid not in bet_ids and not (ref and ref in refs):
                 continue
             raw = order.get("sizeRemaining", order.get("size_remaining"))
             try:

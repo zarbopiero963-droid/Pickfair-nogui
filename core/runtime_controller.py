@@ -20,6 +20,7 @@ from core.duplication_guard import DuplicationGuard
 from core.hedge_ref import is_hedge_order_ref
 from core.dutching_batch_manager import DutchingBatchManager
 from core.market_tracker import MarketTracker
+from core.order_ref import customer_order_ref
 from core.money_management import RoserpinaMoneyManagement
 from core.pnl_engine import PnLEngine
 from core.reconciliation_engine import ReconciliationEngine
@@ -27,7 +28,9 @@ from core.runtime_authority import RuntimeAuthority, RuntimeAuthorityLost
 from core.state_recovery import StateRecovery
 from core.risk_desk import RiskDesk
 from core import sl_tp_pnl
+from core import config_validation as cfg_rules
 from core import sl_tp_close
+from core import trailing_stop
 from core.safety_layer import assert_live_gate_or_refuse
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
@@ -1511,6 +1514,7 @@ class RuntimeController:
         # F-04 (#586): SL/TP scattati (F-02) => chiusura del SOLO tavolo interessato
         self.bus.subscribe(sl_tp_close.SL_TRIGGERED, self._on_sl_triggered)
         self.bus.subscribe(sl_tp_close.TP_TRIGGERED, self._on_tp_triggered)
+        self.bus.subscribe(trailing_stop.TRAILING_TRIGGERED, self._on_trailing_triggered)
 
     # =========================================================
     # CONFIG / MODE
@@ -2734,6 +2738,10 @@ class RuntimeController:
             self._start_settlement_poller()
         except Exception:
             logger.exception("Errore start settlement poller")
+        try:
+            self._start_sl_tp_poller()          # F-02: monitor SL/TP anche in SIM e in poll (no-op con lo stream)
+        except Exception:
+            logger.exception("Errore start monitor SL/TP")
 
         # Fase A1: Auto-Sync al boot (background)
         if self.executor:
@@ -3003,6 +3011,7 @@ class RuntimeController:
         smontato = False
         try:
             self._stop_settlement_poller()
+            self._stop_sl_tp_poller()
             self._stop_market_data_feed()
             self.telegram_service.stop()
             smontato = True
@@ -3674,6 +3683,8 @@ class RuntimeController:
                     self, topic, payload, origin=signal),
                 commission_pct=commission,
                 source="TELEGRAM",
+                # F-13b: seconda chiave I1 (customerOrderRef), per gli ordini sostituiti o con risposta persa
+                fetch_bot_refs=getattr(self.db, "get_bot_order_refs", None),
             )
             ctx = getattr(self, "_cashout_route_ctx", None)
             RuntimeController._await_entries_in_flight(self, getattr(ctx, "barrier_id", None))
@@ -3893,6 +3904,9 @@ class RuntimeController:
 
     def _on_tp_triggered(self, payload: dict) -> None:
         RuntimeController._on_sl_tp_triggered(self, sl_tp_close.TP_TRIGGERED, payload)
+
+    def _on_trailing_triggered(self, payload: dict) -> None:
+        RuntimeController._on_sl_tp_triggered(self, sl_tp_close.TRAILING_TRIGGERED, payload)
 
     def _sl_tp_routes(self) -> dict:
         routes = getattr(self, "_sl_tp_pending_routes", None)
@@ -4816,6 +4830,15 @@ class RuntimeController:
             "roserpina_reason": decision.reason,
             "roserpina_mode": decision.desk_mode.value,
         }
+        # F-02 (#586, F-CFG-01): SL/TP/trailing della posizione, dal segnale o dalla configurazione. Nel payload
+        # (persistito in `orders`) cosi' la ricostruzione F018 li ritrova dopo un riavvio; invalidi => segnale rifiutato.
+        sl_tp, sl_tp_reason = self._sl_tp_settings(signal)
+        if sl_tp_reason:
+            if self.config.anti_duplication_enabled:
+                self.duplication_guard.release(event_key)
+            self._reject_signal(signal, sl_tp_reason)
+            return
+        payload.update(sl_tp)
         # PR26-a: identita' stabile dell'intento (core/order_identity.py). Un
         # customer_ref a monte (anche annidato in raw_signal) si preserva;
         # altrimenti si deriva dal messaggio
@@ -4886,6 +4909,8 @@ class RuntimeController:
                 "price": payload["price"],
                 "simulation_mode": payload["simulation_mode"],
                 "customer_ref": payload["customer_ref"],          # #461 PR28-e: correlazione esito-riserva
+                # F-02: importi SL/TP sul rischio della gamba e stake reale per il monitor
+                **self._sl_tp_meta(sl_tp, order_exposure, payload["stake"]),
             },
         )
         # #461 PR29-c: l'identita' della riserva viaggia con la request (persistita in `orders`): dopo un riavvio
@@ -5316,6 +5341,8 @@ class RuntimeController:
                 # assenti negli ordini salvati prima => None, resta il confronto per nome.
                 "meta": {k: p.get(k) for k in ("event_name", "event_id", "event_identity", "market_name",
                                                "runner_name", "bet_type", "price", "simulation_mode")},
+                # F-02 (F-CFG-01): SL/TP/trailing persistiti con l'ordine, ricaricati sul tavolo dopo il riavvio
+                "sl_tp": {k: p.get(k) for k in self.SL_TP_KEYS if p.get(k) is not None},
             }
             # #461 PR29-c: il tavolo ricostruito porta l'identita' della riserva (intento e riserva persistiti),
             # cosi' il settlement della sua bet lo riconosce dopo il riavvio.
@@ -5503,9 +5530,14 @@ class RuntimeController:
             result.update(ok=False, reason=f"EXCHANGE_ORDERS_UNAVAILABLE:{type(exc).__name__}")
         live_bets = {str(o.get("bet_id") or o.get("betId") or "") for o in (current or [])}
         live_markets = {str(o.get("marketId") or o.get("market_id") or "") for o in (current or [])}
+        # F-13b (#586, ID-01): il customerOrderRef (= customer_ref conforme, inviato da F-13a) sopravvive a un replace
+        # (nuovo betId) e a una risposta persa (riga senza betId): con il ref vivo la posizione e' certa, mai 'closed'.
+        live_refs = {ref for ref in (customer_order_ref(o.get("customerOrderRef") or o.get("customer_order_ref"))
+                                     for o in (current or []) if isinstance(o, dict)) if ref}
         for c in candidates:
             if c["status"] == "SUBMITTED" and current is not None:
-                if c["bet_id"] and c["bet_id"] in live_bets:
+                own_ref = customer_order_ref(c["customer_ref"])
+                if (c["bet_id"] and c["bet_id"] in live_bets) or (own_ref and own_ref in live_refs):
                     is_uncertain = False
                 elif not c["bet_id"] and c["market_id"] in live_markets:
                     is_uncertain = True                       # ordine sul mercato ma senza identita' certa
@@ -5526,8 +5558,11 @@ class RuntimeController:
                 result.update(ok=False, reason="NO_TABLE_FOR_OPEN_POSITION")
                 continue
             exposure = validators.order_exposure_or_inf(c["side"], c["stake"], c["price"])
+            meta = dict(c["meta"])
+            if math.isfinite(exposure):
+                meta.update(self._sl_tp_meta(c.get("sl_tp") or {}, exposure, c["stake"]))
             self.table_manager.activate(table_id=table_id, event_key=c["event_key"], exposure=float(exposure),
-                                        market_id=c["market_id"], selection_id=c["selection_id"], meta=c["meta"])
+                                        market_id=c["market_id"], selection_id=c["selection_id"], meta=meta)
             self.duplication_guard.acquire(c["event_key"], pin=True)       # posizione viva: mai scaduta per TTL (c9)
             if is_uncertain:
                 self._mark_uncertain(c["event_key"], table_id, customer_ref=c["customer_ref"])
@@ -7047,6 +7082,121 @@ class RuntimeController:
         return set(self._direct_order_bet_ids.values())
 
     # =========================================================
+    # SL / TP / TRAILING — impostazioni della posizione (F-02 #586)
+    # =========================================================
+    SL_TP_KEYS = ("stop_loss_pct", "take_profit_pct", "trailing_stop_pct")
+
+    def _sl_tp_settings(self, signal: Any) -> tuple[dict, str]:
+        """``({chiave: pct}, motivo_rifiuto)`` per una nuova posizione (F-02, F-CFG-01).
+
+        Un segnale puo' portare le proprie ``stop_loss_pct``/``take_profit_pct``/``trailing_stop_pct``; altrimenti valgono
+        quelle della configurazione Roserpina. Assenti = OFF. Un valore presente ma invalido (segnale o configurazione)
+        rifiuta il segnale con ``<chiave>_non_valido``: mai una protezione spenta in silenzio."""
+        sig = signal if isinstance(signal, dict) else {}
+        out: dict = {}
+        for name in self.SL_TP_KEYS:
+            raw = sig.get(name)
+            if cfg_rules.is_unset(raw):
+                raw = getattr(getattr(self, "config", None), name, None)
+            if cfg_rules.is_unset(raw):
+                continue
+            if cfg_rules.invalid_reason(f"roserpina.{name}", raw):
+                return {}, f"{name}_non_valido"
+            out[name] = float(cfg_rules.parse_number(raw))
+        return out, ""
+
+    @staticmethod
+    def _sl_tp_meta(pcts: Any, exposure: Any, stake: Any) -> dict:
+        """Meta del tavolo per il monitor: gli importi SL/TP (``stop_loss``/``take_profit``) sono la percentuale del
+        RISCHIO della gamba (BACK: stake; LAY: liability = ``exposure``), in Decimal al centesimo; ``stake`` e' lo stake
+        reale (il monitor non lo ricava dall'esposizione). Nessuna percentuale => solo lo stake."""
+        meta: dict = {}
+        stake_d = sl_tp_pnl.to_decimal(stake)
+        if stake_d is not None and stake_d > 0:
+            meta["stake"] = float(stake_d)
+        risk = sl_tp_pnl.to_decimal(exposure)
+        for name, target in (("stop_loss_pct", "stop_loss"), ("take_profit_pct", "take_profit"),
+                             ("trailing_stop_pct", None)):
+            pct = sl_tp_pnl.to_decimal((pcts or {}).get(name))
+            if pct is None or pct <= 0:
+                continue
+            meta[name] = float(pct)
+            if target and risk is not None and risk > 0:
+                meta[target] = float((risk * pct / sl_tp_pnl.Decimal("100")).quantize(sl_tp_pnl.CENT))
+        return meta
+
+    def _sl_tp_poll_markets(self) -> list:
+        """Mercati con almeno un tavolo ACTIVE che ha SL o TP armato e non ancora scattato."""
+        markets = []
+        for table in list(getattr(self.table_manager, "_tables", {}).values()):
+            meta = table.meta or {}
+            if table.status != "ACTIVE" or meta.get("sl_tp_triggered"):
+                continue
+            if meta.get("stop_loss") is None and meta.get("take_profit") is None \
+                    and trailing_stop.trailing_pct(meta.get("trailing_stop_pct")) is None:
+                continue
+            if table.market_id and table.market_id not in markets:
+                markets.append(table.market_id)
+        return markets
+
+    def _sl_tp_poll_once(self) -> int:
+        """Un giro del monitor SL/TP fuori dallo streaming (SIM e poll, F-02): lo snapshot del book di ogni mercato con
+        una protezione armata passa allo stesso ``_monitor_sl_tp_trailing`` dello stream. Con lo stream attivo non fa
+        nulla solo se lo stream e' sano (il callback dello stream lo esegue gia'); con lo stream giu' o degradato il
+        poller lo copre. Ritorna i mercati valutati."""
+        if self.mode != RuntimeMode.ACTIVE:
+            return 0
+        feed = getattr(self, "streaming_feed", None)
+        try:
+            streaming = feed is not None and bool(feed.healthy())
+        except Exception:  # noqa: BLE001 - stato dello stream ignoto => il poller copre (mai nessun monitor)
+            streaming = False
+        if streaming:
+            return 0
+        done = 0
+        for market_id in self._sl_tp_poll_markets():
+            try:
+                book = self.betfair_service.get_market_book_snapshot(market_id, include_prices=True)
+            except Exception:  # noqa: BLE001 - book illeggibile => nessuna decisione su quel mercato
+                logger.exception("SL/TP: book di %s illeggibile", market_id)
+                continue
+            if isinstance(book, dict) and book:
+                book = dict(book, marketId=book.get("marketId") or market_id)
+                self._monitor_sl_tp_trailing(book)
+                done += 1
+        return done
+
+    def _start_sl_tp_poller(self) -> None:
+        thread = getattr(self, "_sl_tp_poll_thread", None)
+        if thread is not None and thread.is_alive():
+            return
+        stop_event = threading.Event()
+        self._sl_tp_poll_stop = stop_event
+        interval = max(0.5, float(((self._market_data_cfg or {}) if isinstance(getattr(self, "_market_data_cfg", None),
+                                                                                dict) else {}).get(
+            "sl_tp_poll_sec", 2.0) or 2.0))
+
+        def loop():
+            while not stop_event.is_set():
+                try:
+                    self._sl_tp_poll_once()
+                except Exception:  # noqa: BLE001
+                    logger.exception("Errore giro monitor SL/TP")
+                stop_event.wait(interval)
+
+        self._sl_tp_poll_thread = threading.Thread(target=loop, name="sl-tp-monitor", daemon=True)
+        self._sl_tp_poll_thread.start()
+
+    def _stop_sl_tp_poller(self) -> None:
+        stop_event = getattr(self, "_sl_tp_poll_stop", None)
+        thread = getattr(self, "_sl_tp_poll_thread", None)
+        if stop_event is not None:
+            stop_event.set()
+        if thread is not None:
+            thread.join(timeout=5.0)
+        self._sl_tp_poll_thread = None
+
+    # =========================================================
     # SL / TP / TRAILING MONITOR (C1 #320)
     # =========================================================
     def _monitor_sl_tp_trailing(self, market_book: dict) -> None:
@@ -7066,9 +7216,12 @@ class RuntimeController:
         
         for table in active_tables:
             meta = table.meta or {}
+            if meta.get("sl_tp_triggered"):
+                continue                        # gia' scattato: nessun evento ripetuto a ogni book (F-02)
             sl = meta.get("stop_loss")
             tp = meta.get("take_profit")
-            if sl is None and tp is None:
+            trail_pct = trailing_stop.trailing_pct(meta.get("trailing_stop_pct"))   # F-03: None = OFF
+            if sl is None and tp is None and trail_pct is None:
                 continue
                 
             # F-01 (#586, CSH-01): P&L NETTO LIQUIDABILE = green-up del cashout al prezzo di chiusura del book
@@ -7098,23 +7251,98 @@ class RuntimeController:
             tp_d = sl_tp_pnl.to_decimal(tp) if tp is not None else None
             if sl_d is not None and pnl <= -abs(sl_d):
                 self._trigger_auto_close_table(table, "STOP_LOSS_REACHED", float(pnl))
+                continue
+            # F-03 (K-7): precedenza hard-stop > SL > trailing > TP. Il trailing decide solo su mercato negoziabile e
+            # profitto garantito liquidabile per intero (book che copre tutta la posizione).
+            if trail_pct is not None and covered and RuntimeController._market_book_tradable(market_book, table):
+                if RuntimeController._evaluate_trailing(self, table, side, stake, legs, trail_pct):
+                    continue
             # TP solo su profitto LIQUIDABILE per intero; lo SL (chiusura protettiva, PF-EXEC-03) scatta anche con book
             # insufficiente: il residuo non coperto e' valutato all'ultimo livello disponibile.
             # Il TP confronta il netto dell'esito PEGGIORE sulle gambe arrotondate (profitto garantito, Sol su f1de646).
-            elif tp_d is not None and covered:
+            if tp_d is not None and covered:
                 tp_pnl = sl_tp_pnl.liquidable_pnl_legs(side, stake, meta.get("price"), legs,
                                                        BETFAIR_ITALY_COMMISSION_PCT, guaranteed=True)
                 if tp_pnl is not None and tp_pnl >= abs(tp_d):
                     self._trigger_auto_close_table(table, "TAKE_PROFIT_REACHED", float(tp_pnl))
 
+    @staticmethod
+    def _market_book_tradable(market_book: dict, table) -> bool:
+        """F-03/PF-EXEC-05: decisione del trailing solo con mercato OPEN e selezione ACTIVE (stato assente = no)."""
+        if str((market_book or {}).get("status") or "").strip().upper() != "OPEN":
+            return False
+        runner = next((r for r in (market_book or {}).get("runners") or []
+                       if isinstance(r, dict) and str(r.get("selectionId")) == str(table.selection_id)), None)
+        return runner is not None and str(runner.get("status") or "").strip().upper() == "ACTIVE"
+
+    def _evaluate_trailing(self, table, side: str, stake, legs, pct) -> bool:
+        """F-03 (#586, K-7): un tick del trailing per il tavolo. ``True`` se e' scattato (evento pubblicato).
+
+        Picco = massimo del P&L GARANTITO liquidabile (stessa funzione del cashout, F-01), persistito per posizione in
+        ``risk.trailing_peak.<customer_ref>`` PRIMA di essere usato: un processo che cade fra il calcolo e la scrittura
+        riparte con un picco <= l'ultimo persistito, mai maggiore. Stato persistito illeggibile, posizione senza
+        ``customer_ref`` o P&L non calcolabile => nessuna decisione (fail-closed)."""
+        meta = table.meta if isinstance(table.meta, dict) else {}
+        ref = str(meta.get("customer_ref") or "").strip()
+        if not ref:
+            return False
+        key = trailing_stop.PEAK_KEY_PREFIX + ref
+        if "trailing_peak" not in meta:
+            try:
+                peak, why = trailing_stop.read_peak(self.db.get_settings().get(key))
+            except Exception:  # noqa: BLE001 - stato non leggibile: nessuna decisione
+                logger.exception("F-03: picco del trailing di %s non leggibile", ref)
+                return False
+            if why:
+                logger.error("F-03: picco del trailing di %s non valido (%s): nessuna decisione", ref, why)
+                return False
+            meta["trailing_peak"] = str(peak) if peak is not None else None
+        try:
+            pnl = sl_tp_pnl.liquidable_pnl_legs(side, stake, meta.get("price"), legs, BETFAIR_ITALY_COMMISSION_PCT,
+                                                guaranteed=True)
+        except Exception:  # noqa: BLE001
+            logger.exception("F-03: P&L garantito del tavolo %s non calcolabile", table.table_id)
+            return False
+        decision = trailing_stop.evaluate(meta.get("trailing_peak"), pnl, pct)
+        if decision is None or decision.peak is None:
+            return False
+        if decision.peak_raised:
+            try:
+                self.db.save_settings({key: trailing_stop.state_record(decision.peak, pct, time.time())})
+            except Exception:  # noqa: BLE001 - picco non persistito => non usato (resta l'ultimo persistito)
+                logger.exception("F-03: picco del trailing di %s non persistito: resta il precedente", ref)
+                return False
+            meta["trailing_peak"] = str(decision.peak)
+        meta["trailing_threshold"] = float(decision.threshold)
+        if decision.triggered:
+            self._trigger_auto_close_table(table, trailing_stop.TRAILING_REASON, float(pnl))
+            return True
+        return False
+
     def _trigger_auto_close_table(self, table, reason: str, pnl: float) -> None:
-        logger.info(f"[RuntimeController] Auto-closing table {table.table_id} reason={reason} pnl={pnl:.2f}")
-        self.bus.publish("REQ_EXECUTE_CASHOUT", {
+        """F-02 (#586): lo scatto di SL/TP e' un EVENTO (``SL_TRIGGERED``/``TP_TRIGGERED``), una sola volta per
+        posizione. Nessun ordine dal trigger finche' F-04 non costruisce la chiusura con lato, prezzo e barriera:
+        la richiesta precedente (``REQ_EXECUTE_CASHOUT`` senza lato ne' prezzo, R3-01) veniva sempre rifiutata."""
+        meta = table.meta if isinstance(table.meta, dict) else {}
+        if meta.get("sl_tp_triggered"):
+            return
+        meta["sl_tp_triggered"] = reason
+        event = {"STOP_LOSS_REACHED": "SL_TRIGGERED", trailing_stop.TRAILING_REASON: trailing_stop.TRAILING_TRIGGERED}.get(
+            reason, "TP_TRIGGERED")
+        logger.warning("[RuntimeController] %s tavolo %s mercato %s pnl=%.2f", event, table.table_id, table.market_id, pnl)
+        self.bus.publish(event, {
+            "table_id": table.table_id,
             "market_id": table.market_id,
             "selection_id": table.selection_id,
-            "stake": table.current_exposure,
+            "side": str(meta.get("bet_type") or "").upper(),
+            "stake": meta.get("stake"),
+            "price": meta.get("price"),
+            "threshold": meta.get({"SL_TRIGGERED": "stop_loss", trailing_stop.TRAILING_TRIGGERED: "trailing_threshold"}.get(
+                event, "take_profit")),
+            "pnl": pnl,
             "reason": reason,
-            "source": "AUTO_MONITOR"
+            "customer_ref": meta.get("customer_ref") or "",
+            "source": "AUTO_MONITOR",
         })
 
     # =========================================================
@@ -8255,6 +8483,11 @@ class RuntimeController:
                     "bet_type": submit_payload["bet_type"],
                 },
             )
+            # F-02 (F-CFG-01): l'auto-next eredita SL/TP/trailing come ogni nuova posizione (invalidi => nessun invio)
+            sl_tp, sl_tp_reason = self._sl_tp_settings(signal or {})
+            if sl_tp_reason:
+                raise ValueError(sl_tp_reason)
+            submit_payload.update(sl_tp)
         except Exception as exc:
             result["auto_trade_status"] = "AUTO_TRADE_SUBMIT_FAILED"
             result["cycle_executor_status"] = "CYCLE_SUBMIT_FAILED"
@@ -8299,6 +8532,10 @@ class RuntimeController:
                     "simulation_mode": bool(submit_payload.get("simulation_mode", self.simulation_mode)),
                     "auto_trade_source": submit_payload.get("auto_trade_source") or "",
                     "customer_ref": str(submit_payload.get("customer_ref") or ""),  # PR28-e: esito-riserva
+                    **self._sl_tp_meta({k: submit_payload.get(k) for k in self.SL_TP_KEYS},
+                                       validators.order_exposure(submit_payload["bet_type"], submit_payload["stake"],
+                                                                 submit_payload["price"]),
+                                       submit_payload["stake"]),
                 },
             )
             # #461 PR29-c (Codex su 29903af): il tavolo e la riserva dell'auto-next viaggiano con la request

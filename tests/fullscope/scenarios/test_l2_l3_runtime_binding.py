@@ -55,9 +55,8 @@ def test_combination_runs_in_sim_and_respects_oracle(group, case_id, case, scena
     assert rec["outcome"] == "PASS"
 
 
-@pytest.mark.xfail(strict=True, reason="F-01/F-02/F-03: stop_loss_pct / take_profit_pct / trailing_stop_pct non esistono "
-                                       "su main (monitor SL/TP inerte); il gruppo SL/TP/trailing non puo' essere eseguito")
 def test_sl_tp_trailing_group_is_executable():
+    # F-02 (#586): le tre chiavi esistono (default OFF) e il monitor e' cablato; prima xfail strict
     inv = C.G.load_inventory()
     keys = {p["key"] for p in inv["parameters"]}
     assert {"roserpina.stop_loss_pct", "roserpina.take_profit_pct", "roserpina.trailing_stop_pct"} <= keys

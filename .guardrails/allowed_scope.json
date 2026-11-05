@@ -3575,6 +3575,87 @@
         "tests/control_api/test_sl_tp_close_view.py"
       ],
       "max_files": 8
+    },
+    "f13b_order_identity_cashout": {
+      "description": "F-13b (#586, ID-01; dopo F-13a): il customerOrderRef e' la seconda chiave d'identita' del bot. Database.get_bot_order_refs (ref conformi di ogni riga orders, anche senza betId); cashout_router I1 per betId o ref (ordini sostituiti o con risposta persa: posizione, resting, CASHOUT singolo), ref illeggibili => CASHOUT_FAILED; F018 ricostruisce come certa una riga SUBMITTED col ref vivo; CashoutExecutor riconosce l'hedge precedente sostituito dal ref hedge:. Ref estranei o assenti mai adottati.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "cashout_executor.py",
+        "cashout_router.py",
+        "core/runtime_controller.py",
+        "database.py",
+        "docs/order_identity.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/ci_changed_modules.py",
+        "tests/f13b/__init__.py",
+        "tests/f13b/test_f13b_order_identity.py"
+      ],
+      "max_files": 11
+    },
+    "f18_config_validation": {
+      "description": "F-18 (#586, CFG-01/02/04, NF-16, NF-17): dominio unico delle chiavi Roserpina (core/config_validation.py); SettingsService.save_settings rifiuta per intero valori illeggibili/fuori dominio/incoerenti (config intatta); loader: valore presente ma invalido mai default silenzioso (NaN, valore protettivo, RoserpinaConfig.invalid_settings) => validators.risk_pcts_reason nega ogni nuova entrata. Nessun cap monetario di default, min_stake solo > 0 (microstake 0,10). Test che collaudavano il loader via save scrivono raw; due test che fissavano il fallback al default (NF-16) aggiornati al nuovo contratto.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/config_validation.py",
+        "core/system_state.py",
+        "core/validators.py",
+        "docs/config_validation.md",
+        "guardrails/mutation_catalog.json",
+        "services/setting_service.py",
+        "tests/f18/__init__.py",
+        "tests/f18/test_f18_config_validation.py",
+        "tests/fullscope/config/test_l1_settings_roundtrip.py",
+        "tests/roserpina41/test_rsr_targeted.py",
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "max_files": 13
+    },
+    "f02_sl_tp_path": {
+      "description": "F-02 (#586, CSH-02/NF-03, F-CFG-01; dopo F-01/F-18): chiavi roserpina.stop_loss_pct/take_profit_pct/trailing_stop_pct (OFF di default, validate), SL/TP dal segnale o dalla config nel meta del tavolo come importi sul rischio della gamba (persistiti per F018 e auto-next), monitor anche in SIM/poll (poller, stream sano escluso), evento SL_TRIGGERED/TP_TRIGGERED una volta per posizione e nessun ordine dal trigger fino a F-04 (R3-01). Tab Roserpina: due campi.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/config_validation.py",
+        "core/runtime_controller.py",
+        "core/system_state.py",
+        "docs/cashout_overview.md",
+        "docs/design/design_handoff.md",
+        "guardrails/mutation_catalog.json",
+        "mini_gui.py",
+        "services/setting_service.py",
+        "tests/acceptance/test_issue437_pr04.py",
+        "tests/core/test_sl_tp_pnl_sign.py",
+        "tests/f02/__init__.py",
+        "tests/f02/test_f02_sl_tp_path.py",
+        "tests/fullscope/combi/test_generator.py",
+        "tests/fullscope/scenarios/test_l2_l3_runtime_binding.py",
+        "tests/fullscope/scenarios/test_sim_combo_001.py",
+        "tests/unit/test_runtime_controller_best_price_direct.py",
+        "tools/combi/inventory.json"
+      ],
+      "max_files": 19
+    },
+    "d_f03_trailing_stop": {
+      "description": "F-03 (#586, K-7): trailing stop sul P&L garantito liquidabile, picco persistito prima dell'uso, precedenza hard-stop > SL > trailing > TP, scatto chiuso da F-04 sul solo tavolo. Impilato su F-02 (keep/f02-sl-tp-path-20261103) + F-04: i file elencati sono il delta di F-03 rispetto a quella base.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/runtime_controller.py",
+        "core/sl_tp_close.py",
+        "core/trailing_stop.py",
+        "docs/cashout_overview.md",
+        "guardrails/mutation_catalog.json",
+        "tests/f03/__init__.py",
+        "tests/f03/test_f02_f04_f03_cumulativo.py",
+        "tests/f03/test_f03_trailing_stop.py"
+      ],
+      "max_files": 10
     }
   }
 }
