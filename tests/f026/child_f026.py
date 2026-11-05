@@ -5,6 +5,7 @@ SCENARIO_JSON: {"steps": [...]} con passi:
   {"op": "signal", "m": "1.701", "price": 2.0, "side": "BACK"}       segnale reale (Roserpina decide lo stake;
                                                                     con "stake" lo stake fisso del segnale)
   {"op": "mode", "m": "1.701", "mode": "lost"|"partial"|"ok"}       comportamento del trasporto (SIM)
+  {"op": "mode", "m": "1.701", "mode": "mixed_diag"}                 ordine eseguito, risposta mista con sizeMatched 999 falso
   {"op": "settle", "m": "1.701", "win": true}                       mercato CLOSED (settlement reale via poller)
   {"op": "resettle", "m": "1.701"}                                  stesso settlement ripubblicato (duplicato)
   {"op": "withdraw", "amount": 20.0}                                variazione esterna del saldo, senza settlement
@@ -163,6 +164,14 @@ try:
         m = str(k.get("market_id") or "")
         if MODE.get(m) == "lost":
             real(*a, **k); raise TimeoutError("response lost after send")
+        if MODE.get(m) == "mixed_diag":
+            # F-14 / MCP-01k: l'exchange esegue DAVVERO l'ordine, ma al bot torna un esito misto (PROCESSED_WITH_ERRORS
+            # con report SUCCESS) che porta un sizeMatched DIAGNOSTICO falso (999): mai un dato confermato.
+            out = real(*a, **k)
+            rep = ((out or {}).get("instructionReports") or [{}])[0]
+            crash_if_armed("PLACE_BET:" + m)
+            return {"status": "PROCESSED_WITH_ERRORS", "marketId": m, "instructionReports": [
+                {"status": "SUCCESS", "betId": rep.get("betId"), "sizeMatched": 999.0, "averagePriceMatched": 9.9}]}
         out = real(*a, **k)
         crash_if_armed("PLACE_BET:" + m)
         return out

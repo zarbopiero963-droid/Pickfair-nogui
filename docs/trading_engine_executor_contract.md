@@ -35,6 +35,10 @@ broker oppure solleva. Non restituisce mai un `concurrent.futures.Future` né un
   (test `test_riga_incerta_non_espone_importi_del_report`). Il `matched` che `OrderRouter._normalize_live` mette su un
   esito `AMBIGUOUS` (`order_unknown`) viene dai report ed e' **non confermato**: l'esito porta
   `matched_confirmed: false` e quel valore finisce solo in audit/notifica, mai in un calcolo di esposizione.
+  Prova end-to-end (runtime reale, restart e settlement): `tests/f026/test_f14_matched_non_confermato.py`. Con un
+  report diagnostico falso (`sizeMatched` 999) su un ordine realmente abbinato: prima della riconciliazione P&L 0,
+  esposizione = riserva della richiesta, bankroll pre-ordine, cassa dall'exchange; dopo il riavvio la ricostruzione F018
+  usa lo stake della richiesta; al settlement il realizzato viene dal solo abbinato confermato dall'exchange.
 - **Attesa.** Il tempo di attesa vale `executor.default_timeout`. Se il valore manca o non è valido si usano 30 s (`ExecutorManager` di produzione: 30 s). Deve restare **maggiore** del timeout HTTP del `BetfairClient` (20 s), altrimenti si producono AMBIGUOUS evitabili. Il valore per LIVE resta un'ipotesi da validare (decisione owner).
 - **Thread.** L'attesa avviene nel worker dell'EventBus che esegue l'handler, mai nel thread della GUI. Un engine invocato da un worker dello stesso pool dell'executor rifiuta prima dell'invio (`EXECUTOR_REENTRANT_SUBMIT_REFUSED`), per evitare il deadlock.
 - **Messaggi pre-invio.** Non contengono la parola "timeout": `_handle_submit_exception` la legge come ambiguità, mentre la classificazione pre-invio è per **tipo**.
