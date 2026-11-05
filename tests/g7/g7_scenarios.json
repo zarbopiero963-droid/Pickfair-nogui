@@ -205,6 +205,16 @@
         7
       ],
       "requires": "F-03"
+    },
+    {
+      "id": "G7-S21",
+      "test": "",
+      "requirements": [
+        "G7-R12"
+      ],
+      "seeds": [],
+      "requires": "main",
+      "unsupported": "auto-next end-to-end: in produzione non esiste un generatore di next_signal (decisione owner: nessuna scommessa inventata); copertura solo runtime (G7-S06)"
     }
   ]
 }

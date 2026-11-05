@@ -14,6 +14,7 @@ def test_registro_valido() -> None:
     assert reg["schema"] == "pf-g7-scenarios/1"
     for sc in reg["scenarios"]:
         assert re.fullmatch(r"G7-S\d{2}", sc["id"]), sc
+        assert sc["test"] or sc.get("unsupported"), sc
         assert sc["requirements"] and all(re.fullmatch(r"G7-R(0[1-9]|1[0-4])", r) for r in sc["requirements"]), sc
         assert all(isinstance(s, int) for s in sc["seeds"])
     covered = {r for sc in reg["scenarios"] for r in sc["requirements"]}
@@ -45,3 +46,33 @@ def test_scenario_su_file_assente_e_not_tested() -> None:
     row = run_g7.run_scenario({"id": "G7-S99", "test": "tests/non/esiste.py", "requirements": ["G7-R01"], "seeds": [],
                                "requires": "x"})
     assert row["outcome"] == "NOT_TESTED"
+
+
+@pytest.mark.parametrize("esiti,atteso", [
+    (["PASS", "PASS"], "PASS"),
+    (["PASS", "XFAIL"], "XFAIL"),            # difetto noto: mai PASS
+    (["PASS", "NOT_TESTED"], "NOT_TESTED"),
+    (["PASS", "UNSUPPORTED"], "UNSUPPORTED"),
+    (["XFAIL"], "XFAIL"),
+    (["UNSUPPORTED"], "UNSUPPORTED"),
+    (["NOT_TESTED", "FAIL", "PASS"], "FAIL"),
+])
+def test_xfail_not_tested_unsupported_mai_pass(esiti, atteso) -> None:
+    results = [{"requirements": ["G7-R01"], "outcome": e} for e in esiti]
+    assert run_g7.requirement_status(results) == {"G7-R01": atteso}
+
+
+@pytest.mark.parametrize("tree,clean,pub,atteso", [
+    ("abc", True, "abc", "certification_candidate"),
+    ("abc", False, "abc", "development"),          # albero sporco
+    ("abc", True, "def", "development"),           # SHA diverso dal pubblicato
+    ("abc", True, None, "development"),            # nessuno SHA pubblicato dichiarato
+])
+def test_modalita_dell_evidenza(tree, clean, pub, atteso) -> None:
+    assert run_g7.evidence_mode(tree, clean, pub) == atteso
+
+
+def test_scenario_unsupported_dichiarato() -> None:
+    row = run_g7.run_scenario({"id": "G7-S21", "test": "", "requirements": ["G7-R12"], "seeds": [], "requires": "main",
+                               "unsupported": "motivo"})
+    assert row["outcome"] == "UNSUPPORTED" and row["detail"] == "motivo"

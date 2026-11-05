@@ -66,7 +66,10 @@ test, i seed, i requisiti `G7-Rnn` coperti (elenco di Claude B: `pf-gov-persiste
 e il codice che deve essere su main perche' l'esito sia certificativo (`requires`). Gli ID non si riusano ne' si
 rinumerano.
 
-`python3 tools/sim_report/run_g7.py --out art/g7/<sha>.json [--only G7-S12 ...]` riesegue gli scenari sull'albero
-corrente e scrive l'evidenza: SHA dell'albero, albero pulito o no, esito per scenario (`PASS`, `FAIL`, `XFAIL`,
-`NOT_TESTED` se il test non esiste sull'albero o e' saltato), durata. Lo strumento non decide la certificazione: vale
-solo su uno SHA pubblicato (head di PR o main), lo stabilisce chi verifica. Nessuna rete, nessun ordine.
+`python3 tools/sim_report/run_g7.py --out art/g7/<sha>.json [--published-sha <sha>] [--only G7-S12 ...]` riesegue
+gli scenari sull'albero corrente e scrive l'evidenza (`pf-g7-evidence/2`): SHA dell'albero, albero pulito o no, hash
+del registro, esito per scenario (`PASS`, `FAIL`, `XFAIL` = difetto noto, `NOT_TESTED` = test assente o saltato,
+`UNSUPPORTED` = dichiarato nel registro, es. G7-S21 auto-next), durata, e lo stato per requisito: **PASS solo se tutti i
+suoi scenari sono PASS**, altrimenti il peggiore (FAIL > XFAIL > UNSUPPORTED > NOT_TESTED). `mode` e' `development`
+salvo albero pulito con SHA uguale a `--published-sha` (`certification_candidate`); la certificazione la decide comunque
+il verificatore, solo su SHA pubblicati (head di PR o main). Nessuna rete, nessun ordine.

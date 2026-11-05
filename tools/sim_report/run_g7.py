@@ -10,6 +10,7 @@ Uso: python3 tools/sim_report/run_g7.py --out art/g7/<sha>.json [--only G7-S12 .
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -48,9 +49,33 @@ def classify(returncode: int, stdout: str) -> str:
     return "FAIL"
 
 
+#: Gravita' degli esiti: un requisito prende lo stato peggiore dei suoi scenari ed e' PASS solo se TUTTI sono PASS.
+#: XFAIL (difetto noto), UNSUPPORTED e NOT_TESTED non contribuiscono mai a un PASS.
+SEVERITY = ("FAIL", "XFAIL", "UNSUPPORTED", "NOT_TESTED", "PASS")
+
+
+def requirement_status(results: List[Dict[str, Any]]) -> Dict[str, str]:
+    by_req: Dict[str, List[str]] = {}
+    for r in results:
+        for req in r["requirements"]:
+            by_req.setdefault(req, []).append(r["outcome"])
+    return {req: min(outcomes, key=SEVERITY.index) for req, outcomes in sorted(by_req.items())}
+
+
+def evidence_mode(tree_sha: str, tree_clean: bool, published_sha: Optional[str]) -> str:
+    """``development`` salvo albero pulito con SHA uguale a quello pubblicato dichiarato: allora
+    ``certification_candidate``. La certificazione la decide comunque il verificatore (solo SHA pubblicati)."""
+    if published_sha and tree_clean and tree_sha and tree_sha == published_sha:
+        return "certification_candidate"
+    return "development"
+
+
 def run_scenario(sc: Dict[str, Any]) -> Dict[str, Any]:
-    path = sc["test"].split("::", 1)[0]
     row = {k: sc[k] for k in ("id", "test", "requirements", "seeds", "requires")}
+    if sc.get("unsupported"):
+        row.update(outcome="UNSUPPORTED", detail=str(sc["unsupported"]), duration_s=0.0)
+        return row
+    path = sc["test"].split("::", 1)[0]
     if not os.path.exists(os.path.join(ROOT, path)):
         row.update(outcome="NOT_TESTED", detail="test assente su questo albero", duration_s=0.0)
         return row
@@ -66,14 +91,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Riesegue la campagna G7 e scrive l'evidenza")
     ap.add_argument("--out", required=True)
     ap.add_argument("--only", nargs="*", default=None)
+    ap.add_argument("--published-sha", default=None,
+                    help="SHA pubblicato (head di PR o main) che l'albero deve essere per un candidato certificativo")
     args = ap.parse_args(argv)
     reg = load_registry()
     scenarios = [s for s in reg["scenarios"] if not args.only or s["id"] in args.only]
-    evidence = {"schema": "pf-g7-evidence/1", "tree_sha": _git("rev-parse", "HEAD"),
-                "tree_clean": _git("status", "--porcelain") == "", "python": sys.version.split()[0],
+    tree_sha, tree_clean = _git("rev-parse", "HEAD"), _git("status", "--porcelain") == ""
+    results = [run_scenario(s) for s in scenarios]
+    evidence = {"schema": "pf-g7-evidence/2", "tree_sha": tree_sha, "tree_clean": tree_clean,
+                "published_sha": args.published_sha,
+                "registry_sha256": hashlib.sha256(open(REGISTRY, "rb").read()).hexdigest(),
+                "mode": evidence_mode(tree_sha, tree_clean, args.published_sha),
+                "python": sys.version.split()[0],
                 "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "certification": "DA STABILIRE DAL VERIFICATORE (solo SHA pubblicati)",
-                "results": [run_scenario(s) for s in scenarios]}
+                "certification": "DECISA DAL VERIFICATORE: mai su mode=development",
+                "requirements": requirement_status(results),
+                "results": results}
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(evidence, fh, indent=2, ensure_ascii=False)
