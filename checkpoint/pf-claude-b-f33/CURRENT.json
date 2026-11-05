@@ -2,12 +2,12 @@
  "certification_verdict": "NOT VERIFIED",
  "checkpoint_commit": null,
  "code": {
-  "branch": "claude/pickfair-core-audit-slu9su",
-  "sha": "1b2b502436f3a75395aa158946dd8767112b6380"
+  "branch": "main",
+  "sha": "89af178e5681e6216cb906cb0027e3b734f6f15a"
  },
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "next_atomic_action": "Attendere le decisioni owner sulla #609 (non applicabilita' F-13b su 1b2b5024; review Sol). Poi rivalutare i gate sullo stesso SHA e decidere merge. In parallelo offline: hardening pfckpt (agente), F-16 delta 64e965b, G1-G2, G7.",
- "previous_checkpoint_sha": "c7538b9db87d3c69403dac94e25b2a13ec3cc0bb",
+ "next_atomic_action": "F-16: test sul branch f16-pr (merge main 7fae18d4), push su claude/d-f16-funds-freshness, PR, gate, auto-merge se tutti PASS. Poi F-R06 (1d8ca01), poi pfckpt hardening (b449f359, rebase su main).",
+ "previous_checkpoint_sha": "bb71124949e432fc3188e2eeb024245bfdfba5cd",
  "schema": "pf-current/1",
- "seq": 19
+ "seq": 20
 }
