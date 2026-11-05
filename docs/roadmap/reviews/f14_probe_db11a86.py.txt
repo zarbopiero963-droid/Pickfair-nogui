@@ -1,0 +1,111 @@
+"""Probe indipendenti F-14 (revisore). Chiamano il codice reale."""
+import json
+import pytest
+import betfair_client
+from core.order_identity import response_bet_id
+from core.trading_engine import TradingEngine
+from tests.acceptance.test_place_bet_risposta_senza_esito import (
+    _SessioneContaInvii, _client, _place, _Riconciliazione, _Nulla, _DbMinimo, _RuntimeLive)
+
+
+def _engine(corpo):
+    s = _SessioneContaInvii(corpo); ric = _Riconciliazione(); c = _client(s)
+    eng = TradingEngine(bus=_Nulla(), db=_DbMinimo(), client_getter=lambda: c, executor=None, reconciliation_engine=ric)
+    eng._runtime_state = "READY"; eng.runtime_controller = _RuntimeLive()
+    r = eng.submit_quick_bet({"customer_ref": "PFPROBE1", "market_id": "1.2", "selection_id": 4,
+                              "bet_type": "BACK", "price": 2.5, "stake": 10.0})
+    return s, ric, eng, r
+
+# --- A: PROCESSED_WITH_ERRORS con report SUCCESS+betId / TIMEOUT: i report non vengono letti
+PWE = {
+    "pwe_report_success_betid": [{"result": {"status": "PROCESSED_WITH_ERRORS", "errorCode": "ERROR_IN_ORDER",
+        "instructionReports": [{"status": "SUCCESS", "betId": "999", "sizeMatched": 0.0}]}}],
+    "pwe_report_timeout": [{"result": {"status": "PROCESSED_WITH_ERRORS", "errorCode": "ERROR_IN_ORDER",
+        "instructionReports": [{"status": "TIMEOUT"}]}}],
+    "failure_report_success_betid": [{"result": {"status": "FAILURE", "errorCode": "ERROR_IN_ORDER",
+        "instructionReports": [{"status": "SUCCESS", "betId": "999"}]}}],
+    "pwe_report_senza_status": [{"result": {"status": "PROCESSED_WITH_ERRORS", "errorCode": "ERROR_IN_ORDER",
+        "instructionReports": [{"betId": "999"}]}}],
+}
+
+@pytest.mark.parametrize("k", list(PWE))
+def test_probe_A_client(k):
+    e = _place(_client(_SessioneContaInvii(PWE[k])))
+    print(k, e)
+    assert e["order_unknown"] is True, f"{k}: {e}"
+
+@pytest.mark.parametrize("k", list(PWE))
+def test_probe_A_engine(k):
+    s, ric, eng, r = _engine(PWE[k])
+    assert s.post_inviati == 1
+    assert r["status"] == "AMBIGUOUS", f"{k}: {r['status']} {r.get('error')}"
+
+# --- B: result non-dict (2xx senza esito di tipo diverso)
+@pytest.mark.parametrize("corpo", [[{"result": ["x"]}], [{"result": "SUCCESS"}], [{"result": {"status": "SUCCESS", "instructionReports": ["x"]}}],
+                                   [{"result": {"status": "SUCCESS", "instructionReports": {"betId": "1"}}}]])
+def test_probe_B_engine(corpo):
+    s, ric, eng, r = _engine(corpo)
+    assert s.post_inviati == 1
+    assert r["status"] == "AMBIGUOUS", f"{corpo}: {r['status']} {r.get('error')}"
+    assert "PFPROBE1" in eng._inflight_keys
+
+# --- C: cancel-all (bet_ids vuoto) con report TIMEOUT sotto status SUCCESS
+def test_probe_C_cancel_all_timeout_report():
+    out = betfair_client.BetfairClient._cancel_result("1.2", [], {"status": "SUCCESS", "instructionReports": [
+        {"status": "SUCCESS", "instruction": {"betId": "1"}}, {"status": "TIMEOUT", "instruction": {"betId": "2"}}]})
+    print(out)
+    assert out["ok"] is False, out
+
+def test_probe_C2_cancel_all_pwe_only_timeout():
+    out = betfair_client.BetfairClient._cancel_result("1.2", [], {"status": "PROCESSED_WITH_ERRORS", "instructionReports": [
+        {"status": "TIMEOUT", "instruction": {"betId": "2"}}]})
+    print(out)
+    assert out["outcome"] != "FAILED", out
+
+# --- D: cancel singolo - matrice
+@pytest.mark.parametrize("res,exp", [
+    ({"status": "SUCCESS", "instructionReports": [{"status": "SUCCESS", "instruction": {"betId": "7"}}]}, "SUCCESS"),
+    ({"status": "SUCCESS", "instructionReports": [{"status": "SUCCESS", "instruction": {"betId": "8"}}]}, "AMBIGUOUS"),
+    ({"status": "SUCCESS", "instructionReports": []}, "AMBIGUOUS"),
+    ({"status": "SUCCESS"}, "AMBIGUOUS"),
+    ({"status": "PROCESSED_WITH_ERRORS", "instructionReports": [{"status": "TIMEOUT", "instruction": {"betId": "7"}}]}, "AMBIGUOUS"),
+    ({"status": "PROCESSED_WITH_ERRORS", "instructionReports": [{"status": "FAILURE", "instruction": {"betId": "7"}}]}, "FAILED"),
+    ({"status": "FAILURE", "errorCode": "X"}, "FAILED"),
+    ({"status": "TIMEOUT"}, "AMBIGUOUS"),
+    ({}, "AMBIGUOUS"),
+    (None, "AMBIGUOUS"),
+    ({"status": "SUCCESS", "instructionReports": [{"status": "SUCCESS"}]}, "SUCCESS"),  # posizionale
+    ({"status": "SUCCESS", "instructionReports": [{"status": "PENDING", "instruction": {"betId": "7"}}]}, "AMBIGUOUS"),
+])
+def test_probe_D_cancel_single(res, exp):
+    out = betfair_client.BetfairClient._cancel_result("1.2", ["7"], res)
+    assert out["outcome"] == exp, out
+    assert out["ok"] is (exp == "SUCCESS")
+
+# --- E: cancel_orders single-shot sul trasporto con timeout
+def test_probe_E_cancel_timeout_single_shot():
+    from requests.exceptions import Timeout
+    class S:
+        n = 0
+        def post(self, *a, **k):
+            S.n += 1; raise Timeout("t")
+    c = betfair_client.BetfairClient(username="u", app_key="a", cert_pem="c", key_pem="k", session=S(), max_retries=3)
+    c.session_token = "TOK"
+    out = c.cancel_orders(market_id="1.2", bet_ids=["7"])
+    assert S.n == 1 and out["outcome"] == "AMBIGUOUS" and out["ok"] is False, (S.n, out)
+    with pytest.raises(RuntimeError, match="UNCONFIRMED"):
+        c.cancel_order(bet_id="7", market_id="1.2")
+    assert S.n == 2
+
+# --- F: response_bet_id
+@pytest.mark.parametrize("resp,exp", [
+    ({"ok": False, "order_unknown": True, "result": {"instructionReports": [{"status": "SUCCESS", "betId": "31"}]}}, "31"),
+    ({"betId": "1", "result": {"instructionReports": [{"betId": "2"}]}}, ""),
+    ({"betId": 5, "result": {"instructionReports": [{"betId": "5"}]}}, "5"),
+    ({"betId": True}, ""),
+    ({"result": {"instructionReports": [{"betId": "1"}, {"betId": "2"}]}}, ""),
+    ({"raw": {"instructionReports": [{"bet_id": " 9 "}]}}, "9"),
+    ([], ""),
+])
+def test_probe_F_betid(resp, exp):
+    assert response_bet_id(resp) == exp
