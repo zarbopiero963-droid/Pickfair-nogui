@@ -607,6 +607,7 @@ def test_non_canonical_development_paths_are_refused(target):
 
 # Sol su #606 (8fadc8c8, VALID_BLOCKERS): dopo os.replace va sincronizzata anche la DIRECTORY, altrimenti un crash
 # dell'host puo' perdere la rinomina: l'ammissione gia' confermata sparisce e la stessa richiesta viene riammessa.
+@_NEEDS_FCNTL
 def test_admission_fsyncs_the_ledger_directory_after_the_rename(tmp_path, monkeypatch):
     path = tmp_path / "ledger" / "admitted.json"
     events = []
@@ -626,6 +627,7 @@ def test_admission_fsyncs_the_ledger_directory_after_the_rename(tmp_path, monkey
     assert ("fsync", True) in after, events                      # la directory e' sincronizzata DOPO la rinomina
 
 
+@_NEEDS_FCNTL
 def test_a_failed_directory_fsync_is_never_reported_as_admitted(tmp_path, monkeypatch):
     path = tmp_path / "ledger" / "admitted.json"
     real_fsync = os.fsync
