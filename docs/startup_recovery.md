@@ -53,11 +53,13 @@ attribuito al suo intento (tavolo rilasciato, P&L contabilizzato, effetto regist
 riavvio. La ricostruzione F018 riprendeva la riga AMBIGUOUS come posizione incerta: tavolo occupato e riserva
 trattenuta per sempre su un mercato gia' chiuso (capitale bloccato, cap di esposizione consumati).
 
-Ora `_rebuild_open_positions` chiede a `Database.settled_customer_refs` (sola lettura) quali intenti candidati hanno
-un effetto di settlement **applicato** (esito diverso da `held`): quelli sono chiusi dall'exchange, con la chiave del
-settlement come prova (`result["settled"] = {customer_ref: settlement_key}`, `result["closed"]`). Senza effetto
-applicato (mai abbinato, decaduto: F028_04) la riga resta incerta e trattenuta; registro illeggibile => nessuna prova,
-la riga resta incerta (fail-closed). La riga `orders` non viene riscritta. Test: `tests/acceptance/test_g7_r06_rebuild_settled.py`;
+Ora `_rebuild_open_positions` (`_drop_settled_candidates`) chiude un candidato solo se **tutte** queste condizioni
+valgono: `Database.settled_customer_refs` (sola lettura) riporta per il suo intento un effetto di settlement
+**applicato** (esito diverso da `held`) **sullo stesso mercato**; gli ordini correnti dell'exchange sono leggibili; e
+l'exchange **non** mostra alcun ordine vivo dell'intento (per `customerOrderRef` o `betId`). La chiave del settlement e'
+la prova (`result["settled"] = {customer_ref: settlement_key}`, `result["closed"]`). In ogni altro caso la riga resta
+incerta e trattenuta: nessun effetto applicato (mai abbinato, decaduto: F028_04), effetto su un altro mercato, exchange
+illeggibile, ordine ancora vivo (dati incoerenti), registro illeggibile (fail-closed). La riga `orders` non viene riscritta. Test: `tests/acceptance/test_g7_r06_rebuild_settled.py`;
 mutazioni `g7r06_*`.
 
 ## Crash fra il settlement nel broker e la sua contabilizzazione (F-10, #586 RST-03)

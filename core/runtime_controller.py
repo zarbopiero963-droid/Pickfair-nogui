@@ -44,6 +44,7 @@ from cashout_router import CashoutRouter
 from direct_best_price import SOURCE_FALLBACK_MASTER, resolve_direct_best_price
 from direct_unmatched_ttl import select_expired_unmatched
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
+from core.order_ref import customer_order_ref
 from core.order_identity import (
     derive_customer_ref,
     resolve_customer_ref,
@@ -5348,30 +5349,19 @@ class RuntimeController:
         candidates = [c for c in candidates if c["event_key"] not in held]
         if not candidates:
             return result
-        # G7-R06 (#586): un intento con un effetto di settlement gia' APPLICATO e' chiuso dall'exchange (prova: la chiave
-        # del settlement), anche se la sua riga e' rimasta AMBIGUOUS/INFLIGHT: non si ricostruisce una riserva fantasma
-        # su un mercato regolato. Registro illeggibile => nessuna prova, la riga resta incerta (fail-closed).
-        settled: dict = {}
-        finder = getattr(getattr(self, "db", None), "settled_customer_refs", None)
-        if callable(finder):
-            try:
-                settled = dict(finder([c["customer_ref"] for c in candidates]) or {})
-            except Exception:
-                logger.exception("F018: registro dei settlement illeggibile, nessuna chiusura per settlement")
-                settled = {}
-        if settled:
-            result["settled"] = {ref: key for ref, key in settled.items()}
-            for c in candidates:
-                if c["customer_ref"] in settled:
-                    result["closed"].append(c["customer_ref"])
-            candidates = [c for c in candidates if c["customer_ref"] not in settled]
-            if not candidates:
-                return result
         current = None
         try:
             current = list(self.betfair_service.list_current_orders() or [])
         except Exception as exc:
             result.update(ok=False, reason=f"EXCHANGE_ORDERS_UNAVAILABLE:{type(exc).__name__}")
+        # G7-R06 (#586): un intento con un effetto di settlement gia' APPLICATO sul SUO mercato e' chiuso dall'exchange
+        # (prova: la chiave del settlement) anche se la riga e' rimasta AMBIGUOUS/INFLIGHT: nessuna riserva fantasma su un
+        # mercato regolato. Mai con l'exchange illeggibile, mai se l'exchange mostra ancora un ordine dell'intento (per
+        # customerOrderRef o betId): dati incoerenti => prudenza, la riga resta incerta. Registro illeggibile => incerta.
+        if current is not None:
+            candidates = RuntimeController._drop_settled_candidates(self, candidates, current, result)
+            if not candidates:
+                return result
         live_bets = {str(o.get("bet_id") or o.get("betId") or "") for o in (current or [])}
         live_markets = {str(o.get("marketId") or o.get("market_id") or "") for o in (current or [])}
         for c in candidates:
@@ -5412,6 +5402,40 @@ class RuntimeController:
         if current is None and not result["reason"]:
             result.update(ok=False, reason="EXCHANGE_ORDERS_UNAVAILABLE")
         return result
+
+    def _drop_settled_candidates(self, candidates: list, current: list, result: dict) -> list:
+        """G7-R06: toglie dai candidati F018 quelli chiusi da un settlement applicato sul loro mercato e senza alcun
+        ordine ancora vivo sull'exchange; li registra in ``result["closed"]``/``result["settled"]`` con la chiave."""
+        finder = getattr(getattr(self, "db", None), "settled_customer_refs", None)
+        if not callable(finder):
+            return candidates
+        try:
+            settled = dict(finder([c["customer_ref"] for c in candidates]) or {})
+        except Exception:
+            logger.exception("F018: registro dei settlement illeggibile, nessuna chiusura per settlement")
+            return candidates
+        if not settled:
+            return candidates
+        live_refs, live_bets = set(), set()
+        for o in current or []:
+            if not isinstance(o, dict):
+                continue
+            live_bets.add(str(o.get("betId") or o.get("bet_id") or ""))
+            live_refs.add(str(o.get("customerOrderRef") or o.get("customer_order_ref") or ""))
+        live_refs.discard("")
+        live_bets.discard("")
+        kept = []
+        for c in candidates:
+            ref = c["customer_ref"]
+            key = (settled.get(ref) or {}).get(str(c.get("market_id") or ""))
+            alive = (ref in live_refs or customer_order_ref(ref) in live_refs
+                     or (c.get("bet_id") and c["bet_id"] in live_bets))
+            if key and not alive:
+                result["closed"].append(ref)
+                result.setdefault("settled", {})[ref] = key
+            else:
+                kept.append(c)
+        return kept
 
     def _release_settled_tables(self, payload: dict, *, table_id: Any, pnl: float,
                                 settlement_key: str = "") -> dict:

@@ -70,5 +70,53 @@ def test_settled_customer_refs_sola_lettura_e_filtri(tmp_path) -> None:
     _effect(c, "a", "r1", "released")
     _effect(c, "b", "r2", "held")
     _effect(c, "c", "", "released")
-    assert c.db.settled_customer_refs(["r1", "r2", "", None]) == {"r1": "a"}
+    assert c.db.settled_customer_refs(["r1", "r2", "", None]) == {"r1": {"1.5": "a"}}
     assert c.db.settled_customer_refs([]) == {}
+
+
+# ------------------------------------------------------------------ casi avversariali: mai rilasciare un ordine vivo
+def _live_order_on_exchange(c, ref, market="1.5"):
+    """L'exchange (broker SIM) mostra ancora un ordine vivo con il ref dell'intento."""
+    c.broker.update_market_book(market, {"marketId": market, "status": "OPEN", "runners": [
+        {"selectionId": 7, "status": "ACTIVE", "ex": {"availableToBack": [{"price": 1.5, "size": 100.0}],
+                                                      "availableToLay": [{"price": 1.52, "size": 100.0}]}}]})
+    c.broker.place_bet(market_id=market, selection_id=7, side="BACK", price=2.0, size=3.0, customer_ref=ref)
+
+
+def test_block_effetto_su_altro_mercato_non_chiude(tmp_path) -> None:
+    """Il registro ha un effetto per lo stesso ref ma su un ALTRO mercato: nessuna prova per questa riga."""
+    c = _chain(tmp_path)
+    _ambiguous(c, market="1.5")
+    c.db._execute("INSERT INTO settlement_effects(settlement_key, outcome, customer_ref, market_id, pnl, recorded_at) "
+                  "VALUES (?, ?, ?, ?, ?, ?)", ("stl-x", "released", "ref-r06", "1.999", 1.0, time.time()))
+
+    out = c.rc._rebuild_open_positions()
+
+    assert out["uncertain"] == ["ref-r06"] and c.rc.table_manager.total_exposure() == 3.0
+
+
+def test_block_ordine_ancora_vivo_sull_exchange_non_si_rilascia(tmp_path) -> None:
+    """Prova di settlement presente ma l'exchange mostra l'ordine dell'intento ancora vivo (dati incoerenti): vince la
+    prudenza, la riserva resta trattenuta."""
+    c = _chain(tmp_path)
+    _ambiguous(c)
+    _effect(c, "stl-5", "ref-r06", "released")
+    _live_order_on_exchange(c, "ref-r06")
+
+    out = c.rc._rebuild_open_positions()
+
+    assert "ref-r06" not in out["closed"] and c.rc.table_manager.total_exposure() == 3.0, out
+
+
+def test_block_exchange_illeggibile_nessuna_chiusura_per_settlement(tmp_path, monkeypatch) -> None:
+    c = _chain(tmp_path)
+    _ambiguous(c)
+    _effect(c, "stl-6", "ref-r06", "released")
+
+    def rotto(*_a, **_k):
+        raise RuntimeError("exchange non raggiungibile")
+
+    monkeypatch.setattr(c.rc.betfair_service, "list_current_orders", rotto)
+    out = c.rc._rebuild_open_positions()
+
+    assert "ref-r06" not in out["closed"] and out["ok"] is False and c.rc.table_manager.total_exposure() == 3.0
