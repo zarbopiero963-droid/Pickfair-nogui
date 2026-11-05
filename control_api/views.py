@@ -909,12 +909,30 @@ def _exposure_stop(rc: object) -> dict[str, Any]:
     return _p("ACTIVE", source="RISK_STOP", limit=limit)
 
 
+def _funds_limit(rc: object, ttl: object) -> str | None:
+    """Età massima dei fondi dichiarata come limite, senza ricalcolare la regola del core (MCP-01k).
+
+    - accessore unico del core ``funds_max_age_s()`` (richiesto a Claude D per F-16): il suo valore;
+    - soglia F-16 ``LIVE_FUNDS_MAX_AGE_S`` presente senza accessore: limite non dichiarato (None), perché
+      quello effettivo è una combinazione decisa dal core e non va replicata qui;
+    - altrimenti (``main`` attuale): il TTL delle tracce delle riserve, l'unico limite del core.
+    Lo stato della protezione viene sempre e solo dalla regola del core (``_entry_funds_reason``).
+    """
+    cls = type(rc)
+    accessor = getattr(cls, "funds_max_age_s", None)
+    if callable(accessor):
+        return decimal_str(accessor())
+    if hasattr(cls, "LIVE_FUNDS_MAX_AGE_S"):
+        return None
+    return decimal_str(ttl)
+
+
 def _funds_freshness(rc: object, monotonic: Callable[[], float]) -> dict[str, Any]:
     from core.table_manager import TableManager
 
     account = vars(rc).get("_account_snapshot")
     read_at = vars(rc).get("_account_snapshot_read_at")
-    limit = decimal_str(TableManager.PLACED_TOMBSTONE_TTL_S)
+    limit = _funds_limit(rc, TableManager.PLACED_TOMBSTONE_TTL_S)
     # Regola del core per le nuove entrate (riserve pendenti escluse: lettura pura).
     reason = rc._entry_funds_reason(account, 0.0, read_at=read_at)  # type: ignore[attr-defined]
     if not isinstance(reason, str):
@@ -1152,6 +1170,10 @@ ORDER_STATUS_MAP: Final = {
 # Stati non terminali che la riconciliazione d'avvio del core considera aperti
 # (`RuntimeController._open_order_candidates`; un test verifica che coincidano).
 RECONCILE_STATUSES: Final = frozenset({"SUBMITTED", "AMBIGUOUS", "INFLIGHT"})
+# MCP-01k: righe il cui esito non è confermato dal core. Un report presente nella loro risposta (es. la
+# risposta senza esito conservata dal fix P0 di Claude D) non è un dato: gli importi abbinati/residui restano
+# indisponibili. Il betId resta, perché è l'identità che la riconciliazione del core usa.
+UNCONFIRMED_STATUSES: Final = frozenset({"AMBIGUOUS", "HEDGE_AMBIGUOUS", "INFLIGHT", "HEDGE_PENDING"})
 MAX_ORDERS: Final = 500
 RECENT_FINALIZED: Final = 100
 DB_BUSY_TIMEOUT_S: Final = 0.25
@@ -1273,8 +1295,8 @@ def _order_row(row: sqlite3.Row, queue_ids: set[str], broker_ids: set[str] | Non
         response = json.loads(row["response_json"]) if row["response_json"] else None
     except ValueError:
         response = None  # risposta illeggibile: quantità e betId restano indisponibili
-    report = _first_report(response)
     core_status = to_code(str(row["status"] or "").upper())
+    report = {} if core_status in UNCONFIRMED_STATUSES else _first_report(response)
     bet_id = _ident_or_none(_bet_id_from_response(response))
     side = str(payload.get("bet_type") or payload.get("side") or "").upper()
     table = payload.get("table_id") if payload.get("table_id") is not None \
