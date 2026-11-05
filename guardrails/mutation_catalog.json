@@ -8387,6 +8387,18 @@
       "rationale": "Grok su #609: PARTIAL del cancel singolo chiude la saga FAILED/CANCEL_REJECTED invece di AMBIGUOUS."
     },
     {
+      "id": "f14_place_aping_unexpected_failed",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "                        \"UNEXPECTED_ERROR\",",
+      "mutated": "",
+      "tests": [
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py"
+      ],
+      "rationale": "Sol su #609: API_ERROR APING UNEXPECTED_ERROR sul place letto come rifiuto definitivo (riserva e dedupe liberate)."
+    },
+    {
       "id": "f14_cancel_unknown_report_ignored",
       "module": "betfair_client",
       "area": "ambiguous",

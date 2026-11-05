@@ -1797,6 +1797,9 @@ class BetfairClient:
                     for marker in (
                         "TIMEOUT", "NETWORK_ERROR", "HTTP_5", "UNKNOWN_ERROR",
                         "DUPLICATE_TRANSACTION",
+                        # eccezione APING che non prova il mancato piazzamento (rilievo di Sol su #609, come il cancel);
+                        # TIMEOUT_ERROR e' gia' coperto da "TIMEOUT"
+                        "UNEXPECTED_ERROR",
                     )
                 ) or error_text.split(":", 1)[0].strip() in _RISPOSTA_ILLEGGIBILE_DOPO_L_INVIO,
             }

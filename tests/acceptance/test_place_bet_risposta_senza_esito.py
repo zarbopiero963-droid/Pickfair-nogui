@@ -367,3 +367,24 @@ def test_client_tutti_i_report_failure_su_success_resta_rifiuto() -> None:
     risultato = {"status": "SUCCESS", "instructionReports": [{"status": "FAILURE", "errorCode": "INVALID_ODDS"}]}
     esito = _place(_client(_SessioneContaInvii([{"result": risultato}])))
     assert esito["ok"] is False and esito["order_unknown"] is False, esito
+
+
+# Sol su #609 (911562a..ff489e1): eccezioni APING che NON provano il mancato piazzamento, come per il cancel.
+def _errore_api(codice: str) -> list:
+    return [{"jsonrpc": "2.0", "id": 1, "error": {
+        "code": -32099, "message": "ANGX-0007", "data": {"APINGException": {"errorCode": codice}}}}]
+
+
+@pytest.mark.parametrize("codice", ["UNEXPECTED_ERROR", "TIMEOUT_ERROR"])
+def test_client_errore_api_ad_esito_ignoto_e_order_unknown(codice: str) -> None:
+    sessione = _SessioneContaInvii(_errore_api(codice))
+    esito = _place(_client(sessione))
+
+    assert sessione.post_inviati == 1
+    assert esito["ok"] is False and esito["order_unknown"] is True, esito
+
+
+@pytest.mark.parametrize("codice", ["INVALID_INPUT_DATA", "TOO_MANY_REQUESTS", "SERVICE_BUSY", "ACCESS_DENIED"])
+def test_client_errore_api_di_rifiuto_resta_definitivo(codice: str) -> None:
+    esito = _place(_client(_SessioneContaInvii(_errore_api(codice))))
+    assert esito["ok"] is False and esito["order_unknown"] is False, esito
