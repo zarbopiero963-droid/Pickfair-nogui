@@ -215,6 +215,43 @@
       "seeds": [],
       "requires": "main",
       "unsupported": "auto-next end-to-end: in produzione non esiste un generatore di next_signal (decisione owner: nessuna scommessa inventata); copertura solo runtime (G7-S06)"
+    },
+    {
+      "id": "G7-S22",
+      "test": "tests/f026/test_roserpina_100_campagna4.py::test_b1_lay_con_sl_chiude_con_un_back",
+      "requirements": [
+        "G7-R10"
+      ],
+      "seeds": [],
+      "requires": "F-03"
+    },
+    {
+      "id": "G7-S23",
+      "test": "tests/f026/test_roserpina_100_campagna4.py::test_b2_lay_con_trailing_chiude_con_un_back",
+      "requirements": [
+        "G7-R10"
+      ],
+      "seeds": [],
+      "requires": "F-03"
+    },
+    {
+      "id": "G7-S24",
+      "test": "tests/f026/test_roserpina_100_campagna4.py::test_b3_sl_raggiunto_a_mercato_sospeso_chiude_alla_riapertura",
+      "requirements": [
+        "G7-R10"
+      ],
+      "seeds": [],
+      "requires": "F-03"
+    },
+    {
+      "id": "G7-S25",
+      "test": "tests/f026/test_roserpina_100_campagna4.py::test_b4_trailing_su_lay_non_abbinato_non_scatta",
+      "requirements": [
+        "G7-R09",
+        "G7-R10"
+      ],
+      "seeds": [],
+      "requires": "F-03"
     }
   ]
 }

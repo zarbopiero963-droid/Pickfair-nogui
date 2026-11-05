@@ -59,6 +59,23 @@ toccato; dopo il riavvio solo `SL_TP_CLOSE_SKIPPED`, nessun hedge duplicato. Cap
 cassa massimo 1,01 %; saldo finale 103,20; nessun ordine non riconciliato; 1 riavvio. Coerente al centesimo con
 l'oracolo indipendente (arrotondamento HALF_UP come il report). Valori di uno scenario sintetico.
 
+## Campagna 4 (SINTETICO): LAY con SL e trailing, SL a mercato sospeso, protezioni su LAY non abbinato
+
+`tests/f026/test_roserpina_100_campagna4.py`, stessi requisiti della campagna 2 (F-02 + F-04 + F-03), altrimenti
+saltata. Scenari G7-S22..S25. L'op `price` accetta `status` (es. `SUSPENDED`) per spostare quota e stato insieme.
+
+- B1 (G7-S22) LAY @3.0 con SL 10 %, quota a 2.0: un solo hedge BACK, `SL_TP_CLOSE_ROUTED`, coerente con l'oracolo.
+- B2 (G7-S23) LAY @2.0 abbinato a 1.92, trailing 20 %, quota 3.0 → 3.4 → 2.4: `TRAILING_TRIGGERED`, un solo hedge BACK.
+- B3 (G7-S24) **XFAIL, difetto D-C4-01**: SL superato a mercato sospeso. Il monitor valuta lo SL anche su book non
+  negoziabile, imposta il latch `sl_tp_triggered`, F-04 esita `SL_TP_CLOSE_NOT_EXECUTED` (ritentabile) ma il latch
+  impedisce un nuovo scatto: alla riapertura, con la perdita ancora oltre lo SL, la posizione resta aperta.
+- B4 (G7-S25) **XFAIL, difetto D-C4-02**: trailing su un LAY mai abbinato. `sl_tp_pnl.position_stake` usa lo stake
+  richiesto (`meta['stake']`) e non quello abbinato: il trailing scatta su un profitto inesistente e la chiusura F-04
+  cancella l'ingresso in attesa.
+
+Esito osservato il 05/11/2026 sull'albero d3b2d41 (main 911562a + F-14 + F-16 + F-R06 + F-03 + simulazione) piu'
+questa campagna: 2 PASS, 2 XFAIL strict. I due XFAIL diventano PASS solo con la correzione nel monitor SL/TP.
+
 ## Registro G7 e riesecuzione
 
 Gli scenari della campagna finanziaria G7 hanno ID stabili `G7-Snn` in `tests/g7/g7_scenarios.json`: per ognuno il
