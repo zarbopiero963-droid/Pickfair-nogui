@@ -6253,7 +6253,11 @@ class RuntimeController:
         del conto) NON coprono nulla: possono essere di posizioni esterne al bot (rilievo Sol su #531).
         Solo NUOVE entrate (segnale, auto-next): mai hedge o uscite protettive (PF-EXEC-03). `account` e' il
         payload del conto o uno snapshot (`_account_from_funds`); un payload con `error`, non valido o assente
-        => fondi non verificabili. Nessun ridimensionamento: rifiuto esplicito con gli importi."""
+        => fondi non verificabili. Nessun ridimensionamento: rifiuto esplicito con gli importi.
+
+        F-16: la conferma dei fondi vale solo se ``read_at`` (istante monotonic d'inizio della lettura) ha eta' <=
+        `funds_max_age_s()` al momento di questo gate; altrimenti (o se assente, non valido o nel futuro)
+        ``fondi_non_verificabili:FUNDS_STALE``."""
         if isinstance(account, dict) and "cash_equity" in account and "ok" in account:
             parsed = account if not account.get("error") else {"ok": False}
         elif isinstance(account, dict) and not account.get("error"):

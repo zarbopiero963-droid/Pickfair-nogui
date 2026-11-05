@@ -70,9 +70,12 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   ammette una lettura solo se ha al massimo `LIVE_FUNDS_MAX_AGE_S` = 30 s (soglia effettiva esposta da un solo
   accessore, `RuntimeController.funds_max_age_s()`, per la Control API), misurati con orologio monotono
   dall'inizio della lettura (29,999 s ammessa, 30,001 s rifiutata). Lettura più vecchia, `read_at` assente, non
-  numerico, non finito o nel futuro ⇒ `fondi_non_verificabili:FUNDS_STALE`, nessun ingresso, tavolo e chiave
-  rilasciati (ritentabile con una nuova lettura). L'auto-next usa lo snapshot del settlement: se il settlement è
-  stato elaborato oltre 30 s dopo la lettura, l'ingresso è rifiutato, mai eseguito su fondi scaduti. Prima il limite
+  numerico, non finito o nel futuro (anche di 1 ms) ⇒ `fondi_non_verificabili:FUNDS_STALE`, nessun ingresso, tavolo
+  e chiave rilasciati. Per un segnale (o un lotto Dutching) il rifiuto è ritentabile con un nuovo segnale e una nuova
+  lettura. L'auto-next usa lo snapshot del settlement: se il settlement è stato elaborato oltre 30 s dopo la lettura,
+  l'ingresso è rifiutato, mai eseguito su fondi scaduti, e il rifiuto è **definitivo per quel settlement** (la sua
+  chiave entra in `_processed_auto_trade_keys`: lo stesso settlement non riprova). L'età si misura **al gate**
+  d'ingresso, non all'invio dell'ordine. Prima il limite
   era il TTL tecnico delle tracce delle riserve (120 s) e `read_at` assente saltava il controllo. Vale anche in SIM
   (parità decisionale PF-OD12-12). L'invalidazione anticipata su eventi (PF-LIVE-FUNDS-INVALIDATE-01) non fa parte di
   questa correzione.

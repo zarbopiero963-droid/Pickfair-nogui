@@ -236,3 +236,13 @@ def test_accessore_unico_della_soglia_dei_fondi(monkeypatch) -> None:
     now = _time.monotonic()
     assert RuntimeController._funds_confirmation_fresh(now - 11.0) is True
     assert RuntimeController._funds_confirmation_fresh(now - 13.0) is False
+
+
+def test_block_lettura_nel_futuro_anche_di_un_millisecondo_e_stale() -> None:
+    """NIT-1 (revisione Claude B): nessuna tolleranza sul futuro (uccide M03)."""
+    import time as _time
+
+    from core.runtime_controller import RuntimeController
+
+    assert RuntimeController._funds_confirmation_fresh(_time.monotonic() + 0.001) is False
+    assert RuntimeController._funds_confirmation_fresh(_time.monotonic() + 0.5) is False
