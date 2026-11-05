@@ -8220,7 +8220,7 @@
     {
       "id": "f14_cancel_timeout_failed",
       "module": "betfair_client",
-      "area": "orders",
+      "area": "ambiguous",
       "file": "betfair_client.py",
       "original": "                \"outcome\": \"AMBIGUOUS\" if self._cancel_outcome_unknown(error_text) else \"FAILED\",",
       "mutated": "                \"outcome\": \"FAILED\",",
@@ -8233,7 +8233,7 @@
     {
       "id": "f14_cancel_missing_report_ok",
       "module": "betfair_client",
-      "area": "orders",
+      "area": "ambiguous",
       "file": "betfair_client.py",
       "original": "        elif status == \"SUCCESS\" and not failed and not missing:",
       "mutated": "        elif status == \"SUCCESS\" and not failed:",
@@ -8246,7 +8246,7 @@
     {
       "id": "f14_cancel_timeout_report_failure",
       "module": "betfair_client",
-      "area": "orders",
+      "area": "ambiguous",
       "file": "betfair_client.py",
       "original": "            elif report_status == \"FAILURE\":",
       "mutated": "            elif report_status in (\"FAILURE\", \"TIMEOUT\"):",
@@ -8259,7 +8259,7 @@
     {
       "id": "f14_cancel_5xx_certain",
       "module": "betfair_client",
-      "area": "orders",
+      "area": "ambiguous",
       "file": "betfair_client.py",
       "original": "        return any(k in e for k in (\"TIMEOUT\", \"NETWORK_ERROR\", \"HTTP_5\", \"UNKNOWN_ERROR\", \"INVALID_JSON\"))",
       "mutated": "        return any(k in e for k in (\"TIMEOUT\", \"NETWORK_ERROR\", \"UNKNOWN_ERROR\", \"INVALID_JSON\"))",
@@ -8272,7 +8272,7 @@
     {
       "id": "f14_om_ignores_ambiguous",
       "module": "order_manager",
-      "area": "orders",
+      "area": "ambiguous",
       "file": "order_manager.py",
       "original": "        if isinstance(response, dict) and str(response.get(\"outcome\") or \"\").upper() == \"AMBIGUOUS\":",
       "mutated": "        if False:",
@@ -8285,7 +8285,7 @@
     {
       "id": "f14_om_exception_failed",
       "module": "order_manager",
-      "area": "orders",
+      "area": "ambiguous",
       "file": "order_manager.py",
       "original": "            if _cancel_error_unknown(str(exc)):",
       "mutated": "            if False:",
@@ -8298,7 +8298,7 @@
     {
       "id": "f14_betid_conflict_first",
       "module": "core.order_identity",
-      "area": "orders",
+      "area": "reconciliation",
       "file": "core/order_identity.py",
       "original": "    return next(iter(found)) if len(found) == 1 else \"\"",
       "mutated": "    return sorted(found)[0] if found else \"\"",
@@ -8311,7 +8311,7 @@
     {
       "id": "f14_betid_bool",
       "module": "core.order_identity",
-      "area": "orders",
+      "area": "reconciliation",
       "file": "core/order_identity.py",
       "original": "    if isinstance(value, bool) or value is None:",
       "mutated": "    if value is None:",
