@@ -33,10 +33,18 @@ def _exchange_matched(s):
     return sum(D(str(o["matched"] or 0)) for o in s["exch_orders"] if o["market_id"] == M and o["side"] == "BACK")
 
 
-@pytest.fixture(scope="module")
-def corsa():
-    r1 = run([{"op": "mode", "m": M, "mode": "mixed_diag"}, {"op": "signal", "m": M, "price": 2.0},
-              {"op": "crash_now"}])
+# Cosa conferma Betfair (exchange SIM) per lo stesso ordine, mentre il bot riceve sempre il report diagnostico 999:
+#  pieno    = abbinato per intero (importo confermato diverso dal diagnostico);
+#  parziale = abbinato solo 1 EUR (book con 1 EUR di contropartita): importo confermato diverso e minore dello stake;
+#  nessuno  = nessun abbinamento (book peggiore del prezzo): l'ordine decade alla chiusura del mercato.
+SCENARI = {"pieno": [], "parziale": [{"op": "mode", "m": M, "mode": "partial"}],
+           "nessuno": [{"op": "mode", "m": M, "mode": "nomatch"}]}
+
+
+@pytest.fixture(scope="module", params=list(SCENARI), ids=list(SCENARI))
+def corsa(request):
+    r1 = run(SCENARI[request.param] + [{"op": "mode", "m": M, "mode": "mixed_diag"},
+                                        {"op": "signal", "m": M, "price": 2.0}, {"op": "crash_now"}])
     r2 = run([{"op": "wait", "s": 1}, {"op": "settle", "m": M, "win": True}], home=r1["_home"])
     return r1, r2
 
@@ -62,7 +70,7 @@ def test_prima_della_riconciliazione_valori_pre_ordine(corsa) -> None:
     assert q(s["bankroll"]) == q(START), describe(s)
     # equita' di cassa (disponibile + impegnato) invariata: lo stake si sposta fra le due voci, nessun importo inventato
     assert q(s["account"]["cash_equity"]) == q(START) == q(s["funds"]["total"]), describe(s)
-    assert _exchange_matched(s) == stake                 # quantita' confermata dall'exchange: lo stake, non 999
+    assert _exchange_matched(s) <= stake < DIAG          # quantita' confermata dall'exchange, mai il 999
 
 
 def test_dopo_restart_e_settlement_contano_solo_i_valori_confermati(corsa) -> None:
@@ -79,7 +87,16 @@ def test_dopo_restart_e_settlement_contano_solo_i_valori_confermati(corsa) -> No
     atteso = confermato * (D("2.0") - 1) * (1 - COMM)    # dal SOLO abbinato confermato, prezzo richiesto 2.0
     assert q(finale["realized"]) == q(atteso), describe(finale)
     assert q(finale["funds"]["total"]) == q(START + atteso), describe(finale)
-    assert M not in {t["market_id"] for t in finale["tables"] if t["market_id"]}, "riserva non rilasciata al settlement"
+    tavoli = {t["market_id"] for t in finale["tables"] if t["market_id"]}
+    if confermato > 0:
+        assert M not in tavoli, "riserva non rilasciata al settlement di un abbinato confermato"
+    else:
+        # Nessun abbinamento: nessun settlement della bet, l'ordine decade. Un esito AMBIGUOUS non si libera mai
+        # "come annullato" senza prova (F028_04): la riserva resta trattenuta finche' la riconciliazione non la chiude.
+        assert M in tavoli, "esito ignoto liberato senza prova"
+        # nessun evento di conto dopo la decadenza: la lettura resta quella (prudente) di prima, mai gonfiata
+        assert q(finale["bankroll"]) <= q(finale["funds"]["available"]), describe(finale)
+        return
     account_ok(finale)
     # mai il dato diagnostico: con 999 @ 9.9 il realizzato sarebbe ~8.4k, con 999 @ 2.0 ~954
     assert abs(D(str(finale["realized"]))) < DIAG
