@@ -92,6 +92,20 @@ mancante diventa zero; nessun betId viene inventato.
   Lettura del DB con la stessa connessione in sola lettura degli ordini; lock con attesa limitata.
 - `GET /v1/status`, `engine.queues.cashout_barriers`: barriere di cashout attive.
 
+### MCP-01j — impostazioni operative redatte (contratto 1.6.0)
+
+- `GET /v1/config`: le impostazioni di `RoserpinaConfig` (`rc.config`) da un'allowlist esplicita di 42
+  chiavi (`control_api.views.CONFIG_KEYS`, identica a `semantics.config.keys` del contratto). Ogni voce:
+  `SET` con il valore esatto (decimali come stringhe canoniche, interi, booleani, profilo di rischio),
+  `NOT_SET` (solo per i campi `Optional` del core: non configurato) o `INVALID` (presente ma
+  illeggibile: tipo errato, NaN/inf, fuori scala; mai zero).
+- Un solo riferimento a `rc.config` (`reload_config` lo sostituisce intero): consistenza
+  `SINGLE_REFERENCE_READ`. Nessun lock, nessuna scrittura, nessuna chiamata a `settings_service`.
+- Credenziali Betfair e Telegram, certificati, token e impostazioni persistite non sono mai lette. Un
+  campo del core fuori allowlist compare solo per nome in `unlisted` (massimo 64); un nome sensibile
+  (`core.redaction.is_sensitive_key` o un frammento del contratto) o non canonico è soltanto contato in
+  `redacted`. Nessun valore fuori allowlist esce mai.
+
 Nota per i test di assenza di effetti: la lettura in WAL aggiorna l'indice `-shm` (marcatori di lettura
 di SQLite, nessun dato); `.db` e `-wal` restano identici byte per byte.
 

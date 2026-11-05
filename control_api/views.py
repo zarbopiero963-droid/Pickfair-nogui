@@ -1538,3 +1538,118 @@ def _settlement(rc: object) -> dict[str, Any]:
         **values,
         "unavailable": [k for k, v in values.items() if v is None],
     }
+
+
+# ---------------------------------------------------------------- GET /v1/config (MCP-01j)
+
+# Allowlist ESPLICITA delle impostazioni operative esposte, identica a
+# `semantics.config.keys` del contratto (verificato dai test). Solo `RoserpinaConfig`
+# (`rc.config`): credenziali Betfair, Telegram, certificati e impostazioni persistite non sono
+# mai lette da qui.
+CONFIG_KEYS: Final = {
+    "target_profit_cycle_pct": "DECIMAL", "max_single_bet_pct": "DECIMAL",
+    "max_total_exposure_pct": "DECIMAL", "max_event_exposure_pct": "DECIMAL",
+    "max_daily_loss": "DECIMAL", "max_drawdown_hard_stop_pct": "DECIMAL",
+    "max_open_exposure": "DECIMAL", "max_order_exposure": "DECIMAL",
+    "max_market_exposure": "DECIMAL", "max_event_exposure_abs": "DECIMAL",
+    "max_drawdown_abs": "DECIMAL", "max_session_loss": "DECIMAL",
+    "max_exposure_stop": "DECIMAL", "max_recovery_chase_abs": "DECIMAL",
+    "auto_reset_drawdown_pct": "DECIMAL", "defense_drawdown_pct": "DECIMAL",
+    "lockdown_drawdown_pct": "DECIMAL", "expansion_profit_pct": "DECIMAL",
+    "expansion_multiplier": "DECIMAL", "defense_multiplier": "DECIMAL",
+    "risk_profile": "ENUM", "table_count": "INT", "max_recovery_tables": "INT",
+    "allow_recovery": "BOOL", "anti_duplication_enabled": "BOOL",
+    "commission_pct": "DECIMAL", "min_stake": "DECIMAL", "max_stake_abs": "DECIMAL",
+    "book_warning": "DECIMAL", "book_block": "DECIMAL", "liquidity_guard_enabled": "BOOL",
+    "liquidity_multiplier": "DECIMAL", "min_liquidity_absolute": "DECIMAL",
+    "liquidity_warning_only": "BOOL", "min_price": "DECIMAL", "max_win": "DECIMAL",
+    "max_win_warning_only": "BOOL", "max_stake_pct": "DECIMAL", "profit_epsilon": "DECIMAL",
+    "profit_epsilon_enabled": "BOOL", "auto_green_delay_enabled": "BOOL",
+    "auto_green_delay_sec": "DECIMAL",
+}
+# Campi Optional del core: None = non configurato (NOT_SET). Per gli altri None è INVALID.
+OPTIONAL_CONFIG_KEYS: Final = frozenset({
+    "target_profit_cycle_pct", "max_single_bet_pct", "max_total_exposure_pct",
+    "max_event_exposure_pct", "max_daily_loss", "max_drawdown_hard_stop_pct",
+    "max_open_exposure", "max_order_exposure", "max_market_exposure", "max_event_exposure_abs",
+    "max_drawdown_abs", "max_session_loss", "max_exposure_stop", "max_recovery_chase_abs",
+    "max_stake_abs", "max_win",
+})
+RISK_PROFILES: Final = frozenset({"CONSERVATIVE", "BALANCED", "AGGRESSIVE"})
+# Seconda barriera oltre a `core.redaction.is_sensitive_key`: stessi frammenti del contratto.
+SENSITIVE_NAME_FRAGMENTS: Final = (
+    "token", "secret", "password", "passwd", "auth", "bearer", "key", "session", "api",
+    "cert", "cookie", "ssoid", "private", "credential", "hash", "pin",
+)
+FIELD_NAME_RE: Final = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+MAX_UNLISTED: Final = 64
+INT_LIMIT: Final = 1_000_000_000
+
+
+def _setting_value(kind: str, raw: object) -> object:
+    """Valore nel formato del contratto; ``_Unavailable`` se illeggibile (mai un default)."""
+    if kind == "DECIMAL":
+        return decimal_str(raw)  # bool, NaN/inf, fuori scala => _Unavailable
+    if kind == "BOOL":
+        if type(raw) is not bool:
+            raise _Unavailable("bool")
+        return raw
+    if kind == "INT":
+        if type(raw) is not int or not -INT_LIMIT <= raw <= INT_LIMIT:
+            raise _Unavailable("int")
+        return raw
+    name = getattr(raw, "value", raw)  # ENUM: RiskProfile del core
+    if not isinstance(name, str) or name not in RISK_PROFILES:
+        raise _Unavailable("enum")
+    return name
+
+
+def _setting(key: str, kind: str, raw: object) -> dict[str, Any]:
+    if raw is None or raw is _MISSING:
+        state = "NOT_SET" if raw is None and key in OPTIONAL_CONFIG_KEYS else "INVALID"
+        return {"key": key, "kind": kind, "state": state, "value": None}
+    try:
+        value = _setting_value(kind, raw)
+    except _Unavailable:
+        return {"key": key, "kind": kind, "state": "INVALID", "value": None}
+    return {"key": key, "kind": kind, "state": "SET", "value": value}
+
+
+def _sensitive_name(name: str) -> bool:
+    from core.redaction import is_sensitive_key
+
+    lowered = name.lower()
+    return is_sensitive_key(name) or any(f in lowered for f in SENSITIVE_NAME_FRAGMENTS)
+
+
+def config_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict[str, Any]:
+    """Impostazioni operative di ``rc.config`` dall'allowlist del contratto.
+
+    Un solo riferimento letto: ``reload_config`` sostituisce l'oggetto intero, quindi tutte le
+    impostazioni appartengono alla stessa versione. Un campo del core fuori allowlist compare
+    solo per NOME in ``unlisted``; un nome sensibile o non canonico (o oltre ``MAX_UNLISTED``)
+    è soltanto contato in ``redacted``. Nessun valore fuori allowlist esce mai.
+    """
+    body: dict[str, Any] = {
+        "source": "core", "observed_at": clock(), "consistency": "SINGLE_REFERENCE_READ",
+        "settings": None, "unlisted": [], "redacted": 0, "unavailable": ["settings"],
+    }
+    try:
+        fields = dict(vars(_attr(rc, "config")))  # copia del dizionario: una sola lettura
+    except Exception:  # noqa: BLE001 - config assente o non un oggetto con attributi
+        return body
+    unlisted: list[str] = []
+    redacted = 0
+    for name in sorted(fields):
+        if name in CONFIG_KEYS or name.startswith("_"):
+            continue
+        if (not FIELD_NAME_RE.fullmatch(name) or _sensitive_name(name)
+                or len(unlisted) >= MAX_UNLISTED):
+            redacted += 1
+        else:
+            unlisted.append(name)
+    body.update(
+        settings=[_setting(k, kind, fields.get(k, _MISSING)) for k, kind in CONFIG_KEYS.items()],
+        unlisted=unlisted, redacted=redacted, unavailable=[],
+    )
+    return body

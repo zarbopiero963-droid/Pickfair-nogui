@@ -9,6 +9,7 @@ from typing import Any
 
 from control_api.views import (
     account_view,
+    config_view,
     exposure_view,
     orders_view,
     positions_view,
@@ -18,8 +19,8 @@ from control_api.views import (
 
 # Pin esatto del package pickfair_control_api (repository pickfair-mcp-). Un package diverso da
 # quello verificato non viene MAI usato: la Control API non parte (CONTRACT_PIN_MISMATCH).
-EXPECTED_CONTROL_API_VERSION = "1.5.0"
-EXPECTED_SCHEMA_HASH = "3878844a9518a6778a871d6cba054c5778820e2b5d20f3155d355e944f8ff070"
+EXPECTED_CONTROL_API_VERSION = "1.6.0"
+EXPECTED_SCHEMA_HASH = "9c1aefb5c9b169f8513ceccdd4766d5a9330429bfa94aa9dc30e8334dafd5ed0"
 
 
 class ControlApiPinMismatch(Exception):
@@ -45,6 +46,7 @@ def make_providers(
         "exposure": lambda: exposure_view(runtime, clock=clock),
         "positions": lambda: positions_view(runtime, clock=clock),
         "orders": lambda: orders_view(runtime, clock=clock),
+        "config": lambda: config_view(runtime, clock=clock),
     }
 
 

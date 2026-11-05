@@ -128,6 +128,7 @@ def test_reads_have_no_effect_on_a_started_sim_runtime(
             assert read_http(server.port, token, "/v1/account") == 200
             assert read_http(server.port, token, "/v1/exposure") == 200
             assert read_http(server.port, token, "/v1/orders") == 200
+            assert read_http(server.port, token, "/v1/config") == 200
 
         assert calls == []                                   # 3, 5: nessuna query, nessun monitor
         assert db_digest(tmp_path) == db_before              # 1
@@ -184,6 +185,7 @@ def test_runtime_operations_are_not_slowed_by_continuous_reads(sim_runtime: Any)
             providers["account"]()
             providers["exposure"]()
             providers["orders"]()
+            providers["config"]()
 
     readers = [threading.Thread(target=hammer) for _ in range(4)]
     for t in readers:

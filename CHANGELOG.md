@@ -32,6 +32,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `GET /v1/exposure` (NOT_ARMED/ARMED/TRIGGERED/UNKNOWN), sezione `settlement` in
   `GET /v1/reconciliation/status` (solo conteggi), barriere di cashout in `GET /v1/status`. Pin al contratto
   1.5.0; area di mutazione `control_api` a 62 mutazioni. Dipende dalle patch MCP-01d…MCP-01g.
+- **Control API: `GET /v1/config` (MCP-01j, handoff di Claude C):** impostazioni operative di
+  `RoserpinaConfig` in sola lettura da un'allowlist di 42 chiavi (SET/NOT_SET/INVALID, mai zero);
+  credenziali, token e certificati mai letti; campi fuori allowlist solo per nome, nomi sensibili solo
+  contati. Pin al contratto 1.6.0. Dipende dalle patch MCP-01d…MCP-01h.
 
 ### Changed
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**

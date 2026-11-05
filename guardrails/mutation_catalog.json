@@ -8970,6 +8970,162 @@
         "tests/control_api/test_settlement_sltp_views.py"
       ],
       "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): settlement del broker SIM riportati anche in LIVE."
+    },
+    {
+      "id": "cap_config_secret_name_listed",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    return is_sensitive_key(name) or any(f in lowered for f in SENSITIVE_NAME_FRAGMENTS)",
+      "mutated": "    return is_sensitive_key(name)",
+      "tests": [
+        "tests/control_api/test_config_view.py"
+      ],
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): nome sensibile non bloccato dai frammenti del contratto."
+    },
+    {
+      "id": "cap_config_redaction_off",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    return is_sensitive_key(name) or any(f in lowered for f in SENSITIVE_NAME_FRAGMENTS)",
+      "mutated": "    return False",
+      "tests": [
+        "tests/control_api/test_config_view.py"
+      ],
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): redazione dei nomi disattivata."
+    },
+    {
+      "id": "cap_config_noncanonical_listed",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        if (not FIELD_NAME_RE.fullmatch(name) or _sensitive_name(name)",
+      "mutated": "        if (_sensitive_name(name)",
+      "tests": [
+        "tests/control_api/test_config_view.py"
+      ],
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): nome non canonico elencato."
+    },
+    {
+      "id": "cap_config_unlisted_uncapped",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "                or len(unlisted) >= MAX_UNLISTED):",
+      "mutated": "                or False):",
+      "tests": [
+        "tests/control_api/test_config_view.py"
+      ],
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): elenco dei campi non in allowlist senza tetto."
+    },
+    {
+      "id": "cap_config_private_listed",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        if name in CONFIG_KEYS or name.startswith(\"_\"):",
+      "mutated": "        if name in CONFIG_KEYS:",
+      "tests": [
+        "tests/control_api/test_config_view.py"
+      ],
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): attributi privati della config considerati."
+    },
+    {
+      "id": "cap_config_not_set_for_required",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        state = \"NOT_SET\" if raw is None and key in OPTIONAL_CONFIG_KEYS else \"INVALID\"",
+      "mutated": "        state = \"NOT_SET\" if raw is None else \"INVALID\"",
+      "tests": [
+        "tests/control_api/test_config_view.py"
+      ],
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): campo obbligatorio assente mostrato come non configurato."
+    },
+    {
+      "id": "cap_config_missing_as_not_set",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        state = \"NOT_SET\" if raw is None and key in OPTIONAL_CONFIG_KEYS else \"INVALID\"",
+      "mutated": "        state = \"NOT_SET\" if key in OPTIONAL_CONFIG_KEYS else \"INVALID\"",
+      "tests": [
+        "tests/control_api/test_config_view.py"
+      ],
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): campo mancante mostrato come non configurato."
+    },
+    {
+      "id": "cap_config_invalid_as_zero",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        return {\"key\": key, \"kind\": kind, \"state\": \"INVALID\", \"value\": None}\n    return {\"key\": key, \"kind\": kind, \"state\": \"SET\", \"value\": value}",
+      "mutated": "        return {\"key\": key, \"kind\": kind, \"state\": \"SET\", \"value\": \"0\"}\n    return {\"key\": key, \"kind\": kind, \"state\": \"SET\", \"value\": value}",
+      "tests": [
+        "tests/control_api/test_config_view.py"
+      ],
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): valore illeggibile convertito in zero."
+    },
+    {
+      "id": "cap_config_bool_coerced",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        if type(raw) is not bool:\n            raise _Unavailable(\"bool\")",
+      "mutated": "        if not isinstance(raw, int):\n            raise _Unavailable(\"bool\")",
+      "tests": [
+        "tests/control_api/test_config_view.py"
+      ],
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): intero accettato come booleano."
+    },
+    {
+      "id": "cap_config_int_bool_accepted",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        if type(raw) is not int or not -INT_LIMIT <= raw <= INT_LIMIT:",
+      "mutated": "        if not isinstance(raw, int) or not -INT_LIMIT <= raw <= INT_LIMIT:",
+      "tests": [
+        "tests/control_api/test_config_view.py"
+      ],
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): booleano accettato come intero."
+    },
+    {
+      "id": "cap_config_enum_unchecked",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if not isinstance(name, str) or name not in RISK_PROFILES:",
+      "mutated": "    if not isinstance(name, str):",
+      "tests": [
+        "tests/control_api/test_config_view.py"
+      ],
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): profilo di rischio sconosciuto accettato."
+    },
+    {
+      "id": "cap_config_unavailable_hidden",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    except Exception:  # noqa: BLE001 - config assente o non un oggetto con attributi\n        return body",
+      "mutated": "    except Exception:  # noqa: BLE001 - config assente o non un oggetto con attributi\n        fields = {}",
+      "tests": [
+        "tests/control_api/test_config_view.py"
+      ],
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): config assente presentata come leggibile."
+    },
+    {
+      "id": "cap_config_rereads_reference",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        settings=[_setting(k, kind, fields.get(k, _MISSING)) for k, kind in CONFIG_KEYS.items()],",
+      "mutated": "        settings=[_setting(k, kind, getattr(rc.config, k, _MISSING)) for k, kind in CONFIG_KEYS.items()],",
+      "tests": [
+        "tests/control_api/test_config_view.py"
+      ],
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): lettura ripetuta del riferimento invece della copia unica (stessa versione non garantita)."
     }
   ]
 }

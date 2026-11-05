@@ -3489,6 +3489,21 @@
         "tests/control_api/test_views_real_runtime.py"
       ],
       "max_files": 10
+    },
+    "pf_api6_control_api_config": {
+      "description": "MCP-01j (handoff di Claude C): GET /v1/config, impostazioni operative di RoserpinaConfig in sola lettura da allowlist, credenziali mai lette, nomi sensibili solo contati; pin al contratto 1.6.0. Dipende da pf_api1..5.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "control_api/bridge.py",
+        "control_api/views.py",
+        "docs/control_api.md",
+        "guardrails/mutation_catalog.json",
+        "tests/control_api/test_config_view.py",
+        "tests/control_api/test_side_effects.py"
+      ],
+      "max_files": 8
     }
   }
 }
