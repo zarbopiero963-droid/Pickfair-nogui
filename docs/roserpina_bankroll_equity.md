@@ -67,7 +67,8 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   registrata (a differenza del segnale, che li ricontrolla anche sulla lettura fresca).
 - **Freschezza della conferma dei fondi (F-16, decisione owner PF-LIVE-FUNDS-THRESHOLD-01, #426 c.6162806642):** il
   gate fondi d'ingresso (`RuntimeController._entry_funds_reason`, usato da segnale, DutchingController e auto-next)
-  ammette una lettura solo se ha al massimo `LIVE_FUNDS_MAX_AGE_S` = 30 s, misurati con orologio monotono
+  ammette una lettura solo se ha al massimo `LIVE_FUNDS_MAX_AGE_S` = 30 s (soglia effettiva esposta da un solo
+  accessore, `RuntimeController.funds_max_age_s()`, per la Control API), misurati con orologio monotono
   dall'inizio della lettura (29,999 s ammessa, 30,001 s rifiutata). Lettura più vecchia, `read_at` assente, non
   numerico, non finito o nel futuro ⇒ `fondi_non_verificabili:FUNDS_STALE`, nessun ingresso, tavolo e chiave
   rilasciati (ritentabile con una nuova lettura). L'auto-next usa lo snapshot del settlement: se il settlement è

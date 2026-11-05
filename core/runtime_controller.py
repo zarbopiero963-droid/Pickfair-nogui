@@ -6226,6 +6226,12 @@ class RuntimeController:
     LIVE_FUNDS_MAX_AGE_S = 30.0
 
     @classmethod
+    def funds_max_age_s(cls) -> float:
+        """F-16: soglia EFFETTIVA di freschezza della conferma dei fondi, in secondi. Accessore unico (Control API/MCP):
+        la stessa regola che applica `_funds_confirmation_fresh`, mai replicata altrove."""
+        return float(min(cls.LIVE_FUNDS_MAX_AGE_S, TableManager.PLACED_TOMBSTONE_TTL_S))
+
+    @classmethod
     def _funds_confirmation_fresh(cls, read_at: Any) -> bool:
         """True solo se ``read_at`` e' un istante monotonic valido, non nel futuro, e la lettura ha <= 30 s.
 
@@ -6234,8 +6240,7 @@ class RuntimeController:
         if isinstance(read_at, bool) or not isinstance(read_at, (int, float)):
             return False
         age = time.monotonic() - float(read_at)          # NaN/inf: il confronto qui sotto e' falso => False
-        max_age = min(cls.LIVE_FUNDS_MAX_AGE_S, TableManager.PLACED_TOMBSTONE_TTL_S)
-        return 0.0 <= age <= max_age
+        return 0.0 <= age <= cls.funds_max_age_s()
 
     def _entry_funds_reason(self, account: Any, pending_exposure: float, *, read_at: Optional[float] = None) -> str:
         """#461 PR28-e (PF-CAP-09 / PF-CAP-19, PF-EXEC-04): '' se le riserve non ancora a mercato, COMPRESA la

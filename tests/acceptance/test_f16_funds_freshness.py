@@ -221,3 +221,18 @@ def test_controller_ingresso_con_lettura_di_29s_parte(tmp_path, ingresso: str) -
         _batch(total_stake=10.0))
 
     assert res["ok"] is True, res
+
+
+def test_accessore_unico_della_soglia_dei_fondi(monkeypatch) -> None:
+    """Richiesta Claude C (MCP-01k): la Control API legge la soglia effettiva da un solo accessore, la stessa che decide."""
+    import time as _time
+
+    from core.runtime_controller import RuntimeController
+    from core.table_manager import TableManager
+
+    assert RuntimeController.funds_max_age_s() == 30.0
+    monkeypatch.setattr(TableManager, "PLACED_TOMBSTONE_TTL_S", 12.0)
+    assert RuntimeController.funds_max_age_s() == 12.0
+    now = _time.monotonic()
+    assert RuntimeController._funds_confirmation_fresh(now - 11.0) is True
+    assert RuntimeController._funds_confirmation_fresh(now - 13.0) is False
