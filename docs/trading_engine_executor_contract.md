@@ -23,6 +23,14 @@ broker oppure solleva. Non restituisce mai un `concurrent.futures.Future` né un
 | Eccezione dopo l'avvio dell'invio (transizione `SUBMITTED` fallita, crash nella costruzione dell'esito, finalize che solleva) (#524) | `AMBIGUOUS` + riconciliazione (`ENGINE_FATAL_AFTER_SEND`), anche con DB indisponibile. **Mai** `FAILED` | **no** |
 | Eccezione sollevata dal client | propagata **invariata**: stessa classificazione del percorso diretto | secondo la classificazione |
 
+- **Report conservato di una riga incerta (vincolo MCP-01k, 05/11/2026).** Su una riga `AMBIGUOUS`, `INFLIGHT`,
+  `HEDGE_AMBIGUOUS` o `HEDGE_PENDING` il `response_json` conservato **non e' un dato confermato**: serve solo come
+  identita' (`betId`, tramite `core.order_identity.response_bet_id`). Nessun consumatore tratta i suoi importi
+  (`sizeMatched`, `averagePriceMatched`, `sizeRemaining`) come eseguiti: le quantita' abbinate si leggono solo
+  dall'exchange (`listCurrentOrders`/settlement) dopo la riconciliazione. Nel core le uniche letture del `response_json`
+  di `orders` sono l'estrazione del `betId` (`Database._order_bet_id`, `find_orders_by_bet_id`,
+  `RuntimeController._open_order_candidates`); il candidato di riconciliazione non porta importi abbinati (test
+  `test_riga_incerta_non_espone_importi_del_report`).
 - **Attesa.** Il tempo di attesa vale `executor.default_timeout`. Se il valore manca o non è valido si usano 30 s (`ExecutorManager` di produzione: 30 s). Deve restare **maggiore** del timeout HTTP del `BetfairClient` (20 s), altrimenti si producono AMBIGUOUS evitabili. Il valore per LIVE resta un'ipotesi da validare (decisione owner).
 - **Thread.** L'attesa avviene nel worker dell'EventBus che esegue l'handler, mai nel thread della GUI. Un engine invocato da un worker dello stesso pool dell'executor rifiuta prima dell'invio (`EXECUTOR_REENTRANT_SUBMIT_REFUSED`), per evitare il deadlock.
 - **Messaggi pre-invio.** Non contengono la parola "timeout": `_handle_submit_exception` la legge come ambiguità, mentre la classificazione pre-invio è per **tipo**.

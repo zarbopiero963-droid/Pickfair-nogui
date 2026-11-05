@@ -64,3 +64,22 @@ def test_database_e_riconciliazione_concordano(tmp_path, risposta) -> None:
     candidati, _ = c.rc._open_order_candidates()
     riga = c.db._execute("SELECT response_json FROM orders", fetch=True, commit=False)[0]
     assert candidati[0]["bet_id"] == Database._order_bet_id(json.loads(riga["response_json"]))
+
+
+@pytest.mark.parametrize("stato", ["AMBIGUOUS", "INFLIGHT", "SUBMITTED"])
+def test_riga_incerta_non_espone_importi_del_report(tmp_path, stato) -> None:
+    """Vincolo MCP-01k: il report conservato non e' un dato confermato. Il candidato di riconciliazione porta il betId
+    (identita') e lo stake della RICHIESTA, mai gli importi abbinati del report."""
+    from tests.integration.test_issue461_pr26a_customer_ref_provenance import _chain
+
+    c = _chain(tmp_path)
+    c.db.insert_order({"customer_ref": "ref-9", "correlation_id": "c-9", "status": stato,
+                       "payload": {"market_id": "1.1", "selection_id": 7, "event_key": "1.1:7:BACK", "bet_type": "BACK",
+                                   "stake": 2.0, "price": 2.0},
+                       "response": {"ok": False, "result": {"status": "PROCESSED_WITH_ERRORS", "instructionReports": [
+                           {"status": "SUCCESS", "betId": "77", "sizeMatched": 999.0, "averagePriceMatched": 9.9}]}}})
+    candidato = c.rc._open_order_candidates()[0][0]
+
+    assert candidato["bet_id"] == "77" and candidato["stake"] == 2.0 and candidato["price"] == 2.0
+    testo = json.dumps(candidato, default=str)
+    assert "999" not in testo and "9.9" not in testo, candidato
