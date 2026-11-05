@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Checkpoint multi-agente: SHA durevoli dopo squash merge (`pfckpt_squash_durable_refs`).** Risolve l'incidente
+  di `agent-state/pf-claude-b` seq 17: lo SHA della PR, integrata con squash e con il branch poi cancellato, rendeva
+  il checkpoint `LATEST_CHECKPOINT_CORRUPT`. Ora `save` pubblica `refs/agent-state/keep/<sha>` per ogni SHA citato
+  nello stesso push atomico, senza force, e il readback ne verifica la presenza. Nuovo campo opzionale `integration`
+  (transizione verso main su tree SHA uguali, `TREE_EQUAL` / `NOT_PROVEN`) e comando `integrate`. Fallback su
+  `refs/pull/<N>/head` per gli SHA irrisolti. Un checkpoint integro ma con riferimenti non provabili dà
+  `NEEDS_RECONCILIATION`, mai `READY`. Documentazione: `docs/agent_checkpoint_protocol.md` §6-ter.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

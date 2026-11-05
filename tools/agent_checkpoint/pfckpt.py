@@ -19,6 +19,11 @@ Comandi:
   bootstrap --url URL --branch B --dest DEST [--code-branch C] [--agent A] [--dir D]
                                                         ripresa da zero in un ambiente pulito (START/RESUME)
   recover   --url URL --branch B --dest DEST [--dir D]   materializza l'ULTIMO checkpoint valido, senza toccare il remoto
+  integrate --repo R --original SHA --integration SHA [--original-tree T]
+                                                        calcola il record `integration` (squash merge -> main) dai tree
+SHA durevoli (pfckpt_squash_durable_refs): ogni SHA di codice citato e risolvibile riceve al save un ref permanente
+`refs/agent-state/keep/<sha>` nello stesso push atomico del checkpoint (mai force); il readback ne verifica la presenza.
+Uno SHA originale non piu' raggiungibile e' accettato solo con `integration` TREE_EQUAL provata sui tree SHA.
 Esiti: una riga JSON; exit 0 = OK, 2 = checkpoint non valido, 3 = conflitto di concorrenza, 4 = readback fallito,
 5 = errore git/ambiente, 6 = lease tenuto da un altro agente / scrittore stale.
 """
@@ -54,6 +59,13 @@ SECRET_PATTERNS = [re.compile(p) for p in (
 # L'unico file esente dallo scan: la copia dello scanner nel checkpoint, al suo percorso esatto (relativo alla
 # directory del checkpoint). Un file con lo stesso nome altrove (es. results/pfckpt.py) viene scansionato.
 SECRET_SCAN_EXEMPT = frozenset({"tools/pfckpt.py"})
+# Ref permanenti degli SHA citati: fuori da refs/heads e refs/tags (nessun workflow on-push, nessun branch da
+# cancellare), uno per SHA, pubblicati senza force nello stesso push atomico del checkpoint.
+KEEP_REF_PREFIX = "refs/agent-state/keep/"
+KEEP_REFSPEC = f"+{KEEP_REF_PREFIX}*:{KEEP_REF_PREFIX}*"
+EQUIVALENCES = ("TREE_EQUAL", "NOT_PROVEN")
+INTEGRATION_FIELDS = ("original_sha", "original_tree", "integration_sha", "integration_tree", "equivalence")
+_SHA40 = re.compile(r"[0-9a-f]{40}")
 
 
 class CheckpointError(Exception):
@@ -191,6 +203,109 @@ def validate_lease(lease, seq):
     return problems
 
 
+def resolve_commit(repo, sha):
+    """SHA completo del commit, o None. Solo id esadecimali: mai un riferimento mobile (HEAD, main, main~1)."""
+    if not re.fullmatch(r"[0-9a-f]{7,40}", str(sha or "")):
+        return None
+    p = git(repo, "rev-parse", "-q", "--verify", f"{sha}^{{commit}}", check=False)
+    return p.stdout.decode().strip() if p.returncode == 0 else None
+
+
+def tree_of(repo, commit):
+    return out(repo, "rev-parse", f"{commit}^{{tree}}")
+
+
+def check_code_reference(repo, label, sha, integration, anchors=(), unresolved_msg=None):
+    """Risolvibilita' di uno SHA di codice citato (code.sha o tests_executed[].sha).
+
+    Senza `integration`: lo SHA deve risolversi. Con `integration` (squash merge verso main): se l'originale si risolve
+    deve valere tree(original_sha) == original_tree; se non si risolve e' accettato SOLO con equivalence TREE_EQUAL e
+    tree(integration_sha) == original_tree, confrontando i tree SHA (mai file per file) del commit di integrazione
+    SPECIFICO (SHA completo, mai l'ultimo main). Ritorna (problems, keep_shas, info)."""
+    problems, keep = [], []
+    unresolved_msg = unresolved_msg or f"{label}: SHA inesistente nel repository: {sha}"
+    full = resolve_commit(repo, sha)
+    info = {"sha": sha, "original_reachable": bool(full), "via": None, "effective_sha": full}
+    if full:
+        for t in anchors:
+            if t and tree_of(repo, full) != t:
+                problems.append(f"{label}: tree({sha[:12]}) != code.tree registrato {t[:12]}")
+    if integration is None:
+        if full:
+            keep.append(full)
+            info["via"] = "ORIGINAL"
+        else:
+            problems.append(unresolved_msg)
+        return problems, keep, info
+    bad = [] if isinstance(integration, dict) else ["non un oggetto"]
+    if not bad:
+        for f in ("original_sha", "original_tree", "integration_sha", "integration_tree"):
+            if not _SHA40.fullmatch(str(integration.get(f, ""))):
+                bad.append(f)
+        if integration.get("equivalence") not in EQUIVALENCES:
+            bad.append("equivalence")
+        if "original_sha" not in bad and not integration["original_sha"].startswith(str(sha)):
+            bad.append("original_sha != SHA citato")
+    if bad:
+        problems.append(f"{label}: integration malformata: {', '.join(bad)}")
+        if not full:
+            problems.append(unresolved_msg)
+        else:
+            keep.append(full)
+        return problems, keep, info
+    otree, itree = integration["original_tree"], integration["integration_tree"]
+    for t in anchors:
+        if t and t != otree:
+            problems.append(f"{label}: integration.original_tree != code.tree registrato {t[:12]}")
+    if full:
+        keep.append(full)
+        if tree_of(repo, full) != otree:
+            problems.append(f"{label}: tree(original_sha) != integration.original_tree")
+    ifull = resolve_commit(repo, integration["integration_sha"])
+    if ifull and tree_of(repo, ifull) != itree:
+        problems.append(f"{label}: tree(integration_sha) != integration.integration_tree")
+    if integration["equivalence"] == "TREE_EQUAL":
+        if not ifull:
+            problems.append(f"{label}: integration_sha irrisolto: {integration['integration_sha']}")
+        elif itree != otree or tree_of(repo, ifull) != otree:
+            problems.append(f"{label}: tree di integrazione diverso dall'originale: equivalenza non provata")
+    if ifull:
+        keep.append(ifull)
+    if not full and integration["equivalence"] != "TREE_EQUAL":
+        problems.append(f"{label}: originale irraggiungibile ed equivalenza {integration['equivalence']}")
+    if not full and not problems:
+        info.update(via="INTEGRATION_TREE_EQUAL", effective_sha=ifull)
+    elif full and not problems:
+        info["via"] = "ORIGINAL"
+    if not full and problems:
+        problems.append(unresolved_msg)
+    return problems, keep, info
+
+
+def build_integration(repo, original_sha, integration_sha, original_tree=None):
+    """Record `integration` calcolato SOLO dagli oggetti git: tree dell'originale (dall'oggetto se presente, altrimenti
+    dal tree gia' registrato e passato esplicitamente) e tree del commit di integrazione specifico. Mai per file."""
+    ifull = resolve_commit(repo, integration_sha)
+    if not ifull or not _SHA40.fullmatch(str(integration_sha)):
+        raise CheckpointError(2, "INTEGRATION_UNRESOLVED", integration_sha=integration_sha,
+                              action="serve lo SHA completo del commit di integrazione, risolvibile")
+    if not _SHA40.fullmatch(str(original_sha)):
+        raise CheckpointError(2, "ORIGINAL_SHA_MALFORMED", original_sha=original_sha)
+    ofull = resolve_commit(repo, original_sha)
+    if ofull:
+        otree, source = tree_of(repo, ofull), "OBJECT"
+        if original_tree and original_tree != otree:
+            raise CheckpointError(2, "ORIGINAL_TREE_MISMATCH", declared=original_tree, actual=otree)
+    elif original_tree and _SHA40.fullmatch(str(original_tree)):
+        otree, source = original_tree, "RECORDED"
+    else:
+        raise CheckpointError(2, "ORIGINAL_TREE_UNKNOWN", original_sha=original_sha,
+                              action="recuperare l'oggetto originale (es. refs/pull/<n>/head) o un tree registrato")
+    itree = tree_of(repo, ifull)
+    return {"original_sha": original_sha, "original_tree": otree, "integration_sha": ifull, "integration_tree": itree,
+            "equivalence": "TREE_EQUAL" if itree == otree else "NOT_PROVEN", "original_tree_source": source}
+
+
 def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
     """Verifica completa del checkpoint al commit REF. Ritorna un dict di report; solleva CheckpointError(2) se invalido."""
     commit = out(repo, "rev-parse", "--verify", f"{ref}^{{commit}}")
@@ -241,10 +356,29 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
                 pseq = None
             if isinstance(pseq, int) and state.get("seq") != pseq + 1:
                 problems.append(f"seq {state.get('seq')} non monotono (precedente {pseq})")
-    code_sha = (state.get("code") or {}).get("sha", "")
+    code = state.get("code") if isinstance(state.get("code"), dict) else {}
+    code_sha = code.get("sha", "")
     lookup = code_repo or repo
-    if code_sha and git(lookup, "cat-file", "-e", f"{code_sha}^{{commit}}", check=False).returncode != 0:
-        problems.append(f"SHA del codice inesistente nel repository: {code_sha}")
+    ref_problems, keep_shas, code_ref = [], [], {"sha": code_sha, "via": None, "effective_sha": None}
+    # tree registrati per uno SHA (code.tree scritto dal save quando l'oggetto c'era; tree del code_patch)
+    anchors = {}
+    if code.get("tree"):
+        anchors.setdefault(str(code_sha), []).append(str(code["tree"]))
+    pm = code.get("patch") if isinstance(code.get("patch"), dict) else {}
+    if pm.get("head") and pm.get("tree"):
+        anchors.setdefault(str(pm["head"]), []).append(str(pm["tree"]))
+
+    def _anchors_for(sha, integ):
+        orig = integ.get("original_sha") if isinstance(integ, dict) else None
+        return [t for k, ts in anchors.items() for t in ts
+                if sha and (k.startswith(str(sha)) or (orig and k == orig))]
+
+    if code_sha:
+        rp, ks, code_ref = check_code_reference(lookup, "code.sha", code_sha, code.get("integration"),
+                                                _anchors_for(code_sha, code.get("integration")),
+                                                f"SHA del codice inesistente nel repository: {code_sha}")
+        ref_problems += rp
+        keep_shas += ks
     for t in state.get("tests_executed") or []:
         if isinstance(t, dict) and t.get("status") in ("PASS", "FAIL"):
             # rilievo Codex #512 su 034af59: lo SHA di un test eseguito deve risolversi a un commit reale,
@@ -259,9 +393,14 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
             # risolverebbe ma legherebbe l'esito a un commit diverso nel tempo (secondo riesame c9).
             well_formed = re.fullmatch(r"[0-9a-f]{7,40}", tsha) is not None
             declared_unpublished = (t.get("unpublished_tree") is True and bool(str(t.get("sha_note", "")).strip()))
-            if not well_formed or (not declared_unpublished
-                                   and git(lookup, "cat-file", "-e", f"{tsha}^{{commit}}", check=False).returncode != 0):
-                problems.append(f"test {t.get('id')!r}: test sha unresolved: {tsha}")
+            msg = f"test {t.get('id')!r}: test sha unresolved: {tsha}"
+            if not well_formed:
+                problems.append(msg)
+            elif not declared_unpublished:
+                rp, ks, _ = check_code_reference(lookup, f"test {t.get('id')!r}", tsha, t.get("integration"),
+                                                 _anchors_for(tsha, t.get("integration")), msg)
+                ref_problems += rp
+                keep_shas += ks
         art = t.get("artifact") if isinstance(t, dict) else None
         for a in ([art] if isinstance(art, str) else (art or [])):
             if a not in files:
@@ -285,10 +424,14 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
         for f in patch_meta.get("files") or []:
             if f not in files:
                 problems.append(f"code.patch: file dichiarato assente: {f}")
+    problems += ref_problems
     if problems:
-        raise CheckpointError(2, "CHECKPOINT_INVALID", commit=commit, problems=problems)
+        # ref_problems: riferimenti di codice non provabili (SHA irraggiungibile, transizione non provata); il resto
+        # e' integrita'. `bootstrap` distingue NEEDS_RECONCILIATION da LATEST_CHECKPOINT_CORRUPT su questa base.
+        raise CheckpointError(2, "CHECKPOINT_INVALID", commit=commit, problems=problems, reference_problems=ref_problems)
     lease = derived.get(LEASE) or {}
     return {"commit": commit, "seq": state["seq"], "code_sha": code_sha, "files": len(files),
+            "code_reference": code_ref, "keep_shas": sorted(set(keep_shas)),
             "next_atomic_action": state["next_atomic_action"], "verdict": state["certification_verdict"],
             "lease_owner": lease.get("owner"), "lease_expires_at": lease.get("expires_at")}
 
@@ -431,8 +574,66 @@ def remote_head(repo, remote, branch):
     return line.split()[0] if line else None
 
 
-def readback(remote_url, branch, d, code_branch=None):
-    """Clone pulito dal remoto e verifica completa li': l'unica prova di durabilita'."""
+def fetch_keep_refs(repo):
+    git(repo, "fetch", "-q", "origin", KEEP_REFSPEC, check=False)
+
+
+def _cited_shas_and_prs(state):
+    """SHA citati da risolvere (code.sha, tests_executed[].sha PASS/FAIL non dichiarati unpublished) e numeri di PR
+    dichiarati (`code.pr`, `tests_executed[].pr`, interi positivi)."""
+    shas, prs = [], set()
+    code = state.get("code") if isinstance(state.get("code"), dict) else {}
+    if code.get("sha"):
+        shas.append(str(code["sha"]))
+    if isinstance(code.get("pr"), int) and code["pr"] > 0:
+        prs.add(code["pr"])
+    for t in state.get("tests_executed") or []:
+        if not isinstance(t, dict):
+            continue
+        if isinstance(t.get("pr"), int) and t["pr"] > 0:
+            prs.add(t["pr"])
+        if t.get("status") in ("PASS", "FAIL") and t.get("unpublished_tree") is not True and t.get("sha"):
+            shas.append(str(t["sha"]))
+    return shas, sorted(prs)
+
+
+def fetch_pull_heads(repo, d, ref="HEAD"):
+    """Fallback per gli SHA di PR integrate con squash e branch cancellato: GitHub conserva `refs/pull/<N>/head`.
+    Solo se, dopo i ref keep, uno SHA citato dal checkpoint REF resta irrisolto: si scaricano i `refs/pull/<N>/head`
+    dichiarati nello STATE (`code.pr` / `tests_executed[].pr`) o, se nessuno e' dichiarato, tutti i
+    `refs/pull/*/head`. Nessuna configurazione per agente o catena. Ritorna cosa e' stato scaricato (None = niente).
+    Uno SHA ancora irrisolto dopo il fallback resta un problema di verify: mai READY."""
+    try:
+        state = tree_json(repo, ref, d, "STATE.json")
+    except (ValueError, CheckpointError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    shas, prs = _cited_shas_and_prs(state)
+    if all(resolve_commit(repo, s) for s in shas if re.fullmatch(r"[0-9a-f]{7,40}", s)):
+        return None
+    specs = ([f"+refs/pull/{n}/head:refs/remotes/origin/pull/{n}" for n in prs] if prs
+             else ["+refs/pull/*/head:refs/remotes/origin/pull/*"])
+    git(repo, "fetch", "-q", "origin", *specs, check=False)
+    return {"declared_prs": prs, "refspecs": specs}
+
+
+def keep_ref_status(repo, shas):
+    """Quali SHA hanno il ref keep (gia' scaricato in `repo`) che punta esattamente a loro."""
+    present, missing = [], []
+    for sha in shas:
+        p = git(repo, "rev-parse", "-q", "--verify", f"{KEEP_REF_PREFIX}{sha}", check=False)
+        (present if p.returncode == 0 and p.stdout.decode().strip() == sha else missing).append(sha)
+    return {"present": present, "missing": missing}
+
+
+def keep_refspecs(shas):
+    return [f"{sha}:{KEEP_REF_PREFIX}{sha}" for sha in shas]
+
+
+def readback(remote_url, branch, d, code_branch=None, expect_commit=None):
+    """Clone pulito dal remoto e verifica completa li': l'unica prova di durabilita'. Verifica anche che ogni SHA
+    citato abbia sul remoto il proprio ref keep, puntato allo SHA stesso."""
     tmp = tempfile.mkdtemp(prefix="pfckpt_readback_")
     try:
         p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, remote_url, tmp], capture_output=True)
@@ -443,10 +644,18 @@ def readback(remote_url, branch, d, code_branch=None):
         # Gli SHA di `tests_executed` possono stare su qualunque branch pubblicato (ciclo 8 #512: la
         # risoluzione e' obbligatoria): il readback scarica tutti i branch remoti, non solo quello di codice.
         git(tmp, "fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*", check=False)
+        fetch_keep_refs(tmp)
+        fetch_pull_heads(tmp, d)
         try:
-            return verify(tmp, "HEAD", d)
+            report = verify(tmp, "HEAD", d)
         except CheckpointError as exc:
             raise CheckpointError(4, "READBACK_VERIFY_FAILED", inner=exc.reason, **exc.detail)
+        if expect_commit and report["commit"] != expect_commit:
+            raise CheckpointError(4, "READBACK_SHA_MISMATCH", remote=report["commit"])
+        ks = keep_ref_status(tmp, report["keep_shas"])
+        if ks["missing"]:
+            raise CheckpointError(4, "READBACK_KEEP_REF_MISSING", missing=ks["missing"])
+        return report
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -462,10 +671,14 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
     head = out(repo, "rev-parse", "HEAD")
     parent = out(repo, "rev-parse", "HEAD^") if git(repo, "rev-parse", "--verify", "HEAD^", check=False).returncode == 0 else None
     if current == head and head != expected and parent == expected:
-        # crash dopo il push (prima del readback): il remoto ha gia' il NOSTRO checkpoint figlio di expected
-        report = readback(url, branch, d, code_branch)
-        if report["commit"] != head:
-            raise CheckpointError(4, "READBACK_SHA_MISMATCH", remote=report["commit"])
+        # crash dopo il push (prima del readback): il remoto ha gia' il NOSTRO checkpoint figlio di expected.
+        # I ref keep potrebbero mancare (crash fra i due, strumento precedente): si pubblicano, senza force.
+        local = verify(repo, "HEAD", d)
+        if local["keep_shas"]:
+            p = git(repo, "push", "-q", "--atomic", remote, *keep_refspecs(local["keep_shas"]), check=False)
+            if p.returncode != 0:
+                raise CheckpointError(3, "KEEP_REF_PUSH_REJECTED", stderr=p.stderr.decode(errors="replace")[-300:])
+        report = readback(url, branch, d, code_branch, expect_commit=head)
         return {"status": "DURABLE", "resumed": "after_push", **report}
     if current != expected:
         raise CheckpointError(3, "CONCURRENT_UPDATE", expected=expected, remote=current,
@@ -502,27 +715,32 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
             st["agent"]["lease_status_at_write"] = status
         if code_repo:
             st.setdefault("code", {})["patch"] = capture_code_patch(code_repo, repo, d)
+        code_full = resolve_commit(repo, (st.get("code") or {}).get("sha"))
+        if code_full and "tree" not in st["code"]:
+            # tree registrato finche' l'oggetto esiste: ancora per un futuro `integration.original_tree`
+            st["code"]["tree"] = tree_of(repo, code_full)
         with open(state_path, "w") as fh:
             json.dump(st, fh, indent=1, ensure_ascii=False)
         write_derived(repo, d, st, new_lease(agent, st["seq"], ttl_min, now, released=release))
         write_manifest(repo, d)
         git(repo, "add", "-A", "-f", "--", d)          # -f: un .gitignore non puo' escludere artefatti in silenzio
         git(repo, "commit", "-q", "-m", message)
-    verify(repo, "HEAD", d)                         # verifica del TREE committato prima di pubblicare
+    local = verify(repo, "HEAD", d)                 # verifica del TREE committato prima di pubblicare
     untracked = [l for l in out(repo, "status", "--porcelain", "--ignored", "--", d).splitlines()
                  if not l.endswith(".pyc") and "__pycache__" not in l]
     if untracked:
         raise CheckpointError(2, "LOCAL_ONLY_FILES", files=untracked[:20])
-    p = git(repo, "push", "-q", remote, f"HEAD:refs/heads/{branch}", check=False)   # senza force: non-FF rifiutato
+    # un solo push ATOMICO, senza force: checkpoint + ref keep di ogni SHA citato; un ref keep esistente su un altro
+    # commit (non-FF) fa rifiutare tutto, branch compreso
+    p = git(repo, "push", "-q", "--atomic", remote, f"HEAD:refs/heads/{branch}", *keep_refspecs(local["keep_shas"]),
+            check=False)
     if p.returncode != 0:
         now_remote = remote_head(repo, remote, branch)
         if now_remote == out(repo, "rev-parse", "HEAD"):
             resumed = "push_reported_error_but_landed"
         else:
             raise CheckpointError(3, "PUSH_REJECTED", remote=now_remote, stderr=p.stderr.decode(errors="replace")[-300:])
-    report = readback(url, branch, d, code_branch)
-    if report["commit"] != out(repo, "rev-parse", "HEAD"):
-        raise CheckpointError(4, "READBACK_SHA_MISMATCH", remote=report["commit"])
+    report = readback(url, branch, d, code_branch, expect_commit=out(repo, "rev-parse", "HEAD"))
     return {"status": "DURABLE", "resumed": resumed, **report}
 
 
@@ -557,10 +775,21 @@ def bootstrap(url, branch, dest, d=DEFAULT_DIR, code_branch=None, agent=None):
         raise CheckpointError(5, "CLONE_FAILED", stderr=p.stderr.decode(errors="replace")[-300:])
     if code_branch:
         git(dest, "fetch", "-q", "origin", f"{code_branch}:refs/remotes/origin/{code_branch}", check=False)
+    fetch_keep_refs(dest)                           # gli SHA citati restano risolvibili dopo squash + delete branch
+    pull_fetch = fetch_pull_heads(dest, d)          # fallback GitHub refs/pull/<N>/head, solo se serve
     try:
         report = verify(dest, "HEAD", d)
     except CheckpointError as exc:
         last_valid = last_valid_checkpoint(dest, d, "HEAD~1") if out(dest, "rev-list", "--count", "HEAD") != "1" else None
+        problems = exc.detail.get("problems") or []
+        refp = exc.detail.get("reference_problems") or []
+        if problems and set(problems) <= set(refp):
+            # integro ma con riferimenti di codice non provabili: mai READY, mai rollback; nuovo checkpoint con
+            # `integration` TREE_EQUAL (pfckpt.py integrate) o ripubblicazione dell'oggetto originale
+            raise CheckpointError(2, "NEEDS_RECONCILIATION", inner=exc.reason, problems=problems,
+                                  last_valid_checkpoint=last_valid,
+                                  action="nuovo checkpoint con code.integration TREE_EQUAL o SHA originale ripubblicato; "
+                                         "nessun rollback automatico")
         raise CheckpointError(2, "LATEST_CHECKPOINT_CORRUPT", inner=exc.reason, problems=exc.detail.get("problems"),
                               last_valid_checkpoint=last_valid, action="nessun rollback automatico: decidere esplicitamente")
     state = json.loads(blob(dest, report["commit"], f"{d}/STATE.json"))
@@ -569,9 +798,11 @@ def bootstrap(url, branch, dest, d=DEFAULT_DIR, code_branch=None, agent=None):
     result = {"status": "READY", **report, "mandate_id": state["mandate_id"],
               "owner_authorizations": state["owner_authorizations"], "blocks": state["blocks"],
               "code_branch": (state.get("code") or {}).get("branch"), "lease": status,
-              "code_patch": bool((state.get("code") or {}).get("patch"))}
+              "code_patch": bool((state.get("code") or {}).get("patch")),
+              "keep_refs": keep_ref_status(dest, report["keep_shas"]), "pull_refs_fetched": pull_fetch}
     if code_branch:
-        result["code_divergence"] = code_divergence(dest, code_branch, report["code_sha"])
+        result["code_divergence"] = code_divergence(dest, code_branch,
+                                                    report["code_reference"].get("effective_sha") or report["code_sha"])
     if status == "HELD":
         result["status"] = "READY_READ_ONLY"
         result["action"] = f"lease tenuto da {lease.get('owner')} fino a {lease.get('expires_at')}: nessuna scrittura"
@@ -583,6 +814,8 @@ def recover(url, branch, dest, d=DEFAULT_DIR):
     p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, url, dest], capture_output=True)
     if p.returncode != 0:
         raise CheckpointError(5, "CLONE_FAILED", stderr=p.stderr.decode(errors="replace")[-300:])
+    fetch_keep_refs(dest)
+    fetch_pull_heads(dest, d)
     head = out(dest, "rev-parse", "HEAD")
     valid = last_valid_checkpoint(dest, d, "HEAD")
     if valid is None:
@@ -610,6 +843,8 @@ def main(argv=None):
     r.add_argument("--dest", required=True); r.add_argument("--dir", default=DEFAULT_DIR)
     rc = sub.add_parser("restore-code"); rc.add_argument("--repo", default="."); rc.add_argument("--ref", default="HEAD")
     rc.add_argument("--dir", default=DEFAULT_DIR); rc.add_argument("--code-repo", required=True)
+    ig = sub.add_parser("integrate"); ig.add_argument("--repo", default="."); ig.add_argument("--original", required=True)
+    ig.add_argument("--integration", required=True); ig.add_argument("--original-tree")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "verify":
@@ -621,6 +856,10 @@ def main(argv=None):
             res = bootstrap(a.url, a.branch, a.dest, a.dir, a.code_branch, agent=a.agent)
         elif a.cmd == "recover":
             res = recover(a.url, a.branch, a.dest, a.dir)
+        elif a.cmd == "integrate":
+            res = build_integration(a.repo, a.original, a.integration, a.original_tree)
+            print(json.dumps(res, ensure_ascii=False))
+            return 0 if res["equivalence"] == "TREE_EQUAL" else 2
         else:
             res = restore_code_patch(a.repo, a.ref, a.dir, a.code_repo)
         print(json.dumps(res, ensure_ascii=False))

@@ -1,7 +1,7 @@
 # Protocollo di checkpoint multi-agente — `pf-checkpoint/3`
 
 Mandato owner PF-UNIVERSAL-CHECKPOINT-V1 (15/10/2026). Strumento: `tools/agent_checkpoint/pfckpt.py`
-(solo Python standard library + git). Test: `tests/agent_checkpoint/test_pfckpt.py` (git reale, offline).
+(solo Python standard library + git). Test: `tests/agent_checkpoint/` (git reale, offline; ref keep e squash merge in `test_pfckpt_squash_durable.py`).
 
 ## 1. Scopo e fonte di verità
 
@@ -41,7 +41,8 @@ una voce dichiara `artifact`, il file deve essere nel commit.
 `pfckpt.py verify --repo R --ref REF` legge **dal tree committato** (mai dal disco) e controlla: STATE e MANIFEST
 presenti; JSON valido e schema rispettato; manifest ↔ commit completo in entrambe le direzioni; hash di ogni file;
 assenza di pattern di segreti; `previous_checkpoint_sha` = parent; `seq` = seq del parent + 1; SHA del codice
-esistente; artefatti dichiarati presenti. Qualsiasi problema → exit 2 con l'elenco dei problemi.
+esistente (o, se non più raggiungibile, transizione `integration` TREE_EQUAL provata, §6-ter); artefatti dichiarati
+presenti. Qualsiasi problema → exit 2 con l'elenco dei problemi.
 
 ## 4. Salvataggio atomico (`save`)
 
@@ -128,6 +129,73 @@ verifica che lo stato risultante coincida con quello dichiarato (repo sporco o b
 Sincronizzazione reale: solo dopo pubblicazione sul branch condiviso autorizzato e ripresa verificata da un secondo
 ambiente/agente (`bootstrap` in un clone nuovo). Un archivio locale non è un handoff sincronizzato.
 
+## 6-ter. SHA durevoli dopo squash merge (`pfckpt_squash_durable_refs`)
+
+**Incidente.** `agent-state/pf-claude-b` seq 17 citava in `code.sha` e `tests_executed[].sha` l'head di una PR
+integrata con squash merge. Cancellato il branch, quello SHA non era più raggiungibile da nessun ref remoto: un clone
+nuovo non aveva l'oggetto, quindi `verify` lo dava inesistente e `bootstrap` rispondeva `LATEST_CHECKPOINT_CORRUPT`,
+pur con il checkpoint integro.
+
+**1. Ref keep.** A ogni `save`, per ogni SHA di codice citato e risolvibile (`code.sha`, gli `sha` dei
+`tests_executed` PASS/FAIL non dichiarati `unpublished_tree`, i commit di integrazione), lo strumento pubblica
+`refs/agent-state/keep/<sha completo>` → `<sha>`. Avviene **nello stesso push atomico** del checkpoint
+(`git push --atomic`), **senza force**: un ref keep già presente sullo stesso SHA è un no-op, uno che punta altrove
+fa rifiutare tutto il push, branch di stato compreso. Il namespace sta fuori da `refs/heads` e `refs/tags`, quindi
+non fa partire workflow `on: push` e non dipende dal branch della PR. Il readback scarica `refs/agent-state/keep/*`
+e richiede, per ogni SHA citato, il ref keep sul remoto e puntato a quello SHA (`READBACK_KEEP_REF_MISSING`
+altrimenti, mai DURABLE). `bootstrap` e `recover` scaricano i ref keep prima di verificare. Nella ripresa
+`after_push` (crash fra il push del branch e quello dei ref, o un checkpoint pubblicato dallo strumento precedente)
+i ref mancanti vengono pubblicati senza duplicare il commit. Il `save` registra anche `code.tree` (il tree di
+`code.sha`) finché l'oggetto esiste.
+
+**2. Transizione verso main.** Campo opzionale `integration` in `code` e in ogni voce di `tests_executed`:
+
+```json
+{"original_sha": "<40 hex>", "original_tree": "<40 hex>", "integration_sha": "<40 hex>",
+ "integration_tree": "<40 hex>", "equivalence": "TREE_EQUAL" | "NOT_PROVEN"}
+```
+
+Regole di `verify`, confrontando solo tree SHA e mai file per file:
+- `original_sha` deve iniziare con lo SHA citato; tutti gli SHA sono id completi, mai riferimenti mobili. Il commit
+  di integrazione è quello specifico, mai «l'ultimo main».
+- Se l'originale si risolve: tree(`original_sha`) == `original_tree`.
+- Se `integration_sha` si risolve: tree(`integration_sha`) == `integration_tree`.
+- Originale **non** risolvibile: accettato solo con `equivalence: "TREE_EQUAL"`, `integration_sha` risolto e
+  tree(`integration_sha`) == `integration_tree` == `original_tree`. Con `NOT_PROVEN`, o con un tree diverso anche
+  per un solo file, il riferimento resta non provato.
+- `original_tree` deve coincidere con i tree già registrati per quello SHA (`code.tree`, `code.patch.tree`).
+- La dichiarazione non è mai creduta: `verify` ricalcola sempre i tree.
+
+`pfckpt.py integrate --repo R --original <sha> --integration <sha> [--original-tree <tree registrato>]` calcola il
+record dagli oggetti git (exit 0 = `TREE_EQUAL`, 2 = `NOT_PROVEN`). Se l'oggetto originale manca e non si passa un
+tree registrato, l'esito è `ORIGINAL_TREE_UNKNOWN` (BLOCKED). Lo STATE conserva gli SHA originali: le autorizzazioni
+owner e i risultati legati a quegli SHA restano invariati. La transizione entra con un **nuovo** checkpoint
+(seq + 1), mai riscrivendo quello vecchio.
+
+**3. Fallback `refs/pull/<N>/head`.** GitHub conserva `refs/pull/<N>/head` anche dopo la cancellazione del branch.
+Se, dopo i ref keep, uno SHA citato resta irrisolto, `bootstrap`, `recover` e il readback scaricano i
+`refs/pull/<N>/head` dichiarati nello STATE (`code.pr` / `tests_executed[].pr`, interi), oppure tutti i
+`refs/pull/*/head` se non ne è dichiarato nessuno. Non serve configurazione per agente o per catena (B, C, D). Il
+fallback fa solo tornare risolvibile l'oggetto e non sostituisce alcun controllo.
+
+**4. Esiti.** In `verify`, i problemi di riferimento (SHA irraggiungibile, transizione non provata o malformata,
+tree in contrasto) sono separati da quelli di integrità. Se un checkpoint ha **solo** problemi di riferimento,
+`bootstrap` dà `NEEDS_RECONCILIATION` (exit 2, `last_valid_checkpoint`, nessun rollback); con qualunque problema di
+integrità dà `LATEST_CHECKPOINT_CORRUPT`. Mai `READY` in nessuno dei due casi. `bootstrap` riporta
+`code_reference` (`via`: `ORIGINAL` | `INTEGRATION_TREE_EQUAL`, `effective_sha`), `keep_refs` (presenti/mancanti)
+e `pull_refs_fetched`.
+
+**Riparazione di seq 17 (procedura).** Dopo `bootstrap` si ottiene `NEEDS_RECONCILIATION`. Si scarica
+`refs/pull/<N>/head` della PR, poi `integrate --original <aa184a2…> --integration <SHA dello squash su main>` (dall'oggetto:
+`original_tree_source: OBJECT`). Quindi un nuovo checkpoint seq 18 con `code.integration` e
+`tests_executed[].integration` e `save`: il `save` pubblica i ref keep dell'originale e del commit di integrazione.
+
+**Operazioni e duplicati.** Lo strumento registra solo checkpoint (un commit per `save`) e ref keep (uno per SHA, per
+nome). Ripetere lo stesso `save` dopo DURABLE è idempotente (`resumed: after_push`, nessun commit e nessun ref
+nuovo). Uno scrittore su base vecchia riceve `CONCURRENT_UPDATE`. PR, merge, ordini e altre operazioni sensibili
+**non sono modellati** dallo strumento: `lotti_completati` è testo dichiarato, senza registro di operazioni né
+deduplica. Il ripristino non può quindi garantire «nessuna PR o merge duplicato»: è un limite dichiarato (§8).
+
 ## 7. Incidente storico INC-b45f528
 
 Il checkpoint seq 7 (`b45f528`) elencava nel MANIFEST tre log mai committati
@@ -139,12 +207,22 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 39 test, inclusi lease/fencing, patch del codice, recover) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 81 test, inclusi lease/fencing, patch del codice, recover, ref keep e transizione squash) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo
   Codex #512, PF-PR-RECOVERY-DECISIONS-02).
 - La concorrenza è ottimistica: due agenti possono lavorare in parallelo, ma solo uno pubblica per volta.
+- Ref keep (§6-ter): provati con git reale offline su repository bare (push atomico, gc del remoto, clone nuovo).
+  L'accettazione di push `--atomic` e di ref fuori da `refs/heads`/`refs/tags` su GitHub **non è stata provata**
+  (`NOT VERIFIED`); se GitHub rifiutasse il push, il `save` fallisce senza pubblicare nulla, mai in modo silenzioso.
+  Il fallback `refs/pull/*/head` senza PR dichiarata può scaricare molti ref su repository grandi.
+- `original_tree` di un oggetto ormai irraggiungibile è verificabile solo contro i tree registrati (`code.tree`,
+  `code.patch.tree`): senza registrazione resta il valore scritto da chi ha creato la transizione, che `integrate`
+  calcola dall'oggetto quando c'è.
+- `restore-code` richiede ancora HEAD == `code_patch.head`: dopo uno squash si ripristina sull'originale (risolvibile
+  via ref keep), non sul commit di integrazione.
+- Lo strumento non modella PR, merge od ordini: nessuna deduplica di operazioni sensibili oltre ai checkpoint.
 
 ### SHA dei test eseguiti (ciclo 8/9 #512)
 
