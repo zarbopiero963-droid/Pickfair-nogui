@@ -51,10 +51,15 @@
     "F-23"
    ],
    "source": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6504942027",
-   "links": {},
+   "links": {
+    "branches": [
+     "claude/d-f03-trailing-stop"
+    ]
+   },
    "blocked_by": null,
    "needs_reconciliation": null,
-   "certifications": []
+   "certifications": [],
+   "notes": "Claude D: base = keep/f02 @80b0090 fusa con F-04 @4c07f71; ordine d'integrazione F-02 -> F-04 -> F-03."
   },
   {
    "id": "F-04",
@@ -249,8 +254,9 @@
     ]
    },
    "blocked_by": null,
-   "needs_reconciliation": "PARTIAL secondo Claude D (pfab-d-20261104-ack-001): coperto placeOrders senza esito -> AMBIGUOUS con betId conservato; NON coperto il cancel single-shot",
-   "certifications": []
+   "needs_reconciliation": null,
+   "certifications": [],
+   "notes": "Branch completo secondo Claude D (pfab-d-20261105-f03-stack-001, @db11a86): cancel single-shot, esito ignoto di cancel/placeOrders = AMBIGUOUS, report per istruzione, estrattore unico del betId. Prima PR della corsia finanziaria."
   },
   {
    "id": "F-15",
