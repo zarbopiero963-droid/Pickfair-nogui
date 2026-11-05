@@ -8216,6 +8216,201 @@
         "tests/f13/test_f13_customer_order_ref.py"
       ],
       "rationale": "F-13 (review indipendente su 4881adb): la mappa del de-dup SIM cresce di una voce per ordine nello snapshot, senza limiti."
+    },
+    {
+      "id": "f14_cancel_timeout_failed",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "                \"outcome\": \"AMBIGUOUS\" if self._cancel_outcome_unknown(error_text) else \"FAILED\",",
+      "mutated": "                \"outcome\": \"FAILED\",",
+      "tests": [
+        "tests/acceptance/test_f14_cancel_single_shot.py",
+        "tests/acceptance/test_betid_extractor_unico.py"
+      ],
+      "rationale": "F-14: cancel con esito ignoto letto come rifiuto certo."
+    },
+    {
+      "id": "f14_cancel_missing_report_ok",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "        uncertain = bool(missing or unknown or reports_unreadable",
+      "mutated": "        uncertain = bool(unknown or reports_unreadable",
+      "tests": [
+        "tests/acceptance/test_f14_cancel_single_shot.py",
+        "tests/acceptance/test_betid_extractor_unico.py"
+      ],
+      "rationale": "F-14: cancel confermato senza il report di ogni istruzione."
+    },
+    {
+      "id": "f14_cancel_timeout_report_failure",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "            elif report_status == \"FAILURE\":",
+      "mutated": "            elif report_status in (\"FAILURE\", \"TIMEOUT\"):",
+      "tests": [
+        "tests/acceptance/test_f14_cancel_single_shot.py",
+        "tests/acceptance/test_betid_extractor_unico.py"
+      ],
+      "rationale": "F-14: TIMEOUT per istruzione letto come rifiuto certo."
+    },
+    {
+      "id": "f14_cancel_5xx_certain",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "        return any(k in e for k in (\"TIMEOUT\", \"NETWORK_ERROR\", \"HTTP_5\", \"UNKNOWN_ERROR\", \"INVALID_JSON\"))",
+      "mutated": "        return any(k in e for k in (\"TIMEOUT\", \"NETWORK_ERROR\", \"UNKNOWN_ERROR\", \"INVALID_JSON\"))",
+      "tests": [
+        "tests/acceptance/test_f14_cancel_single_shot.py",
+        "tests/acceptance/test_betid_extractor_unico.py"
+      ],
+      "rationale": "F-14: 5xx dopo l'invio letto come rifiuto certo."
+    },
+    {
+      "id": "f14_om_ignores_ambiguous",
+      "module": "order_manager",
+      "area": "ambiguous",
+      "file": "order_manager.py",
+      "original": "        if isinstance(response, dict) and str(response.get(\"outcome\") or \"\").upper() in (\"AMBIGUOUS\", \"PARTIAL\"):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_f14_cancel_single_shot.py",
+        "tests/acceptance/test_betid_extractor_unico.py"
+      ],
+      "rationale": "F-14: saga del cancel FAILED invece di AMBIGUOUS."
+    },
+    {
+      "id": "f14_om_exception_failed",
+      "module": "order_manager",
+      "area": "ambiguous",
+      "file": "order_manager.py",
+      "original": "            if _cancel_error_unknown(exc):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/acceptance/test_f14_cancel_single_shot.py",
+        "tests/acceptance/test_betid_extractor_unico.py"
+      ],
+      "rationale": "F-14: eccezione di timeout del cancel letta come rifiuto certo."
+    },
+    {
+      "id": "f14_betid_conflict_first",
+      "module": "core.order_identity",
+      "area": "reconciliation",
+      "file": "core/order_identity.py",
+      "original": "    return next(iter(found)) if len(found) == 1 else \"\"",
+      "mutated": "    return sorted(found)[0] if found else \"\"",
+      "tests": [
+        "tests/acceptance/test_f14_cancel_single_shot.py",
+        "tests/acceptance/test_betid_extractor_unico.py"
+      ],
+      "rationale": "F-14: betId in conflitto attribuito a caso invece di lasciare la riga alla riconciliazione."
+    },
+    {
+      "id": "f14_betid_bool",
+      "module": "core.order_identity",
+      "area": "reconciliation",
+      "file": "core/order_identity.py",
+      "original": "    if isinstance(value, bool) or value is None:",
+      "mutated": "    if value is None:",
+      "tests": [
+        "tests/acceptance/test_f14_cancel_single_shot.py",
+        "tests/acceptance/test_betid_extractor_unico.py"
+      ],
+      "rationale": "F-14: True letto come betId."
+    },
+    {
+      "id": "f14_place_mixed_failed",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "                    raise RuntimeError(f\"BET_OUTCOME_MIXED: {status}\")",
+      "mutated": "                    raise RuntimeError(f\"BET_FAILED: {status}\")",
+      "tests": [
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py",
+        "tests/acceptance/test_place_bet_senza_esito_catena.py",
+        "tests/acceptance/test_f14_cancel_single_shot.py"
+      ],
+      "rationale": "P1-1: placeOrders FAILURE/PROCESSED_WITH_ERRORS con report non FAILURE letto come rifiuto certo (secondo ordine possibile)."
+    },
+    {
+      "id": "f14_engine_mixed_failed",
+      "module": "core.trading_engine",
+      "area": "ambiguous",
+      "file": "core/trading_engine.py",
+      "original": "        if status in {\"FAILURE\", \"PROCESSED_WITH_ERRORS\"} and (",
+      "mutated": "        if False and (",
+      "tests": [
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py",
+        "tests/acceptance/test_place_bet_senza_esito_catena.py",
+        "tests/acceptance/test_f14_cancel_single_shot.py"
+      ],
+      "rationale": "P1-1: corpo grezzo con esito misto letto come rifiuto certo dall'engine."
+    },
+    {
+      "id": "f14_place_success_mixed_reports_rejected",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "            if non_riusciti and (riusciti or any(st == \"TIMEOUT\" for st in report_statuses)):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py",
+        "tests/acceptance/test_place_bet_senza_esito_catena.py"
+      ],
+      "rationale": "Sol su #609: status SUCCESS con report discordanti (FAILURE + SUCCESS con betId) letto come rifiuto definitivo, betId scartato."
+    },
+    {
+      "id": "f14_cancel_status_report_conflict_partial",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "        if status not in (\"SUCCESS\", \"FAILURE\", \"PROCESSED_WITH_ERRORS\") or reports_unreadable or in_conflitto:",
+      "mutated": "        if status not in (\"SUCCESS\", \"FAILURE\", \"PROCESSED_WITH_ERRORS\") or reports_unreadable:",
+      "tests": [
+        "tests/acceptance/test_f14_cancel_single_shot.py"
+      ],
+      "rationale": "Grok su #609: status del cancel in conflitto con i report chiuso come PARTIAL, cancellazione confermata senza prova."
+    },
+    {
+      "id": "f14_om_partial_failed",
+      "module": "order_manager",
+      "area": "ambiguous",
+      "file": "order_manager.py",
+      "original": "        if isinstance(response, dict) and str(response.get(\"outcome\") or \"\").upper() in (\"AMBIGUOUS\", \"PARTIAL\"):",
+      "mutated": "        if isinstance(response, dict) and str(response.get(\"outcome\") or \"\").upper() in (\"AMBIGUOUS\",):",
+      "tests": [
+        "tests/acceptance/test_f14_cancel_single_shot.py"
+      ],
+      "rationale": "Grok su #609: PARTIAL del cancel singolo chiude la saga FAILED/CANCEL_REJECTED invece di AMBIGUOUS."
+    },
+    {
+      "id": "f14_place_aping_unexpected_failed",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "                        \"UNEXPECTED_ERROR\",",
+      "mutated": "",
+      "tests": [
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py"
+      ],
+      "rationale": "Sol su #609: API_ERROR APING UNEXPECTED_ERROR sul place letto come rifiuto definitivo (riserva e dedupe liberate)."
+    },
+    {
+      "id": "f14_cancel_unknown_report_ignored",
+      "module": "betfair_client",
+      "area": "ambiguous",
+      "file": "betfair_client.py",
+      "original": "                unknown.append(bid)",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py",
+        "tests/acceptance/test_place_bet_senza_esito_catena.py",
+        "tests/acceptance/test_f14_cancel_single_shot.py"
+      ],
+      "rationale": "P2-1: report TIMEOUT del cancel di mercato letto come successo."
     }
   ]
 }

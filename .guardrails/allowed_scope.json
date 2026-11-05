@@ -3442,6 +3442,31 @@
         "tools/teardown_evidence/verify_teardown_evidence.py"
       ],
       "max_files": 14
+    },
+    "d_place_no_outcome_ambiguous": {
+      "description": "Claude D P0 (#586, P0-B integrita' ordini): placeOrders LIVE con risposta 2xx arrivata senza esito (result assente/vuoto, status assente o fuori contratto, report senza status o sconosciuto) => order_unknown/AMBIGUOUS + riconciliazione, mai FAILED definitivo che libera tavolo, riserva e chiave anti-duplicato. Rifiuti dichiarati da Betfair invariati. Estensione dichiarata dello scope (owner 04/11/2026, verifica betId): core/trading_engine.py persiste la risposta del broker sulla riga AMBIGUOUS, cosi' un betId gia' assegnato resta attribuibile al settlement. Estensione dichiarata (scheda F-14, mandato owner 05/11/2026): cancel single-shot con esito AMBIGUOUS e report per istruzione (client e OrderManager), estrattore unico del betId per identita' del bot e riconciliazione, voci f14_* nel catalogo mutazioni. Estensione dichiarata (NIT-3 della revisione Claude B, 05/11/2026): `matched_confirmed` nell'esito di OrderRouter (matched di un esito ignoto non confermato). Estensione dichiarata (aggiunta owner al NIT-3, 05/11/2026): prova end-to-end che il matched non confermato non entra in P&L, esposizione, riserve e cassa (harness F-026, modalita' mixed_diag).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "betfair_client.py",
+        "core/microstake_live_port.py",
+        "core/order_identity.py",
+        "core/order_router.py",
+        "core/runtime_controller.py",
+        "core/trading_engine.py",
+        "database.py",
+        "docs/trading_engine_executor_contract.md",
+        "guardrails/mutation_catalog.json",
+        "order_manager.py",
+        "tests/acceptance/test_betid_extractor_unico.py",
+        "tests/acceptance/test_f14_cancel_single_shot.py",
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py",
+        "tests/acceptance/test_place_bet_senza_esito_catena.py",
+        "tests/f026/child_f026.py",
+        "tests/f026/test_f14_matched_non_confermato.py"
+      ],
+      "max_files": 18
     }
   }
 }

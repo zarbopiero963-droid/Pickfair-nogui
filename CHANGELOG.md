@@ -24,6 +24,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   Nessun segreto e nessun accesso alla VPS per Claude B. Documentazione: `docs/test_automation.md`.
 
+### Fixed
+- **F-14 (#586): cancel single-shot, esito ignoto = AMBIGUOUS, report per istruzione.** `BetfairClient.cancel_orders`
+  invia `cancelOrders` una sola volta; timeout/rete/5xx/risposta illeggibile/`status` assente => `outcome`
+  `AMBIGUOUS` (mai FAILED), ogni `betId` richiesto verificato sul proprio report, `cancelled_count` solo SUCCESS.
+  `OrderManager.cancel_order` porta la saga in AMBIGUOUS invece di FAILED. Un solo estrattore del `betId`
+  (`core.order_identity.response_bet_id`) per identita' del bot e riconciliazione; `betId` in conflitto => nessuna
+  identita' (riconciliazione). Documentazione: `docs/trading_engine_executor_contract.md` §2 e §2-bis.
+  Revisione Claude B (05/11/2026): `placeOrders` con status `FAILURE`/`PROCESSED_WITH_ERRORS` e almeno un report
+  non `FAILURE` => AMBIGUOUS (client e engine, P1-1); cancel di mercato con report `TIMEOUT` => AMBIGUOUS (P2-1).
+
 ### Changed
 - **Governance: verificatore dell'evidenza di teardown del PRE-LIVE (PF-TEARDOWN-EVIDENCE-01, #608):**
   `tools/teardown_evidence/verify_teardown_evidence.py` verifica da GitHub, per ogni run VPS del PRE-LIVE, le evidenze
@@ -66,6 +76,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Nessuna attestazione storica viene riscritta. `docs/review_attestation.md` aggiornato.
 
 ### Fixed
+- **P0 placeOrders senza esito (#586, P0-B, audit Claude D 04/11/2026):** una risposta LIVE 2xx arrivata dopo
+  l'invio ma senza esito leggibile (JSON-RPC senza `result`/`error`, `result` vuoto o senza `status`, `status` fuori
+  da `SUCCESS`/`FAILURE`/`PROCESSED_WITH_ERRORS`/`TIMEOUT`, instruction report senza `status` anche con `betId`)
+  veniva chiusa `FAILED` definitivo: zero riconciliazioni e rilascio di tavolo, riserva e chiave anti-duplicato con
+  l'ordine forse vivo sull'exchange. Ora `BetfairClient.place_bet` la marca `order_unknown` ⇒ `AMBIGUOUS` +
+  riconciliazione, mai retry. I rifiuti dichiarati da Betfair restano `FAILED`. Se la risposta ambigua porta gia' un
+  `betId`, la riga AMBIGUOUS lo conserva (`response_json`): il settlement di quella bet resta attribuibile al suo
+  intento invece di bloccare il tavolo per sempre. Test
+  `tests/acceptance/test_place_bet_risposta_senza_esito.py` e `test_place_bet_senza_esito_catena.py` (RED su
+  `ada4076`, 14/14 mutanti uccisi);
+  `docs/trading_engine_executor_contract.md` aggiornato.
 - **CB-586-FI-03Z (#586, P1):** il broker SIM abbinava ordini contro livelli del book con size 0. Esempio: un LAY
   0,10@3.0 risultava abbinato a 2.02 su un book senza liquidità, con un matched finto e un'esposizione abbinata
   inventata. Ora un livello con size esplicita ≤ 0 è assente, come il delta Betfair che lo rimuove, e il migliore è il

@@ -103,10 +103,13 @@ _STATUS_TO_OUTCOME: Dict[str, str] = {
 
 class ExecutionError(Exception):
     def __init__(self, message: str, *, error_type: str = ERROR_PERMANENT,
-                 ambiguity_reason: Optional[str] = None) -> None:
+                 ambiguity_reason: Optional[str] = None, response: Optional[Any] = None) -> None:
         super().__init__(message)
         self.error_type = error_type
         self.ambiguity_reason = ambiguity_reason
+        # Risposta del broker che ha prodotto l'esito ignoto: persistita sulla riga AMBIGUOUS (un `betId` gia'
+        # assegnato e' l'identita' dell'ordine per settlement e riconciliazione).
+        self.response = response
 
 
 class _ErrorePrimaDellInvio(RuntimeError):
@@ -1389,6 +1392,19 @@ class TradingEngine:
                         reports.append(report)
         return reports
 
+    @staticmethod
+    def _raw_instruction_reports(response: Dict[str, Any]) -> list:
+        """Come ``_instruction_reports`` ma senza scartare le voci illeggibili: servono a decidere se un rifiuto e'
+        provato (una voce non oggetto non e' un FAILURE dichiarato)."""
+        reports: list = []
+        for container in (response, response.get("result"), response.get("raw")):
+            if not isinstance(container, dict) or container.get("instructionReports") is None:
+                continue
+            value = container["instructionReports"]
+            # campo presente ma non lista: una voce illeggibile (mai un FAILURE dichiarato)
+            reports.extend(value if isinstance(value, list) else [None])
+        return reports
+
     @classmethod
     def _response_bet_ids(cls, response: Dict[str, Any]) -> list:
         """Identita' d'ordine esplicite nelle shape broker supportate."""
@@ -1430,6 +1446,7 @@ class TradingEngine:
                 f"DOWNSTREAM_AMBIGUOUS_RESPONSE:{response}",
                 error_type=ERROR_AMBIGUOUS,
                 ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+                response=response,
             )
 
         # #545: il broker SIM ha eseguito l'operazione in memoria ma NON ha scritto lo snapshot di reload: un
@@ -1443,6 +1460,32 @@ class TradingEngine:
                 f"SIM_SNAPSHOT_NOT_PERSISTED:{response.get('status')}",
                 error_type=ERROR_AMBIGUOUS,
                 ambiguity_reason=AMBIGUITY_PERSISTED_NOT_CONFIRMED,
+            )
+
+        # P1-1 (revisione Claude B, 05/11/2026): status FAILURE/PROCESSED_WITH_ERRORS con almeno un report che non e'
+        # FAILURE (SUCCESS con betId, TIMEOUT, senza status) non prova il rifiuto: l'ordine puo' esistere => AMBIGUOUS.
+        # Sol su #609: i report si leggono GREZZI (un report illeggibile non e' un FAILURE) e PROCESSED_WITH_ERRORS senza
+        # report non prova il fallimento dell'istruzione.
+        raw_reports = self._raw_instruction_reports(response)
+        if status in {"FAILURE", "PROCESSED_WITH_ERRORS"} and (
+                any(not isinstance(r, dict) or str(r.get("status") or "").upper() != "FAILURE" for r in raw_reports)
+                or (status == "PROCESSED_WITH_ERRORS" and not raw_reports)):
+            raise ExecutionError(
+                f"DOWNSTREAM_MIXED_OUTCOME:{response}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+                response=response,
+            )
+
+        # TIMEOUT dichiarato (status o report di istruzione) in un corpo grezzo: Betfair stesso non sa se l'ordine e'
+        # passato => AMBIGUOUS, mai un successo senza identita' ne' un rifiuto (sweep dopo il rilievo di Sol su #609).
+        if status == "TIMEOUT" or any(isinstance(r, dict) and str(r.get("status") or "").upper() == "TIMEOUT"
+                                      for r in raw_reports):
+            raise ExecutionError(
+                f"DOWNSTREAM_TIMEOUT_OUTCOME:{response}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+                response=response,
             )
 
         semantic_failure = (
@@ -1487,7 +1530,8 @@ class TradingEngine:
     def _resolve_ambiguity(self, ctx: _ExecutionContext, audit: Dict[str, Any],
                            order_id: Any, *, ambiguity_reason: str,
                            trigger_event: str, trigger_error: str,
-                           extra_fields: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                           extra_fields: Optional[Dict[str, Any]] = None,
+                           response: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         self._assert_valid_ctx(ctx)
         self._metric_inc("quick_bet_ambiguous_total")
         logger.error("Ambiguity: %s – %s", trigger_event, trigger_error)
@@ -1516,7 +1560,7 @@ class TradingEngine:
             return self._complete_order_lifecycle(
                 ctx, audit, order_id=order_id,
                 status=STATUS_AMBIGUOUS, ambiguity_reason=ambiguity_reason,
-                extra_fields=extra_fields)
+                response=response, extra_fields=extra_fields)
         except Exception as exc:
             logger.exception("Finalize AMBIGUOUS fallito per order_id=%s: resta AMBIGUOUS", order_id)
             return self._build_degraded_ambiguous_result(ctx, audit, order_id, ambiguity_reason,
@@ -1577,10 +1621,12 @@ class TradingEngine:
             error_type = ERROR_PERMANENT
 
         if error_type == ERROR_AMBIGUOUS:
+            risposta = getattr(exc, "response", None)
             return self._resolve_ambiguity(ctx, audit, order_id,
                                            ambiguity_reason=ambiguity_reason or AMBIGUITY_SUBMIT_UNKNOWN,
                                            trigger_event="SUBMIT_AMBIGUOUS", trigger_error=str(exc),
-                                           extra_fields=extra_fields)
+                                           extra_fields=extra_fields,
+                                           response=risposta if isinstance(risposta, dict) else None)
 
         payload = {"order_id": order_id, "error": str(exc), "error_type": error_type}
         # #524: rifiuto gia' classificato certo. Se il finalize solleva dopo, l'except esterno resta sul FAILED

@@ -178,3 +178,40 @@ def signal_identity_material(signal: Mapping[str, Any]) -> dict[str, Any]:
     if chat_id is None:
         chat_id = signal.get("chat_id")
     return {"message": stripped, "chat_id": chat_id}
+
+
+def _bet_id_text(value: Any) -> str:
+    if isinstance(value, bool) or value is None:
+        return ""
+    if isinstance(value, (str, int)):
+        return str(value).strip()
+    return ""
+
+
+def response_bet_id(response: Any) -> str:
+    """F-14 (#586): ``betId`` della risposta d'ordine persistita in ``orders.response_json``; UNICO estrattore per
+    l'identita' del bot (cashout, F-04) e per la riconciliazione all'avvio.
+
+    Raccoglie il betId diretto (``betId``/``bet_id``) e quello di OGNI ``instructionReports`` al livello top e sotto
+    ``result``/``raw`` (forme del broker SIM, di ``BetfairClient.place_bet`` e di ``OrderRouter``). Un solo valore
+    distinto => quello; nessuno o piu' di uno (risposta a piu' istruzioni, betId diretto diverso dal report) => ``""``:
+    una riga con identita' non univoca non viene attribuita a nessun betId e resta alla riconciliazione.
+    """
+    if not isinstance(response, dict):
+        return ""
+    found = set()
+    for container in (response, response.get("result"), response.get("raw")):
+        if not isinstance(container, dict):
+            continue
+        for key in ("betId", "bet_id"):
+            text = _bet_id_text(container.get(key))
+            if text:
+                found.add(text)
+        reports = container.get("instructionReports")
+        for report in reports if isinstance(reports, list) else []:
+            if isinstance(report, dict):
+                for key in ("betId", "bet_id"):
+                    text = _bet_id_text(report.get(key))
+                    if text:
+                        found.add(text)
+    return next(iter(found)) if len(found) == 1 else ""
