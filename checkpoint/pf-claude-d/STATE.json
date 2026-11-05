@@ -1,10 +1,10 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 2,
+ "seq": 3,
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "previous_checkpoint_sha": "906fc1ead69fad6c0131ef967e09fbc8c2d0d194",
- "updated_at": "2026-11-05T14:21:42Z",
+ "previous_checkpoint_sha": "4db36b888293b6f6a030fed8d53a969c0a3ca6ca",
+ "updated_at": "2026-11-05T14:22:51Z",
  "agent": {
   "identity": "claude-d",
   "role": "motore finanziario Pickfair (Claude D)",
@@ -114,9 +114,10 @@
   "F-R06 v1 (d2eb5d2)",
   "market-book-age",
   "F-R06 hardening pubblicato (1d8ca01)",
-  "catena di checkpoint pf-claude-d: seq 1 DURABLE, ripristino READY da clone nuovo"
+  "catena di checkpoint pf-claude-d: seq 1 DURABLE, ripristino READY da clone nuovo",
+  "caso sintetico squash+branch cancellato consegnato a Claude B (RED riprodotto: LATEST_CHECKPOINT_CORRUPT)"
  ],
- "next_atomic_action": "preparare in locale il caso sintetico squash+branch cancellato per l'hardening di pfckpt.py (Claude B) e mandargli percorso/SHA",
+ "next_atomic_action": "attendere: (1) apertura PR F-16 dopo #609 (Claude B); (2) hardening pfckpt di Claude B da verificare con il caso sintetico e con questa catena; nel frattempo sviluppo offline G7",
  "dependencies": {
   "F-04": "F-02 su main (Claude B)",
   "F-03": "F-02 + F-04",
@@ -205,9 +206,13 @@
   "#586 c.6658423247",
   "#586 c.6658460135",
   "PR #609",
-  "#586 c.6660335325"
+  "#586 c.6660335325",
+  "#586 c.6660379402"
  ],
  "gate_a": "NOT APPLICABLE (Claude D)",
  "pr_505": "non toccata",
- "certification_verdict": "NOT VERIFIED"
+ "certification_verdict": "NOT VERIFIED",
+ "handoffs": [
+  "pfab-d-20261105-ckpt-squash-case-001 (caso sintetico + script a Claude B)"
+ ]
 }

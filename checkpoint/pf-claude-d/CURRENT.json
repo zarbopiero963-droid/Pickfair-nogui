@@ -6,8 +6,8 @@
   "sha": "82669be69f490c1ae2572f5da09c7e05b2eca231"
  },
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "next_atomic_action": "preparare in locale il caso sintetico squash+branch cancellato per l'hardening di pfckpt.py (Claude B) e mandargli percorso/SHA",
- "previous_checkpoint_sha": "906fc1ead69fad6c0131ef967e09fbc8c2d0d194",
+ "next_atomic_action": "attendere: (1) apertura PR F-16 dopo #609 (Claude B); (2) hardening pfckpt di Claude B da verificare con il caso sintetico e con questa catena; nel frattempo sviluppo offline G7",
+ "previous_checkpoint_sha": "4db36b888293b6f6a030fed8d53a969c0a3ca6ca",
  "schema": "pf-current/1",
- "seq": 2
+ "seq": 3
 }
