@@ -101,7 +101,16 @@ def test_enum_as_plain_string_and_negative_values(runtime: RuntimeController) ->
 
 def test_missing_field_is_invalid(runtime: RuntimeController) -> None:
     del runtime.config.__dict__["min_stake"]
-    assert settings(config_view(runtime))["min_stake"]["state"] == "INVALID"
+    del runtime.config.__dict__["max_win"]  # opzionale MANCANTE: illeggibile, non «non configurato»
+    s = settings(config_view(runtime))
+    assert s["min_stake"]["state"] == "INVALID" and s["max_win"]["state"] == "INVALID"
+
+
+def test_bool_is_never_an_int(runtime: RuntimeController) -> None:
+    runtime.config.table_count = True
+    runtime.config.max_recovery_tables = False
+    s = settings(config_view(runtime))
+    assert s["table_count"]["state"] == "INVALID" and s["max_recovery_tables"]["state"] == "INVALID"
 
 
 def test_config_absent_or_unreadable(runtime: RuntimeController) -> None:
