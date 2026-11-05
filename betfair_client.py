@@ -54,7 +54,19 @@ _CUSTOMER_REF_RE = re.compile(r"[A-Za-z0-9\-._+*:;~]{1,32}")
 #: POST e' partito, quindi l'esito e' ignoto (`order_unknown`), mai FAILED.
 _RISPOSTA_ILLEGGIBILE_DOPO_L_INVIO = frozenset({
     "INVALID_JSON", "INVALID_JSON_RPC", "BET_NO_REPORT",
+    # Risposta arrivata senza esito leggibile (P0 audit Claude D 04/11/2026): confronto sul CODICE prima dei
+    # due punti, mai per sottostringa del dettaglio.
+    "BET_STATUS_UNRECOGNIZED", "BET_REPORT_STATUS_UNRECOGNIZED",
+    # Status FAILURE/PROCESSED_WITH_ERRORS con almeno un report non FAILURE (P1-1, revisione Claude B 05/11/2026).
+    "BET_OUTCOME_MIXED",
 })
+
+#: Gli `ExecutionReportStatus` di `placeOrders` (contratto Betfair). Uno status fuori da qui non e' un rifiuto
+#: dichiarato: esito ignoto. FAILURE / PROCESSED_WITH_ERRORS restano rifiuti, TIMEOUT resta ignoto.
+_STATUS_PLACE_RICONOSCIUTI = frozenset({"SUCCESS", "FAILURE", "PROCESSED_WITH_ERRORS", "TIMEOUT"})
+
+#: Gli `InstructionReportStatus` di `placeOrders` (`PLACED` tollerato per compatibilita' con le forme normalizzate).
+_STATUS_REPORT_RICONOSCIUTI = frozenset({"SUCCESS", "PLACED", "FAILURE", "TIMEOUT"})
 
 #: I soli lati che `placeOrders` accetta. Un valore fuori da qui e' un errore
 #: PRIMA dell'invio (`INVALID_SIDE`), mai un BACK di ripiego.
@@ -1691,6 +1703,7 @@ class BetfairClient:
         if ref:
             params["customerRef"] = ref
 
+        result: Any = None
         try:
             result = self._post_jsonrpc(
                 self.BETTING_URL,
@@ -1706,6 +1719,29 @@ class BetfairClient:
             status = str(result.get("status") or "").upper()
             reports = result.get("instructionReports") or []
 
+            # Risposta ARRIVATA ma senza esito (P0, audit Claude D 04/11/2026): JSON-RPC senza `result`/`error`,
+            # `result` vuoto o senza `status`, oppure uno `status` fuori dal contratto ExecutionReportStatus.
+            # Il POST e' partito e Betfair non ha detto FAILURE: l'ordine PUO' esistere (anche con betId nel
+            # report). Mai un rifiuto definitivo, che libererebbe tavolo, riserva e chiave anti-duplicato.
+            if status not in _STATUS_PLACE_RICONOSCIUTI:
+                raise RuntimeError(f"BET_STATUS_UNRECOGNIZED: {status or '<assente>'}")
+            # Report malformati (campo non lista, voce non oggetto) non dicono l'esito: esito ignoto, mai un
+            # AttributeError fuori da place_bet (sweep dopo il rilievo di Sol su #609).
+            if (result.get("instructionReports") is not None and not isinstance(result.get("instructionReports"), list)) \
+                    or any(not isinstance(r, dict) for r in reports if status == "SUCCESS"):
+                raise RuntimeError("BET_REPORT_STATUS_UNRECOGNIZED: instructionReports illeggibili")
+
+            if status in ("FAILURE", "PROCESSED_WITH_ERRORS"):
+                # P1-1 (revisione Claude B, 05/11/2026): il rifiuto e' certo solo se nessun report dice altro. Un
+                # report non FAILURE (SUCCESS con betId, TIMEOUT, senza status) => l'ordine puo' esistere: esito
+                # ignoto con la risposta conservata, mai un FAILED che libererebbe tavolo, riserva e chiave.
+                mixed = [r for r in reports if not isinstance(r, dict)
+                         or str(r.get("status") or "").upper() != "FAILURE"]
+                # Sol su #609: PROCESSED_WITH_ERRORS senza report non prova il fallimento dell'istruzione (solo FAILURE
+                # dichiara il rifiuto dell'intera richiesta): esito ignoto, mai un FAILED che libera riserva e dedupe.
+                if mixed or (status == "PROCESSED_WITH_ERRORS" and not reports):
+                    raise RuntimeError(f"BET_OUTCOME_MIXED: {status}")
+
             if status != "SUCCESS":
                 # errorCode nel testo => la classificazione order_unknown sotto puo'
                 # riconoscere DUPLICATE_TRANSACTION (dedup customerRef, #PR-C/#452):
@@ -1716,9 +1752,21 @@ class BetfairClient:
             if not reports:
                 raise RuntimeError("BET_NO_REPORT")
 
-            for report in reports:
-                if str(report.get("status") or "").upper() not in {"SUCCESS", "PLACED"}:
-                    raise RuntimeError(f"BET_REJECTED: {report}")
+            # Tutti i report si valutano PRIMA di decidere (rilievo di Sol su #609): un FAILURE seguito da un SUCCESS
+            # con betId non e' un rifiuto, e il primo report non puo' scartare gli altri.
+            report_statuses = [str(report.get("status") or "").upper() for report in reports]
+            # Un report senza status o con uno status sconosciuto non prova nulla: esito ignoto.
+            ignoti = [st for st in report_statuses if st not in _STATUS_REPORT_RICONOSCIUTI]
+            if ignoti:
+                raise RuntimeError(f"BET_REPORT_STATUS_UNRECOGNIZED: {ignoti[0] or '<assente>'}")
+            riusciti = [st for st in report_statuses if st in {"SUCCESS", "PLACED"}]
+            non_riusciti = [rep for rep, st in zip(reports, report_statuses) if st not in {"SUCCESS", "PLACED"}]
+            # Rifiuto certo SOLO se ogni report e' FAILURE. Un report riuscito o un TIMEOUT in qualsiasi posizione
+            # (rilievo di Sol su #609: [FAILURE, TIMEOUT]) rende l'esito ignoto.
+            if non_riusciti and (riusciti or any(st == "TIMEOUT" for st in report_statuses)):
+                raise RuntimeError(f"BET_OUTCOME_MIXED: {status}")
+            if non_riusciti:
+                raise RuntimeError(f"BET_REJECTED: {non_riusciti[0]}")
 
             return {
                 "ok": True,
@@ -1728,7 +1776,7 @@ class BetfairClient:
         except RuntimeError as exc:
             error_text = str(exc)
             error_upper = error_text.upper()
-            return {
+            esito = {
                 "ok": False,
                 "error": error_text,
                 "classification": self._classify_error(error_text),
@@ -1749,9 +1797,18 @@ class BetfairClient:
                     for marker in (
                         "TIMEOUT", "NETWORK_ERROR", "HTTP_5", "UNKNOWN_ERROR",
                         "DUPLICATE_TRANSACTION",
+                        # eccezione APING che non prova il mancato piazzamento (rilievo di Sol su #609, come il cancel);
+                        # TIMEOUT_ERROR e' gia' coperto da "TIMEOUT"
+                        "UNEXPECTED_ERROR",
                     )
-                ) or error_text in _RISPOSTA_ILLEGGIBILE_DOPO_L_INVIO,
+                ) or error_text.split(":", 1)[0].strip() in _RISPOSTA_ILLEGGIBILE_DOPO_L_INVIO,
             }
+            # Esito ignoto con una risposta arrivata: la risposta grezza resta nell'esito, perche' un `betId` gia'
+            # assegnato da Betfair e' l'unica identita' certa dell'ordine (settlement e riconciliazione per bet).
+            # Mai su un rifiuto dichiarato: non serve e non deve sembrare un ordine.
+            if esito["order_unknown"] and isinstance(result, dict) and result:
+                esito["result"] = result
+            return esito
 
     # =========================================================
     # ORDERS – CANCEL
@@ -1780,7 +1837,10 @@ class BetfairClient:
             if bet_ids else []
         )
 
+        requested = [i["betId"] for i in instructions]
         try:
+            # F-14 (#586): un solo invio. Un timeout o una risposta persa non provano che il cancel non sia avvenuto:
+            # esito AMBIGUOUS, riconciliazione per bet_id, mai un secondo POST.
             result = self._post_jsonrpc(
                 self.BETTING_URL,
                 "SportsAPING/v1.0/cancelOrders",
@@ -1788,31 +1848,100 @@ class BetfairClient:
                     "marketId": market_id_s,
                     "instructions": instructions,
                 },
+                single_shot=True,
             )
-
-            status = str(result.get("status") or "").upper()
-            reports = result.get("instructionReports") or []
-
-            if status == "FAILURE":
-                err = str(result.get("errorCode") or "UNKNOWN")
-                raise RuntimeError(f"CANCEL_FAILED: {err}")
-
-            return {
-                "ok": True,
-                "market_id": market_id_s,
-                "status": status or "SUCCESS",
-                "cancelled_count": len(reports),
-                "result": result,
-            }
-
         except RuntimeError as exc:
             error_text = str(exc)
             return {
                 "ok": False,
                 "market_id": market_id_s,
                 "error": error_text,
+                "outcome": "AMBIGUOUS" if self._cancel_outcome_unknown(error_text) else "FAILED",
+                "bet_ids": requested,
                 "classification": self._classify_error(error_text),
             }
+        return self._cancel_result(market_id_s, requested, result)
+
+    @staticmethod
+    def _cancel_outcome_unknown(error_text: str) -> bool:
+        """F-14: errore dopo che la richiesta potrebbe essere arrivata (timeout, rete, 5xx, risposta illeggibile)."""
+        e = str(error_text or "").upper()
+        if e.startswith("API_ERROR"):
+            # Eccezioni APING che NON provano il mancato cancel (rilievo di Sol su #609): Betfair ha ricevuto la
+            # richiesta ma non sa dire se l'ha eseguita. Gli altri codici (input, quota, accesso, servizio occupato)
+            # sono rifiuti dichiarati prima dell'esecuzione: FAILED invariato.
+            return any(k in e for k in ("TIMEOUT_ERROR", "UNEXPECTED_ERROR"))
+        if not e.startswith("REQUEST_FAILED") and "INVALID_JSON" not in e:
+            return False                     # non inviata (NOT_AUTHENTICATED, breaker) o rifiutata (sessione)
+        return any(k in e for k in ("TIMEOUT", "NETWORK_ERROR", "HTTP_5", "UNKNOWN_ERROR", "INVALID_JSON"))
+
+    @staticmethod
+    def _cancel_result(market_id_s: str, requested: List[str], result: Any) -> Dict[str, Any]:
+        """F-14: esito verificato PER ISTRUZIONE. ``ok`` solo se lo status complessivo e' SUCCESS e ogni bet_id
+        richiesto ha il suo report SUCCESS; ``cancelled_count`` conta solo i report SUCCESS. Status assente o
+        illeggibile => AMBIGUOUS (la risposta e' arrivata ma non dice l'esito)."""
+        result = result if isinstance(result, dict) else {}
+        status = str(result.get("status") or "").strip().upper()
+        raw_reports = result.get("instructionReports")
+        # Campo presente ma non lista (rilievo di Sol su #609): i report ci sono ma sono illeggibili, esito ignoto.
+        reports_unreadable = raw_reports is not None and not isinstance(raw_reports, list)
+        reports = list(raw_reports) if isinstance(raw_reports, list) else []
+        cancelled: List[str] = []
+        failed: List[str] = []
+        unknown: List[str] = []
+        # Betfair: un report per istruzione, nello stesso ordine. Il confronto usa TUTTI i report, anche quelli
+        # illeggibili (rilievo di Sol su #609): scartarli prima farebbe attribuire per posizione un report superstite.
+        positional = len(reports) == len(requested)
+        for idx, r in enumerate(reports):
+            if not isinstance(r, dict):
+                unknown.append(requested[idx] if positional else "")   # report illeggibile: esito ignoto
+                continue
+            instr = r.get("instruction") if isinstance(r.get("instruction"), dict) else {}
+            bid = str(instr.get("betId") or r.get("betId") or (requested[idx] if positional else "")).strip()
+            report_status = str(r.get("status") or "").strip().upper()
+            if report_status == "SUCCESS":
+                cancelled.append(bid)
+            elif report_status == "FAILURE":
+                failed.append(bid)
+            else:
+                # TIMEOUT o stato ignoto per l'istruzione: esito non noto (AMBIGUOUS), anche nel cancel di tutto il
+                # mercato senza betId richiesti (P2-1, revisione Claude B 05/11/2026)
+                unknown.append(bid)
+        missing = [b for b in requested if b not in cancelled and b not in failed]
+        # PROCESSED_WITH_ERRORS senza report non esclude un'esecuzione parziale (rilievo di Sol su #609).
+        uncertain = bool(missing or unknown or reports_unreadable
+                         or (status == "PROCESSED_WITH_ERRORS" and not reports))
+        # Status complessivo in conflitto con i report (rilievo di Grok su #609): FAILURE con un report SUCCESS,
+        # PROCESSED_WITH_ERRORS senza alcun errore, SUCCESS con un report FAILURE. Nessuna delle due fonti prova
+        # l'esito: AMBIGUOUS, mai un PARTIAL che confermi cancellazioni non provate.
+        in_conflitto = ((status == "FAILURE" and bool(cancelled))
+                        or (status == "PROCESSED_WITH_ERRORS" and bool(reports) and not failed and not unknown)
+                        or (status == "SUCCESS" and bool(failed)))
+        if status not in ("SUCCESS", "FAILURE", "PROCESSED_WITH_ERRORS") or reports_unreadable or in_conflitto:
+            outcome = "AMBIGUOUS"
+        elif not cancelled and not unknown and (
+                status == "FAILURE" or (status == "PROCESSED_WITH_ERRORS" and reports and not missing)):
+            outcome = "FAILED"                # rifiuto certo: Betfair dichiara che nessuna istruzione e' eseguita
+        elif status == "SUCCESS" and not failed and not uncertain:
+            outcome = "SUCCESS"
+        else:
+            outcome = "AMBIGUOUS" if uncertain else "PARTIAL"
+        out: Dict[str, Any] = {
+            "ok": outcome == "SUCCESS",
+            "market_id": market_id_s,
+            "status": status or "UNKNOWN",
+            "outcome": outcome,
+            "cancelled_count": len(cancelled),
+            "cancelled_bet_ids": [b for b in cancelled if b],
+            "failed_bet_ids": [b for b in failed if b],
+            "bet_ids": list(requested),
+            "result": result,
+        }
+        if outcome == "FAILED":
+            out["error"] = f"CANCEL_FAILED: {result.get('errorCode') or 'UNKNOWN'}"
+        elif outcome != "SUCCESS":
+            out["error"] = f"CANCEL_{outcome}"
+        return out
 
     def reduce_order(
         self,
@@ -2244,6 +2373,9 @@ class BetfairClient:
         # that is still live on the exchange would be logged as cancelled
         # (fail-open).
         if isinstance(result, dict) and not result.get("ok"):
+            if str(result.get("outcome") or "").upper() in ("AMBIGUOUS", "PARTIAL"):
+                # F-14: esito non confermato (timeout, report mancante o TIMEOUT per istruzione)
+                raise RuntimeError(f"CANCEL_ORDER_UNCONFIRMED: {result.get('error') or 'UNKNOWN'}")
             raise RuntimeError(
                 f"CANCEL_ORDER_FAILED: {result.get('error') or 'UNKNOWN'}"
             )

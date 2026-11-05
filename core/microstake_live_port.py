@@ -294,7 +294,7 @@ class LiveExchangePort:
 
     def cancel_all_remaining(self, bet_id: str) -> SimOrder:
         """Cancellazione del residuo per il rollback. La PROVA e' la rilettura dell'ordine, non la risposta:
-        `BetfairClient.cancel_orders` torna ok=True anche con l'istruzione fallita (PROCESSED_WITH_ERRORS, report
+        `BetfairClient.cancel_orders` tornava ok=True anche con l'istruzione fallita (prima di F-14; PROCESSED_WITH_ERRORS, report
         FAILURE, TIMEOUT), mandato PF-561-LIVE-MICROSTAKE-P1-HARDENING-01. Residuo ancora positivo =>
         CANCEL_NOT_CONFIRMED; rilettura impossibile => esito ignoto. Mai un secondo invio cieco: se la rilettura
         mostra residuo zero (anche dopo una risposta persa) non si cancella di nuovo."""

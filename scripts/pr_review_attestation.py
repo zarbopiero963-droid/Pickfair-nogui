@@ -427,6 +427,19 @@ class GitHub:
     def run_attempt_conclusion(self, run_id: int, attempt: int) -> Optional[str]:
         return self.json(f"/actions/runs/{run_id}/attempts/{attempt}").get("conclusion")
 
+    def attempt_never_executed(self, run_id: int, attempt: int) -> bool:
+        """True SOLO con la prova che il tentativo non ha eseguito nulla: elenco dei job completo, almeno un job, ogni
+        job ``completed``/``skipped`` con ``steps`` vuoto (job saltato dall'``if:``, come alla riapertura della PR su
+        #606). Qualunque altra forma, o l'API non leggibile, => False: il run resta un esito sconosciuto."""
+        try:
+            data = self.json(f"/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
+            jobs = data.get("jobs")
+            return (isinstance(jobs, list) and 0 < len(jobs) == data.get("total_count")
+                    and all(isinstance(j, dict) and j.get("status") == "completed" and j.get("conclusion") == "skipped"
+                            and j.get("steps") == [] for j in jobs))
+        except Exception:  # noqa: BLE001 - prova non leggibile => nessuna esclusione
+            return False
+
     def attestation_files(self, run_id: int) -> List[bytes]:
         return [raw for _name, raw in self.attestation_artifacts(run_id)]
 
@@ -507,6 +520,10 @@ def verify_pr(gh: GitHub, number: int, verify_signature: Callable[[bytes, str], 
                     if f"review-attestation-{n}" in names:
                         continue
                     concl = run.get("conclusion") if n == latest else gh.run_attempt_conclusion(int(run["id"]), n)
+                    # un tentativo saltato senza eseguire nulla non ha fatto nessuna review: escluso solo con la prova
+                    # dai job di QUEL tentativo (decisione owner su #606), mai sulla sola conclusione del run
+                    if concl == "skipped" and gh.attempt_never_executed(int(run["id"]), n):
+                        continue
                     if concl != "success":
                         unpublished.append(f"RUN_WITHOUT_ATTESTATION:{reviewer}:{run['id']}:{n}")
     except Exception as exc:  # noqa: BLE001 - API non leggibile => non verificabile

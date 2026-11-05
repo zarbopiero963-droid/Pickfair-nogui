@@ -45,6 +45,7 @@ from direct_best_price import SOURCE_FALLBACK_MASTER, resolve_direct_best_price
 from direct_unmatched_ttl import select_expired_unmatched
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from core.order_identity import (
+    response_bet_id,
     derive_customer_ref,
     resolve_customer_ref,
     signal_identity_material,
@@ -5138,18 +5139,8 @@ class RuntimeController:
             # betId nelle forme note: top-level (broker SIM, Betfair grezzo) o annidato
             # sotto result/raw (BetfairClient.place_bet). Prima il nested restava senza
             # identita' e ogni ordine LIVE diventava incerto (rilievo Codex #512).
-            bet_id = ""
-            if isinstance(resp, dict):
-                for container in (resp, resp.get("result"), resp.get("raw")):
-                    if not isinstance(container, dict):
-                        continue
-                    direct = container.get("betId") or container.get("bet_id")
-                    reports = container.get("instructionReports") or []
-                    first = reports[0] if reports and isinstance(reports[0], dict) else {}
-                    found = first.get("betId") or first.get("bet_id") or direct
-                    if found not in (None, ""):
-                        bet_id = str(found)
-                        break
+            # F-14 (#586): stesso estrattore dell'identita' del bot (Database._order_bet_id); betId non univoco => ""
+            bet_id = response_bet_id(resp)
             item = {
                 "customer_ref": str(row.get("customer_ref") or ""),
                 "status": str(row.get("status") or ""),

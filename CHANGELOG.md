@@ -8,7 +8,56 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
+  - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
+  - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;
+  - verifica condivisa con la VPS (`scripts/pf_test_dispatch.py`: richiesta a schema chiuso, catalogo di main,
+    idempotenza persistente, stati QUEUED/RUNNING/PASS/FAIL/BLOCKED/TIMEOUT/CANCELLED/INFRA_ERROR, dove
+    INFRA_ERROR non vale mai PASS);
+  - mappa di copertura dei comportamenti, con inventario Gate A non ancora importato.
+  - corsia development (PF-UNIVERSAL-TEST-AUTONOMY-365-01): `dev:tests/...` esegue i test nuovi della PR allo SHA in
+    una sandbox senza rete né segreti, ripetibile per dispatch, con esito `certification: false`, mai certificativo.
+
+  - isolamento anche per aggregazione: una suite fuori dalla sandbox non esegue percorsi isolati
+    (`AGGREGATE_INCLUDES_ISOLATED`); `full-regression` gira in `SANDBOX_EPHEMERAL`.
+
+  Nessun segreto e nessun accesso alla VPS per Claude B. Documentazione: `docs/test_automation.md`.
+
+### Fixed
+- **F-14 (#586): cancel single-shot, esito ignoto = AMBIGUOUS, report per istruzione.** `BetfairClient.cancel_orders`
+  invia `cancelOrders` una sola volta; timeout/rete/5xx/risposta illeggibile/`status` assente => `outcome`
+  `AMBIGUOUS` (mai FAILED), ogni `betId` richiesto verificato sul proprio report, `cancelled_count` solo SUCCESS.
+  `OrderManager.cancel_order` porta la saga in AMBIGUOUS invece di FAILED. Un solo estrattore del `betId`
+  (`core.order_identity.response_bet_id`) per identita' del bot e riconciliazione; `betId` in conflitto => nessuna
+  identita' (riconciliazione). Documentazione: `docs/trading_engine_executor_contract.md` §2 e §2-bis.
+  Revisione Claude B (05/11/2026): `placeOrders` con status `FAILURE`/`PROCESSED_WITH_ERRORS` e almeno un report
+  non `FAILURE` => AMBIGUOUS (client e engine, P1-1); cancel di mercato con report `TIMEOUT` => AMBIGUOUS (P2-1).
+
 ### Changed
+- **Governance: verificatore dell'evidenza di teardown del PRE-LIVE (PF-TEARDOWN-EVIDENCE-01, #608):**
+  `tools/teardown_evidence/verify_teardown_evidence.py` verifica da GitHub, per ogni run VPS del PRE-LIVE, le evidenze
+  firmate `pf-teardown-evidence/<suite>` pubblicate da pf-orch `1.4.3+teardown-evidence-1` (doppia firma Ed25519 con
+  chiave fissata, legame sha256 manifest/sidecar, build autorizzata, teardown pulito del tipo di unit giusto).
+  Fail-closed; il PASS copre solo il teardown, non la conclusione del PRE-LIVE. Revisioni indipendenti e test di
+  manomissione in `tests/teardown_evidence/`; `docs/review_attestation.md` §3-bis.
+- **Governance: redazione dei reviewer e run di review saltati (decisione owner sulla #606, merge owner):**
+  - la redazione dei segreti dei cinque workflow di review lascia visibili il permesso `id-token: read|write|none`
+    e i riferimenti `${{ ... }}` fatti solo di contesti (`secrets.`, `github.`, `inputs.`...) che occupano tutto
+    il valore. Prima li oscurava, e Sol non poteva certificare il permesso OIDC di `pf-test-request.yml`
+    (VALID_INCONCLUSIVE sulla #606). Ogni altro valore resta redatto. Misurate 59 righe in più visibili su 325.884,
+    tutte di queste due forme;
+  - chiusa una fuga **preesistente**: `password: ${{ 'x' }}` (letterale dentro un'espressione) usciva in chiaro,
+    perché la regola di inizio riga escludeva ogni valore che comincia con `${{`. Ora a inizio riga si redige tutto
+    tranne il riferimento di contesto puro. Fuzz differenziale di oltre 50.000 righe: nessun valore nascosto da main
+    diventa visibile;
+  - il valore consentito deve chiudere la riga o il campo: un commento dopo il permesso o dopo il riferimento, oppure
+    un riferimento quotato non chiuso subito dopo `}}` (`"${{ secrets.X }}, altro"`), restano redatti come su main
+    (rilievi di Sol sulla #608);
+  - `scripts/pr_review_attestation.py` esclude un tentativo `skipped` da `RUN_WITHOUT_ATTESTATION` solo con la
+    prova dall'API dei job (tutti `completed`/`skipped`, nessuno step, elenco completo). Sulla #606 quattro run
+    saltati alla riapertura bloccavano verify-pr senza aver eseguito nulla. Un run ambiguo o non leggibile continua
+    a bloccare. `docs/ai_audit_workflows.md` e `docs/review_attestation.md` aggiornati.
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**
   - se un range precedente di Sol o Grok non è PASS (BLOCKERS, INCONCLUSIVE, ERROR, incompleto), la review della push
     successiva copre l'intera PR `BASE...HEAD` invece del solo delta;
@@ -27,6 +76,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Nessuna attestazione storica viene riscritta. `docs/review_attestation.md` aggiornato.
 
 ### Fixed
+- **P0 placeOrders senza esito (#586, P0-B, audit Claude D 04/11/2026):** una risposta LIVE 2xx arrivata dopo
+  l'invio ma senza esito leggibile (JSON-RPC senza `result`/`error`, `result` vuoto o senza `status`, `status` fuori
+  da `SUCCESS`/`FAILURE`/`PROCESSED_WITH_ERRORS`/`TIMEOUT`, instruction report senza `status` anche con `betId`)
+  veniva chiusa `FAILED` definitivo: zero riconciliazioni e rilascio di tavolo, riserva e chiave anti-duplicato con
+  l'ordine forse vivo sull'exchange. Ora `BetfairClient.place_bet` la marca `order_unknown` ⇒ `AMBIGUOUS` +
+  riconciliazione, mai retry. I rifiuti dichiarati da Betfair restano `FAILED`. Se la risposta ambigua porta gia' un
+  `betId`, la riga AMBIGUOUS lo conserva (`response_json`): il settlement di quella bet resta attribuibile al suo
+  intento invece di bloccare il tavolo per sempre. Test
+  `tests/acceptance/test_place_bet_risposta_senza_esito.py` e `test_place_bet_senza_esito_catena.py` (RED su
+  `ada4076`, 14/14 mutanti uccisi);
+  `docs/trading_engine_executor_contract.md` aggiornato.
+
 - **F-16 (#586, FUNDS-01, P1): freschezza della conferma dei fondi a 30 s (decisione owner PF-LIVE-FUNDS-THRESHOLD-01,
   #426 c.6162806642).** Il gate fondi d'ingresso ammetteva letture fino a 120 s (TTL tecnico delle tracce delle
   riserve) e saltava il controllo con `read_at` assente. Ora `RuntimeController.LIVE_FUNDS_MAX_AGE_S = 30`, orologio
