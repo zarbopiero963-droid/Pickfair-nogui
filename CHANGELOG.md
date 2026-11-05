@@ -8,6 +8,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
+  - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
+  - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;
+  - verifica condivisa con la VPS (`scripts/pf_test_dispatch.py`: richiesta a schema chiuso, catalogo di main,
+    idempotenza persistente, stati QUEUED/RUNNING/PASS/FAIL/BLOCKED/TIMEOUT/CANCELLED/INFRA_ERROR, dove
+    INFRA_ERROR non vale mai PASS);
+  - mappa di copertura dei comportamenti, con inventario Gate A non ancora importato.
+  - corsia development (PF-UNIVERSAL-TEST-AUTONOMY-365-01): `dev:tests/...` esegue i test nuovi della PR allo SHA in
+    una sandbox senza rete né segreti, ripetibile per dispatch, con esito `certification: false`, mai certificativo.
+
+  - isolamento anche per aggregazione: una suite fuori dalla sandbox non esegue percorsi isolati
+    (`AGGREGATE_INCLUDES_ISOLATED`); `full-regression` gira in `SANDBOX_EPHEMERAL`.
+
+  Nessun segreto e nessun accesso alla VPS per Claude B. Documentazione: `docs/test_automation.md`.
+
 ### Changed
 - **Governance: verificatore dell'evidenza di teardown del PRE-LIVE (PF-TEARDOWN-EVIDENCE-01, #608):**
   `tools/teardown_evidence/verify_teardown_evidence.py` verifica da GitHub, per ogni run VPS del PRE-LIVE, le evidenze
