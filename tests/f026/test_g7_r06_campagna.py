@@ -4,14 +4,17 @@ HeadlessApp reale, exchange SIM. Ingresso con risposta persa dopo l'invio (riga 
 - PASS atteso: prima del settlement la riserva resta trattenuta; il settlement dell'exchange (prova) la chiude per
   identita' (`customerOrderRef`) e contabilizza il P&L confermato;
 - DIFETTO NOTO (xfail strict): dopo un riavvio la ricostruzione F018 ricrea la riserva dell'AMBIGUOUS gia' regolato
-  (riga mai finalizzata). Correzione proposta sul branch `claude/d-g7-r06-settled-ambiguous`: quando sara' su main
-  questo xfail diventa XPASS e va rimosso.
+  (riga mai finalizzata). Correzione sul branch `claude/d-g7-r06-settled-ambiguous` (`Database.settled_customer_refs`):
+  l'xfail vale solo dove la correzione manca; con la correzione presente il test deve passare (nessun XPASS silenzioso).
 """
 from __future__ import annotations
 
 import pytest
 
+from database import Database
 from tests.f026.test_f026_financial import describe, run
+
+R06_FIX = hasattr(Database, "settled_customer_refs")
 
 pytestmark = pytest.mark.integration
 
@@ -38,7 +41,7 @@ def test_r06_chiusura_solo_con_la_prova_dell_exchange(corsa) -> None:
     assert M not in _tables(dopo) and dopo["realized"] > 0, describe(dopo)
 
 
-@pytest.mark.xfail(strict=True, reason="difetto G7-R06: al riavvio F018 ricrea la riserva di un AMBIGUOUS gia' "
+@pytest.mark.xfail(not R06_FIX, strict=True, reason="difetto G7-R06: al riavvio F018 ricrea la riserva di un AMBIGUOUS gia' "
                                        "regolato; correzione su claude/d-g7-r06-settled-ambiguous")
 def test_r06_dopo_il_riavvio_nessuna_riserva_fantasma(corsa) -> None:
     _r1, r2 = corsa
