@@ -1,8 +1,16 @@
-# HANDOFF Claude B — seq 18 (05/11/2026)
+# HANDOFF Claude B — seq 19 (05/11/2026)
 
-- **Unica PR aperta:** #609 F-14, branch `claude/pickfair-core-audit-slu9su` @ `69765cff`, fix loop 1/10. Gate in corso.
-- **Merge:** governance vigente. Il messaggio owner PF-AUTO-MERGE-ALL-01 del 05/11 è contraddittorio (contiene sia l'autorizzazione al merge autonomo sia «nessun merge autonomo»): non applicato finché non viene chiarito.
-- **Dopo #609:** F-16 (head D `64e965b`, delta da verificare), poi la corsia finanziaria della roadmap.
-- **Collaudo 360°:** roadmap su `pf-gov-persistent-roadmap-01:docs/roadmap/pf_universal_360_testing.md`. Kit G1–G2 e campagna G7 solo offline; nessun deploy VPS.
-- **Lacuna:** il checkpoint seq 17 puntava a uno SHA cancellato dopo lo squash merge; vedi `checkpoint_gap_20261105` in STATE.json.
+- **Unica PR aperta:** #609 F-14 @ `1b2b5024`, fix 7/10.
+- **Verdetto:** OWNER_DECISION_REQUIRED.
+- **Blocchi:**
+  - Sol VALID_INCONCLUSIVE (STOP_OWNER);
+  - PRE-LIVE REQ-F13B NOT_RUN, perche' richiede `tests/f13b` della scheda F-13b.
+- **Prove:**
+  - E2E/recovery/riconciliazione 551 passed su `1b2b5024`;
+  - teardown 9/9;
+  - F-13b 17/19 FAIL identici su main e F-14.
+- **Prossimo:**
+  - decisioni owner sulla #609;
+  - poi F-16 (`64e965b`, delta da verificare) e F-R06;
+  - offline: hardening pfckpt, G1-G2, G7.
 - **LIVE:** OFF.

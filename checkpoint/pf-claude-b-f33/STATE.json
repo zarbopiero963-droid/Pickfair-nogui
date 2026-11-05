@@ -1,14 +1,14 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 18,
+ "seq": 19,
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "previous_checkpoint_sha": "2176e92acb82a84d1a7eb6afea44d059688f8628",
+ "previous_checkpoint_sha": "c7538b9db87d3c69403dac94e25b2a13ec3cc0bb",
  "code": {
   "branch": "claude/pickfair-core-audit-slu9su",
-  "sha": "69765cff06b69696b218bfc21e7bdc87dbb3a2fa"
+  "sha": "1b2b502436f3a75395aa158946dd8767112b6380"
  },
- "lotto_corrente": "PR #609 F-14 @69765cff (fix loop 1/10): gate in corso (CI, Sol, Grok, Codex, PRE-LIVE, teardown). Unica PR aperta del repository.",
+ "lotto_corrente": "PR #609 F-14 @1b2b5024 (fix 7/10): OWNER_DECISION_REQUIRED (ext-review Sol VALID_INCONCLUSIVE; PRE-LIVE REQ-F13B NOT_RUN). Dossier sulla #609.",
  "lotti_completati": [
   "#596 F-01 merged dc83b06",
   "#597 F-09 0d16693",
@@ -26,64 +26,80 @@
   "F-16 4250f97 verificato FIT (registro f16_review_4250f97); fix D @64e965b da verificare",
   "Roadmap PF-UNIVERSAL-360-TESTING registrata (pf-gov-persistent-roadmap-01 @eacba405)"
  ],
- "next_atomic_action": "1) #609: attendere CI/Sol/Grok/Codex/PRE-LIVE su 69765cff; triage; teardown verify; review-gate; verdetto. 2) Merge: secondo la governance vigente confermata dall'owner (PF-AUTO-MERGE-ALL-01 in attesa di chiarimento: il messaggio contiene anche 'nessun merge autonomo'). 3) Dopo il merge: verifica main + checkpoint; poi F-16 (head D 64e965b). 4) In parallelo offline: kit G1-G2 dry-run e campagna G7.",
+ "next_atomic_action": "Attendere le decisioni owner sulla #609 (non applicabilita' F-13b su 1b2b5024; review Sol). Poi rivalutare i gate sullo stesso SHA e decidere merge. In parallelo offline: hardening pfckpt (agente), F-16 delta 64e965b, G1-G2, G7.",
  "dependencies": {
   "f16": "dopo merge #609",
   "g1_g2_install": "GO owner specifico",
   "f02_f04_f03": "dopo F-16/F-11/F-12/F-23 secondo roadmap"
  },
  "blocks": [
+  "#609: ext-review Sol VALID_INCONCLUSIVE (STOP_OWNER)",
+  "#609: PRE-LIVE pytest-f13b-order-identity NOT_RUN (requisito di F-13b)",
   "LIVE NO-GO",
-  "VPS: nessuna installazione/modifica senza GO owner",
-  "G1-G2: certd non collegato (dry-run)",
-  "Gate A: 0 comportamenti mappati"
+  "VPS: nessuna modifica senza GO"
  ],
  "owner_authorizations": {
   "merge_606": "eseguito dall'owner 911562ad",
   "ext_review_606": "c.6656683842 (head 11a38662)",
   "f14": "aprire la PR e avviare tutti i gate (owner 05/11)",
   "g1_g2_g7": "solo preparazione e test offline (owner 05/11); nessun deploy VPS, nessuna modifica certd, polling, KS, uscita dry-run",
-  "auto_merge_all_01": "messaggio owner 05/11 contraddittorio (autorizza e vieta il merge autonomo): NON applicato finche' non chiarito",
-  "live": "NO"
+  "auto_merge_all_01": "ATTIVA (owner 05/11, #586 c.6657216281): merge autonomo solo a gate tutti PASS, mai con decisioni owner pendenti",
+  "live": "NO",
+  "f14_decisions_20261105": "Sol: percorso B (verifica prima di modificare, nessun commit artificiale); F-13b: percorso A condizionato alla prova di non applicabilita', testo pubblicato dall'owner; nessuna modifica VPS"
  },
  "tests_executed": [
   {
-   "name": "#609 merge main: 5 file F-14 + tests/scripts + tests/guardrails",
+   "name": "F-14 acceptance (4 file)",
    "status": "PASS",
-   "sha": "a8659e40967479fe05bcae3839f3e5bca16efbf0",
-   "result": "4921 passed, 11 skipped, 0 failed"
+   "sha": "1b2b502436f3a75395aa158946dd8767112b6380",
+   "result": "77+38+75+43 passed"
   },
   {
-   "name": "#609 fix Sol: 4 acceptance F-14",
+   "name": "tests/f026 (HeadlessApp, matched non confermato, crash/restart/settlement)",
    "status": "PASS",
-   "sha": "69765cff06b69696b218bfc21e7bdc87dbb3a2fa",
-   "result": "171 passed (6 RED su a8659e40)"
+   "sha": "1b2b502436f3a75395aa158946dd8767112b6380",
+   "result": "173 passed"
   },
   {
-   "name": "#609 fix Sol: 26 file cancel/mutation_catalog + tests/guardrails",
+   "name": "tests/recovery",
    "status": "PASS",
-   "sha": "69765cff06b69696b218bfc21e7bdc87dbb3a2fa",
-   "result": "2212 passed, 11 skipped, 0 failed"
+   "sha": "1b2b502436f3a75395aa158946dd8767112b6380",
+   "result": "51 passed"
   },
   {
-   "name": "#606 teardown evidence verifier 888e20f7",
+   "name": "tests/reconciliation",
    "status": "PASS",
+   "sha": "1b2b502436f3a75395aa158946dd8767112b6380",
+   "result": "79 passed"
+  },
+  {
+   "name": "tests/acceptance/test_issue524_ambiguous_never_failed.py",
+   "status": "PASS",
+   "sha": "1b2b502436f3a75395aa158946dd8767112b6380",
+   "result": "15 passed"
+  },
+  {
+   "name": "teardown evidence verifier 888e20f7",
+   "status": "PASS",
+   "sha": "1b2b502436f3a75395aa158946dd8767112b6380",
+   "result": "9/9 run coperti, prelive action_required"
+  },
+  {
+   "name": "tests/f13b (di F-13b) su main 911562ad",
+   "status": "FAIL",
    "sha": "911562addbea88fa981f151a2c388b1bbd23f145",
-   "result": "7/7 run coperti",
-   "sha_note": "eseguito sull'head 11a38662 della #606 (branch cancellato dopo il merge); 911562ad su main ha albero identico (ae189be9)"
+   "result": "17 failed 2 passed (identico a F-14)"
   },
   {
-   "name": "#606 tests/scripts+tests/catalog",
-   "status": "PASS",
-   "sha": "911562addbea88fa981f151a2c388b1bbd23f145",
-   "result": "3406 passed, 1 skipped",
-   "sha_note": "eseguito sull'head 11a38662 della #606 (branch cancellato dopo il merge); 911562ad su main ha albero identico (ae189be9)"
+   "name": "tests/f13b (di F-13b) su F-14",
+   "status": "FAIL",
+   "sha": "1b2b502436f3a75395aa158946dd8767112b6380",
+   "result": "17 failed 2 passed, stessi errori di main"
   }
  ],
  "tests_missing": [
-  "#609: CI/review/PRE-LIVE su 69765cff",
-  "#609 regressione completa sul nuovo head (CI)",
-  "F-16 delta 4250f97..64e965b"
+  "ext-review Sol conclusivo",
+  "REQ-F13B (resta alla PR F-13b)"
  ],
  "missing_historical_evidence": [],
  "gate_a": "NON PASS: behaviour_coverage.json 0 comportamenti mappati",
@@ -92,9 +108,9 @@
  "pr": {
   "609": {
    "state": "open",
-   "head": "69765cff06b69696b218bfc21e7bdc87dbb3a2fa",
-   "status": "CHECKS_PENDING",
-   "fix_loop": "1/10"
+   "head": "1b2b502436f3a75395aa158946dd8767112b6380",
+   "status": "OWNER_DECISION_REQUIRED",
+   "fix_loop": "7/10"
   },
   "606": {
    "state": "merged",

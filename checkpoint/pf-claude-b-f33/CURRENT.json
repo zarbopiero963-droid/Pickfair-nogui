@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "claude/pickfair-core-audit-slu9su",
-  "sha": "69765cff06b69696b218bfc21e7bdc87dbb3a2fa"
+  "sha": "1b2b502436f3a75395aa158946dd8767112b6380"
  },
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "next_atomic_action": "1) #609: attendere CI/Sol/Grok/Codex/PRE-LIVE su 69765cff; triage; teardown verify; review-gate; verdetto. 2) Merge: secondo la governance vigente confermata dall'owner (PF-AUTO-MERGE-ALL-01 in attesa di chiarimento: il messaggio contiene anche 'nessun merge autonomo'). 3) Dopo il merge: verifica main + checkpoint; poi F-16 (head D 64e965b). 4) In parallelo offline: kit G1-G2 dry-run e campagna G7.",
- "previous_checkpoint_sha": "2176e92acb82a84d1a7eb6afea44d059688f8628",
+ "next_atomic_action": "Attendere le decisioni owner sulla #609 (non applicabilita' F-13b su 1b2b5024; review Sol). Poi rivalutare i gate sullo stesso SHA e decidere merge. In parallelo offline: hardening pfckpt (agente), F-16 delta 64e965b, G1-G2, G7.",
+ "previous_checkpoint_sha": "c7538b9db87d3c69403dac94e25b2a13ec3cc0bb",
  "schema": "pf-current/1",
- "seq": 18
+ "seq": 19
 }

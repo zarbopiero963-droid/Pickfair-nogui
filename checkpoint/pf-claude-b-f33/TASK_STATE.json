@@ -1,9 +1,9 @@
 {
  "blocks": [
+  "#609: ext-review Sol VALID_INCONCLUSIVE (STOP_OWNER)",
+  "#609: PRE-LIVE pytest-f13b-order-identity NOT_RUN (requisito di F-13b)",
   "LIVE NO-GO",
-  "VPS: nessuna installazione/modifica senza GO owner",
-  "G1-G2: certd non collegato (dry-run)",
-  "Gate A: 0 comportamenti mappati"
+  "VPS: nessuna modifica senza GO"
  ],
  "dependencies": {
   "f02_f04_f03": "dopo F-16/F-11/F-12/F-23 secondo roadmap",
@@ -28,14 +28,13 @@
   "F-16 4250f97 verificato FIT (registro f16_review_4250f97); fix D @64e965b da verificare",
   "Roadmap PF-UNIVERSAL-360-TESTING registrata (pf-gov-persistent-roadmap-01 @eacba405)"
  ],
- "lotto_corrente": "PR #609 F-14 @69765cff (fix loop 1/10): gate in corso (CI, Sol, Grok, Codex, PRE-LIVE, teardown). Unica PR aperta del repository.",
+ "lotto_corrente": "PR #609 F-14 @1b2b5024 (fix 7/10): OWNER_DECISION_REQUIRED (ext-review Sol VALID_INCONCLUSIVE; PRE-LIVE REQ-F13B NOT_RUN). Dossier sulla #609.",
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "next_atomic_action": "1) #609: attendere CI/Sol/Grok/Codex/PRE-LIVE su 69765cff; triage; teardown verify; review-gate; verdetto. 2) Merge: secondo la governance vigente confermata dall'owner (PF-AUTO-MERGE-ALL-01 in attesa di chiarimento: il messaggio contiene anche 'nessun merge autonomo'). 3) Dopo il merge: verifica main + checkpoint; poi F-16 (head D 64e965b). 4) In parallelo offline: kit G1-G2 dry-run e campagna G7.",
+ "next_atomic_action": "Attendere le decisioni owner sulla #609 (non applicabilita' F-13b su 1b2b5024; review Sol). Poi rivalutare i gate sullo stesso SHA e decidere merge. In parallelo offline: hardening pfckpt (agente), F-16 delta 64e965b, G1-G2, G7.",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
-  "#609: CI/review/PRE-LIVE su 69765cff",
-  "#609 regressione completa sul nuovo head (CI)",
-  "F-16 delta 4250f97..64e965b"
+  "ext-review Sol conclusivo",
+  "REQ-F13B (resta alla PR F-13b)"
  ]
 }
