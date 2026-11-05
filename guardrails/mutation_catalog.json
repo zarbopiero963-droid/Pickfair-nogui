@@ -8868,12 +8868,12 @@
       "module": "control_api.views",
       "area": "control_api",
       "file": "control_api/views.py",
-      "original": "    if meta.get(\"sl_tp_triggered\"):",
+      "original": "    if triggered and triggered != _TRAILING_REASON:  # uno scatto del trailing non è uno scatto di SL/TP",
       "mutated": "    if False:",
       "tests": [
         "tests/control_api/test_settlement_sltp_views.py"
       ],
-      "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): scatto SL/TP registrato dal core non riportato."
+      "rationale": "MCP-01h ponte Control API SL/TP, settlement, cashout (handoff Claude C): scatto SL/TP registrato dal core non riportato. (MCP-01m: originale riallineato al ramo che distingue lo scatto del trailing)"
     },
     {
       "id": "cap_sltp_meta_leak",
@@ -9024,12 +9024,12 @@
       "module": "control_api.views",
       "area": "control_api",
       "file": "control_api/views.py",
-      "original": "        if name in CONFIG_KEYS or name.startswith(\"_\"):",
-      "mutated": "        if name in CONFIG_KEYS:",
+      "original": "        if name in CONFIG_KEYS or name.startswith(\"_\") or name == \"invalid_settings\":",
+      "mutated": "        if name in CONFIG_KEYS or name == \"invalid_settings\":",
       "tests": [
         "tests/control_api/test_config_view.py"
       ],
-      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): attributi privati della config considerati."
+      "rationale": "MCP-01j ponte Control API get_config (handoff Claude C): attributi privati della config considerati. (MCP-01m: originale riallineato, invalid_settings di F-18 escluso da unlisted)"
     },
     {
       "id": "cap_config_not_set_for_required",
@@ -9823,6 +9823,126 @@
         "tests/f03/test_f03_trailing_stop.py"
       ],
       "rationale": "F-03: lo scatto del trailing non chiude la posizione."
+    },
+    {
+      "id": "cap_trailing_trigger_as_sltp",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if triggered and triggered != _TRAILING_REASON:  # uno scatto del trailing non è uno scatto di SL/TP",
+      "mutated": "    if triggered:",
+      "tests": [
+        "tests/control_api/test_trailing_view.py"
+      ],
+      "rationale": "MCP-01m ponte Control API, trailing F-03 / F-02 / F-18 (handoff Claude C): scatto del trailing presentato come scatto di SL/TP."
+    },
+    {
+      "id": "cap_trailing_off_ignored",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    pct = mod.trailing_pct(meta.get(\"trailing_stop_pct\"))\n    if pct is None:\n        return dict(_TRAILING_OFF)",
+      "mutated": "    pct = mod.trailing_pct(meta.get(\"trailing_stop_pct\"))\n    if False:\n        return dict(_TRAILING_OFF)",
+      "tests": [
+        "tests/control_api/test_trailing_view.py"
+      ],
+      "rationale": "MCP-01m ponte Control API, trailing F-03 / F-02 / F-18 (handoff Claude C): percentuale non valida presentata come trailing attivo."
+    },
+    {
+      "id": "cap_trailing_bad_peak_trusted",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        if raw is not None and (peak is None or peak <= 0):\n            return {**_TRAILING_OFF, \"state\": \"UNKNOWN\", \"pct\": pct_s}",
+      "mutated": "        if False:\n            return {**_TRAILING_OFF, \"state\": \"UNKNOWN\", \"pct\": pct_s}",
+      "tests": [
+        "tests/control_api/test_trailing_view.py"
+      ],
+      "rationale": "MCP-01m ponte Control API, trailing F-03 / F-02 / F-18 (handoff Claude C): picco illeggibile non dichiarato."
+    },
+    {
+      "id": "cap_trailing_corrupt_persisted_trusted",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        if why:\n            return {**_TRAILING_OFF, \"state\": \"UNKNOWN\", \"pct\": pct_s}",
+      "mutated": "        if False:\n            return {**_TRAILING_OFF, \"state\": \"UNKNOWN\", \"pct\": pct_s}",
+      "tests": [
+        "tests/control_api/test_trailing_view.py"
+      ],
+      "rationale": "MCP-01m ponte Control API, trailing F-03 / F-02 / F-18 (handoff Claude C): picco persistito corrotto non dichiarato."
+    },
+    {
+      "id": "cap_trailing_persisted_ignored",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    values[\"tables\"] = _with_persisted_peaks(rc, values[\"tables\"], table_refs)  # MCP-01m, fuori dal lock",
+      "mutated": "    pass",
+      "tests": [
+        "tests/control_api/test_trailing_view.py"
+      ],
+      "rationale": "MCP-01m ponte Control API, trailing F-03 / F-02 / F-18 (handoff Claude C): picco persistito ignorato dopo un riavvio."
+    },
+    {
+      "id": "cap_trailing_close_unknown",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "               getattr(mod, \"TRAILING_TRIGGERED\", None): \"TRAILING_STOP\"}.get(",
+      "mutated": "               }.get(",
+      "tests": [
+        "tests/control_api/test_trailing_view.py"
+      ],
+      "rationale": "MCP-01m ponte Control API, trailing F-03 / F-02 / F-18 (handoff Claude C): chiusura del trailing presentata come evento sconosciuto."
+    },
+    {
+      "id": "cap_config_validity_ignored",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if raw:\n        return _p(\"TRIGGERED\", \"CONFIGURAZIONE_NON_VALIDA\", source=\"CONFIG\")",
+      "mutated": "    if False:\n        return _p(\"TRIGGERED\", \"CONFIGURAZIONE_NON_VALIDA\", source=\"CONFIG\")",
+      "tests": [
+        "tests/control_api/test_trailing_view.py"
+      ],
+      "rationale": "MCP-01m ponte Control API, trailing F-03 / F-02 / F-18 (handoff Claude C): impostazioni non valide (F-18) con protezione dichiarata attiva."
+    },
+    {
+      "id": "cap_config_validity_missing_as_active",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if raw is _MISSING:\n        return _p(\"UNAVAILABLE\", \"CORE_PENDING_F18\", source=\"NONE\")",
+      "mutated": "    if raw is _MISSING:\n        return _p(\"ACTIVE\", source=\"CONFIG\")",
+      "tests": [
+        "tests/control_api/test_trailing_view.py"
+      ],
+      "rationale": "MCP-01m ponte Control API, trailing F-03 / F-02 / F-18 (handoff Claude C): core senza F-18 presentato come configurazione valida."
+    },
+    {
+      "id": "cap_invalid_persisted_secret_listed",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        if (SETTING_KEY_RE.fullmatch(key) and not _sensitive_name(key.removeprefix(\"roserpina.\"))",
+      "mutated": "        if (SETTING_KEY_RE.fullmatch(key)",
+      "tests": [
+        "tests/control_api/test_trailing_view.py"
+      ],
+      "rationale": "MCP-01m ponte Control API, trailing F-03 / F-02 / F-18 (handoff Claude C): nome sensibile elencato fra le impostazioni non valide."
+    },
+    {
+      "id": "cap_invalid_persisted_missing_as_empty",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if raw is _MISSING or not isinstance(raw, tuple) or not all(isinstance(k, str) for k in raw):\n        return None, 0",
+      "mutated": "    if raw is _MISSING or not isinstance(raw, tuple) or not all(isinstance(k, str) for k in raw):\n        return [], 0",
+      "tests": [
+        "tests/control_api/test_trailing_view.py"
+      ],
+      "rationale": "MCP-01m ponte Control API, trailing F-03 / F-02 / F-18 (handoff Claude C): core senza F-18 presentato come nessuna impostazione non valida."
     }
   ]
 }

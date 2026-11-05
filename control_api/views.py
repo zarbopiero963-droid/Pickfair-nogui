@@ -480,6 +480,7 @@ def exposure_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict
     )
     table_refs = values.pop("_table_refs")
     unavailable = [name for name in unavailable if name != "_table_refs"]
+    values["tables"] = _with_persisted_peaks(rc, values["tables"], table_refs)  # MCP-01m, fuori dal lock
     return {
         "source": "core",
         "observed_at": float(clock()),
@@ -1009,7 +1010,7 @@ PROTECTION_ORDER: Final = (
     "risk_stop", "exposure_stop", "max_open_exposure", "max_order_exposure",
     "max_market_exposure", "max_event_exposure_abs", "max_total_exposure_pct",
     "max_event_exposure_pct", "funds_freshness", "book_guard", "market_tradability",
-    "anti_duplication", "order_circuit_breaker", "recovery_state",
+    "anti_duplication", "order_circuit_breaker", "recovery_state", "config_validity",
 )
 UNVERIFIABLE: Final = frozenset({"UNKNOWN", "UNAVAILABLE"})
 
@@ -1038,6 +1039,7 @@ def protections_view(rc: object, *, monotonic: Callable[[], float] = time.monoto
         "book_guard": lambda: _book_guard(rc),
         # Stato negoziabile del mercato: correzione F-23 in corso nel core (Claude D).
         "market_tradability": lambda: _p("UNAVAILABLE", "CORE_PENDING_F23", source="NONE"),
+        "config_validity": lambda: _config_validity(rc),  # MCP-01m, F-18
         "anti_duplication": lambda: _anti_duplication(rc),
         "order_circuit_breaker": lambda: _order_breaker(rc),
         "recovery_state": lambda: _recovery_guard(rc),
@@ -1469,13 +1471,66 @@ def _sl_tp(meta: object) -> dict[str, Any]:
         except _Unavailable:
             return unknown  # valore presente ma illeggibile: mai «non armato»
     armed = values["stop_loss"] is not None or values["take_profit"] is not None
-    if meta.get("sl_tp_triggered"):
+    trailing = _trailing(meta)
+    triggered = meta.get("sl_tp_triggered")
+    if triggered and triggered != _TRAILING_REASON:  # uno scatto del trailing non è uno scatto di SL/TP
         state = "TRIGGERED" if armed else "UNKNOWN"
         if not armed:
-            return unknown
+            return {**unknown, "trailing": trailing}
     else:
         state = "ARMED" if armed else "NOT_ARMED"
-    return {"state": state, **values}
+    return {"state": state, **values, "trailing": trailing}
+
+
+# ------------------------------------------------- MCP-01m: trailing stop (F-03 di Claude D)
+#
+# Percentuale, soglia e lettura del picco persistito vengono dal modulo del core `core.trailing_stop`: il ponte
+# non ricalcola nulla. Il picco del `meta` (in memoria, "MEMORY") ha la precedenza; se il runtime non lo ha
+# ancora caricato, vale il picco persistito `risk.trailing_peak.<customer_ref>` ("PERSISTED"), letto fuori dal
+# lock dei tavoli in una transazione di sola lettura (`_with_persisted_peaks`).
+
+_TRAILING_REASON: Final = "TRAILING_STOP_REACHED"
+_TRAILING_OFF: Final = {"state": "OFF", "pct": None, "peak": None, "threshold": None, "peak_source": "NONE"}
+
+
+def _trailing_module() -> Any:
+    try:
+        from core import trailing_stop
+    except ImportError:
+        return None
+    return trailing_stop
+
+
+def _trailing(meta: dict[str, Any], persisted: object = _MISSING) -> dict[str, Any]:
+    mod = _trailing_module()
+    if mod is None:  # prima di F-03 la percentuale (se configurata) non è applicata
+        try:
+            pct = _non_negative_dec(meta.get("trailing_stop_pct")) if meta.get("trailing_stop_pct") is not None \
+                else None
+        except _Unavailable:
+            pct = None
+        return {**_TRAILING_OFF, "state": "NOT_IN_CORE", "pct": pct}
+    pct = mod.trailing_pct(meta.get("trailing_stop_pct"))
+    if pct is None:
+        return dict(_TRAILING_OFF)
+    pct_s = decimal_str(pct)
+    triggered = meta.get("sl_tp_triggered") == _TRAILING_REASON
+    if "trailing_peak" in meta:
+        raw, source = meta.get("trailing_peak"), "MEMORY"
+        peak = mod._dec(raw) if raw is not None else None
+        if raw is not None and (peak is None or peak <= 0):
+            return {**_TRAILING_OFF, "state": "UNKNOWN", "pct": pct_s}
+    elif persisted is _MISSING:
+        raw, source, peak = None, "NONE", None  # picco persistito non ancora letto (completato dopo il lock)
+    else:
+        peak, why = mod.read_peak(persisted)
+        if why:
+            return {**_TRAILING_OFF, "state": "UNKNOWN", "pct": pct_s}
+        source = "PERSISTED"
+    if peak is None:
+        return {**_TRAILING_OFF, "state": "TRIGGERED" if triggered else "WAITING_PROFIT", "pct": pct_s}
+    return {"state": "TRIGGERED" if triggered else "ARMED", "pct": pct_s, "peak": decimal_str(peak),
+            "threshold": decimal_str(mod.threshold(peak, pct)), "peak_source": source}
 
 
 def _settlement_db(rc: object) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -1600,6 +1655,8 @@ CONFIG_KEYS: Final = {
     "max_win_warning_only": "BOOL", "max_stake_pct": "DECIMAL", "profit_epsilon": "DECIMAL",
     "profit_epsilon_enabled": "BOOL", "auto_green_delay_enabled": "BOOL",
     "auto_green_delay_sec": "DECIMAL",
+    # MCP-01m: percentuali SL/TP/trailing di default della posizione (F-02 di Claude D)
+    "stop_loss_pct": "DECIMAL", "take_profit_pct": "DECIMAL", "trailing_stop_pct": "DECIMAL",
 }
 # Campi Optional del core: None = non configurato (NOT_SET). Per gli altri None è INVALID.
 OPTIONAL_CONFIG_KEYS: Final = frozenset({
@@ -1607,7 +1664,7 @@ OPTIONAL_CONFIG_KEYS: Final = frozenset({
     "max_event_exposure_pct", "max_daily_loss", "max_drawdown_hard_stop_pct",
     "max_open_exposure", "max_order_exposure", "max_market_exposure", "max_event_exposure_abs",
     "max_drawdown_abs", "max_session_loss", "max_exposure_stop", "max_recovery_chase_abs",
-    "max_stake_abs", "max_win",
+    "max_stake_abs", "max_win", "stop_loss_pct", "take_profit_pct", "trailing_stop_pct",
 })
 RISK_PROFILES: Final = frozenset({"CONSERVATIVE", "BALANCED", "AGGRESSIVE"})
 # Seconda barriera oltre a `core.redaction.is_sensitive_key`: stessi frammenti del contratto.
@@ -1666,7 +1723,8 @@ def config_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict[s
     """
     body: dict[str, Any] = {
         "source": "core", "observed_at": clock(), "consistency": "SINGLE_REFERENCE_READ",
-        "settings": None, "unlisted": [], "redacted": 0, "unavailable": ["settings"],
+        "settings": None, "unlisted": [], "redacted": 0, "invalid_persisted": None,
+        "unavailable": ["settings", "invalid_persisted"],
     }
     try:
         fields = dict(vars(_attr(rc, "config")))  # copia del dizionario: una sola lettura
@@ -1675,18 +1733,40 @@ def config_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict[s
     unlisted: list[str] = []
     redacted = 0
     for name in sorted(fields):
-        if name in CONFIG_KEYS or name.startswith("_"):
+        if name in CONFIG_KEYS or name.startswith("_") or name == "invalid_settings":
             continue
         if (not FIELD_NAME_RE.fullmatch(name) or _sensitive_name(name)
                 or len(unlisted) >= MAX_UNLISTED):
             redacted += 1
         else:
             unlisted.append(name)
+    invalid, hidden = _invalid_persisted(fields.get("invalid_settings", _MISSING))
     body.update(
         settings=[_setting(k, kind, fields.get(k, _MISSING)) for k, kind in CONFIG_KEYS.items()],
-        unlisted=unlisted, redacted=redacted, unavailable=[],
+        unlisted=unlisted, redacted=redacted + hidden, invalid_persisted=invalid,
+        unavailable=[] if invalid is not None else ["invalid_persisted"],
     )
     return body
+
+
+SETTING_KEY_RE: Final = re.compile(r"(?:roserpina\.)?[a-z][a-z0-9_]{0,63}")
+MAX_INVALID: Final = 64
+
+
+def _invalid_persisted(raw: object) -> tuple[list[str] | None, int]:
+    """F-18 (Claude D): chiavi persistite illeggibili o fuori dominio. ``None`` se il core non le registra
+    (prima di F-18) o il valore non è leggibile; i nomi sensibili o non canonici sono solo contati."""
+    if raw is _MISSING or not isinstance(raw, tuple) or not all(isinstance(k, str) for k in raw):
+        return None, 0
+    shown, hidden = [], 0
+    for key in raw:
+        if (SETTING_KEY_RE.fullmatch(key) and not _sensitive_name(key.removeprefix("roserpina."))
+                and key not in shown
+                and len(shown) < MAX_INVALID):
+            shown.append(key)
+        elif key not in shown:
+            hidden += 1
+    return shown, hidden
 
 
 # ---------------------------------------------------------------- MCP-01l: mercati e book
@@ -1938,7 +2018,8 @@ def _close_item(mod: Any, raw: object, ref: str, positions: dict[str, list[Any]]
     states = {mod.STATE_CLAIMED, mod.STATE_ROUTED, mod.STATE_NOT_EXECUTED, mod.STATE_UNCERTAIN}
     state = mod.read_state(raw)
     close_state = state if state in states else "UNKNOWN"
-    trigger = {mod.SL_TRIGGERED: "STOP_LOSS", mod.TP_TRIGGERED: "TAKE_PROFIT"}.get(
+    trigger = {mod.SL_TRIGGERED: "STOP_LOSS", mod.TP_TRIGGERED: "TAKE_PROFIT",
+               getattr(mod, "TRAILING_TRIGGERED", None): "TRAILING_STOP"}.get(
         data.get("trigger"), "UNKNOWN")
     raw_bets = data.get("bet_ids")
     bets = [b for b in (_ident_or_none(x) for x in raw_bets) if b] if isinstance(raw_bets, list) else []
@@ -1994,3 +2075,60 @@ def _table_refs(rc: object) -> dict[int, tuple[str, object]]:
         if isinstance(ref, str) and ref and row.get("status") in ("ACTIVE", "RECOVERY"):
             refs[row["table_id"]] = (ref, row.get("current_exposure"))
     return refs
+
+
+def _with_persisted_peaks(rc: object, tables: list[dict[str, Any]] | None,
+                          table_refs: dict[int, tuple[str, object]] | None) -> list[dict[str, Any]] | None:
+    """Completa il trailing dei tavoli il cui picco non è ancora nel `meta` con il picco persistito."""
+    mod = _trailing_module()
+    if mod is None or not tables or not table_refs:
+        return tables
+    need = {t["table_id"]: table_refs[t["table_id"]][0] for t in tables
+            if t["table_id"] in table_refs and t["sl_tp"].get("trailing", {}).get("state") == "WAITING_PROFIT"
+            and t["sl_tp"]["trailing"].get("peak_source") == "NONE"}
+    if not need:
+        return tables
+    prefix = mod.PEAK_KEY_PREFIX
+
+    def read(conn: sqlite3.Connection) -> dict[str, object]:
+        return {ref: (row["value"] if row else None) for ref in set(need.values())
+                for row in [conn.execute("SELECT value FROM settings WHERE key = ?",
+                                         (prefix + ref,)).fetchone()]}
+
+    try:
+        peaks = _ro_transaction(rc, read)
+    except Exception:  # noqa: BLE001 - picco persistito non leggibile: il trailing resta non dimostrabile
+        peaks = None
+    out = []
+    for t in tables:
+        ref = need.get(t["table_id"])
+        if ref is None:
+            out.append(t)
+            continue
+        if peaks is None:
+            trailing = {**_TRAILING_OFF, "state": "UNKNOWN", "pct": t["sl_tp"]["trailing"]["pct"]}
+        else:
+            meta = {"trailing_stop_pct": t["sl_tp"]["trailing"]["pct"]}
+            if t["sl_tp"]["trailing"]["state"] == "TRIGGERED":
+                meta["sl_tp_triggered"] = _TRAILING_REASON
+            trailing = _trailing({**meta, "trailing_stop_pct": Decimal(meta["trailing_stop_pct"])},
+                                 peaks.get(ref))
+        out.append({**t, "sl_tp": {**t["sl_tp"], "trailing": trailing}})
+    return out
+
+
+def _config_validity(rc: object) -> dict[str, Any]:
+    """F-18 (Claude D): impostazioni persistite illeggibili => il core nega ogni nuova entrata."""
+    try:
+        cfg = _attr(rc, "config")
+        raw = vars(cfg).get("invalid_settings", _MISSING)
+    except Exception:  # noqa: BLE001
+        return _unknown("CONFIG")
+    if raw is _MISSING:
+        return _p("UNAVAILABLE", "CORE_PENDING_F18", source="NONE")
+    if not isinstance(raw, tuple):
+        return _unknown("CONFIG")
+    if raw:
+        return _p("TRIGGERED", "CONFIGURAZIONE_NON_VALIDA", source="CONFIG")
+    return _p("ACTIVE", source="CONFIG")
+

@@ -3656,6 +3656,23 @@
         "tests/f03/test_f03_trailing_stop.py"
       ],
       "max_files": 10
+    },
+    "pf_api11_control_api_trailing": {
+      "description": "MCP-01m (handoff di Claude C): trailing F-03 per tavolo e nelle chiusure, percentuali F-02 e impostazioni non valide F-18 in GET /v1/config, protezione config_validity; pin al contratto 1.11.0. Dipende da d_f03_trailing_stop (F-02, F-04) e da pf_api1..10.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "control_api/bridge.py",
+        "control_api/views.py",
+        "docs/control_api.md",
+        "guardrails/mutation_catalog.json",
+        "tests/control_api/test_config_view.py",
+        "tests/control_api/test_finance_views.py",
+        "tests/control_api/test_settlement_sltp_views.py",
+        "tests/control_api/test_trailing_view.py"
+      ],
+      "max_files": 10
     }
   }
 }

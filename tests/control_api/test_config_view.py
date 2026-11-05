@@ -116,9 +116,9 @@ def test_bool_is_never_an_int(runtime: RuntimeController) -> None:
 def test_config_absent_or_unreadable(runtime: RuntimeController) -> None:
     runtime.config = None
     view = config_view(runtime)
-    assert view["settings"] is None and view["unavailable"] == ["settings"]
+    assert view["settings"] is None and view["unavailable"] == ["settings", "invalid_persisted"]
     del runtime.__dict__["config"]
-    assert config_view(runtime)["unavailable"] == ["settings"]
+    assert config_view(runtime)["unavailable"] == ["settings", "invalid_persisted"]
 
 
 def test_credentials_never_leak(runtime: RuntimeController) -> None:
@@ -142,7 +142,7 @@ def test_unknown_fields_are_named_never_valued_and_secrets_not_even_named(
         runtime: RuntimeController) -> None:
     cfg = runtime.config
     extra = {
-        "stop_loss_pct": 25.0,               # campo nuovo (es. F-02): solo il nome
+        "future_field_pct": 25.0,            # campo nuovo del core: solo il nome
         "betfair_app_key": "K-SECRET",       # sensibile: solo contato
         "ApiToken": "T-SECRET",              # camelCase sensibile
         "pin_code": "1234",                  # frammento del contratto
@@ -151,7 +151,7 @@ def test_unknown_fields_are_named_never_valued_and_secrets_not_even_named(
     }
     cfg.__dict__.update(extra)
     view = config_view(runtime)
-    assert view["unlisted"] == ["stop_loss_pct"]
+    assert view["unlisted"] == ["future_field_pct"]
     assert view["redacted"] == 4
     text = json.dumps(view)
     for value in ("K-SECRET", "T-SECRET", "1234", "W-SECRET", "P-SECRET"):
@@ -196,7 +196,7 @@ def test_view_passes_the_server_contract(runtime: RuntimeController) -> None:
 
     validate(config_view(runtime), response_schema("config"))
     runtime.config.max_daily_loss = float("inf")
-    runtime.config.__dict__["stop_loss_pct"] = 1.0
+    runtime.config.__dict__["future_field_pct"] = 1.0
     validate(config_view(runtime), response_schema("config"))
     runtime.config = None
     validate(config_view(runtime), response_schema("config"))

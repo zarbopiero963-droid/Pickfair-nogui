@@ -39,7 +39,8 @@ def test_tables_on_main_are_not_armed(runtime: RuntimeController) -> None:
     activate(runtime, 1, {"bet_type": "BACK", "price": 2.0})  # meta come lo scrive il main
     t = tables(runtime)[1]["sl_tp"]
     assert t == {"state": "NOT_ARMED", "stop_loss": None, "take_profit": None,
-                 "stop_loss_pct": None, "take_profit_pct": None, "trailing_stop_pct": None}
+                 "stop_loss_pct": None, "take_profit_pct": None, "trailing_stop_pct": None,
+                 "trailing": {"state": "OFF", "pct": None, "peak": None, "threshold": None, "peak_source": "NONE"}}
 
 
 def test_f02_meta_shape_is_reported_as_armed(runtime: RuntimeController) -> None:
@@ -48,7 +49,10 @@ def test_f02_meta_shape_is_reported_as_armed(runtime: RuntimeController) -> None
                           "take_profit_pct": 50.0, "take_profit": 5.0, "trailing_stop_pct": 3.0})
     t = tables(runtime)[2]["sl_tp"]
     assert t == {"state": "ARMED", "stop_loss": "2.5", "take_profit": "5",
-                 "stop_loss_pct": "25", "take_profit_pct": "50", "trailing_stop_pct": "3"}
+                 "stop_loss_pct": "25", "take_profit_pct": "50", "trailing_stop_pct": "3",
+                 # MCP-01m: con F-03 il trailing al 3 % è attivo, in attesa del primo profitto garantito
+                 "trailing": {"state": "WAITING_PROFIT", "pct": "3", "peak": None, "threshold": None,
+                              "peak_source": "NONE"}}
     text = json.dumps(exposure_view(runtime))
     assert "Juventus" not in text and "cref-x" not in text  # solo le chiavi SL/TP del meta
 

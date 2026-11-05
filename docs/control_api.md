@@ -150,6 +150,16 @@ per richiesta su stderr del processo Pickfair.
 - Le chiusure respinte prima della rivendicazione non sono persistite dal core e non compaiono. Il
   `customer_ref` non esce mai. Senza F-04 la sezione è `UNAVAILABLE` `CORE_PENDING_F04`.
 
+### MCP-01m — trailing (F-03), percentuali F-02, impostazioni non valide F-18 (contratto 1.11.0)
+
+- `GET /v1/exposure`, `tables[].sl_tp.trailing`: stato del trailing dal `meta` del tavolo (picco in memoria) o dal picco
+  persistito `risk.trailing_peak.<customer_ref>` (letto fuori dal lock dei tavoli); percentuale, soglia e lettura del
+  picco con `core.trailing_stop` (nessuna regola replicata). `sl_tp_closes[].trigger` anche `TRAILING_STOP`.
+- `GET /v1/config`: `stop_loss_pct`, `take_profit_pct`, `trailing_stop_pct` (F-02); `invalid_persisted` da
+  `RoserpinaConfig.invalid_settings` (F-18), nomi `roserpina.<nome>`, sensibili solo contati.
+- `GET /v1/status`, `protections.config_validity`: TRIGGERED quando `invalid_settings` non è vuoto (il core nega ogni
+  nuova entrata), UNAVAILABLE `CORE_PENDING_F18` senza F-18.
+
 Nota per i test di assenza di effetti: la lettura in WAL aggiorna l'indice `-shm` (marcatori di lettura
 di SQLite, nessun dato); `.db` e `-wal` restano identici byte per byte.
 
