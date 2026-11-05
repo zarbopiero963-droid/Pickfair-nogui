@@ -18,6 +18,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   per gli SHA irrisolti. I ref permanenti `refs/agent-state/keep/<sha>` sono solo opt-in (`--keep-refs`), perché il
   proxy delle sessioni rifiuta i ref fuori da `refs/heads` e `refs/tags`. Un checkpoint integro ma con riferimenti
   non provabili dà `NEEDS_RECONCILIATION`, mai `READY`. Documentazione: `docs/agent_checkpoint_protocol.md` §6-ter.
+- **Checkpoint multi-agente: consegna di patch fra agenti (`handoffs`).** Record opzionale dello STATE per le patch
+  consegnate da un agente senza PR proprie (Claude C) e integrate da un altro (Claude B). La sorgente deve essere
+  risolvibile e durevole come `code.sha`, e il digest della patch inclusa deve combaciare. `DELIVERED` non vale mai
+  come integrato. `INTEGRATED_VERIFIED` è accettato solo con la prova ricalcolata (patch su `base_sha` == tree di
+  `integration_sha`); se non è provato, il checkpoint è invalido. Nuovo comando `handoff-verify`. Documentazione:
+  §6-quater.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

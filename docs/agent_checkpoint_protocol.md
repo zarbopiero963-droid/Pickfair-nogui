@@ -1,7 +1,8 @@
 # Protocollo di checkpoint multi-agente — `pf-checkpoint/3`
 
 Mandato owner PF-UNIVERSAL-CHECKPOINT-V1 (15/10/2026). Strumento: `tools/agent_checkpoint/pfckpt.py`
-(solo Python standard library + git). Test: `tests/agent_checkpoint/` (git reale, offline; ref keep e squash merge in `test_pfckpt_squash_durable.py`).
+(solo Python standard library + git). Test: `tests/agent_checkpoint/` (git reale, offline; durabilità e squash merge in `test_pfckpt_squash_durable.py`,
+handoff di patch in `test_pfckpt_handoffs.py`).
 
 ## 1. Scopo e fonte di verità
 
@@ -219,6 +220,49 @@ commit nuovo). Uno scrittore su base vecchia riceve `CONCURRENT_UPDATE`. PR, mer
 **non sono modellati** dallo strumento: `lotti_completati` è testo dichiarato, senza registro di operazioni né
 deduplica. Il ripristino non può quindi garantire «nessuna PR o merge duplicato»: è un limite dichiarato (§8).
 
+## 6-quater. Consegna di patch fra agenti (`handoffs`)
+
+Decisione owner (05/11/2026). Claude C consegna il lavoro come **patch**, senza PR proprie, e Claude B la integra su
+main. Lo strumento resta unico per tutti gli agenti. Il campo opzionale `handoffs` dello STATE è una lista di
+record:
+
+```json
+{"source_repo": "...", "source_branch": "...", "source_sha": "<40 hex>", "patch_sha256": "<64 hex>",
+ "target_repo": "...", "handoff_ref": "<issue o commento GitHub>",
+ "status": "DELIVERED" | "INTEGRATED_VERIFIED" | "INTEGRATED_NOT_PROVEN",
+ "artifact": "<percorso della patch nel checkpoint>", "base_sha": "<40 hex>", "integration_sha": "<40 hex>",
+ "integration_tree": "<40 hex>"}
+```
+
+Gli ultimi quattro campi sono opzionali. Regole di `verify`:
+1. `source_sha` deve risolversi; irrisolto (per esempio branch sorgente cancellato prima della riconciliazione) è un
+   problema di **riferimento** ⇒ `bootstrap` dà `NEEDS_RECONCILIATION`, mai `READY`. Al `save` e al readback la
+   sorgente passa per la stessa classificazione di durabilità di `code.sha` (§6-ter, etichetta `handoff[i]`): branch
+   durevole, `refs/pull/<N>/head`, ecc. Il branch di consegna di C conta come durevole solo se è passato a
+   `--durable-branch`.
+2. Se la patch è inclusa nel checkpoint (`artifact`), il suo sha256 deve essere `patch_sha256`; un artefatto dichiarato
+   assente o con digest diverso rende il checkpoint invalido.
+3. `DELIVERED` **non** equivale mai a integrato: lo strumento non deduce nulla da main, dai nomi dei branch o dalla
+   presenza di un commit simile. `verify` riporta `verified: false`.
+4. `INTEGRATED_VERIFIED` è accettato solo se `verify` **ricalcola** la prova. Servono la patch inclusa e integra,
+   `base_sha` e `integration_sha` risolvibili, e tree(patch applicata su `base_sha`) == tree(`integration_sha`)
+   (== `integration_tree`, se dichiarato). La patch si applica in un **indice temporaneo** (`read-tree base` +
+   `git apply --cached --binary` + `write-tree`): stesso tree di `git apply --index` in un worktree temporaneo, senza
+   checkout né effetti sul repository. Se la prova non regge, il record va dichiarato `INTEGRATED_NOT_PROVEN`. Un
+   `INTEGRATED_VERIFIED` non provato è un problema di **integrità**: `LATEST_CHECKPOINT_CORRUPT`, mai `READY`.
+5. `INTEGRATED_NOT_PROVEN` è una dichiarazione onesta (per esempio l'integrazione contiene una modifica in più): è
+   ammessa e riportata `verified: false`.
+
+`pfckpt.py handoff-verify --repo R --source <sha> --patch <file> --base <sha> --integration <sha>` (più
+`--source-repo`, `--source-branch`, `--target-repo` e `--handoff-ref` facoltativi) stampa il record con
+`applied_tree` e `integration_tree`. Exit 0 se `INTEGRATED_VERIFIED`, 2 altrimenti. `verify` e `bootstrap` riportano
+per ogni record `{index, status, source_reachable, verified}`.
+
+**`--allow-branch-only` non è una prova.** Resta un'eccezione registrata nello STATE
+(`code.durability_waiver`, con `declared_by` e `reason`), mai una prova di durabilità. Lo SHA sparisce con il
+suo branch e, quando succede, il checkpoint torna `NEEDS_RECONCILIATION`. Un handoff che dipende da un'eccezione del
+genere non è riconciliato.
+
 ## 7. Incidente storico INC-b45f528
 
 Il checkpoint seq 7 (`b45f528`) elencava nel MANIFEST tre log mai committati
@@ -230,7 +274,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 88 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA e transizione squash) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 100 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo
@@ -245,8 +289,11 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 - La conservazione di `refs/pull/<N>/head` dopo la cancellazione del branch è un comportamento di GitHub, simulato
   offline con un ref sul bare. Senza PR dichiarata la scoperta scarica tutti i `refs/pull/*/head`, e su repository
   grandi possono essere molti.
-- `--allow-branch-only` rende pubblicabile uno SHA che sparirà con il suo branch. È dichiarato nello STATE, ma la
-  durabilità vera non c'è.
+- `--allow-branch-only` rende pubblicabile uno SHA che sparirà con il suo branch. È un'eccezione registrata nello
+  STATE, mai una prova di durabilità (§6-quater).
+- `handoffs`: la prova di integrazione richiede la patch dentro il checkpoint. Una patch consegnata solo via
+  issue o commento (`handoff_ref`) non è verificabile dallo strumento e resta `DELIVERED` o `INTEGRATED_NOT_PROVEN`.
+  Il contenuto di `handoff_ref` non viene letto (nessun accesso a GitHub).
 - `original_tree` di un oggetto ormai irraggiungibile è verificabile solo contro i tree registrati (`code.tree`,
   `code.patch.tree`): senza registrazione resta il valore scritto da chi ha creato la transizione, che `integrate`
   calcola dall'oggetto quando c'è.

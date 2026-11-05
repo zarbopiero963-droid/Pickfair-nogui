@@ -21,6 +21,8 @@ Comandi:
   recover   --url URL --branch B --dest DEST [--dir D]   materializza l'ULTIMO checkpoint valido, senza toccare il remoto
   integrate --repo R --original SHA --integration SHA [--original-tree T]
                                                         calcola il record `integration` (squash merge -> main) dai tree
+  handoff-verify --repo R --source SHA --patch FILE --base SHA --integration SHA
+                                                        prova (ricalcolata) che la patch consegnata su base = integrazione
 SHA durevoli (pfckpt_squash_durable_refs): al save ogni SHA di codice citato deve essere raggiungibile sul remoto da
 un branch durevole (default `main`), da `refs/pull/<N>/head` (dichiarato in `pr` o scoperto) o, tramite `integration`
 TREE_EQUAL, dal commit di integrazione su un branch durevole; altrimenti CODE_SHA_NOT_DURABLE e nulla e' pubblicato.
@@ -71,6 +73,8 @@ KEEP_REFSPEC = f"+{KEEP_REF_PREFIX}*:{KEEP_REF_PREFIX}*"
 EQUIVALENCES = ("TREE_EQUAL", "NOT_PROVEN")
 INTEGRATION_FIELDS = ("original_sha", "original_tree", "integration_sha", "integration_tree", "equivalence")
 _SHA40 = re.compile(r"[0-9a-f]{40}")
+HANDOFF_STATUSES = ("DELIVERED", "INTEGRATED_VERIFIED", "INTEGRATED_NOT_PROVEN")
+HANDOFF_TEXT_FIELDS = ("source_repo", "source_branch", "target_repo", "handoff_ref")
 
 
 class CheckpointError(Exception):
@@ -313,6 +317,105 @@ def build_integration(repo, original_sha, integration_sha, original_tree=None):
             "equivalence": "TREE_EQUAL" if itree == otree else "NOT_PROVEN", "original_tree_source": source}
 
 
+def apply_patch_tree(repo, base_sha, patch):
+    """Tree ottenuto applicando `patch` su `base_sha`, in un indice TEMPORANEO (nessun checkout, nessun effetto sul
+    repository): `read-tree base` + `git apply --cached` + `write-tree`, equivalente a `git apply --index` in un
+    worktree temporaneo. None se la patch non si applica."""
+    fd, idx = tempfile.mkstemp(prefix="pfckpt_handoff_idx_")
+    os.close(fd)
+    os.unlink(idx)
+    env = dict(os.environ, GIT_INDEX_FILE=idx)
+    try:
+        def run(*args, data=None):
+            return subprocess.run(["git", "-C", repo, *args], capture_output=True, input=data, env=env)
+        if run("read-tree", base_sha).returncode != 0:
+            return None
+        if run("apply", "--cached", "--binary", "-", data=patch).returncode != 0:
+            return None
+        p = run("write-tree")
+        return p.stdout.decode().strip() if p.returncode == 0 else None
+    finally:
+        if os.path.exists(idx):
+            os.unlink(idx)
+
+
+def handoff_verify(repo, source, patch, base, integration, **meta):
+    """Record di handoff con la prova ricalcolata: patch applicata su `base` == tree(`integration`)
+    => INTEGRATED_VERIFIED, altrimenti INTEGRATED_NOT_PROVEN. Mai inferito da main o dai nomi dei branch."""
+    for name, sha in (("source", source), ("base", base), ("integration", integration)):
+        if not _SHA40.fullmatch(str(sha)) or not resolve_commit(repo, sha):
+            raise CheckpointError(2, "HANDOFF_SHA_UNRESOLVED", field=name, sha=sha)
+    applied = apply_patch_tree(repo, base, patch)
+    itree = tree_of(repo, integration)
+    rec = {**{k: v for k, v in meta.items() if v is not None}, "source_sha": source,
+           "patch_sha256": hashlib.sha256(patch).hexdigest(), "base_sha": base, "integration_sha": integration,
+           "integration_tree": itree, "applied_tree": applied,
+           "status": "INTEGRATED_VERIFIED" if applied and applied == itree else "INTEGRATED_NOT_PROVEN"}
+    return rec
+
+
+def check_handoff(repo, commit, files, i, h):
+    """Un record di `handoffs`. Ritorna (problemi di integrita', problemi di riferimento, info)."""
+    label = f"handoff[{i}]"
+    problems, refp = [], []
+    info = {"index": i, "status": None, "source_reachable": False, "verified": False}
+    if not isinstance(h, dict):
+        return [f"{label}: non un oggetto"], refp, info
+    info["status"] = h.get("status")
+    for f in HANDOFF_TEXT_FIELDS:
+        if not isinstance(h.get(f), str) or not h[f].strip():
+            problems.append(f"{label}: campo {f} mancante o vuoto")
+    if not _SHA40.fullmatch(str(h.get("source_sha", ""))):
+        problems.append(f"{label}: source_sha deve essere uno SHA completo")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(h.get("patch_sha256", ""))):
+        problems.append(f"{label}: patch_sha256 deve essere un sha256 esadecimale")
+    if h.get("status") not in HANDOFF_STATUSES:
+        problems.append(f"{label}: status non ammesso: {h.get('status')!r}")
+    for f in ("integration_sha", "integration_tree", "base_sha"):
+        if f in h and h[f] is not None and not _SHA40.fullmatch(str(h[f])):
+            problems.append(f"{label}: {f} deve essere uno SHA completo")
+    if problems:
+        return problems, refp, info
+    if resolve_commit(repo, h["source_sha"]):
+        info["source_reachable"] = True
+    else:
+        refp.append(f"{label}: source_sha irrisolto: {h['source_sha']} (branch sorgente cancellato?)")
+    patch = None
+    art = h.get("artifact")
+    if art is not None:
+        if not isinstance(art, str) or art not in files:
+            problems.append(f"{label}: artefatto patch dichiarato assente: {art!r}")
+        else:
+            patch = blob(repo, commit, files[art])
+            if hashlib.sha256(patch).hexdigest() != h["patch_sha256"]:
+                problems.append(f"{label}: sha256 della patch != patch_sha256")
+                patch = None
+    if h["status"] == "INTEGRATED_VERIFIED":
+        why = None
+        base, integ = h.get("base_sha"), h.get("integration_sha")
+        if patch is None:
+            why = "patch non inclusa o non integra nel checkpoint"
+        elif not base or not resolve_commit(repo, base):
+            why = "base_sha assente o irrisolto"
+        elif not integ or not resolve_commit(repo, integ):
+            why = "integration_sha assente o irrisolto"
+        else:
+            itree = tree_of(repo, integ)
+            applied = apply_patch_tree(repo, base, patch)
+            if h.get("integration_tree") and h["integration_tree"] != itree:
+                why = "integration_tree != tree(integration_sha)"
+            elif applied is None:
+                why = "la patch non si applica su base_sha"
+            elif applied != itree:
+                why = "tree(patch su base_sha) != tree(integration_sha)"
+        if why:
+            # dichiarazione di integrazione non provata: problema di INTEGRITA' (mai READY), non di riferimento
+            problems.append(f"{label}: INTEGRATED_VERIFIED non provato: {why}; dichiarare INTEGRATED_NOT_PROVEN")
+        else:
+            info["verified"] = True
+    return problems, refp, info
+
+
 def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
     """Verifica completa del checkpoint al commit REF. Ritorna un dict di report; solleva CheckpointError(2) se invalido."""
     commit = out(repo, "rev-parse", "--verify", f"{ref}^{{commit}}")
@@ -412,6 +515,18 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
         for a in ([art] if isinstance(art, str) else (art or [])):
             if a not in files:
                 problems.append(f"test {t.get('id')!r}: artefatto dichiarato assente: {a}")
+    # handoffs (consegna di patch fra agenti): source_sha risolvibile, digest della patch, prova ricalcolata
+    handoff_report = []
+    hs = state.get("handoffs")
+    if hs is not None:
+        if not isinstance(hs, list):
+            problems.append("handoffs non e' una lista")
+        else:
+            for i, h in enumerate(hs):
+                hp, hr, hinfo = check_handoff(lookup, commit, files, i, h)
+                problems += hp
+                ref_problems += hr
+                handoff_report.append(hinfo)
     # puntatori derivati e lease (PF-AGENT-CONTINUITY-01): coerenti con STATE, altrimenti checkpoint incoerente
     derived = {}
     for name in (CURRENT, TASK_STATE, LEASE):
@@ -438,7 +553,7 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
         raise CheckpointError(2, "CHECKPOINT_INVALID", commit=commit, problems=problems, reference_problems=ref_problems)
     lease = derived.get(LEASE) or {}
     return {"commit": commit, "seq": state["seq"], "code_sha": code_sha, "files": len(files),
-            "code_reference": code_ref, "keep_shas": sorted(set(keep_shas)),
+            "code_reference": code_ref, "keep_shas": sorted(set(keep_shas)), "handoffs": handoff_report,
             "next_atomic_action": state["next_atomic_action"], "verdict": state["certification_verdict"],
             "lease_owner": lease.get("owner"), "lease_expires_at": lease.get("expires_at")}
 
@@ -594,6 +709,9 @@ def _cited_shas_and_prs(state):
         shas.append(str(code["sha"]))
     if isinstance(code.get("pr"), int) and code["pr"] > 0:
         prs.add(code["pr"])
+    for h in (state["handoffs"] if isinstance(state.get("handoffs"), list) else []):
+        if isinstance(h, dict) and h.get("source_sha"):
+            shas.append(str(h["source_sha"]))
     for t in state.get("tests_executed") or []:
         if not isinstance(t, dict):
             continue
@@ -653,6 +771,12 @@ def cited_references(repo, state):
         _p, _k, info = check_code_reference(repo, label, str(e["sha"]), e.get("integration"))
         cited.append({"label": label, "sha": str(e["sha"]), "original": resolve_commit(repo, str(e["sha"])),
                       "integration": info.get("integration_sha")})
+    # handoffs: la sorgente della patch deve essere durevole come code.sha (mai inferita dall'integrazione)
+    hs = state.get("handoffs") if isinstance(state.get("handoffs"), list) else []
+    for i, h in enumerate(hs):
+        if isinstance(h, dict) and h.get("source_sha"):
+            cited.append({"label": f"handoff[{i}]", "sha": str(h["source_sha"]),
+                          "original": resolve_commit(repo, str(h["source_sha"])), "integration": None})
     return cited
 
 
@@ -933,7 +1057,8 @@ def bootstrap(url, branch, dest, d=DEFAULT_DIR, code_branch=None, agent=None):
               "owner_authorizations": state["owner_authorizations"], "blocks": state["blocks"],
               "code_branch": (state.get("code") or {}).get("branch"), "lease": status,
               "code_patch": bool((state.get("code") or {}).get("patch")),
-              "keep_refs": keep_ref_status(dest, report["keep_shas"]), "pull_refs_fetched": pull_fetch}
+              "keep_refs": keep_ref_status(dest, report["keep_shas"]), "pull_refs_fetched": pull_fetch,
+              "handoffs": report["handoffs"]}
     if code_branch:
         result["code_divergence"] = code_divergence(dest, code_branch,
                                                     report["code_reference"].get("effective_sha") or report["code_sha"])
@@ -984,6 +1109,11 @@ def main(argv=None):
     rc.add_argument("--dir", default=DEFAULT_DIR); rc.add_argument("--code-repo", required=True)
     ig = sub.add_parser("integrate"); ig.add_argument("--repo", default="."); ig.add_argument("--original", required=True)
     ig.add_argument("--integration", required=True); ig.add_argument("--original-tree")
+    hv = sub.add_parser("handoff-verify"); hv.add_argument("--repo", default=".")
+    hv.add_argument("--source", required=True); hv.add_argument("--patch", required=True)
+    hv.add_argument("--base", required=True); hv.add_argument("--integration", required=True)
+    for f in HANDOFF_TEXT_FIELDS:
+        hv.add_argument("--" + f.replace("_", "-"))
     a = ap.parse_args(argv)
     try:
         if a.cmd == "verify":
@@ -996,6 +1126,13 @@ def main(argv=None):
             res = bootstrap(a.url, a.branch, a.dest, a.dir, a.code_branch, agent=a.agent)
         elif a.cmd == "recover":
             res = recover(a.url, a.branch, a.dest, a.dir)
+        elif a.cmd == "handoff-verify":
+            with open(a.patch, "rb") as fh:
+                data = fh.read()
+            res = handoff_verify(a.repo, a.source, data, a.base, a.integration,
+                                 **{f: getattr(a, f) for f in HANDOFF_TEXT_FIELDS})
+            print(json.dumps(res, ensure_ascii=False))
+            return 0 if res["status"] == "INTEGRATED_VERIFIED" else 2
         elif a.cmd == "integrate":
             res = build_integration(a.repo, a.original, a.integration, a.original_tree)
             print(json.dumps(res, ensure_ascii=False))
