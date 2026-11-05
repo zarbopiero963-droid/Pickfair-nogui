@@ -2,7 +2,7 @@
 
 Mandato owner PF-UNIVERSAL-CHECKPOINT-V1 (15/10/2026). Strumento: `tools/agent_checkpoint/pfckpt.py`
 (solo Python standard library + git). Test: `tests/agent_checkpoint/` (git reale, offline; durabilità e squash merge in `test_pfckpt_squash_durable.py`,
-handoff di patch in `test_pfckpt_handoffs.py`).
+handoff di patch in `test_pfckpt_handoffs.py` e `test_pfckpt_handoff_cross_repo.py`).
 
 ## 1. Scopo e fonte di verità
 
@@ -222,41 +222,68 @@ deduplica. Il ripristino non può quindi garantire «nessuna PR o merge duplicat
 
 ## 6-quater. Consegna di patch fra agenti (`handoffs`)
 
-Decisione owner (05/11/2026). Claude C consegna il lavoro come **patch**, senza PR proprie, e Claude B la integra su
-main. Lo strumento resta unico per tutti gli agenti. Il campo opzionale `handoffs` dello STATE è una lista di
-record:
+Decisioni owner (05/11/2026) e PF-MCP-CROSS-REPO-HANDOFF-01. Claude C consegna il lavoro come **patch**, senza PR
+proprie, e Claude B la integra su main. La catena di C può stare in un repository (per esempio `pickfair-mcp-`)
+diverso da quello di base e integrazione (`Pickfair-nogui`). Lo strumento resta unico per tutti gli agenti. Il campo
+opzionale `handoffs` dello STATE è una lista di record:
 
 ```json
-{"source_repo": "...", "source_branch": "...", "source_sha": "<40 hex>", "patch_sha256": "<64 hex>",
- "target_repo": "...", "handoff_ref": "<issue o commento GitHub>",
- "status": "DELIVERED" | "INTEGRATED_VERIFIED" | "INTEGRATED_NOT_PROVEN",
- "artifact": "<percorso della patch nel checkpoint>", "base_sha": "<40 hex>", "integration_sha": "<40 hex>",
- "integration_tree": "<40 hex>"}
+{"checkpoint_repo": "<= STATE.repository>",
+ "source_repo": "...", "source_sha": "<40 hex>", "source_published": true,
+ "target_repo": "...", "base_sha": "<40 hex>",
+ "handoff_branch": "...", "handoff_sha": "<40 hex>", "handoff_tree": "<40 hex>",
+ "integration_sha": "<40 hex>", "integration_tree": "<40 hex>",
+ "patch_sha256": "<64 hex>", "artifact": "<percorso della patch nel checkpoint>",
+ "handoff_ref": "<issue o commento GitHub>",
+ "status": "DELIVERED" | "DURABLE" | "INTEGRATED_VERIFIED" | "INTEGRATED_NOT_PROVEN"}
 ```
 
-Gli ultimi quattro campi sono opzionali. Regole di `verify`:
-1. `source_sha` deve risolversi; irrisolto (per esempio branch sorgente cancellato prima della riconciliazione) è un
-   problema di **riferimento** ⇒ `bootstrap` dà `NEEDS_RECONCILIATION`, mai `READY`. Al `save` e al readback la
-   sorgente passa per la stessa classificazione di durabilità di `code.sha` (§6-ter, etichetta `handoff[i]`): branch
-   durevole, `refs/pull/<N>/head`, ecc. Il branch di consegna di C conta come durevole solo se è passato a
-   `--durable-branch`.
-2. Se la patch è inclusa nel checkpoint (`artifact`), il suo sha256 deve essere `patch_sha256`; un artefatto dichiarato
-   assente o con digest diverso rende il checkpoint invalido.
-3. `DELIVERED` **non** equivale mai a integrato: lo strumento non deduce nulla da main, dai nomi dei branch o dalla
-   presenza di un commit simile. `verify` riporta `verified: false`.
-4. `INTEGRATED_VERIFIED` è accettato solo se `verify` **ricalcola** la prova. Servono la patch inclusa e integra,
-   `base_sha` e `integration_sha` risolvibili, e tree(patch applicata su `base_sha`) == tree(`integration_sha`)
-   (== `integration_tree`, se dichiarato). La patch si applica in un **indice temporaneo** (`read-tree base` +
-   `git apply --cached --binary` + `write-tree`): stesso tree di `git apply --index` in un worktree temporaneo, senza
-   checkout né effetti sul repository. Se la prova non regge, il record va dichiarato `INTEGRATED_NOT_PROVEN`. Un
-   `INTEGRATED_VERIFIED` non provato è un problema di **integrità**: `LATEST_CHECKPOINT_CORRUPT`, mai `READY`.
-5. `INTEGRATED_NOT_PROVEN` è una dichiarazione onesta (per esempio l'integrazione contiene una modifica in più): è
-   ammessa e riportata `verified: false`.
+Sono obbligatori `checkpoint_repo`, `source_repo`, `target_repo`, `handoff_ref`, `patch_sha256` e `status`.
+`source_sha` è obbligatorio se la sorgente è pubblicata; un commit solo locale si dichiara con
+`source_published: false`, senza `source_sha`. `source_branch` è facoltativo.
 
-`pfckpt.py handoff-verify --repo R --source <sha> --patch <file> --base <sha> --integration <sha>` (più
-`--source-repo`, `--source-branch`, `--target-repo` e `--handoff-ref` facoltativi) stampa il record con
-`applied_tree` e `integration_tree`. Exit 0 se `INTEGRATED_VERIFIED`, 2 altrimenti. `verify` e `bootstrap` riportano
-per ogni record `{index, status, source_reachable, verified}`.
+**Risoluzione nel proprio repository.** Ogni riferimento si risolve **solo** nel repository a cui appartiene:
+- quello della catena, se il nome coincide con `checkpoint_repo` == `STATE.repository`;
+- altrimenti uno passato a `verify`, `save`, `bootstrap` o `recover` con `--repo-path NOME=PERCORSO` (ripetibile).
+
+**Mai** nel repository della catena per ripiego, nemmeno se l'oggetto si trova lì. Un repository non disponibile,
+uno SHA irrisolto o un commit di handoff non pubblicato sul suo `handoff_branch` sono problemi di **riferimento**
+⇒ `NEEDS_RECONCILIATION`, mai `READY`, `DURABLE` o `VERIFIED`. «Pubblicato» significa contenuto in un remote-tracking
+`refs/remotes/*/<handoff_branch>` del percorso passato, oppure in `refs/heads/<handoff_branch>` se il percorso è il
+bare remoto stesso. Al `save` e al readback, la sorgente pubblicata e il commit di handoff che stanno nel repository
+della catena passano anche per la classificazione di durabilità (§6-ter, etichette `handoff[i]` e
+`handoff[i].handoff_sha`).
+
+Regole di `verify`:
+1. **Digest.** Se la patch è inclusa (`artifact`), il suo sha256 deve essere `patch_sha256`; un artefatto assente o
+   con digest diverso rende il checkpoint invalido.
+2. **`DELIVERED`** è solo una dichiarazione di consegna: non è mai integrato e non richiede repository extra. È
+   l'unico stato ammesso per una sorgente non pubblicata senza commit di handoff.
+3. **`DURABLE`** (handoff pubblicato e verificato) richiede tutte queste condizioni:
+   - `handoff_branch`, `handoff_sha`, `handoff_tree` e `base_sha` presenti;
+   - `handoff_sha` e `base_sha` risolvibili nel `target_repo`;
+   - `handoff_sha` pubblicato su `handoff_branch`;
+   - la patch inclusa e integra;
+   - tree(patch applicata su `base_sha`) == `handoff_tree` == tree(`handoff_sha`).
+
+   Un `source_sha` non pubblicato non è mai la prova: la prova è il commit di handoff.
+4. **`INTEGRATED_VERIFIED`** si prova in uno di due modi:
+   - con commit di handoff: le condizioni di `DURABLE`, più `integration_sha` risolvibile nel target e
+     tree(`integration_sha`) == `handoff_tree` (e == `integration_tree`, se dichiarato);
+   - senza commit di handoff (forma precedente): la prova ricalcolata, cioè tree(patch su `base_sha`) ==
+     tree(`integration_sha`).
+5. **`INTEGRATED_NOT_PROVEN`** è una dichiarazione onesta (per esempio l'integrazione contiene una modifica in più):
+   ammessa, con `verified: false`.
+
+Un `DURABLE` o `INTEGRATED_VERIFIED` la cui prova non regge (tree diverso, patch mancante, modifica in più) è un
+problema di **integrità**: `LATEST_CHECKPOINT_CORRUPT`, mai `READY`. Il messaggio chiede di dichiarare `DELIVERED`
+o `INTEGRATED_NOT_PROVEN`. La patch si applica in un **indice temporaneo** (`read-tree base` +
+`git apply --cached --binary` + `write-tree`): stesso tree di `git apply --index` in un worktree temporaneo, senza
+checkout né effetti sul repository.
+
+`pfckpt.py handoff-verify --repo R --source <sha> --patch <file> --base <sha> --integration <sha>` lavora su un solo
+repository: stampa il record con `applied_tree` e `integration_tree`, exit 0 se `INTEGRATED_VERIFIED`, 2 altrimenti.
+`verify` e `bootstrap` riportano per ogni record `{index, status, source_reachable, handoff_proven, verified}`.
 
 **`--allow-branch-only` non è una prova.** Resta un'eccezione registrata nello STATE
 (`code.durability_waiver`, con `declared_by` e `reason`), mai una prova di durabilità. Lo SHA sparisce con il
@@ -274,7 +301,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 100 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 109 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo
@@ -294,6 +321,11 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 - `handoffs`: la prova di integrazione richiede la patch dentro il checkpoint. Una patch consegnata solo via
   issue o commento (`handoff_ref`) non è verificabile dallo strumento e resta `DELIVERED` o `INTEGRATED_NOT_PROVEN`.
   Il contenuto di `handoff_ref` non viene letto (nessun accesso a GitHub).
+- Handoff fra repository diversi: `--repo-path` punta a un clone **locale**, e «pubblicato su `handoff_branch`» si
+  legge dai suoi remote-tracking (aggiornati all'ultimo `fetch` del chiamante) o dal bare stesso. Lo strumento non fa
+  `fetch` nei repository passati: un clone non aggiornato può dare `NEEDS_RECONCILIATION` (mai un falso `READY` per
+  un oggetto assente), ma non prova che il branch esista ancora sul remoto in quel momento. Il readback di `save` usa
+  gli stessi percorsi.
 - `original_tree` di un oggetto ormai irraggiungibile è verificabile solo contro i tree registrati (`code.tree`,
   `code.patch.tree`): senza registrazione resta il valore scritto da chi ha creato la transizione, che `integrate`
   calcola dall'oggetto quando c'è.

@@ -22,6 +22,7 @@ Comandi:
   integrate --repo R --original SHA --integration SHA [--original-tree T]
                                                         calcola il record `integration` (squash merge -> main) dai tree
   handoff-verify --repo R --source SHA --patch FILE --base SHA --integration SHA
+  (verify/save/bootstrap/recover) --repo-path NOME=PERCORSO   repository citati dagli handoff, ripetibile
                                                         prova (ricalcolata) che la patch consegnata su base = integrazione
 SHA durevoli (pfckpt_squash_durable_refs): al save ogni SHA di codice citato deve essere raggiungibile sul remoto da
 un branch durevole (default `main`), da `refs/pull/<N>/head` (dichiarato in `pr` o scoperto) o, tramite `integration`
@@ -73,8 +74,10 @@ KEEP_REFSPEC = f"+{KEEP_REF_PREFIX}*:{KEEP_REF_PREFIX}*"
 EQUIVALENCES = ("TREE_EQUAL", "NOT_PROVEN")
 INTEGRATION_FIELDS = ("original_sha", "original_tree", "integration_sha", "integration_tree", "equivalence")
 _SHA40 = re.compile(r"[0-9a-f]{40}")
-HANDOFF_STATUSES = ("DELIVERED", "INTEGRATED_VERIFIED", "INTEGRATED_NOT_PROVEN")
+HANDOFF_STATUSES = ("DELIVERED", "DURABLE", "INTEGRATED_VERIFIED", "INTEGRATED_NOT_PROVEN")
 HANDOFF_TEXT_FIELDS = ("source_repo", "source_branch", "target_repo", "handoff_ref")
+HANDOFF_REQUIRED_TEXT = ("checkpoint_repo", "source_repo", "target_repo", "handoff_ref")
+HANDOFF_SHA_FIELDS = ("source_sha", "base_sha", "handoff_sha", "handoff_tree", "integration_sha", "integration_tree")
 
 
 class CheckpointError(Exception):
@@ -354,32 +357,85 @@ def handoff_verify(repo, source, patch, base, integration, **meta):
     return rec
 
 
-def check_handoff(repo, commit, files, i, h):
-    """Un record di `handoffs`. Ritorna (problemi di integrita', problemi di riferimento, info)."""
+def parse_repo_paths(items):
+    """`--repo-path NAME=PATH` (ripetibile) -> {NAME: PATH}. Un NAME ripetuto o senza PATH e' un errore."""
+    paths = {}
+    for it in items or []:
+        name, sep, path = str(it).partition("=")
+        if not sep or not name.strip() or not path.strip() or name.strip() in paths:
+            raise CheckpointError(5, "REPO_PATH_MALFORMED", item=it, action="usare --repo-path NOME=PERCORSO, una volta per nome")
+        paths[name.strip()] = path.strip()
+    return paths
+
+
+def _published_on(repo, sha, branch):
+    """`sha` e' contenuto nel branch pubblicato `branch` di `repo`: via un remote-tracking `refs/remotes/*/<branch>`
+    o, se `repo` e' esso stesso il remoto (bare), via `refs/heads/<branch>`."""
+    refs = out(repo, "for-each-ref", "--format=%(refname)", "refs/remotes/").splitlines()
+    cands = [r for r in refs if r.split("/", 3)[-1] == branch]
+    if out(repo, "rev-parse", "--is-bare-repository") == "true":
+        cands.append(f"refs/heads/{branch}")
+    for ref in cands:
+        if git(repo, "rev-parse", "-q", "--verify", ref, check=False).returncode == 0 \
+                and git(repo, "merge-base", "--is-ancestor", sha, ref, check=False).returncode == 0:
+            return True
+    return False
+
+
+def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None):
+    """Un record di `handoffs` (PF-MCP-CROSS-REPO-HANDOFF-01). Ogni riferimento si risolve nel PROPRIO repository:
+    quello della catena (`checkpoint_repo` == STATE.repository) o uno passato con --repo-path NOME=PERCORSO; mai nel
+    repository della catena per ripiego. Ritorna (problemi di integrita', problemi di riferimento, info)."""
     label = f"handoff[{i}]"
     problems, refp = [], []
-    info = {"index": i, "status": None, "source_reachable": False, "verified": False}
+    info = {"index": i, "status": None, "source_reachable": False, "handoff_proven": False, "verified": False}
     if not isinstance(h, dict):
         return [f"{label}: non un oggetto"], refp, info
     info["status"] = h.get("status")
-    for f in HANDOFF_TEXT_FIELDS:
+    for f in HANDOFF_REQUIRED_TEXT:
         if not isinstance(h.get(f), str) or not h[f].strip():
             problems.append(f"{label}: campo {f} mancante o vuoto")
-    if not _SHA40.fullmatch(str(h.get("source_sha", ""))):
-        problems.append(f"{label}: source_sha deve essere uno SHA completo")
+    if chain_repo and h.get("checkpoint_repo") not in (None, chain_repo):
+        problems.append(f"{label}: checkpoint_repo {h.get('checkpoint_repo')!r} != STATE.repository {chain_repo!r}")
+    published = h.get("source_published", True)
+    if published not in (True, False):
+        problems.append(f"{label}: source_published deve essere true/false")
+    if published is not False and "source_sha" not in h:
+        problems.append(f"{label}: source_sha obbligatorio se la sorgente e' pubblicata (altrimenti source_published: false)")
     if not re.fullmatch(r"[0-9a-f]{64}", str(h.get("patch_sha256", ""))):
         problems.append(f"{label}: patch_sha256 deve essere un sha256 esadecimale")
     if h.get("status") not in HANDOFF_STATUSES:
         problems.append(f"{label}: status non ammesso: {h.get('status')!r}")
-    for f in ("integration_sha", "integration_tree", "base_sha"):
+    for f in HANDOFF_SHA_FIELDS:
         if f in h and h[f] is not None and not _SHA40.fullmatch(str(h[f])):
             problems.append(f"{label}: {f} deve essere uno SHA completo")
     if problems:
         return problems, refp, info
-    if resolve_commit(repo, h["source_sha"]):
-        info["source_reachable"] = True
-    else:
-        refp.append(f"{label}: source_sha irrisolto: {h['source_sha']} (branch sorgente cancellato?)")
+    paths = repo_paths or {}
+
+    def repo_of(name, what):
+        if name == h["checkpoint_repo"] and (chain_repo is None or name == chain_repo):
+            return repo
+        if name in paths:
+            return paths[name]
+        refp.append(f"{label}: repository {name!r} non disponibile per {what} (--repo-path {name}=PERCORSO); "
+                    "mai risolto nel repository della catena")
+        return None
+
+    def resolved(r, f, what):
+        if r is None:
+            return None
+        sha = resolve_commit(r, h[f])
+        if not sha:
+            refp.append(f"{label}: {f} irrisolto in {what}: {h[f]}")
+        return sha
+
+    if published is not False:
+        src_repo = repo_of(h["source_repo"], "source_sha")
+        if src_repo is not None and resolve_commit(src_repo, h["source_sha"]):
+            info["source_reachable"] = True
+        elif src_repo is not None:
+            refp.append(f"{label}: source_sha irrisolto: {h['source_sha']} (branch sorgente cancellato?)")
     patch = None
     art = h.get("artifact")
     if art is not None:
@@ -390,33 +446,84 @@ def check_handoff(repo, commit, files, i, h):
             if hashlib.sha256(patch).hexdigest() != h["patch_sha256"]:
                 problems.append(f"{label}: sha256 della patch != patch_sha256")
                 patch = None
-    if h["status"] == "INTEGRATED_VERIFIED":
+    status = h["status"]
+    if status in ("DELIVERED", "INTEGRATED_NOT_PROVEN"):
+        return problems, refp, info                 # dichiarazioni: nessuna prova ricalcolata, nessuna inferenza
+    has_handoff = any(h.get(f) for f in ("handoff_branch", "handoff_sha", "handoff_tree"))
+    claim = f"{status} non provato"
+    if status == "DURABLE" or has_handoff:
+        # la prova e' il commit di handoff pubblicato nel target, mai la sorgente (eventualmente non pubblicata)
+        missing = [f for f in ("handoff_branch", "handoff_sha", "handoff_tree", "base_sha") if not h.get(f)]
+        if missing:
+            problems.append(f"{label}: {claim}: mancano {', '.join(missing)}")
+            return problems, refp, info
+        tgt = repo_of(h["target_repo"], "handoff_sha/base_sha")
+        hsha, base = resolved(tgt, "handoff_sha", "target_repo"), resolved(tgt, "base_sha", "target_repo")
+        if hsha and not _published_on(tgt, hsha, h["handoff_branch"]):
+            refp.append(f"{label}: handoff_sha non pubblicato sul branch {h['handoff_branch']!r} del target")
+        if not (hsha and base):
+            return problems, refp, info
         why = None
-        base, integ = h.get("base_sha"), h.get("integration_sha")
-        if patch is None:
+        htree = tree_of(tgt, hsha)
+        if htree != h["handoff_tree"]:
+            why = "tree(handoff_sha) != handoff_tree"
+        elif patch is None:
             why = "patch non inclusa o non integra nel checkpoint"
-        elif not base or not resolve_commit(repo, base):
-            why = "base_sha assente o irrisolto"
-        elif not integ or not resolve_commit(repo, integ):
-            why = "integration_sha assente o irrisolto"
         else:
-            itree = tree_of(repo, integ)
-            applied = apply_patch_tree(repo, base, patch)
-            if h.get("integration_tree") and h["integration_tree"] != itree:
-                why = "integration_tree != tree(integration_sha)"
-            elif applied is None:
+            applied = apply_patch_tree(tgt, base, patch)
+            if applied is None:
                 why = "la patch non si applica su base_sha"
-            elif applied != itree:
-                why = "tree(patch su base_sha) != tree(integration_sha)"
+            elif applied != htree:
+                why = "tree(patch su base_sha) != handoff_tree"
         if why:
-            # dichiarazione di integrazione non provata: problema di INTEGRITA' (mai READY), non di riferimento
-            problems.append(f"{label}: INTEGRATED_VERIFIED non provato: {why}; dichiarare INTEGRATED_NOT_PROVEN")
+            problems.append(f"{label}: {claim}: {why}; dichiarare DELIVERED o INTEGRATED_NOT_PROVEN")
+            return problems, refp, info
+        if any(p.startswith(f"{label}:") for p in refp):
+            return problems, refp, info
+        info["handoff_proven"] = True
+        if status == "DURABLE":
+            return problems, refp, info
+        integ = h.get("integration_sha")
+        if not integ:
+            problems.append(f"{label}: {claim}: integration_sha assente")
+            return problems, refp, info
+        isha = resolved(tgt, "integration_sha", "target_repo")
+        if not isha:
+            return problems, refp, info
+        itree = tree_of(tgt, isha)
+        if h.get("integration_tree") and h["integration_tree"] != itree:
+            problems.append(f"{label}: {claim}: integration_tree != tree(integration_sha)")
+        elif itree != h["handoff_tree"]:
+            problems.append(f"{label}: {claim}: tree(integration_sha) != handoff_tree; dichiarare INTEGRATED_NOT_PROVEN")
         else:
             info["verified"] = True
+        return problems, refp, info
+    # INTEGRATED_VERIFIED senza commit di handoff: prova ricalcolata patch su base_sha == tree(integration_sha)
+    if patch is None:
+        problems.append(f"{label}: {claim}: patch non inclusa o non integra nel checkpoint; dichiarare INTEGRATED_NOT_PROVEN")
+        return problems, refp, info
+    if not h.get("base_sha") or not h.get("integration_sha"):
+        problems.append(f"{label}: {claim}: base_sha o integration_sha assente")
+        return problems, refp, info
+    tgt = repo_of(h["target_repo"], "base_sha/integration_sha")
+    base, isha = resolved(tgt, "base_sha", "target_repo"), resolved(tgt, "integration_sha", "target_repo")
+    if not (base and isha):
+        return problems, refp, info
+    itree = tree_of(tgt, isha)
+    applied = apply_patch_tree(tgt, base, patch)
+    if h.get("integration_tree") and h["integration_tree"] != itree:
+        problems.append(f"{label}: {claim}: integration_tree != tree(integration_sha)")
+    elif applied is None:
+        problems.append(f"{label}: {claim}: la patch non si applica su base_sha")
+    elif applied != itree:
+        problems.append(f"{label}: {claim}: tree(patch su base_sha) != tree(integration_sha); "
+                        "dichiarare INTEGRATED_NOT_PROVEN")
+    else:
+        info["verified"] = True
     return problems, refp, info
 
 
-def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
+def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None):
     """Verifica completa del checkpoint al commit REF. Ritorna un dict di report; solleva CheckpointError(2) se invalido."""
     commit = out(repo, "rev-parse", "--verify", f"{ref}^{{commit}}")
     files = tree_files(repo, commit, d)
@@ -523,7 +630,7 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
             problems.append("handoffs non e' una lista")
         else:
             for i, h in enumerate(hs):
-                hp, hr, hinfo = check_handoff(lookup, commit, files, i, h)
+                hp, hr, hinfo = check_handoff(lookup, commit, files, i, h, state.get("repository"), repo_paths)
                 problems += hp
                 ref_problems += hr
                 handoff_report.append(hinfo)
@@ -700,6 +807,21 @@ def fetch_keep_refs(repo):
     git(repo, "fetch", "-q", "origin", KEEP_REFSPEC, check=False)
 
 
+def _same_repo_handoff_shas(state):
+    """(record, campo) degli SHA di handoff che stanno nel repository della catena: la sorgente pubblicata e il commit
+    di handoff. Gli SHA di altri repository non si classificano sul remoto della catena (si verificano nel loro)."""
+    chain = state.get("repository")
+    found = []
+    for h in (state["handoffs"] if isinstance(state.get("handoffs"), list) else []):
+        if not isinstance(h, dict):
+            continue
+        if h.get("source_sha") and h.get("source_published", True) is not False and h.get("source_repo") == chain:
+            found.append((h, "source_sha"))
+        if h.get("handoff_sha") and h.get("target_repo") == chain:
+            found.append((h, "handoff_sha"))
+    return found
+
+
 def _cited_shas_and_prs(state):
     """SHA citati da risolvere (code.sha, tests_executed[].sha PASS/FAIL non dichiarati unpublished) e numeri di PR
     dichiarati (`code.pr`, `tests_executed[].pr`, interi positivi)."""
@@ -709,9 +831,8 @@ def _cited_shas_and_prs(state):
         shas.append(str(code["sha"]))
     if isinstance(code.get("pr"), int) and code["pr"] > 0:
         prs.add(code["pr"])
-    for h in (state["handoffs"] if isinstance(state.get("handoffs"), list) else []):
-        if isinstance(h, dict) and h.get("source_sha"):
-            shas.append(str(h["source_sha"]))
+    for h, f in _same_repo_handoff_shas(state):
+        shas.append(str(h[f]))
     for t in state.get("tests_executed") or []:
         if not isinstance(t, dict):
             continue
@@ -773,10 +894,10 @@ def cited_references(repo, state):
                       "integration": info.get("integration_sha")})
     # handoffs: la sorgente della patch deve essere durevole come code.sha (mai inferita dall'integrazione)
     hs = state.get("handoffs") if isinstance(state.get("handoffs"), list) else []
-    for i, h in enumerate(hs):
-        if isinstance(h, dict) and h.get("source_sha"):
-            cited.append({"label": f"handoff[{i}]", "sha": str(h["source_sha"]),
-                          "original": resolve_commit(repo, str(h["source_sha"])), "integration": None})
+    for h, f in _same_repo_handoff_shas(state):
+        i = hs.index(h)
+        cited.append({"label": f"handoff[{i}]" if f == "source_sha" else f"handoff[{i}].handoff_sha",
+                      "sha": str(h[f]), "original": resolve_commit(repo, str(h[f])), "integration": None})
     return cited
 
 
@@ -859,7 +980,7 @@ def _not_durable(code, reason, missing, branch_only):
 
 
 def readback(remote_url, branch, d, code_branch=None, expect_commit=None, keep_refs=False,
-             durable_branches=DEFAULT_DURABLE_BRANCHES):
+             durable_branches=DEFAULT_DURABLE_BRANCHES, repo_paths=None):
     """Clone pulito dal remoto e verifica completa li': l'unica prova di durabilita'. Riverifica che ogni SHA citato sia
     durevole sul remoto (branch durevole, refs/pull/<N>/head, integrazione TREE_EQUAL; con keep_refs, il proprio ref
     keep puntato allo SHA stesso)."""
@@ -876,7 +997,7 @@ def readback(remote_url, branch, d, code_branch=None, expect_commit=None, keep_r
         fetch_keep_refs(tmp)
         fetch_pull_heads(tmp, d)
         try:
-            report = verify(tmp, "HEAD", d)
+            report = verify(tmp, "HEAD", d, repo_paths=repo_paths)
         except CheckpointError as exc:
             raise CheckpointError(4, "READBACK_VERIFY_FAILED", inner=exc.reason, **exc.detail)
         if expect_commit and report["commit"] != expect_commit:
@@ -897,7 +1018,7 @@ def readback(remote_url, branch, d, code_branch=None, expect_commit=None, keep_r
 
 def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=None, agent=None,
          ttl_min=DEFAULT_LEASE_MIN, release=False, code_repo=None, now=None, keep_refs=False, allow_branch_only=False,
-         durable_branches=DEFAULT_DURABLE_BRANCHES):
+         durable_branches=DEFAULT_DURABLE_BRANCHES, repo_paths=None):
     """Pubblicazione verificata. Ripresa idempotente: rieseguire save dopo un crash in qualunque punto e' sicuro.
     expected = SHA remoto da cui l'agente e' partito (controllo ottimistico); mai force-push, mai merge di stato.
     agent = identita' dello scrittore: il lease si legge dal checkpoint remoto atteso; tenuto da un altro agente e
@@ -914,13 +1035,13 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
     if current == head and head != expected and parent == expected:
         # crash dopo il push (prima del readback): il remoto ha gia' il NOSTRO checkpoint figlio di expected.
         # I ref keep potrebbero mancare (crash fra i due, strumento precedente): si pubblicano, senza force.
-        local = verify(repo, "HEAD", d)
+        local = verify(repo, "HEAD", d, repo_paths=repo_paths)
         if keep_refs and local["keep_shas"]:
             p = git(repo, "push", "-q", "--atomic", remote, *keep_refspecs(local["keep_shas"]), check=False)
             if p.returncode != 0:
                 raise CheckpointError(3, "KEEP_REF_PUSH_REJECTED", stderr=p.stderr.decode(errors="replace")[-300:])
         report = readback(url, branch, d, code_branch, expect_commit=head, keep_refs=keep_refs,
-                          durable_branches=durable_branches)
+                          durable_branches=durable_branches, repo_paths=repo_paths)
         return {"status": "DURABLE", "resumed": "after_push", **report}
     if current != expected:
         raise CheckpointError(3, "CONCURRENT_UPDATE", expected=expected, remote=current,
@@ -976,7 +1097,7 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
         write_manifest(repo, d)
         git(repo, "add", "-A", "-f", "--", d)          # -f: un .gitignore non puo' escludere artefatti in silenzio
         git(repo, "commit", "-q", "-m", message)
-    local = verify(repo, "HEAD", d)                 # verifica del TREE committato prima di pubblicare
+    local = verify(repo, "HEAD", d, repo_paths=repo_paths)   # verifica del TREE committato prima di pubblicare
     untracked = [l for l in out(repo, "status", "--porcelain", "--ignored", "--", d).splitlines()
                  if not l.endswith(".pyc") and "__pycache__" not in l]
     if untracked:
@@ -998,15 +1119,15 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
         else:
             raise CheckpointError(3, "PUSH_REJECTED", remote=now_remote, stderr=p.stderr.decode(errors="replace")[-300:])
     report = readback(url, branch, d, code_branch, expect_commit=out(repo, "rev-parse", "HEAD"), keep_refs=keep_refs,
-                      durable_branches=durable_branches)
+                      durable_branches=durable_branches, repo_paths=repo_paths)
     return {"status": "DURABLE", "resumed": resumed, **report}
 
 
 # ------------------------------------------------------------------ ripresa da zero, recover, divergenza
-def last_valid_checkpoint(repo, d, start="HEAD", limit=200):
+def last_valid_checkpoint(repo, d, start="HEAD", limit=200, repo_paths=None):
     for c in out(repo, "rev-list", "--first-parent", start).splitlines()[:limit]:
         try:
-            verify(repo, c, d)
+            verify(repo, c, d, repo_paths=repo_paths)
             return c
         except CheckpointError:
             continue
@@ -1027,7 +1148,7 @@ def code_divergence(repo, code_branch, code_sha):
             "action": "non completare un lotto con risultati di un'altra versione: riconciliare esplicitamente"}
 
 
-def bootstrap(url, branch, dest, d=DEFAULT_DIR, code_branch=None, agent=None):
+def bootstrap(url, branch, dest, d=DEFAULT_DIR, code_branch=None, agent=None, repo_paths=None):
     p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, url, dest], capture_output=True)
     if p.returncode != 0:
         raise CheckpointError(5, "CLONE_FAILED", stderr=p.stderr.decode(errors="replace")[-300:])
@@ -1036,9 +1157,9 @@ def bootstrap(url, branch, dest, d=DEFAULT_DIR, code_branch=None, agent=None):
     fetch_keep_refs(dest)                           # gli SHA citati restano risolvibili dopo squash + delete branch
     pull_fetch = fetch_pull_heads(dest, d)          # fallback GitHub refs/pull/<N>/head, solo se serve
     try:
-        report = verify(dest, "HEAD", d)
+        report = verify(dest, "HEAD", d, repo_paths=repo_paths)
     except CheckpointError as exc:
-        last_valid = last_valid_checkpoint(dest, d, "HEAD~1") if out(dest, "rev-list", "--count", "HEAD") != "1" else None
+        last_valid = last_valid_checkpoint(dest, d, "HEAD~1", repo_paths=repo_paths) if out(dest, "rev-list", "--count", "HEAD") != "1" else None
         problems = exc.detail.get("problems") or []
         refp = exc.detail.get("reference_problems") or []
         if problems and set(problems) <= set(refp):
@@ -1068,7 +1189,7 @@ def bootstrap(url, branch, dest, d=DEFAULT_DIR, code_branch=None, agent=None):
     return result
 
 
-def recover(url, branch, dest, d=DEFAULT_DIR):
+def recover(url, branch, dest, d=DEFAULT_DIR, repo_paths=None):
     """Materializza in DEST l'ultimo checkpoint VALIDO della catena, senza toccare il remoto."""
     p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, url, dest], capture_output=True)
     if p.returncode != 0:
@@ -1076,11 +1197,11 @@ def recover(url, branch, dest, d=DEFAULT_DIR):
     fetch_keep_refs(dest)
     fetch_pull_heads(dest, d)
     head = out(dest, "rev-parse", "HEAD")
-    valid = last_valid_checkpoint(dest, d, "HEAD")
+    valid = last_valid_checkpoint(dest, d, "HEAD", repo_paths=repo_paths)
     if valid is None:
         raise CheckpointError(2, "NO_VALID_CHECKPOINT", head=head)
     git(dest, "checkout", "-q", "--detach", valid)
-    report = verify(dest, "HEAD", d)
+    report = verify(dest, "HEAD", d, repo_paths=repo_paths)
     return {"status": "RECOVERED", "remote_head": head, "skipped_invalid": out(dest, "rev-list", "--count", f"{valid}..{head}"),
             **report}
 
@@ -1114,18 +1235,23 @@ def main(argv=None):
     hv.add_argument("--base", required=True); hv.add_argument("--integration", required=True)
     for f in HANDOFF_TEXT_FIELDS:
         hv.add_argument("--" + f.replace("_", "-"))
+    for sp in (v, s, b, r):
+        sp.add_argument("--repo-path", action="append", default=[],
+                        help="NOME=PERCORSO di un repository citato dagli handoff (ripetibile); mai ripiego sulla catena")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "verify":
-            res = {"status": "VALID", **verify(a.repo, a.ref, a.dir, a.code_repo)}
+            res = {"status": "VALID", **verify(a.repo, a.ref, a.dir, a.code_repo, parse_repo_paths(a.repo_path))}
         elif a.cmd == "save":
             res = save(a.repo, a.branch, a.remote, a.expected, a.message, a.dir, a.code_branch, agent=a.agent,
                        ttl_min=a.ttl_min, release=a.release, code_repo=a.code_repo, keep_refs=a.keep_refs,
-                       allow_branch_only=a.allow_branch_only, durable_branches=a.durable_branch)
+                       allow_branch_only=a.allow_branch_only, durable_branches=a.durable_branch,
+                       repo_paths=parse_repo_paths(a.repo_path))
         elif a.cmd == "bootstrap":
-            res = bootstrap(a.url, a.branch, a.dest, a.dir, a.code_branch, agent=a.agent)
+            res = bootstrap(a.url, a.branch, a.dest, a.dir, a.code_branch, agent=a.agent,
+                            repo_paths=parse_repo_paths(a.repo_path))
         elif a.cmd == "recover":
-            res = recover(a.url, a.branch, a.dest, a.dir)
+            res = recover(a.url, a.branch, a.dest, a.dir, repo_paths=parse_repo_paths(a.repo_path))
         elif a.cmd == "handoff-verify":
             with open(a.patch, "rb") as fh:
                 data = fh.read()

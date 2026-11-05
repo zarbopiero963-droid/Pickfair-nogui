@@ -64,7 +64,8 @@ def integrate_on_main(world, base, patch, extra=None):
 
 
 def record(source, patch, status="DELIVERED", **extra):
-    return {"source_repo": "zarbopiero963-droid/Pickfair-nogui", "source_branch": C_BRANCH, "source_sha": source,
+    return {"checkpoint_repo": "zarbopiero963-droid/Pickfair-nogui",
+            "source_repo": "zarbopiero963-droid/Pickfair-nogui", "source_branch": C_BRANCH, "source_sha": source,
             "patch_sha256": hashlib.sha256(patch).hexdigest(), "target_repo": "zarbopiero963-droid/Pickfair-nogui",
             "handoff_ref": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/1#issuecomment-1",
             "status": status, **extra}
@@ -104,7 +105,8 @@ def test_delivery_on_durable_branch_is_saved_and_never_integrated(world):
                       release=True)
     assert res["status"] == "DURABLE"
     assert {r["label"]: r["via"] for r in res["durability"]}["handoff[0]"] == f"BRANCH:{C_BRANCH}"
-    assert res["handoffs"] == [{"index": 0, "status": "DELIVERED", "source_reachable": True, "verified": False}]
+    assert res["handoffs"] == [{"index": 0, "status": "DELIVERED", "source_reachable": True, "handoff_proven": False,
+                                "verified": False}]
     integrate_on_main(world, base, patch)                         # B integra, ma il record resta DELIVERED:
     rep = pfckpt.bootstrap(world["url"], BR, str(world["tmp"] / "fresh"), D, CODE_BR)
     assert rep["status"] == "READY" and rep["handoffs"][0]["status"] == "DELIVERED"

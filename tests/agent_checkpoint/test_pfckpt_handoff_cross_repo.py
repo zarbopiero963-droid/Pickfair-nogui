@@ -1,0 +1,232 @@
+"""PF-MCP-CROSS-REPO-HANDOFF-01: handoff fra repository diversi (git REALE, offline).
+
+La catena di Claude C sta nel bare A (`pickfair-mcp-`). Base, commit di handoff pubblicato da Claude B e integrazione
+stanno nel bare B (`Pickfair-nogui`). Ogni riferimento si risolve nel PROPRIO repository (--repo-path NOME=PERCORSO),
+mai nel repository della catena per ripiego. Repository non disponibile => NEEDS_RECONCILIATION, mai READY.
+"""
+import hashlib
+import os
+import subprocess
+import sys
+
+import pytest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "tools", "agent_checkpoint"))
+import pfckpt  # noqa: E402
+from test_pfckpt import BR, CODE_BR, D, _cfg, agent, expect, next_state, raw_commit, sh, world  # noqa: E402,F401
+
+CHAIN = "zarbopiero963-droid/pickfair-mcp-"
+TARGET = "zarbopiero963-droid/Pickfair-nogui"
+HBRANCH = "handoff/claude-c-1"
+
+
+def _git(*args, **kw):
+    return subprocess.run(["git", *args], check=True, capture_output=True, **kw)
+
+
+@pytest.fixture
+def target(world):
+    """Bare B con main (base), commit di handoff su HBRANCH e integrazione su main; clone fresco per --repo-path."""
+    t = world["tmp"]
+    bare = str(t / "target.git")
+    _git("init", "-q", "--bare", bare)
+    w = str(t / "target_work")
+    _git("init", "-q", w); _cfg(w)
+    open(os.path.join(w, "app.py"), "w").write("print('nogui')\n")
+    sh(w, "add", "-A"); sh(w, "commit", "-q", "-m", "base")
+    sh(w, "remote", "add", "origin", bare)
+    sh(w, "push", "-q", "origin", "HEAD:refs/heads/main")
+    base = sh(w, "rev-parse", "HEAD")
+    # la patch di C (prodotta fuori dal target: qui un diff su una copia di lavoro)
+    sh(w, "checkout", "-q", "-b", "scratch")
+    open(os.path.join(w, "app.py"), "a").write("print('patch di C')\n")
+    open(os.path.join(w, "mcp_bridge.py"), "w").write("BRIDGE = 1\n")
+    sh(w, "add", "-A")
+    patch = _git("-C", w, "diff", "--cached", "--binary", base).stdout
+    sh(w, "reset", "-q", "--hard", base); sh(w, "checkout", "-q", "main"); sh(w, "branch", "-q", "-D", "scratch")
+    return {"bare": bare, "work": w, "base": base, "patch": patch, "tmp": t}
+
+
+def publish_handoff(tg, extra=None):
+    """Claude B applica la patch su base, su HBRANCH (con `extra`: una modifica in piu'), e pubblica."""
+    w = tg["work"]
+    sh(w, "checkout", "-q", "-B", "h", tg["base"])
+    _git("-C", w, "apply", "--index", "-", input=tg["patch"])
+    if extra:
+        open(os.path.join(w, extra), "w").write("non nella patch\n")
+        sh(w, "add", "-A")
+    sh(w, "commit", "-q", "-m", "handoff patch di C")
+    sh(w, "push", "-q", "-f", "origin", f"HEAD:refs/heads/{HBRANCH}")
+    return sh(w, "rev-parse", "HEAD"), sh(w, "rev-parse", "HEAD^{tree}")
+
+
+def integrate(tg, extra=None):
+    w = tg["work"]
+    sh(w, "fetch", "-q", "origin")
+    sh(w, "checkout", "-q", "-B", "i", "origin/main")
+    _git("-C", w, "apply", "--index", "-", input=tg["patch"])
+    if extra:
+        open(os.path.join(w, extra), "w").write("aggiunta in integrazione\n")
+        sh(w, "add", "-A")
+    sh(w, "commit", "-q", "-m", "squash handoff")
+    sh(w, "push", "-q", "origin", "HEAD:refs/heads/main")
+    return sh(w, "rev-parse", "HEAD"), sh(w, "rev-parse", "HEAD^{tree}")
+
+
+def target_clone(tg, name="target_clone"):
+    path = str(tg["tmp"] / name)
+    _git("clone", "-q", "--no-local", tg["bare"], path)
+    return path
+
+
+def rec(world, tg, status, **kw):
+    r = {"checkpoint_repo": CHAIN, "source_repo": CHAIN, "source_sha": world["code"], "target_repo": TARGET,
+         "base_sha": tg["base"], "patch_sha256": hashlib.sha256(tg["patch"]).hexdigest(),
+         "handoff_ref": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/1#issuecomment-2",
+         "artifact": "handoff/c.patch", "status": status}
+    r.update(kw)
+    return r
+
+
+def chain_ckpt(world, tg, name, handoffs, push=False):
+    a = agent(world, name)
+    os.makedirs(os.path.join(a, D, "handoff"), exist_ok=True)
+    open(os.path.join(a, D, "handoff", "c.patch"), "wb").write(tg["patch"])
+    next_state(a, world, repository=CHAIN, handoffs=handoffs)
+    pfckpt.write_manifest(a, D)
+    raw_commit(a, "ckpt C con handoff")
+    if push:
+        sh(a, "push", "-q", "origin", f"HEAD:refs/heads/{BR}")
+    return a
+
+
+def _only_reference_problems(err):
+    return set(err.detail["problems"]) <= set(err.detail["reference_problems"])
+
+
+# ================================================================== repository del target assente
+def test_target_repo_absent_is_needs_reconciliation_and_present_is_ready(world, target):
+    hsha, htree = publish_handoff(target)
+    r = rec(world, target, "DURABLE", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    a = chain_ckpt(world, target, "c", [r], push=True)
+    err = expect(2, pfckpt.verify, a, "HEAD", D)
+    assert _only_reference_problems(err) and any("non disponibile" in p for p in err.detail["problems"])
+    err = expect(2, pfckpt.bootstrap, world["url"], BR, str(world["tmp"] / "f1"), D, CODE_BR)
+    assert err.reason == "NEEDS_RECONCILIATION"
+    paths = {TARGET: target_clone(target)}
+    rep = pfckpt.bootstrap(world["url"], BR, str(world["tmp"] / "f2"), D, CODE_BR, repo_paths=paths)
+    assert rep["status"] == "READY" and rep["handoffs"][0]["handoff_proven"] is True
+    assert rep["handoffs"][0]["verified"] is False, "DURABLE non e' integrato"
+
+
+def test_never_resolved_in_the_chain_repo_as_fallback(world, target):
+    """Anche se gli oggetti del target esistono nel repository della catena, senza --repo-path non si risolvono li'."""
+    hsha, htree = publish_handoff(target)
+    sh(target["work"], "push", "-q", world["url"], f"{hsha}:refs/heads/copia-nella-catena")
+    r = rec(world, target, "DURABLE", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    a = chain_ckpt(world, target, "c", [r])
+    sh(a, "fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*")
+    assert pfckpt.resolve_commit(a, hsha) == hsha, "l'oggetto c'e' nella catena..."
+    err = expect(2, pfckpt.verify, a, "HEAD", D)                 # ...ma non vale come prova
+    assert _only_reference_problems(err)
+
+
+# ================================================================== handoff pubblicato e tree uguale
+def test_published_handoff_with_equal_tree_is_durable_then_integrated_verified(world, target):
+    hsha, htree = publish_handoff(target)
+    paths = {TARGET: target_clone(target, "t1")}
+    r = rec(world, target, "DURABLE", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    a = agent(world, "c")
+    os.makedirs(os.path.join(a, D, "handoff"), exist_ok=True)
+    open(os.path.join(a, D, "handoff", "c.patch"), "wb").write(target["patch"])
+    exp = next_state(a, world, repository=CHAIN, handoffs=[r])
+    res = pfckpt.save(a, BR, "origin", exp, "handoff DURABLE", D, agent="claude-c", repo_paths=paths)
+    assert res["status"] == "DURABLE" and res["handoffs"][0]["handoff_proven"] is True
+    assert {x["label"]: x["via"] for x in res["durability"]}["handoff[0]"] == "BRANCH:main"   # sorgente nella catena
+    isha, itree = integrate(target)
+    assert itree == htree
+    paths = {TARGET: target_clone(target, "t2")}
+    r2 = dict(r, status="INTEGRATED_VERIFIED", integration_sha=isha, integration_tree=itree)
+    exp2 = next_state(a, world, handoffs=[r2])
+    res2 = pfckpt.save(a, BR, "origin", exp2, "handoff integrato", D, agent="claude-c", repo_paths=paths)
+    assert res2["status"] == "DURABLE" and res2["handoffs"][0]["verified"] is True
+
+
+def test_cli_verify_accepts_repo_path_and_rejects_malformed(world, target, capsys):
+    hsha, htree = publish_handoff(target)
+    r = rec(world, target, "DURABLE", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    a = chain_ckpt(world, target, "c", [r])
+    assert pfckpt.main(["verify", "--repo", a, "--dir", D]) == 2
+    capsys.readouterr()
+    assert pfckpt.main(["verify", "--repo", a, "--dir", D, "--repo-path", f"{TARGET}={target_clone(target)}"]) == 0
+    capsys.readouterr()
+    assert pfckpt.main(["verify", "--repo", a, "--dir", D, "--repo-path", "senza-percorso"]) == 5
+
+
+# ================================================================== una modifica in piu'
+def test_extra_change_in_handoff_declared_durable_is_invalid(world, target):
+    hsha, htree = publish_handoff(target, extra="extra.py")
+    paths = {TARGET: target_clone(target)}
+    for st in ("DURABLE", "INTEGRATED_VERIFIED"):
+        r = rec(world, target, st, handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree,
+                integration_sha=hsha, integration_tree=htree)
+        a = chain_ckpt(world, target, f"c_{st}", [r])
+        err = expect(2, pfckpt.verify, a, "HEAD", D, repo_paths=paths)
+        assert any(f"{st} non provato" in p and "patch su base_sha" in p for p in err.detail["problems"])
+        assert not _only_reference_problems(err), "integrita', non riferimento"
+
+
+def test_extra_change_in_integration_declared_verified_is_invalid_not_proven_is_accepted(world, target):
+    hsha, htree = publish_handoff(target)
+    isha, itree = integrate(target, extra="extra.py")
+    paths = {TARGET: target_clone(target)}
+    base = dict(handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree, integration_sha=isha)
+    liar = chain_ckpt(world, target, "liar", [rec(world, target, "INTEGRATED_VERIFIED", **base)], push=True)
+    err = expect(2, pfckpt.verify, liar, "HEAD", D, repo_paths=paths)
+    assert any("tree(integration_sha) != handoff_tree" in p for p in err.detail["problems"])
+    err = expect(2, pfckpt.bootstrap, world["url"], BR, str(world["tmp"] / "f"), D, CODE_BR, repo_paths=paths)
+    assert err.reason == "LATEST_CHECKPOINT_CORRUPT"
+    honest = chain_ckpt(world, target, "honest", [rec(world, target, "INTEGRATED_NOT_PROVEN", **base)])
+    assert pfckpt.verify(honest, "HEAD", D, repo_paths=paths)["handoffs"][0]["verified"] is False
+
+
+# ================================================================== sorgente non pubblicata
+def test_unpublished_source_is_delivered_only_unless_the_handoff_commit_proves_it(world, target):
+    unpub = {"source_published": False}
+    a = chain_ckpt(world, target, "d", [{k: v for k, v in rec(world, target, "DELIVERED", **unpub).items()
+                                         if k != "source_sha"}])
+    rep = pfckpt.verify(a, "HEAD", D)                             # nessun repository extra serve per DELIVERED
+    assert rep["handoffs"][0] == {"index": 0, "status": "DELIVERED", "source_reachable": False,
+                                  "handoff_proven": False, "verified": False}
+    for st in ("DURABLE", "INTEGRATED_VERIFIED"):                 # la sorgente non e' mai la prova
+        r = {k: v for k, v in rec(world, target, st, **unpub).items() if k != "source_sha"}
+        b = chain_ckpt(world, target, f"x_{st}", [r])
+        err = expect(2, pfckpt.verify, b, "HEAD", D, repo_paths={TARGET: target_clone(target, f"t_{st}")})
+        assert any(f"{st} non provato" in p for p in err.detail["problems"])
+    hsha, htree = publish_handoff(target)                         # la prova e' il commit di handoff pubblicato
+    r = {k: v for k, v in rec(world, target, "DURABLE", handoff_branch=HBRANCH, handoff_sha=hsha,
+                              handoff_tree=htree, **unpub).items() if k != "source_sha"}
+    c = chain_ckpt(world, target, "ok", [r])
+    assert pfckpt.verify(c, "HEAD", D, repo_paths={TARGET: target_clone(target)})["handoffs"][0]["handoff_proven"]
+
+
+def test_published_source_without_sha_and_wrong_checkpoint_repo_are_invalid(world, target):
+    r = {k: v for k, v in rec(world, target, "DELIVERED").items() if k != "source_sha"}
+    expect(2, pfckpt.verify, chain_ckpt(world, target, "a", [r]), "HEAD", D)
+    r = rec(world, target, "DELIVERED", checkpoint_repo="altro/repo")
+    expect(2, pfckpt.verify, chain_ckpt(world, target, "b", [r]), "HEAD", D)
+
+
+def test_handoff_branch_deleted_before_reconciliation_is_needs_reconciliation(world, target):
+    hsha, htree = publish_handoff(target)
+    r = rec(world, target, "DURABLE", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    a = chain_ckpt(world, target, "c", [r], push=True)
+    sh(target["bare"], "update-ref", "-d", f"refs/heads/{HBRANCH}")
+    sh(target["bare"], "reflog", "expire", "--expire=now", "--all")
+    sh(target["bare"], "gc", "-q", "--prune=now")
+    paths = {TARGET: target_clone(target)}
+    err = expect(2, pfckpt.bootstrap, world["url"], BR, str(world["tmp"] / "f"), D, CODE_BR, repo_paths=paths)
+    assert err.reason == "NEEDS_RECONCILIATION"
+    assert pfckpt.remote_head(a, "origin", BR) is not None

@@ -24,6 +24,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   come integrato. `INTEGRATED_VERIFIED` è accettato solo con la prova ricalcolata (patch su `base_sha` == tree di
   `integration_sha`); se non è provato, il checkpoint è invalido. Nuovo comando `handoff-verify`. Documentazione:
   §6-quater.
+- **Checkpoint multi-agente: handoff fra repository diversi (PF-MCP-CROSS-REPO-HANDOFF-01).** Ogni riferimento di un
+  handoff si risolve solo nel proprio repository: la catena oppure `--repo-path NOME=PERCORSO` su `verify`, `save`,
+  `bootstrap` e `recover`. Mai nella catena per ripiego. Un repository non disponibile dà `NEEDS_RECONCILIATION`.
+  Nuovo stato `DURABLE`: il commit di handoff è pubblicato su `handoff_branch` e la patch su `base_sha` dà il suo
+  tree. `INTEGRATED_VERIFIED` richiede in più tree(`integration_sha`) == `handoff_tree`. Una sorgente non
+  pubblicata (`source_published: false`) non è mai la prova.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;
