@@ -1,0 +1,210 @@
+{
+  "schema": "pf-g7-scenarios/1",
+  "requirements_doc": "pf-gov-persistent-roadmap-01:docs/roadmap/g7_financial_campaign.md",
+  "note": "ID stabili: non riusare ne' rinumerare. 'requires' = codice che deve essere su main perche' l'esito sia certificativo.",
+  "scenarios": [
+    {
+      "id": "G7-S01",
+      "test": "tests/acceptance/test_place_bet_risposta_senza_esito.py",
+      "requirements": [
+        "G7-R01",
+        "G7-R02"
+      ],
+      "seeds": [],
+      "requires": "F-14"
+    },
+    {
+      "id": "G7-S02",
+      "test": "tests/acceptance/test_place_bet_senza_esito_catena.py",
+      "requirements": [
+        "G7-R01",
+        "G7-R02"
+      ],
+      "seeds": [],
+      "requires": "F-14"
+    },
+    {
+      "id": "G7-S03",
+      "test": "tests/acceptance/test_f14_cancel_single_shot.py",
+      "requirements": [
+        "G7-R11"
+      ],
+      "seeds": [],
+      "requires": "F-14"
+    },
+    {
+      "id": "G7-S04",
+      "test": "tests/acceptance/test_betid_extractor_unico.py",
+      "requirements": [
+        "G7-R03",
+        "G7-R05"
+      ],
+      "seeds": [],
+      "requires": "F-14"
+    },
+    {
+      "id": "G7-S05",
+      "test": "tests/f026/test_f14_matched_non_confermato.py",
+      "requirements": [
+        "G7-R02",
+        "G7-R03",
+        "G7-R04",
+        "G7-R07",
+        "G7-R08"
+      ],
+      "seeds": [],
+      "requires": "F-14"
+    },
+    {
+      "id": "G7-S06",
+      "test": "tests/acceptance/test_f16_funds_freshness.py",
+      "requirements": [
+        "G7-R12"
+      ],
+      "seeds": [],
+      "requires": "F-16"
+    },
+    {
+      "id": "G7-S07",
+      "test": "tests/f026/test_g7_r12_fondi_vecchi.py",
+      "requirements": [
+        "G7-R12"
+      ],
+      "seeds": [],
+      "requires": "F-16"
+    },
+    {
+      "id": "G7-S08",
+      "test": "tests/f026/test_g7_r06_campagna.py::test_r06_chiusura_solo_con_la_prova_dell_exchange",
+      "requirements": [
+        "G7-R06"
+      ],
+      "seeds": [],
+      "requires": "main"
+    },
+    {
+      "id": "G7-S09",
+      "test": "tests/f026/test_g7_r06_campagna.py::test_r06_dopo_il_riavvio_nessuna_riserva_fantasma",
+      "requirements": [
+        "G7-R06"
+      ],
+      "seeds": [],
+      "requires": "F-R06"
+    },
+    {
+      "id": "G7-S10",
+      "test": "tests/f026/test_roserpina_100_report.py",
+      "requirements": [
+        "G7-R07",
+        "G7-R08",
+        "G7-R13"
+      ],
+      "seeds": [],
+      "requires": "main"
+    },
+    {
+      "id": "G7-S11",
+      "test": "tests/f026/test_roserpina_100_campagna2.py",
+      "requirements": [
+        "G7-R08",
+        "G7-R10",
+        "G7-R13"
+      ],
+      "seeds": [],
+      "requires": "F-03"
+    },
+    {
+      "id": "G7-S12",
+      "test": "tests/f026/test_roserpina_100_campagna3.py::test_a1_ingresso_parziale_un_solo_hedge_sull_abbinato_confermato",
+      "requirements": [
+        "G7-R09"
+      ],
+      "seeds": [],
+      "requires": "F-03"
+    },
+    {
+      "id": "G7-S13",
+      "test": "tests/f026/test_roserpina_100_campagna3.py::test_a2_hedge_con_esito_ignoto_mai_ripetuto",
+      "requirements": [
+        "G7-R01",
+        "G7-R10"
+      ],
+      "seeds": [],
+      "requires": "F-03"
+    },
+    {
+      "id": "G7-S14",
+      "test": "tests/f026/test_roserpina_100_campagna3.py::test_a3_settlement_e_bankroll_coerenti",
+      "requirements": [
+        "G7-R07",
+        "G7-R08"
+      ],
+      "seeds": [],
+      "requires": "F-03"
+    },
+    {
+      "id": "G7-S15",
+      "test": "tests/f026/test_roserpina_100_campagna3.py::test_a4_crash_dopo_l_invio_dell_hedge_nessun_secondo_hedge",
+      "requirements": [
+        "G7-R04",
+        "G7-R10"
+      ],
+      "seeds": [],
+      "requires": "F-03"
+    },
+    {
+      "id": "G7-S16",
+      "test": "tests/f026/test_roserpina_100_campagna3.py::test_a5_sl_di_un_tavolo_non_tocca_l_altro_tavolo_dello_stesso_mercato",
+      "requirements": [
+        "G7-R13"
+      ],
+      "seeds": [],
+      "requires": "F-03"
+    },
+    {
+      "id": "G7-S17",
+      "test": "tests/f026/test_roserpina_100_campagna3.py::test_a6_crash_dopo_l_accettazione_dell_ingresso_mai_ripiazzato",
+      "requirements": [
+        "G7-R04",
+        "G7-R05"
+      ],
+      "seeds": [],
+      "requires": "F-03"
+    },
+    {
+      "id": "G7-S18",
+      "test": "tests/f026/test_roserpina_100_campagna3.py::test_a7_ordine_esterno_mai_adottato_ne_chiuso",
+      "requirements": [
+        "G7-R05"
+      ],
+      "seeds": [],
+      "requires": "F-03"
+    },
+    {
+      "id": "G7-S19",
+      "test": "tests/f026/test_roserpina_100_campagna3.py::test_campagna_con_seed_invarianti_e_oracolo",
+      "requirements": [
+        "G7-R04",
+        "G7-R08",
+        "G7-R13"
+      ],
+      "seeds": [
+        20261105,
+        7,
+        42
+      ],
+      "requires": "F-03"
+    },
+    {
+      "id": "G7-S20",
+      "test": "tests/f026/test_roserpina_100_campagna3.py::test_stesso_seed_stesso_esito_e_stesso_dump",
+      "requirements": [
+        "G7-R14"
+      ],
+      "seeds": [
+        7
+      ],
+      "requires": "F-03"
+    }
+  ]
+}

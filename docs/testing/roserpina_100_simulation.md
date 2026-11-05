@@ -58,3 +58,15 @@ toccato; dopo il riavvio solo `SL_TP_CLOSE_SKIPPED`, nessun hedge duplicato. Cap
 +3,20 (1.901 −1,01, 1.902 +0,67, 1.903 +0,67, 1.904 +2,87); commissioni 0,20; esposizione massima 12,00; drawdown di
 cassa massimo 1,01 %; saldo finale 103,20; nessun ordine non riconciliato; 1 riavvio. Coerente al centesimo con
 l'oracolo indipendente (arrotondamento HALF_UP come il report). Valori di uno scenario sintetico.
+
+## Registro G7 e riesecuzione
+
+Gli scenari della campagna finanziaria G7 hanno ID stabili `G7-Snn` in `tests/g7/g7_scenarios.json`: per ognuno il
+test, i seed, i requisiti `G7-Rnn` coperti (elenco di Claude B: `pf-gov-persistent-roadmap-01:docs/roadmap/g7_financial_campaign.md`)
+e il codice che deve essere su main perche' l'esito sia certificativo (`requires`). Gli ID non si riusano ne' si
+rinumerano.
+
+`python3 tools/sim_report/run_g7.py --out art/g7/<sha>.json [--only G7-S12 ...]` riesegue gli scenari sull'albero
+corrente e scrive l'evidenza: SHA dell'albero, albero pulito o no, esito per scenario (`PASS`, `FAIL`, `XFAIL`,
+`NOT_TESTED` se il test non esiste sull'albero o e' saltato), durata. Lo strumento non decide la certificazione: vale
+solo su uno SHA pubblicato (head di PR o main), lo stabilisce chi verifica. Nessuna rete, nessun ordine.

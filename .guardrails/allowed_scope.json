@@ -3419,10 +3419,14 @@
         "tests/f026/test_roserpina_100_campagna2.py",
         "tests/f026/test_roserpina_100_campagna3.py",
         "tests/f026/test_roserpina_100_report.py",
+        "tests/g7/__init__.py",
+        "tests/g7/g7_scenarios.json",
+        "tests/g7/test_g7_registry.py",
         "tools/sim_report/__init__.py",
-        "tools/sim_report/roserpina_report.py"
+        "tools/sim_report/roserpina_report.py",
+        "tools/sim_report/run_g7.py"
       ],
-      "max_files": 11
+      "max_files": 15
     }
   }
 }
