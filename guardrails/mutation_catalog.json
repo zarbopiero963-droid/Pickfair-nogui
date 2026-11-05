@@ -9174,6 +9174,138 @@
         "tests/control_api/test_compat_views.py"
       ],
       "rationale": "MCP-01k ponte Control API, compatibilità con P0 e F-16 di Claude D (handoff Claude C): accessore unico del core ignorato."
+    },
+    {
+      "id": "cap_book_status_invented",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        \"book_status\": status if status in BOOK_STATUSES else \"UNKNOWN\",",
+      "mutated": "        \"book_status\": status if status in BOOK_STATUSES else \"OPEN\",",
+      "tests": [
+        "tests/control_api/test_market_views.py"
+      ],
+      "rationale": "MCP-01l ponte Control API, mercati e book (handoff Claude C): stato del book sconosciuto presentato come OPEN."
+    },
+    {
+      "id": "cap_book_levels_reordered",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if prices != sorted(prices, reverse=descending):\n        raise _Unavailable(\"levels\")",
+      "mutated": "    if False:\n        raise _Unavailable(\"levels\")",
+      "tests": [
+        "tests/control_api/test_market_views.py"
+      ],
+      "rationale": "MCP-01l ponte Control API, mercati e book (handoff Claude C): scala dei prezzi fuori ordine accettata."
+    },
+    {
+      "id": "cap_book_levels_uncapped",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    for item in raw[:MAX_LEVELS]:",
+      "mutated": "    for item in raw:",
+      "tests": [
+        "tests/control_api/test_market_views.py"
+      ],
+      "rationale": "MCP-01l ponte Control API, mercati e book (handoff Claude C): più di tre livelli esposti."
+    },
+    {
+      "id": "cap_book_negative_accepted",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    return None if text.startswith(\"-\") else text",
+      "mutated": "    return text",
+      "tests": [
+        "tests/control_api/test_market_views.py"
+      ],
+      "rationale": "MCP-01l ponte Control API, mercati e book (handoff Claude C): prezzo o importo negativo accettato."
+    },
+    {
+      "id": "cap_book_unreadable_runner_hidden",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        except _Unavailable:\n            omitted += 1\n            continue\n        if len(runners)",
+      "mutated": "        except _Unavailable:\n            continue\n        if len(runners)",
+      "tests": [
+        "tests/control_api/test_market_views.py"
+      ],
+      "rationale": "MCP-01l ponte Control API, mercati e book (handoff Claude C): runner illeggibile nascosto."
+    },
+    {
+      "id": "cap_book_duplicate_runner",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        if len(runners) >= MAX_RUNNERS or any(r[\"selection_id\"] == runner[\"selection_id\"] for r in runners):",
+      "mutated": "        if len(runners) >= MAX_RUNNERS:",
+      "tests": [
+        "tests/control_api/test_market_views.py"
+      ],
+      "rationale": "MCP-01l ponte Control API, mercati e book (handoff Claude C): runner duplicato esposto."
+    },
+    {
+      "id": "cap_markets_missing_as_empty",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    except Exception:  # noqa: BLE001 - tracker assente: indisponibile, mai una lista vuota\n        return body",
+      "mutated": "    except Exception:  # noqa: BLE001 - tracker assente: indisponibile, mai una lista vuota\n        books = {}",
+      "tests": [
+        "tests/control_api/test_market_views.py"
+      ],
+      "rationale": "MCP-01l ponte Control API, mercati e book (handoff Claude C): tracker assente presentato come nessun mercato."
+    },
+    {
+      "id": "cap_markets_bad_ids_hidden",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    omitted = len(books) - len(ids)",
+      "mutated": "    omitted = 0",
+      "tests": [
+        "tests/control_api/test_market_views.py"
+      ],
+      "rationale": "MCP-01l ponte Control API, mercati e book (handoff Claude C): id non validi nascosti."
+    },
+    {
+      "id": "cap_markets_truncation_hidden",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    body.update(markets=markets, omitted=omitted, truncated=len(ids) > MAX_MARKETS, unavailable=[])",
+      "mutated": "    body.update(markets=markets, omitted=omitted, truncated=False, unavailable=[])",
+      "tests": [
+        "tests/control_api/test_market_views.py"
+      ],
+      "rationale": "MCP-01l ponte Control API, mercati e book (handoff Claude C): troncamento nascosto."
+    },
+    {
+      "id": "cap_book_untracked_as_unavailable",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "        body[\"state\"] = \"NOT_TRACKED\"",
+      "mutated": "        body[\"state\"] = \"UNAVAILABLE\"",
+      "tests": [
+        "tests/control_api/test_market_views.py"
+      ],
+      "rationale": "MCP-01l ponte Control API, mercati e book (handoff Claude C): mercato non seguito presentato come illeggibile."
+    },
+    {
+      "id": "cap_book_bad_id_accepted",
+      "module": "control_api.views",
+      "area": "control_api",
+      "file": "control_api/views.py",
+      "original": "    if not isinstance(market_id, str) or not MARKET_ID_RE.fullmatch(market_id):\n        raise ValueError(\"market_id\")",
+      "mutated": "    if not isinstance(market_id, str):\n        raise ValueError(\"market_id\")",
+      "tests": [
+        "tests/control_api/test_market_views.py"
+      ],
+      "rationale": "MCP-01l ponte Control API, mercati e book (handoff Claude C): id di mercato non valido accettato dal ponte."
     }
   ]
 }

@@ -117,6 +117,19 @@ mancante diventa zero; nessun betId viene inventato.
   senza accessore, limite null; sul `main` attuale il TTL delle riserve (120 s). Lo stato viene sempre dalla
   regola del core.
 
+### MCP-01l — mercati e book (contratto 1.8.0)
+
+- `GET /v1/markets`: i mercati del `MarketTracker` (ultimo book ricevuto per mercato), copiati in una sola
+  operazione: id, stato del book (dato Betfair: OPEN/SUSPENDED/CLOSED/INACTIVE, altrimenti UNKNOWN), in-play,
+  numero di runner, abbinato totale, `lastMatchTime`. Id non validi o book illeggibili contati in `omitted`;
+  oltre 256 mercati `truncated`.
+- `GET /v1/markets/{id}/book` (prima route con parametro: il server accetta solo `^[0-9]{1,4}\.[0-9]{1,15}$`,
+  altrimenti 404, e passa al provider il valore già validato): per ogni runner stato, ultimo prezzo, abbinato e i
+  tre migliori livelli BACK/LAY come stringhe decimali. Mercato non seguito: `NOT_TRACKED` (nessuna chiamata di
+  rete per procurarlo). Livelli illeggibili o fuori ordine: runner omesso e contato, mai riordinato.
+- Lo stato del book non è un giudizio di negoziabilità (F-23, protezione `market_tradability`). Il tracker non
+  registra l'istante di ricezione: l'età del book è nota solo tramite `lastMatchTime`.
+
 Nota per i test di assenza di effetti: la lettura in WAL aggiorna l'indice `-shm` (marcatori di lettura
 di SQLite, nessun dato); `.db` e `-wal` restano identici byte per byte.
 

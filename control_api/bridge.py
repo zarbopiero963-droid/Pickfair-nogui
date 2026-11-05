@@ -11,6 +11,8 @@ from control_api.views import (
     account_view,
     config_view,
     exposure_view,
+    market_book_view,
+    markets_view,
     orders_view,
     positions_view,
     reconciliation_view,
@@ -19,8 +21,8 @@ from control_api.views import (
 
 # Pin esatto del package pickfair_control_api (repository pickfair-mcp-). Un package diverso da
 # quello verificato non viene MAI usato: la Control API non parte (CONTRACT_PIN_MISMATCH).
-EXPECTED_CONTROL_API_VERSION = "1.7.0"
-EXPECTED_SCHEMA_HASH = "94982a9c9de0c62360d98c018190b4fad8ae71006fc93bcd339b85258fd6a6fd"
+EXPECTED_CONTROL_API_VERSION = "1.8.0"
+EXPECTED_SCHEMA_HASH = "0bb7355fc5476f80f2e5c2c6865bba97eac2c9cc7bcab96620c8ddf347991309"
 
 
 class ControlApiPinMismatch(Exception):
@@ -38,7 +40,7 @@ def verify_pinned_package() -> None:
 
 def make_providers(
     runtime: object, *, clock: Callable[[], float] = time.time
-) -> dict[str, Callable[[], dict[str, Any]]]:
+) -> dict[str, Callable[..., dict[str, Any]]]:
     return {
         "status": lambda: status_view(runtime, clock=clock),
         "reconciliation_status": lambda: reconciliation_view(runtime, clock=clock),
@@ -47,6 +49,8 @@ def make_providers(
         "positions": lambda: positions_view(runtime, clock=clock),
         "orders": lambda: orders_view(runtime, clock=clock),
         "config": lambda: config_view(runtime, clock=clock),
+        "markets": lambda: markets_view(runtime, clock=clock),
+        "market_book": lambda market_id: market_book_view(runtime, market_id, clock=clock),
     }
 
 

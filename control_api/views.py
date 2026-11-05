@@ -1675,3 +1675,138 @@ def config_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict[s
         unlisted=unlisted, redacted=redacted, unavailable=[],
     )
     return body
+
+
+# ---------------------------------------------------------------- MCP-01l: mercati e book
+#
+# Fonte: `MarketTracker._markets`, l'ultimo book ricevuto per ogni mercato (stream o polling), copiato con
+# UNA sola operazione (`dict(...)`): il tracker sostituisce il book intero a ogni aggiornamento, quindi ogni
+# book letto è coerente in sé. Nessuna chiamata di rete, nessun publish, nessuna scrittura. Lo stato del
+# mercato è il dato del book, non il giudizio di negoziabilità del core (F-23). L'età del book è nota solo
+# tramite `lastMatchTime`: il tracker non registra l'istante di ricezione.
+
+MARKET_ID_RE: Final = re.compile(r"[0-9]{1,4}\.[0-9]{1,15}")
+BOOK_STATUSES: Final = frozenset({"OPEN", "SUSPENDED", "CLOSED", "INACTIVE"})
+RUNNER_STATUSES: Final = frozenset({"ACTIVE", "REMOVED", "WINNER", "LOSER", "PLACED", "HIDDEN"})
+MAX_MARKETS: Final = 256
+MAX_RUNNERS: Final = 64
+MAX_LEVELS: Final = 3
+
+
+def _tracked_books(rc: object) -> dict[str, Any]:
+    tracker = _attr(rc, "market_tracker")
+    books = vars(tracker).get("_markets")
+    if not isinstance(books, dict):
+        raise _Unavailable("market_tracker")
+    return dict(books)  # una sola copia: ogni valore è il book intero sostituito dal tracker
+
+
+def _book_dec(value: object) -> str | None:
+    """Numero del book (int/float Betfair) come stringa decimale; `decimal_str` rifiuta stringhe e bool."""
+    if value is None:
+        return None
+    try:
+        text = decimal_str(value)
+    except _Unavailable:
+        return None
+    return None if text.startswith("-") else text
+
+
+def _book_header(book: dict[str, Any]) -> dict[str, Any]:
+    status = book.get("status")
+    inplay = book.get("inplay")
+    return {
+        "book_status": status if status in BOOK_STATUSES else "UNKNOWN",
+        "inplay": inplay if type(inplay) is bool else None,
+        "total_matched": _book_dec(book.get("totalMatched")),
+        "last_match_time": _epoch(book.get("lastMatchTime")),
+    }
+
+
+def _levels(raw: object, *, descending: bool) -> list[dict[str, str]]:
+    if not isinstance(raw, list):
+        raise _Unavailable("levels")
+    levels = []
+    for item in raw[:MAX_LEVELS]:
+        if not isinstance(item, dict):
+            raise _Unavailable("levels")
+        price, size = _book_dec(item.get("price")), _book_dec(item.get("size"))
+        if price is None or size is None:
+            raise _Unavailable("levels")
+        levels.append({"price": price, "size": size})
+    prices = [Decimal(level["price"]) for level in levels]
+    if prices != sorted(prices, reverse=descending):
+        raise _Unavailable("levels")  # scala fuori ordine: mai riordinata in silenzio
+    return levels
+
+
+def _runner(raw: object) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise _Unavailable("runner")
+    selection = _ident_or_none(raw.get("selectionId"))  # Betfair: intero
+    if selection is None:
+        raise _Unavailable("runner")
+    ex = raw.get("ex") if isinstance(raw.get("ex"), dict) else {}
+    status = raw.get("status")
+    return {
+        "selection_id": selection,
+        "status": status if status in RUNNER_STATUSES else "UNKNOWN",
+        "last_price_traded": _book_dec(raw.get("lastPriceTraded")),
+        "total_matched": _book_dec(raw.get("totalMatched")),
+        "back": _levels(ex.get("availableToBack", []), descending=True),
+        "lay": _levels(ex.get("availableToLay", []), descending=False),
+    }
+
+
+def markets_view(rc: object, *, clock: Callable[[], float] = time.time) -> dict[str, Any]:
+    body: dict[str, Any] = {"source": "core", "observed_at": float(clock()),
+                            "consistency": "SINGLE_REFERENCE_READ", "markets": None, "omitted": 0,
+                            "truncated": False, "unavailable": ["markets"]}
+    try:
+        books = _tracked_books(rc)
+    except Exception:  # noqa: BLE001 - tracker assente: indisponibile, mai una lista vuota
+        return body
+    ids = sorted(k for k in books if isinstance(k, str) and MARKET_ID_RE.fullmatch(k))
+    omitted = len(books) - len(ids)
+    markets = []
+    for market_id in ids[:MAX_MARKETS]:
+        book = books[market_id]
+        runners = book.get("runners") if isinstance(book, dict) else None
+        if not isinstance(runners, list):
+            omitted += 1
+            continue
+        markets.append({"market_id": market_id, **_book_header(book), "runners": len(runners)})
+    body.update(markets=markets, omitted=omitted, truncated=len(ids) > MAX_MARKETS, unavailable=[])
+    return body
+
+
+def market_book_view(rc: object, market_id: str, *,
+                     clock: Callable[[], float] = time.time) -> dict[str, Any]:
+    body: dict[str, Any] = {"source": "core", "observed_at": float(clock()),
+                            "consistency": "SINGLE_REFERENCE_READ", "market_id": market_id,
+                            "state": "UNAVAILABLE", "book": None}
+    if not isinstance(market_id, str) or not MARKET_ID_RE.fullmatch(market_id):
+        raise ValueError("market_id")  # il server valida già il percorso: qui è una seconda barriera
+    try:
+        book = _tracked_books(rc).get(market_id)
+    except Exception:  # noqa: BLE001
+        return body
+    if book is None:
+        body["state"] = "NOT_TRACKED"
+        return body
+    raw_runners = book.get("runners") if isinstance(book, dict) else None
+    if not isinstance(raw_runners, list):
+        return body
+    runners, omitted = [], 0
+    for raw in raw_runners:
+        try:
+            runner = _runner(raw)
+        except _Unavailable:
+            omitted += 1
+            continue
+        if len(runners) >= MAX_RUNNERS or any(r["selection_id"] == runner["selection_id"] for r in runners):
+            omitted += 1
+            continue
+        runners.append(runner)
+    body.update(state="OK", book={**_book_header(book), "runners": runners, "omitted_runners": omitted})
+    return body

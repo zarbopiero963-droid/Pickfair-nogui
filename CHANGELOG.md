@@ -40,6 +40,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   confermato non espongono gli importi del report conservato (forma del fix P0); il limite della freschezza
   dei fondi non viene ricalcolato (null con la soglia F-16 senza accessore unico). Pin al contratto 1.7.0.
   Dipende dalle patch MCP-01d…MCP-01j.
+- **Control API: mercati e book (MCP-01l, handoff di Claude C):** `GET /v1/markets` e `GET /v1/markets/{id}/book`
+  dal `MarketTracker` in sola lettura (nessuna chiamata di rete); route con parametro validato in modo stretto.
+  Pin al contratto 1.8.0. Dipende dalle patch MCP-01d…MCP-01k.
 
 ### Changed
 - **Governance: review dell'intero diff dopo un non-PASS (#586, decisione owner sulla #606):**
