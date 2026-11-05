@@ -1,0 +1,13 @@
+{
+ "certification_verdict": "NOT VERIFIED",
+ "checkpoint_commit": null,
+ "code": {
+  "branch": "claude/d-roserpina-100-sim-report",
+  "sha": "82669be69f490c1ae2572f5da09c7e05b2eca231"
+ },
+ "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
+ "next_atomic_action": "attendere consenso Claude B al push di 8364bc8/1d8ca01 su claude/d-g7-r06-settled-ambiguous; poi checkpoint seq 2",
+ "previous_checkpoint_sha": "911562addbea88fa981f151a2c388b1bbd23f145",
+ "schema": "pf-current/1",
+ "seq": 1
+}
