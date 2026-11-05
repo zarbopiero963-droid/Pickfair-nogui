@@ -1,9 +1,9 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 3,
+ "seq": 4,
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "previous_checkpoint_sha": "4db36b888293b6f6a030fed8d53a969c0a3ca6ca",
+ "previous_checkpoint_sha": "36428c140fae489898ebf14b18ce945662e9de2f",
  "updated_at": "2026-11-05T14:22:51Z",
  "agent": {
   "identity": "claude-d",
@@ -16,11 +16,11 @@
   "branch": "claude/d-roserpina-100-sim-report",
   "sha": "82669be69f490c1ae2572f5da09c7e05b2eca231"
  },
- "main_sha": "911562addbea88fa981f151a2c388b1bbd23f145",
+ "main_sha": "89af178e",
  "branches": {
   "claude/pickfair-core-audit-slu9su": {
    "sha": "1b2b502436f3a75395aa158946dd8767112b6380",
-   "stato": "F-14: PR #609 aperta, gestita da Claude B (head attuale suo); non toccare"
+   "stato": "F-14: PR #609 MERGIATA su main 89af178e"
   },
   "claude/d-f16-funds-freshness": {
    "sha": "64e965b7f9f818a861ff2818e851809482d9c53b",
@@ -39,8 +39,8 @@
    "stato": "F-03: impilato su F-02 @80b0090 + F-04; dopo F-04"
   },
   "claude/d-roserpina-100-sim-report": {
-   "sha": "82669be69f490c1ae2572f5da09c7e05b2eca231",
-   "stato": "Simulazione 100 EUR SINTETICA, campagne 1-3, registro G7 G7-S01..S21, runner run_g7.py"
+   "sha": "e9fc3aaf",
+   "stato": "campagne 1-4, G7-S01..S25, S09 xfail condizionato a F-R06"
   },
   "claude/d-market-book-age": {
    "sha": "ea81e93e2f2dfe2791353ca42480cf4a7d382511",
@@ -117,7 +117,7 @@
   "catena di checkpoint pf-claude-d: seq 1 DURABLE, ripristino READY da clone nuovo",
   "caso sintetico squash+branch cancellato consegnato a Claude B (RED riprodotto: LATEST_CHECKPOINT_CORRUPT)"
  ],
- "next_atomic_action": "attendere: (1) apertura PR F-16 dopo #609 (Claude B); (2) hardening pfckpt di Claude B da verificare con il caso sintetico e con questa catena; nel frattempo sviluppo offline G7",
+ "next_atomic_action": "Attendere risposta Claude B su D-C4-01 (patch su stack F-03?); a ogni integrazione su main rieseguire run_g7.py --published-sha",
  "dependencies": {
   "F-04": "F-02 su main (Claude B)",
   "F-03": "F-02 + F-04",
@@ -183,6 +183,21 @@
    "id": "F-R06 hardening: 26 test (completezza exchange, ordini vivi, stesso mercato), mutanti 6/6, regressione ~269 file, runner GATE PASS (145)",
    "status": "PASS",
    "sha": "1d8ca01d7f20508e7cba33baf67b439a7b5b45f0"
+  },
+  {
+   "id": "G7 run_g7.py S01-S21 albero massimo (S01-S20 PASS, S09 XPASS strict corretto in e9fc3aaf, S21 UNSUPPORTED)",
+   "status": "NOT VERIFIED",
+   "note": "unpublished_tree d3b2d41, mode development"
+  },
+  {
+   "id": "G7 S01-S05 (F-14) su main pubblicato, 239 test",
+   "status": "PASS",
+   "sha": "89af178e"
+  },
+  {
+   "id": "campagna 4 G7-S22..S25: 2 PASS, 2 XFAIL strict (D-C4-01, D-C4-02)",
+   "status": "NOT VERIFIED",
+   "note": "unpublished_tree d3b2d41+e802ea8"
   }
  ],
  "tests_missing": [
@@ -195,7 +210,9 @@
  "defects_open": [
   "F-R06 (P2, su main): riserva fantasma al riavvio per AMBIGUOUS regolato",
   "stack F-02: voce di catalogo recovery_live_bets_inverted (Claude B)",
-  "preesistenti su main: test_issue437_pr02, test_trading_engine_internal_contracts, Telegram"
+  "preesistenti su main: test_issue437_pr02, test_trading_engine_internal_contracts, Telegram",
+  "D-C4-01 (P1, catena F-02/F-04): SL su mercato sospeso, latch mai rilasciato dopo NOT_EXECUTED (G7-S24 xfail)",
+  "D-C4-02 (P2, main sl_tp_pnl.position_stake): protezioni su stake richiesto non abbinato (G7-S25 xfail)"
  ],
  "github_evidence": [
   "#586 c.6640163608",
@@ -207,7 +224,8 @@
   "#586 c.6658460135",
   "PR #609",
   "#586 c.6660335325",
-  "#586 c.6660379402"
+  "#586 c.6660379402",
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6663479116"
  ],
  "gate_a": "NOT APPLICABLE (Claude D)",
  "pr_505": "non toccata",
