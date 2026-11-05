@@ -136,17 +136,39 @@ integrata con squash merge. Cancellato il branch, quello SHA non era più raggiu
 nuovo non aveva l'oggetto, quindi `verify` lo dava inesistente e `bootstrap` rispondeva `LATEST_CHECKPOINT_CORRUPT`,
 pur con il checkpoint integro.
 
-**1. Ref keep.** A ogni `save`, per ogni SHA di codice citato e risolvibile (`code.sha`, gli `sha` dei
-`tests_executed` PASS/FAIL non dichiarati `unpublished_tree`, i commit di integrazione), lo strumento pubblica
-`refs/agent-state/keep/<sha completo>` → `<sha>`. Avviene **nello stesso push atomico** del checkpoint
-(`git push --atomic`), **senza force**: un ref keep già presente sullo stesso SHA è un no-op, uno che punta altrove
-fa rifiutare tutto il push, branch di stato compreso. Il namespace sta fuori da `refs/heads` e `refs/tags`, quindi
-non fa partire workflow `on: push` e non dipende dal branch della PR. Il readback scarica `refs/agent-state/keep/*`
-e richiede, per ogni SHA citato, il ref keep sul remoto e puntato a quello SHA (`READBACK_KEEP_REF_MISSING`
-altrimenti, mai DURABLE). `bootstrap` e `recover` scaricano i ref keep prima di verificare. Nella ripresa
-`after_push` (crash fra il push del branch e quello dei ref, o un checkpoint pubblicato dallo strumento precedente)
-i ref mancanti vengono pubblicati senza duplicare il commit. Il `save` registra anche `code.tree` (il tree di
-`code.sha`) finché l'oggetto esiste.
+**1. Durabilità al `save` (default).** Ogni riferimento citato deve restare risolvibile anche dopo uno squash merge
+con cancellazione del branch. Sono citati `code.sha` e gli `sha` dei `tests_executed` PASS/FAIL non dichiarati
+`unpublished_tree` + `sha_note`. Prima di scrivere e di committare, il `save` scarica le punte **remote** in un
+namespace solo locale (`refs/pfckpt-durability/*`, mai pubblicato) e classifica ogni SHA:
+
+| `via` | Significato |
+| --- | --- |
+| `BRANCH:<b>` | antenato di un branch durevole (default `main`; `--durable-branch` ripetibile) |
+| `PULL:<n>` | antenato di `refs/pull/<n>/head`: `pr` dichiarato (`code.pr` / `tests_executed[].pr`) o, se nessuno è dichiarato, scoperto fra tutti i `refs/pull/*/head` |
+| `INTEGRATION:<b>` | originale irraggiungibile, ma `integration` TREE_EQUAL provata e commit di integrazione antenato di un branch durevole |
+| `KEEP_REF` | solo con `--keep-refs` (opt-in, punto 1-bis) |
+| `BRANCH_ONLY:<b>` | presente solo su un branch di lavoro: sparirebbe con la sua cancellazione |
+
+`BRANCH_ONLY` o nessuna `via` ⇒ `CODE_SHA_NOT_DURABLE` (exit 2): nessun commit, nessun push, STATE su disco intatto.
+Il messaggio indica le vie d'uscita: dichiarare `pr` dopo aver aperto la PR, `unpublished_tree` + `sha_note` per un
+test su albero scratch, integrazione TREE_EQUAL su main, oppure `--allow-branch-only`. Quest'ultima accetta lo SHA
+ma lo **dichiara** nello STATE (`code.durability_waiver.branch_only`, `declared_by`, `reason`), e dopo la
+cancellazione del branch `bootstrap` resta `NEEDS_RECONCILIATION`: la perdita non viene mai nascosta. La ripresa
+`after_commit` di un commit fatto fuori dallo strumento ripete lo stesso controllo prima del push. Il readback rifà
+la classificazione da un clone pulito (`READBACK_CODE_SHA_NOT_DURABLE`, mai DURABLE) e la riporta in `durability`.
+Il push di default è quello di sempre: **solo** il branch di stato, nessun ref nuovo. Il `save` registra anche
+`code.tree` (il tree di `code.sha`) finché l'oggetto esiste.
+
+*Semantica scelta per il caso «SHA solo sul branch della PR, nessuna PR aperta»* (accettazione `make_case.sh`):
+rifiuto al `save`, non `READY` rimandato. Oggi lo SHA è risolvibile, ma solo finché esiste il branch: pubblicarlo
+come durevole riprodurrebbe l'incidente di seq 17. Con `refs/pull/1/head` lo stesso caso è DURABLE (`PULL:1`) e
+dopo squash e cancellazione del branch `bootstrap` dà `READY`.
+
+**1-bis. Ref keep (opt-in, `--keep-refs`).** Disattivati di default (vincoli d'ambiente in §8). Con il flag, per ogni
+SHA citato e risolvibile il `save` pubblica `refs/agent-state/keep/<sha>` nello stesso push `--atomic` del
+checkpoint, senza force: un ref già presente sullo stesso SHA è un no-op, uno che punta altrove fa rifiutare tutto,
+branch compreso. Il readback ne verifica la presenza (`READBACK_KEEP_REF_MISSING`). `bootstrap` e `recover`
+scaricano comunque i ref keep, se ce ne sono; il campo `keep_refs` di `bootstrap` è solo informativo.
 
 **2. Transizione verso main.** Campo opzionale `integration` in `code` e in ogni voce di `tests_executed`:
 
@@ -172,11 +194,11 @@ tree registrato, l'esito è `ORIGINAL_TREE_UNKNOWN` (BLOCKED). Lo STATE conserva
 owner e i risultati legati a quegli SHA restano invariati. La transizione entra con un **nuovo** checkpoint
 (seq + 1), mai riscrivendo quello vecchio.
 
-**3. Fallback `refs/pull/<N>/head`.** GitHub conserva `refs/pull/<N>/head` anche dopo la cancellazione del branch.
+**3. `refs/pull/<N>/head` in lettura.** GitHub conserva `refs/pull/<N>/head` anche dopo la cancellazione del branch.
 Se, dopo i ref keep, uno SHA citato resta irrisolto, `bootstrap`, `recover` e il readback scaricano i
-`refs/pull/<N>/head` dichiarati nello STATE (`code.pr` / `tests_executed[].pr`, interi), oppure tutti i
-`refs/pull/*/head` se non ne è dichiarato nessuno. Non serve configurazione per agente o per catena (B, C, D). Il
-fallback fa solo tornare risolvibile l'oggetto e non sostituisce alcun controllo.
+`refs/pull/<N>/head` dichiarati nello STATE, oppure tutti i `refs/pull/*/head` se non ne è dichiarato nessuno. Non
+serve configurazione per agente o per catena (B, C, D). Il fallback fa solo tornare risolvibile l'oggetto e non
+sostituisce alcun controllo: uno SHA non risolvibile in nessun modo resta non `READY`.
 
 **4. Esiti.** In `verify`, i problemi di riferimento (SHA irraggiungibile, transizione non provata o malformata,
 tree in contrasto) sono separati da quelli di integrità. Se un checkpoint ha **solo** problemi di riferimento,
@@ -188,11 +210,12 @@ e `pull_refs_fetched`.
 **Riparazione di seq 17 (procedura).** Dopo `bootstrap` si ottiene `NEEDS_RECONCILIATION`. Si scarica
 `refs/pull/<N>/head` della PR, poi `integrate --original <aa184a2…> --integration <SHA dello squash su main>` (dall'oggetto:
 `original_tree_source: OBJECT`). Quindi un nuovo checkpoint seq 18 con `code.integration` e
-`tests_executed[].integration` e `save`: il `save` pubblica i ref keep dell'originale e del commit di integrazione.
+`tests_executed[].integration` e `save`, che lo classifica `INTEGRATION:main`. In alternativa basta dichiarare
+`code.pr` / `tests_executed[].pr` in seq 18: lo SHA originale torna durevole via `PULL:<N>`.
 
-**Operazioni e duplicati.** Lo strumento registra solo checkpoint (un commit per `save`) e ref keep (uno per SHA, per
-nome). Ripetere lo stesso `save` dopo DURABLE è idempotente (`resumed: after_push`, nessun commit e nessun ref
-nuovo). Uno scrittore su base vecchia riceve `CONCURRENT_UPDATE`. PR, merge, ordini e altre operazioni sensibili
+**Operazioni e duplicati.** Lo strumento registra solo checkpoint (un commit per `save`) e, con `--keep-refs`, ref
+keep (uno per SHA, per nome). Ripetere lo stesso `save` dopo DURABLE è idempotente (`resumed: after_push`, nessun
+commit nuovo). Uno scrittore su base vecchia riceve `CONCURRENT_UPDATE`. PR, merge, ordini e altre operazioni sensibili
 **non sono modellati** dallo strumento: `lotti_completati` è testo dichiarato, senza registro di operazioni né
 deduplica. Il ripristino non può quindi garantire «nessuna PR o merge duplicato»: è un limite dichiarato (§8).
 
@@ -207,21 +230,28 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 81 test, inclusi lease/fencing, patch del codice, recover, ref keep e transizione squash) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 88 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA e transizione squash) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo
   Codex #512, PF-PR-RECOVERY-DECISIONS-02).
 - La concorrenza è ottimistica: due agenti possono lavorare in parallelo, ma solo uno pubblica per volta.
-- Ref keep (§6-ter): provati con git reale offline su repository bare (push atomico, gc del remoto, clone nuovo).
-  L'accettazione di push `--atomic` e di ref fuori da `refs/heads`/`refs/tags` su GitHub **non è stata provata**
-  (`NOT VERIFIED`); se GitHub rifiutasse il push, il `save` fallisce senza pubblicare nulla, mai in modo silenzioso.
-  Il fallback `refs/pull/*/head` senza PR dichiarata può scaricare molti ref su repository grandi.
+- **Vincoli dell'ambiente (verificati su GitHub reale dal coordinatore, 05/11/2026).** Dalle sessioni Claude il proxy
+  rifiuta il push di ref fuori da `refs/heads/*` e `refs/tags/*` (`send-pack: unexpected disconnect`), con o senza
+  `--atomic`. Per questo i ref keep sono opt-in e spenti di default: con `--keep-refs` un `save` da quelle sessioni
+  fallisce, senza pubblicare nulla. Un branch o tag per SHA non è un'alternativa: ogni ref nuovo in `refs/heads` o
+  `refs/tags` fa partire circa 20 workflow `on: push`, a ogni checkpoint. La durabilità di default si appoggia quindi
+  a ciò che esiste già: `main`, `refs/pull/<N>/head` (creati da GitHub) e la transizione TREE_EQUAL.
+- La conservazione di `refs/pull/<N>/head` dopo la cancellazione del branch è un comportamento di GitHub, simulato
+  offline con un ref sul bare. Senza PR dichiarata la scoperta scarica tutti i `refs/pull/*/head`, e su repository
+  grandi possono essere molti.
+- `--allow-branch-only` rende pubblicabile uno SHA che sparirà con il suo branch. È dichiarato nello STATE, ma la
+  durabilità vera non c'è.
 - `original_tree` di un oggetto ormai irraggiungibile è verificabile solo contro i tree registrati (`code.tree`,
   `code.patch.tree`): senza registrazione resta il valore scritto da chi ha creato la transizione, che `integrate`
   calcola dall'oggetto quando c'è.
 - `restore-code` richiede ancora HEAD == `code_patch.head`: dopo uno squash si ripristina sull'originale (risolvibile
-  via ref keep), non sul commit di integrazione.
+  via `refs/pull/<N>/head` o ref keep), non sul commit di integrazione.
 - Lo strumento non modella PR, merge od ordini: nessuna deduplica di operazioni sensibili oltre ai checkpoint.
 
 ### SHA dei test eseguiti (ciclo 8/9 #512)

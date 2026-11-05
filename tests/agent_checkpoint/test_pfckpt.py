@@ -55,6 +55,7 @@ def world(tmp_path):
     code_sha = sh(str(seed), "rev-parse", "HEAD")
     sh(str(seed), "remote", "add", "origin", str(remote))
     sh(str(seed), "push", "-q", "origin", f"HEAD:refs/heads/{CODE_BR}")
+    sh(str(seed), "push", "-q", "origin", "HEAD:refs/heads/main")    # branch durevole (pfckpt_squash_durable_refs)
     os.makedirs(seed / D / "results")
     (seed / D / "STATE.json").write_text(json.dumps(_state(code_sha, 1, code_sha)))
     (seed / D / "HANDOFF.md").write_text("primo checkpoint\n")

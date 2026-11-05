@@ -13,7 +13,7 @@ Nessuna dipendenza dalla memoria della conversazione o da file locali.
 Comandi:
   verify    --repo R --ref REF [--dir D]                verifica il checkpoint DENTRO il tree committato di REF
   save      --repo R --branch B --remote O --expected SHA --message M --agent A [--ttl-min N] [--release]
-            [--code-repo PATH] [--code-branch C] [--dir D]
+            [--code-repo PATH] [--code-branch C] [--dir D] [--keep-refs] [--allow-branch-only] [--durable-branch B]
                                                         pubblica in modo atomico e verificato, ripresa idempotente;
                                                         rinnova (o rilascia) il lease; cattura la patch del codice
   bootstrap --url URL --branch B --dest DEST [--code-branch C] [--agent A] [--dir D]
@@ -21,9 +21,11 @@ Comandi:
   recover   --url URL --branch B --dest DEST [--dir D]   materializza l'ULTIMO checkpoint valido, senza toccare il remoto
   integrate --repo R --original SHA --integration SHA [--original-tree T]
                                                         calcola il record `integration` (squash merge -> main) dai tree
-SHA durevoli (pfckpt_squash_durable_refs): ogni SHA di codice citato e risolvibile riceve al save un ref permanente
-`refs/agent-state/keep/<sha>` nello stesso push atomico del checkpoint (mai force); il readback ne verifica la presenza.
-Uno SHA originale non piu' raggiungibile e' accettato solo con `integration` TREE_EQUAL provata sui tree SHA.
+SHA durevoli (pfckpt_squash_durable_refs): al save ogni SHA di codice citato deve essere raggiungibile sul remoto da
+un branch durevole (default `main`), da `refs/pull/<N>/head` (dichiarato in `pr` o scoperto) o, tramite `integration`
+TREE_EQUAL, dal commit di integrazione su un branch durevole; altrimenti CODE_SHA_NOT_DURABLE e nulla e' pubblicato.
+Il readback lo riverifica da un clone pulito. I ref permanenti `refs/agent-state/keep/<sha>` sono OPZIONALI
+(`--keep-refs`, disattivati di default: il proxy delle sessioni rifiuta ref fuori da refs/heads e refs/tags).
 Esiti: una riga JSON; exit 0 = OK, 2 = checkpoint non valido, 3 = conflitto di concorrenza, 4 = readback fallito,
 5 = errore git/ambiente, 6 = lease tenuto da un altro agente / scrittore stale.
 """
@@ -59,9 +61,12 @@ SECRET_PATTERNS = [re.compile(p) for p in (
 # L'unico file esente dallo scan: la copia dello scanner nel checkpoint, al suo percorso esatto (relativo alla
 # directory del checkpoint). Un file con lo stesso nome altrove (es. results/pfckpt.py) viene scansionato.
 SECRET_SCAN_EXEMPT = frozenset({"tools/pfckpt.py"})
-# Ref permanenti degli SHA citati: fuori da refs/heads e refs/tags (nessun workflow on-push, nessun branch da
-# cancellare), uno per SHA, pubblicati senza force nello stesso push atomico del checkpoint.
+# Ref permanenti degli SHA citati (opt-in `--keep-refs`): fuori da refs/heads e refs/tags, uno per SHA, pubblicati
+# senza force nello stesso push atomico del checkpoint. Disattivati di default: il proxy delle sessioni rifiuta i ref
+# fuori da refs/heads e refs/tags, e un branch/tag per SHA farebbe partire la CI on-push a ogni checkpoint.
 KEEP_REF_PREFIX = "refs/agent-state/keep/"
+DEFAULT_DURABLE_BRANCHES = ("main",)
+DURABILITY_NS = "refs/pfckpt-durability/"          # namespace SOLO locale (mai pubblicato) per le punte remote
 KEEP_REFSPEC = f"+{KEEP_REF_PREFIX}*:{KEEP_REF_PREFIX}*"
 EQUIVALENCES = ("TREE_EQUAL", "NOT_PROVEN")
 INTEGRATION_FIELDS = ("original_sha", "original_tree", "integration_sha", "integration_tree", "equivalence")
@@ -269,6 +274,8 @@ def check_code_reference(repo, label, sha, integration, anchors=(), unresolved_m
             problems.append(f"{label}: integration_sha irrisolto: {integration['integration_sha']}")
         elif itree != otree or tree_of(repo, ifull) != otree:
             problems.append(f"{label}: tree di integrazione diverso dall'originale: equivalenza non provata")
+        else:
+            info["integration_sha"] = ifull            # transizione provata: il commit di integrazione e' citabile
     if ifull:
         keep.append(ifull)
     if not full and integration["equivalence"] != "TREE_EQUAL":
@@ -631,9 +638,107 @@ def keep_refspecs(shas):
     return [f"{sha}:{KEEP_REF_PREFIX}{sha}" for sha in shas]
 
 
-def readback(remote_url, branch, d, code_branch=None, expect_commit=None):
-    """Clone pulito dal remoto e verifica completa li': l'unica prova di durabilita'. Verifica anche che ogni SHA
-    citato abbia sul remoto il proprio ref keep, puntato allo SHA stesso."""
+def cited_references(repo, state):
+    """Riferimenti di codice citati dallo STATE che devono essere durevoli: code.sha e tests_executed[].sha PASS/FAIL
+    non dichiarati `unpublished_tree`. Per ognuno: SHA originale completo (se risolvibile) e commit di integrazione
+    (solo se la transizione TREE_EQUAL e' provata)."""
+    cited = []
+    code = state.get("code") if isinstance(state.get("code"), dict) else {}
+    entries = [("code.sha", code)] if code.get("sha") else []
+    for t in state.get("tests_executed") or []:
+        if isinstance(t, dict) and t.get("status") in ("PASS", "FAIL") and t.get("sha") \
+                and not (t.get("unpublished_tree") is True and str(t.get("sha_note", "")).strip()):
+            entries.append((f"test {t.get('id')!r}", t))
+    for label, e in entries:
+        _p, _k, info = check_code_reference(repo, label, str(e["sha"]), e.get("integration"))
+        cited.append({"label": label, "sha": str(e["sha"]), "original": resolve_commit(repo, str(e["sha"])),
+                      "integration": info.get("integration_sha")})
+    return cited
+
+
+def _fetch_into_ns(repo, remote, specs, check):
+    p = git(repo, "fetch", "-q", "--no-tags", remote, *specs, check=False)
+    if check and p.returncode != 0:
+        raise CheckpointError(5, "REMOTE_UNREACHABLE", stderr=p.stderr.decode(errors="replace")[-300:])
+
+
+def durability_tips(repo, remote, prs=(), all_pulls=False):
+    """Punte REMOTE attuali (scaricate in un namespace solo locale, ripulito prima): refs/heads/* e i refs/pull/<N>/head
+    dichiarati (o tutti, se all_pulls). Ritorna {"heads/<b>": sha, "pull/<n>": sha}."""
+    for name in out(repo, "for-each-ref", "--format=%(refname)", DURABILITY_NS).splitlines():
+        git(repo, "update-ref", "-d", name)
+    _fetch_into_ns(repo, remote, [f"+refs/heads/*:{DURABILITY_NS}heads/*"], check=True)
+    if all_pulls:
+        _fetch_into_ns(repo, remote, [f"+refs/pull/*/head:{DURABILITY_NS}pull/*"], check=False)
+    for n in prs:                                   # uno per volta: una PR inesistente non fa fallire le altre
+        _fetch_into_ns(repo, remote, [f"+refs/pull/{n}/head:{DURABILITY_NS}pull/{n}"], check=False)
+    tips = {}
+    for line in out(repo, "for-each-ref", "--format=%(objectname) %(refname)", DURABILITY_NS).splitlines():
+        sha, name = line.split(" ", 1)
+        tips[name[len(DURABILITY_NS):]] = sha
+    return tips
+
+
+def _is_ancestor(repo, sha, tip):
+    return git(repo, "merge-base", "--is-ancestor", sha, tip, check=False).returncode == 0
+
+
+def _classify(repo, c, tips, durable_branches, keep):
+    o, i = c["original"], c["integration"]
+    if o and keep:
+        return "KEEP_REF"
+    for b in durable_branches:
+        if o and f"heads/{b}" in tips and _is_ancestor(repo, o, tips[f"heads/{b}"]):
+            return f"BRANCH:{b}"
+    for name, tip in sorted(tips.items()):
+        if o and name.startswith("pull/") and _is_ancestor(repo, o, tip):
+            return f"PULL:{name.split('/')[1]}"
+    for b in durable_branches:
+        if i and f"heads/{b}" in tips and _is_ancestor(repo, i, tips[f"heads/{b}"]):
+            return f"INTEGRATION:{b}"
+    for name, tip in sorted(tips.items()):
+        if o and name.startswith("heads/") and _is_ancestor(repo, o, tip):
+            return f"BRANCH_ONLY:{name[len('heads/'):]}"
+    return None
+
+
+def check_durability(repo, remote, state, durable_branches=DEFAULT_DURABLE_BRANCHES, keep=False, waiver=()):
+    """Ogni riferimento citato deve restare risolvibile dopo uno squash merge con cancellazione del branch:
+    BRANCH:<durevole> | PULL:<n> | INTEGRATION:<durevole> | KEEP_REF (solo con --keep-refs). BRANCH_ONLY (solo un
+    branch di lavoro, che puo' essere cancellato) e' ammesso SOLO per gli SHA dichiarati in
+    `code.durability_waiver.branch_only`. Ritorna (righe, non_durevoli, branch_only_non_dichiarati)."""
+    _shas, prs = _cited_shas_and_prs(state)
+    cited = cited_references(repo, state)
+    tips = durability_tips(repo, remote, prs)
+    rows = [dict(c, via=_classify(repo, c, tips, durable_branches, keep)) for c in cited]
+    if not prs and any(r["via"] is None or r["via"].startswith("BRANCH_ONLY") for r in rows):
+        tips = durability_tips(repo, remote, (), all_pulls=True)          # PR non dichiarata: scoperta
+        rows = [dict(c, via=_classify(repo, c, tips, durable_branches, keep)) for c in cited]
+    missing = [r for r in rows if r["via"] is None]
+    branch_only = [r for r in rows if r["via"] and r["via"].startswith("BRANCH_ONLY")
+                   and r["original"] not in set(waiver)]
+    return rows, missing, branch_only
+
+
+def _waiver(state):
+    w = ((state.get("code") or {}).get("durability_waiver") or {}) if isinstance(state.get("code"), dict) else {}
+    return [str(x) for x in (w.get("branch_only") or [])] if isinstance(w, dict) else []
+
+
+def _not_durable(code, reason, missing, branch_only):
+    return CheckpointError(code, reason, not_durable=[{"label": r["label"], "sha": r["sha"], "via": r["via"]}
+                                                       for r in missing + branch_only],
+                           action="lo SHA citato sparirebbe con il branch: dichiarare `pr` (code.pr / "
+                                  "tests_executed[].pr) della PR che lo contiene, oppure `unpublished_tree` + "
+                                  "`sha_note` per un test su albero scratch, oppure integrare su main con "
+                                  "`integration` TREE_EQUAL, oppure --allow-branch-only (dichiarato nello STATE)")
+
+
+def readback(remote_url, branch, d, code_branch=None, expect_commit=None, keep_refs=False,
+             durable_branches=DEFAULT_DURABLE_BRANCHES):
+    """Clone pulito dal remoto e verifica completa li': l'unica prova di durabilita'. Riverifica che ogni SHA citato sia
+    durevole sul remoto (branch durevole, refs/pull/<N>/head, integrazione TREE_EQUAL; con keep_refs, il proprio ref
+    keep puntato allo SHA stesso)."""
     tmp = tempfile.mkdtemp(prefix="pfckpt_readback_")
     try:
         p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, remote_url, tmp], capture_output=True)
@@ -652,20 +757,32 @@ def readback(remote_url, branch, d, code_branch=None, expect_commit=None):
             raise CheckpointError(4, "READBACK_VERIFY_FAILED", inner=exc.reason, **exc.detail)
         if expect_commit and report["commit"] != expect_commit:
             raise CheckpointError(4, "READBACK_SHA_MISMATCH", remote=report["commit"])
-        ks = keep_ref_status(tmp, report["keep_shas"])
-        if ks["missing"]:
-            raise CheckpointError(4, "READBACK_KEEP_REF_MISSING", missing=ks["missing"])
+        if keep_refs:
+            ks = keep_ref_status(tmp, report["keep_shas"])
+            if ks["missing"]:
+                raise CheckpointError(4, "READBACK_KEEP_REF_MISSING", missing=ks["missing"])
+        state = json.loads(blob(tmp, report["commit"], f"{d}/STATE.json"))
+        rows, missing, branch_only = check_durability(tmp, "origin", state, durable_branches, keep_refs, _waiver(state))
+        if missing or branch_only:
+            raise _not_durable(4, "READBACK_CODE_SHA_NOT_DURABLE", missing, branch_only)
+        report["durability"] = [{"label": r["label"], "sha": r["sha"], "via": r["via"]} for r in rows]
         return report
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
 def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=None, agent=None,
-         ttl_min=DEFAULT_LEASE_MIN, release=False, code_repo=None, now=None):
+         ttl_min=DEFAULT_LEASE_MIN, release=False, code_repo=None, now=None, keep_refs=False, allow_branch_only=False,
+         durable_branches=DEFAULT_DURABLE_BRANCHES):
     """Pubblicazione verificata. Ripresa idempotente: rieseguire save dopo un crash in qualunque punto e' sicuro.
     expected = SHA remoto da cui l'agente e' partito (controllo ottimistico); mai force-push, mai merge di stato.
     agent = identita' dello scrittore: il lease si legge dal checkpoint remoto atteso; tenuto da un altro agente e
-    non scaduto => exit 6, nessuna scrittura."""
+    non scaduto => exit 6, nessuna scrittura.
+    Durabilita' (pfckpt_squash_durable_refs): ogni SHA citato deve essere raggiungibile sul remoto da un branch
+    durevole, da refs/pull/<N>/head o da un'integrazione TREE_EQUAL; altrimenti CODE_SHA_NOT_DURABLE (exit 2) e nulla
+    e' pubblicato. keep_refs=True pubblica anche refs/agent-state/keep/<sha> (opt-in). allow_branch_only=True accetta
+    uno SHA presente solo su un branch di lavoro, dichiarandolo nello STATE (code.durability_waiver)."""
+    durable_branches = tuple(durable_branches or DEFAULT_DURABLE_BRANCHES)
     url = out(repo, "remote", "get-url", remote)
     current = remote_head(repo, remote, branch)
     head = out(repo, "rev-parse", "HEAD")
@@ -674,11 +791,12 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
         # crash dopo il push (prima del readback): il remoto ha gia' il NOSTRO checkpoint figlio di expected.
         # I ref keep potrebbero mancare (crash fra i due, strumento precedente): si pubblicano, senza force.
         local = verify(repo, "HEAD", d)
-        if local["keep_shas"]:
+        if keep_refs and local["keep_shas"]:
             p = git(repo, "push", "-q", "--atomic", remote, *keep_refspecs(local["keep_shas"]), check=False)
             if p.returncode != 0:
                 raise CheckpointError(3, "KEEP_REF_PUSH_REJECTED", stderr=p.stderr.decode(errors="replace")[-300:])
-        report = readback(url, branch, d, code_branch, expect_commit=head)
+        report = readback(url, branch, d, code_branch, expect_commit=head, keep_refs=keep_refs,
+                          durable_branches=durable_branches)
         return {"status": "DURABLE", "resumed": "after_push", **report}
     if current != expected:
         raise CheckpointError(3, "CONCURRENT_UPDATE", expected=expected, remote=current,
@@ -719,6 +837,15 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
         if code_full and "tree" not in st["code"]:
             # tree registrato finche' l'oggetto esiste: ancora per un futuro `integration.original_tree`
             st["code"]["tree"] = tree_of(repo, code_full)
+        # durabilita' PRIMA di scrivere/committare: uno SHA che sparirebbe con il branch non entra nel checkpoint
+        _rows, missing, branch_only = check_durability(repo, remote, st, durable_branches, keep_refs, _waiver(st))
+        if branch_only and allow_branch_only and not missing:
+            w = st["code"].setdefault("durability_waiver", {})
+            w["branch_only"] = sorted(set(w.get("branch_only") or []) | {r["original"] for r in branch_only})
+            w["declared_by"], w["reason"] = agent, "--allow-branch-only: durevole solo finche' il branch esiste"
+            branch_only = []
+        if missing or branch_only:
+            raise _not_durable(2, "CODE_SHA_NOT_DURABLE", missing, branch_only)
         with open(state_path, "w") as fh:
             json.dump(st, fh, indent=1, ensure_ascii=False)
         write_derived(repo, d, st, new_lease(agent, st["seq"], ttl_min, now, released=release))
@@ -730,9 +857,15 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
                  if not l.endswith(".pyc") and "__pycache__" not in l]
     if untracked:
         raise CheckpointError(2, "LOCAL_ONLY_FILES", files=untracked[:20])
-    # un solo push ATOMICO, senza force: checkpoint + ref keep di ogni SHA citato; un ref keep esistente su un altro
-    # commit (non-FF) fa rifiutare tutto, branch compreso
-    p = git(repo, "push", "-q", "--atomic", remote, f"HEAD:refs/heads/{branch}", *keep_refspecs(local["keep_shas"]),
+    if resumed == "after_commit":                   # commit gia' fatto (anche da un altro strumento): stesso controllo
+        cst = json.loads(blob(repo, "HEAD", f"{d}/STATE.json"))
+        _rows, missing, branch_only = check_durability(repo, remote, cst, durable_branches, keep_refs, _waiver(cst))
+        if missing or branch_only:
+            raise _not_durable(2, "CODE_SHA_NOT_DURABLE", missing, branch_only)
+    # senza force. Default: solo il branch di stato. Con keep_refs: push ATOMICO di checkpoint + ref keep; un ref keep
+    # esistente su un altro commit (non-FF) fa rifiutare tutto, branch compreso
+    extra = keep_refspecs(local["keep_shas"]) if keep_refs else []
+    p = git(repo, "push", "-q", *(["--atomic"] if extra else []), remote, f"HEAD:refs/heads/{branch}", *extra,
             check=False)
     if p.returncode != 0:
         now_remote = remote_head(repo, remote, branch)
@@ -740,7 +873,8 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
             resumed = "push_reported_error_but_landed"
         else:
             raise CheckpointError(3, "PUSH_REJECTED", remote=now_remote, stderr=p.stderr.decode(errors="replace")[-300:])
-    report = readback(url, branch, d, code_branch, expect_commit=out(repo, "rev-parse", "HEAD"))
+    report = readback(url, branch, d, code_branch, expect_commit=out(repo, "rev-parse", "HEAD"), keep_refs=keep_refs,
+                      durable_branches=durable_branches)
     return {"status": "DURABLE", "resumed": resumed, **report}
 
 
@@ -836,6 +970,11 @@ def main(argv=None):
     s.add_argument("--message", required=True); s.add_argument("--dir", default=DEFAULT_DIR); s.add_argument("--code-branch")
     s.add_argument("--agent", required=True); s.add_argument("--ttl-min", type=int, default=DEFAULT_LEASE_MIN)
     s.add_argument("--release", action="store_true"); s.add_argument("--code-repo")
+    s.add_argument("--keep-refs", action="store_true",
+                   help="pubblica anche refs/agent-state/keep/<sha> (opt-in; rifiutato dal proxy delle sessioni)")
+    s.add_argument("--allow-branch-only", action="store_true",
+                   help="accetta SHA presenti solo su un branch di lavoro, dichiarandolo nello STATE")
+    s.add_argument("--durable-branch", action="append", help="branch durevole (ripetibile; default main)")
     b = sub.add_parser("bootstrap"); b.add_argument("--url", required=True); b.add_argument("--branch", required=True)
     b.add_argument("--dest", required=True); b.add_argument("--dir", default=DEFAULT_DIR); b.add_argument("--code-branch")
     b.add_argument("--agent")
@@ -851,7 +990,8 @@ def main(argv=None):
             res = {"status": "VALID", **verify(a.repo, a.ref, a.dir, a.code_repo)}
         elif a.cmd == "save":
             res = save(a.repo, a.branch, a.remote, a.expected, a.message, a.dir, a.code_branch, agent=a.agent,
-                       ttl_min=a.ttl_min, release=a.release, code_repo=a.code_repo)
+                       ttl_min=a.ttl_min, release=a.release, code_repo=a.code_repo, keep_refs=a.keep_refs,
+                       allow_branch_only=a.allow_branch_only, durable_branches=a.durable_branch)
         elif a.cmd == "bootstrap":
             res = bootstrap(a.url, a.branch, a.dest, a.dir, a.code_branch, agent=a.agent)
         elif a.cmd == "recover":
