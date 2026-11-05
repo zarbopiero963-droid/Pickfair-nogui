@@ -152,3 +152,35 @@ def test_campagna_con_seed_invarianti_e_oracolo(seed: int) -> None:
     _oracle_ok(rep, snaps, outcomes)
     assert rep["unreconciled_orders"] == [], (seed, rep["unreconciled_orders"])
     assert rep["restarts"] == 1
+
+
+# ------------------------------------------------------------------ G7-R04 / G7-R10: crash durante l'hedge
+def test_a4_crash_dopo_l_invio_dell_hedge_nessun_secondo_hedge() -> None:
+    """Il processo cade appena l'exchange ha accettato l'hedge (prima che il bot ne registri l'esito). Al riavvio lo
+    scatto si ripete ma la chiusura e' gia' rivendicata: nessun secondo hedge sull'exchange."""
+    r1 = run([{"op": "signal", "m": "1.991", "price": 2.0, "stop_loss_pct": 10},
+              {"op": "crash_on_next_place"}, {"op": "price", "m": "1.991", "price": 3.0}, POLL])
+    assert r1.get("crashed_at", "").startswith("PLACE_BET:1.991"), r1.get("crashed_at")
+    r2 = run([POLL, POLL, {"op": "settle", "m": "1.991", "win": False}], home=r1["_home"])
+    rep = build_report([r1, r2], provenance="SINTETICO", scenario="roserpina-100-crash-hedge-v1")
+    snaps = r1["snaps"] + r2["snaps"]
+    before = [s for s in snaps if not s["tag"].endswith(":settle:1.991")][-1]
+    refs = {o["ref"] for o in before["exch_orders"] if str(o["market_id"]) == "1.991" and o["side"] == "LAY"}
+    assert len(refs) == 1, refs
+    assert not [c for c in _closes(rep, "1.991", "SL_TP_CLOSE_ROUTED") if c["run"] == 1], rep["protections"]
+    _oracle_ok(rep, snaps, {"1.991": False})
+
+
+# ------------------------------------------------------------------ G7-R14: riproducibilita'
+def test_stesso_seed_stesso_esito_e_stesso_dump() -> None:
+    def una_volta():
+        markets, outcomes, phase1, phase2 = _campagna(7)
+        r1 = run(phase1)
+        r2 = run(phase2, home=r1["_home"])
+        return build_report([r1, r2], provenance="SINTETICO", scenario="roserpina-100-seed-7")
+
+    primo, secondo = una_volta(), una_volta()
+    for rep in (primo, secondo):                     # l'ordine degli eventi nel dump puo' dipendere dai thread
+        rep["protections"] = {k: sorted(v, key=lambda x: (x["run"], x["event"], str(x["market_id"])))
+                              for k, v in rep["protections"].items()}
+    assert primo == secondo
