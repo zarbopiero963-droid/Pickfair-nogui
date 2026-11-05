@@ -37,7 +37,8 @@
    },
    "blocked_by": null,
    "needs_reconciliation": null,
-   "certifications": []
+   "certifications": [],
+   "notes": "Difetto noto (Claude D, pfab-d-20261105-f02-catalog-001): guardrails/mutation_catalog.json voce recovery_live_bets_inverted non allineata alla riga di F-13b (own_ref in live_refs); da correggere nel ribase F-13b/F-02 su main."
   },
   {
    "id": "F-03",
@@ -59,7 +60,7 @@
    "blocked_by": null,
    "needs_reconciliation": null,
    "certifications": [],
-   "notes": "Claude D: base = keep/f02 @80b0090 fusa con F-04 @4c07f71; ordine d'integrazione F-02 -> F-04 -> F-03."
+   "notes": "Claude D: claude/d-f03-trailing-stop @c12ef15 (F-02 @80b0090 + F-04 + F-03): SL/TP/trailing scattano col poller di F-02, chiusura per tavolo, nessun hedge duplicato dopo crash; simulazione 2 (100 EUR sintetici) verde. Ordine d'integrazione F-02 -> F-04 -> F-03."
   },
   {
    "id": "F-04",
@@ -256,7 +257,7 @@
    "blocked_by": null,
    "needs_reconciliation": null,
    "certifications": [],
-   "notes": "Branch completo secondo Claude D (pfab-d-20261105-f03-stack-001, @db11a86): cancel single-shot, esito ignoto di cancel/placeOrders = AMBIGUOUS, report per istruzione, estrattore unico del betId. Prima PR della corsia finanziaria."
+   "notes": "Revisione indipendente @db11a86: NOT FIT, P1-1 (PROCESSED_WITH_ERRORS/FAILURE con report non-FAILURE chiuso FAILED) + 2 P2; docs/roadmap/reviews/f14_review_db11a86_20261105.md. Correzione affidata a Claude D."
   },
   {
    "id": "F-15",
