@@ -79,7 +79,8 @@
    },
    "blocked_by": null,
    "needs_reconciliation": null,
-   "certifications": []
+   "certifications": [],
+   "notes": "@2d0cf4c: record di chiusura con cashout_request_ids (hedge attribuibile al tavolo, richiesta Claude C); 54 test F-04, 143 su F-02+F-04+F-03 dichiarati. F-03 su claude/d-f03-trailing-stop @65a84f5."
   },
   {
    "id": "F-05",
@@ -257,7 +258,7 @@
    "blocked_by": null,
    "needs_reconciliation": null,
    "certifications": [],
-   "notes": "Revisione indipendente @db11a86: NOT FIT, P1-1 (PROCESSED_WITH_ERRORS/FAILURE con report non-FAILURE chiuso FAILED) + 2 P2; docs/roadmap/reviews/f14_review_db11a86_20261105.md. Correzione affidata a Claude D."
+   "notes": "@7daf592 (Claude D): fix P1-1/P2 della revisione db11a86 (414047e) + vincolo MCP-01k (report di righe incerte = solo identita'); verifica indipendente del delta in corso. Revisione precedente: docs/roadmap/reviews/f14_review_db11a86_20261105.md."
   },
   {
    "id": "F-15",
@@ -285,7 +286,8 @@
    },
    "blocked_by": null,
    "needs_reconciliation": "il registrar VPS mappa FI-08B su F-16; l'audit Claude B lo dichiara fuori scheda",
-   "certifications": []
+   "certifications": [],
+   "notes": "@4250f97: accessore unico RuntimeController.funds_max_age_s() (vincolo MCP-01k), docs/roserpina_bankroll_equity.md; 98 test F-16 dichiarati."
   },
   {
    "id": "F-17",
