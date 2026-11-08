@@ -3512,9 +3512,10 @@
         "headless_main.py",
         "scripts/ci_changed_modules.py",
         "tests/blackbox/test_blackbox_core.py",
-        "tests/blackbox/test_blackbox_runtime.py"
+        "tests/blackbox/test_blackbox_runtime.py",
+        "tests/catalog/pf-test-catalog.json"
       ],
-      "max_files": 12
+      "max_files": 13
     }
   }
 }

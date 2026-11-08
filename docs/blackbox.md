@@ -132,6 +132,7 @@ Un tipo sconosciuto viene rifiutato.
   - hook dei crash;
   - dump nativi.
 - Mutanti `bb_*` in `guardrails/mutation_catalog.json`, area `blackbox`.
+- Suite `blackbox` nel catalogo dei test (`tests/catalog/pf-test-catalog.json`, OFFLINE, campagna `all`).
 
 **Limiti onesti:**
 - l'avvio reale su Windows e il crash nativo vero (segfault) restano MANUAL_ONLY;
