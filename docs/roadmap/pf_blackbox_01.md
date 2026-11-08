@@ -108,10 +108,10 @@ Tabella `events`, append-only. Un trigger SQLite vieta UPDATE e DELETE fuori dal
 | `query(filters, after_seq, limit)` | `(records, next_after_seq, gaps_in_range, as_of_seq)` |
 | `get(event_id, chain_depth)` | l'evento con la sua catena causale |
 
-Hook `record_control_api_request(fields) -> bool`: un record per ogni richiesta HTTP (con `X-Request-Id`), mai uno per ogni evento letto. Se ritorna `False`, la Control API risponde 503 `BLACKBOX_UNAVAILABLE`, tranne `/v1/blackbox/status`. Oltre una soglia di richieste al secondo, le letture si aggregano in un solo record con il conteggio.
+Hook `request_hook(record) -> bool` (contratto Claude C 1.13.0 @ `2350850`), obbligatorio: senza hook la Control API non parte (`REQUEST_HOOK_REQUIRED`). Una richiesta servita produce un `ATTEMPT` prima della lettura e un `RESULT` dopo l'invio; una richiesta rifiutata produce solo il `RESULT`. Campi: `phase`, `route` (il modello della route, mai il percorso grezzo), `params` (solo valori validati), `status`, `code`, `request_id` (`X-Request-Id`), `duration_ms`, `coalesced_before`. Mai un record per ogni evento letto. Se ritorna `False` o solleva un'eccezione, la Control API risponde 503 `BLACKBOX_UNAVAILABLE`, tranne `/v1/blackbox/status`. Oltre 20 record/s (raffica 40), le letture si aggregano in un solo record con il conteggio (`coalesced_before`). Paginazione: `next_after_seq = 0` quando non ci sono altre pagine; `as_of_seq = 0` con registro vuoto.
 
 Regole per i campi:
-- un campo non registrato vale `null` ed è elencato in `unavailable`;
+- un campo non registrato vale `null` ed è elencato in `not_recorded` (nello stato: `not_reported`); `unavailable` resta riservato al validatore del contratto («null se e solo se elencato»);
 - `customer_ref` è conservato per la riconciliazione, ma la vista esterna (Control API/MCP) non lo espone mai.
 
 ## 5. Crash e ripristino
