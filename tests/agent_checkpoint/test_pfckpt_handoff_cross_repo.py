@@ -396,6 +396,7 @@ def test_cross_repo_integration_commit_must_be_published_on_target_main(world, t
     non rende INTEGRATED_VERIFIED: un clone nuovo perderebbe la prova."""
     hsha, htree = publish_handoff(target)
     clone = target_clone(target)
+    _cfg(clone)                                                  # identita' git locale: il runner CI non ne ha una globale
     sh(clone, "checkout", "-q", "-B", "locale", hsha)
     sh(clone, "commit", "-q", "--allow-empty", "-m", "integrazione locale, mai pubblicata")
     local_integ = sh(clone, "rev-parse", "HEAD")
