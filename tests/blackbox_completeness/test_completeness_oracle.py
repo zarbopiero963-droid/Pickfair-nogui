@@ -10,7 +10,7 @@ import threading
 import pytest
 
 from tests.blackbox_completeness import oracle
-from tests.blackbox_completeness.fake_blackbox import FakeBlackBox, records_of
+from tests.blackbox_completeness.fake_blackbox import FakeBlackBox, _now_iso as _now, records_of
 from tests.blackbox_completeness.scenario import Scenario
 
 
@@ -143,29 +143,104 @@ def test_block_manomissione_rompe_la_catena() -> None:
     assert any(p.startswith("CHAIN_BROKEN") for p in oracle.check(recs, sc.exchange, sc.settlements))
 
 
-# ------------------------------------------------------------------ disco pieno
-def test_disco_pieno_nessun_nuovo_ingresso_uscita_coperta_da_lacuna_dichiarata() -> None:
+# ------------------------------------------------------------------ disco pieno (semantica BB-1, due casi soltanto)
+def _outage_case1(gap=True):
     sc = Scenario()
     e = sc.place("sig-d", "1.6", "BACK", 2.0, 4.0, matched=4.0)
     sc.bb.disk_full = True
-    assert sc.try_entry_while_unavailable("sig-new", "1.5") is False          # fail-closed: nessun invio
+    assert sc.try_entry_while_unavailable("sig-new", "1.5") is False          # nessun nuovo ingresso, nessun invio
     assert all(o["customerOrderRef"] != "sig-new" for o in sc.exchange)
-    # uscita protettiva consentita durante il guasto (buffer critico in memoria, §2): ordine sull'exchange senza record
-    sc.exchange.append({"betId": "BET-H", "customerOrderRef": "hedge:sig-d", "marketId": "1.6", "side": "LAY",
-                        "sizeMatched": 2.6, "status": "EXECUTION_COMPLETE"})
-    sc.bb.recover_disk()
-    sc.bb.record("BLACKBOX_GAP", source="SYSTEM", outcome="UNKNOWN", data={"refs": ["hedge:sig-d"]},
-                 reason_code="DISK_FULL")
+    hedge = sc.exit_during_outage(e, 2.6, 3.0)                                # uscita protettiva: nel buffer critico
+    if gap:
+        sc.bb.recover_disk()
+    else:                                                                     # scaricato senza lacuna dichiarata
+        sc.bb.disk_full = False
+        gap_less = sc.bb.buffer
+        sc.bb.buffer, sc.bb.degraded = [], False
+        for ev in gap_less:
+            refs = ev.pop("refs")
+            sc.bb._write(ev.pop("type"), data=dict(ev.pop("data") or {}, buffered=True), **ev, **refs)
+    return sc, hedge
+
+
+def test_disco_pieno_caso1_buffer_recuperato_richiesta_bufferizzata_e_lacuna() -> None:
+    sc, hedge = _outage_case1()
+    recs = records_of(sc.bb)
+    req = [r for r in recs if r["type"] == "ORDER_PLACE_REQUEST" and r["order_ref"] == hedge["order_ref"]]
+    assert len(req) == 1 and req[0]["data"]["buffered"] is True
+    gap = [r for r in recs if r["type"] == "BLACKBOX_GAP"]
+    assert len(gap) == 1 and hedge["order_ref"] in gap[0]["data"]["refs"] and gap[0]["seq"] > req[0]["seq"]
     assert _check(sc) == []
-    assert e["bet"] in {o["betId"] for o in sc.exchange}
 
 
-def test_block_uscita_durante_il_guasto_senza_lacuna_dichiarata() -> None:
+def test_block_caso1_richiesta_bufferizzata_senza_lacuna() -> None:
+    sc, hedge = _outage_case1(gap=False)
+    assert f"BUFFERED_WITHOUT_GAP:{hedge['order_ref']}" in _check(sc)
+
+
+def test_block_ingresso_bufferizzato_non_ammesso() -> None:
+    sc = Scenario()
+    sc.bb.record("ORDER_PLACE_REQUEST", source="STRATEGY", phase="ATTEMPT", outcome="PENDING", critical=True,
+                 order_ref="sig-in", market_id="1.5", data={"purpose": "ENTRY", "buffered": True})
+    assert "ENTRY_DURING_OUTAGE:sig-in" in _check(sc)
+
+
+def _outage_case2(reconciled=True, inside=True):
+    sc = Scenario()
+    e = sc.place("sig-d", "1.6", "BACK", 2.0, 4.0, matched=4.0)
+    if not inside:                                     # uscita partita PRIMA del guasto, senza richiesta
+        sc.exchange.append({"betId": "BET-OUT", "customerOrderRef": "hedge:sig-d", "marketId": "1.6",
+                            "side": "LAY", "sizeMatched": 2.6, "status": "EXECUTION_COMPLETE",
+                            "placedDate": "2000-01-01T00:00:00.000000+00:00"})
+    sc.bb.disk_full = True
+    sc.bb.record("ORDER_PLACE_REQUEST", source="STRATEGY")  # attiva il guasto (non critico: nel buffer)
+    if inside:
+        sc.exit_during_outage(e, 2.6, 3.0)             # inviata dal buffer critico...
+    sc.bb.crash_losing_buffer()                        # ...poi crash prima dello scarico: buffer perso
+    hedge = [o for o in sc.exchange if o["customerOrderRef"] == "hedge:sig-d"][0]
+    if reconciled:
+        sc.reconcile_found(hedge["betId"], "hedge:sig-d", "1.6")
+    return sc, hedge
+
+
+def test_disco_pieno_caso2_buffer_perso_lacuna_unknown_e_riconciliazione() -> None:
+    sc, _h = _outage_case2()
+    recs = records_of(sc.bb)
+    assert [r["type"] for r in recs if r["type"] in ("UNCLEAN_TERMINATION", "BLACKBOX_GAP")] == [
+        "UNCLEAN_TERMINATION", "BLACKBOX_GAP"]
+    assert [r for r in recs if r["type"] == "BLACKBOX_GAP"][0]["outcome"] == "UNKNOWN"
+    assert _check(sc) == []
+
+
+def test_block_caso2_senza_riconciliazione() -> None:
+    sc, h = _outage_case2(reconciled=False)
+    assert f"MISSING_REQUEST:{h['betId']}" in _check(sc)
+
+
+def test_block_caso2_ordine_fuori_dall_intervallo_della_lacuna() -> None:
+    sc, h = _outage_case2(inside=False)
+    assert f"MISSING_REQUEST:{h['betId']}" in _check(sc)
+
+
+def test_block_regola_vecchia_lacuna_con_ref_ma_senza_richiesta_bufferizzata() -> None:
+    """La regola precedente («uscita senza richiesta se una lacuna successiva ne dichiara il ref») non basta piu'."""
     sc = Scenario()
     sc.place("sig-d", "1.6", "BACK", 2.0, 4.0, matched=4.0)
     sc.exchange.append({"betId": "BET-H2", "customerOrderRef": "hedge:sig-d", "marketId": "1.6", "side": "LAY",
-                        "sizeMatched": 2.6, "status": "EXECUTION_COMPLETE"})
-    assert "MISSING_RESULT_FOR_BET:BET-H2" in _check(sc)
+                        "sizeMatched": 2.6, "status": "EXECUTION_COMPLETE", "placedDate": "2026-11-08T00:00:00+00:00"})
+    sc.bb.record("BLACKBOX_GAP", source="SYSTEM", outcome="VERIFIED", data={"refs": ["hedge:sig-d"]})
+    assert "MISSING_REQUEST:BET-H2" in _check(sc)
+
+
+def test_block_ingresso_senza_richiesta_anche_dentro_una_lacuna_unknown() -> None:
+    sc = Scenario()
+    sc.bb.disk_full = True
+    sc.bb.record("X", source="SYSTEM")
+    sc.exchange.append({"betId": "BET-E", "customerOrderRef": "sig-e", "marketId": "1.6", "side": "BACK",
+                        "sizeMatched": 4.0, "status": "EXECUTION_COMPLETE", "placedDate": _now()})
+    sc.bb.crash_losing_buffer()
+    sc.reconcile_found("BET-E", "sig-e", "1.6")
+    assert "MISSING_REQUEST:BET-E" in _check(sc), "un ingresso non e' mai un'uscita protettiva"
 
 
 def test_block_richiesta_non_critica() -> None:
@@ -191,3 +266,27 @@ def test_vocabolario_nuovo_dichiarato_e_assente_da_event_categories() -> None:
     for t in (oracle.REQUEST, oracle.RESPONSE, oracle.MATCHED, oracle.CANCEL_REQUEST, oracle.CANCEL_RESPONSE,
               oracle.CASHOUT_REQUEST, oracle.CASHOUT_EXECUTED, oracle.SETTLEMENT):
         assert t in known, t
+
+
+def test_block_richiesta_bufferizzata_coperta_solo_da_una_lacuna_unknown() -> None:
+    """Il caso 1 vuole una lacuna con riferimenti NOTI: una lacuna UNKNOWN (caso 2) non copre una richiesta bufferizzata."""
+    sc = Scenario()
+    sc.bb.record("ORDER_PLACE_REQUEST", source="STRATEGY", phase="ATTEMPT", outcome="PENDING", critical=True,
+                 order_ref="hedge:sig-z", market_id="1.5", data={"purpose": "HEDGE", "buffered": True})
+    sc.bb.record("BLACKBOX_GAP", source="SYSTEM", outcome="UNKNOWN", data={"refs": ["hedge:sig-z"]})
+    assert "BUFFERED_WITHOUT_GAP:hedge:sig-z" in _check(sc)
+
+
+def test_block_richiesta_successiva_all_esito() -> None:
+    """L'esito risale a una richiesta solo se la richiesta lo precede (seq): una richiesta registrata dopo non vale."""
+    sc = Scenario()
+    o = sc.place("sig-r", "1.5", "BACK", 2.0, 4.0, matched=4.0, cause=None)
+    recs = records_of(sc.bb)
+    res = [r for r in recs if r["type"] == "ORDER_PLACE_RESPONSE"][0]
+    sc2 = Scenario()
+    sc2.exchange = sc.exchange
+    sc2.bb.record("ORDER_PLACE_RESPONSE", source="EXCHANGE", phase="RESULT", outcome="VERIFIED",
+                  bet_id=o["bet"], order_ref="sig-r", market_id="1.5")
+    sc2.bb.record("ORDER_PLACE_REQUEST", source="STRATEGY", phase="ATTEMPT", outcome="PENDING", critical=True,
+                  order_ref="sig-r", market_id="1.5", data={"purpose": "ENTRY"})
+    assert res and f"MISSING_REQUEST:{o['bet']}" in _check(sc2)

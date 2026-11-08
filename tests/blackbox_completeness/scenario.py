@@ -9,7 +9,7 @@ from __future__ import annotations
 import itertools
 from typing import Any, Dict, List, Optional, Set
 
-from tests.blackbox_completeness.fake_blackbox import BlackBoxUnavailable, FakeBlackBox
+from tests.blackbox_completeness.fake_blackbox import BlackBoxUnavailable, FakeBlackBox, _now_iso
 
 _ids = itertools.count(1)
 
@@ -39,7 +39,7 @@ class Scenario:
         status = "CANCELLED" if purpose == "MICROSTAKE_STUB" else ("EXECUTION_COMPLETE" if matched >= size
                                                                      else "EXECUTABLE")
         self.exchange.append({"betId": bet, "customerOrderRef": ref, "marketId": market, "side": side,
-                              "sizeMatched": matched, "status": status})
+                              "sizeMatched": matched, "status": status, "placedDate": _now_iso()})
         if outcome == "UNKNOWN":
             self._rec("response", "ORDER_PLACE_RESPONSE", source="EXCHANGE", phase="RESULT", outcome="UNKNOWN",
                       causation_id=att["event_id"], reason_code="NO_OUTCOME", **refs)
@@ -93,7 +93,7 @@ class Scenario:
                         critical=True, values_after={"size": size}, data={"purpose": "ENTRY"}, **refs)
         bet = f"BET-{next(_ids)}"
         self.exchange.append({"betId": bet, "customerOrderRef": ref, "marketId": market, "side": "BACK",
-                              "sizeMatched": matched, "status": "EXECUTION_COMPLETE"})
+                              "sizeMatched": matched, "status": "EXECUTION_COMPLETE", "placedDate": _now_iso()})
         self.bb.session_id = self.bb.session_id + "-riavvio"
         self._rec("unclean", "UNCLEAN_TERMINATION", source="SYSTEM")
         run = self._rec("reconciliation", "RECONCILIATION_RUN", source="SYSTEM", phase="ATTEMPT", outcome="PENDING")
@@ -112,3 +112,14 @@ class Scenario:
         except BlackBoxUnavailable:
             return False
         return True
+
+    def exit_during_outage(self, entry: Dict[str, Any], size: float, price: float) -> Dict[str, Any]:
+        """Uscita protettiva (SL) a disco pieno: tutto passa dal buffer critico della scatola nera, l'ordine parte."""
+        return self.protection_close(entry, "SL_TRIGGERED", size, price)
+
+    def reconcile_found(self, bet: str, ref: str, market: str) -> None:
+        """Caso 2: dopo il riavvio la riconciliazione trova l'ordine per identita' e lo registra come osservato."""
+        run = self.bb.record("RECONCILIATION_RUN", source="SYSTEM", phase="ATTEMPT", outcome="PENDING")
+        self.bb.record("RECONCILIATION_RESOLVED", source="EXCHANGE", phase="OBSERVATION", outcome="VERIFIED",
+                       causation_id=run["event_id"], bet_id=bet, order_ref=ref, market_id=market,
+                       data={"via": "customerOrderRef"})

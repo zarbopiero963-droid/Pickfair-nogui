@@ -20,6 +20,13 @@ OUTCOMES = frozenset({"VERIFIED", "PENDING", "UNKNOWN", "REJECTED", "FAILED", "N
 SOURCES = frozenset({"USER", "SYSTEM", "MCP", "CONTROL_API", "STRATEGY", "EXCHANGE", "TELEGRAM", "CLI"})
 REF_FIELDS = ("table_id", "market_id", "selection_id", "order_ref", "bet_id", "strategy")
 GENESIS = "0" * 64
+EXIT_PURPOSES = frozenset({"HEDGE", "CASHOUT", "SL_TP_CLOSE"})      # uscite protettive (bufferizzabili, §2 / BB-1)
+EXIT_TYPES = frozenset({"SL_TRIGGERED", "TP_TRIGGERED", "TRAILING_TRIGGERED", "SL_TP_CLOSE_ROUTED",
+                        "SL_TP_CLOSE_NOT_EXECUTED", "SL_TP_CLOSE_UNCERTAIN", "CASHOUT_REQUEST", "CASHOUT_EXECUTED"})
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 class BlackBoxUnavailable(RuntimeError):
@@ -44,6 +51,8 @@ class FakeBlackBox:
         self._session_seq = 0
         self.disk_full = False          # simula ENOSPC: nessuna scrittura durevole
         self.degraded = False
+        self.buffer: List[Dict[str, Any]] = []   # buffer critico in memoria delle uscite protettive (BB-1, caso 1)
+        self.outage_from: Optional[str] = None
 
     # ------------------------------------------------------------------ scrittura (§4)
     def record(self, type: str, *, source: str, phase: str = "OBSERVATION", outcome: str = "NOT_APPLICABLE",
@@ -56,17 +65,36 @@ class FakeBlackBox:
         unknown = set(refs) - set(REF_FIELDS)
         if unknown:
             raise ValueError(f"riferimenti non previsti: {sorted(unknown)}")
-        with self._lock:
-            if self.disk_full:
+        if self.disk_full:
+            with self._lock:
                 if not self.degraded:
-                    self.degraded = True
-                if critical:
-                    raise BlackBoxUnavailable(f"BLACKBOX_UNAVAILABLE:{type}")
-                return {}
+                    self.degraded, self.outage_from = True, _now_iso()
+                purpose = (data or {}).get("purpose") if isinstance(data, dict) else None
+                exit_related = purpose in EXIT_PURPOSES or type in EXIT_TYPES or \
+                    str(refs.get("order_ref") or "").startswith("hedge:")
+                if critical and not exit_related:
+                    raise BlackBoxUnavailable(f"BLACKBOX_UNAVAILABLE:{type}")   # nuovi ingressi rifiutati
+                # uscita protettiva (o suo esito): nel buffer critico PRIMA dell'invio, con l'ora originale
+                ev = dict(type=type, source=source, phase=phase, outcome=outcome, critical=critical,
+                          causation_id=causation_id, correlation_id=correlation_id, reason_code=reason_code,
+                          reason=reason, state_before=state_before, state_after=state_after,
+                          values_before=values_before, values_after=values_after, data=data, refs=refs,
+                          ts_utc=_now_iso(), event_id=uuid.uuid4().hex)
+                self.buffer.append(ev)
+                return {"event_id": ev["event_id"], "buffered": True}
+        return self._write(type, source=source, phase=phase, outcome=outcome, critical=critical,
+                           causation_id=causation_id, correlation_id=correlation_id, reason_code=reason_code,
+                           reason=reason, state_before=state_before, state_after=state_after,
+                           values_before=values_before, values_after=values_after, data=data, **refs)
+
+    def _write(self, type, *, source, phase, outcome, critical, causation_id, correlation_id, reason_code, reason,
+               state_before, state_after, values_before, values_after, data, ts_utc=None, event_id=None,
+               **refs) -> Dict[str, Any]:
+        with self._lock:
             self._session_seq += 1
             prev = self.events[-1]["hash"] if self.events else GENESIS
-            rec = {"seq": len(self.events) + 1, "event_id": uuid.uuid4().hex,
-                   "ts_utc": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
+            rec = {"seq": len(self.events) + 1, "event_id": event_id or uuid.uuid4().hex,
+                   "ts_utc": ts_utc or _now_iso(),
                    "mono": time.monotonic(), "session_id": self.session_id, "session_seq": self._session_seq,
                    "pid": self.pid, "source": source, "type": type, "phase": phase, "outcome": outcome,
                    "critical": bool(critical), "causation_id": causation_id, "correlation_id": correlation_id,
@@ -78,11 +106,39 @@ class FakeBlackBox:
             return dict(rec)
 
     def recover_disk(self) -> None:
+        """Caso 1 (buffer recuperato): eventi ORIGINALI scaricati (ts originale, ``data.buffered=true``, nuovo ``seq``
+        nell'ordine di scarico) piu' un ``BLACKBOX_GAP`` con intervallo e customerOrderRef."""
         with self._lock:
             self.disk_full = False
-        if self.degraded:
-            self.degraded = False
-            self.record("BLACKBOX_RECOVERED", source="SYSTEM")
+            buffered, self.buffer = self.buffer, []
+            was, frm = self.degraded, self.outage_from
+            self.degraded, self.outage_from = False, None
+        if not was:
+            return
+        gap_refs = sorted({str(e["refs"].get("order_ref")) for e in buffered if e["refs"].get("order_ref")})
+        for ev in buffered:
+            refs = ev.pop("refs")
+            data = dict(ev.pop("data") or {}, buffered=True)
+            self._write(ev.pop("type"), data=data, **ev, **refs)
+        self._write("BLACKBOX_GAP", source="SYSTEM", phase="OBSERVATION", outcome="VERIFIED", critical=True,
+                    causation_id=None, correlation_id=None, reason_code="DISK_FULL", reason="", state_before=None,
+                    state_after=None, values_before=None, values_after=None,
+                    data={"from_ts": frm, "to_ts": _now_iso(),
+                          "refs": gap_refs})
+        self._write("BLACKBOX_RECOVERED", source="SYSTEM", phase="OBSERVATION", outcome="VERIFIED", critical=False,
+                    causation_id=None, correlation_id=None, reason_code="", reason="", state_before=None,
+                    state_after=None, values_before=None, values_after=None, data=None)
+
+    def crash_losing_buffer(self) -> Dict[str, Any]:
+        """Caso 2 (buffer perso: crash prima dello scarico). Al riavvio: UNCLEAN_TERMINATION + BLACKBOX_GAP UNKNOWN
+        con l'intervallo del guasto e riferimenti ignoti."""
+        with self._lock:
+            self.disk_full, self.buffer = False, []
+            frm, self.outage_from, self.degraded = self.outage_from, None, False
+            self.session_id = self.session_id + "-riavvio"
+        self.record("UNCLEAN_TERMINATION", source="SYSTEM")
+        return self.record("BLACKBOX_GAP", source="SYSTEM", outcome="UNKNOWN", critical=True,
+                           reason_code="BUFFER_LOST", data={"from_ts": frm, "to_ts": _now_iso(), "refs": None})
 
     # ------------------------------------------------------------------ lettura (§4-bis)
     def status(self) -> Dict[str, Any]:

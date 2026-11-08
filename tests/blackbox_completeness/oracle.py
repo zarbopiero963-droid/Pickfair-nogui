@@ -111,19 +111,46 @@ def check(records: List[Dict[str, Any]], exchange_orders: Iterable[Dict[str, Any
         if any(r.get("type") == RESPONSE and r.get("outcome") == "UNKNOWN" for r in res) and not rec:
             problems.append(f"MISSING_RECONCILIATION:{a.get('order_ref')}")
 
+    # --- disco pieno (semantica BB-1, Claude B pfab-b-20261108-blackbox-oracle-ack-001): due casi soltanto.
+    # Caso 1, buffer recuperato: la richiesta dell'uscita e' presente con data.buffered=true E una BLACKBOX_GAP
+    # (refs noti) ne dichiara il customerOrderRef. Un ingresso bufferizzato non e' ammesso (ingressi rifiutati).
+    # Caso 2, buffer perso: un'uscita SENZA richiesta e' valida solo se cade nell'intervallo di una BLACKBOX_GAP con
+    # outcome UNKNOWN E ha una RECONCILIATION_RESOLVED (phase OBSERVATION) per il suo bet.
+    gaps = [r for r in recs if r.get("type") == "BLACKBOX_GAP"]
+    known_gap_refs = set()
+    for g in gaps:
+        if g.get("outcome") != "UNKNOWN":
+            known_gap_refs.update((g.get("data") or {}).get("refs") or [])
+    for a in attempts:
+        if (a.get("data") or {}).get("buffered"):
+            if (a.get("data") or {}).get("purpose") == "ENTRY":
+                problems.append(f"ENTRY_DURING_OUTAGE:{a.get('order_ref')}")
+            elif a.get("order_ref") not in known_gap_refs:
+                problems.append(f"BUFFERED_WITHOUT_GAP:{a.get('order_ref')}")
+
+    def in_unknown_gap(order):
+        ts = str(order.get("placedDate") or "")
+        for g in gaps:
+            d = g.get("data") or {}
+            if g.get("outcome") == "UNKNOWN" and d.get("from_ts") and d.get("to_ts") and ts \
+                    and str(d["from_ts"]) <= ts <= str(d["to_ts"]):
+                return True
+        return False
+
     # --- ogni ordine sull'exchange: richiesta durevole prima, esito con il suo bet_id
-    gap_refs = set()
-    for r in recs:
-        if r.get("type") == "BLACKBOX_GAP":
-            gap_refs.update((r.get("data") or {}).get("refs") or [])
     exch = list(exchange_orders)
     exch_bets = {_bet(o) for o in exch}
     for o in exch:
         bet, ref = _bet(o), _ref(o)
         res = [r for r in results if r.get("bet_id") == bet]
+        if not any(a.get("order_ref") == ref for a in attempts):
+            observed = any(r.get("type") == "RECONCILIATION_RESOLVED" and r.get("bet_id") == bet
+                           and r.get("phase") == "OBSERVATION" for r in recs)
+            if ref.startswith("hedge:") and in_unknown_gap(o) and observed:
+                continue                                    # caso 2: buffer perso, lacuna UNKNOWN + riconciliazione
+            problems.append(f"MISSING_REQUEST:{bet}")
+            continue
         if not res:
-            if ref in gap_refs:
-                continue                                    # uscita in modalita' degradata, lacuna dichiarata
             problems.append(f"MISSING_RESULT_FOR_BET:{bet}")
             continue
         chain_ok = False

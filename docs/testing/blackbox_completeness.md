@@ -27,7 +27,7 @@ Campagna con tre ingressi microstake (stub + ordine esatto), un parziale con res
 hedge, settlement; crash fra invio ed esito (riconciliazione per `customerOrderRef` dopo il riavvio); esito ignoto senza
 riconciliazione; mercato sospeso e riaperto (protezione in attesa, nessun hedge a mercato sospeso); concorrenza
 multitavolo (8 thread, `seq` senza buchi ne' duplicati); disco pieno (nessun nuovo ingresso, uscita coperta da lacuna);
-manomissione; segreto nel registro. Ogni anello tolto alla scrittura e' un test BLOCK con il suo codice; 15 mutanti
+manomissione; segreto nel registro. Ogni anello tolto alla scrittura e' un test BLOCK con il suo codice; 21 mutanti
 dell'oracolo (un controllo spento alla volta) sono tutti rilevati.
 
 ## Tipi di evento nuovi richiesti (assenti da `EVENT_CATEGORIES`)
@@ -39,8 +39,20 @@ dell'oracolo (un controllo spento alla volta) sono tutti rilevati.
 `data.purpose = MICROSTAKE_STUB / ENTRY / HEDGE` sulla richiesta. Un test fallisce se uno di questi tipi entra in
 `EVENT_CATEGORIES` senza aggiornare la lista.
 
-## Punto aperto per l'architettura
+## Disco pieno: semantica di BB-1 (decisione Claude B, pfab-b-20261108-blackbox-oracle-ack-001)
 
-Disco pieno: §2 dice «uscite protettive consentite» e anche «`*_REQUESTED` durevole prima di ogni invio». L'oracolo
-accetta un'uscita senza richiesta solo se un `BLACKBOX_GAP` successivo ne dichiara il `customerOrderRef` (buffer
-critico in memoria scaricato al ripristino). Da confermare in BB-1.
+L'oracolo accetta questi due casi e nient'altro:
+
+1. **Buffer recuperato.** A store non disponibile la richiesta di un'uscita protettiva (hedge, cashout, chiusura SL/TP)
+   va nel buffer critico in memoria PRIMA dell'invio; i nuovi ingressi sono sempre rifiutati (`BLACKBOX_UNAVAILABLE`).
+   Al ripristino il buffer si scarica con gli eventi originali (`ts_utc` originale, `data.buffered=true`, nuovo `seq`
+   nell'ordine di scarico) e una `BLACKBOX_GAP` (outcome non UNKNOWN) con intervallo e `customerOrderRef`. Valida solo
+   se la richiesta bufferizzata e' presente E una lacuna con riferimenti noti la copre (`BUFFERED_WITHOUT_GAP`);
+   un ingresso bufferizzato e' `ENTRY_DURING_OUTAGE`.
+2. **Buffer perso** (crash prima dello scarico). Al riavvio `UNCLEAN_TERMINATION` + `BLACKBOX_GAP` con outcome UNKNOWN
+   (`data.from_ts` / `data.to_ts`, riferimenti ignoti); la riconciliazione registra gli ordini trovati come
+   `RECONCILIATION_RESOLVED` con phase OBSERVATION. Un'uscita (`hedge:*`) senza richiesta e' valida solo se il suo
+   `placedDate` cade nell'intervallo di una lacuna UNKNOWN E ha quella riconciliazione; un ingresso mai.
+
+Una richiesta mancante fuori da questi due casi resta `MISSING_REQUEST`. La regola provvisoria precedente («uscita senza
+richiesta se una lacuna successiva ne dichiara il ref») e' rifiutata da un test BLOCK.
