@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "claude/d-roserpina-100-sim-report",
-  "sha": "cfe2a1c16162465c5a396828509107f79610c6f0"
+  "sha": "6475b938e930f8e9b83c34a55708d6906e7cb229"
  },
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "next_atomic_action": "D-C4-02 (commit separato su claude/d-f03-trailing-stop, condizioni Claude B); leggere risposta Claude B su D-C4-01; PF-BLACKBOX-01 matrice completezza",
- "previous_checkpoint_sha": "90e45e345e026b71419a63c9189eda3f7f42b095",
+ "next_atomic_action": "PF-BLACKBOX-01: test di completezza offline (tests/blackbox_completeness/) contro schema pf_blackbox_01.md @cb2f04bb; attendere risposta Claude B su D-C4-02",
+ "previous_checkpoint_sha": "73b2d69c97280649d1fd816425481b06e4257ab2",
  "schema": "pf-current/1",
- "seq": 7
+ "seq": 8
 }

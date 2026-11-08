@@ -1,9 +1,9 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 7,
+ "seq": 8,
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "previous_checkpoint_sha": "90e45e345e026b71419a63c9189eda3f7f42b095",
+ "previous_checkpoint_sha": "73b2d69c97280649d1fd816425481b06e4257ab2",
  "updated_at": "2026-11-05T14:22:51Z",
  "agent": {
   "identity": "claude-d",
@@ -14,7 +14,7 @@
  },
  "code": {
   "branch": "claude/d-roserpina-100-sim-report",
-  "sha": "cfe2a1c16162465c5a396828509107f79610c6f0"
+  "sha": "6475b938e930f8e9b83c34a55708d6906e7cb229"
  },
  "main_sha": "a09d8d6116aa234e838186f807f62470873def50",
  "branches": {
@@ -35,12 +35,12 @@
    "stato": "F-04: dopo F-02 (Claude B)"
   },
   "claude/d-f03-trailing-stop": {
-   "sha": "3bcb308f619113b6b4581c3dddbe6c2dd42ccebb",
-   "stato": "stack F-02+F-04+F-03 + D-C4-01 (tree 126f2fd8); consegnato a Claude B (pfab-d-20261108-dc401-handoff-001), in attesa di ACCEPTED"
+   "sha": "8ae07efe23dfe73b1385d76f7cc6b7a90f14a49c",
+   "stato": "stack F-02+F-04+F-03 + D-C4-01 (3bcb308f) + D-C4-02 (8ae07efe, tree 1a993b04); D-C4-01 DELIVERED (ack Claude B), D-C4-02 consegnato"
   },
   "claude/d-roserpina-100-sim-report": {
-   "sha": "cfe2a1c16162465c5a396828509107f79610c6f0",
-   "stato": "campagne 1-4, G7-S01..S26; B3 xfail solo senza D-C4-01; B5/S26 microstake E2E"
+   "sha": "6475b938e930f8e9b83c34a55708d6906e7cb229",
+   "stato": "campagne 1-4, G7-S01..S26; B3/B4 xfail solo senza D-C4-01/02"
   },
   "claude/d-market-book-age": {
    "sha": "ea81e93e2f2dfe2791353ca42480cf4a7d382511",
@@ -117,7 +117,7 @@
   "catena di checkpoint pf-claude-d: seq 1 DURABLE, ripristino READY da clone nuovo",
   "caso sintetico squash+branch cancellato consegnato a Claude B (RED riprodotto: LATEST_CHECKPOINT_CORRUPT)"
  ],
- "next_atomic_action": "D-C4-02 (commit separato su claude/d-f03-trailing-stop, condizioni Claude B); leggere risposta Claude B su D-C4-01; PF-BLACKBOX-01 matrice completezza",
+ "next_atomic_action": "PF-BLACKBOX-01: test di completezza offline (tests/blackbox_completeness/) contro schema pf_blackbox_01.md @cb2f04bb; attendere risposta Claude B su D-C4-02",
  "dependencies": {
   "F-04": "F-02 su main (Claude B)",
   "F-03": "F-02 + F-04",
@@ -230,6 +230,21 @@
    "id": "G7 S07 su main a09d8d61 con harness e test del branch simulazione cfe2a1c1 (albero non pulito)",
    "status": "NOT VERIFIED",
    "note": "unpublished_tree: main a09d8d61 + tests/f026 da cfe2a1c1; 2 passed"
+  },
+  {
+   "id": "D-C4-02 test mirati tests/f03/test_dc402_stake_abbinato.py (18) + 8 mutanti uccisi",
+   "status": "PASS",
+   "sha": "8ae07efe23dfe73b1385d76f7cc6b7a90f14a49c"
+  },
+  {
+   "id": "suite completa claude/d-f03-trailing-stop @8ae07efe: 12495 passed, 36 falliti preesistenti identici alla base",
+   "status": "PASS",
+   "sha": "8ae07efe23dfe73b1385d76f7cc6b7a90f14a49c"
+  },
+  {
+   "id": "f026 campagne 2-4 + report su d3b2d41 + D-C4-01/02: tutti PASS; senza correzioni campagna 4 = 3 PASS 2 XFAIL",
+   "status": "NOT VERIFIED",
+   "note": "unpublished_tree"
   }
  ],
  "tests_missing": [
@@ -243,9 +258,9 @@
   "F-R06 (P2, su main): riserva fantasma al riavvio per AMBIGUOUS regolato",
   "stack F-02: voce di catalogo recovery_live_bets_inverted (Claude B)",
   "preesistenti su main: test_issue437_pr02, test_trading_engine_internal_contracts, Telegram",
-  "D-C4-02 (P2, main sl_tp_pnl.position_stake): protezioni su stake richiesto non abbinato (G7-S25 xfail)",
   "D-C4-01 (P1): CORRETTO su claude/d-f03-trailing-stop 3bcb308f, non su main; in verifica da Claude B",
-  "D-C4-03 (candidato, catena F-04/F-05): ROUTED + fallimento terminale provato dell'hedge non riapre la protezione; issue da Claude B"
+  "D-C4-03 (candidato, catena F-04/F-05): ROUTED + fallimento terminale provato dell'hedge non riapre la protezione; issue da Claude B",
+  "D-C4-02 (P2): CORRETTO su claude/d-f03-trailing-stop 8ae07efe, non su main; consegnato a Claude B"
  ],
  "github_evidence": [
   "#586 c.6640163608",
@@ -259,7 +274,8 @@
   "#586 c.6660335325",
   "#586 c.6660379402",
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6663479116",
-  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728013955"
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728013955",
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728261674"
  ],
  "gate_a": "NOT APPLICABLE (Claude D)",
  "pr_505": "non toccata",
@@ -274,6 +290,12 @@
   },
   {
    "note": "D-C4-01 consegnato a Claude B: pfab-d-20261108-dc401-handoff-001 (consegna del messaggio confermata dal canale, risposta non ancora ricevuta)"
+  },
+  {
+   "note": "Claude B pfab-b-20261108-dc401-ack-001: D-C4-01 ACCEPTED (ricevuta), verifica indipendente quando la catena SL/TP sara' la PR; D-C4-03 issue aperta da Claude B"
+  },
+  {
+   "note": "D-C4-02 consegnato: pfab-d-20261108-dc402-handoff-001 (consegnato al canale, risposta non ancora ricevuta)"
   }
  ]
 }
