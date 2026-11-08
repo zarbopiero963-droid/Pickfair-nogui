@@ -8472,6 +8472,18 @@
         "tests/acceptance/test_g7_r06_rebuild_settled.py"
       ],
       "rationale": "G7-R06: un settlement di un altro mercato usato come prova di chiusura."
+    },
+    {
+      "id": "g7r06_live_order_ignored",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            if key and not alive:",
+      "mutated": "            if key:",
+      "tests": [
+        "tests/acceptance/test_g7_r06_rebuild_settled.py"
+      ],
+      "rationale": "G7-R06: un intento con un ordine ancora vivo sull'exchange (per customerOrderRef o betId) viene chiuso per settlement e la sua riserva rilasciata."
     }
   ]
 }
