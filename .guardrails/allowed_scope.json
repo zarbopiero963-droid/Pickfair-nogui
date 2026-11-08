@@ -3481,6 +3481,20 @@
         "tests/acceptance/test_issue461_pr28e_funds_gate.py"
       ],
       "max_files": 7
+    },
+    "d_blackbox_completeness": {
+      "description": "PF-BLACKBOX-01 (Claude D): oracolo di completezza finanziaria della scatola nera, offline sul contratto pf_blackbox_01.md @cb2f04bb (scatola nera finta, scenari G7, BLOCK per ogni anello mancante). Solo test e documentazione: nessun codice di prodotto.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "docs/testing/blackbox_completeness.md",
+        "tests/blackbox_completeness/__init__.py",
+        "tests/blackbox_completeness/fake_blackbox.py",
+        "tests/blackbox_completeness/oracle.py",
+        "tests/blackbox_completeness/scenario.py",
+        "tests/blackbox_completeness/test_completeness_oracle.py"
+      ],
+      "max_files": 7
     }
   }
 }
