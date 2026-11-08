@@ -1,0 +1,1884 @@
+[
+ {
+  "number": 274,
+  "title": "[DETTAGLIO di #374 — non è più il tracker] Roadmap Go-Live: blocker B1–B10, serie test A–M, TOP30, fasi 0–5 (NON chiudere)",
+  "class": "NEEDS_REVIEW",
+  "priority": "P2",
+  "reason": "Roadmap storica superata come sequenza (#489: STORICO; si opera su #453/#461) e i requisiti sono dichiarati conservati nella #453 (consolidamento 13/09). Però titolo e commento owner 20/08 dicono esplicitamente di NON chiuderla finché tutto non è implementato con test: serve la decisione owner per chiuderla come SUPERSEDED.",
+  "replacement": "#453",
+  "evidence": [
+   "#489 matrice: '#274/#337/#338/#374 vecchie roadmap … STORICI come sequenza'",
+   "#274 c.5653929670 (13/09): requisiti conservati in #453 righe 01,03–10,14,18,20,26–29,34–35; S1–S4; X01–X05; collaudo #351 T01–T24,T28–T32; stato PARZIALE",
+   "#274 c.5353624564 (20/08): 'non va chiusa finché tutto è implementato tecnicamente con test'",
+   "#453 corpo: riga #274 'Roadmap storica B1–B10, fasi 0–5, A–M/TOP30/proof e sei follow-up cashout'",
+   "#426 P10: volatility breaker/Parser Trainer/Fractional Kelly/PROFITTO X€ rinviati"
+  ],
+  "deps": [
+   "#453",
+   "#461",
+   "#374",
+   "#351"
+  ],
+  "open_requirements": "Contenuti di dettaglio unici: TOP30 Parte 2 (11 test elencati), proof operazionali (StreamingFeed/EventBus/session gate/RuntimeController control-path), 6 follow-up cashout, limite green-up preview-only, regola auto_bet senza supervisione. Dichiarati conservati in #453 solo per richiamo (non elencati uno per uno nel corpo #453).",
+  "owner_question": "La #274 ha l'istruzione 'NON chiudere'. Confermi che, essendo i requisiti consolidati nella #453 (riga #274) e la sequenza sostituita da #453/#461, si può chiudere come SUPERSEDED? In caso affermativo, vuoi prima riportare in #453 l'elenco puntuale degli 11 test TOP30 Parte 2 e dei 6 follow-up cashout?",
+  "auditor": "subagent",
+  "final_class": "NEEDS_REVIEW",
+  "phase2_action": "decisione owner richiesta"
+ },
+ {
+  "number": 285,
+  "title": "Daily-loss kill switch — snapshot di lockdown non-mutante (evita overwrite del bankroll live dal broker simulato)",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Il riordino force_lockdown→set_simulation_mode è su main, ma mancano ancora il test di regressione con saldi SIM/LIVE diversi (PASS+BLOCK sull'ordine) e la correzione del commento 'NON-MUTANTE' (get_status resta mutante). Consolidata in #453 come PARZIALE; requisito citato in #489 come 'da non perdere'.",
+  "replacement": null,
+  "evidence": [
+   "main a09d8d6: core/runtime_controller.py:2240 commento 'Snapshot di lockdown NON-MUTANTE (Issue #285)' ancora impreciso",
+   "core/runtime_controller.py:2246 force_lockdown prima di :2257 set_simulation_mode(True)",
+   "nessun test in tests/ con saldi live≠sim o ordine force_lockdown/set_simulation_mode (unico artefatto: hard_verify_issue_320.py:170 fuori da tests/)",
+   "#285 c.4949089668 hard-verify IMPLEMENTED_WITH_NOTE",
+   "#285 c.5653930624 → #453 riga 20; S4; #351 T17,T22; PARZIALE",
+   "#461 scheda 15 'Emergency snapshot e separazione saldi SIM/LIVE'",
+   "#489 'Requisiti correnti da non perdere'"
+  ],
+  "deps": [
+   "#453",
+   "#461 scheda 15",
+   "#351"
+  ],
+  "open_requirements": "Test hard con get_account_funds che distingue live/sim + test BLOCK se l'ordine viene invertito; commento corretto.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 289,
+  "title": "Agganciare i pannelli di ui_panels/ come tab nella GUI (mini_gui.py)",
+  "class": "KEEP",
+  "priority": "P3",
+  "reason": "Nessun pannello di ui_panels/ è importato o montato in mini_gui.py su main; le tab Alert/Watchdog sono di configurazione e per D17 non sostituiscono i viewer. Lavoro ancora da fare (una sola tab Osservabilità + Safe Mode reale).",
+  "replacement": null,
+  "evidence": [
+   "main a09d8d6: grep 'ui_panels|alerts_panel|health_panel|safe_mode_panel' in mini_gui.py = 0; tab montate mini_gui.py:874-885",
+   "ui_panels/ contiene ancora i 9 pannelli",
+   "#426 D17: una tab Osservabilità con manager nel processo GUI; SafeMode controllo effettivo",
+   "#289 c.5653931451 → #453 righe 02,11,28,31; #351 T03,T23; NON IMPLEMENTATO",
+   "#461 scheda 13 'Osservabilità unica e Safe Mode nella GUI'",
+   "#489 'Requisiti correnti da non perdere'"
+  ],
+  "deps": [
+   "#453",
+   "#461 scheda 13",
+   "#426 D17",
+   "#351"
+  ],
+  "open_requirements": "Tab Osservabilità unica con pannelli alimentati dai manager reali e Safe Mode effettivo; aggiornamento design_handoff.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 290,
+  "title": "[Spec → Pickfair-nogui] Parser Personalizzato (a delimitatori) che SOSTITUISCE i pattern regex + Provider + sync catalogo Betfair (SQLite)",
+  "class": "CONSOLIDATE",
+  "priority": "P2",
+  "reason": "Per #489 Provider/editor a delimitatori/regex/alias sono SUPERATI dal Catalogo e dal formato KEY: value; le parti vigenti (parser standard, catalogo no-wipe, risoluzione deterministica, provenienza, dutching, rimozione regex) sono nelle schede #461 PR06–PR10/PR12. Restano però requisiti non riportati nei registri (decisione CS_OTHER a 3 gambe, helper best-price-by-selection_id) da trasferire prima della chiusura. Nessuna consolidazione 13/09 su questa issue.",
+  "replacement": "#461",
+  "evidence": [
+   "#489 matrice righe #290/#301/#305 (Provider SUPERATO, editor custom SUPERATO, risoluzione/catalogo VIGENTE → PR06–PR08, dutching VIGENTE → PR09)",
+   "#290 c. 12/07 decisione owner CS_OTHER = 3 gambe Any Other Home/Away/Draw, fail-closed se una non risolvibile",
+   "ricerca issue 'CS_OTHER': solo #290/#301/#305/#306/#337/#338/#374, assente da #453/#461/#426",
+   "main: CS_OTHER_HOME assente; tab 'Provider' e 'Parser Avanzati' ancora in mini_gui.py:884,2692 (PR10 non eseguita)",
+   "#290 c. 19/08 (libreria mercati/Provider) superata dal Catalogo #453 A.04"
+  ],
+  "deps": [
+   "#461 PR06",
+   "#461 PR07",
+   "#461 PR08",
+   "#461 PR09",
+   "#461 PR10",
+   "#453 A.03/A.04/A.06"
+  ],
+  "open_requirements": "Da trasferire in #461 PR08/PR09: CS_OTHER (e HT) espanso in 3 selection_id dal catalogo con fail-closed; helper best-price per selection_id per le gambe; mapping punteggio→selection_id per CORRECT_SCORE; fail-closed SIGNAL_NOT_DICT e guardia sync 0 eventi (no-wipe, già in PR08).",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "CONSOLIDATE",
+  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica"
+ },
+ {
+  "number": 293,
+  "title": "Follow-up B8/replace_orders: timeout-ambiguous in order_manager + sim durability/no-op parity",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Su main OrderManager.replace_order mappa ancora TIMEOUT/eccezioni di rete a TRANSIENT→FAILED/REPLACE_REJECTED invece di AMBIGUOUS; i test di durabilità SIM al reload e del no-op a prezzo invariato non esistono e la semantica Betfair non è verificata. OrderManager resta dormiente (debito latente, opzione b ammessa dall'owner ma non ancora dichiarata).",
+  "replacement": null,
+  "evidence": [
+   "main a09d8d6: order_manager.py:174 'TIMEOUT': TRANSIENT; order_manager.py:1096-1105 ramo except → REPLACE_REJECTED/FAILED se non AMBIGUOUS",
+   "OrderManager( non istanziato fuori dai test",
+   "simulation_broker.py:1952 no-op su prezzo invariato senza test; tests/unit/test_simulation_broker_replace_orders.py senza casi reload/no-op",
+   "nota: il percorso Microstake LIVE gestisce già il replace ignoto come LostResponse (core/microstake_live_port.py:263-271), non OrderManager",
+   "#293 c.5423794832 checklist owner 26/08",
+   "#293 c.5653932265 → #453 righe 14,29; S1; PARZIALE",
+   "#461 PR30/PR31 'Cancel/replace ambiguity'"
+  ],
+  "deps": [
+   "#461 PR30",
+   "#461 PR31",
+   "#453",
+   "#351 T10,T11,T21,T22"
+  ],
+  "open_requirements": "Item 1 fix AMBIGUOUS+test BLOCK o dichiarazione scritta di debito latente; item 2 test reload SIM; item 3 verifica semantica replaceOrders Betfair + test.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 297,
+  "title": "GUI: tab \"Storico Bet\" + Risk Desk con cronologia + auto-sync reattivo non-bloccante",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Implementazione parziale su main: Storico Bet mostra solo SIM (limit=100, niente LIVE/orders né paginazione 200), la scrittura della cronologia è ancora in core/runtime_controller.py contro la decisione owner (writer GUI off-thread), coordinator solo su 3 viste e poll non configurabile.",
+  "replacement": null,
+  "evidence": [
+   "main a09d8d6: mini_gui.py:2496 get_recent_simulation_bets(limit=100); get_recent_orders_for_diagnostics non usato in mini_gui.py",
+   "core/runtime_controller.py:7228-7229 chiama db.add_risk_position_history (decisione owner #297 c.4950625668: spostare nella GUI)",
+   "mini_gui.py:2395-2440 coordinator solo risk_desk/bet_history/risk_desk_history",
+   "database_schema.py:378 risk_position_history presente",
+   "#297 c.5653933122 → #453 righe 15; 02,35; PARZIALE",
+   "#461 scheda 14 'Storico LIVE+SIM, pagine, writer e coordinator'"
+  ],
+  "deps": [
+   "#461 scheda 14",
+   "#453",
+   "#426",
+   "#351 T19,T20"
+  ],
+  "open_requirements": "Unione LIVE+SIM con outcome/PnL reali, paginazione default 200 configurabile, writer GUI off-thread e rimozione dal core, coordinator per tutte le viste + poll configurabile, test pytest.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 301,
+  "title": "parser personalizzato requisiti",
+  "class": "CONSOLIDATE",
+  "priority": "P3",
+  "reason": "È il criterio di accettazione di #290: tab Provider, editor 'inizia dopo/finisce prima' e cancellazione degli stantii sono SUPERATI (#489, Catalogo no-wipe), mentre risoluzione deterministica, catalogo e dutching restano in #461 PR06–PR10. Gli esempi end-to-end (Over 2.5 singolo, dutching CS con quote dal book) e la decisione CS_OTHER non sono riportati nei registri: vanno trasferiti prima di chiudere.",
+  "replacement": "#461",
+  "evidence": [
+   "#489 matrice righe #290/#301",
+   "#301 c.4813848149 decisione CS_OTHER chiusa",
+   "#290 c.4810222441: #301 è il criterio di accettazione di #290",
+   "nessun commento di consolidamento #453 su #301"
+  ],
+  "deps": [
+   "#290",
+   "#461 PR06–PR10",
+   "#453 A.03/A.04/A.06"
+  ],
+  "open_requirements": "Esempi di accettazione e2e (segnale singolo e dutching CORRECT_SCORE con quote dal book e split), mapping punteggio→selection_id, CS_OTHER 3 gambe, priceProjection già fatto (#322).",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "CONSOLIDATE",
+  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica"
+ },
+ {
+  "number": 302,
+  "title": "Dizionario azioni globale — GUI single-select + CANCEL_UNMATCHED / CLOSE_EVENT / PARTIAL_CASHOUT",
+  "class": "CONSOLIDATE",
+  "priority": "P2",
+  "reason": "Tab Azioni/token/emoji esclusa da P33; percentuale soglia+frazione confermata P34 e attesa/Mantieni P35-A con destinazioni PR25/PR42/PR44; l'override 'vince l'ultimo' è superato da P35-B. Restano da riportare esplicitamente le azioni come comandi standard (CANCEL_UNMATCHED autonomo, CLOSE_EVENT = scope evento) e le regole SKIP dei modi %/range, che non risultano in #461/#453.",
+  "replacement": "#461",
+  "evidence": [
+   "#489 matrice righe #302 (ESCLUSI P33; P34/P35 CONFERMATE → PR44/PR25/PR42)",
+   "#426 P33–P35 (corpo #426, DECISIONI-VIGENTI-P33-P40)",
+   "#461 tabella: Fraction/percentage PR44, P35 lifecycle PR25",
+   "ricerca 'CANCEL_UNMATCHED': solo #301/#302/#305/#306",
+   "main: nessuna action_aliases/pending_cashout_targets per dizionario azioni"
+  ],
+  "deps": [
+   "#461 PR25",
+   "#461 PR43",
+   "#461 PR44",
+   "#461 PR45",
+   "#426 P33–P35"
+  ],
+  "open_requirements": "CANCEL_UNMATCHED come comando standard; CLOSE_EVENT come cashout di tutte le gambe dell'evento (PF-CASH-01); % fissa/dal messaggio/range con SKIP se assente o fuori range; ordine bet→azioni nel messaggio misto.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "CONSOLIDATE",
+  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica"
+ },
+ {
+  "number": 305,
+  "title": "Piano di implementazione — parser personalizzato + Provider + catalogo + dizionario azioni",
+  "class": "SUPERSEDED",
+  "priority": "n/a",
+  "reason": "Vecchio piano Fasi 0–9: #489 lo classifica STORICO come sequenza, sostituito da #453/#461. I requisiti di contenuto vivono nelle issue sorgente (#290/#302/#306/#309/#312/#320) e nelle schede #461; MIN_STAKE 0.10 (MM-1) è superato dalle decisioni Microstake del 17/10; la Fase 7-ter 'Prova messaggio' dipendeva da UI escluse (P33/P36) e il forced-SIM è in PR42/X05.",
+  "replacement": "#461",
+  "evidence": [
+   "#489 matrice: '#305 vecchio piano Fasi 1–9 → STORICO come sequenza; seguire #453/#461'",
+   "#426 P33/P36 (tab Azioni e UI Test escluse)",
+   "CLAUDE.md/#426 PF-MICROSTAKE-NATIVE-AUTO-01: nessun minimo artificiale",
+   "#461 X05: Banco Prova primario PR42"
+  ],
+  "deps": [
+   "#461",
+   "#453",
+   "#290",
+   "#302",
+   "#320"
+  ],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "SUPERSEDED",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 306,
+  "title": "Automazione Azioni avanzate — Scommessa Condizionata, Cash Out, Void, famiglia Stop Loss",
+  "class": "KEEP",
+  "priority": "P1",
+  "reason": "Registro vivo: contiene le 25 specifiche PF-CASH (09–11/10/2026) mappate su PR43/PR44/PR45, lo scenario Under 1.5 HT BLOCKED_SPEC (base percentuale SL da decidere) e le parti vigenti X05 (condizionata, stop, Void hedge P39). Motore condizionato e azioni non implementati su main; cashout = sicurezza finanziaria.",
+  "replacement": null,
+  "evidence": [
+   "#306 c.6085516609 (09/10) PF-CASH-01..25 → PR28/PR32/PR43/PR44/PR45/PR47",
+   "#306 c.6109135893 (11/10) PF-DOC-4: PF-CASH-CASE-U15HT BLOCKED_SPEC",
+   "#489: '#306 condizionata, stop, Void e replica VIGENTI nel minimo X05; Void hedge CONFERMATO P39'; '#312 e #306 restano nel perimetro X05'",
+   "main: nessun conditional_order engine (grep vuoto)"
+  ],
+  "deps": [
+   "#461 PR23–PR25",
+   "#461 PR43–PR45",
+   "#426 P39",
+   "#320",
+   "#351"
+  ],
+  "open_requirements": "Decisione base percentuale SL/TP (stake/bankroll/liability); motore condizionato; Void hedge su selezione; 25 PF-CASH NOT_RUN.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 309,
+  "title": "Copy/Mirror — allineamento stake del parser nuovo + inoltro azioni ai follower",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Fan-out completo e 4 modalità stake follower sono estensioni VIGENTI (#489, X05, schede PR39–PR42) non implementate; Copy/Mirror è sospeso (PF-DOC 09/10), non cancellato. Da segnalare il conflitto: la regola 'superamento tetto = CAP' (#309, #426 D10) contrasta con le decisioni 17/10 (rifiuto esplicito sopra max_single_bet, PF-EXEC-04 mai ridimensionamento).",
+  "replacement": null,
+  "evidence": [
+   "#489: '#309 fan-out completo … estensioni approvate VIGENTI. Fan-out PR39–PR42'",
+   "#309 c.5653933936 → #453 righe 03,09,10; X05; PARZIALE",
+   "#461 schede 39–42",
+   "#426 D10 (CAP) vs CLAUDE.md decisione owner 2 PF-PR-RECOVERY-DECISIONS-02 e PF-EXEC-04 (17/10)",
+   "#461/#489 PF-DOC 09/10: Telegram/Copy/Mirror sospesi"
+  ],
+  "deps": [
+   "#461 PR39–PR42",
+   "#453 X05",
+   "#426 D10",
+   "#351 T07,T24,T25"
+  ],
+  "open_requirements": "Registry/dispatcher follower, replica azioni con dedup action_seq, 4 modalità stake follower, tolleranze ingresso/uscita (valori aperti), riallineamento CAP alle decisioni 17/10 quando il lavoro riprende.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 312,
+  "title": "Banco di prova test",
+  "class": "CONSOLIDATE",
+  "priority": "P3",
+  "reason": "La UI completa della tab Test è ESCLUSA (P36) e il selettore Live/Delayed è SUPERATO (P28–P30, app_key_delayed già su main in services/setting_service.py); resta vigente solo il Banco Prova forced-SIM nel perimetro X05 (PR42 primaria, PR39 routing). I vincoli concreti (force_test_simulation, raise se manca il broker simulato, mai ordine reale anche in LIVE, stato isolato) vanno riportati esplicitamente in PR42 prima di chiudere; non c'è consolidamento 13/09 su questa issue.",
+  "replacement": "#461",
+  "evidence": [
+   "#489: '#312 Banco Prova/forced-SIM VIGENTE … PR42 primaria, PR39 routing comune'; 'intera UI tab Test ESCLUSA P36'; 'selettore manuale Live/Delayed SUPERATO'",
+   "#426 P36: UI Test esclusa; Banco Prova forced-SIM e collaudo conservati",
+   "main: force_test_simulation assente; app_key_delayed presente services/setting_service.py:102-146"
+  ],
+  "deps": [
+   "#461 PR39",
+   "#461 PR42",
+   "#453 X05",
+   "#426 P36",
+   "#309"
+  ],
+  "open_requirements": "Da trasferire in PR42: flag forced-SIM esplicito valutato prima del chokepoint, fail-closed senza SimulationBroker, zero ordini reali anche con programma LIVE, isolamento stato/bankroll, tracciamento degli esiti di test.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "CONSOLIDATE",
+  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica"
+ },
+ {
+  "number": 320,
+  "title": "Money management hardening: MIN_STAKE floor unico 0.10 € + gate di sicurezza inerti, EXPANSION bug, SL/TP/trailing",
+  "class": "KEEP",
+  "priority": "P1",
+  "reason": "Requisiti MM/Roserpina ancora attivi e dichiarati VIGENTI da #489 (auto-cashout MM, cluster A/B/C/D, RSR-01..41 con 0 HARD CERTIFIED e FAIL RSR-08/39/40/41). Consolidata in #453 come PARZIALE; sicurezza finanziaria, non chiudibile.",
+  "replacement": null,
+  "evidence": [
+   "#489 matrice riga '#320: auto-cashout autonomo del MM con checkbox ON' = VIGENTE; elenco 'Requisiti correnti da non perdere'",
+   "#320 c.5653934784 consolidamento #453: stato PARZIALE, destinazioni 16-19,30; 01,06,10,20; S4",
+   "#320 c.6085518917 / c.6109136042: RSR-01..41, FAIL RSR08/39/40/41, nessun HARD",
+   "core/money_management.py:161-178 su main a09d8d6: baseline di crescita EXPANSION riprogettata (expansion_growth_pct) ma fallback su equity_peak ancora presente; certificazione non attestata",
+   "#461 elenco fonti (riga 468) include #320"
+  ],
+  "deps": [
+   "#453",
+   "#461",
+   "#426",
+   "#351",
+   "#306",
+   "#437",
+   "#505"
+  ],
+  "open_requirements": "MIN_STAKE/microstake coerente con decisioni 17/10, EXPANSION (RSR-08), cap esposizione RSR-39/40, drawdown assoluto RSR-41, SL/TP/trailing € reali con cashout eseguito/riconciliato, D1/D2 configurabili con enforcement reale, test pytest PASS+BLOCK.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 328,
+  "title": "Chiusura Issue #285 - Report Finale Integrazione Go-Live",
+  "class": "SUPERSEDED",
+  "priority": "n/a",
+  "reason": "Report storico di completamento 'Live-Ready' dichiarato superato da #489: non è prova di PASS né autorizzazione LIVE. Non contiene finding propri; i requisiti delle issue citate (#285/#290/#320) restano tracciati nelle rispettive issue aperte e in #453/#461.",
+  "replacement": "#453",
+  "evidence": [
+   "#489 matrice: '#328/#329/#330/#331: “completo/pronto LIVE” = REPORT SUPERATI' (#453/#461/#351)",
+   "#489 tabella 'Vecchi tracker e report': #328 report storico superato",
+   "0 commenti; #285, #320, #290 restano aperte/tracciate in #489 elenco requisiti correnti"
+  ],
+  "deps": [
+   "#453",
+   "#461",
+   "#351"
+  ],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "SUPERSEDED",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 329,
+  "title": "[SUPERATA da hard-verify #293] Chiusura Issue #293: Hard-block, AMBIGUOUS handling e Database Hardening",
+  "class": "SUPERSEDED",
+  "priority": "n/a",
+  "reason": "Report di completamento già marcato SUPERATO nel titolo e da #489; i requisiti reali (AMBIGUOUS replace, durabilità SIM, prezzo invariato) restano nella #293 aperta e nelle schede #453/#461.",
+  "replacement": "#293",
+  "evidence": [
+   "#489 matrice: REPORT SUPERATI #328-#331; '#329/#330 già esplicitamente declassati come superati'",
+   "#461 riga 468 elenca #293 e #329 tra le fonti",
+   "#293 in #489 elenco 'Requisiti correnti da non perdere'"
+  ],
+  "deps": [
+   "#293",
+   "#453",
+   "#461"
+  ],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "SUPERSEDED",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 330,
+  "title": "[SUPERATA da hard-verify #293/#297/#320] Riferimento Issue n 297 - Completamento GUI e Money Management #320",
+  "class": "SUPERSEDED",
+  "priority": "n/a",
+  "reason": "Report già marcato superato (c.5423964071) e consolidato in #453 come 'STORICO SUPERATO'; i rilievi sovrastimati/omessi (B1, D1, D2, M-06, trailing, #297) sono tracciati in #320/#297/#293 aperte e #453.",
+  "replacement": "#453",
+  "evidence": [
+   "#330 c.5423964071: report superato, rilievi rimandati a #320/#297/#293",
+   "#330 c.5653936474: consolidamento #453, stato STORICO SUPERATO, destinazioni 02,07,15-20,35; X04; #351 T01-T03,T13-T22",
+   "#489 matrice REPORT SUPERATI"
+  ],
+  "deps": [
+   "#320",
+   "#297",
+   "#293",
+   "#453",
+   "#351"
+  ],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "SUPERSEDED",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 331,
+  "title": "Implementazione Integrale Parser v2 & Catalogo Deterministico (Ref #290)",
+  "class": "SUPERSEDED",
+  "priority": "n/a",
+  "reason": "Report di completamento parser v2 superato da #489; parser a delimitatori e tab Provider sono stati superati dalla decisione formato standard/Catalogo, mentre risoluzione deterministica e dutching restano in #290 e schede PR06-PR10.",
+  "replacement": "#453",
+  "evidence": [
+   "#489 matrice: #328-#331 REPORT SUPERATI",
+   "#489 matrice: '#290/#301 Provider per canale' SUPERATO dal Catalogo; editor 'inizia dopo/finisce prima' SUPERATO dal formato standard; risoluzione deterministica VIGENTE PR06-PR08",
+   "#453 allegato A.03/07, A.04/25"
+  ],
+  "deps": [
+   "#290",
+   "#453",
+   "#461"
+  ],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "SUPERSEDED",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 332,
+  "title": "Manus audit",
+  "class": "SUPERSEDED",
+  "priority": "n/a",
+  "reason": "Resoconto originario dell'audit Manus: #489 lo classifica fonte storica, non pacchetto autonomo. I suoi finding sono riportati e verificati uno per uno in #335 (aperta, VIGENTE) e destinati a #453 H/S/X.",
+  "replacement": "#335",
+  "evidence": [
+   "#489 matrice: '#332: resoconto originario Manus = FONTI STORICHE/DUPLICATE; finding validi da riconvalidare' → #335/#455; #453",
+   "#489 tabella: '#332 fonte storica, non un ulteriore pacchetto autonomo'",
+   "#335 corpo: verifica indipendente degli ~50 rilievi Manus @688d2c2"
+  ],
+  "deps": [
+   "#335",
+   "#453"
+  ],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "SUPERSEDED",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 335,
+  "title": "[AUDIT] Audit totale sicurezza/correttezza @ 688d2c2 — verificato: NO-GO per LIVE",
+  "class": "KEEP",
+  "priority": "P1",
+  "reason": "Registro dei finding Manus verificati (rischio, ordini, sicurezza CI, dati); #489 lo dichiara VIGENTE nei sottorequisiti con stato tecnico da riconvalidare sul main. Contiene P0/P1 di sicurezza finanziaria/CI: non chiudibile finché ogni finding non ha prova su main.",
+  "replacement": null,
+  "evidence": [
+   "#489 matrice: '#335/#454/#455/#457/#460 finding ... = VIGENTI nei sottorequisiti conservati' → #453 H/S/X; schede #461",
+   "#489 elenco 'Requisiti correnti da non perdere' include #335",
+   "#338 corpo: '#335 si chiude quando tutti i finding hanno una PR'"
+  ],
+  "deps": [
+   "#453",
+   "#461",
+   "#332"
+  ],
+  "open_requirements": "Riconvalida su main di ogni finding (C-01..C-04 CI, H-xx, M-06, M-07 EXPANSION, M-16 pin action, ecc.) con PR/test di prova.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 337,
+  "title": "Roadmap PR — bonifica Pickfair-nogui / Principi trasversali",
+  "class": "SUPERSEDED",
+  "priority": "n/a",
+  "reason": "Vecchia roadmap (bozza testuale poi formalizzata in #338) dichiarata da #489 superata come sequenza operativa; il piano corrente è #453/#461 con decisioni #426 e collaudo #351, e i principi trasversali (test BLOCK in tests/, Phase 0, docs stesso PR) sono già in CLAUDE.md/AGENTS.md.",
+  "replacement": "#453",
+  "evidence": [
+   "#489 matrice: '#274/#337/#338/#374 vecchie roadmap = STORICI come sequenza; requisiti validi conservati nel piano corrente' (#453/#461)",
+   "#489 tabella: #337 superato come sequenza operativa e cruscotto",
+   "CLAUDE.md su main: GENERAZIONE AUTOMATICA TEST HARD, Matrix Phase 0, docs nello stesso PR",
+   "0 commenti"
+  ],
+  "deps": [
+   "#453",
+   "#461",
+   "#338"
+  ],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "SUPERSEDED",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 338,
+  "title": "[EPIC] Roadmap bonifica Pickfair-nogui — piano PR che chiude #335 / #274 / #285 / #290 / #293 / #297 / #320 / #336",
+  "class": "SUPERSEDED",
+  "priority": "n/a",
+  "reason": "Meta-tracker storico superato come sequenza da #489; le voci ancora valide (PR-2 SIGNAL_NOT_DICT, FASE 3/4/5 go-live, CATSYNC, D1/D2) sono conservate in #453/#461 e nelle issue figlie aperte (#320, #335, #359, #356). Le vecchie decisioni auto-merge sono superate dalla policy corrente (#426/P41, CLAUDE.md).",
+  "replacement": "#453",
+  "evidence": [
+   "#489 matrice: '#274/#337/#338/#374 = STORICI come sequenza' → #453/#461",
+   "#489 tabella 'Vecchi tracker e report': #338 superato",
+   "#338 c.4957187177 appendice go-live FASE 3-5 → coperta da #453 X06 / #351",
+   "PR #340 merged 2026-07-12 (PR-1), PR #342 merged 2026-07-12 (PR-4), PR #344 merged 2026-07-12 (PR-CI-1)"
+  ],
+  "deps": [
+   "#453",
+   "#461",
+   "#426",
+   "#351",
+   "#335",
+   "#320",
+   "#359"
+  ],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "SUPERSEDED",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 343,
+  "title": "[HARDENING] logout() non revoca la sessione Betfair server-side (nessuna chiamata a /api/logout)",
+  "class": "KEEP",
+  "priority": "P3",
+  "reason": "Decisione owner opzione A (revoca server-side + fail-safe) registrata ma non implementata: su main logout() è ancora local-only. Consolidata in #453 come NON IMPLEMENTATO; bassa priorità, non blocca il go-live.",
+  "replacement": null,
+  "evidence": [
+   "betfair_client.py:1350-1355 su main a09d8d6: logout() chiama solo _clear_session_state()",
+   "nessun 'api/logout' nel codice applicativo (grep)",
+   "#343 c.5424023375: decisione owner opzione A 2026-08-26",
+   "#343 c.5653937496: consolidamento #453 dest. 21; S2; #351 T04,T05,T26; NON IMPLEMENTATO",
+   "#489 elenco requisiti correnti include #343"
+  ],
+  "deps": [
+   "#453",
+   "#351"
+  ],
+  "open_requirements": "LOGOUT_URL + POST identitysso.betfair.it/api/logout con X-Authentication, pulizia locale anche su errore, server_revoked nel risultato, token mai nei log, test PASS+BLOCK.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 345,
+  "title": "[HARDENING] Guard: auth immutabile per edit ai workflow CI + wiring di test_check_merge_markers",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Consolidata in #453 come PARZIALE; owner (c.6275846478, 19/10) chiede di non considerarla risolta automaticamente. Parziali su main: registro confrontato con copia base e workflow a merge owner/label, ma nessuna allowlist critica letta dal base; test_check_merge_markers non è nella lista di repo-guardrails.yml (gira solo nel backstop full-suite di _module-ultra-check).",
+  "replacement": null,
+  "evidence": [
+   "scripts/guardrail_check.py:193 SCOPE_REGISTRY_BASE + registry_tampering (confronto con base) su main",
+   "CLAUDE.md: tutti i .github/workflows/ a merge owner, MANUAL_AUTHORITY_PATTERNS",
+   "repo-guardrails.yml:33-38 lista pytest senza test_check_merge_markers",
+   "_module-ultra-check.yml:243-248 full suite backstop (testpaths=tests) — copertura indiretta, solo nei workflow modulo",
+   "#345 c.5653938461: #453 dest. 22; X06; #351 T31,T33; PARZIALE",
+   "#345 c.6275846478: collegamento #525"
+  ],
+  "deps": [
+   "#453",
+   "#525",
+   "#351"
+  ],
+  "open_requirements": "Prova che una PR non possa auto-autorizzare cambi a file critici (workflow) tramite registro dal merge-ref; esecuzione esplicita e verificata di test_check_merge_markers nel gate CI pertinente.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 351,
+  "title": "[TEST REALI] Collaudo Windows → Linux — Telegram, Betfair Delayed/Live e tutte le funzionalità",
+  "class": "KEEP",
+  "priority": "P0",
+  "reason": "REGISTRO: Registro del collaudo reale Windows→Linux; percorso MCP obbligatorio (CLAUDE.md).",
+  "replacement": null,
+  "evidence": [
+   "mandato PF-ISSUE-CLEANUP-01 / CLAUDE.md"
+  ],
+  "deps": [],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "claude-e",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 356,
+  "title": "follow-up(mini_gui): shutdown sequence idempotente sui path di fallimento di main() (Exception/KeyboardInterrupt)",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Bug ancora presente su main: il finally di mini_gui.main() chiama solo app.destroy(), senza la shutdown sequence di _on_close(). Consolidata in #453 come PARZIALE; area teardown safety-critical.",
+  "replacement": null,
+  "evidence": [
+   "mini_gui.py:3087-3103 su main a09d8d6: finally → solo app.destroy()",
+   "mini_gui.py:3058-3066: _on_close esegue shutdown.shutdown() prima di destroy",
+   "#356 c.5653939369: #453 dest. 23; 35; X04,X06; #351 T22,T29,T33; PARZIALE",
+   "#489 elenco requisiti correnti include #356"
+  ],
+  "deps": [
+   "#453",
+   "#351",
+   "PR #353"
+  ],
+  "open_requirements": "Shutdown idempotente invocato nel finally anche su Exception/KeyboardInterrupt, hook una volta sola, test PASS+BLOCK su entrambi i rami con ShutdownManager reale.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 359,
+  "title": "[EPIC] Config & Go-Live Console — punto unico configurazioni + preflight readiness (GUI tab + headless report)",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Solo PR-A mergiata (ConfigRegistry + readiness_report, PR #366); PR-B (--config-report), PR-C/D (tab GUI) e PR-E (logging gate) non presenti: ConfigRegistry non è usato fuori da config_registry.py e headless_main non ha --config-report. #489 la mantiene tra i requisiti correnti.",
+  "replacement": null,
+  "evidence": [
+   "PR #366 merged 2026-07-13 (PR-A, SHA 463fbb8)",
+   "grep su main: ConfigRegistry/readiness_report non importati da headless_main.py/mini_gui.py; nessun '--config-report'",
+   "headless_main.py:898-901 --preflight esiste (pre-esistente, non consuma il registry)",
+   "#359 c.4960401623 roadmap: PR-B..E aperte",
+   "#489 elenco requisiti correnti include #359"
+  ],
+  "deps": [
+   "#453",
+   "#461",
+   "PR #366",
+   "#320"
+  ],
+  "open_requirements": "PR-B --config-report headless dal registry; PR-C/D tab GUI Go-Live Readiness + config; PR-E logging decisioni gate in chiaro + preflight nel servizio; parità GUI/headless.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 367,
+  "title": "✅ LIVE Health Check Report - 2026-07-13",
+  "class": "SUPERSEDED",
+  "priority": "n/a",
+  "reason": "Report operativo del vecchio VPS, classificato STORICO da #489: non vale come prova per la campagna #351. I punti di codice emersi sono stati chiusi con PR mergiate (#368/#370/#371/#372); i residui infrastrutturali (latenza VPS) sono superati dal nuovo collaudo Windows/Linux in #351.",
+  "replacement": "#351",
+  "evidence": [
+   "#489 matrice: '#367 report operativo sul vecchio VPS = STORICO' → #351",
+   "#367 c. 2026-07-13T20:47: tutti i punti di codice chiusi",
+   "PR #368 merged 2026-07-13, PR #370 merged 2026-07-13, PR #371 merged 2026-07-13, PR #372 merged 2026-07-13"
+  ],
+  "deps": [
+   "#351"
+  ],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "SUPERSEDED",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 374,
+  "title": "[ROADMAP OPERATIVA] Percorso PR fino a go-live — tracker unico",
+  "class": "NEEDS_REVIEW",
+  "priority": "P2",
+  "reason": "Vecchio tracker operativo dichiarato STORICO come sequenza da #489 (matrice: '#274/#337/#338/#374 vecchie roadmap') e da #426 ('istruzioni su #374 non prevalgono'); l'operatività è in #453/#461. Però 56 commenti contengono decisioni D-1..D-12 di cui alcune non risultano riportate nei corpi di #453/#461/#426 (D-9 stake dal messaggio, D-11 bot/keyboards da Pickfair-MarketAPI, D-12 CS_OTHER = tre gambe dutching); nessun commento di consolidamento su #374 (ultimo commento 22/08/2026).",
+  "replacement": "#461",
+  "evidence": [
+   "#489 matrice: '#274/#337/#338/#374 vecchie roadmap autoritative — STORICI come sequenza; requisiti validi conservati nel piano corrente'",
+   "#489: '#374 MiniApp, proprietà canali e hosting Railway RINVIATI (#426 P12)'",
+   "#426 corpo: 'le sue istruzioni su #374/VPS/rotazione non prevalgono sugli aggiornamenti successivi'",
+   "#374 ultimo commento c.5383082802 (22/08/2026), nessun marker CONSOLIDAMENTO-SOURCE",
+   "grep corpi #453/#461/#426/#351: 'CS_OTHER', 'D-9', 'keyboards' = 0 occorrenze"
+  ],
+  "deps": [
+   "#453",
+   "#461",
+   "#426"
+  ],
+  "open_requirements": "Verificare destinazione di D-9 (stake/direzione dal messaggio, sempre via risk gate), D-11 (porting bot/telegram_api.py, security.py, keyboards.py da Pickfair-MarketAPI — T1–T3 Bot API send/tastiere, oggi Telegram sospeso), D-12 (CS_OTHER tre gambe); D-3 (merge solo owner) e D-4 (label a pagamento) superate da AUTO-MERGE/P41.",
+  "owner_question": "Confermi #374 come storica chiusa (SUPERSEDED da #453/#461), e le decisioni D-9 (stake dal messaggio), D-11 (porting tastiere Bot API da Pickfair-MarketAPI) e D-12 (CS_OTHER a tre gambe) sono ancora vigenti? Se sì, vanno annotate in #426/#461 prima della chiusura.",
+  "auditor": "subagent",
+  "final_class": "NEEDS_REVIEW",
+  "phase2_action": "decisione owner richiesta"
+ },
+ {
+  "number": 380,
+  "title": "[GUI] Controllo FINALE: nuovi pulsanti/parametri da esporre in GUI",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Sweep finale registry→GUI→enforcement ancora da eseguire; è la fonte della scheda PR60 (PKG-P44) della roadmap #461 e del cancello finale #453.",
+  "replacement": null,
+  "evidence": [
+   "#461 tabella: '60 | PKG-P44 | Sweep finale #380 e dossier per il collaudo | PR59'",
+   "#461 'F380 | PKG-P44 | PR60'",
+   "#380 c.5653940243: stato PARZIALE, sweep finale non certificato",
+   "#489: #380 fra i 'requisiti correnti da non perdere'"
+  ],
+  "deps": [
+   "#461 PR60",
+   "#461 PR59",
+   "#351"
+  ],
+  "open_requirements": "Sweep completo parametri operativi esposti in GUI con enforcement reale; lock/unlock anti-rivendita solo code-side.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 388,
+  "title": "Controlla ambiguità",
+  "class": "KEEP",
+  "priority": "P3",
+  "reason": "Inventario consegnato (c.5425565875); M1 (sanitizer) e A1 (DutchingCalculator orfano) risolti su main, ma M2–M10 e B1–B3 restano senza decisione voce per voce e l'elenco dettagliato esiste solo qui.",
+  "replacement": null,
+  "evidence": [
+   "PR #447 merged 2026-08-26 (predicato unico redazione): observability/sanitizers.py:31-33 e telegram_sanitizer.py:18-20 delegano a core.redaction.is_sensitive_key",
+   "PR #448 merged 2026-08-26: core/dutching_calculator.py assente su main",
+   "Ancora presenti su main: services/setting_service.py (M2), pnl_engine.py root (M3), TickData in tick_dispatcher.py:28 e ai/wom_engine.py:36 (M4), normalize_mode ×4 in core/ (M7)",
+   "#426 D19: '#388 inventario consegnato; M1/A1 affidati a lavori dedicati'",
+   "#388 c.5653941128: consolidato in #453 (12,13,29,34; S1–S3), risoluzioni PARZIALI"
+  ],
+  "deps": [
+   "#453",
+   "#426"
+  ],
+  "open_requirements": "Disposizione owner/tecnica per M2–M10 e B1–B3 (in particolare M7 fallback normalize_mode non fail-closed, M4 TickData).",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 392,
+  "title": "Assistente in app",
+  "class": "KEEP",
+  "priority": "P3",
+  "reason": "Blueprint dell'assistente AI in-app SOSPESO dall'owner (19/08/2026) ma da conservare come progetto futuro; il contenuto (23k caratteri) non è riportato altrove. Le regole trasversali estratte vivono in #416.",
+  "replacement": null,
+  "evidence": [
+   "#392 c.5340830323: 'SOSPESA dalla roadmap — decisione owner 2026-08-19 ... Resta aperta come blueprint'",
+   "#489 matrice: '#392 assistente AI in-app — SOSPESO; conservarlo come blueprint futuro'"
+  ],
+  "deps": [
+   "#416"
+  ],
+  "open_requirements": "Blueprint futuro, fuori dalla coda corrente; nessuna azione ora.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 394,
+  "title": "Creare handoff file e file per claude design",
+  "class": "CONSOLIDATE",
+  "priority": "P3",
+  "reason": "La parte B è in gran parte eseguita (docs/design/design_handoff.md su main con tab, palette, dialoghi, invarianti UI §16 e due screenshot reali); la parte A (nota 'Riferimenti visivi', cartella screenshot con README/convenzione nomi/regola segreti, guide utente) coincide con i requisiti di #416, che resta aperta.",
+  "replacement": "#416",
+  "evidence": [
+   "docs/design/design_handoff.md su main (404 righe, §1–§17, §16 'Invarianti di sicurezza lato UI'), introdotto con PR #414 merged 2026-07-24",
+   "docs/design/screenshots/ contiene pr04-quater-credentials.png e pfc008-roserpina-guidata.png; docs/assets/screenshots e docs/user assenti su main",
+   "design_handoff.md: nessuna nota 'Riferimenti visivi', nessuna sezione Glossario / Inventario copy / Pain point / Deliverable",
+   "#489: '#416 ... #394 design handoff VIGENTI come requisiti trasversali'"
+  ],
+  "deps": [
+   "#416"
+  ],
+  "open_requirements": "Da trasferire in #416 prima di chiudere: (1) nota 'Riferimenti visivi' in testa all'handoff; (2) procedura segnaposto [screenshot: …] e cablaggio immagini da parte dell'agente headless; (3) sezioni handoff mancanti: prodotto in una frase, principi di design, inventario copy/microcopy, glossario, pain point, deliverable; (4) decidere percorso unico screenshot (docs/design/screenshots attuale vs docs/assets/screenshots richiesto); (5) sezione assistente solo se #392 riprende.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "CONSOLIDATE",
+  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica"
+ },
+ {
+  "number": 398,
+  "title": "Fare scattare commit vuoto",
+  "class": "NEEDS_REVIEW",
+  "priority": "P3",
+  "reason": "Campagna di riapertura di 69 PR chiuse per far girare 'i due review con label' rinviata da #426 P11 senza budget; inoltre le review a label (Fugu/Fable) sono SOSPESE da P41, quindi la richiesta non è eseguibile come scritta. L'elenco delle 69 PR esiste solo qui.",
+  "replacement": null,
+  "evidence": [
+   "#489 matrice: '#398 campagna generalizzata di riapertura/review vecchie PR — RINVIATA senza budget esplicito (#426 P11)'",
+   "CLAUDE.md §AI PR REVIEW: Fugu Ultra, Claude Fable 5.1 e GPT-6 Astra SOSPESI da P41, label final-* non si applicano",
+   "#398: 0 commenti"
+  ],
+  "deps": [
+   "#426"
+  ],
+  "open_requirements": "Nessuno attivo nella coda corrente; le verifiche mirate Phase 0/sweep ultime 5 PR restano obbligatorie per policy.",
+  "owner_question": "La campagna di re-review delle 69 PR chiuse va abbandonata (chiusura come not planned, dato P11 e la sospensione P41 dei reviewer a label) oppure va mantenuta con un budget esplicito usando Sol/Grok?",
+  "auditor": "subagent",
+  "final_class": "NEEDS_REVIEW",
+  "phase2_action": "decisione owner richiesta"
+ },
+ {
+  "number": 410,
+  "title": "[#374] Validazione formato chat_id in _add_telegram_bot_chat_from_ui",
+  "class": "KEEP",
+  "priority": "P3",
+  "reason": "Bug ancora presente su main: l'editor chat per-bot controlla solo il chat_id vuoto e persiste valori non numerici. Requisito confermato in #453 (riga 24; 09,35) e collaudo #351 T06.",
+  "replacement": null,
+  "evidence": [
+   "telegram_module.py:1303-1317 su main a09d8d6: solo 'if not chat_id', nessun int(chat_id) prima di set_telegram_bot_chats",
+   "nessuna PR mergiata che citi #410 (search/issues)",
+   "#410 c.5653942208: stato PARZIALE, destinazione 24; 09,35",
+   "#351 T06: 'ID non numerico non persiste'"
+  ],
+  "deps": [
+   "#453",
+   "#351"
+  ],
+  "open_requirements": "Guardia numerica sul chat_id con errore GUI e DB invariato; test PASS+BLOCK. Nota: Telegram è sospeso (#489 header), il fix resta comunque requisito.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 412,
+  "title": "[#374] Valutare staleness message-age come trigger di restart per il multi-bot Bot API",
+  "class": "SUPERSEDED",
+  "priority": "P3",
+  "reason": "Valutazione chiusa con decisione owner Opzione 1 (status quo poll-success, nessun restart per sola età del messaggio), registrata in #426 D19; la verifica del comportamento è riportata in #351 T06 e nel checklist S3 di #453. Nessun lavoro di modifica residuo.",
+  "replacement": "#426",
+  "evidence": [
+   "#412 c.5425567823: 'Decisione owner: OPZIONE 1 — mantieni status quo' (26/08/2026)",
+   "#426 D19: '#412 opzione 1 confermata ... Non riproporre opzioni 2/3'",
+   "#351 T06: 'Child CONNECTED silenzioso non riavviato solo per età messaggio (#412 opzione 1)'",
+   "#453 S3: 'staleness Telegram multi-bot (#412): test al confine'",
+   "#489: '#412 alternativa non scelta; comportamento attuale VIGENTE'"
+  ],
+  "deps": [
+   "#426",
+   "#351",
+   "#453"
+  ],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "SUPERSEDED",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 415,
+  "title": "follow-up(mini_gui): _on_sync_catalog passa on_success= a _run_runtime_command_async",
+  "class": "KEEP",
+  "priority": "P3",
+  "reason": "Bug latente ancora presente su main: _on_sync_catalog chiama _run_runtime_command_async(..., on_success=_done) ma la firma accetta solo (command_name, worker_fn). #453 riga 25 lo dà NON IMPLEMENTATO.",
+  "replacement": null,
+  "evidence": [
+   "mini_gui.py:2732 su main: self._run_runtime_command_async(\"SYNC_CATALOG\", _work, on_success=_done)",
+   "mini_gui.py:2269: def _run_runtime_command_async(self, command_name: str, worker_fn)",
+   "docs/design/design_handoff.md:262-264 documenta ancora il bug",
+   "#415 c.5653943274: 'NON IMPLEMENTATO il fix', destinazione 25; 04"
+  ],
+  "deps": [
+   "#453",
+   "#351"
+  ],
+  "open_requirements": "Fix (supporto on_success o rimozione del metodo) con test PASS+BLOCK e aggiornamento handoff §12.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 416,
+  "title": "[POLICY] Regole in CLAUDE.md e AGENTS.md: invarianti trasversali, guida utente, screenshot",
+  "class": "KEEP",
+  "priority": "P3",
+  "reason": "Requisiti trasversali vigenti per #489 e non ancora presenti su main: AGENTS.md non nomina screenshot né guida utente né le quattro invarianti cross-cutting; docs/assets/screenshots/README.md non esiste. PR solo policy, a merge owner.",
+  "replacement": null,
+  "evidence": [
+   "grep -ci screenshot AGENTS.md = 0 su main a09d8d6; nessuna 'guida utente'/cross-cutting in AGENTS.md",
+   "CLAUDE.md GATE DI CONSEGNA §4 copre solo lo screenshot Xvfb per PR con superficie visibile, non la regola cartella/README/guide",
+   "docs/assets/screenshots e docs/user assenti",
+   "#489: '#416 ... VIGENTI come requisiti trasversali pertinenti'"
+  ],
+  "deps": [
+   "#394",
+   "#392"
+  ],
+  "open_requirements": "Quattro invarianti trasversali in AGENTS.md; guida utente fra i docs obbligatori; regola screenshot con ripartizione owner/agente e regola segreti; check screenshots: PASS/FAIL/N/A; README cartella screenshot; formula codice+test+docs condizionale. Assorbire anche i punti residui di #394.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 426,
+  "title": "[DECISIONI OWNER] Registro unico per #453 e collaudo reale #351",
+  "class": "KEEP",
+  "priority": "P0",
+  "reason": "REGISTRO: Registro unico delle decisioni owner; fonte normativa citata da CLAUDE.md/AGENTS.md.",
+  "replacement": null,
+  "evidence": [
+   "mandato PF-ISSUE-CLEANUP-01 / CLAUDE.md"
+  ],
+  "deps": [],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "claude-e",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 437,
+  "title": "Sperando che si aggiusta",
+  "class": "KEEP",
+  "priority": "P1",
+  "reason": "Tracker master storico da cui deriva la roadmap #461 (60 schede): non è più il registro operativo quotidiano (ultimo commento 14/09/2026, lavoro spostato su #453), ma per decisione owner resta l'ombrello di chiusura, da chiudere per ultimo dopo PR59/PR60 e la campagna #351.",
+  "replacement": null,
+  "evidence": [
+   "#437 c.5653944225: 'resta fonte storica e ombrello di chiusura finale; il lavoro quotidiano ora è nella #453'",
+   "#437 c.5663149107: 'Questa #437 si chiude per ultima, dopo le evidenze richieste'",
+   "#426 D20: '#437 resta ombrello da chiudere per ultimo nel perimetro storico'",
+   "#351: 'Chiusura coordinata master storiche, #437 per ultima'",
+   "#453: '#437 conserva il criterio di chiusura finale del suo perimetro'"
+  ],
+  "deps": [
+   "#461",
+   "#453",
+   "#351"
+  ],
+  "open_requirements": "Chiusura solo dopo whole-wiring PR59, sweep PR60 e campagna #351 completa; decisioni chiave (trailing solo €, CASHOUT solo Esegui, bug monitor SL/TP assorbiti in #320-C, Q452) già riportate in #453.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 446,
+  "title": "Database Hardening — hard-verify del delta commit diretto c8fcaa3",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Hard-verify del delta DB entrato fuori flusso PR mai eseguito: nessuna PR mergiata lo cita come chiuso; #453 lo elenca come riga 26 [POST] aperta, stato PARZIALE.",
+  "replacement": null,
+  "evidence": [
+   "search PR '#446': nessuna PR di hard-verify DB mergiata",
+   "#453 lista: '26. ⬜ [POST] #446 — hard-verify DB hardening'",
+   "#446 c.5653945203: stato PARZIALE, destinazione 26; S1,S2; X04; #351 T21,T22,T26,T29",
+   "#426 D20: '#446 dedicata al delta DB c8fcaa3'"
+  ],
+  "deps": [
+   "#453",
+   "#351"
+  ],
+  "open_requirements": "Isolare delta c8fcaa3 vs #215; test PASS+BLOCK atomicità/outbox/colonne riconciliazione; conferma assenza migrazioni distruttive; docs.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 453,
+  "title": "[OPERATIVA] Piano unico: 25 issue, 35 righe + integrazioni e test hard",
+  "class": "KEEP",
+  "priority": "P1",
+  "reason": "REGISTRO: Piano operativo unico (35 righe + S1–S4/X01–X07); destinazione dei consolidamenti; percorso MCP.",
+  "replacement": null,
+  "evidence": [
+   "mandato PF-ISSUE-CLEANUP-01 / CLAUDE.md"
+  ],
+  "deps": [],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "claude-e",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 454,
+  "title": "Audit grok app",
+  "class": "NEEDS_REVIEW",
+  "priority": "P2",
+  "reason": "Report di audit esterno (12 aree + Top10) privo di lavoro proprio: i rilievi sono tutti mappati in #453 (righe 01/05–11/14/16–22/26–35, S1–S4, X01–X05) e nelle schede #461 (PR27/PR28, PR12, PR38, PR37, PR51–54, PR31/PR46, PR28-b, PR43, #351). Sarebbe SUPERSEDED, ma l'allegato #453 (c.5653916051, §C) dispone 'Non chiudere la #453/#437 o le fonti perché sono state raggruppate' e #489 la elenca tra le issue che 'mantengono i rispettivi requisiti'.",
+  "replacement": "#453",
+  "evidence": [
+   "#454 c.5653946154 consolidamento in #453 (13/09/2026)",
+   "#453 c.5653916051 X01–X04 citano #454",
+   "docs/issue_reconciliation/PF-ISSUE-RECONCILIATION-01.csv riga 454 (IN CORSO, mapping Top1–Top10 → PR27/28, PR12, PR38, PR37, PR51–54, PR31/46, PR28-b, PR43, #351)",
+   "#489 sezione 'Requisiti correnti da non perdere'",
+   "core/secret_cipher.py e altri finding ancora da hard-verify (stato PARZIALE)"
+  ],
+  "deps": [
+   "#453",
+   "#461",
+   "#351"
+  ],
+  "open_requirements": "Nessuno non tracciato altrove: tutti i Top10 hanno destinazione in #453/#461; restano da implementare/verificare lì.",
+  "owner_question": "La direttiva del 13/09 (#453 allegato §C: non chiudere le fonti raggruppate) vale ancora? Se no, #454 può essere chiusa come SUPERSEDED da #453/#461 dato che ogni Top10 ha scheda di destinazione.",
+  "auditor": "subagent",
+  "final_class": "NEEDS_REVIEW",
+  "phase2_action": "decisione owner richiesta"
+ },
+ {
+  "number": 455,
+  "title": "Audit chatgpt app",
+  "class": "NEEDS_REVIEW",
+  "priority": "P2",
+  "reason": "Report di audit gateway (P0 security…P6 certificazione) con decisione owner nel commento 5446020778 (Quant Layer escluso, metriche operative/slippage incluse). Requisiti mappati in #453 S1–S4/X01–X04 e schede #461 (PR26–PR30, PR11, PR47, PR59/60); l'esclusione Quant è riportata in #489 matrice e in #453 allegato §C. Chiudibile come SUPERSEDED salvo la direttiva owner di non chiudere le fonti raggruppate.",
+  "replacement": "#453",
+  "evidence": [
+   "#455 c.5446020778 decisione owner esclusione Quant",
+   "#455 c.5653947183 consolidamento #453",
+   "#453 c.5653916051 X01–X04 e §C (esclusione Quant)",
+   "#489 matrice riga '#455/#456: Quant Layer … ESCLUSO'",
+   "PF-ISSUE-RECONCILIATION-01.csv riga 455"
+  ],
+  "deps": [
+   "#453",
+   "#461",
+   "#426"
+  ],
+  "open_requirements": "Nessuno non tracciato: la decisione di esclusione Quant è registrata in #489 e #453; i requisiti gateway in X01–X04.",
+  "owner_question": "Confermi che la decisione 'Quant escluso' registrata in #489/#453 è sufficiente e che #455 può essere chiusa come SUPERSEDED nonostante la regola #453 §C 'non chiudere le fonti raggruppate'?",
+  "auditor": "subagent",
+  "final_class": "NEEDS_REVIEW",
+  "phase2_action": "decisione owner richiesta"
+ },
+ {
+  "number": 456,
+  "title": "Audit Gap Analysis Institutional-Grade",
+  "class": "DUPLICATE",
+  "priority": "n/a",
+  "reason": "Seconda formulazione dello stesso audit #455: il commento di consolidamento lo dichiara esplicitamente ('stessi requisiti, nessuna duplicazione', stesso mapping, stessa esclusione Quant) e #489 la classifica 'FONTE DUPLICATA'. La riconciliazione su main la marca SUPERATA CON PROVE.",
+  "replacement": "#455",
+  "evidence": [
+   "#456 c.5653948155 (13/09/2026) 'Seconda formulazione dello stesso audit #455'",
+   "#489 matrice: '#332 …; #456 audit duplicato — FONTI STORICHE/DUPLICATE'",
+   "docs/issue_reconciliation/PF-ISSUE-RECONCILIATION-01.csv riga 456 'SUPERATA CON PROVE'"
+  ],
+  "deps": [
+   "#455",
+   "#453"
+  ],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "DUPLICATE",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 457,
+  "title": "Esegui un Functional Connectivity Audit mirato sui percorsi",
+  "class": "NEEDS_REVIEW",
+  "priority": "P1",
+  "reason": "Audit di connettività con finding P0-1 esposizione proiettata, P0-2 barriera STOP, P1-1 feed→risk→ordine, P1-2 AMBIGUOUS→reconciliation; tutti mappati in #453 (05,14,16–20,26,29,35; S1,S4; X01–X03) e schede #461 PR28/PR29, PR37, PR11, PR30/PR31. Contiene P0 non ancora certificati, quindi la chiusura richiede conferma owner nonostante il tracciamento completo.",
+  "replacement": "#453",
+  "evidence": [
+   "#457 c.5653949162 consolidamento #453",
+   "#453 c.5653916051 X01–X03",
+   "PF-ISSUE-RECONCILIATION-01.csv riga 457 (mapping P0-1→PR28/29, P0-2→PR37, P1-1→PR11, P1-2→PR30/31)"
+  ],
+  "deps": [
+   "#453",
+   "#461",
+   "#351"
+  ],
+  "open_requirements": "Nessuno non tracciato; i P0/P1 restano aperti nelle schede PR28/PR29/PR37/PR11/PR30/PR31.",
+  "owner_question": "#457 contiene P0 ancora aperti ma tutti tracciati in #453/#461: preferisci tenerla aperta come fonte fino alla chiusura di PR28/PR29/PR37 o chiuderla come SUPERSEDED?",
+  "auditor": "subagent",
+  "final_class": "NEEDS_REVIEW",
+  "phase2_action": "decisione owner richiesta"
+ },
+ {
+  "number": 458,
+  "title": "Auto update senza toccare nulla",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Estensione approvata e mai implementata (nessun updater/version checker su main); destinazione X06 in #453 e schede PR55–PR58 (+PR59, collaudo T33). Updater rinviato dalla prima LIVE ma non dal prodotto finale (PF-DOC 09/10). Attività ancora necessaria: non chiudibile.",
+  "replacement": null,
+  "evidence": [
+   "#458 c.5653950153 consolidamento X06",
+   "#453 c.5653916051 X06 (7 sotto-requisiti)",
+   "#489 matrice: '#309 fan-out; #458 auto-update — VIGENTI'",
+   "main a09d8d6: nessun modulo updater/auto_update (grep)",
+   "PF-ISSUE-RECONCILIATION-01.csv riga 458 'DA FARE'"
+  ],
+  "deps": [
+   "#453",
+   "#461 PR55–PR58",
+   "#351 T33"
+  ],
+  "open_requirements": "Tutto il Livello 1 X06: VERSION/Release/manifest+sha256, checker/download, safe-state, updater separato, persistenza/rollback, compatibilità DB, meccanismo Linux da decidere (#426).",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 459,
+  "title": "Da controllare (Desktop Commander)",
+  "class": "SUPERSEDED",
+  "priority": "P3",
+  "reason": "Nota di una riga per valutare Desktop Commander: rinviata dopo il go-live da #426 P10 e interamente riportata come voce X07 in #453/#461 (valutazione con disposizione motivata in #426).",
+  "replacement": "#453",
+  "evidence": [
+   "#461: 'DEC-426-P10 tutti5 rinviati ... DesktopCommander(#459/X07)'; tabella 'X07 | Rinviato DEC-426-P10 | Fuori coda corrente'",
+   "#453 checklist: '[ ] X07 Valutazione #459 e disposizione motivata in #426 (adozione oppure non adozione)'",
+   "#459 c.5653951088: VALUTAZIONE APERTA, destinazione X07",
+   "#489: '#459 Desktop Commander — RINVIATI dopo go-live'"
+  ],
+  "deps": [
+   "#426",
+   "#453"
+  ],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "SUPERSEDED",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 460,
+  "title": "[AUDIT] Grok 4.6 — controllo totale + reconciliation + cifratura (NO-GO LIVE)",
+  "class": "KEEP",
+  "priority": "P0",
+  "reason": "Audit NO-GO LIVE con finding critici A1–A4, B1–B9 e cifratura C1–C9; sotto-issue di #453 e indicata in #586 come registro collegato 'non sostituito'. Su main restano aperti almeno C1/C2 (core/secret_cipher.py usa ancora XOR+shake_256, nessun AEAD); altri finding solo parzialmente chiusi (es. F-14 PR #609 per AMBIGUOUS, controlli NaN in betfair_client.py) e non certificati.",
+  "replacement": null,
+  "evidence": [
+   "#460 c.5647231990 sotto-issue #453",
+   "#460 c.5653952178 consolidamento (13 riproduttori FAIL)",
+   "#586 corpo: 'Registri collegati, non sostituiti: … #460'",
+   "core/secret_cipher.py:4 'XOR stream cipher using shake_256' (C1/C2 aperti)",
+   "PR #609 merged 2026-11-05 (F-14 esito ignoto→AMBIGUOUS, parziale A3)",
+   "betfair_client.py:1656 guardia NaN/inf (parziale A4)"
+  ],
+  "deps": [
+   "#453",
+   "#586",
+   "#461 PR26/PR27/PR30/PR31/PR32/PR35",
+   "#351"
+  ],
+  "open_requirements": "AEAD/cifratura C1–C9 (PR35), B1–B9 reconciliation (PR30–PR32), hard-verify A1–A4 su main.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 461,
+  "title": "PR by PR per la issue #437 — 60 schede operative per l’agente, piano #453 e Phase 0",
+  "class": "KEEP",
+  "priority": "P1",
+  "reason": "REGISTRO: Roadmap (60 schede) e PF-BLACKBOX-01; unica roadmap, da non duplicare.",
+  "replacement": null,
+  "evidence": [
+   "mandato PF-ISSUE-CLEANUP-01 / CLAUDE.md"
+  ],
+  "deps": [],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "claude-e",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 471,
+  "title": "Guard di scope: la `description` dichiara l'estensione, ma nessun controllo può dirla veritiera (2 residui dichiarati della #470)",
+  "class": "KEEP",
+  "priority": "P3",
+  "reason": "Registro di limite noto permanente: l'owner il 22/09 ha deciso di fermarsi e documentare; la issue resta aperta intenzionalmente perché chiuderla suggerirebbe che i residui siano risolti. #489 la classifica 'LIMITE NOTO … Issue aperta intenzionalmente'.",
+  "replacement": null,
+  "evidence": [
+   "#471 c.5773548405 decisione owner 22/09/2026 'fermarsi e documentare'",
+   "#489 matrice riga #471 'LIMITE NOTO'",
+   "PR #470 merged 2026-09-21 (validate_own_entry_declared)",
+   "PF-ISSUE-RECONCILIATION-01.csv riga 471 'SOLO GOVERNANCE/TRACKING'"
+  ],
+  "deps": [
+   "PR #470"
+  ],
+  "open_requirements": "Nessun lavoro; solo registro di limite.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 472,
+  "title": "L'esclusione dall'auto-merge non e' applicata da niente: il CODEOWNERS non puo' mordere perche' l'agente e' l'autore",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Rischio di governance accettato dall'owner (22/09) e mantenuto aperto intenzionalmente; il commento owner del 19/10 (dipendenza #525) dispone esplicitamente '#472 resta OPEN fino a soluzione indipendentemente verificata'. #586 la cita come premessa (account agenti pubblicano come owner).",
+  "replacement": null,
+  "evidence": [
+   "#472 c.5773713412 rischio ACCETTATO 22/09/2026",
+   "#472 c.6275847155 owner 19/10/2026 '#472 resta OPEN'",
+   "PR #475 merged 2026-09-22 (solo visibilità)",
+   "#489 matrice riga #472 'RISCHIO ACCETTATO … aperta intenzionalmente'"
+  ],
+  "deps": [
+   "#525",
+   "PR #475"
+  ],
+  "open_requirements": "Enforcement reale dell'esclusione dall'auto-merge (identità separata + branch protection) non realizzato.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 489,
+  "title": "[PROMEMORIA] Confronto con #461: issue superate, rinviate e requisiti ancora validi",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "REGISTRO: Promemoria #461 citato da CLAUDE.md nel percorso MCP; matrice supersessioni vigente.",
+  "replacement": null,
+  "evidence": [
+   "mandato PF-ISSUE-CLEANUP-01 / CLAUDE.md"
+  ],
+  "deps": [],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "claude-e",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 491,
+  "title": "[MCP] Coordinamento Pickfair-nogui → Control API → pickfair-mcp",
+  "class": "KEEP",
+  "priority": "P1",
+  "reason": "REGISTRO: Ingresso obbligatorio del percorso MCP (CLAUDE.md).",
+  "replacement": null,
+  "evidence": [
+   "mandato PF-ISSUE-CLEANUP-01 / CLAUDE.md"
+  ],
+  "deps": [],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "claude-e",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 495,
+  "title": "[BETFAIR API] Completezza endpoint personali + Stream API + esposizione Control API/MCP",
+  "class": "KEEP",
+  "priority": "P1",
+  "reason": "Work package tecnico vivo (VERDETTO INCOMPLETO): target 17/17 Betting + 4/4 Account + Market/Order Stream via Control API/MCP. Su main mancano ancora listTimeRanges, listMarketTypes, listCountries, listVenues, listRunnerBook, listMarketProfitAndLoss, updateOrders, getAccountDetails, getAccountStatement, listCurrencyRates e Order Stream; #489 e #586 (CTL-01) lo richiamano.",
+  "replacement": null,
+  "evidence": [
+   "#495 c.6085515107 registro BF-01..BF-S02",
+   "#489 sezione 'Residui correnti del work package #495'",
+   "#586 c.6497867754 riga CTL-01 '#491/#495'",
+   "main a09d8d6: grep senza risultati per i 10 endpoint MISSING"
+  ],
+  "deps": [
+   "#491",
+   "#461 PR08/PR11/PR14/PR19/PR26/PR31",
+   "#489"
+  ],
+  "open_requirements": "7 endpoint Betting MISSING + 3 Account MISSING + Order Stream + Market Stream operativo + Control API/MCP.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 497,
+  "title": "[DEFERRED] Ledger PR-flow persistente sulla futura VPS/host Pickfair",
+  "class": "KEEP",
+  "priority": "P3",
+  "reason": "Follow-up differito per decisione owner (no deadline) della PR #496; condizioni di ripresa non soddisfatte: la VPS è stata acquistata (#509 c.6127994955) ma l'owner non ha autorizzato l'uso per il PR-flow. Contiene requisiti unici (migrazione ledger, Final Owner Pre-Merge Verify, rivalutazione C1–C6) non riportati altrove.",
+  "replacement": null,
+  "evidence": [
+   "PR #496 merged 2026-10-07",
+   "#509 c.6127994955 VPS acquistata, configurazione rinviata",
+   "PF-ISSUE-RECONCILIATION-01.csv riga 497 'DIFFERITA'"
+  ],
+  "deps": [
+   "PR #496",
+   "#509",
+   "#562"
+  ],
+  "open_requirements": "Ledger persistente su host, Final Owner Pre-Merge Verify, riaudit cluster C1–C6.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 506,
+  "title": "[MASTER PF-506-ATOMIC] Pickfair — certificazione atomica Gate A/B, audit finanziari e HARD globale",
+  "class": "KEEP",
+  "priority": "P0",
+  "reason": "REGISTRO: Master Gate A/B e certificazione atomica: certificazione incompleta.",
+  "replacement": null,
+  "evidence": [
+   "mandato PF-ISSUE-CLEANUP-01 / CLAUDE.md"
+  ],
+  "deps": [],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "claude-e",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 507,
+  "title": "[PF-HARD-ALL-01] Certificazione integrale Trading Pickfair — 20 lotti, invarianti e test avversariali",
+  "class": "KEEP",
+  "priority": "P1",
+  "reason": "Programma di certificazione integrale (600 scenari/68 test spec BF2) tutto NOT_RUN: nessun PASS registrato, certificazione incompleta. Registro vivo collegato a #506/#453/#586.",
+  "replacement": null,
+  "evidence": [
+   "corpo: 'TRACKING / TEST PLAN — NON CERTIFICATO'",
+   "c.6125598605: 68 ID tutti NOT_RUN, revisione D10 REVIEW_PENDING (owner)",
+   "c.6162793264: collegamento finding #453 → lotti L01/L05/L06/L07/L13"
+  ],
+  "deps": [
+   "#506",
+   "#453",
+   "#461",
+   "#586",
+   "#351"
+  ],
+  "open_requirements": "Esecuzione dei 20 lotti/68 test spec, revisione D10 owner, dossier PR59/PR60.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 509,
+  "title": "[PF-VPS-QA-MANUAL] QA VPS Linux facoltativo, GitHub runner e Betfair Delayed SIM — PR post #505",
+  "class": "CONSOLIDATE",
+  "priority": "P3",
+  "reason": "La sequenza è ancorata al merge di #505, che è stata chiusa senza merge, e l'obiettivo (VPS, dati reali Delayed in sola lettura, ordini solo simulati, job manuali non bloccanti, segreti solo sulla VPS) è ora coperto dalla lane PF-BETFAIR-REALDATA-SIM-CI di #562 §8. Restano però dettagli propri da trasferire prima di chiudere.",
+  "replacement": "#562",
+  "evidence": [
+   "PR #505 CLOSED-unmerged (prs.txt)",
+   "#562 corpo §8 'OPZIONE OWNER — Betfair Italia real-data / SIM CI e job manuali'",
+   "#509 c.6127887346 decisione owner custodia credenziali sulla VPS (12/10)",
+   "#509 c.6127994955 VPS acquistata, configurazione rinviata",
+   "PF-ISSUE-RECONCILIATION-01.csv riga 509 'DIFFERITA'"
+  ],
+  "deps": [
+   "#562",
+   "#497",
+   "#351"
+  ],
+  "open_requirements": "Da trasferire in #562: decisione owner 12/10 su custodia (percorsi /etc/pickfair/*, utenti di servizio distinti, runner senza accesso a segreti LIVE); trigger solo workflow_dispatch e prova che NOT_RUN/offline/FAIL non incidono sul merge; negazione fail-closed di placeOrders/cancelOrders/replaceOrders/updateOrders con test negativi; matrice test (stream 503/heartbeat, recovery, GUI Linux Xvfb, Windows NOT_VERIFIED); hardening runner effimero.",
+  "owner_question": "Confermi che la lane PF-BETFAIR-REALDATA-SIM-CI di #562 §8 sostituisce PF-VPS-QA-MANUAL (#509), ora che #505 è stata chiusa senza merge, e che posso trasferire lì i punti elencati?",
+  "auditor": "subagent",
+  "final_class": "CONSOLIDATE",
+  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica"
+ },
+ {
+  "number": 510,
+  "title": "[PROMEMORIA NON BLOCCANTE] Tracciabilità sincronizzazione Roserpina multi-tavolo end-to-end",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Nato come promemoria, è diventato il registro operativo dei replay/collaudi multi-tavolo (Round 2 PF-TEST-MULTITABLE-01 differito, PF-CRASH-RECOVERY-MULTITABLE-01, replay ScoreTrend 4 modalità, commissione 4,5%, campagna C02); richiamato da #511 e #506. Round 2 non avviato.",
+  "replacement": null,
+  "evidence": [
+   "#510 20 commenti 13–18/10/2026 (mandati owner replay e crash/recovery)",
+   "#510 c. 17/10 'PASS_SIM_NON_CERTIFICANTE con 1 decisione owner aperta'",
+   "PF-ISSUE-RECONCILIATION-01.csv riga 510 'DIFFERITA' (Round 2 dopo PR28–PR34)"
+  ],
+  "deps": [
+   "#506",
+   "#511",
+   "#514",
+   "#461 PR28/PR34",
+   "#351"
+  ],
+  "open_requirements": "Round 2 multi-tavolo, replay post-fix su 13 segnali ScoreTrend in PRE/LIVE/MIX, tracciabilità atomica 41×10 assi.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 511,
+  "title": "PF-ROSERPINA-41 — configurazione GUI/MCP e simulazione finanziaria combinatoria",
+  "class": "KEEP",
+  "priority": "P1",
+  "reason": "Mandato owner approvato (14/10), non implementato: nessun tool roserpina_config_* su main, e dutching.py rifiuta ancora selezioni miste BACK/LAY (requisito PF-DUTCH-CS-FTHT nel commento 6179221621). Nessuna scheda #461 dedicata ai tool di configurazione né alla campagna combinatoria.",
+  "replacement": null,
+  "evidence": [
+   "dutching.py:382-383 'mixed BACK/LAY selections are not supported'",
+   "main a09d8d6: nessuna occorrenza di roserpina_config_* nel codice",
+   "#511 c.6179221621 mandato PF-DUTCH-CS-FTHT-ROSERPINA-E2E-01",
+   "PF-ISSUE-RECONCILIATION-01.csv riga 511 'IN CORSO'"
+  ],
+  "deps": [
+   "#506",
+   "#510",
+   "#461 PR12/PR22–PR29/PR60",
+   "#491"
+  ],
+  "open_requirements": "41 parametri via GUI+MCP con fonte unica, campagna di simulazione con migliaia di scenari, dutching FT/HT BACK/LAY/MIXED con due modalità di dimensionamento.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 513,
+  "title": "PF-QA-02 — Programma QA: 10 cicli di fix, regressione, finanziari, concorrenza, sicurezza, mutation, fault injection, anti-bypass, verifica indipendente, CI",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Il punto 1 (cap 10 cicli) è su main, ma il criterio di accettazione docs/pf_qa_02.md (matrice requisito→test→evidenza→gate) non esiste su main e i punti 3–11 (mutation, fault injection, anti-bypass, verifica indipendente) restano programma di certificazione aperto.",
+  "replacement": null,
+  "evidence": [
+   "PR #530 merged 2026-10-20 (cap 5→10)",
+   "scripts/pr_fix_loop_policy.py:22 MAX_FIX_LOOP_ITERATIONS_PER_PR = 10",
+   "docs/pf_qa_02.md assente su main a09d8d6",
+   "c.6275844900: requisiti aggiuntivi #524/#525 (chiusi da PR #526/#527)"
+  ],
+  "deps": [
+   "#426",
+   "#515",
+   "#506"
+  ],
+  "open_requirements": "docs/pf_qa_02.md con matrice; requisito PF-CAP-ATOMIC-01 e 14 test nominati (c.6250412196); correzione test che assumono cap universali; mutation/fault-injection/anti-bypass come gate.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 514,
+  "title": "PF-OWNER-DECISION-RECONCILIATION-20261018 — matrice decisioni vigenti e divergenze residue",
+  "class": "NEEDS_REVIEW",
+  "priority": "P2",
+  "reason": "Matrice di riconciliazione decisioni: gran parte è ora ratificata/implementata (cap opzionali #522, max_single_bet rifiuto esplicito in CLAUDE.md, fondi 30 s #610), ma restano divergenze (PF-C22-01 EXPANSION, Best Execution non implementata, freshness Delayed/Live, migrazione pre-v9) di cui non è certo che tutte siano tracciate altrove.",
+  "replacement": "#426",
+  "evidence": [
+   "PR #522 merged 2026-10-19 (cap monetari opzionali)",
+   "PR #610 merged 2026-11-08 (F-16 fondi ≤30 s)",
+   "CLAUDE.md: decisione owner 2 PF-PR-RECOVERY-DECISIONS-02 (max_single_bet rifiuto esplicito)",
+   "CLAUDE.md: miglior prezzo dinamico 'registrata, non implementata'",
+   "ricerca PF-C22-01: citata anche in #506, #586, #461, #453"
+  ],
+  "deps": [
+   "#426",
+   "#506",
+   "#586"
+  ],
+  "open_requirements": "PF-C22-01 (EXPANSION su bankroll_start persistito; core/risk_desk.py:192 usa max(bankroll_start, current) per equity_peak — da verificare); parametri freshness Delayed/Live; migrazione pre-v9; checklist inventario cap (c.6250006704).",
+  "owner_question": "Le divergenze residue (PF-C22-01, freshness Delayed/Live, migrazione pre-v9) sono tutte tracciate in #586/#506 così che #514 possa essere chiusa come SUPERSEDED da #426, oppure #514 resta il registro canonico di queste divergenze?",
+  "auditor": "subagent",
+  "final_class": "NEEDS_REVIEW",
+  "phase2_action": "decisione owner richiesta"
+ },
+ {
+  "number": 515,
+  "title": "PF-AUTONOMOUS-UNBLOCK-01 — Autonomous Blocker Resolution & Governance Recovery Engine",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Mandato owner approvato (P1 nel corpo) con policy ratificata PF-AUTONOMOUS-UNBLOCK-POLICY-01 (T1–T3, timeout O1–O4, budget B1–B4) dichiarata 'non ancora implementata'; su main non c'è un motore con limite di 3 tentativi identici né le soglie di timeout.",
+  "replacement": null,
+  "evidence": [
+   "c.6255412992: 'Parametri approvati che #515 deve implementare. Non sono ancora implementati.'",
+   "grep su main: nessuna implementazione T1/T2/T3 in scripts/pr_*; solo MANUAL_UNBLOCK_REASON_MAP in scripts/pr_automation_controller.py:7578 (preesistente)",
+   "PR #552/#603 coprono solo retry review e merge readiness, non il motore"
+  ],
+  "deps": [
+   "#426",
+   "#513",
+   "#550"
+  ],
+  "open_requirements": "Motore di auto-sblocco: stop a 3 tentativi identici, tentativi motivati tracciati, contatori QA non azzerabili, timeout configurabili, budget review, soglia 10 cicli come punto di diagnosi (c.6263597506).",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 516,
+  "title": "PF-LOT-D-D — un solo cashout attivo per posizione fino a riconciliazione (thread trasferiti dalla #512)",
+  "class": "KEEP",
+  "priority": "P1",
+  "reason": "Su main il ref dell'hedge nativo è ancora un uuid per chiamata e pending_same_position esclude le saghe ACTIVE: i difetti r4304693614/r4304867217/r4309039363 restano. Il commento del 19/10 lo eleva a P1 (doppio hedge LIVE possibile); F-05/F-06 potrebbero mitigare parzialmente ma non chiudono l'identità stabile.",
+  "replacement": null,
+  "evidence": [
+   "core/order_router.py:166 ref = f\"{base_ref[:16]}-ms-{uuid.uuid4().hex[:12]}\"",
+   "core/microstake_sim_port.py:126-130 pending_refs esclude phase ACTIVE",
+   "PR #593 (F-05 hedge nel ledger orders) e PR #600 (F-06 hedge guard) merged: da riverificare l'effetto",
+   "c.6265209781: priorità P1"
+  ],
+  "deps": [
+   "#521",
+   "#426",
+   "PR #593",
+   "PR #600"
+  ],
+  "open_requirements": "Riferimento hedge stabile per posizione/cashout; saghe ACTIVE visibili; due CMD_EXECUTE_CASHOUT ⇒ un solo hedge; recovery al riavvio conserva l'identità; docstring order_router da correggere.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 517,
+  "title": "PF-LOT-D-E — minimo effettivo verificato al posto del floor 0,10 € del coordinatore Microstake (thread trasferito dalla #512)",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Il floor fisso è ancora nel codice: MicrostakePolicy.minimum_economic_stake = 0.10 e il coordinatore rifiuta con outside_microstake_range sotto quella soglia, indipendentemente dal min_stake configurato. Fail-closed, ma in contrasto con D-E e con 'nessun minimo artificiale'.",
+  "replacement": null,
+  "evidence": [
+   "core/microstake_safe.py:83 minimum_economic_stake: Decimal = D(\"0.10\")",
+   "core/microstake_safe.py:486 controllo outside_microstake_range",
+   "core/microstake_sim_port.py:349 e core/microstake_live_port.py:364 usano la policy di default"
+  ],
+  "deps": [
+   "#426",
+   "#505"
+  ],
+  "open_requirements": "min_stake configurato 0,05 ⇒ eseguito esatto in SIM o rifiuto motivato; nessun floor fisso nel codice; default invariato.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 518,
+  "title": "PF-LOT-TOOLING-01 — pf_trace e pfckpt: base di confronto, rename porcelain, lease obbligatorio, symlink e modo (thread trasferiti dalla #512)",
+  "class": "KEEP",
+  "priority": "P3",
+  "reason": "Debito solo tooling ancora presente su main: pf_trace confronta con HEAD (nessun --base), pfckpt valida CURRENT/TASK_STATE/AGENT_LEASE solo se presenti, rename porcelain letti come righe separate. Va chiuso prima di usare gli strumenti come prova di certificazione.",
+  "replacement": null,
+  "evidence": [
+   "tools/traceability/pf_trace.py:133 git show HEAD:{path}, nessuna opzione --base",
+   "tools/agent_checkpoint/pfckpt.py:271-273 puntatori/lease validati solo se presenti",
+   "tools/agent_checkpoint/pfckpt.py:333-335 parsing porcelain -z senza gestione rename"
+  ],
+  "deps": [
+   "#461",
+   "#351"
+  ],
+  "open_requirements": "--base esplicito in pf_trace; ultima evidenza per test (r4311806868); rename come coppia; lease obbligatoria; TTL ≥1 con tetto; seq/fencing int non bool; symlink conservato come link.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 519,
+  "title": "PF-CYCLE-EXEC-CONFIRM-01 — conferma dello step del cycle executor legata al verdetto dell'engine (thread trasferito dalla #512)",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Su main il cycle executor pubblica CMD_QUICK_BET e subito persiste NEXT_TRADE_SUBMIT_CONFIRMED/SUBMITTED, avanza lo step e marca il settlement come processato, prima del verdetto dell'engine. Richiede anche decisione owner sul contratto di conferma.",
+  "replacement": null,
+  "evidence": [
+   "core/runtime_controller.py:8231-8256 publish CMD_QUICK_BET → checkpoint NEXT_TRADE_SUBMIT_CONFIRMED con next_trade_submission_status='SUBMITTED'"
+  ],
+  "deps": [
+   "#426",
+   "#461"
+  ],
+  "open_requirements": "Rifiuto engine ⇒ checkpoint non SUBMITTED (o NOT_PLACED), step non avanzato, tavolo rilasciato, settlement riprendibile, stato coerente al riavvio; decisione owner ack vs evento terminale.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 520,
+  "title": "PF-SIM-MICROSTAKE-HARDEN-01 — book SIM malformato classificato come blocco pre-invio (thread trasferito dalla #512)",
+  "class": "KEEP",
+  "priority": "P3",
+  "reason": "Riprodotto su main a09d8d6: best_counterparty_price solleva AttributeError con ex o runner non mapping. Solo SIM e fail-closed, ma il difetto e gli hardening aggiunti nei commenti (recover con importo corrotto, residuo vivo, riserva AMBIGUOUS, attribuzione per saga) restano aperti.",
+  "replacement": null,
+  "evidence": [
+   "simulation_broker.py:1720 ex = runner.get(\"ex\") or {} — sonda: ex=['x'] ⇒ AttributeError 'list' object has no attribute 'get'",
+   "simulation_broker.py:1712 r.get su runner non mapping ⇒ AttributeError"
+  ],
+  "deps": [
+   "#461"
+  ],
+  "open_requirements": "Book malformato ⇒ BLOCKED pre-invio con intento rilasciato; best_counterparty_price None su input non mapping; voci c.6262658929, c.6263026984, c.6263922371.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 521,
+  "title": "PF-LOT-D-F — aggregazione per bet_id dei settlement dello stesso mercato prima del rilascio del tavolo (dalla #512)",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "PR29-c (#535) ha introdotto l'attribuzione per identità e il registro settlement_effects, ma l'aggregazione del netto multi-gamba (D-F) non è implementata: il test su main asserisce ancora che +10/−6/−6 NON rilascia il tavolo. Restano anche i residui dei commenti (marker hedged_markets, latenza listClearedOrders, chiusura a soglia senza table_id).",
+  "replacement": null,
+  "evidence": [
+   "tests/f026/test_f026_units.py:203-215 multi-gamba ⇒ nessun rilascio, loss_amount 0",
+   "core/runtime_controller.py:5388 _release_settled_tables (identità PR29-c)",
+   "core/runtime_controller.py:5983 _single_bet_position",
+   "PR #535 merged 2026-10-22"
+  ],
+  "deps": [
+   "#516",
+   "PR #535",
+   "#426"
+  ],
+  "open_requirements": "Netto per bet_id ⇒ rilascio con −2 e loss_amount 2; ordine perdite ⇒ mai 6; hedge+bet ⇒ netto; r4309039345, r4312719723; marcatura hedged_markets sincrona; flag unreliable persistito; P&L hedge LIVE contabilizzato.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 528,
+  "title": "Test F026_04 instabile: attesa fissa di 4 s nel settle della harness child_f026",
+  "class": "CLOSE_VERIFIED",
+  "priority": "P3",
+  "reason": "Su main l'operazione settle della harness non usa più sleep(4): accoda i mercati in pending_settle e attende con wait_for su condizione (RUNTIME_CLOSE_POSITION per mercato + bus idle, 3 letture stabili, deadline 30 s), come richiesto dalla correzione proposta.",
+  "replacement": null,
+  "evidence": [
+   "tests/f026/child_f026.py:249-261 wait_for con predicato e deadline",
+   "tests/f026/child_f026.py:310-328 settle → pending_settle → wait_for(settled)",
+   "stato del file su main a09d8d6 (clone shallow: il commit che ha introdotto pending_settle non è risolvibile localmente, il più vecchio disponibile è 7caab58/#541)"
+  ],
+  "deps": [
+   "#513"
+  ],
+  "open_requirements": "Restano sleep fissi su risk_stop/cashout/replay_cmd (righe 338-348) ma fuori dal perimetro di questa issue.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "CLOSE_VERIFIED",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 536,
+  "title": "PF-RUNTIME-LOCK-01 — esclusività del runtime per database: cancellazione manuale di .runtime.lock (prerequisito certificazione LIVE)",
+  "class": "CLOSE_VERIFIED",
+  "priority": "P1",
+  "reason": "Implementata con PR #537 (merge owner esplicito): lock OS + identità inode del file di lock + lease runtime_lease con fencing token verificato nelle scritture; CI post-merge 14/14 verde. I follow-up residui sono tracciati in #453 c.6345531244 e #506 c.6345533873; la certificazione LIVE resta in #351.",
+  "replacement": null,
+  "evidence": [
+   "PR #537 merged 2026-10-22 (main 3bb4477)",
+   "core/runtime_authority.py:12-14 lease runtime_lease con fencing_token",
+   "docs/runtime_authority.md presente su main",
+   "#536 c.6347834878: limiti dichiarati e follow-up in #453/#506"
+  ],
+  "deps": [
+   "#351",
+   "#453",
+   "#506"
+  ],
+  "open_requirements": "Limiti dichiarati (TOCTOU verso exchange, stesso host, Windows MANUAL_ONLY, registry TTL in memoria) — tracciati in #453/#506.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "CLOSE_VERIFIED",
+  "phase2_action": "CHIUSURA SOLO CON CONFERMA OWNER ESPLICITA (P1)"
+ },
+ {
+  "number": 550,
+  "title": "PF-REVIEW-RECOVERY-01 — Retry controllato delle review AI incomplete e deroga owner verificabile",
+  "class": "CLOSE_VERIFIED",
+  "priority": "P2",
+  "reason": "Implementata con PR #552: classificazione delle review, max 2 tentativi, deroga PF-REVIEW-WAIVER verificata; presente in workflow Sol/Grok e in pr_autonomy_policy, test dedicati verdi su main.",
+  "replacement": null,
+  "evidence": [
+   "PR #552 merged 2026-10-24 (commit 35936be)",
+   "scripts/pr_autonomy_policy.py:1001 regex PF-REVIEW-WAIVER; :1047 deroga assente/ambigua ⇒ no",
+   "workflow pr-review-openrouter-gpt56-sol.yml:1074 e pr-review-xai-grok46.yml:1071",
+   "tests/scripts/test_pr_review_recovery.py: 161 passed su a09d8d6 (eseguito)"
+  ],
+  "deps": [
+   "PR #559",
+   "PR #602",
+   "PR #607"
+  ],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "CLOSE_VERIFIED",
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+ },
+ {
+  "number": 562,
+  "title": "[CI INFRA] Pickfair CI VPS — riattivare PR #561 e migrare i workflow Linux",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "REGISTRO: CI VPS: registro infrastruttura attivo (destinazione proposta di #509).",
+  "replacement": null,
+  "evidence": [
+   "mandato PF-ISSUE-CLEANUP-01 / CLAUDE.md"
+  ],
+  "deps": [],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "claude-e",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 565,
+  "title": "Follow-up (decisione owner): legare il required check overlap-check alla GitHub App sorgente",
+  "class": "NEEDS_REVIEW",
+  "priority": "P3",
+  "reason": "L'owner ha configurato il ruleset 25459867 con overlap-check legato a integration_id 15368 (configurazione CERTIFIED), ma enforcement runtime e test negativo risultano NOT VERIFIED; la chiusura dipende dall'accettazione owner dell'evidenza documentale.",
+  "replacement": null,
+  "evidence": [
+   "#565 c.6437589987: required_status_checks overlap-check integration_id 15368, verifiche 1/2/3/6 PASS, 4/5 NOT VERIFIED",
+   "#565 c.6437671827: ruleset verificato",
+   "PR #592 merged 2026-10-31: GHA primario, overlap-check GHA resta obbligatorio"
+  ],
+  "deps": [
+   "#562"
+  ],
+  "open_requirements": "Verifica 4 (check autentico accettato su una PR reale, ottenibile in lettura dalle PR #593–#610) e 5 (check omonimo da altra app rifiutato).",
+  "owner_question": "Accetti l'evidenza documentale (integration_id 15368 + merge delle PR successive con overlap-check GHA) per chiudere #565, o serve il test negativo con un'identità separata?",
+  "auditor": "subagent",
+  "final_class": "NEEDS_REVIEW",
+  "phase2_action": "decisione owner richiesta"
+ },
+ {
+  "number": 578,
+  "title": "Pickfair — Tracking post-#562: backup automatico, pulizia VPS MatchPilot, riconciliazione",
+  "class": "NEEDS_REVIEW",
+  "priority": "P3",
+  "reason": "Tracking infrastrutturale con checklist tutta aperta; la rettifica owner t257 (c.6471545109) ha ridotto lo scopo a un kit di recovery una tantum senza backup automatici, quindi il corpo (backup giornaliero, AUTO_BACKUP_CERTIFIED) non è più allineato. Restano attività reali (kit DRAFT, pulizia VPS MatchPilot, revoca PAT).",
+  "replacement": null,
+  "evidence": [
+   "#578 c.6471545109: rettifica t257, niente backup continui",
+   "#578 c.6471852806: kit DRAFT, 31/31 SHA PASS, non INFRA_RECOVERY_KIT_VERIFIED",
+   "#578 c.6472224589: registro t261, gap binding 15368/5492626"
+  ],
+  "deps": [
+   "#562"
+  ],
+  "open_requirements": "Kit recovery verificato + rebuild isolato; rimozione componenti Pickfair dalla VPS MatchPilot; riconciliazione repo/VPS/file locali; revoca vecchio PAT (owner).",
+  "owner_question": "Dopo la rettifica t257, la checklist 'backup automatico' del corpo va considerata annullata? Se sì, il corpo va aggiornato al solo kit recovery + pulizia VPS + revoca PAT, oppure l'issue va chiusa e quelle attività spostate in #562?",
+  "auditor": "subagent",
+  "final_class": "NEEDS_REVIEW",
+  "phase2_action": "decisione owner richiesta"
+ },
+ {
+  "number": 582,
+  "title": "[PICKFAIR A–D] Registro unico collaudo integrale Betfair — LIVE DATA, SIM, Adapter, ordini reali",
+  "class": "KEEP",
+  "priority": "P0",
+  "reason": "REGISTRO: Registro collaudo integrale Betfair A–D (LIVE DATA, SIM, ordini reali): certificazione aperta.",
+  "replacement": null,
+  "evidence": [
+   "mandato PF-ISSUE-CLEANUP-01 / CLAUDE.md"
+  ],
+  "deps": [],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "claude-e",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 586,
+  "title": "PICKFAIR_100_PERCENT_GLOBAL_RECONCILIATION",
+  "class": "KEEP",
+  "priority": "P0",
+  "reason": "REGISTRO: Registro di coordinamento (mandato: da preservare).",
+  "replacement": null,
+  "evidence": [
+   "mandato PF-ISSUE-CLEANUP-01 / CLAUDE.md"
+  ],
+  "deps": [],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "claude-e",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 588,
+  "title": "Adapter da aggiungere altri exchange ",
+  "class": "KEEP",
+  "priority": "P3",
+  "reason": "REGISTRO: Ricerca adapter altri exchange (mandato: da preservare).",
+  "replacement": null,
+  "evidence": [
+   "mandato PF-ISSUE-CLEANUP-01 / CLAUDE.md"
+  ],
+  "deps": [],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "claude-e",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 590,
+  "title": "full-suite w5-telegram-live-sim: guard credenziali Telegram fail-open (env | grep -q + pipefail)",
+  "class": "CLOSE_VERIFIED",
+  "priority": "P1",
+  "reason": "Il guard su main non usa più la pipeline env|grep -q: usa 'compgen -e TG_' (builtin, nessun SIGPIPE). Il test di regressione con ambiente grande passa su a09d8d6.",
+  "replacement": null,
+  "evidence": [
+   "PR #592 merged 2026-10-31 (commit 986bebd introduce 'compgen -e TG_', git log -S)",
+   "scripts/pr_full_suite_pipeline.py:321 'if compgen -e TG_ >/dev/null; then ... exit 1; fi'",
+   "tests/scripts/test_pr_full_suite_pipeline.py:335 test_telegram_guard_has_no_pipeline_and_never_misses_with_a_large_environment: PASS su a09d8d6 (eseguito)",
+   "PR #591 merged 2026-10-31 (task fix-590, residuo test TTL)"
+  ],
+  "deps": [],
+  "open_requirements": "",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "CLOSE_VERIFIED",
+  "phase2_action": "CHIUSURA SOLO CON CONFERMA OWNER ESPLICITA (P1)"
+ },
+ {
+  "number": 605,
+  "title": "[PF-DEF][Roadmap V2] ext-mutation: [REDACTED] non PASS",
+  "class": "NEEDS_REVIEW",
+  "priority": "P2",
+  "reason": "Auto-card del registrar Roadmap V2: l'esito è NOT_RUN con codice EXTERNAL_PENDING (evidenza esterna mancante), non un FAIL riprodotto; check redatto, nessun difetto di codice identificabile. Si ripete sullo SHA ddc82f9 (c.6639689509).",
+  "replacement": "#586",
+  "evidence": [
+   "corpo: esito NOT_RUN codice EXTERNAL_PENDING, SHA a0fafb6e8602, run 20261103T112505Z-5bfde3bd",
+   "c.6639689509: nuova occorrenza SHA ddc82f9f5759"
+  ],
+  "deps": [
+   "#586",
+   "#602"
+  ],
+  "open_requirements": "Far eseguire lo scenario ext-mutation@1 con evidenza esterna fino a PASS (Criteri GREEN della card).",
+  "owner_question": "Un esito EXTERNAL_PENDING/NOT_RUN deve generare una scheda difetto PF-DEF P1, o va tracciato come attività di esecuzione esterna in #586 e la card chiusa?",
+  "auditor": "subagent",
+  "final_class": "NEEDS_REVIEW",
+  "phase2_action": "decisione owner richiesta"
+ },
+ {
+  "number": 611,
+  "title": "Test preesistente rosso su main: test_issue437_pr02::test_block_firma_non_ispezionabile_conserva_il_customer_ref",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Riprodotto su main a09d8d6: fallisce con 'chiave de-dup persa: []'. Diagnosi: su Python 3.13 inspect.signature(time.time) restituisce '()' invece di sollevare ValueError, quindi la premessa del test (firma non ispezionabile) non vale e _kwargs_per_place_bet taglia tutti i kwargs; serve PR dedicata (correzione del test con un callable davvero non ispezionabile e/o regola che conserva customer_ref).",
+  "replacement": null,
+  "evidence": [
+   "pytest su a09d8d6: 1 failed, tests/acceptance/test_issue437_pr02.py:501 AssertionError",
+   "python 3.13.18: inspect.signature(time.time) → ()",
+   "core/trading_engine.py:2072 _kwargs_per_place_bet"
+  ],
+  "deps": [],
+  "open_requirements": "Test che usi un callable con firma davvero non ispezionabile; verificare se una firma vuota/senza **kwargs debba comunque conservare customer_ref (idempotenza).",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ },
+ {
+  "number": 612,
+  "title": "D-C4-02 (P2): core/sl_tp_pnl.position_stake usa lo stake richiesto invece dell'abbinato confermato",
+  "class": "KEEP",
+  "priority": "P2",
+  "reason": "Su main a09d8d6 position_stake restituisce meta['stake'] (stake richiesto) quando presente, senza riferimento all'abbinato confermato. Latente finché F-02/F-04 non sono su main; correzione prevista nella catena F-02.",
+  "replacement": null,
+  "evidence": [
+   "core/sl_tp_pnl.py:72-76 'stake = to_decimal((meta or {}).get(\"stake\")); if stake > 0: return stake'",
+   "#586 c.6663479116 (sim 574aa490, G7-S22..S25 xfail strict)"
+  ],
+  "deps": [
+   "#613",
+   "#586"
+  ],
+  "open_requirements": "SL/TP/trailing solo sull'abbinato confermato; matched 0 ⇒ nessuna protezione; test PASS+BLOCK col mutante 'stake richiesto'.",
+  "owner_question": null,
+  "auditor": "subagent",
+  "final_class": "KEEP",
+  "phase2_action": "resta aperta"
+ }
+]

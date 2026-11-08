@@ -1,0 +1,24 @@
+{
+ "blocks": [
+  "Approvazione owner del piano (Fase 2)",
+  "Decisioni owner sulle 10 NEEDS_REVIEW, 6 CONSOLIDATE e 2 CLOSE_VERIFIED P1"
+ ],
+ "dependencies": {
+  "#426": "decisioni owner",
+  "#453": "piano operativo; c.5653916051 \u00a7C non chiudere le fonti raggruppate",
+  "#461": "roadmap unica",
+  "#489": "matrice supersessioni (nessuna chiusura automatica per consolidamento)",
+  "#586": "registro di coordinamento (da preservare)",
+  "#588": "ricerca adapter (da preservare)"
+ },
+ "gate_a": "non toccato da questo mandato (NON PASS, vedi #506)",
+ "lotti_completati": [
+  "FASE-1: matrice 82/82 issue aperte (results/MATRIX.md)"
+ ],
+ "lotto_corrente": "FASE-1 audit completato; in attesa approvazione owner del piano",
+ "mandate_id": "PF-ISSUE-CLEANUP-01 (owner 08/11/2026) \u2014 audit e razionalizzazione issue GitHub",
+ "next_atomic_action": "Attendere l'approvazione owner di results/PLAN.md; poi Lotto 1 (13 chiusure con commento conclusivo), registrando ogni chiusura in results/closures.json",
+ "pr_505": "chiusa senza merge (rilevante solo per #509)",
+ "schema": "pf-task-state/1",
+ "tests_missing": []
+}

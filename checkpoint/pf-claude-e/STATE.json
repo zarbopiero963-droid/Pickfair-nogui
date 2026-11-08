@@ -1,0 +1,74 @@
+{
+ "schema": "pf-checkpoint/3",
+ "repository": "zarbopiero963-droid/Pickfair-nogui",
+ "seq": 1,
+ "mandate_id": "PF-ISSUE-CLEANUP-01 (owner 08/11/2026) — audit e razionalizzazione issue GitHub",
+ "previous_checkpoint_sha": "a09d8d6116aa234e838186f807f62470873def50",
+ "updated_at": "2026-11-08T23:30:00Z",
+ "agent": {
+  "identity": "claude-e",
+  "role": "pulizia e razionalizzazione delle issue (Claude E)",
+  "session": "https://claude.ai/code/session_013X2mCWhw5vHNrZRwseFiAL",
+  "last_writer": "claude-e",
+  "lease_status_at_write": "FREE"
+ },
+ "code": {
+  "branch": "main",
+  "sha": "a09d8d6116aa234e838186f807f62470873def50"
+ },
+ "lotto_corrente": "FASE-1 audit completato; in attesa approvazione owner del piano",
+ "lotti_completati": [
+  "FASE-1: matrice 82/82 issue aperte (results/MATRIX.md)"
+ ],
+ "next_atomic_action": "Attendere l'approvazione owner di results/PLAN.md; poi Lotto 1 (13 chiusure con commento conclusivo), registrando ogni chiusura in results/closures.json",
+ "dependencies": {
+  "#586": "registro di coordinamento (da preservare)",
+  "#588": "ricerca adapter (da preservare)",
+  "#461": "roadmap unica",
+  "#489": "matrice supersessioni (nessuna chiusura automatica per consolidamento)",
+  "#453": "piano operativo; c.5653916051 §C non chiudere le fonti raggruppate",
+  "#426": "decisioni owner"
+ },
+ "blocks": [
+  "Approvazione owner del piano (Fase 2)",
+  "Decisioni owner sulle 10 NEEDS_REVIEW, 6 CONSOLIDATE e 2 CLOSE_VERIFIED P1"
+ ],
+ "owner_authorizations": {
+  "fase_1": "audit in sola lettura, mandato owner 08/11/2026",
+  "fase_2": "NON ancora concessa: chiusure CLOSE_VERIFIED/DUPLICATE/SUPERSEDED solo dopo approvazione del piano"
+ },
+ "tests_executed": [
+  {
+   "id": "tests/scripts/test_pr_review_recovery.py (prova #550)",
+   "status": "PASS",
+   "sha": "a09d8d6116aa234e838186f807f62470873def50"
+  },
+  {
+   "id": "tests/scripts/test_pr_full_suite_pipeline.py::test_telegram_guard_has_no_pipeline_and_never_misses_with_a_large_environment (prova #590)",
+   "status": "PASS",
+   "sha": "a09d8d6116aa234e838186f807f62470873def50"
+  },
+  {
+   "id": "test_issue437_pr02::test_block_firma_non_ispezionabile_conserva_il_customer_r* (riproduzione #611)",
+   "status": "FAIL",
+   "sha": "a09d8d6116aa234e838186f807f62470873def50"
+  }
+ ],
+ "tests_missing": [],
+ "missing_historical_evidence": [
+  "clone a profondità 50: provenienza delle PR più vecchie verificata via ricerca GitHub e stato dei file su main"
+ ],
+ "gate_a": "non toccato da questo mandato (NON PASS, vedi #506)",
+ "pr_505": "chiusa senza merge (rilevante solo per #509)",
+ "certification_verdict": "NOT VERIFIED",
+ "counts": {
+  "open": 82,
+  "KEEP": 50,
+  "SUPERSEDED": 11,
+  "DUPLICATE": 1,
+  "CLOSE_VERIFIED": 4,
+  "CONSOLIDATE": 6,
+  "NEEDS_REVIEW": 10
+ },
+ "closures": []
+}

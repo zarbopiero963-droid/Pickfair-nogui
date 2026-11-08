@@ -1,0 +1,13 @@
+{
+ "certification_verdict": "NOT VERIFIED",
+ "checkpoint_commit": null,
+ "code": {
+  "branch": "main",
+  "sha": "a09d8d6116aa234e838186f807f62470873def50"
+ },
+ "mandate_id": "PF-ISSUE-CLEANUP-01 (owner 08/11/2026) \u2014 audit e razionalizzazione issue GitHub",
+ "next_atomic_action": "Attendere l'approvazione owner di results/PLAN.md; poi Lotto 1 (13 chiusure con commento conclusivo), registrando ogni chiusura in results/closures.json",
+ "previous_checkpoint_sha": "a09d8d6116aa234e838186f807f62470873def50",
+ "schema": "pf-current/1",
+ "seq": 1
+}
