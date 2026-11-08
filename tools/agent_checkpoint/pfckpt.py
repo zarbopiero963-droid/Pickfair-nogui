@@ -287,6 +287,11 @@ def check_code_reference(repo, label, sha, integration, anchors=(), unresolved_m
         keep.append(ifull)
     if not full and integration["equivalence"] != "TREE_EQUAL":
         problems.append(f"{label}: originale irraggiungibile ed equivalenza {integration['equivalence']}")
+    if not full and not any(anchors):
+        # rilievo Sol #615: senza l'oggetto originale l'original_tree DICHIARATO e' un'autodichiarazione (potrebbe
+        # essere il tree di main): vale solo se coincide con un code.tree registrato da un save quando l'oggetto c'era
+        problems.append(f"{label}: original_tree non ancorato a un code.tree registrato da un checkpoint; recuperare "
+                        "l'oggetto originale (es. refs/pull/<N>/head)")
     if not full and not problems:
         info.update(via="INTEGRATION_TREE_EQUAL", effective_sha=ifull)
     elif full and not problems:
@@ -359,7 +364,7 @@ def handoff_verify(repo, source, patch, base, integration, **meta):
 
 # Forma canonica del digest di una patch di handoff: `git diff --binary --full-index base head` con la configurazione
 # di default di git resa esplicita (rename detection attiva, prefissi a/ b/, algoritmo myers, 3 righe di contesto,
-# nessun interHunkContext, nessun orderFile, niente colore, niente diff esterni o textconv), cosi' il risultato non
+# nessun interHunkContext, nessun orderFile, sottomoduli sempre inclusi, niente colore, niente diff esterni o textconv), cosi' il risultato non
 # dipende dalla config locale. Una forma diversa => digest diverso
 # => prova fallita (fail-closed), mai una prova accettata per errore.
 _CANONICAL_DIFF_CFG = ("-c", "diff.renames=true", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
@@ -371,7 +376,7 @@ _CANONICAL_DIFF_CFG = ("-c", "diff.renames=true", "-c", "diff.noprefix=false", "
 def canonical_diff_sha256(repo, base_sha, head_sha):
     """sha256 di `git diff --binary --full-index base_sha head_sha` in forma canonica; None se git fallisce."""
     p = subprocess.run(["git", "-C", repo, *_CANONICAL_DIFF_CFG, "diff", "--no-color", "--no-ext-diff",
-                        "--no-textconv", "--unified=3", "-O/dev/null", "--binary", "--full-index", base_sha, head_sha, "--"], capture_output=True)
+                        "--no-textconv", "--ignore-submodules=none", "--unified=3", "-O/dev/null", "--binary", "--full-index", base_sha, head_sha, "--"], capture_output=True)
     return hashlib.sha256(p.stdout).hexdigest() if p.returncode == 0 else None
 
 
@@ -611,10 +616,35 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None):
     if pm.get("head") and pm.get("tree"):
         anchors.setdefault(str(pm["head"]), []).append(str(pm["tree"]))
 
+    history = {}
+    history_loaded = []
+
+    def _history():
+        """code.tree / code.patch.tree registrati dai checkpoint PRECEDENTI della catena (first-parent, max 200)."""
+        if not history_loaded:
+            history_loaded.append(True)
+            for c in out(repo, "rev-list", "--first-parent", "--max-count=200", f"{commit}~1").splitlines() \
+                    if git(repo, "rev-parse", "-q", "--verify", f"{commit}~1", check=False).returncode == 0 else []:
+                try:
+                    st = tree_json(repo, c, d, "STATE.json")
+                except (ValueError, CheckpointError):
+                    continue
+                cd = st.get("code") if isinstance(st, dict) and isinstance(st.get("code"), dict) else {}
+                if cd.get("sha") and cd.get("tree"):
+                    history.setdefault(str(cd["sha"]), []).append(str(cd["tree"]))
+                pmh = cd.get("patch") if isinstance(cd.get("patch"), dict) else {}
+                if pmh.get("head") and pmh.get("tree"):
+                    history.setdefault(str(pmh["head"]), []).append(str(pmh["tree"]))
+        return history
+
     def _anchors_for(sha, integ):
         orig = integ.get("original_sha") if isinstance(integ, dict) else None
-        return [t for k, ts in anchors.items() for t in ts
-                if sha and (k.startswith(str(sha)) or (orig and k == orig))]
+        found = [t for k, ts in anchors.items() for t in ts
+                 if sha and (k.startswith(str(sha)) or (orig and k == orig))]
+        if not found and isinstance(integ, dict) and not resolve_commit(lookup, str(sha)):
+            found = [t for k, ts in _history().items() for t in ts
+                     if sha and (k.startswith(str(sha)) or (orig and k == orig))]
+        return found
 
     if code_sha:
         rp, ks, code_ref = check_code_reference(lookup, "code.sha", code_sha, code.get("integration"),

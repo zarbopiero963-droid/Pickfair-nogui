@@ -50,6 +50,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `interHunkContext` e ordine dei file, così non dipende da `diff.context`/`diff.orderFile` del clone; il `save`
   risolve gli SHA citati dopo il fetch dei ref durevoli (uno SHA appena pubblicato su main è DURABLE al primo
   tentativo).
+- **Checkpoint multi-agente: secondo giro di GPT-6.1 Sol su #615.** Un `original_tree` di un originale
+  irraggiungibile vale solo se ancorato a un `code.tree` registrato da un checkpoint (corrente o precedente); senza
+  ancora `NEEDS_RECONCILIATION` (prima un tree copiato da main rendeva READY uno SHA inventato). Il digest canonico
+  include sempre i sottomoduli (`--ignore-submodules=none`).
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

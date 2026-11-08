@@ -190,6 +190,10 @@ Regole di `verify`, confrontando solo tree SHA e mai file per file:
   tree(`integration_sha`) == `integration_tree` == `original_tree`. Con `NOT_PROVEN`, o con un tree diverso anche
   per un solo file, il riferimento resta non provato.
 - `original_tree` deve coincidere con i tree già registrati per quello SHA (`code.tree`, `code.patch.tree`).
+- Con l'originale **non** risolvibile, l'`original_tree` vale solo se è **ancorato**: deve coincidere con un `code.tree`
+  (o `code.patch.tree`) registrato da un `save` quando l'oggetto esisteva, nello STATE corrente o in un checkpoint
+  precedente della catena (first-parent, ultimi 200). Senza ancora è un'autodichiarazione (potrebbe essere il tree di
+  main): `NEEDS_RECONCILIATION`; si recupera l'oggetto originale (per esempio da `refs/pull/<N>/head`).
 - La dichiarazione non è mai creduta: `verify` ricalcola sempre i tree.
 
 `pfckpt.py integrate --repo R --original <sha> --integration <sha> [--original-tree <tree registrato>]` calcola il
@@ -274,7 +278,7 @@ Regole di `verify`:
        del motore non può stare): sha256 di `git diff --binary --full-index base_sha handoff_sha`, ricalcolato nel
        `target_repo`, == `patch_sha256`. Il diff usa la configurazione di default di git resa esplicita (rename
        detection, prefissi `a/` `b/`, algoritmo myers, 3 righe di
-       contesto, nessun `interHunkContext` né `orderFile`, niente colore, diff esterni o textconv), quindi non dipende
+       contesto, nessun `interHunkContext` né `orderFile`, sottomoduli sempre inclusi, niente colore, diff esterni o textconv), quindi non dipende
        dalla config del clone. Un digest registrato in un'altra forma (per esempio indici abbreviati) non
        coincide: la prova fallisce, mai il contrario.
 
@@ -315,7 +319,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 122 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 126 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo

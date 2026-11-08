@@ -371,3 +371,21 @@ def test_canonical_digest_ignores_context_and_order_config(world, target):
     r = rec_no_artifact(world, target, "DURABLE", digest, handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
     a = chain_ckpt(world, target, "c", [r])
     assert pfckpt.verify(a, "HEAD", D, repo_paths={TARGET: clone})["handoffs"][0]["handoff_proven"] is True
+
+
+def test_gitlink_change_hidden_by_ignore_submodules_config_is_still_in_the_canonical_digest(world, target):
+    """Sol #615 (aaa3e8db): con diff.ignoreSubmodules=all nel clone, un gitlink aggiunto nel commit di handoff non
+    deve sparire dal digest canonico: il digest della sola patch non prova un handoff con una modifica in piu'."""
+    hsha, _ = publish_handoff(target)
+    clean = hashlib.sha256(canonical_patch(target, hsha)).hexdigest()
+    w = target["work"]
+    sh(w, "checkout", "-q", "-B", "h2", hsha)
+    _git("-C", w, "update-index", "--add", "--cacheinfo", f"160000,{target['base']},vendor/sub")
+    sh(w, "commit", "-q", "-m", "gitlink in piu'")
+    sh(w, "push", "-q", "-f", "origin", f"HEAD:refs/heads/{HBRANCH}")
+    h2, t2 = sh(w, "rev-parse", "HEAD"), sh(w, "rev-parse", "HEAD^{tree}")
+    clone = target_clone(target)
+    sh(clone, "config", "diff.ignoreSubmodules", "all")
+    r = rec_no_artifact(world, target, "DURABLE", clean, handoff_branch=HBRANCH, handoff_sha=h2, handoff_tree=t2)
+    err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c", [r]), "HEAD", D, repo_paths={TARGET: clone})
+    assert any("digest canonico" in p for p in err.detail["problems"])

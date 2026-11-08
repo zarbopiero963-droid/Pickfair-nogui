@@ -206,9 +206,26 @@ def test_legacy_checkpoint_without_pr_ref_after_squash_is_needs_reconciliation(w
 
 
 # ================================================================== 3. transizione verso main (tree-equal)
+def test_legacy_transition_without_a_recorded_tree_anchor_is_needs_reconciliation(world):
+    """Rilievo Sol #615: un checkpoint legacy senza code.tree e originale cancellato non diventa READY con un
+    original_tree solo dichiarato: si recupera l'oggetto (refs/pull) o resta NEEDS_RECONCILIATION."""
+    feat, ftree = make_feature(world)
+    _legacy_checkpoint_citing(world, feat)
+    squash, _ = squash_merge_and_delete(world, feat)
+    a = agent(world, "after")
+    sh(a, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    integ = pfckpt.build_integration(a, feat, squash, original_tree=ftree)
+    st = json.load(open(os.path.join(a, D, "STATE.json")))
+    exp = next_state(a, world, code=dict(st["code"], integration=integ),
+                     tests_executed=[dict(t, integration=integ) for t in st["tests_executed"]])
+    err = expect(2, pfckpt.save, a, BR, "origin", exp, "transizione senza ancora", D, agent="claude")
+    assert set(err.detail["problems"]) <= set(err.detail["reference_problems"])
+    assert pfckpt.remote_head(a, "origin", BR) == exp, "nulla pubblicato"
+
+
 def test_tree_equal_transition_new_checkpoint_bootstraps_ready_from_fresh_clone(world):
     feat, ftree = make_feature(world)
-    legacy = _legacy_checkpoint_citing(world, feat)
+    legacy = _legacy_checkpoint_citing(world, feat, tree=ftree)   # code.tree registrato quando l'oggetto c'era
     squash, stree = squash_merge_and_delete(world, feat)
     assert stree == ftree
     a = agent(world, "after")                                     # clone NUOVO: lo SHA originale non esiste qui
@@ -465,3 +482,40 @@ def test_first_save_citing_a_commit_published_on_main_but_not_yet_fetched_is_dur
     exp = next_state(a, world, code={"branch": "main", "sha": new}, tests_executed=_tests(new))
     res = pfckpt.save(a, BR, "origin", exp, "ckpt su main", D, agent="claude", release=True)
     assert res["status"] == "DURABLE" and _vias(res)["code.sha"] == "BRANCH:main"
+
+
+# ================================================================== rilievo Sol su #615 (aaa3e8db): ancora del tree
+def test_unanchored_original_tree_copied_from_main_never_makes_an_invented_sha_ready(world):
+    """Sol #615 (aaa3e8db): originale irraggiungibile e nessun code.tree registrato da un save precedente => un
+    original_tree DICHIARATO (qui copiato da main) non prova nulla: NEEDS_RECONCILIATION, mai READY."""
+    invented = "1234567890abcdef1234567890abcdef12345678"
+    a = agent(world, "a")
+    sh(a, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    main = sh(a, "rev-parse", "origin/main")
+    mtree = sh(a, "rev-parse", "origin/main^{tree}")
+    lie = {"original_sha": invented, "original_tree": mtree, "integration_sha": main, "integration_tree": mtree,
+           "equivalence": "TREE_EQUAL"}
+    next_state(a, world, code={"branch": "main", "sha": invented, "integration": lie})
+    pfckpt.write_manifest(a, D)
+    raw_commit(a, "SHA inventato con tree di main")
+    sh(a, "push", "-q", "origin", f"HEAD:refs/heads/{BR}")
+    err = expect(2, pfckpt.verify, a, "HEAD", D)
+    assert set(err.detail["problems"]) <= set(err.detail["reference_problems"])
+    assert any("ancor" in p for p in err.detail["problems"]), err.detail["problems"]
+    err = expect(2, pfckpt.bootstrap, world["url"], BR, str(world["tmp"] / "fresh"), D, CODE_BR)
+    assert err.reason == "NEEDS_RECONCILIATION"
+
+
+def test_tree_anchor_recorded_by_an_earlier_checkpoint_of_the_chain_is_accepted(world):
+    """L'ancora puo' stare in un checkpoint PRECEDENTE della catena (save quando l'oggetto c'era)."""
+    feat, ftree = make_feature(world)
+    a = ckpt_agent(world, "a")
+    exp = next_state(a, world, code={"branch": FEATURE, "sha": feat})
+    pfckpt.save(a, BR, "origin", exp, "ckpt", D, agent="claude", release=True, allow_branch_only=True)
+    squash, _ = squash_merge_and_delete(world, feat)
+    b = agent(world, "b")
+    sh(b, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    integ = pfckpt.build_integration(b, feat, squash, original_tree=ftree)
+    exp = next_state(b, world, code={"branch": "main", "sha": feat, "integration": integ})   # nessun code.tree qui
+    res = pfckpt.save(b, BR, "origin", exp, "transizione", D, agent="claude", release=True)
+    assert res["status"] == "DURABLE" and _vias(res)["code.sha"] == "INTEGRATION:main"
