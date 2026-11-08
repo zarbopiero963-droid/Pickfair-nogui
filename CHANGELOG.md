@@ -8,6 +8,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Scatola nera universale, BB-1: nucleo e ciclo di vita (PF-BLACKBOX-01).** Un solo registro cronologico
+  permanente, `blackbox.sqlite` nella cartella dati: append-only (trigger), `seq` globale, catena di hash con
+  `verify()`, WAL + `synchronous=FULL`, redazione dei segreti in scrittura. `headless_main.main()` lo installa prima
+  di qualunque componente (`PROCESS_START`) e senza registro rifiuta l'avvio; registra `COMPONENT_INIT`,
+  `EMERGENCY_STOP` (richiesta ed esito), eccezioni non gestite di processo e thread, dump nativi (`faulthandler`),
+  `SHUTDOWN`, e al riavvio dopo un crash `UNCLEAN_TERMINATION` + `BLACKBOX_GAP` UNKNOWN. Eventi critici fail-closed
+  (`BlackBoxUnavailable`), buffer critico per le sole uscite protettive. Lettura unica `core/blackbox_query`
+  (contratto Control API/MCP 1.13.0 di Claude C). Vocabolario esteso in `core.event_journal`. Documentazione:
+  `docs/blackbox.md`. Ordini, impostazioni e visualizzatore arrivano in BB-2…BB-6.
+
 ### Fixed
 - **G7-R06 (#586): AMBIGUOUS gia' regolato non rinasce come riserva al riavvio.** La ricostruzione F018 chiude gli
   intenti con un effetto di settlement applicato (`Database.settled_customer_refs`, prova = chiave del settlement)

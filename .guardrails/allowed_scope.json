@@ -3496,6 +3496,25 @@
         "tests/f026/test_g7_r06_settled_ambiguous.py"
       ],
       "max_files": 8
+    },
+    "bb1_blackbox_core": {
+      "description": "PF-BLACKBOX-01 BB-1 (#586, direttiva owner 08/11/2026): scatola nera unica blackbox.sqlite (append-only, seq globale, catena di hash, redazione, fail-closed critico, buffer per uscite protettive), installata in headless_main.main prima dei componenti (PROCESS_START/COMPONENT_INIT/EMERGENCY_STOP/eccezioni/faulthandler/SHUTDOWN/UNCLEAN_TERMINATION), lettura core/blackbox_query (contratto Claude C 1.13.0), vocabolario esteso in core/event_journal, mutanti bb_*. Nessun aggancio al percorso del denaro (BB-3).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/blackbox.py",
+        "core/blackbox_query.py",
+        "core/blackbox_runtime.py",
+        "core/event_journal.py",
+        "docs/blackbox.md",
+        "guardrails/mutation_catalog.json",
+        "headless_main.py",
+        "scripts/ci_changed_modules.py",
+        "tests/blackbox/test_blackbox_core.py",
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "max_files": 12
     }
   }
 }

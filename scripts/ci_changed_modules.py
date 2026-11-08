@@ -216,6 +216,7 @@ MODULE_RULES = [
             "session_manager.py",
             "rate_limiter.py",
             "live_gate.py",
+            "headless_main.py",  # PF-BLACKBOX-01: mutazione del catalogo sull'avvio della scatola nera
         ],
     },
 ]

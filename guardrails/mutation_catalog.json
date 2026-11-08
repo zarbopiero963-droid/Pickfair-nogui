@@ -17,7 +17,8 @@
     "check_dedupe",
     "trusted_gate",
     "trusted_dispatcher",
-    "fullscope_tooling"
+    "fullscope_tooling",
+    "blackbox"
   ],
   "mutations": [
     {
@@ -8484,6 +8485,102 @@
         "tests/acceptance/test_g7_r06_rebuild_settled.py"
       ],
       "rationale": "G7-R06: un intento con un ordine ancora vivo sull'exchange (per customerOrderRef o betId) viene chiuso per settlement e la sua riserva rilasciata."
+    },
+    {
+      "id": "bb_critical_write_failure_ignored",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                if critical:",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: un evento critico non scritto non solleva BlackBoxUnavailable: l'azione finanziaria partirebbe senza registro."
+    },
+    {
+      "id": "bb_redaction_removed",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        return REDACTED",
+      "mutated": "        pass",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: i valori delle chiavi sensibili (password, token, app_key) finiscono nel registro."
+    },
+    {
+      "id": "bb_verify_seq_gap_ignored",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "            if row[\"seq\"] != expected:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: un record mancante non viene rilevato dalla verifica."
+    },
+    {
+      "id": "bb_verify_hash_ignored",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "            if compute_hash(row[\"prev_hash\"], row[\"seq\"], rec) != row[\"hash\"]:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: un record alterato non viene rilevato dalla verifica."
+    },
+    {
+      "id": "bb_unclean_termination_ignored",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        if last is not None and last[\"type\"] not in (\"SHUTDOWN\", \"UNCLEAN_TERMINATION\"):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: un crash della sessione precedente non lascia ne' UNCLEAN_TERMINATION ne' la lacuna dichiarata."
+    },
+    {
+      "id": "bb_entry_buffered_during_outage",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                if critical and buffer_on_failure and len(self._buffer) < MAX_CRITICAL_BUFFER:",
+      "mutated": "                if critical and len(self._buffer) < MAX_CRITICAL_BUFFER:",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: con il registro guasto anche un nuovo ingresso viene bufferizzato invece di essere bloccato."
+    },
+    {
+      "id": "bb_external_view_exposes_customer_ref",
+      "module": "core.blackbox_query",
+      "area": "blackbox",
+      "file": "core/blackbox_query.py",
+      "original": "            ev.pop(f, None)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: la vista esterna (Control API/MCP) espone il customerOrderRef."
+    },
+    {
+      "id": "bb_not_started_before_components",
+      "module": "headless_main",
+      "area": "blackbox",
+      "file": "headless_main.py",
+      "original": "        blackbox_runtime.install(entrypoint=\"headless_main\")",
+      "mutated": "        pass",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: il processo parte senza scatola nera (nessun PROCESS_START prima dei componenti)."
     }
   ]
 }
