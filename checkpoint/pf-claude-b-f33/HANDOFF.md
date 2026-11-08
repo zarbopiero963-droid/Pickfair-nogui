@@ -1,6 +1,6 @@
-# HANDOFF Claude B — seq 22 (08/11/2026)
+# HANDOFF Claude B — seq 23 (08/11/2026)
 
-- #610 F-16 @6fdb6398: OWNER_MANUAL_MERGE_REQUIRED, eccezione mutante documentata (c.6727851307).
-- PF-BLACKBOX-01: architettura su registro e424d7ae; codice dopo F-R06/pfckpt.
-- pfckpt-squash-durable @de40d0cd verificato da C (seq 8 d6d1cda0).
+- #610 F-16 merged a09d8d61.
+- F-R06 pubblicato 34bbf01f, PR in apertura.
+- pfckpt @5c52cd9f pronto, PR dopo F-R06. Poi BB-1 (scatola nera).
 - LIVE OFF.

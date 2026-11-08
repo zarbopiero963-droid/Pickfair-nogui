@@ -1,14 +1,14 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 22,
+ "seq": 23,
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "previous_checkpoint_sha": "f62b1ca3b4b9b5bcf6fc5ac3e7b254abba94c93b",
+ "previous_checkpoint_sha": "be16bbbd74beb700e316470aefed063b241ce80a",
  "code": {
-  "branch": "claude/d-f16-funds-freshness",
-  "sha": "6fdb639829ac4a288cf16215866c83a643457fbc"
+  "branch": "claude/d-g7-r06-settled-ambiguous",
+  "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e"
  },
- "lotto_corrente": "#610 F-16 @6fdb6398: OWNER_MANUAL_MERGE_REQUIRED (PF-F16-MUTATION-EXCEPTION-01); PRE-LIVE action_required non convertito; rapporto c.6727851307",
+ "lotto_corrente": "F-R06: head 34bbf01f pubblicato (merge main a09d8d61 + mutante g7r06_live_order_ignored); PR in apertura. Mandato owner PF-POST-F16-FULL-EXECUTION-20261108.",
  "lotti_completati": [
   "#596 F-01 merged dc83b06",
   "#597 F-09 0d16693",
@@ -29,9 +29,11 @@
   "Handoff C pubblicato handoff/claude-c/mcp-core-20261105 @ f22d6bfb (verificato da C)",
   "PF-CKPT-CROSS-REPO-PROOF-02: pfckpt-squash-durable @ de40d0cd (117 test, 12/12 digest reali)",
   "PF-BLACKBOX-01 architettura pubblicata (registro e424d7ae)",
-  "Piano integrazione MCP pubblicato (registro f5bfa2b6, #586 c.6663734910)"
+  "Piano integrazione MCP pubblicato (registro f5bfa2b6, #586 c.6663734910)",
+  "#610 F-16 merged owner a09d8d61 (tree = 6fdb6398), CI post-merge 12/12",
+  "pfckpt-squash-durable aggiornato su main @5c52cd9f (117 test)"
  ],
- "next_atomic_action": "Attendere merge owner #610; poi verifica main/CI post-merge, PR F-R06, poi pfckpt (de40d0cd, rebase). BB-1 dopo. Patch 13 attende archivio.",
+ "next_atomic_action": "Aprire PR F-R06, gate; auto-merge se tutti PASS sullo stesso SHA. Poi PR pfckpt (5c52cd9f). Poi BB-1.",
  "dependencies": {
   "f16": "dopo merge #609",
   "g1_g2_install": "GO owner specifico",
@@ -40,8 +42,7 @@
  "blocks": [
   "LIVE NO-GO",
   "VPS: nessuna modifica senza GO",
-  "#610: merge riservato all'owner (eccezione mutante)",
-  "MCP-A: decisione owner sul package pinnato in CI"
+  "MCP-A: pacchetto pinnato da verificare (mandato: selezione tecnica autorizzata)"
  ],
  "owner_authorizations": {
   "merge_606": "eseguito dall'owner 911562ad",
@@ -54,27 +55,50 @@
  },
  "tests_executed": [
   {
-   "name": "mutanti F-16 (3) su checkout pulito",
+   "name": "F-R06 mirati",
    "status": "PASS",
-   "sha": "6fdb639829ac4a288cf16215866c83a643457fbc",
-   "result": "3/3 KILLED (18/11/3 test falliti)"
+   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
+   "result": "26 passed; 4 mutanti g7r06_* KILLED"
   },
   {
-   "name": "F-16 + pr28e confini",
+   "name": "F018 collegati",
    "status": "PASS",
-   "sha": "6fdb639829ac4a288cf16215866c83a643457fbc",
-   "result": "70 passed"
+   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
+   "result": "814 passed, 1 xfailed"
   },
   {
-   "name": "CI #610",
+   "name": "tests/acceptance",
+   "status": "FAIL",
+   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
+   "result": "1451 passed, 1 failed preesistente #611"
+  },
+  {
+   "name": "tests/f026",
    "status": "PASS",
-   "sha": "6fdb639829ac4a288cf16215866c83a643457fbc",
-   "result": "120 check: verdi salvo PRE-LIVE action_required e Merge readiness conseguente"
+   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
+   "result": "176 passed"
+  },
+  {
+   "name": "tests/recovery+core",
+   "status": "PASS",
+   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
+   "result": "51 + 675 passed"
+  },
+  {
+   "name": "tests/guardrails",
+   "status": "PASS",
+   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
+   "result": "1343 passed, 15 skipped (ambiente: origin/main, xdist)"
+  },
+  {
+   "name": "tests/scripts",
+   "status": "PASS",
+   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
+   "result": "3406 passed"
   }
  ],
  "tests_missing": [
-  "merge owner #610",
-  "CI post-merge"
+  "gate CI/review/PRE-LIVE F-R06"
  ],
  "missing_historical_evidence": [],
  "gate_a": "NON PASS: behaviour_coverage.json 0 comportamenti mappati",
@@ -92,6 +116,10 @@
   "608": {
    "state": "merged",
    "sha": "53e744e96e286c4d025835cca7a262bc1003d00f"
+  },
+  "610": {
+   "state": "merged",
+   "sha": "a09d8d6116aa234e838186f807f62470873def50"
   }
  },
  "worktrees": {

@@ -2,8 +2,7 @@
  "blocks": [
   "LIVE NO-GO",
   "VPS: nessuna modifica senza GO",
-  "#610: merge riservato all'owner (eccezione mutante)",
-  "MCP-A: decisione owner sul package pinnato in CI"
+  "MCP-A: pacchetto pinnato da verificare (mandato: selezione tecnica autorizzata)"
  ],
  "dependencies": {
   "f02_f04_f03": "dopo F-16/F-11/F-12/F-23 secondo roadmap",
@@ -31,15 +30,16 @@
   "Handoff C pubblicato handoff/claude-c/mcp-core-20261105 @ f22d6bfb (verificato da C)",
   "PF-CKPT-CROSS-REPO-PROOF-02: pfckpt-squash-durable @ de40d0cd (117 test, 12/12 digest reali)",
   "PF-BLACKBOX-01 architettura pubblicata (registro e424d7ae)",
-  "Piano integrazione MCP pubblicato (registro f5bfa2b6, #586 c.6663734910)"
+  "Piano integrazione MCP pubblicato (registro f5bfa2b6, #586 c.6663734910)",
+  "#610 F-16 merged owner a09d8d61 (tree = 6fdb6398), CI post-merge 12/12",
+  "pfckpt-squash-durable aggiornato su main @5c52cd9f (117 test)"
  ],
- "lotto_corrente": "#610 F-16 @6fdb6398: OWNER_MANUAL_MERGE_REQUIRED (PF-F16-MUTATION-EXCEPTION-01); PRE-LIVE action_required non convertito; rapporto c.6727851307",
+ "lotto_corrente": "F-R06: head 34bbf01f pubblicato (merge main a09d8d61 + mutante g7r06_live_order_ignored); PR in apertura. Mandato owner PF-POST-F16-FULL-EXECUTION-20261108.",
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "next_atomic_action": "Attendere merge owner #610; poi verifica main/CI post-merge, PR F-R06, poi pfckpt (de40d0cd, rebase). BB-1 dopo. Patch 13 attende archivio.",
+ "next_atomic_action": "Aprire PR F-R06, gate; auto-merge se tutti PASS sullo stesso SHA. Poi PR pfckpt (5c52cd9f). Poi BB-1.",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
-  "merge owner #610",
-  "CI post-merge"
+  "gate CI/review/PRE-LIVE F-R06"
  ]
 }

@@ -2,12 +2,12 @@
  "certification_verdict": "NOT VERIFIED",
  "checkpoint_commit": null,
  "code": {
-  "branch": "claude/d-f16-funds-freshness",
-  "sha": "6fdb639829ac4a288cf16215866c83a643457fbc"
+  "branch": "claude/d-g7-r06-settled-ambiguous",
+  "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e"
  },
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "next_atomic_action": "Attendere merge owner #610; poi verifica main/CI post-merge, PR F-R06, poi pfckpt (de40d0cd, rebase). BB-1 dopo. Patch 13 attende archivio.",
- "previous_checkpoint_sha": "f62b1ca3b4b9b5bcf6fc5ac3e7b254abba94c93b",
+ "next_atomic_action": "Aprire PR F-R06, gate; auto-merge se tutti PASS sullo stesso SHA. Poi PR pfckpt (5c52cd9f). Poi BB-1.",
+ "previous_checkpoint_sha": "be16bbbd74beb700e316470aefed063b241ce80a",
  "schema": "pf-current/1",
- "seq": 22
+ "seq": 23
 }
