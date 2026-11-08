@@ -519,3 +519,38 @@ def test_tree_anchor_recorded_by_an_earlier_checkpoint_of_the_chain_is_accepted(
     exp = next_state(b, world, code={"branch": "main", "sha": feat, "integration": integ})   # nessun code.tree qui
     res = pfckpt.save(b, BR, "origin", exp, "transizione", D, agent="claude", release=True)
     assert res["status"] == "DURABLE" and _vias(res)["code.sha"] == "INTEGRATION:main"
+
+
+def test_one_unavailable_declared_pr_does_not_block_fetching_the_others(world):
+    """Codex #615 (aaa3e8db): i refs/pull/<N>/head dichiarati si scaricano uno per volta; una PR inesistente non
+    impedisce di risolvere lo SHA conservato da un'altra PR."""
+    feat, _ = make_feature(world)
+    open_pr(world, 1, feat)
+    squash_merge_and_delete(world, feat)
+    a = agent(world, "a")
+    next_state(a, world, code={"branch": "main", "sha": world["code"], "pr": 999},
+               tests_executed=_tests(feat, pr=1))
+    pfckpt.write_manifest(a, D)
+    raw_commit(a, "ckpt con una PR inesistente e una valida")
+    sh(a, "push", "-q", "origin", f"HEAD:refs/heads/{BR}")
+    dest = str(world["tmp"] / "fresh")
+    subprocess.run(["git", "clone", "-q", "--no-local", "--branch", BR, world["url"], dest], check=True)
+    pfckpt.fetch_pull_heads(dest, D)
+    assert pfckpt.resolve_commit(dest, feat) == feat
+
+
+def test_recover_survives_an_exception_while_fetching_pull_refs(world, monkeypatch):
+    """Grok #615 (aaa3e8db): un'eccezione nel fetch dei refs/pull di un candidato non interrompe recover."""
+    a = agent(world, "a")
+    exp = next_state(a, world)
+    good = pfckpt.save(a, BR, "origin", exp, "ckpt valido", D, agent="claude", release=True)["commit"]
+    real = pfckpt.fetch_pull_heads
+
+    def flaky(repo, d, ref="HEAD"):
+        if ref == good:
+            raise RuntimeError("fetch esploso")
+        return real(repo, d, ref)
+
+    monkeypatch.setattr(pfckpt, "fetch_pull_heads", flaky)
+    rep = pfckpt.recover(world["url"], BR, str(world["tmp"] / "rec"), D)
+    assert rep["status"] == "RECOVERED" and rep["commit"] == good

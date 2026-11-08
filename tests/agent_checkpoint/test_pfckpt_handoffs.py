@@ -237,3 +237,23 @@ def test_verify_with_a_separate_code_repo_reads_the_patch_from_the_checkpoint(wo
                           capture_output=True).returncode != 0
     rep = pfckpt.verify(a, "HEAD", D, code_repo=code_clone)
     assert rep["handoffs"][0]["source_reachable"] is True
+
+
+def test_integration_sha_of_a_verified_handoff_must_be_durable_too(world):
+    """Codex #615 (aaa3e8db): in un record INTEGRATED_VERIFIED (forma artefatto/base/integration, stesso repository)
+    il commit di integrazione e' parte della prova: se sta solo su un branch temporaneo il save rifiuta."""
+    base, source, patch = deliver(world)
+    c = _code(world)
+    sh(c, "checkout", "-q", "-B", "tmp-integ", base)
+    subprocess.run(["git", "-C", c, "apply", "--index", "-"], input=patch, check=True)
+    sh(c, "commit", "-q", "-m", "integrazione su branch temporaneo")
+    integ = sh(c, "rev-parse", "HEAD")
+    sh(c, "push", "-q", "origin", "HEAD:refs/heads/tmp-integ")
+    a = b_agent(world, "a")
+    art = put_patch(a, patch)
+    exp = next_state(a, world, handoffs=[record(source, patch, "INTEGRATED_VERIFIED", artifact=art, base_sha=base,
+                                                integration_sha=integ)])
+    err = expect(2, pfckpt.save, a, BR, "origin", exp, "verificato su branch temporaneo", D, agent="claude-b",
+                 durable_branches=DURABLE)
+    assert err.reason == "CODE_SHA_NOT_DURABLE"
+    assert any(r["label"] == "handoff[0].integration_sha" for r in err.detail["not_durable"])

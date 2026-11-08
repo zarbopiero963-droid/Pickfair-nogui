@@ -54,6 +54,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   irraggiungibile vale solo se ancorato a un `code.tree` registrato da un checkpoint (corrente o precedente); senza
   ancora `NEEDS_RECONCILIATION` (prima un tree copiato da main rendeva READY uno SHA inventato). Il digest canonico
   include sempre i sottomoduli (`--ignore-submodules=none`).
+  Rilievi Codex/Grok sullo stesso giro: negli handoff `DURABLE`/`INTEGRATED_VERIFIED` dello stesso repository anche
+  `base_sha` e `integration_sha` devono essere durevoli; i `refs/pull/<N>/head` dichiarati si scaricano uno per volta
+  (una PR inesistente non blocca le altre); un errore nel fetch di un candidato non interrompe `recover`.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

@@ -204,7 +204,8 @@ owner e i risultati legati a quegli SHA restano invariati. La transizione entra 
 
 **3. `refs/pull/<N>/head` in lettura.** GitHub conserva `refs/pull/<N>/head` anche dopo la cancellazione del branch.
 Se, dopo i ref keep, uno SHA citato resta irrisolto, `bootstrap`, `recover` e il readback scaricano i
-`refs/pull/<N>/head` dichiarati nello STATE, oppure tutti i `refs/pull/*/head` se non ne è dichiarato nessuno. Non
+`refs/pull/<N>/head` dichiarati nello STATE (uno per volta: una PR inesistente non blocca le altre), oppure tutti i
+`refs/pull/*/head` se non ne è dichiarato nessuno. Non
 serve configurazione per agente o per catena (B, C, D). `recover` ripete il fallback per **ogni** checkpoint candidato,
 non solo per HEAD: con HEAD corrotto, un checkpoint precedente valido che cita una PR diversa resta recuperabile. Il fallback fa solo tornare risolvibile l'oggetto e non
 sostituisce alcun controllo: uno SHA non risolvibile in nessun modo resta non `READY`.
@@ -319,7 +320,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 126 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 129 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo

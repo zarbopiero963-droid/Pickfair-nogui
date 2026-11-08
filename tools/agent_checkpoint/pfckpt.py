@@ -878,8 +878,15 @@ def _same_repo_handoff_shas(state):
             continue
         if h.get("source_sha") and h.get("source_published", True) is not False and h.get("source_repo") == chain:
             found.append((h, "source_sha"))
-        if h.get("handoff_sha") and h.get("target_repo") == chain:
-            found.append((h, "handoff_sha"))
+        if h.get("target_repo") == chain:
+            if h.get("handoff_sha"):
+                found.append((h, "handoff_sha"))
+            # rilievo Codex #615: base e integrazione sono parte della prova ricalcolata (DURABLE / INTEGRATED_*):
+            # devono restare risolvibili quanto la sorgente
+            if h.get("status") in ("DURABLE", "INTEGRATED_VERIFIED"):
+                for f in ("base_sha", "integration_sha"):
+                    if h.get(f):
+                        found.append((h, f))
     return found
 
 
@@ -921,7 +928,8 @@ def fetch_pull_heads(repo, d, ref="HEAD"):
         return None
     specs = ([f"+refs/pull/{n}/head:refs/remotes/origin/pull/{n}" for n in prs] if prs
              else ["+refs/pull/*/head:refs/remotes/origin/pull/*"])
-    git(repo, "fetch", "-q", "origin", *specs, check=False)
+    for spec in specs:                      # uno per volta: una PR inesistente non blocca le altre (rilievo Codex #615)
+        git(repo, "fetch", "-q", "origin", spec, check=False)
     return {"declared_prs": prs, "refspecs": specs}
 
 
@@ -957,7 +965,7 @@ def cited_references(repo, state):
     hs = state.get("handoffs") if isinstance(state.get("handoffs"), list) else []
     for h, f in _same_repo_handoff_shas(state):
         i = hs.index(h)
-        cited.append({"label": f"handoff[{i}]" if f == "source_sha" else f"handoff[{i}].handoff_sha",
+        cited.append({"label": f"handoff[{i}]" if f == "source_sha" else f"handoff[{i}].{f}",
                       "sha": str(h[f]), "original": resolve_commit(repo, str(h[f])), "integration": None})
     return cited
 
@@ -1188,7 +1196,10 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
 # ------------------------------------------------------------------ ripresa da zero, recover, divergenza
 def last_valid_checkpoint(repo, d, start="HEAD", limit=200, repo_paths=None):
     for c in out(repo, "rev-list", "--first-parent", start).splitlines()[:limit]:
-        fetch_pull_heads(repo, d, c)            # i refs/pull/<N>/head citati da QUESTO checkpoint, non solo da HEAD
+        try:
+            fetch_pull_heads(repo, d, c)        # i refs/pull/<N>/head citati da QUESTO checkpoint, non solo da HEAD
+        except Exception:                       # rilievo Grok #615: un fetch fallito non interrompe il recupero
+            pass
         try:
             verify(repo, c, d, repo_paths=repo_paths)
             return c
