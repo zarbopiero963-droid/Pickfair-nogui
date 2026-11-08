@@ -138,7 +138,7 @@ class FakeBlackBox:
             self.session_id = self.session_id + "-riavvio"
         self.record("UNCLEAN_TERMINATION", source="SYSTEM")
         return self.record("BLACKBOX_GAP", source="SYSTEM", outcome="UNKNOWN", critical=True,
-                           reason_code="BUFFER_LOST", data={"from_ts": frm, "to_ts": _now_iso(), "refs": None})
+                           reason_code="BUFFER_LOST", data={"from_ts": frm, "to_ts": _now_iso(), "refs": []})   # vuota = ignoti (BB-1)
 
     # ------------------------------------------------------------------ lettura (§4-bis)
     def status(self) -> Dict[str, Any]:

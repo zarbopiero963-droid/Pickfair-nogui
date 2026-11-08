@@ -170,6 +170,13 @@ def test_disco_pieno_caso1_buffer_recuperato_richiesta_bufferizzata_e_lacuna() -
     assert len(req) == 1 and req[0]["data"]["buffered"] is True
     gap = [r for r in recs if r["type"] == "BLACKBOX_GAP"]
     assert len(gap) == 1 and hedge["order_ref"] in gap[0]["data"]["refs"] and gap[0]["seq"] > req[0]["seq"]
+    # ordine al ripristino confermato per BB-1: eventi bufferizzati, poi GAP, poi BLACKBOX_RECOVERED
+    tail = [r["type"] for r in recs if (r.get("data") or {}).get("buffered") or r["type"] in (
+        "BLACKBOX_GAP", "BLACKBOX_RECOVERED")]
+    assert tail[-2:] == ["BLACKBOX_GAP", "BLACKBOX_RECOVERED"] and all(
+        (r.get("data") or {}).get("buffered") for r in recs if r["seq"] < gap[0]["seq"] and r["seq"] > req[0]["seq"] - 1
+        and r["type"] not in ("BLACKBOX_GAP", "BLACKBOX_RECOVERED") and r["seq"] >= req[0]["seq"])
+    assert all(isinstance(g["data"]["from_ts"], str) and isinstance(g["data"]["to_ts"], str) for g in gap)
     assert _check(sc) == []
 
 
@@ -208,7 +215,8 @@ def test_disco_pieno_caso2_buffer_perso_lacuna_unknown_e_riconciliazione() -> No
     recs = records_of(sc.bb)
     assert [r["type"] for r in recs if r["type"] in ("UNCLEAN_TERMINATION", "BLACKBOX_GAP")] == [
         "UNCLEAN_TERMINATION", "BLACKBOX_GAP"]
-    assert [r for r in recs if r["type"] == "BLACKBOX_GAP"][0]["outcome"] == "UNKNOWN"
+    gap = [r for r in recs if r["type"] == "BLACKBOX_GAP"][0]
+    assert gap["outcome"] == "UNKNOWN" and gap["data"]["refs"] == []                # riferimenti ignoti = lista vuota
     assert _check(sc) == []
 
 
