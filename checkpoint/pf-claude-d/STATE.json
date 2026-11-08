@@ -1,9 +1,9 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 9,
+ "seq": 10,
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "previous_checkpoint_sha": "7e1b5b12bc6e253ba85555a3a236c377f2d9f32c",
+ "previous_checkpoint_sha": "6864941e52da7492993093c9f57565bc33be8ac3",
  "updated_at": "2026-11-05T14:22:51Z",
  "agent": {
   "identity": "claude-d",
@@ -16,7 +16,7 @@
   "branch": "claude/d-roserpina-100-sim-report",
   "sha": "6475b938e930f8e9b83c34a55708d6906e7cb229"
  },
- "main_sha": "a09d8d6116aa234e838186f807f62470873def50",
+ "main_sha": "6519794b125152e62ca02b1821854075f8fc6653",
  "branches": {
   "claude/pickfair-core-audit-slu9su": {
    "sha": "1b2b502436f3a75395aa158946dd8767112b6380",
@@ -27,16 +27,16 @@
    "stato": "F-16 MERGIATA su main (#610, squash); branch cancellato"
   },
   "claude/d-g7-r06-settled-ambiguous": {
-   "sha": "1d8ca01d7f20508e7cba33baf67b439a7b5b45f0",
-   "stato": "F-R06 (P2): hardening pubblicato col consenso di Claude B (pfab-b-20261105-r06-harden-ack-001); PR dopo #609 e F-16, la apre Claude B; non aggiungere altro senza coordinamento"
+   "sha": "6519794b125152e62ca02b1821854075f8fc6653",
+   "stato": "F-R06 MERGIATA su main (#614)"
   },
   "claude/d-f04-sl-tp-close": {
    "sha": "5ae398eb2d5c9dc056f53cbe8cdbcf535986eee2",
    "stato": "F-04: dopo F-02 (Claude B)"
   },
   "claude/d-f03-trailing-stop": {
-   "sha": "8ae07efe23dfe73b1385d76f7cc6b7a90f14a49c",
-   "stato": "stack F-02+F-04+F-03 + D-C4-01 (3bcb308f) + D-C4-02 (8ae07efe, tree 1a993b04); D-C4-01 DELIVERED (ack Claude B), D-C4-02 consegnato"
+   "sha": "663bd44d67627d4a0ca9afe2758a23834095d1ad",
+   "stato": "stack F-02+F-04+F-03 + D-C4-01 + D-C4-02 (+test cache 663bd44d); DELIVERED a Claude B, verifica indipendente alla PR SL/TP; semantica soglie = decisione owner aperta"
   },
   "claude/d-roserpina-100-sim-report": {
    "sha": "6475b938e930f8e9b83c34a55708d6906e7cb229",
@@ -83,8 +83,8 @@
    "stato": "guardia/campagna Betfair READ-ONLY"
   },
   "claude/d-blackbox-completeness": {
-   "sha": "569284ddfbb956119d23a1e5414bc9d0db119280",
-   "stato": "PF-BLACKBOX-01 oracolo di completezza offline (23 test, 15 mutanti), consegnato a Claude B"
+   "sha": "3b3691113dcf21c7f4318c0721a8c61db8dcc75d",
+   "stato": "oracolo completezza, semantica BB-1 disco pieno (31 test, 21 mutanti); ACCEPTED da Claude B (contratto offline)"
   }
  },
  "integration_queue": [
@@ -121,7 +121,7 @@
   "catena di checkpoint pf-claude-d: seq 1 DURABLE, ripristino READY da clone nuovo",
   "caso sintetico squash+branch cancellato consegnato a Claude B (RED riprodotto: LATEST_CHECKPOINT_CORRUPT)"
  ],
- "next_atomic_action": "Attendere risposte Claude B (D-C4-02, oracolo); a ogni integrazione su main rieseguire G7 sullo SHA pubblicato; agganciare l'oracolo a core.blackbox_query quando BB-1 e' in PR",
+ "next_atomic_action": "Attendere la PR della catena SL/TP (Claude B) e BB-1; rieseguire G7 sullo SHA pubblicato a ogni merge; agganciare l'oracolo a core.blackbox_query",
  "dependencies": {
   "F-04": "F-02 su main (Claude B)",
   "F-03": "F-02 + F-04",
@@ -254,6 +254,21 @@
    "id": "oracolo completezza scatola nera tests/blackbox_completeness (23) + 15 mutanti",
    "status": "PASS",
    "sha": "569284ddfbb956119d23a1e5414bc9d0db119280"
+  },
+  {
+   "id": "G7 S01-S06 + R06 acceptance/f026 su main pubblicato (F-14+F-16+F-R06), 292 test",
+   "status": "PASS",
+   "sha": "6519794b125152e62ca02b1821854075f8fc6653"
+  },
+  {
+   "id": "G7 S07-S10 su main + file test sim 6475b938 (albero non pulito), 23 test",
+   "status": "NOT VERIFIED",
+   "note": "unpublished_tree"
+  },
+  {
+   "id": "oracolo scatola nera 31 test + 21 mutanti",
+   "status": "PASS",
+   "sha": "3b3691113dcf21c7f4318c0721a8c61db8dcc75d"
   }
  ],
  "tests_missing": [
@@ -264,7 +279,6 @@
   "checkpoint Claude D prima del 05/11/2026: nessuna catena precedente; stato ricostruito solo da evidenze verificabili (branch pubblicati, #586 c.6640163608, c.6655184840, c.6657564484, c.6657579185, c.6657851343, c.6658423247, c.6658460135)"
  ],
  "defects_open": [
-  "F-R06 (P2, su main): riserva fantasma al riavvio per AMBIGUOUS regolato",
   "stack F-02: voce di catalogo recovery_live_bets_inverted (Claude B)",
   "preesistenti su main: test_issue437_pr02, test_trading_engine_internal_contracts, Telegram",
   "D-C4-01 (P1): CORRETTO su claude/d-f03-trailing-stop 3bcb308f, non su main; in verifica da Claude B",
@@ -285,7 +299,8 @@
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6663479116",
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728013955",
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728261674",
-  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728318353"
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728318353",
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728448873"
  ],
  "gate_a": "NOT APPLICABLE (Claude D)",
  "pr_505": "non toccata",
@@ -309,6 +324,9 @@
   },
   {
    "note": "pfab-d-20261108-blackbox-oracle-001 consegnato al canale (risposta non ancora ricevuta); punto aperto disco pieno/uscite"
+  },
+  {
+   "note": "Claude B: D-C4-02 ACCEPTED (ricevuta, DELIVERED); oracolo ACCEPTED + semantica disco pieno BB-1 recepita in 3b369111"
   }
  ]
 }
