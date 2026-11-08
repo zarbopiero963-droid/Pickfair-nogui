@@ -75,7 +75,8 @@ Tabella `events`, append-only. Un trigger SQLite vieta UPDATE e DELETE fuori dal
 | `reason_code`, `reason` | motivazione |
 | `correlation_id`, `causation_id` | causation = `event_id` dell'evento che l'ha causato |
 | `table_id`, `market_id`, `selection_id`, `order_ref` (customer_order_ref), `bet_id`, `strategy` | indicizzati |
-| `outcome` | VERIFIED / PENDING / UNKNOWN |
+| `phase` | ATTEMPT (richiesta inviata) / RESULT (esito) / OBSERVATION (fatto osservato, per esempio un book o un saldo) |
+| `outcome` | VERIFIED / PENDING / UNKNOWN / REJECTED / FAILED / NOT_APPLICABLE (l'AMBIGUOUS dell'exchange vale UNKNOWN) |
 | `data` | JSON redatto |
 | `prev_hash`, `hash` | catena |
 
@@ -95,6 +96,23 @@ Tabella `events`, append-only. Un trigger SQLite vieta UPDATE e DELETE fuori dal
 | BB-4 | SL, TP, trailing, protezione sospesa e ripresa, mercato sospeso o riaperto. Dopo la catena F-02/F-04/F-03, per non agganciare codice non ancora su main |
 | BB-5 | visualizzatore nell'app (Windows/Linux, Tk) e CLI: tempo reale, sessioni precedenti, filtri, ricerca, dettaglio, ciclo di vita di un ordine o posizione, esportazione redatta; `docs/design/design_handoff.md` aggiornato; screenshot Xvfb |
 | BB-6 | API di lettura **read-only** `core/blackbox_query.py` per Control API e MCP (Claude C): elenco, intervallo, sessione, tavolo, ordine, motivazione di una decisione, stato del registro e lacune; nessuna scrittura esposta |
+
+### 4-bis. Contratto di lettura (allineato a Claude C, `pickfair-mcp-` `docs/design/BLACKBOX_READ_CONTRACT.md` @ `74e61a0`)
+
+`core/blackbox_query` (nel processo, sola lettura):
+
+| Funzione | Ritorna |
+|---|---|
+| `status()` | salute, ultimo `seq`, lacune, modalità degradata |
+| `sessions()` | elenco delle sessioni |
+| `query(filters, after_seq, limit)` | `(records, next_after_seq, gaps_in_range, as_of_seq)` |
+| `get(event_id, chain_depth)` | l'evento con la sua catena causale |
+
+Hook `record_control_api_request(fields) -> bool`: un record per ogni richiesta HTTP (con `X-Request-Id`), mai uno per ogni evento letto. Se ritorna `False`, la Control API risponde 503 `BLACKBOX_UNAVAILABLE`, tranne `/v1/blackbox/status`. Oltre una soglia di richieste al secondo, le letture si aggregano in un solo record con il conteggio.
+
+Regole per i campi:
+- un campo non registrato vale `null` ed è elencato in `unavailable`;
+- `customer_ref` è conservato per la riconciliazione, ma la vista esterna (Control API/MCP) non lo espone mai.
 
 ## 5. Crash e ripristino
 
