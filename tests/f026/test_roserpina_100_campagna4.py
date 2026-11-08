@@ -10,7 +10,8 @@ HeadlessApp reale, exchange SIM. Senza F-02/F-04/F-03 (`core.trailing_stop`) SAL
   senza la correzione (`sl_tp_close.latch_releasable`): con la correzione il test deve passare;
 - B4 trailing su un LAY mai abbinato: nessun profitto da proteggere, nessuno scatto, l'ingresso resta in attesa.
   DIFETTO D-C4-02 (xfail strict): `sl_tp_pnl.position_stake` usa lo stake RICHIESTO (meta['stake']) e non quello
-  abbinato: il trailing scatta su un "profitto" fittizio e la chiusura F-04 cancella l'ingresso non abbinato.
+  abbinato: il trailing scatta su un "profitto" fittizio e la chiusura F-04 cancella l'ingresso non abbinato. Xfail solo
+  senza la correzione (`sl_tp_pnl.matched_position`): con la correzione il test deve passare.
 
 Nel SIM un LAY alla quota del segnale non e' abbinato (book: lay = quota + 0.02): l'abbinamento arriva quando la quota
 scende sotto quella del segnale (op `price`).
@@ -35,6 +36,7 @@ def _has(module: str, attr: str) -> bool:
 
 
 DC401_FIX = _has("core.sl_tp_close", "latch_releasable")      # D-C4-01 corretto (claude/d-f03-trailing-stop)
+DC402_FIX = _has("core.sl_tp_pnl", "matched_position")        # D-C4-02 corretto (claude/d-f03-trailing-stop)
 
 pytestmark = [pytest.mark.integration, pytest.mark.skipif(
     importlib.util.find_spec("core.trailing_stop") is None,
@@ -48,7 +50,8 @@ def _hedges(snaps, market, side):
 
 def test_b1_lay_con_sl_chiude_con_un_back() -> None:
     r1 = run([{"op": "signal", "m": "1.961", "price": 3.0, "side": "LAY", "stop_loss_pct": 10},
-              {"op": "price", "m": "1.961", "price": 2.0}, POLL])          # quota giu': perdita del bancatore
+              {"op": "price", "m": "1.961", "price": 2.0}, POLL,           # il LAY si abbina a 2.02 (quota del book)
+              {"op": "price", "m": "1.961", "price": 1.5}, POLL])          # quota giu': perdita reale del bancatore
     r2 = run([{"op": "settle", "m": "1.961", "win": True}], home=r1["_home"])
     rep = build_report([r1, r2], provenance="SINTETICO", scenario="roserpina-100-lay-sl-v1")
     assert len(_hedges(r1["snaps"], "1.961", "BACK")) == 1, describe(r1["snaps"][-1])
@@ -85,7 +88,7 @@ def _matched(snaps, market):
     return sum(float(o.get("matched") or 0) for o in snaps[-1]["exch_orders"] if str(o["market_id"]) == market)
 
 
-@pytest.mark.xfail(strict=True, reason="D-C4-02: protezioni valutate sullo stake richiesto, non su quello abbinato")
+@pytest.mark.xfail(not DC402_FIX, strict=True, reason="D-C4-02: protezioni valutate sullo stake richiesto, non su quello abbinato")
 def test_b4_trailing_su_lay_non_abbinato_non_scatta() -> None:
     r1 = run([{"op": "signal", "m": "1.964", "price": 2.0, "side": "LAY", "trailing_stop_pct": 20},
               {"op": "price", "m": "1.964", "price": 3.0}, POLL,             # mai abbinato: quota sale

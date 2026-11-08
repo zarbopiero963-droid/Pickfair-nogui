@@ -64,14 +64,16 @@ l'oracolo indipendente (arrotondamento HALF_UP come il report). Valori di uno sc
 `tests/f026/test_roserpina_100_campagna4.py`, stessi requisiti della campagna 2 (F-02 + F-04 + F-03), altrimenti
 saltata. Scenari G7-S22..S26. L'op `price` accetta `status` (es. `SUSPENDED`) per spostare quota e stato insieme.
 
-- B1 (G7-S22) LAY @3.0 con SL 10 %, quota a 2.0: un solo hedge BACK, `SL_TP_CLOSE_ROUTED`, coerente con l'oracolo.
+- B1 (G7-S22) LAY @3.0 con SL 10 %: si abbina a 2.02 quando la quota scende a 2.0, poi la quota scende a 1.5 (perdita
+  reale del bancatore): un solo hedge BACK, `SL_TP_CLOSE_ROUTED`, coerente con l'oracolo. Prima della correzione D-C4-02
+  lo SL scattava gia' a 2.0 perche' il P&L usava l'ingresso richiesto (3.0) invece del prezzo abbinato (2.02).
 - B2 (G7-S23) LAY @2.0 abbinato a 1.92, trailing 20 %, quota 3.0 → 3.4 → 2.4: `TRAILING_TRIGGERED`, un solo hedge BACK.
 - B3 (G7-S24) **XFAIL, difetto D-C4-01**: SL superato a mercato sospeso. Il monitor valuta lo SL anche su book non
   negoziabile, imposta il latch `sl_tp_triggered`, F-04 esita `SL_TP_CLOSE_NOT_EXECUTED` (ritentabile) ma il latch
   impedisce un nuovo scatto: alla riapertura, con la perdita ancora oltre lo SL, la posizione resta aperta.
 - B4 (G7-S25) **XFAIL, difetto D-C4-02**: trailing su un LAY mai abbinato. `sl_tp_pnl.position_stake` usa lo stake
   richiesto (`meta['stake']`) e non quello abbinato: il trailing scatta su un profitto inesistente e la chiusura F-04
-  cancella l'ingresso in attesa.
+  cancella l'ingresso in attesa. Xfail solo senza la correzione (`sl_tp_pnl.matched_position`).
 
 - B5 (G7-S26) ingresso BACK abbinato in parte (book con 1 EUR), SL a quota 3.0: l'hedge della sola parte abbinata
   (~0,66) e' sotto il minimo exchange e passa dal Microstake nativo cablato nell'HeadlessApp; un solo hedge per
@@ -80,7 +82,8 @@ saltata. Scenari G7-S22..S26. L'op `price` accetta `status` (es. `SUSPENDED`) pe
   NOT_TESTED, la copertura E2E e' questa.
 
 Esito osservato il 05/11/2026 sull'albero d3b2d41 (main 911562a + F-14 + F-16 + F-R06 + F-03 + simulazione) piu'
-questa campagna: 3 PASS (B1, B2, B5), 2 XFAIL strict (B3, B4). B3 e' xfail solo senza la correzione D-C4-01
+questa campagna: 3 PASS (B1, B2, B5), 2 XFAIL strict (B3, B4). Con le correzioni D-C4-01 e D-C4-02
+(`claude/d-f03-trailing-stop`) applicate allo stesso albero: 5 PASS; senza: 3 PASS e 2 XFAIL (verificati entrambi). B3 e' xfail solo senza la correzione D-C4-01
 (`sl_tp_close.latch_releasable`, branch `claude/d-f03-trailing-stop`): con la correzione deve passare.
 
 ## Registro G7 e riesecuzione
