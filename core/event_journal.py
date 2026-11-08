@@ -68,6 +68,10 @@ EVENT_CATEGORIES = {
         "UNCAUGHT_EXCEPTION",
         "SHUTDOWN",
         "CRASH_RECOVERY",
+        # PF-BLACKBOX-01 (BB-1): ciclo di vita del processo nella scatola nera
+        "PROCESS_START",
+        "UNCLEAN_TERMINATION",
+        "COMPONENT_INIT",
     }),
     # Configurazione. `CONFIG_CHANGE` porta SEMPRE da dove arriva la modifica
     # (`source`: EXE_GUI / TELEGRAM_BOT / CONFIG_FILE / ENV / DEFAULT): e' la domanda
@@ -156,6 +160,9 @@ EVENT_CATEGORIES = {
     "RISK": frozenset({
         "BANKROLL_READ",
         "STAKE_COMPUTED",
+        # PF-BLACKBOX-01: riserve di fondi
+        "FUNDS_RESERVED",
+        "FUNDS_RELEASED",
         "RISK_GATE_EVAL",
         "RISK_GATE_DENY",
         "EXPOSURE_UPDATE",
@@ -189,6 +196,19 @@ EVENT_CATEGORIES = {
         "POSITION_UPDATE",
         "PNL_UPDATE",
         "RECONCILIATION_RUN",
+        # PF-BLACKBOX-01: esiti per ordine e catena di protezione (oracolo di completezza di Claude D)
+        "RECONCILIATION_RESOLVED",
+        "SL_TRIGGERED",
+        "TP_TRIGGERED",
+        "TRAILING_TRIGGERED",
+        "SL_TP_CLOSE_ROUTED",
+        "SL_TP_CLOSE_NOT_EXECUTED",
+        "SL_TP_CLOSE_UNCERTAIN",
+        "SL_TP_CLOSE_REJECTED",
+        "SL_TP_CLOSE_SKIPPED",
+        "PROTECTION_WAITING",
+        "PROTECTION_RESUMED",
+        "PROTECTION_LATCH_RELEASED",
         "RECONCILIATION_DIFF",
         "SETTLEMENT",
     }),
@@ -206,6 +226,18 @@ EVENT_CATEGORIES = {
         "CLOCK_SKEW",
         "DISK_SPACE_LOW",
         "INSTANCE_LOCK_CONFLICT",
+    }),
+    # PF-BLACKBOX-01: stato del registro stesso (guasti, lacune dichiarate, ripristino)
+    "BLACKBOX": frozenset({
+        "BLACKBOX_DEGRADED",
+        "BLACKBOX_RECOVERED",
+        "BLACKBOX_GAP",
+        "BLACKBOX_UNAVAILABLE",
+        "BLACKBOX_CORRUPT_TAIL",
+    }),
+    # PF-BLACKBOX-01: richieste ricevute dalle interfacce di controllo (Control API / MCP)
+    "CONTROL": frozenset({
+        "CONTROL_API_REQUEST",
     }),
 }
 
