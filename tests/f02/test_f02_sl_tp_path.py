@@ -16,6 +16,7 @@ import pytest
 
 from core.duplication_guard import DuplicationGuard
 from core.runtime_controller import RuntimeController
+from tests.f03.matched_exchange import fully_matched
 from core.system_state import RoserpinaConfig, RuntimeMode
 from core.table_manager import TableManager
 from database import Database
@@ -150,7 +151,7 @@ def _monitor(table):
     rc.mode = RuntimeMode.ACTIVE
     rc.bus = _Bus()
     rc.table_manager = SimpleNamespace(_tables={table.table_id: table})
-    return rc
+    return fully_matched(rc, [table])          # D-C4-02: posizione interamente abbinata (ipotesi del test)
 
 
 def test_stop_loss_in_loss_publishes_sl_triggered_once_and_no_order():
@@ -193,9 +194,8 @@ def _poller(tables, books, *, feed=None, mode=RuntimeMode.ACTIVE):
     rc = RuntimeController.__new__(RuntimeController)
     rc.mode, rc.bus = mode, _Bus()
     rc.table_manager = SimpleNamespace(_tables={t.table_id: t for t in tables})
-    rc.betfair_service = _Service(books)
     rc.streaming_feed = feed
-    return rc
+    return fully_matched(rc, tables, _Service(books))   # D-C4-02: posizione interamente abbinata
 
 
 def test_poller_runs_the_monitor_without_streaming():

@@ -612,6 +612,19 @@ viene pubblicato e il consumer resta inerte. Il latch di F-02 e' in memoria: dop
 viene assorbito dalla rivendicazione persistente. Test:
 `tests/acceptance/test_f04_sl_tp_table_close.py`; mutazioni `f04_*`.
 
+**D-C4-02 (G7-S25): posizione abbinata.** SL/TP/trailing decidono sulla posizione **abbinata** confermata
+dall'exchange, non sullo stake richiesto: bet del tavolo per identita' (righe `orders` del suo `customer_ref`, stessa
+regola di F-04: ordine incerto => nessuna decisione), `sizeMatched` da `listCurrentOrders` (stesso percorso del cashout
+router, `betfair_service.list_current_orders`), prezzo d'ingresso = media di `averagePriceMatched`
+(`sl_tp_pnl.matched_position`). Una lettura per giro del poller per tutti i mercati con protezione armata, in cache per
+un intervallo del poller; dallo stream, a cache scaduta, una lettura solo se `AutoThrottle` (1 per intervallo) la
+consente. Mai una lettura su mercato non negoziabile. Abbinato 0, lettura illeggibile o malformata, bet del tavolo
+assente dalla risposta, prezzo medio non valido => nessuna decisione e nessun latch; il motivo resta sul tavolo
+(`meta.sl_tp_wait_reason`, es. `NOT_MATCHED`, `ORDERS_UNREADABLE`). Parziale => solo la parte abbinata (il residuo
+resta al TTL). Le soglie SL/TP sono la percentuale configurata del rischio **abbinato** (BACK: stake abbinato; LAY:
+abbinato x (prezzo medio - 1)), come F-02 le calcola all'ingresso sul richiesto; senza percentuale vale l'importo del
+tavolo. Test: `tests/f03/test_dc402_stake_abbinato.py`; mutazioni `dc402_*`.
+
 ### 7.7 Trailing stop (F-03, K-7, CSH-04)
 
 Decisione owner K-7 (#586 c.6504686680): configurabile, **OFF di default**, sul P&L liquidabile del cashout (F-01),

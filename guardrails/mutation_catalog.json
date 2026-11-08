@@ -8673,6 +8673,54 @@
         "tests/f03/test_dc401_sl_sospeso_latch.py"
       ],
       "rationale": "D-C4-01: un segnale esterno con sl_tp_quiet nasconde il proprio rifiuto."
+    },
+    {
+      "id": "dc402_requested_stake",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "            stake, entry = position\n",
+      "mutated": "            stake, entry = sl_tp_pnl.position_stake(side, meta, table.current_exposure), sl_tp_pnl.to_decimal(meta.get(\"price\"))\n",
+      "tests": [
+        "tests/f03/test_dc402_stake_abbinato.py"
+      ],
+      "rationale": "D-C4-02: protezioni sullo stake richiesto (anche su ordini mai abbinati)."
+    },
+    {
+      "id": "dc402_unmatched_counted",
+      "module": "core.sl_tp_pnl",
+      "area": "cashout",
+      "file": "core/sl_tp_pnl.py",
+      "original": "            total += matched\n",
+      "mutated": "            total += matched + (to_decimal(row.get(\"sizeRemaining\")) or Decimal(0))\n",
+      "tests": [
+        "tests/f03/test_dc402_stake_abbinato.py"
+      ],
+      "rationale": "D-C4-02: la parte non abbinata contata come posizione."
+    },
+    {
+      "id": "dc402_missing_bet_ignored",
+      "module": "core.sl_tp_pnl",
+      "area": "reconciliation",
+      "file": "core/sl_tp_pnl.py",
+      "original": "            return None, f\"BET_NOT_ON_EXCHANGE:{bid}\"",
+      "mutated": "            continue",
+      "tests": [
+        "tests/f03/test_dc402_stake_abbinato.py"
+      ],
+      "rationale": "D-C4-02: bet del tavolo assente dalla risposta trattato come zero."
+    },
+    {
+      "id": "dc402_threshold_on_requested",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "        if pct is not None and pct > 0:\n            risk = stake",
+      "mutated": "        if False:\n            risk = stake",
+      "tests": [
+        "tests/f03/test_dc402_stake_abbinato.py"
+      ],
+      "rationale": "D-C4-02: soglia SL/TP sull'importo del richiesto invece che sul rischio abbinato."
     }
   ]
 }

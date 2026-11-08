@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.runtime_controller import RuntimeController
+from tests.f03.matched_exchange import fully_matched
 from core.system_state import RuntimeMode
 
 pytestmark = [pytest.mark.unit, pytest.mark.safety]
@@ -37,7 +38,7 @@ def _controller(table):
     rc.mode = RuntimeMode.ACTIVE
     rc.bus = _Bus()
     rc.table_manager = SimpleNamespace(_tables={table.table_id: table})
-    return rc
+    return fully_matched(rc, [table])          # D-C4-02: posizione interamente abbinata (ipotesi del test)
 
 
 def _table(side, entry, exposure, sl=None, tp=None, stake=None):

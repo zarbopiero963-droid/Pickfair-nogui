@@ -9,6 +9,7 @@ import math
 import os
 import threading
 import time
+from types import SimpleNamespace
 import uuid
 import weakref
 from datetime import datetime, timedelta, timezone
@@ -7217,7 +7218,9 @@ class RuntimeController:
         if streaming:
             return 0
         done = 0
-        for market_id in self._sl_tp_poll_markets():
+        markets = self._sl_tp_poll_markets()
+        RuntimeController._sl_tp_fetch_orders(self, markets)       # D-C4-02: una lettura degli ordini per giro
+        for market_id in markets:
             try:
                 book = self.betfair_service.get_market_book_snapshot(market_id, include_prices=True)
             except Exception:  # noqa: BLE001 - book illeggibile => nessuna decisione su quel mercato
@@ -7294,45 +7297,144 @@ class RuntimeController:
             if not runner:
                 continue
             side = str(meta.get("bet_type") or "BACK").upper()
-            stake = sl_tp_pnl.position_stake(side, meta, table.current_exposure)
-            quote = sl_tp_pnl.closing_legs(runner, side, stake, meta.get("price"))
-            if quote is None:
-                continue                        # book illeggibile o vuoto: nessuna decisione (fail-closed)
-            # gambe di hedge livello per livello, ognuna al proprio prezzo; covered=False: il book non basta a
-            # chiudere tutta la posizione (Sol su 6d232f4, Codex P2 e Sol su abfd2ed)
-            legs, covered = quote
             # D-C4-01 / PF-EXEC-05: nessuna decisione SL/TP/trailing su book non negoziabile (mercato non OPEN o
             # selezione non ACTIVE): niente latch, niente chiusura. Prima lo SL scattava anche a mercato sospeso, la
             # chiusura esitava NOT_EXECUTED e il latch impediva ogni nuovo scatto alla riapertura.
             if not RuntimeController._market_book_tradable(market_book, table):
                 continue
+            # D-C4-02: posizione ABBINATA confermata dall'exchange (somma sizeMatched dei bet del tavolo, prezzo medio
+            # abbinato). Abbinato 0 o non dimostrabile => nessuna decisione. Prima: stake RICHIESTO (meta['stake']),
+            # quindi protezioni anche su ordini mai abbinati.
+            position = RuntimeController._sl_tp_matched_position(self, table, side)
+            if position is None:
+                continue
+            stake, entry = position
+            quote = sl_tp_pnl.closing_legs(runner, side, stake, entry)
+            if quote is None:
+                continue                        # book illeggibile o vuoto: nessuna decisione (fail-closed)
+            # gambe di hedge livello per livello, ognuna al proprio prezzo; covered=False: il book non basta a
+            # chiudere tutta la posizione (Sol su 6d232f4, Codex P2 e Sol su abfd2ed)
+            legs, covered = quote
             # Commissione di policy del cashout (la stessa che `dynamic_cashout_single` applica all'hedge reale):
             # una commissione di configurazione diversa farebbe sollevare la funzione del cashout nell'handler.
             try:
-                pnl = sl_tp_pnl.liquidable_pnl_legs(side, stake, meta.get("price"), legs, BETFAIR_ITALY_COMMISSION_PCT)
+                pnl = sl_tp_pnl.liquidable_pnl_legs(side, stake, entry, legs, BETFAIR_ITALY_COMMISSION_PCT)
             except Exception:  # noqa: BLE001 - calcolo non dimostrabile => nessuna decisione (fail-closed)
                 logger.exception("SL/TP: P&L liquidabile del tavolo %s non calcolabile", table.table_id)
                 pnl = None
             if pnl is None:
                 continue                        # dati non validi: nessuna decisione (fail-closed)
-            sl_d = sl_tp_pnl.to_decimal(sl) if sl is not None else None
-            tp_d = sl_tp_pnl.to_decimal(tp) if tp is not None else None
+            # D-C4-02: soglie = percentuale configurata del rischio ABBINATO (BACK: stake abbinato; LAY: liability
+            # abbinata), come F-02 le calcola all'ingresso sul richiesto; senza percentuale vale l'importo del tavolo.
+            sl_d = RuntimeController._sl_tp_threshold(meta, "stop_loss_pct", sl, side, stake, entry) \
+                if sl is not None else None
+            tp_d = RuntimeController._sl_tp_threshold(meta, "take_profit_pct", tp, side, stake, entry) \
+                if tp is not None else None
             if sl_d is not None and pnl <= -abs(sl_d):
                 self._trigger_auto_close_table(table, "STOP_LOSS_REACHED", float(pnl))
                 continue
             # F-03 (K-7): precedenza hard-stop > SL > trailing > TP. Il trailing decide solo su mercato negoziabile e
             # profitto garantito liquidabile per intero (book che copre tutta la posizione).
             if trail_pct is not None and covered:
-                if RuntimeController._evaluate_trailing(self, table, side, stake, legs, trail_pct):
+                if RuntimeController._evaluate_trailing(self, table, side, stake, legs, trail_pct, entry):
                     continue
             # TP solo su profitto LIQUIDABILE per intero; lo SL (chiusura protettiva, PF-EXEC-03) scatta anche con book
             # insufficiente: il residuo non coperto e' valutato all'ultimo livello disponibile.
             # Il TP confronta il netto dell'esito PEGGIORE sulle gambe arrotondate (profitto garantito, Sol su f1de646).
             if tp_d is not None and covered:
-                tp_pnl = sl_tp_pnl.liquidable_pnl_legs(side, stake, meta.get("price"), legs,
+                tp_pnl = sl_tp_pnl.liquidable_pnl_legs(side, stake, entry, legs,
                                                        BETFAIR_ITALY_COMMISSION_PCT, guaranteed=True)
                 if tp_pnl is not None and tp_pnl >= abs(tp_d):
                     self._trigger_auto_close_table(table, "TAKE_PROFIT_REACHED", float(tp_pnl))
+
+    @staticmethod
+    def _sl_tp_threshold(meta: dict, pct_key: str, absolute, side: str, stake, entry):
+        pct = sl_tp_pnl.to_decimal((meta or {}).get(pct_key))
+        if pct is not None and pct > 0:
+            risk = stake if side == "BACK" else stake * (entry - sl_tp_pnl.Decimal("1"))
+            return (risk * pct / sl_tp_pnl.Decimal("100")).quantize(sl_tp_pnl.CENT)
+        return sl_tp_pnl.to_decimal(absolute)
+
+    def _sl_tp_poll_interval(self) -> float:
+        cfg = getattr(self, "_market_data_cfg", None)
+        cfg = cfg if isinstance(cfg, dict) else {}
+        try:
+            return max(0.5, float(cfg.get("sl_tp_poll_sec", 2.0) or 2.0))
+        except (TypeError, ValueError):
+            return 2.0
+
+    def _sl_tp_fetch_orders(self, market_ids) -> dict:
+        """D-C4-02: UNA lettura ``listCurrentOrders`` (stesso percorso del cashout router: ``betfair_service``) per i
+        mercati dati. Errore, risposta malformata => ``None`` per ogni mercato (nessuna decisione). Esito in cache per
+        la durata di un giro del poller; la chiamata e' contata dal limitatore."""
+        markets = [str(m) for m in market_ids if m]
+        if not markets:
+            return {}
+        try:
+            rows = self.betfair_service.list_current_orders(markets)
+            if not isinstance(rows, list):
+                raise RuntimeError("CURRENT_ORDERS_MALFORMED")
+            out = {m: [r for r in rows if isinstance(r, dict)
+                       and str(r.get("marketId") or r.get("market_id") or "") == m] for m in markets}
+        except Exception:  # noqa: BLE001 - lettura non dimostrabile: nessuna decisione SL/TP su quei mercati
+            logger.exception("SL/TP: ordini correnti di %s illeggibili: nessuna decisione", markets)
+            out = {m: None for m in markets}
+        now = time.monotonic()
+        cache = getattr(self, "_sl_tp_orders_cache", None)
+        if not isinstance(cache, dict):
+            cache = self._sl_tp_orders_cache = {}
+        for m, rows in out.items():
+            cache[m] = (now, rows)
+        RuntimeController._sl_tp_orders_throttle(self).record_call()
+        return out
+
+    def _sl_tp_orders_throttle(self):
+        throttle = getattr(self, "_sl_tp_throttle", None)
+        if throttle is None:
+            from auto_throttle import AutoThrottle  # limitatore esistente (OMS rate limiter)
+            throttle = self._sl_tp_throttle = AutoThrottle(max_calls=1, period=RuntimeController._sl_tp_poll_interval(self))
+        return throttle
+
+    def _sl_tp_exchange_orders(self, market_id):
+        """Ordini correnti del mercato per il monitor: dalla lettura del giro (cache fresca entro un intervallo del
+        poller), altrimenti una lettura solo se il limitatore la consente (percorso stream). ``None`` = nessuna decisione."""
+        market_id = str(market_id or "")
+        cache = getattr(self, "_sl_tp_orders_cache", None)
+        entry = cache.get(market_id) if isinstance(cache, dict) else None
+        if entry is not None and time.monotonic() - entry[0] <= RuntimeController._sl_tp_poll_interval(self):
+            return entry[1]
+        if not RuntimeController._sl_tp_orders_throttle(self).allow_call():
+            return None
+        return RuntimeController._sl_tp_fetch_orders(self, [market_id]).get(market_id)
+
+    def _sl_tp_matched_position(self, table, side: str):
+        """``(stake_abbinato, prezzo_medio)`` del tavolo, o ``None`` (nessuna decisione): bet del tavolo per identita'
+        dalle righe ``orders`` del suo customer_ref (stessa regola di F-04: ordine incerto => nessuna), sizeMatched
+        dall'exchange."""
+        meta = table.meta if isinstance(table.meta, dict) else {}
+        ref = str(meta.get("customer_ref") or "").strip()
+        finder = getattr(self.db, "find_orders_by_customer_ref", None)
+        if not ref or not callable(finder):
+            return None
+        try:
+            db_rows = finder(ref)
+        except Exception:  # noqa: BLE001
+            logger.exception("SL/TP: ordini del tavolo %s illeggibili", table.table_id)
+            return None
+        ident = SimpleNamespace(market_id=str(table.market_id), selection_id=str(table.selection_id), side=side)
+        bet_ids, why = sl_tp_close.position_bet_ids(ident, db_rows)
+        position = None
+        if bet_ids is not None:
+            rows = RuntimeController._sl_tp_exchange_orders(self, table.market_id)
+            position, why = sl_tp_pnl.matched_position(rows, bet_ids)
+        if position is None:
+            # protezione in attesa: il motivo resta sul tavolo (osservabile, scatola nera) finche' non si puo' decidere
+            if meta.get("sl_tp_wait_reason") != why:
+                logger.info("SL/TP tavolo %s: protezione in attesa (%s)", table.table_id, why)
+            meta["sl_tp_wait_reason"] = why
+        else:
+            meta.pop("sl_tp_wait_reason", None)
+        return position
 
     @staticmethod
     def _market_book_tradable(market_book: dict, table) -> bool:
@@ -7343,7 +7445,7 @@ class RuntimeController:
                        if isinstance(r, dict) and str(r.get("selectionId")) == str(table.selection_id)), None)
         return runner is not None and str(runner.get("status") or "").strip().upper() == "ACTIVE"
 
-    def _evaluate_trailing(self, table, side: str, stake, legs, pct) -> bool:
+    def _evaluate_trailing(self, table, side: str, stake, legs, pct, entry_price=None) -> bool:
         """F-03 (#586, K-7): un tick del trailing per il tavolo. ``True`` se e' scattato (evento pubblicato).
 
         Picco = massimo del P&L GARANTITO liquidabile (stessa funzione del cashout, F-01), persistito per posizione in
@@ -7366,8 +7468,9 @@ class RuntimeController:
                 return False
             meta["trailing_peak"] = str(peak) if peak is not None else None
         try:
-            pnl = sl_tp_pnl.liquidable_pnl_legs(side, stake, meta.get("price"), legs, BETFAIR_ITALY_COMMISSION_PCT,
-                                                guaranteed=True)
+            pnl = sl_tp_pnl.liquidable_pnl_legs(
+                side, stake, entry_price if entry_price is not None else meta.get("price"), legs,
+                BETFAIR_ITALY_COMMISSION_PCT, guaranteed=True)
         except Exception:  # noqa: BLE001
             logger.exception("F-03: P&L garantito del tavolo %s non calcolabile", table.table_id)
             return False

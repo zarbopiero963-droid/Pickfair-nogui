@@ -69,6 +69,45 @@ def closing_legs(runner: dict, side: str, stake: Any, entry_price: Any) -> Optio
     return legs, False
 
 
+def matched_position(rows: Any, bet_ids: Any) -> Tuple[Optional[Tuple[Decimal, Decimal]], str]:
+    """D-C4-02: posizione ABBINATA del tavolo dai suoi ordini sull'exchange (``listCurrentOrders``).
+
+    ``((stake, prezzo_medio), "")`` con stake = somma ``sizeMatched`` dei soli ``bet_ids`` del tavolo (per identita',
+    mai per importo) e prezzo = media ponderata di ``averagePriceMatched``; ``(None, motivo)`` se la posizione non e'
+    dimostrabile: lettura assente, bet del tavolo non presente nella risposta, valori non validi, nulla di abbinato.
+    Ogni ``None`` => nessuna decisione SL/TP/trailing (fail-closed)."""
+    if rows is None or not isinstance(rows, (list, tuple)):
+        return None, "ORDERS_UNREADABLE"
+    wanted = [str(b).strip() for b in (bet_ids or []) if str(b).strip()]
+    if not wanted:
+        return None, "NO_BET_IDS"
+    by_bet = {}
+    for row in rows:
+        if isinstance(row, dict):
+            bid = str(row.get("betId") or row.get("bet_id") or "").strip()
+            if bid:
+                by_bet.setdefault(bid, []).append(row)
+    total, weighted = Decimal(0), Decimal(0)
+    for bid in wanted:
+        if bid not in by_bet:
+            return None, f"BET_NOT_ON_EXCHANGE:{bid}"
+        for row in by_bet[bid]:
+            raw = row.get("sizeMatched")
+            matched = None if isinstance(raw, bool) else to_decimal(raw)
+            if matched is None or matched < 0:
+                return None, f"MATCHED_INVALID:{bid}"
+            if matched == 0:
+                continue
+            avg = to_decimal(row.get("averagePriceMatched"))
+            if avg is None or avg < MIN_PRICE:
+                return None, f"AVG_PRICE_INVALID:{bid}"
+            total += matched
+            weighted += matched * avg
+    if total <= 0:
+        return None, "NOT_MATCHED"
+    return (total.quantize(CENT), (weighted / total).quantize(CENT)), ""
+
+
 def position_stake(side: str, meta: dict, exposure: Any) -> Optional[Decimal]:
     """Stake reale della gamba: ``meta['stake']`` se presente; altrimenti BACK = esposizione, LAY = liability/(p-1)."""
     stake = to_decimal((meta or {}).get("stake"))
