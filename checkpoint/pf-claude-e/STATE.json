@@ -1,26 +1,32 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 1,
+ "seq": 2,
  "mandate_id": "PF-ISSUE-CLEANUP-01 (owner 08/11/2026) — audit e razionalizzazione issue GitHub",
- "previous_checkpoint_sha": "a09d8d6116aa234e838186f807f62470873def50",
- "updated_at": "2026-11-08T23:30:00Z",
+ "previous_checkpoint_sha": "afdfca6ba34da3a4fa149627fa9d556529a92a04",
+ "updated_at": "2026-11-08T23:59:00Z",
  "agent": {
   "identity": "claude-e",
   "role": "pulizia e razionalizzazione delle issue (Claude E)",
   "session": "https://claude.ai/code/session_013X2mCWhw5vHNrZRwseFiAL",
   "last_writer": "claude-e",
-  "lease_status_at_write": "FREE"
+  "lease_status_at_write": "MINE"
  },
  "code": {
   "branch": "main",
   "sha": "a09d8d6116aa234e838186f807f62470873def50"
  },
- "lotto_corrente": "FASE-1 audit completato; in attesa approvazione owner del piano",
+ "lotto_corrente": "FASE-2 controllata eseguita (PF-ISSUE-AUDIT-PHASE2-20261108); in attesa decisioni owner residue",
  "lotti_completati": [
-  "FASE-1: matrice 82/82 issue aperte (results/MATRIX.md)"
+  "FASE-1: matrice 82/82 issue aperte (results/MATRIX.md)",
+  "DIAG-CKPT: diagnosi catene B/D (results/CHECKPOINT_DIAGNOSIS.md)",
+  "CLOSE-3: #528 #550 #456",
+  "P1-VERDICT: #590 CLOSE_VERIFIED, #536 CLOSE_WITH_TRANSFER (aperte)",
+  "IDX-SUPERSEDED: #461 c.6728218170",
+  "CONSOLIDATE-6: trasferimenti + backlink pubblicati",
+  "DEC-STAKE: #426 c.6728203497"
  ],
- "next_atomic_action": "Attendere l'approvazione owner di results/PLAN.md; poi Lotto 1 (13 chiusure con commento conclusivo), registrando ogni chiusura in results/closures.json",
+ "next_atomic_action": "Attendere decisioni owner: chiusura #590; trasferimento rischi A/B/C di #536; domande NEEDS_REVIEW (D-9/D-11/D-12, #398, PF-C22-01, #565, #578) e consolidamento (#302 modi %, collocazione Banco Prova, percorso screenshot). Dopo il merge di pfckpt-squash-durable: rifare bootstrap da clone pulito su B, D, E, full-delivery.",
  "dependencies": {
   "#586": "registro di coordinamento (da preservare)",
   "#588": "ricerca adapter (da preservare)",
@@ -30,12 +36,12 @@
   "#426": "decisioni owner"
  },
  "blocks": [
-  "Approvazione owner del piano (Fase 2)",
-  "Decisioni owner sulle 10 NEEDS_REVIEW, 6 CONSOLIDATE e 2 CLOSE_VERIFIED P1"
+  "Decisioni owner residue (vedi next_atomic_action)",
+  "Integrazione pfckpt-squash-durable nella coda di Claude B (non di Claude E)"
  ],
  "owner_authorizations": {
-  "fase_1": "audit in sola lettura, mandato owner 08/11/2026",
-  "fase_2": "NON ancora concessa: chiusure CLOSE_VERIFIED/DUPLICATE/SUPERSEDED solo dopo approvazione del piano"
+  "fase_1": "audit sola lettura (08/11)",
+  "fase_2": "PF-ISSUE-AUDIT-PHASE2-20261108: diagnosi checkpoint; chiusura #528/#550/#456 dopo riverifica; indice SUPERSEDED senza chiusura; verifica P1 senza chiusura; consolidamento senza chiusura; registrazione regola stake in #426"
  },
  "tests_executed": [
   {
@@ -52,6 +58,38 @@
    "id": "test_issue437_pr02::test_block_firma_non_ispezionabile_conserva_il_customer_r* (riproduzione #611)",
    "status": "FAIL",
    "sha": "a09d8d6116aa234e838186f807f62470873def50"
+  },
+  {
+   "id": "tests/f026/test_f026_financial.py::test_F026_04 (5/5 + 6/6 sotto carico, prova #528)",
+   "status": "PASS",
+   "sha": "a09d8d6116aa234e838186f807f62470873def50"
+  },
+  {
+   "id": "tests/f026/test_f026_financial.py::test_F026_05 (6/6 sotto carico, prova #528)",
+   "status": "PASS",
+   "sha": "a09d8d6116aa234e838186f807f62470873def50"
+  },
+  {
+   "id": "tests/acceptance/test_issue536_runtime_authority.py (61 passed, prova #536)",
+   "status": "PASS",
+   "sha": "a09d8d6116aa234e838186f807f62470873def50"
+  },
+  {
+   "id": "repro #536 due processi OS: difetto presente sul padre di #537",
+   "status": "FAIL",
+   "sha": "152613b",
+   "artifact": "results/p1/repro_output.txt"
+  },
+  {
+   "id": "repro #590 guard vecchio 2/200 mancati, nuovo 0/200",
+   "status": "PASS",
+   "sha": "a09d8d6116aa234e838186f807f62470873def50",
+   "artifact": "results/p1/590_repro.sh"
+  },
+  {
+   "id": "pfckpt verify catena pf-claude-b con refs/pull: 23/23 VALID",
+   "status": "PASS",
+   "sha": "0e329b8a5e5d3e1c9a030db3810053c7bb673aca"
   }
  ],
  "tests_missing": [],
@@ -62,7 +100,9 @@
  "pr_505": "chiusa senza merge (rilevante solo per #509)",
  "certification_verdict": "NOT VERIFIED",
  "counts": {
-  "open": 82,
+  "audited": 82,
+  "open_now": 79,
+  "closed": 3,
   "KEEP": 50,
   "SUPERSEDED": 11,
   "DUPLICATE": 1,
@@ -70,5 +110,9 @@
   "CONSOLIDATE": 6,
   "NEEDS_REVIEW": 10
  },
- "closures": []
+ "closures": [
+  528,
+  550,
+  456
+ ]
 }

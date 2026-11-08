@@ -23,7 +23,9 @@
   "owner_question": "La #274 ha l'istruzione 'NON chiudere'. Confermi che, essendo i requisiti consolidati nella #453 (riga #274) e la sequenza sostituita da #453/#461, si può chiudere come SUPERSEDED? In caso affermativo, vuoi prima riportare in #453 l'elenco puntuale degli 11 test TOP30 Parte 2 e dei 6 follow-up cashout?",
   "auditor": "subagent",
   "final_class": "NEEDS_REVIEW",
-  "phase2_action": "decisione owner richiesta"
+  "phase2_action": "decisione owner richiesta",
+  "state_20261108": "OPEN",
+  "phase2_note": "verdetto in results/NEEDS_REVIEW_VERDICTS.md; resta aperta"
  },
  {
   "number": 285,
@@ -50,7 +52,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 289,
@@ -77,7 +80,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 290,
@@ -105,7 +109,10 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "CONSOLIDATE",
-  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica"
+  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica",
+  "state_20261108": "OPEN — consolidamento pubblicato",
+  "phase2_note": "→ #461 c.6728357499, backlink c.6728377277",
+  "phase2_link": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/461#issuecomment-6728357499"
  },
  {
   "number": 293,
@@ -133,7 +140,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 297,
@@ -160,7 +168,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 301,
@@ -184,7 +193,10 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "CONSOLIDATE",
-  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica"
+  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica",
+  "state_20261108": "OPEN — consolidamento pubblicato",
+  "phase2_note": "→ #461 c.6728360637, backlink c.6728378149",
+  "phase2_link": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/461#issuecomment-6728360637"
  },
  {
   "number": 302,
@@ -211,7 +223,10 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "CONSOLIDATE",
-  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica"
+  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica",
+  "state_20261108": "OPEN — consolidamento pubblicato",
+  "phase2_note": "→ #461 c.6728364519, backlink c.6728379187; 3 punti da chiarire owner",
+  "phase2_link": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/461#issuecomment-6728364519"
  },
  {
   "number": 305,
@@ -237,7 +252,9 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "SUPERSEDED",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "OPEN",
+  "phase2_note": "indice SUPERSEDED in #461 c.6728218170; chiusura NON autorizzata (#453 §C)"
  },
  {
   "number": 306,
@@ -263,7 +280,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 309,
@@ -289,7 +307,10 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN",
+  "phase2_note": "regola CAP superata da PF-STAKE-OVER-LIMIT-REJECT-20261108 (#426 c.6728203497), backlink c.6728204850",
+  "phase2_link": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/426#issuecomment-6728203497"
  },
  {
   "number": 312,
@@ -314,7 +335,10 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "CONSOLIDATE",
-  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica"
+  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica",
+  "state_20261108": "OPEN — consolidamento pubblicato",
+  "phase2_note": "→ #461 c.6728367137, backlink c.6728379998; collocazione Banco Prova da decidere",
+  "phase2_link": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/461#issuecomment-6728367137"
  },
  {
   "number": 320,
@@ -343,7 +367,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 328,
@@ -366,7 +391,9 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "SUPERSEDED",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "OPEN",
+  "phase2_note": "indice SUPERSEDED in #461 c.6728218170; chiusura NON autorizzata (#453 §C)"
  },
  {
   "number": 329,
@@ -389,7 +416,9 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "SUPERSEDED",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "OPEN",
+  "phase2_note": "indice SUPERSEDED in #461 c.6728218170; chiusura NON autorizzata (#453 §C)"
  },
  {
   "number": 330,
@@ -414,7 +443,9 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "SUPERSEDED",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "OPEN",
+  "phase2_note": "indice SUPERSEDED in #461 c.6728218170; chiusura NON autorizzata (#453 §C)"
  },
  {
   "number": 331,
@@ -437,7 +468,9 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "SUPERSEDED",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "OPEN",
+  "phase2_note": "indice SUPERSEDED in #461 c.6728218170; chiusura NON autorizzata (#453 §C)"
  },
  {
   "number": 332,
@@ -459,7 +492,9 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "SUPERSEDED",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "OPEN",
+  "phase2_note": "indice SUPERSEDED in #461 c.6728218170; chiusura NON autorizzata (#453 §C)"
  },
  {
   "number": 335,
@@ -482,7 +517,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 337,
@@ -506,7 +542,9 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "SUPERSEDED",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "OPEN",
+  "phase2_note": "indice SUPERSEDED in #461 c.6728218170; chiusura NON autorizzata (#453 §C)"
  },
  {
   "number": 338,
@@ -534,7 +572,9 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "SUPERSEDED",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "OPEN",
+  "phase2_note": "indice SUPERSEDED in #461 c.6728218170; chiusura NON autorizzata (#453 §C)"
  },
  {
   "number": 343,
@@ -558,7 +598,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 345,
@@ -584,7 +625,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 351,
@@ -601,7 +643,8 @@
   "owner_question": null,
   "auditor": "claude-e",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 356,
@@ -625,7 +668,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 359,
@@ -651,7 +695,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 367,
@@ -672,7 +717,9 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "SUPERSEDED",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "OPEN",
+  "phase2_note": "indice SUPERSEDED in #461 c.6728218170; chiusura NON autorizzata (#453 §C)"
  },
  {
   "number": 374,
@@ -697,7 +744,9 @@
   "owner_question": "Confermi #374 come storica chiusa (SUPERSEDED da #453/#461), e le decisioni D-9 (stake dal messaggio), D-11 (porting tastiere Bot API da Pickfair-MarketAPI) e D-12 (CS_OTHER a tre gambe) sono ancora vigenti? Se sì, vanno annotate in #426/#461 prima della chiusura.",
   "auditor": "subagent",
   "final_class": "NEEDS_REVIEW",
-  "phase2_action": "decisione owner richiesta"
+  "phase2_action": "decisione owner richiesta",
+  "state_20261108": "OPEN",
+  "phase2_note": "verdetto in results/NEEDS_REVIEW_VERDICTS.md; resta aperta"
  },
  {
   "number": 380,
@@ -721,7 +770,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 388,
@@ -745,7 +795,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 392,
@@ -765,7 +816,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 394,
@@ -787,7 +839,10 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "CONSOLIDATE",
-  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica"
+  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica",
+  "state_20261108": "OPEN — consolidamento pubblicato",
+  "phase2_note": "→ #416 c.6728370704, backlink c.6728380886; percorso screenshot da decidere",
+  "phase2_link": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/416#issuecomment-6728370704"
  },
  {
   "number": 398,
@@ -808,7 +863,9 @@
   "owner_question": "La campagna di re-review delle 69 PR chiuse va abbandonata (chiusura come not planned, dato P11 e la sospensione P41 dei reviewer a label) oppure va mantenuta con un budget esplicito usando Sol/Grok?",
   "auditor": "subagent",
   "final_class": "NEEDS_REVIEW",
-  "phase2_action": "decisione owner richiesta"
+  "phase2_action": "decisione owner richiesta",
+  "state_20261108": "OPEN",
+  "phase2_note": "verdetto in results/NEEDS_REVIEW_VERDICTS.md; resta aperta"
  },
  {
   "number": 410,
@@ -831,7 +888,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 412,
@@ -856,7 +914,9 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "SUPERSEDED",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "OPEN",
+  "phase2_note": "indice SUPERSEDED in #461 c.6728218170; chiusura NON autorizzata (#453 §C)"
  },
  {
   "number": 415,
@@ -879,7 +939,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 416,
@@ -902,7 +963,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 426,
@@ -919,7 +981,8 @@
   "owner_question": null,
   "auditor": "claude-e",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 437,
@@ -944,7 +1007,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 446,
@@ -967,7 +1031,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 453,
@@ -984,7 +1049,8 @@
   "owner_question": null,
   "auditor": "claude-e",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 454,
@@ -1009,7 +1075,9 @@
   "owner_question": "La direttiva del 13/09 (#453 allegato §C: non chiudere le fonti raggruppate) vale ancora? Se no, #454 può essere chiusa come SUPERSEDED da #453/#461 dato che ogni Top10 ha scheda di destinazione.",
   "auditor": "subagent",
   "final_class": "NEEDS_REVIEW",
-  "phase2_action": "decisione owner richiesta"
+  "phase2_action": "decisione owner richiesta",
+  "state_20261108": "OPEN",
+  "phase2_note": "verdetto in results/NEEDS_REVIEW_VERDICTS.md; resta aperta"
  },
  {
   "number": 455,
@@ -1034,7 +1102,9 @@
   "owner_question": "Confermi che la decisione 'Quant escluso' registrata in #489/#453 è sufficiente e che #455 può essere chiusa come SUPERSEDED nonostante la regola #453 §C 'non chiudere le fonti raggruppate'?",
   "auditor": "subagent",
   "final_class": "NEEDS_REVIEW",
-  "phase2_action": "decisione owner richiesta"
+  "phase2_action": "decisione owner richiesta",
+  "state_20261108": "OPEN",
+  "phase2_note": "verdetto in results/NEEDS_REVIEW_VERDICTS.md; resta aperta"
  },
  {
   "number": 456,
@@ -1056,7 +1126,10 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "DUPLICATE",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "CLOSED (duplicate of #455)",
+  "phase2_note": "chiusa 08/11: 614/614 righe presenti in #455; #455 resta aperta",
+  "phase2_link": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/456#issuecomment-6728199753"
  },
  {
   "number": 457,
@@ -1079,7 +1152,9 @@
   "owner_question": "#457 contiene P0 ancora aperti ma tutti tracciati in #453/#461: preferisci tenerla aperta come fonte fino alla chiusura di PR28/PR29/PR37 o chiuderla come SUPERSEDED?",
   "auditor": "subagent",
   "final_class": "NEEDS_REVIEW",
-  "phase2_action": "decisione owner richiesta"
+  "phase2_action": "decisione owner richiesta",
+  "state_20261108": "OPEN",
+  "phase2_note": "verdetto in results/NEEDS_REVIEW_VERDICTS.md; resta aperta"
  },
  {
   "number": 458,
@@ -1104,7 +1179,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 459,
@@ -1127,7 +1203,9 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "SUPERSEDED",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "OPEN",
+  "phase2_note": "indice SUPERSEDED in #461 c.6728218170; chiusura NON autorizzata (#453 §C)"
  },
  {
   "number": 460,
@@ -1154,7 +1232,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 461,
@@ -1171,7 +1250,8 @@
   "owner_question": null,
   "auditor": "claude-e",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 471,
@@ -1193,7 +1273,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 472,
@@ -1216,7 +1297,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 489,
@@ -1233,7 +1315,8 @@
   "owner_question": null,
   "auditor": "claude-e",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 491,
@@ -1250,7 +1333,8 @@
   "owner_question": null,
   "auditor": "claude-e",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 495,
@@ -1274,7 +1358,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 497,
@@ -1297,7 +1382,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 506,
@@ -1314,7 +1400,8 @@
   "owner_question": null,
   "auditor": "claude-e",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 507,
@@ -1339,7 +1426,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 509,
@@ -1364,7 +1452,10 @@
   "owner_question": "Confermi che la lane PF-BETFAIR-REALDATA-SIM-CI di #562 §8 sostituisce PF-VPS-QA-MANUAL (#509), ora che #505 è stata chiusa senza merge, e che posso trasferire lì i punti elencati?",
   "auditor": "subagent",
   "final_class": "CONSOLIDATE",
-  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica"
+  "phase2_action": "trasferire i requisiti nella destinazione, poi chiudere: serve decisione specifica",
+  "state_20261108": "OPEN — consolidamento pubblicato",
+  "phase2_note": "→ #562 c.6728374619, backlink c.6728381975",
+  "phase2_link": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/562#issuecomment-6728374619"
  },
  {
   "number": 510,
@@ -1389,7 +1480,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 511,
@@ -1414,7 +1506,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 513,
@@ -1438,7 +1531,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 514,
@@ -1463,7 +1557,9 @@
   "owner_question": "Le divergenze residue (PF-C22-01, freshness Delayed/Live, migrazione pre-v9) sono tutte tracciate in #586/#506 così che #514 possa essere chiusa come SUPERSEDED da #426, oppure #514 resta il registro canonico di queste divergenze?",
   "auditor": "subagent",
   "final_class": "NEEDS_REVIEW",
-  "phase2_action": "decisione owner richiesta"
+  "phase2_action": "decisione owner richiesta",
+  "state_20261108": "OPEN",
+  "phase2_note": "verdetto in results/NEEDS_REVIEW_VERDICTS.md; resta aperta"
  },
  {
   "number": 515,
@@ -1486,7 +1582,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 516,
@@ -1511,7 +1608,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 517,
@@ -1533,7 +1631,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 518,
@@ -1555,7 +1654,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 519,
@@ -1575,7 +1675,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 520,
@@ -1595,7 +1696,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 521,
@@ -1619,7 +1721,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 528,
@@ -1640,7 +1743,10 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "CLOSE_VERIFIED",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "CLOSED (completed)",
+  "phase2_note": "chiusa 08/11 dopo riverifica: PR #538, F026_04 5/5 + 6/6 sotto carico, F026_05 6/6 sotto carico",
+  "phase2_link": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/528#issuecomment-6728197224"
  },
  {
   "number": 536,
@@ -1664,7 +1770,10 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "CLOSE_VERIFIED",
-  "phase2_action": "CHIUSURA SOLO CON CONFERMA OWNER ESPLICITA (P1)"
+  "phase2_action": "CHIUSURA SOLO CON CONFERMA OWNER ESPLICITA (P1)",
+  "state_20261108": "OPEN — verdetto CLOSE_WITH_TRANSFER",
+  "phase2_note": "difetto riprodotto pre-fix e assente su main; rischi residui A/B/C da trasferire (Windows, FS di rete, test 2 processi)",
+  "phase2_link": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/536#issuecomment-6728248037"
  },
  {
   "number": 550,
@@ -1688,7 +1797,10 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "CLOSE_VERIFIED",
-  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo"
+  "phase2_action": "chiudibile dopo approvazione del piano, con commento conclusivo",
+  "state_20261108": "CLOSED (completed)",
+  "phase2_note": "chiusa 08/11: PR #552, 161 passed, requisiti 1-8 verificati",
+  "phase2_link": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/550#issuecomment-6728198867"
  },
  {
   "number": 562,
@@ -1705,7 +1817,8 @@
   "owner_question": null,
   "auditor": "claude-e",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 565,
@@ -1726,7 +1839,9 @@
   "owner_question": "Accetti l'evidenza documentale (integration_id 15368 + merge delle PR successive con overlap-check GHA) per chiudere #565, o serve il test negativo con un'identità separata?",
   "auditor": "subagent",
   "final_class": "NEEDS_REVIEW",
-  "phase2_action": "decisione owner richiesta"
+  "phase2_action": "decisione owner richiesta",
+  "state_20261108": "OPEN",
+  "phase2_note": "verdetto in results/NEEDS_REVIEW_VERDICTS.md; resta aperta"
  },
  {
   "number": 578,
@@ -1747,7 +1862,9 @@
   "owner_question": "Dopo la rettifica t257, la checklist 'backup automatico' del corpo va considerata annullata? Se sì, il corpo va aggiornato al solo kit recovery + pulizia VPS + revoca PAT, oppure l'issue va chiusa e quelle attività spostate in #562?",
   "auditor": "subagent",
   "final_class": "NEEDS_REVIEW",
-  "phase2_action": "decisione owner richiesta"
+  "phase2_action": "decisione owner richiesta",
+  "state_20261108": "OPEN",
+  "phase2_note": "verdetto in results/NEEDS_REVIEW_VERDICTS.md; resta aperta"
  },
  {
   "number": 582,
@@ -1764,7 +1881,8 @@
   "owner_question": null,
   "auditor": "claude-e",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 586,
@@ -1781,7 +1899,8 @@
   "owner_question": null,
   "auditor": "claude-e",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 588,
@@ -1798,7 +1917,8 @@
   "owner_question": null,
   "auditor": "claude-e",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 590,
@@ -1818,7 +1938,10 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "CLOSE_VERIFIED",
-  "phase2_action": "CHIUSURA SOLO CON CONFERMA OWNER ESPLICITA (P1)"
+  "phase2_action": "CHIUSURA SOLO CON CONFERMA OWNER ESPLICITA (P1)",
+  "state_20261108": "OPEN — verdetto CLOSE_VERIFIED",
+  "phase2_note": "riproduzione 2/200 vs 0/200, 3 test PASS; attende conferma owner",
+  "phase2_link": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/590#issuecomment-6728249403"
  },
  {
   "number": 605,
@@ -1839,7 +1962,9 @@
   "owner_question": "Un esito EXTERNAL_PENDING/NOT_RUN deve generare una scheda difetto PF-DEF P1, o va tracciato come attività di esecuzione esterna in #586 e la card chiusa?",
   "auditor": "subagent",
   "final_class": "NEEDS_REVIEW",
-  "phase2_action": "decisione owner richiesta"
+  "phase2_action": "decisione owner richiesta",
+  "state_20261108": "OPEN",
+  "phase2_note": "verdetto in results/NEEDS_REVIEW_VERDICTS.md; resta aperta"
  },
  {
   "number": 611,
@@ -1858,7 +1983,8 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  },
  {
   "number": 612,
@@ -1879,6 +2005,7 @@
   "owner_question": null,
   "auditor": "subagent",
   "final_class": "KEEP",
-  "phase2_action": "resta aperta"
+  "phase2_action": "resta aperta",
+  "state_20261108": "OPEN"
  }
 ]

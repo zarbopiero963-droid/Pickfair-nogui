@@ -1,0 +1,38 @@
+=== pre delete (152613b3)
+A START started=True reason_code=None mode=ACTIVE
+DRIVER lock exists: True
+DRIVER lock delete -> exists now: False
+B START started=True reason_code=None mode=ACTIVE
+B AFTER mode=ACTIVE lost=None live_allowed=False
+B WRITE accepted
+A AFTER mode=ACTIVE lost=None live_allowed=False
+A WRITE accepted
+RESULT two_runtimes_started_concurrently=True
+=== pre replace (152613b3)
+A START started=True reason_code=None mode=ACTIVE
+DRIVER lock exists: True
+DRIVER lock replace -> exists now: True
+B START started=True reason_code=None mode=ACTIVE
+B AFTER mode=ACTIVE lost=None live_allowed=False
+B WRITE accepted
+A AFTER mode=ACTIVE lost=None live_allowed=False
+A WRITE accepted
+RESULT two_runtimes_started_concurrently=True
+=== main delete (a09d8d61)
+A START started=True reason_code=None mode=ACTIVE
+DRIVER lock exists: True
+DRIVER lock delete -> exists now: False
+B START started=False reason_code=RUNTIME_LEASE_HELD mode=STOPPED
+B REASON runtime_lease_held_by:a974132a37c544b49a9b14d9012481e7:pid=26117:expires_in=29.5s
+A AFTER mode=LOCKDOWN lost=lock_file_replaced live_allowed=False
+A WRITE rejected:RuntimeFenceViolation:runtime_authority_lost:lease_expired
+RESULT two_runtimes_started_concurrently=False
+=== main replace (a09d8d61)
+A START started=True reason_code=None mode=ACTIVE
+DRIVER lock exists: True
+DRIVER lock replace -> exists now: True
+B START started=False reason_code=RUNTIME_LEASE_HELD mode=STOPPED
+B REASON runtime_lease_held_by:a59eb1e611fb4c27899e3ce87c363a3d:pid=26246:expires_in=29.7s
+A AFTER mode=LOCKDOWN lost=lock_file_replaced live_allowed=False
+A WRITE rejected:RuntimeFenceViolation:runtime_authority_lost:lease_expired
+RESULT two_runtimes_started_concurrently=False

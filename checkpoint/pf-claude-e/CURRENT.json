@@ -6,8 +6,8 @@
   "sha": "a09d8d6116aa234e838186f807f62470873def50"
  },
  "mandate_id": "PF-ISSUE-CLEANUP-01 (owner 08/11/2026) \u2014 audit e razionalizzazione issue GitHub",
- "next_atomic_action": "Attendere l'approvazione owner di results/PLAN.md; poi Lotto 1 (13 chiusure con commento conclusivo), registrando ogni chiusura in results/closures.json",
- "previous_checkpoint_sha": "a09d8d6116aa234e838186f807f62470873def50",
+ "next_atomic_action": "Attendere decisioni owner: chiusura #590; trasferimento rischi A/B/C di #536; domande NEEDS_REVIEW (D-9/D-11/D-12, #398, PF-C22-01, #565, #578) e consolidamento (#302 modi %, collocazione Banco Prova, percorso screenshot). Dopo il merge di pfckpt-squash-durable: rifare bootstrap da clone pulito su B, D, E, full-delivery.",
+ "previous_checkpoint_sha": "afdfca6ba34da3a4fa149627fa9d556529a92a04",
  "schema": "pf-current/1",
- "seq": 1
+ "seq": 2
 }
