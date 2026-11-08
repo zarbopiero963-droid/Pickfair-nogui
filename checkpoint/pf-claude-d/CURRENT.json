@@ -7,7 +7,7 @@
  },
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
  "next_atomic_action": "Attendere la PR della catena SL/TP (Claude B) e BB-1; rieseguire G7 sullo SHA pubblicato a ogni merge; agganciare l'oracolo a core.blackbox_query",
- "previous_checkpoint_sha": "6864941e52da7492993093c9f57565bc33be8ac3",
+ "previous_checkpoint_sha": "69762be9da5b5a4c23884110987cca313782aa5f",
  "schema": "pf-current/1",
- "seq": 10
+ "seq": 11
 }

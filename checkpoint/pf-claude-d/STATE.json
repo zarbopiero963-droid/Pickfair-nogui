@@ -1,9 +1,9 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 10,
+ "seq": 11,
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "previous_checkpoint_sha": "6864941e52da7492993093c9f57565bc33be8ac3",
+ "previous_checkpoint_sha": "69762be9da5b5a4c23884110987cca313782aa5f",
  "updated_at": "2026-11-05T14:22:51Z",
  "agent": {
   "identity": "claude-d",
@@ -157,8 +157,9 @@
   },
   {
    "id": "F-R06 v1: RED su main, 8 test, mutanti 4/4, runner GATE PASS (144)",
-   "status": "PASS",
-   "sha": "d2eb5d29efa639553342e84362bdd291308eb6b0"
+   "status": "NOT VERIFIED",
+   "sha": "d2eb5d29efa639553342e84362bdd291308eb6b0",
+   "note": "branch F-R06 squash-mergiato in main 6519794b (#614) e cancellato: sha non raggiungibile da clone pulito; prova sostituita dalla riesecuzione su main 6519794b"
   },
   {
    "id": "F-04 83 test dopo merge main",
@@ -187,8 +188,9 @@
   },
   {
    "id": "F-R06 hardening: 26 test (completezza exchange, ordini vivi, stesso mercato), mutanti 6/6, regressione ~269 file, runner GATE PASS (145)",
-   "status": "PASS",
-   "sha": "1d8ca01d7f20508e7cba33baf67b439a7b5b45f0"
+   "status": "NOT VERIFIED",
+   "sha": "1d8ca01d7f20508e7cba33baf67b439a7b5b45f0",
+   "note": "branch F-R06 squash-mergiato in main 6519794b (#614) e cancellato: sha non raggiungibile da clone pulito; prova sostituita dalla riesecuzione su main 6519794b"
   },
   {
    "id": "G7 run_g7.py S01-S21 albero massimo (S01-S20 PASS, S09 XPASS strict corretto in e9fc3aaf, S21 UNSUPPORTED)",
@@ -327,6 +329,9 @@
   },
   {
    "note": "Claude B: D-C4-02 ACCEPTED (ricevuta, DELIVERED); oracolo ACCEPTED + semantica disco pieno BB-1 recepita in 3b369111"
+  },
+  {
+   "note": "seq 10 (69762be) pubblicato ma readback FALLITO (sha F-R06 d2eb5d29/1d8ca01 non risolvibili dopo squash #614): NON DURABLE; sostituito da seq 11"
   }
  ]
 }
