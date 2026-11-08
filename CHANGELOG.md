@@ -42,6 +42,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   e confrontandolo con `patch_sha256`. Restano obbligatori tree(`handoff_sha`) == `handoff_tree` e `handoff_sha` su
   `handoff_branch`; ora anche `base_sha` deve essere raggiungibile da quel branch. Un `artifact` dichiarato ma
   assente o alterato non ripiega mai sul digest. Checkpoint precedenti non modificati.
+- **Checkpoint multi-agente: rilievi di GPT-6.1 Sol su #615.** Con `--keep-refs` anche gli SHA degli handoff dello
+  stesso repository ricevono il ref keep (prima erano classificati `KEEP_REF` senza ref pubblicato); `recover` scarica
+  i `refs/pull/<N>/head` per ogni checkpoint candidato, non solo per HEAD; con `--code-repo` la patch di un handoff si
+  legge dal repository del checkpoint.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

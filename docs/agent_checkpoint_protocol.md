@@ -109,6 +109,9 @@ Scaduto o rilasciato (`--release`) ⇒ chiunque può subentrare; ogni salvataggi
 (`CONCURRENT_UPDATE`), e sulla base nuova dal lease del nuovo proprietario. Un solo agente scrive per volta; gli altri
 leggono (`bootstrap` senza il proprio agente o con lease altrui ⇒ `READY_READ_ONLY`).
 
+Con `--code-repo`, gli SHA si risolvono nel repository del codice, ma gli artefatti del checkpoint (patch degli
+handoff) si leggono sempre dal repository del checkpoint, dove vive il suo commit.
+
 **Patch del codice.** `save --code-repo <repo>` cattura il lavoro non committato (diff tracciato + file nuovi, ignorati
 esclusi) e lo registra in `STATE.code.patch`; `restore-code --code-repo <clone pulito su code.sha>` lo riapplica e
 verifica che lo stato risultante coincida con quello dichiarato (repo sporco o baseline diversa ⇒ rifiuto).
@@ -166,7 +169,7 @@ come durevole riprodurrebbe l'incidente di seq 17. Con `refs/pull/1/head` lo ste
 dopo squash e cancellazione del branch `bootstrap` dà `READY`.
 
 **1-bis. Ref keep (opt-in, `--keep-refs`).** Disattivati di default (vincoli d'ambiente in §8). Con il flag, per ogni
-SHA citato e risolvibile il `save` pubblica `refs/agent-state/keep/<sha>` nello stesso push `--atomic` del
+SHA citato e risolvibile (`code.sha`, test, e anche `source_sha`/`handoff_sha` degli handoff dello stesso repository) il `save` pubblica `refs/agent-state/keep/<sha>` nello stesso push `--atomic` del
 checkpoint, senza force: un ref già presente sullo stesso SHA è un no-op, uno che punta altrove fa rifiutare tutto,
 branch compreso. Il readback ne verifica la presenza (`READBACK_KEEP_REF_MISSING`). `bootstrap` e `recover`
 scaricano comunque i ref keep, se ce ne sono; il campo `keep_refs` di `bootstrap` è solo informativo.
@@ -198,7 +201,8 @@ owner e i risultati legati a quegli SHA restano invariati. La transizione entra 
 **3. `refs/pull/<N>/head` in lettura.** GitHub conserva `refs/pull/<N>/head` anche dopo la cancellazione del branch.
 Se, dopo i ref keep, uno SHA citato resta irrisolto, `bootstrap`, `recover` e il readback scaricano i
 `refs/pull/<N>/head` dichiarati nello STATE, oppure tutti i `refs/pull/*/head` se non ne è dichiarato nessuno. Non
-serve configurazione per agente o per catena (B, C, D). Il fallback fa solo tornare risolvibile l'oggetto e non
+serve configurazione per agente o per catena (B, C, D). `recover` ripete il fallback per **ogni** checkpoint candidato,
+non solo per HEAD: con HEAD corrotto, un checkpoint precedente valido che cita una PR diversa resta recuperabile. Il fallback fa solo tornare risolvibile l'oggetto e non
 sostituisce alcun controllo: uno SHA non risolvibile in nessun modo resta non `READY`.
 
 **4. Esiti.** In `verify`, i problemi di riferimento (SHA irraggiungibile, transizione non provata o malformata,
@@ -310,7 +314,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 109 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 120 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo

@@ -426,3 +426,25 @@ def test_keep_ref_pointing_elsewhere_is_never_forced(world):
     assert ei.value.code in (3, 4, 5)
     assert pfckpt.remote_head(a, "origin", BR) == exp, "push atomico: nemmeno il branch e' avanzato"
     assert _remote_refs(world, f"{KEEP}{code}") == [f"{KEEP}{code} {feat}"], "mai force sul ref keep"
+
+
+# ================================================================== rilievo Sol su #615 (8779ef7a)
+def test_recover_fetches_pull_refs_of_older_valid_checkpoints_when_head_is_corrupt(world):
+    """Sol #615 (2): i refs/pull/<N>/head venivano scaricati solo per lo STATE di HEAD. Con HEAD corrotto e un
+    checkpoint precedente valido che cita lo SHA di una PR squashata (raggiungibile solo da refs/pull/<N>/head),
+    recover saltava quel checkpoint e ripristinava uno stato piu' vecchio."""
+    feat, _ = make_feature(world)
+    open_pr(world, 123, feat)
+    a = ckpt_agent(world, "a")
+    exp = next_state(a, world, code={"branch": FEATURE, "sha": feat, "pr": 123}, tests_executed=_tests(feat, pr=123))
+    good = pfckpt.save(a, BR, "origin", exp, "ckpt sulla PR", D, agent="claude", release=True)["commit"]
+    # checkpoint successivo CORROTTO (manifest non corrispondente), che cita solo main: nessun bisogno di refs/pull
+    next_state(a, world, code={"branch": "main", "sha": world["code"]}, tests_executed=_tests(world["code"]))
+    pfckpt.write_manifest(a, D)
+    with open(os.path.join(a, D, "HANDOFF.md"), "a") as fh:
+        fh.write("modifica dopo il manifest\n")
+    raw_commit(a, "ckpt corrotto")
+    sh(a, "push", "-q", "origin", f"HEAD:refs/heads/{BR}")
+    squash_merge_and_delete(world, feat)
+    rep = pfckpt.recover(world["url"], BR, str(world["tmp"] / "rec"), D)
+    assert rep["commit"] == good, "recover deve fermarsi sull'ultimo checkpoint valido, non su uno piu' vecchio"

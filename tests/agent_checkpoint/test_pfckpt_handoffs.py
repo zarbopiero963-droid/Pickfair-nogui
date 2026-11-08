@@ -202,3 +202,38 @@ def test_source_branch_deleted_before_reconciliation_is_needs_reconciliation(wor
     err = expect(2, pfckpt.bootstrap, world["url"], BR, str(world["tmp"] / "fresh"), D, CODE_BR)
     assert err.reason == "NEEDS_RECONCILIATION"
     assert any("handoff[0]" in p for p in err.detail["problems"])
+
+
+# ================================================================== rilievi Sol su #615 (8779ef7a)
+def test_keep_refs_also_publishes_the_handoff_source_and_survives_branch_deletion(world):
+    """Sol #615 (1): con --keep-refs lo SHA sorgente di un handoff veniva classificato KEEP_REF senza che il suo ref
+    keep fosse pubblicato: DURABLE senza prova. Ora il ref keep della sorgente e' sul remoto e sopravvive alla
+    cancellazione del branch sorgente."""
+    base, source, patch = deliver(world)
+    a = b_agent(world, "a")
+    art = put_patch(a, patch)
+    exp = next_state(a, world, handoffs=[record(source, patch, artifact=art)])
+    res = pfckpt.save(a, BR, "origin", exp, "consegna di C", D, agent="claude-b", keep_refs=True, release=True)
+    assert {r["label"]: r["via"] for r in res["durability"]}["handoff[0]"] == "KEEP_REF"
+    keep = sh(world["url"], "for-each-ref", "--format=%(objectname)", f"{pfckpt.KEEP_REF_PREFIX}{source}")
+    assert keep == source, "KEEP_REF dichiarato ma ref keep della sorgente non pubblicato"
+    sh(world["url"], "update-ref", "-d", f"refs/heads/{C_BRANCH}")
+    sh(world["url"], "reflog", "expire", "--expire=now", "--all")
+    sh(world["url"], "gc", "-q", "--prune=now")
+    rep = pfckpt.bootstrap(world["url"], BR, str(world["tmp"] / "fresh"), D, CODE_BR)
+    assert rep["status"] == "READY"
+
+
+def test_verify_with_a_separate_code_repo_reads_the_patch_from_the_checkpoint(world):
+    """Sol #615 (3): con --code-repo l'artefatto della patch va letto dal repository del CHECKPOINT (il commit del
+    checkpoint non esiste nel clone del codice), gli SHA dal repository del codice."""
+    base, source, patch = deliver(world)
+    a = b_agent(world, "a")
+    art = put_patch(a, patch)
+    exp = next_state(a, world, handoffs=[record(source, patch, artifact=art)])
+    pfckpt.save(a, BR, "origin", exp, "consegna di C", D, agent="claude-b", durable_branches=DURABLE, release=True)
+    code_clone = _code(world)                                    # clone separato: non ha i commit di agent-state
+    assert subprocess.run(["git", "-C", code_clone, "cat-file", "-e", sh(a, "rev-parse", "HEAD")],
+                          capture_output=True).returncode != 0
+    rep = pfckpt.verify(a, "HEAD", D, code_repo=code_clone)
+    assert rep["handoffs"][0]["source_reachable"] is True

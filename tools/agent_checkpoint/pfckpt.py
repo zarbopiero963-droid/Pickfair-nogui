@@ -398,7 +398,7 @@ def _published_on(repo, sha, branch):
     return False
 
 
-def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None):
+def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, ckpt_repo=None):
     """Un record di `handoffs` (PF-MCP-CROSS-REPO-HANDOFF-01). Ogni riferimento si risolve nel PROPRIO repository:
     quello della catena (`checkpoint_repo` == STATE.repository) o uno passato con --repo-path NOME=PERCORSO; mai nel
     repository della catena per ripiego. Ritorna (problemi di integrita', problemi di riferimento, info)."""
@@ -458,7 +458,7 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None):
         if not isinstance(art, str) or art not in files:
             problems.append(f"{label}: artefatto patch dichiarato assente: {art!r}")
         else:
-            patch = blob(repo, commit, files[art])
+            patch = blob(ckpt_repo or repo, commit, files[art])   # il commit del checkpoint vive nel suo repository
             if hashlib.sha256(patch).hexdigest() != h["patch_sha256"]:
                 problems.append(f"{label}: sha256 della patch != patch_sha256")
                 patch = None
@@ -654,10 +654,15 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None):
             problems.append("handoffs non e' una lista")
         else:
             for i, h in enumerate(hs):
-                hp, hr, hinfo = check_handoff(lookup, commit, files, i, h, state.get("repository"), repo_paths)
+                hp, hr, hinfo = check_handoff(lookup, commit, files, i, h, state.get("repository"), repo_paths,
+                                              ckpt_repo=repo)
                 problems += hp
                 ref_problems += hr
                 handoff_report.append(hinfo)
+            for h, f in _same_repo_handoff_shas(state):
+                full = resolve_commit(lookup, str(h[f]))
+                if full:
+                    keep_shas.append(full)          # KEEP_REF dichiarato solo se il suo ref keep viene pubblicato
     # puntatori derivati e lease (PF-AGENT-CONTINUITY-01): coerenti con STATE, altrimenti checkpoint incoerente
     derived = {}
     for name in (CURRENT, TASK_STATE, LEASE):
@@ -1150,6 +1155,7 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
 # ------------------------------------------------------------------ ripresa da zero, recover, divergenza
 def last_valid_checkpoint(repo, d, start="HEAD", limit=200, repo_paths=None):
     for c in out(repo, "rev-list", "--first-parent", start).splitlines()[:limit]:
+        fetch_pull_heads(repo, d, c)            # i refs/pull/<N>/head citati da QUESTO checkpoint, non solo da HEAD
         try:
             verify(repo, c, d, repo_paths=repo_paths)
             return c
