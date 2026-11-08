@@ -404,3 +404,44 @@ def test_cross_repo_integration_commit_must_be_published_on_target_main(world, t
             integration_sha=local_integ, integration_tree=htree)
     err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c", [r]), "HEAD", D, repo_paths={TARGET: clone})
     assert _only_reference_problems(err) and any("main" in p for p in err.detail["problems"])
+
+
+# ================================================================== quinto giro di Sol su #615 (c0ec9571)
+def _local_only_commit(clone, start="origin/main", tag="mai pubblicato"):
+    _cfg(clone)
+    sh(clone, "checkout", "-q", "-B", "solo-locale", start)
+    sh(clone, "commit", "-q", "--allow-empty", "-m", tag)          # messaggio distinto: commit mai identici fra cloni
+    return sh(clone, "rev-parse", "HEAD")
+
+
+def test_external_published_source_must_be_reachable_from_a_published_ref(world, target):
+    """Sol #615 (c0ec9571): per un repository esterno `source_published: true` richiede che source_sha sia
+    raggiungibile da un ref pubblicato, non solo presente nel clone locale."""
+    hsha, htree = publish_handoff(target)
+    clone = target_clone(target)
+    local = _local_only_commit(clone)
+    r = rec(world, target, "DURABLE", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree,
+            source_repo=TARGET, source_sha=local)
+    err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c", [r]), "HEAD", D, repo_paths={TARGET: clone})
+    assert _only_reference_problems(err) and any("source_sha" in p for p in err.detail["problems"])
+
+
+def test_external_base_of_a_verified_handoff_must_be_published(world, target):
+    """Sol #615 (c0ec9571): forma INTEGRATED_VERIFIED senza commit di handoff: anche base_sha deve essere
+    raggiungibile da un ref pubblicato del target."""
+    clone = target_clone(target)
+    base_local = _local_only_commit(clone)
+    _git("-C", clone, "apply", "--index", "-", input=target["patch"])
+    sh(clone, "commit", "-q", "-m", "integrazione")
+    sh(clone, "push", "-q", "origin", "HEAD:refs/heads/main")       # integrazione pubblicata, base solo per ascendenza
+    sh(clone, "fetch", "-q", "origin")
+    isha = sh(clone, "rev-parse", "HEAD")
+    r = rec(world, target, "INTEGRATED_VERIFIED", base_sha=base_local, integration_sha=isha)
+    rep_ok = pfckpt.verify(chain_ckpt(world, target, "ok", [r]), "HEAD", D, repo_paths={TARGET: clone})
+    assert rep_ok["handoffs"][0]["verified"] is True, "base antenata di main pubblicato: ammessa"
+    other = target_clone(target, "t_other")
+    lone = _local_only_commit(other, target["base"], "solo nel clone t_other")         # stesso tree della base: la prova del tree regge
+    r2 = rec(world, target, "INTEGRATED_VERIFIED", base_sha=lone, integration_sha=isha)
+    err = expect(2, pfckpt.verify, chain_ckpt(world, target, "bad", [r2]), "HEAD", D, repo_paths={TARGET: other})
+    assert _only_reference_problems(err) and any("base_sha" in p for p in err.detail["problems"])
+

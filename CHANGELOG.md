@@ -63,6 +63,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   cross-repo `integration_sha` deve stare su `main` del target.
   Quarto giro: `code.tree` calcolato dopo il fetch dei ref durevoli; gli `integration_sha` entrano nel fallback
   `refs/pull`; ancore solo da antenati con manifest integro (limite residuo dichiarato in §6-ter).
+  Quinto giro: in un repository esterno (`--repo-path`) `source_sha` pubblicato e la `base_sha` di un
+  `INTEGRATED_VERIFIED` senza commit di handoff devono essere raggiungibili da un ref pubblicato, non solo presenti
+  nel clone locale.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

@@ -405,6 +405,17 @@ def _published_on(repo, sha, branch):
     return False
 
 
+def _published_anywhere(repo, sha):
+    """`sha` raggiungibile da un ref PUBBLICATO di `repo`: un remote-tracking `refs/remotes/*` (branch o
+    `refs/remotes/*/pull/*`) o, se `repo` e' esso stesso il remoto (bare), `refs/heads/*`. Un commit solo locale no."""
+    p = git(repo, "for-each-ref", "--contains", sha, "--format=%(refname)", "refs/remotes/", check=False)
+    refs = [r for r in p.stdout.decode().splitlines() if r and not r.endswith("/HEAD")] if p.returncode == 0 else []
+    if not refs and out(repo, "rev-parse", "--is-bare-repository") == "true":
+        p = git(repo, "for-each-ref", "--contains", sha, "--format=%(refname)", "refs/heads/", check=False)
+        refs = [r for r in p.stdout.decode().splitlines() if r] if p.returncode == 0 else []
+    return bool(refs)
+
+
 def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, ckpt_repo=None):
     """Un record di `handoffs` (PF-MCP-CROSS-REPO-HANDOFF-01). Ogni riferimento si risolve nel PROPRIO repository:
     quello della catena (`checkpoint_repo` == STATE.repository) o uno passato con --repo-path NOME=PERCORSO; mai nel
@@ -455,7 +466,11 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
 
     if published is not False:
         src_repo = repo_of(h["source_repo"], "source_sha")
-        if src_repo is not None and resolve_commit(src_repo, h["source_sha"]):
+        src_full = resolve_commit(src_repo, h["source_sha"]) if src_repo is not None else None
+        if src_full and src_repo is not repo and not _published_anywhere(src_repo, src_full):
+            # repository esterno (--repo-path): un commit solo nel clone locale non e' pubblicato (rilievo Sol #615)
+            refp.append(f"{label}: source_sha non raggiungibile da un ref pubblicato di {h['source_repo']!r}")
+        elif src_full:
             info["source_reachable"] = True
         elif src_repo is not None:
             refp.append(f"{label}: source_sha irrisolto: {h['source_sha']} (branch sorgente cancellato?)")
@@ -542,6 +557,9 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
     tgt = repo_of(h["target_repo"], "base_sha/integration_sha")
     base, isha = resolved(tgt, "base_sha", "target_repo"), resolved(tgt, "integration_sha", "target_repo")
     if not (base and isha):
+        return problems, refp, info
+    if tgt is not repo and not _published_anywhere(tgt, base):
+        refp.append(f"{label}: base_sha non raggiungibile da un ref pubblicato del target (rilievo Sol #615)")
         return problems, refp, info
     if not _published_on(tgt, isha, "main"):
         refp.append(f"{label}: integration_sha non pubblicato su main del target (rilievo Sol #615)")
