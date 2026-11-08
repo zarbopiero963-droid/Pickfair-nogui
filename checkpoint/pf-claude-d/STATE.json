@@ -1,9 +1,9 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 6,
+ "seq": 7,
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "previous_checkpoint_sha": "38fe6dc4fc7a8adab8c3cf803b13569fe66cbec1",
+ "previous_checkpoint_sha": "90e45e345e026b71419a63c9189eda3f7f42b095",
  "updated_at": "2026-11-05T14:22:51Z",
  "agent": {
   "identity": "claude-d",
@@ -16,15 +16,15 @@
   "branch": "claude/d-roserpina-100-sim-report",
   "sha": "cfe2a1c16162465c5a396828509107f79610c6f0"
  },
- "main_sha": "89af178e",
+ "main_sha": "a09d8d6116aa234e838186f807f62470873def50",
  "branches": {
   "claude/pickfair-core-audit-slu9su": {
    "sha": "1b2b502436f3a75395aa158946dd8767112b6380",
    "stato": "F-14: PR #609 MERGIATA su main 89af178e"
   },
   "claude/d-f16-funds-freshness": {
-   "sha": "64e965b7f9f818a861ff2818e851809482d9c53b",
-   "stato": "F-16: FIT Claude B; PR dopo #609 (la apre Claude B); non pushare senza coordinamento"
+   "sha": "a09d8d6116aa234e838186f807f62470873def50",
+   "stato": "F-16 MERGIATA su main (#610, squash); branch cancellato"
   },
   "claude/d-g7-r06-settled-ambiguous": {
    "sha": "1d8ca01d7f20508e7cba33baf67b439a7b5b45f0",
@@ -147,8 +147,9 @@
   },
   {
    "id": "F-16 test dedicati (27) sul branch",
-   "status": "PASS",
-   "sha": "64e965b7f9f818a861ff2818e851809482d9c53b"
+   "status": "NOT VERIFIED",
+   "sha": "64e965b7f9f818a861ff2818e851809482d9c53b",
+   "note": "branch F-16 squash-mergiato in main a09d8d61 (#610) e cancellato: sha non raggiungibile da clone pulito; prova sostituita dalla riesecuzione su main a09d8d61"
   },
   {
    "id": "F-R06 v1: RED su main, 8 test, mutanti 4/4, runner GATE PASS (144)",
@@ -219,6 +220,16 @@
    "id": "G7-S26 microstake E2E HeadlessApp (B5)",
    "status": "NOT VERIFIED",
    "note": "unpublished_tree d3b2d41+campagna4"
+  },
+  {
+   "id": "G7 S01-S06 su main pubblicato a09d8d61 (F-14+F-16), 266 test",
+   "status": "PASS",
+   "sha": "a09d8d6116aa234e838186f807f62470873def50"
+  },
+  {
+   "id": "G7 S07 su main a09d8d61 con harness e test del branch simulazione cfe2a1c1 (albero non pulito)",
+   "status": "NOT VERIFIED",
+   "note": "unpublished_tree: main a09d8d61 + tests/f026 da cfe2a1c1; 2 passed"
   }
  ],
  "tests_missing": [
@@ -257,6 +268,12 @@
   "pfab-d-20261105-ckpt-squash-case-001 (caso sintetico + script a Claude B)",
   {
    "note": "seq 4 (230eb0d) pubblicato ma readback FALLITO (sha 5f9ddee non risolvibile dopo squash): NON DURABLE; sostituito da seq 5"
+  },
+  {
+   "note": "seq 6 (90e45e3) pubblicato ma readback FALLITO (sha F-16 64e965b non risolvibile dopo squash #610): NON DURABLE; sostituito da seq 7"
+  },
+  {
+   "note": "D-C4-01 consegnato a Claude B: pfab-d-20261108-dc401-handoff-001 (consegna del messaggio confermata dal canale, risposta non ancora ricevuta)"
   }
  ]
 }

@@ -7,7 +7,7 @@
  },
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
  "next_atomic_action": "D-C4-02 (commit separato su claude/d-f03-trailing-stop, condizioni Claude B); leggere risposta Claude B su D-C4-01; PF-BLACKBOX-01 matrice completezza",
- "previous_checkpoint_sha": "38fe6dc4fc7a8adab8c3cf803b13569fe66cbec1",
+ "previous_checkpoint_sha": "90e45e345e026b71419a63c9189eda3f7f42b095",
  "schema": "pf-current/1",
- "seq": 6
+ "seq": 7
 }
