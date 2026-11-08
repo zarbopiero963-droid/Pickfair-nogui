@@ -19,6 +19,29 @@ La scatola nera è una funzionalità permanente di Pickfair-nogui, non uno strum
 | eccezioni non gestite | nessun `sys.excepthook`, `threading.excepthook` o `faulthandler` | da aggiungere (§5) |
 | impostazioni | `save_settings` sovrascrive la riga: nessun vecchio/nuovo valore | da aggiungere (§4) |
 
+### 1-bis. Destino di ogni componente (una sola scatola nera)
+
+Legenda: **MANTENERE** (resta com'è), **UNIFICARE** (assorbito nella scatola nera), **ADATTARE** (resta, ma scrive o legge tramite la scatola nera), **DISMETTERE** (rimosso dopo che il sostituto è su main con test di parità). Nessun comportamento esistente cambia in silenzio: ogni ADATTARE e ogni DISMETTERE ha un test di parità nella sua PR.
+
+| Componente | Destino | Dettaglio |
+|---|---|---|
+| `core/event_journal.py` | **UNIFICARE** | vocabolario `EVENT_CATEGORIES`, `category_of` e redazione passano a `core/blackbox`; il writer JSONL viene dismesso (§DISMETTERE) dopo BB-1, perché oggi non ha chiamanti |
+| `core/session_recorder.py` | **UNIFICARE** | `session_id`, `seq` per sessione, catene `root`/`corr` (contextvars), campionamento ed `ALWAYS_RECORDED` diventano l'API di `BlackBox.record` |
+| `core/event_log.py` | **ADATTARE** | `redact_secrets`/`register_secret` restano la fonte unica della redazione; il log testuale giornaliero resta come log umano, senza valore di evidenza |
+| `core/redaction.py`, `observability/sanitizers.py`, `telegram_sanitizer.py` | **MANTENERE** | chiamati dalla redazione della scatola nera; nessuna seconda implementazione |
+| `audit_events` (SQLite) + `Database.insert_audit_event` | **ADATTARE** | `TradingEngine._emit`, `_emit_critical` e la catena residui del cashout scrivono tramite `BlackBox.record`; la tabella resta (stessa forma, stessi lettori) finché i suoi lettori non sono migrati; la doppia scrittura DB + async writer sparisce |
+| `core/async_db_writer.py` (ramo `audit_event`) | **ADATTARE** | non scrive più audit in proprio: inoltra a `BlackBox.record`; gli eventi critici non passano mai da una coda asincrona |
+| `core/event_bus.py` | **MANTENERE** | resta il pub/sub in memoria del runtime; **non** è la fonte di verità; un subscriber della scatola nera registra solo gli eventi non critici del bus (RUNTIME_*, TELEGRAM_STATUS, SIGNAL_*, QUICK_BET_*), con gli stessi handler di log di oggi |
+| `headless_main._wire_bus` (handler di log) | **MANTENERE** | i log su stderr restano; la scatola nera si aggiunge, non li sostituisce |
+| `safety_logger.py` | **ADATTARE** | ogni `log_event` produce anche l'evento tipizzato equivalente (SAFE_MODE_*, AI_BLOCKED, LIQUIDITY_*); file testuale invariato |
+| `core/journal_view.py` | **ADATTARE** | diventa la CLI di consultazione della scatola nera (stessi filtri, ordine per `seq` invece che per `ts`) |
+| `ui_panels/audit_panel.py` | **ADATTARE** | base del pannello «Scatola nera / Registro attività» (BB-5), letto da `core/blackbox_query` |
+| `observability/retention_manager.py` | **ADATTARE** | ottiene la regola di retention della scatola nera, con il vincolo «mai eventi di ordini non riconciliati» |
+| `orders`, `order_saga`, `startup_orders`, `outbox`, `settlement_effects`, `risk_position_history`, `received_signals`, `telegram_outbox_log` | **MANTENERE** | sono **stato** operativo, non registro; ogni loro transizione significativa produce un evento con `state_before`/`state_after`, senza cambiarne lo schema |
+| writer JSONL di `event_journal` (`append_event`, `prune_events`, `clear`), `config_store.recorder_enabled` | **DISMETTERE** | dopo BB-1: oggi senza chiamanti (percorso del ponte rimosso in #435); i test esistenti si spostano sull'API unificata |
+
+Risultato: un solo store (`blackbox.sqlite`), una sola API di scrittura (`BlackBox.record`), una sola API di lettura (`core/blackbox_query`) usata da GUI, CLI, Control API e MCP.
+
 **Regola:** un solo sistema. Non nasce una terza traccia accanto alle due esistenti; `event_journal` e `session_recorder` vengono assorbiti.
 
 ## 2. Requisiti → decisioni
