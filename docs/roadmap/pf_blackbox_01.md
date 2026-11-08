@@ -1,0 +1,115 @@
+# PF-BLACKBOX-01: scatola nera universale (architettura)
+
+Direttiva owner del 08/11/2026. Questo documento è il progetto; il codice arriva per PR successive, una alla volta.
+
+La scatola nera è una funzionalità permanente di Pickfair-nogui, non uno strumento di debug.
+- Non pubblica su GitHub e non dipende dalla finestra dei log.
+- Nessun servizio VPS, LIVE OFF.
+
+## 1. Punto di partenza verificato (main `89af178e`)
+
+| Esistente | Stato | Cosa ne facciamo |
+|---|---|---|
+| `core/event_journal.py` | JSONL append-only, fsync per evento, coda troncata gestita, ~122 tipi in `EVENT_CATEGORIES`, redazione. **Nessun chiamante a runtime** (il ponte `app.py` è stato rimosso con #435) | si riusano il **vocabolario** e la **redazione**; il formato di persistenza cambia (§3) |
+| `core/session_recorder.py` | `session_id`, `seq` sotto lock, `mono`, catene `root`/`corr` via contextvars, `ALWAYS_RECORDED`. **Nessun chiamante** | diventa la base dell'API di scrittura (`seq`, catene, sessione) |
+| `audit_events` (SQLite, `database.py:2175`) | l'unica traccia viva (engine `_emit`, residui del cashout). Niente sequenza globale, sessione o redazione; possibile doppia scrittura (DB + async writer) | resta per compatibilità; ogni sua scrittura passa dal punto unico della scatola nera (§4) |
+| `core/event_bus.py` | pub/sub in memoria, non persistente, eventi senza subscriber scartati | **non** è la fonte della scatola nera: gli eventi critici si scrivono in modo sincrono, non via bus |
+| `safety_logger.py`, `core/event_log.py` | log testuali senza fsync | restano log umani; gli eventi equivalenti entrano nella scatola nera |
+| `core/journal_view.py`, `ui_panels/audit_panel.py` | CLI e pannello Tk non collegati | base del visualizzatore (§6) |
+| eccezioni non gestite | nessun `sys.excepthook`, `threading.excepthook` o `faulthandler` | da aggiungere (§5) |
+| impostazioni | `save_settings` sovrascrive la riga: nessun vecchio/nuovo valore | da aggiungere (§4) |
+
+**Regola:** un solo sistema. Non nasce una terza traccia accanto alle due esistenti; `event_journal` e `session_recorder` vengono assorbiti.
+
+## 2. Requisiti → decisioni
+
+| Requisito owner | Decisione |
+|---|---|
+| parte prima dei componenti operativi | aperta come prima cosa in `headless_main.main()`, prima di `build()`/`Database()`; il primo evento è `PROCESS_START` |
+| ordinamento affidabile anche multiprocesso | `seq` globale assegnato dal DB (`INTEGER PRIMARY KEY`), più `session_seq` e `mono` per sessione |
+| persistente e resistente ai crash | SQLite dedicato `blackbox.sqlite` nella config dir, WAL, `synchronous=FULL`, una transazione per evento critico |
+| modifiche non autorizzate e record mancanti o corrotti | catena di hash: `hash = sha256(prev_hash ‖ JSON canonico)`; verifica di continuità di `seq`, catena e checksum; ogni lacuna diventa un evento `BLACKBOX_GAP` e uno stato visibile |
+| nessun segreto | redazione **in scrittura** (chiavi sensibili e segreti letterali registrati, `core/redaction` + `event_log.redact_secrets`); test che fanno fallire la build se un token entra |
+| richiesta ≠ conferma | ogni operazione ha due eventi distinti (`*_REQUESTED` / `*_CONFIRMED` / `*_REJECTED` / `*_UNKNOWN`) con `outcome` ∈ VERIFIED / PENDING / UNKNOWN |
+| fail-closed sulle operazioni finanziarie | prima di inviare un ordine, un cancel, un hedge o un cashout, l'evento `*_REQUESTED` deve essere durevole; se la scrittura fallisce ⇒ rifiuto `BLACKBOX_UNAVAILABLE`, nessun invio. Le operazioni già inviate non si bloccano: l'esito va in un buffer critico in memoria con marcatore di lacuna e la riconciliazione resta obbligatoria |
+| disco pieno | `BLACKBOX_DEGRADED`: niente nuovi ingressi; uscite protettive e riconciliazione consentite; allerta; scrittura ritentata. Mai perdita silenziosa |
+| rotazione e retention | per sessione o per età, configurabile; mai cancellare eventi legati a ordini non riconciliati o ad AMBIGUOUS aperti; un archivio ruotato conserva la catena di hash (il primo record cita l'ultimo hash del precedente) |
+| letture MCP registrate senza ricorsione | ogni richiesta di lettura produce **un** evento `READ_REQUEST` aggregato (chi, filtro, conteggio); le letture della scatola nera non generano altri eventi; rate-limit per client |
+
+## 3. Record
+
+Tabella `events`, append-only. Un trigger SQLite vieta UPDATE e DELETE fuori dalla retention autorizzata.
+
+| Campo | Contenuto |
+|---|---|
+| `seq` | progressivo globale persistente (PK) |
+| `event_id` | uuid |
+| `ts_utc` | ISO-8601 UTC al microsecondo (la visualizzazione converte nell'ora locale) |
+| `mono`, `session_id`, `session_seq`, `pid` | sessione e processo |
+| `source` | USER, SYSTEM, MCP, CONTROL_API, STRATEGY, EXCHANGE (più TELEGRAM, CLI) |
+| `component`, `category`, `type`, `severity` | vocabolario di `EVENT_CATEGORIES`, esteso e versionato |
+| `state_before`, `state_after`, `values_before`, `values_after` | quando applicabile |
+| `reason_code`, `reason` | motivazione |
+| `correlation_id`, `causation_id` | causation = `event_id` dell'evento che l'ha causato |
+| `table_id`, `market_id`, `selection_id`, `order_ref` (customer_order_ref), `bet_id`, `strategy` | indicizzati |
+| `outcome` | VERIFIED / PENDING / UNKNOWN |
+| `data` | JSON redatto |
+| `prev_hash`, `hash` | catena |
+
+## 4. Scrittura: un solo punto
+
+- **API:** `core/blackbox.py`, `BlackBox.record(type, *, source, ..., critical=False)`.
+- `critical=True` ⇒ scrittura sincrona e durevole prima del ritorno; un fallimento ritorna un errore che il chiamante finanziario deve rispettare.
+- `audit_events` si alimenta da `record`, così la doppia scrittura e le divergenze spariscono.
+
+**Punti di aggancio, in ordine di PR:**
+
+| PR | Contenuto |
+|---|---|
+| BB-1 | nucleo: store, catena, `seq`, redazione, verifica, disco pieno, retention protetta; ciclo di vita (`PROCESS_START`, init dei componenti, connessioni, `SHUTDOWN`, `CRASH` con excepthook, threading.excepthook, faulthandler, fatale in `main()`); riavvio con lettura della sessione precedente e chiusura «non pulita» rilevata |
+| BB-2 | impostazioni (vecchio/nuovo valore, origine, esito, nel punto unico `Database.save_settings` / `SettingsService`); comandi utente, CLI, Telegram; arresto d'emergenza con causa |
+| BB-3 | catena del denaro: segnali, Roserpina e Money Management, controlli rischio, rifiuti, Dutching e microstake, ordini (request, response, cancel, match, partial fill), hedge e cashout, saldo, riserve, esposizione, P&L, riconciliazione, retry, timeout; gate fail-closed `BLACKBOX_UNAVAILABLE` prima dell'invio |
+| BB-4 | SL, TP, trailing, protezione sospesa e ripresa, mercato sospeso o riaperto. Dopo la catena F-02/F-04/F-03, per non agganciare codice non ancora su main |
+| BB-5 | visualizzatore nell'app (Windows/Linux, Tk) e CLI: tempo reale, sessioni precedenti, filtri, ricerca, dettaglio, ciclo di vita di un ordine o posizione, esportazione redatta; `docs/design/design_handoff.md` aggiornato; screenshot Xvfb |
+| BB-6 | API di lettura **read-only** `core/blackbox_query.py` per Control API e MCP (Claude C): elenco, intervallo, sessione, tavolo, ordine, motivazione di una decisione, stato del registro e lacune; nessuna scrittura esposta |
+
+## 5. Crash e ripristino
+
+- **All'avvio:** se la sessione precedente non ha `SHUTDOWN`, si registra `UNCLEAN_TERMINATION`, poi si verificano catena e `seq` e si apre la nuova sessione.
+- **Ordini:** la riconciliazione già prevista resta prima di ogni nuovo ordine; i suoi esiti entrano nella scatola nera.
+- **Coda corrotta** (scrittura interrotta): rilevata dal checksum, segnalata come `BLACKBOX_CORRUPT_TAIL`, mai riscritta in silenzio.
+
+## 6. Criterio finale
+
+«Mostrami tutto ieri dalle 15:00 alle 17:00» si traduce in `range(t0, t1)` sul solo registro, ordinato per `seq`. Gli eventi mancanti compaiono come lacune dichiarate (`BLACKBOX_GAP`, `outcome UNKNOWN`), mai ricostruiti o inventati.
+
+## 7. Test (in ogni PR, PASS + BLOCK)
+
+| Area | Test |
+|---|---|
+| ciclo di vita | avvio e arresto; crash simulato (kill durante una scrittura) con coda corrotta rilevata; riavvio con cronologia precedente leggibile |
+| impostazioni e comandi | modifica impostazioni con vecchio/nuovo valore; comandi manuali, Telegram, CLI, MCP (lettura); arresto d'emergenza |
+| tavoli e denaro | apertura e chiusura tavoli; microstake multipli; ordini e partial fill; SL/TP/trailing; mercato sospeso e riaperto; crash durante l'invio di un ordine ⇒ `REQUESTED` presente, esito UNKNOWN, riconciliazione registrata |
+| concorrenza | multitavolo e due processi: `seq` senza buchi né duplicati |
+| guasti di scrittura | disco pieno (filesystem pieno simulato) ⇒ nessun nuovo ingresso, uscite consentite; errore di persistenza ⇒ fail-closed prima dell'invio |
+| sicurezza | redazione: nessun token, password o chiave nel DB e negli export; manomissione (UPDATE diretto) ⇒ catena rotta rilevata |
+| consultazione | Linux e Windows (Windows: test sul codice; avvio reale MANUAL_ONLY finché non c'è un runner) e via MCP (Claude C) |
+
+**Mutanti BLOCK:**
+- `critical` ignorato;
+- redazione rimossa;
+- `seq` non controllato;
+- fail-closed disattivato;
+- retention che cancella eventi non riconciliati.
+
+## 8. Ruoli
+
+- **Claude B:** architettura, BB-1…BB-5, integrazione nel motore.
+- **Claude C:** BB-6 lato Control API/MCP (strumenti read-only), sul contratto di `core/blackbox_query.py` fissato in BB-1.
+- **Claude D:** test finanziari e oracolo di completezza (ogni ordine della campagna G7 ha la catena REQUESTED → esito → riconciliazione nella scatola nera).
+
+Una PR alla volta; handoff tramite i canali già autorizzati.
+
+## 9. Ordine nella coda
+
+Dopo #610 F-16 (in attesa della decisione owner sul mutante), F-R06 e `pfckpt`, la PR BB-1 è la successiva. BB-4 segue la catena SL/TP. Le patch MCP-A si integrano prima di BB-6, che ne riusa il ponte `control_api/`.
