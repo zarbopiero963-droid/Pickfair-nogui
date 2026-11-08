@@ -34,9 +34,9 @@
   "#610 F-16 merged owner a09d8d61 (tree = 6fdb6398), CI post-merge 12/12",
   "pfckpt-squash-durable aggiornato su main @5c52cd9f (117 test)"
  ],
- "lotto_corrente": "F-R06: head 34bbf01f pubblicato (merge main a09d8d61 + mutante g7r06_live_order_ignored); PR in apertura. Mandato owner PF-POST-F16-FULL-EXECUTION-20261108.",
+ "lotto_corrente": "#614 F-R06 @34bbf01f: READY_FOR_AUTO_MERGE (tutti i gate PASS sullo stesso SHA); merge in corso",
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "next_atomic_action": "Aprire PR F-R06, gate; auto-merge se tutti PASS sullo stesso SHA. Poi PR pfckpt (5c52cd9f). Poi BB-1.",
+ "next_atomic_action": "Merge #614 vincolato a 34bbf01f; verifica tree e CI post-merge; poi PR pfckpt (5c52cd9f).",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [

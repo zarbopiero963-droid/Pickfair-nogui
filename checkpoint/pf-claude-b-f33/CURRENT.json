@@ -6,8 +6,8 @@
   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e"
  },
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "next_atomic_action": "Aprire PR F-R06, gate; auto-merge se tutti PASS sullo stesso SHA. Poi PR pfckpt (5c52cd9f). Poi BB-1.",
- "previous_checkpoint_sha": "be16bbbd74beb700e316470aefed063b241ce80a",
+ "next_atomic_action": "Merge #614 vincolato a 34bbf01f; verifica tree e CI post-merge; poi PR pfckpt (5c52cd9f).",
+ "previous_checkpoint_sha": "0e329b8a5e5d3e1c9a030db3810053c7bb673aca",
  "schema": "pf-current/1",
- "seq": 23
+ "seq": 24
 }
