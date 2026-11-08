@@ -448,3 +448,20 @@ def test_recover_fetches_pull_refs_of_older_valid_checkpoints_when_head_is_corru
     squash_merge_and_delete(world, feat)
     rep = pfckpt.recover(world["url"], BR, str(world["tmp"] / "rec"), D)
     assert rep["commit"] == good, "recover deve fermarsi sull'ultimo checkpoint valido, non su uno piu' vecchio"
+
+
+def test_first_save_citing_a_commit_published_on_main_but_not_yet_fetched_is_durable(world):
+    """Codex #615: lo SHA citato, gia' su main remoto ma non ancora scaricato nel checkout del checkpoint, va risolto
+    DOPO il fetch dei ref durevoli: il primo save e' DURABLE, senza un secondo tentativo."""
+    a = ckpt_agent(world, "a")                                   # clone fatto PRIMA della pubblicazione
+    c = _code_clone(world, "other")
+    sh(c, "checkout", "-q", "-B", "m", "origin/main")
+    with open(os.path.join(c, "nuovo.py"), "w") as fh:
+        fh.write("N = 1\n")
+    sh(c, "add", "-A"); sh(c, "commit", "-q", "-m", "su main")
+    new = sh(c, "rev-parse", "HEAD")
+    sh(c, "push", "-q", "origin", "HEAD:refs/heads/main")
+    assert pfckpt.resolve_commit(a, new) is None, "precondizione: oggetto non ancora nel checkout"
+    exp = next_state(a, world, code={"branch": "main", "sha": new}, tests_executed=_tests(new))
+    res = pfckpt.save(a, BR, "origin", exp, "ckpt su main", D, agent="claude", release=True)
+    assert res["status"] == "DURABLE" and _vias(res)["code.sha"] == "BRANCH:main"

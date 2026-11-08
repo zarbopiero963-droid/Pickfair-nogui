@@ -358,18 +358,20 @@ def handoff_verify(repo, source, patch, base, integration, **meta):
 
 
 # Forma canonica del digest di una patch di handoff: `git diff --binary --full-index base head` con la configurazione
-# di default di git resa esplicita (rename detection attiva, prefissi a/ b/, algoritmo myers, niente colore, niente
-# diff esterni o textconv), cosi' il risultato non dipende dalla config locale. Una forma diversa => digest diverso
+# di default di git resa esplicita (rename detection attiva, prefissi a/ b/, algoritmo myers, 3 righe di contesto,
+# nessun interHunkContext, nessun orderFile, niente colore, niente diff esterni o textconv), cosi' il risultato non
+# dipende dalla config locale. Una forma diversa => digest diverso
 # => prova fallita (fail-closed), mai una prova accettata per errore.
 _CANONICAL_DIFF_CFG = ("-c", "diff.renames=true", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
                        "-c", "diff.algorithm=myers", "-c", "diff.relative=false", "-c", "diff.indentHeuristic=true",
-                       "-c", "core.quotePath=true")
+                       "-c", "core.quotePath=true", "-c", "diff.context=3", "-c", "diff.interHunkContext=0",
+                       "-c", "diff.suppressBlankEmpty=false")
 
 
 def canonical_diff_sha256(repo, base_sha, head_sha):
     """sha256 di `git diff --binary --full-index base_sha head_sha` in forma canonica; None se git fallisce."""
     p = subprocess.run(["git", "-C", repo, *_CANONICAL_DIFF_CFG, "diff", "--no-color", "--no-ext-diff",
-                        "--no-textconv", "--binary", "--full-index", base_sha, head_sha, "--"], capture_output=True)
+                        "--no-textconv", "--unified=3", "-O/dev/null", "--binary", "--full-index", base_sha, head_sha, "--"], capture_output=True)
     return hashlib.sha256(p.stdout).hexdigest() if p.returncode == 0 else None
 
 
@@ -982,11 +984,12 @@ def check_durability(repo, remote, state, durable_branches=DEFAULT_DURABLE_BRANC
     branch di lavoro, che puo' essere cancellato) e' ammesso SOLO per gli SHA dichiarati in
     `code.durability_waiver.branch_only`. Ritorna (righe, non_durevoli, branch_only_non_dichiarati)."""
     _shas, prs = _cited_shas_and_prs(state)
+    tips = durability_tips(repo, remote, prs)        # prima il fetch: un oggetto gia' pubblicato diventa risolvibile
     cited = cited_references(repo, state)
-    tips = durability_tips(repo, remote, prs)
     rows = [dict(c, via=_classify(repo, c, tips, durable_branches, keep)) for c in cited]
     if not prs and any(r["via"] is None or r["via"].startswith("BRANCH_ONLY") for r in rows):
         tips = durability_tips(repo, remote, (), all_pulls=True)          # PR non dichiarata: scoperta
+        cited = cited_references(repo, state)                             # e risoluzione ripetuta dopo il fetch
         rows = [dict(c, via=_classify(repo, c, tips, durable_branches, keep)) for c in cited]
     missing = [r for r in rows if r["via"] is None]
     branch_only = [r for r in rows if r["via"] and r["via"].startswith("BRANCH_ONLY")

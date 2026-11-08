@@ -356,3 +356,18 @@ def test_handoff_branch_deleted_without_alternative_ref_no_artifact(world, targe
     err = expect(2, pfckpt.bootstrap, world["url"], BR, str(world["tmp"] / "f"), D, CODE_BR,
                  repo_paths={TARGET: target_clone(target)})
     assert err.reason == "NEEDS_RECONCILIATION"
+
+
+def test_canonical_digest_ignores_context_and_order_config(world, target):
+    """Codex #615: diff.context, diff.interHunkContext e diff.orderFile del clone non cambiano il digest canonico."""
+    hsha, htree = publish_handoff(target)
+    digest = hashlib.sha256(canonical_patch(target, hsha)).hexdigest()
+    clone = target_clone(target)
+    order = os.path.join(str(target["tmp"]), "order.txt")
+    open(order, "w").write("mcp_bridge.py\napp.py\n")
+    for k, v in (("diff.context", "0"), ("diff.interHunkContext", "7"), ("diff.orderFile", order),
+                 ("diff.suppressBlankEmpty", "true")):
+        sh(clone, "config", k, v)
+    r = rec_no_artifact(world, target, "DURABLE", digest, handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    a = chain_ckpt(world, target, "c", [r])
+    assert pfckpt.verify(a, "HEAD", D, repo_paths={TARGET: clone})["handoffs"][0]["handoff_proven"] is True
