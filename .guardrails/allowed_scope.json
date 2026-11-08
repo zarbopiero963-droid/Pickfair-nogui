@@ -3443,6 +3443,45 @@
       ],
       "max_files": 14
     },
+    "d_place_no_outcome_ambiguous": {
+      "description": "Claude D P0 (#586, P0-B integrita' ordini): placeOrders LIVE con risposta 2xx arrivata senza esito (result assente/vuoto, status assente o fuori contratto, report senza status o sconosciuto) => order_unknown/AMBIGUOUS + riconciliazione, mai FAILED definitivo che libera tavolo, riserva e chiave anti-duplicato. Rifiuti dichiarati da Betfair invariati. Estensione dichiarata dello scope (owner 04/11/2026, verifica betId): core/trading_engine.py persiste la risposta del broker sulla riga AMBIGUOUS, cosi' un betId gia' assegnato resta attribuibile al settlement. Estensione dichiarata (scheda F-14, mandato owner 05/11/2026): cancel single-shot con esito AMBIGUOUS e report per istruzione (client e OrderManager), estrattore unico del betId per identita' del bot e riconciliazione, voci f14_* nel catalogo mutazioni. Estensione dichiarata (NIT-3 della revisione Claude B, 05/11/2026): `matched_confirmed` nell'esito di OrderRouter (matched di un esito ignoto non confermato). Estensione dichiarata (aggiunta owner al NIT-3, 05/11/2026): prova end-to-end che il matched non confermato non entra in P&L, esposizione, riserve e cassa (harness F-026, modalita' mixed_diag).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "betfair_client.py",
+        "core/microstake_live_port.py",
+        "core/order_identity.py",
+        "core/order_router.py",
+        "core/runtime_controller.py",
+        "core/trading_engine.py",
+        "database.py",
+        "docs/trading_engine_executor_contract.md",
+        "guardrails/mutation_catalog.json",
+        "order_manager.py",
+        "tests/acceptance/test_betid_extractor_unico.py",
+        "tests/acceptance/test_f14_cancel_single_shot.py",
+        "tests/acceptance/test_place_bet_risposta_senza_esito.py",
+        "tests/acceptance/test_place_bet_senza_esito_catena.py",
+        "tests/f026/child_f026.py",
+        "tests/f026/test_f14_matched_non_confermato.py"
+      ],
+      "max_files": 18
+    },
+    "d_f16_funds_freshness": {
+      "description": "Claude D F-16 (#586, FUNDS-01): conferma dei fondi d'ingresso valida al massimo 30 s (decisione owner PF-LIVE-FUNDS-THRESHOLD-01, #426 c.6162806642), orologio monotono, read_at assente/non valido/futuro => fondi_non_verificabili:FUNDS_STALE. Percorsi: segnale, DutchingController, auto-next. Nessuna nuova soglia; invalidazione anticipata (PF-LIVE-FUNDS-INVALIDATE-01) fuori scope.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/runtime_controller.py",
+        "docs/roserpina_bankroll_equity.md",
+        "guardrails/mutation_catalog.json",
+        "tests/acceptance/test_f16_funds_freshness.py",
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "max_files": 7
+    },
     "pfckpt_squash_durable_refs": {
       "description": "Decisione owner (incidente agent-state/pf-claude-b seq 17, LATEST_CHECKPOINT_CORRUPT dopo squash merge e cancellazione del branch della PR): al save ogni SHA di codice citato deve essere durevole sul remoto (branch durevole main, refs/pull/<N>/head dichiarato o scoperto, oppure transizione integration TREE_EQUAL su main), altrimenti CODE_SHA_NOT_DURABLE e nulla e' pubblicato; il readback lo riverifica. Campo opzionale code.integration / tests_executed[].integration (original_sha, original_tree, integration_sha, integration_tree, equivalence TREE_EQUAL|NOT_PROVEN), confronto di soli tree SHA. Ref refs/agent-state/keep/<sha> solo opt-in (--keep-refs): il proxy delle sessioni rifiuta ref fuori da refs/heads e refs/tags. Dati non provabili => NEEDS_RECONCILIATION, mai READY. Solo tools/agent_checkpoint, i suoi test e la doc; nessun runtime, workflow o scripts/pr_*. ESTENSIONE DICHIARATA (05/11, correzione del design dopo verifica su GitHub reale): tests/agent_checkpoint/test_pfckpt.py, il fixture world pubblica il commit di codice anche su main (branch durevole). ESTENSIONE DICHIARATA (05/11, decisione owner sugli handoff fra agenti): record opzionale handoffs nello STATE (DELIVERED / INTEGRATED_VERIFIED / INTEGRATED_NOT_PROVEN, prova ricalcolata patch su base == tree di integrazione, comando handoff-verify) e il nuovo file tests/agent_checkpoint/test_pfckpt_handoffs.py. ESTENSIONE DICHIARATA (05/11, PF-MCP-CROSS-REPO-HANDOFF-01): risoluzione di ogni riferimento di handoff nel proprio repository (--repo-path NOME=PERCORSO, mai ripiego sulla catena), stato DURABLE provato dal commit di handoff pubblicato, e il nuovo file tests/agent_checkpoint/test_pfckpt_handoff_cross_repo.py.",
       "allow_tests": true,

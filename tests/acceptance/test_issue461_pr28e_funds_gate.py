@@ -568,7 +568,8 @@ def test_riserva_a_mercato_rilasciata_resta_per_le_letture_precedenti_e_scade():
 
 def test_lettura_dei_fondi_piu_vecchia_del_ttl_e_non_verificabile(tmp_path):
     # Le tracce delle riserve rilasciate durano PLACED_TOMBSTONE_TTL_S: una lettura piu' vecchia non e'
-    # confrontabile in sicurezza => fondi non verificabili.
+    # confrontabile in sicurezza => fondi non verificabili. F-16: gia' oltre 30 s la conferma e' scaduta
+    # (PF-LIVE-FUNDS-THRESHOLD-01), motivo FUNDS_STALE.
     import time as _time
     from core.table_manager import TableManager
     c = _chain(tmp_path, stake=10.0, anti_duplication=True)
@@ -582,5 +583,5 @@ def test_lettura_dei_fondi_piu_vecchia_del_ttl_e_non_verificabile(tmp_path):
     c.rc._read_funds_for_entry = _lettura_vecchia
     _con_fondi(c, 100.0)
     c.rc._on_signal_received(_signal())
-    assert "fondi_non_verificabili" in _rifiuti(c), _rifiuti(c)
+    assert "fondi_non_verificabili:FUNDS_STALE" in _rifiuti(c), _rifiuti(c)
     assert c.bus.payloads("CMD_QUICK_BET") == []
