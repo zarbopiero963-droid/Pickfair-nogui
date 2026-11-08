@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from cashout_resolver import build_cashout_request, reconstruct_open_positions
@@ -174,10 +175,26 @@ class CashoutRouter:
         self.publish = publish
         self.commission_pct = float(commission_pct)
         self.source = source
+        self._cancel_stats = threading.local()
 
     def route(self, signal: Dict[str, Any]) -> Dict[str, Any]:
         """Gestisce un segnale CASHOUT/CASHOUT_ALL. Ritorna un sommario per
-        log/test: ``{published, positions, skipped, reason?}``."""
+        log/test: ``{published, positions, skipped, reason?, cancels_sent, cancels_unconfirmed}``.
+
+        D-C4-01: ``cancels_sent`` / ``cancels_unconfirmed`` contano i cancel inviati da QUESTA chiamata e quelli senza
+        conferma (eccezione o risposta non SUCCESS): chi deve provare che nulla e' rimasto incerto sull'exchange
+        (rilascio del latch SL/TP) li legge; per thread, cosi' due chiamate concorrenti non si mescolano."""
+        stats = self._cancel_stats
+        stats.sent, stats.unconfirmed = 0, 0
+        try:
+            out = self._route(signal)
+        finally:
+            sent, unconfirmed = stats.sent, stats.unconfirmed
+            stats.sent = stats.unconfirmed = None
+        out["cancels_sent"], out["cancels_unconfirmed"] = sent, unconfirmed
+        return out
+
+    def _route(self, signal: Dict[str, Any]) -> Dict[str, Any]:
         signal = dict(signal or {})
         signal_type = str(signal.get("signal_type") or "").strip().upper()
         if signal_type not in {"CASHOUT", "CASHOUT_ALL", "CASHOUT_TABLE"}:
@@ -481,17 +498,25 @@ class CashoutRouter:
         eccezione — lo riportano nel dict di risultato — quindi si ispeziona la
         risposta (vedi ``_cancel_succeeded``).
         """
+        self._count_cancel("sent")
         try:
             result = self.cancel_orders(market_id, resting_ids)
         except Exception as exc:  # noqa: BLE001 - cancel fallito => non si chiude (fail-closed)
             logger.warning("[cashout_router] cancel resting fallito su %s: skip (fail-closed): %s",
                            market_id, exc)
+            self._count_cancel("unconfirmed")
             return False
         if not self._cancel_succeeded(result):
             logger.warning("[cashout_router] cancel resting NON confermato su %s (%r): skip (fail-closed)",
                            market_id, result)
+            self._count_cancel("unconfirmed")
             return False
         return True
+
+    def _count_cancel(self, kind: str) -> None:
+        stats = getattr(self, "_cancel_stats", None)
+        if stats is not None and isinstance(getattr(stats, kind, None), int):
+            setattr(stats, kind, getattr(stats, kind) + 1)
 
     @staticmethod
     def _cancel_succeeded(result: Any) -> bool:

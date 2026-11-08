@@ -592,6 +592,21 @@ l'hedge e' attribuibile al tavolo chiuso (richiesta Control API, MCP-01k). Nessu
 `NOT_EXECUTED` si ritenta solo con un nuovo scatto dell'evento. Un riavvio, un
 secondo scatto dello stesso evento o lo scatto di TP dopo SL non producono mai un secondo cashout.
 
+**D-C4-01 (G7-S24): mercato sospeso e latch.** Il monitor non decide SL/TP/trailing su un book non negoziabile
+(`_market_book_tradable`: mercato non OPEN o selezione non ACTIVE, stato assente compreso; PF-EXEC-05): nessun latch e
+nessuna chiusura finche' il mercato e' sospeso, e al primo book negoziabile con la soglia ancora superata lo scatto
+avviene. Il latch `sl_tp_triggered` si rilascia dopo la chiusura solo su `NOT_EXECUTED` **provato** e persistito
+(`sl_tp_close.latch_releasable`): rifiuto di un gate prima del router (nessun ordine), oppure router senza hedge
+pubblicati con ogni cancel inviato confermato (il router dichiara `cancels_sent` / `cancels_unconfirmed` per chiamata).
+Errore d'instradamento, esito assente o `UNCERTAIN`, cancel non confermato, conteggi assenti, stato finale non
+persistito, latch di un'altra posizione o di un'altra ragione: il latch resta. Rilasciato il latch, il monitor puo'
+ritentare a ogni book negoziabile finche' la chiusura non e' instradata, **senza ripetere eventi** (condizione Claude B):
+il latch rilasciato lascia `sl_tp_pending` (tavolo, ragione, ultimo esito); il nuovo tentativo chiama F-04 direttamente
+senza ripubblicare `SL_TRIGGERED`/`TP_TRIGGERED`/`TRAILING_TRIGGERED`, il rifiuto interno del gate non ripubblica
+`SIGNAL_REJECTED` (solo per i tentativi interni con token registrato) e l'esito `SL_TP_CLOSE_*` si pubblica solo se
+stato o motivo cambiano. Ogni tentativo riscrive comunque la rivendicazione persistente (una scrittura per giro del
+poller mentre il gate rifiuta). Test: `tests/f03/test_dc401_sl_sospeso_latch.py`.
+
 Limiti dichiarati: F-02 (Claude B, branch `keep/f02-sl-tp-path-20261103`) non e' su `main`: senza F-02 nessun evento
 viene pubblicato e il consumer resta inerte. Il latch di F-02 e' in memoria: dopo un riavvio lo scatto si ripete e
 viene assorbito dalla rivendicazione persistente. Test:
@@ -614,8 +629,8 @@ Regole (`core/trailing_stop.py`, Decimal; cablaggio in `RuntimeController._evalu
   il nuovo picco. Scrittura fallita ⇒ il picco nuovo non si usa (resta l'ultimo persistito): un processo che cade fra
   aggiornamento e scrittura riparte con un picco ≤ ultimo persistito, mai maggiore. Al riavvio il picco si rilegge;
   stato illeggibile o corrotto ⇒ nessuna decisione (non sovrascritto); posizione senza `customer_ref` ⇒ nessun trailing;
-- **fail-closed**: mercato non OPEN, selezione non ACTIVE (stato assente compreso), quote assenti, book che non copre
-  la posizione, P&L non calcolabile ⇒ nessun aggiornamento del picco e nessuno scatto. Nessuna soglia d'età: il monitor
+- **fail-closed**: mercato non OPEN, selezione non ACTIVE (stato assente compreso; vale per SL/TP/trailing, D-C4-01),
+  quote assenti, book che non copre la posizione, P&L non calcolabile ⇒ nessun aggiornamento del picco e nessuno scatto. Nessuna soglia d'età: il monitor
   riceve un book fresco dal poller di F-02 o dallo stream sano (la salute dello stream decide chi lo esegue);
 - **scatto**: evento `TRAILING_TRIGGERED` (forma v1 di F-02, `reason` `TRAILING_STOP_REACHED`, `threshold` = soglia),
   una volta per posizione (latch di F-02); F-04 lo consuma come SL/TP (stessa chiave di chiusura per posizione: dopo un

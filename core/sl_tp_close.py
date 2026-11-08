@@ -12,7 +12,10 @@ Regole (fail-closed: ogni dubbio => nessun ordine, motivo esplicito):
   prima la riconciliazione;
 - una chiusura per posizione (``risk.sl_tp_close.<customer_ref>``), rivendicata in modo persistente PRIMA di
   instradare: un riavvio o un secondo scatto (SL e TP, o lo stesso evento ripetuto) non producono un secondo
-  cashout. Si ritenta solo da ``NOT_EXECUTED`` (nessuna richiesta d'hedge pubblicata).
+  cashout. Si ritenta solo da ``NOT_EXECUTED`` (nessuna richiesta d'hedge pubblicata);
+- il latch dello scatto (``sl_tp_triggered`` del monitor F-02) si rilascia solo su NOT_EXECUTED PROVATO
+  (``latch_releasable``: gate prima del router, o nessun hedge e ogni cancel confermato), cosi' il prossimo book
+  negoziabile puo' scattare di nuovo (D-C4-01); su esito incerto resta.
 """
 from __future__ import annotations
 
@@ -187,3 +190,24 @@ def route_outcome(box: Dict[str, Any]) -> Tuple[str, str]:
     if published > 0:
         return STATE_ROUTED, ""
     return STATE_NOT_EXECUTED, str(result.get("reason") or "NO_HEDGE_PUBLISHED")
+
+
+def _count(value: Any) -> Optional[int]:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def latch_releasable(box: Dict[str, Any]) -> bool:
+    """D-C4-01: ``True`` solo se l'instradamento e' un NOT_EXECUTED PROVATO, cioe' nessun effetto sull'exchange
+    rimasto incerto: rifiuto di un gate PRIMA del router (nessun ordine), oppure router senza hedge pubblicati e con
+    ogni cancel inviato confermato (``cancels_sent`` / ``cancels_unconfirmed`` dichiarati). Qualunque errore, esito
+    assente, conteggio assente o non valido, cancel non confermato => ``False``: il latch dello scatto resta."""
+    if not isinstance(box, dict) or "error" in box:
+        return False
+    if "rejected" in box:
+        return True
+    state, _detail = route_outcome(box)
+    if state != STATE_NOT_EXECUTED:
+        return False
+    result = box.get("result")
+    sent, unconfirmed = _count(result.get("cancels_sent")), _count(result.get("cancels_unconfirmed"))
+    return sent is not None and unconfirmed is not None and unconfirmed == 0

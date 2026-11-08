@@ -50,7 +50,9 @@ def _table(side, entry, exposure, sl=None, tp=None, stake=None):
 
 def _book(back, lay, last=None):
     """back = miglior prezzo availableToBack, lay = miglior availableToLay; `last` = lastPriceTraded (ingannevole)."""
-    return {"marketId": "1.5", "runners": [{"selectionId": 11, "lastPriceTraded": last if last is not None else back,
+    # book negoziabile (stato di mercato e selezione come in listMarketBook / EX_MARKET_DEF): D-C4-01, PF-EXEC-05
+    return {"marketId": "1.5", "status": "OPEN", "runners": [{"selectionId": 11, "status": "ACTIVE",
+                                            "lastPriceTraded": last if last is not None else back,
                                             "ex": {"availableToBack": [{"price": back, "size": 100}],
                                                    "availableToLay": [{"price": lay, "size": 100}]}}]}
 
@@ -130,7 +132,7 @@ def test_config_commission_other_than_policy_neither_raises_nor_changes_the_deci
 # --- Sol su 6d232f4 -------------------------------------------------------------------------------------------------
 
 def _ladder_book(back_levels, lay_levels):
-    return {"marketId": "1.5", "runners": [{"selectionId": 11, "ex": {
+    return {"marketId": "1.5", "status": "OPEN", "runners": [{"selectionId": 11, "status": "ACTIVE", "ex": {
         "availableToBack": [{"price": p, "size": s} for p, s in back_levels],
         "availableToLay": [{"price": p, "size": s} for p, s in lay_levels]}}]}
 

@@ -8601,6 +8601,78 @@
         "tests/f03/test_f03_trailing_stop.py"
       ],
       "rationale": "F-03: lo scatto del trailing non chiude la posizione."
+    },
+    {
+      "id": "dc401_sl_on_suspended_book",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "            if not RuntimeController._market_book_tradable(market_book, table):\n                continue\n",
+      "mutated": "",
+      "tests": [
+        "tests/f03/test_dc401_sl_sospeso_latch.py"
+      ],
+      "rationale": "D-C4-01: SL/TP decisi anche su mercato sospeso (latch senza chiusura)."
+    },
+    {
+      "id": "dc401_latch_released_on_error",
+      "module": "core.sl_tp_close",
+      "area": "ambiguous",
+      "file": "core/sl_tp_close.py",
+      "original": "    if not isinstance(box, dict) or \"error\" in box:",
+      "mutated": "    if not isinstance(box, dict):",
+      "tests": [
+        "tests/f03/test_dc401_sl_sospeso_latch.py"
+      ],
+      "rationale": "D-C4-01: latch rilasciato con esito d'instradamento ignoto."
+    },
+    {
+      "id": "dc401_latch_ignores_unconfirmed_cancel",
+      "module": "core.sl_tp_close",
+      "area": "cashout",
+      "file": "core/sl_tp_close.py",
+      "original": "and unconfirmed == 0",
+      "mutated": "and unconfirmed >= 0",
+      "tests": [
+        "tests/f03/test_dc401_sl_sospeso_latch.py"
+      ],
+      "rationale": "D-C4-01: latch rilasciato con un cancel non confermato."
+    },
+    {
+      "id": "dc401_latch_released_without_persist",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "if persisted and state == sl_tp_close.STATE_NOT_EXECUTED",
+      "mutated": "if state == sl_tp_close.STATE_NOT_EXECUTED",
+      "tests": [
+        "tests/f03/test_dc401_sl_sospeso_latch.py"
+      ],
+      "rationale": "D-C4-01: latch rilasciato con stato finale non persistito (resta CLAIMED)."
+    },
+    {
+      "id": "dc401_retry_republishes_trigger",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "        if isinstance(pending, dict) and pending.get(\"reason\") == reason:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/f03/test_dc401_sl_sospeso_latch.py"
+      ],
+      "rationale": "D-C4-01: ogni giro del poller ripubblica lo scatto mentre il gate rifiuta."
+    },
+    {
+      "id": "dc401_external_quiet_silences_reject",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                and RuntimeController._is_internal_sl_tp_route(self, signal)):",
+      "mutated": "                ):",
+      "tests": [
+        "tests/f03/test_dc401_sl_sospeso_latch.py"
+      ],
+      "rationale": "D-C4-01: un segnale esterno con sl_tp_quiet nasconde il proprio rifiuto."
     }
   ]
 }

@@ -3486,21 +3486,25 @@
       "max_files": 9
     },
     "d_f03_trailing_stop": {
-      "description": "F-03 (#586, K-7): trailing stop sul P&L garantito liquidabile, picco persistito prima dell'uso, precedenza hard-stop > SL > trailing > TP, scatto chiuso da F-04 sul solo tavolo. Impilato su F-02 (keep/f02-sl-tp-path-20261103) + F-04: i file elencati sono il delta di F-03 rispetto a quella base.",
+      "description": "F-03 (#586, K-7): trailing stop sul P&L garantito liquidabile, picco persistito prima dell'uso, precedenza hard-stop > SL > trailing > TP, scatto chiuso da F-04 sul solo tavolo. Impilato su F-02 (keep/f02-sl-tp-path-20261103) + F-04: i file elencati sono il delta di F-03 rispetto a quella base. Estensione dichiarata (D-C4-01, accordo Claude B pfab-b-20261105-g7-run-defects-ack-001): nessuna decisione SL/TP su book non negoziabile e rilascio del latch solo su NOT_EXECUTED provato; il router dichiara cancels_sent/cancels_unconfirmed; i book sintetici dei test F-01/F-02 dichiarano stato OPEN/ACTIVE.",
       "allow_tests": true,
       "files": [
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
+        "cashout_router.py",
         "core/runtime_controller.py",
         "core/sl_tp_close.py",
         "core/trailing_stop.py",
         "docs/cashout_overview.md",
         "guardrails/mutation_catalog.json",
+        "tests/core/test_sl_tp_pnl_sign.py",
+        "tests/f02/test_f02_sl_tp_path.py",
         "tests/f03/__init__.py",
+        "tests/f03/test_dc401_sl_sospeso_latch.py",
         "tests/f03/test_f02_f04_f03_cumulativo.py",
         "tests/f03/test_f03_trailing_stop.py"
       ],
-      "max_files": 10
+      "max_files": 14
     },
     "pf_universal_test_automation_01": {
       "description": "PF-VPS-UNIVERSAL-TEST-AUTOMATION-01 (#586, sostituisce PF-VPS-CERTIFICATION-SELF-SERVICE-01; merge owner: workflow): catalogo versionato delle suite (tests/catalog/pf-test-catalog.json, argv fisso), richiesta di test firmata Sigstore da workflow_dispatch solo su main (pf-test-request.yml), libreria di verifica condivisa con la VPS (scripts/pf_test_dispatch.py: verify_request, Ledger, stati QUEUED..INFRA_ERROR), mappa di copertura comportamenti (inventario Gate A NOT_IMPORTED). Modalita' dry-run; nessun segreto, nessun accesso VPS per Claude B.",

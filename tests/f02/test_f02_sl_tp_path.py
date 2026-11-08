@@ -140,7 +140,8 @@ def _table(sl=None, tp=None, market="1.5"):
 
 
 def _book(back, lay, market="1.5"):
-    return {"marketId": market, "runners": [{"selectionId": 11, "ex": {
+    # book negoziabile (stato di mercato e selezione come in listMarketBook / EX_MARKET_DEF): D-C4-01, PF-EXEC-05
+    return {"marketId": market, "status": "OPEN", "runners": [{"selectionId": 11, "status": "ACTIVE", "ex": {
         "availableToBack": [{"price": back, "size": 100}], "availableToLay": [{"price": lay, "size": 100}]}}]}
 
 

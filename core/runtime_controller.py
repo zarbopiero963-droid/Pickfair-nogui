@@ -3139,6 +3139,12 @@ class RuntimeController:
     # =========================================================
     def _reject_signal(self, signal: dict, reason: str) -> None:
         RuntimeController._record_sl_tp_route(self, signal, {"rejected": reason})
+        if (isinstance(signal, dict) and signal.get("sl_tp_quiet") is True
+                and RuntimeController._is_internal_sl_tp_route(self, signal)):
+            # D-C4-01: nuovo tentativo interno di una chiusura SL/TP gia' rifiutata: l'esito (con il motivo) lo pubblica
+            # F-04 solo se cambia; nessun SIGNAL_REJECTED ripetuto a ogni giro del poller.
+            logger.debug("[RuntimeController] chiusura SL/TP ritentata rifiutata: %s", reason)
+            return
         self.bus.publish(
             "SIGNAL_REJECTED",
             {
@@ -3939,7 +3945,7 @@ class RuntimeController:
         logger.warning("[RuntimeController] %s %s", topic, body)
         self.bus.publish(topic, body)
 
-    def _on_sl_tp_triggered(self, topic: str, payload: dict) -> None:
+    def _on_sl_tp_triggered(self, topic: str, payload: dict, quiet: bool = False) -> None:
         """F-04: chiude SOLO la posizione del tavolo che ha raggiunto SL/TP.
 
         Ordine (fail-closed, ogni passo prima di qualunque ordine): evento v1 valido -> tavolo attivo con lo stesso
@@ -3971,7 +3977,7 @@ class RuntimeController:
                 "signal_type": "CASHOUT_TABLE", "market_id": trigger.market_id,
                 "selection_id": trigger.selection_id, "side": trigger.side, "bet_ids": list(bet_ids),
                 "table_id": trigger.table_id, "sl_tp_event_id": trigger.event_id, "sl_tp_route_token": token,
-                "source": sl_tp_close.TRIGGER_SOURCE,
+                "source": sl_tp_close.TRIGGER_SOURCE, "sl_tp_quiet": bool(quiet),
             })
         except Exception as exc:  # noqa: BLE001 - esito ignoto: mai un reinvio, riconciliazione
             logger.exception("[RuntimeController] chiusura SL/TP: errore d'instradamento")
@@ -3980,16 +3986,73 @@ class RuntimeController:
             routes.pop(token, None)
             req_map.pop(token, None)
         state, detail = sl_tp_close.route_outcome(box)
+        persisted = False
         try:
             self.db.save_settings({trigger.close_key: sl_tp_close.state_record(
                 trigger, state, bet_ids=bet_ids, reason=detail, at=time.time(), request_ids=requests)})
+            persisted = True
         except Exception:  # noqa: BLE001 - resta CLAIMED: non ritentabile (prudente)
             logger.exception("[RuntimeController] chiusura SL/TP: stato finale non persistito (resta CLAIMED)")
+        repeated = bool(quiet) and RuntimeController._sl_tp_pending_outcome(self, trigger) == [state, detail]
+        if persisted and state == sl_tp_close.STATE_NOT_EXECUTED and sl_tp_close.latch_releasable(box):
+            RuntimeController._release_sl_tp_latch(self, trigger, [state, detail])
+        else:
+            RuntimeController._clear_sl_tp_pending(self, trigger)
+        if repeated:
+            logger.debug("[RuntimeController] chiusura SL/TP tavolo %s ancora %s (%s): esito invariato, non ripubblicato",
+                         trigger.table_id, state, detail)
+            return
         topic_out = {sl_tp_close.STATE_ROUTED: sl_tp_close.SL_TP_CLOSE_ROUTED,
                      sl_tp_close.STATE_NOT_EXECUTED: sl_tp_close.SL_TP_CLOSE_NOT_EXECUTED}.get(
             state, sl_tp_close.SL_TP_CLOSE_UNCERTAIN)
         RuntimeController._publish_sl_tp_close(self, topic_out, trigger, payload, state=state, detail=detail,
                                                bet_ids=list(bet_ids), cashout_request_ids=list(requests))
+
+    def _live_sl_tp_meta(self, trigger):
+        """Meta del tavolo VIVO della stessa posizione (customer_ref), sotto il lock del TableManager; altrimenti None."""
+        tm = self.table_manager
+        table = getattr(tm, "_tables", {}).get(int(trigger.table_id))
+        meta = getattr(table, "meta", None)
+        if not isinstance(meta, dict) or str(meta.get("customer_ref") or "") != trigger.customer_ref:
+            return None
+        return meta
+
+    def _sl_tp_pending_outcome(self, trigger):
+        lock = getattr(self.table_manager, "_lock", None)
+        if lock is None:
+            return None
+        with lock:
+            meta = RuntimeController._live_sl_tp_meta(self, trigger)
+            pending = (meta or {}).get("sl_tp_pending")
+            return pending.get("last") if isinstance(pending, dict) and pending.get("reason") == trigger.reason else None
+
+    def _clear_sl_tp_pending(self, trigger) -> None:
+        lock = getattr(self.table_manager, "_lock", None)
+        if lock is None:
+            return
+        with lock:
+            meta = RuntimeController._live_sl_tp_meta(self, trigger)
+            if meta is not None:
+                meta.pop("sl_tp_pending", None)
+
+    def _release_sl_tp_latch(self, trigger, outcome=None) -> None:
+        """D-C4-01: NOT_EXECUTED provato (``sl_tp_close.latch_releasable``) e persistito => il latch del monitor F-02
+        torna libero, cosi' il prossimo book negoziabile con la soglia ancora superata scatta di nuovo (stato
+        NOT_EXECUTED ritentabile da F-04). Solo sul tavolo vivo della STESSA posizione (customer_ref) e con la
+        stessa ragione dello scatto; altrimenti nulla."""
+        tm = self.table_manager
+        lock = getattr(tm, "_lock", None)
+        if lock is None:
+            return
+        with lock:
+            meta = RuntimeController._live_sl_tp_meta(self, trigger)
+            if meta is None:
+                return
+            if meta.get("sl_tp_triggered") == trigger.reason:
+                meta.pop("sl_tp_triggered", None)
+                meta["sl_tp_pending"] = {"reason": trigger.reason, "last": list(outcome or [])}
+                logger.warning("[RuntimeController] latch SL/TP rilasciato: tavolo %s %s NOT_EXECUTED provato",
+                               trigger.table_id, trigger.reason)
 
     def _claim_sl_tp_close(self, trigger):
         """Identita' verificata + rivendicazione persistente. ``bet_ids`` se si puo' instradare, ``None`` (esito
@@ -7238,6 +7301,11 @@ class RuntimeController:
             # gambe di hedge livello per livello, ognuna al proprio prezzo; covered=False: il book non basta a
             # chiudere tutta la posizione (Sol su 6d232f4, Codex P2 e Sol su abfd2ed)
             legs, covered = quote
+            # D-C4-01 / PF-EXEC-05: nessuna decisione SL/TP/trailing su book non negoziabile (mercato non OPEN o
+            # selezione non ACTIVE): niente latch, niente chiusura. Prima lo SL scattava anche a mercato sospeso, la
+            # chiusura esitava NOT_EXECUTED e il latch impediva ogni nuovo scatto alla riapertura.
+            if not RuntimeController._market_book_tradable(market_book, table):
+                continue
             # Commissione di policy del cashout (la stessa che `dynamic_cashout_single` applica all'hedge reale):
             # una commissione di configurazione diversa farebbe sollevare la funzione del cashout nell'handler.
             try:
@@ -7254,7 +7322,7 @@ class RuntimeController:
                 continue
             # F-03 (K-7): precedenza hard-stop > SL > trailing > TP. Il trailing decide solo su mercato negoziabile e
             # profitto garantito liquidabile per intero (book che copre tutta la posizione).
-            if trail_pct is not None and covered and RuntimeController._market_book_tradable(market_book, table):
+            if trail_pct is not None and covered:
                 if RuntimeController._evaluate_trailing(self, table, side, stake, legs, trail_pct):
                     continue
             # TP solo su profitto LIQUIDABILE per intero; lo SL (chiusura protettiva, PF-EXEC-03) scatta anche con book
@@ -7329,8 +7397,7 @@ class RuntimeController:
         meta["sl_tp_triggered"] = reason
         event = {"STOP_LOSS_REACHED": "SL_TRIGGERED", trailing_stop.TRAILING_REASON: trailing_stop.TRAILING_TRIGGERED}.get(
             reason, "TP_TRIGGERED")
-        logger.warning("[RuntimeController] %s tavolo %s mercato %s pnl=%.2f", event, table.table_id, table.market_id, pnl)
-        self.bus.publish(event, {
+        payload = {
             "table_id": table.table_id,
             "market_id": table.market_id,
             "selection_id": table.selection_id,
@@ -7343,7 +7410,16 @@ class RuntimeController:
             "reason": reason,
             "customer_ref": meta.get("customer_ref") or "",
             "source": "AUTO_MONITOR",
-        })
+        }
+        pending = meta.get("sl_tp_pending")
+        if isinstance(pending, dict) and pending.get("reason") == reason:
+            # D-C4-01 (condizione Claude B): chiusura gia' tentata e NOT_EXECUTED provato per questo tavolo e ragione.
+            # Nuovo tentativo senza ripubblicare lo scatto: l'esito si pubblica solo se cambia (dedup).
+            logger.debug("[RuntimeController] %s tavolo %s: nuovo tentativo di chiusura in attesa", event, table.table_id)
+            RuntimeController._on_sl_tp_triggered(self, event, payload, quiet=True)
+            return
+        logger.warning("[RuntimeController] %s tavolo %s mercato %s pnl=%.2f", event, table.table_id, table.market_id, pnl)
+        self.bus.publish(event, payload)
 
     # =========================================================
     # DIRECT unmatched TTL poller (B6.3.2b) — cancel reale, default-OFF
