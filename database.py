@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from core.order_identity import response_bet_id
 from core.secret_cipher import SecretCipher
 from core.type_helpers import safe_float, safe_int, safe_bool_int, safe_json_dumps, safe_json_loads
 from database_schema import SCHEMA_DDL
@@ -2454,19 +2455,9 @@ class Database:
         (broker ``BetfairClient.place_bet`` ``{"ok": True, "result": {...}}``)
         o ``raw``. ``''`` se non determinabile.
         """
-        if not isinstance(response, dict):
-            return ""
-        bet_id = response.get("bet_id") or response.get("betId")
-        if bet_id:
-            return str(bet_id)
-        for container in (response, response.get("result"), response.get("raw")):
-            if isinstance(container, dict):
-                for report in container.get("instructionReports") or []:
-                    if isinstance(report, dict):
-                        rid = report.get("betId") or report.get("bet_id")
-                        if rid:
-                            return str(rid)
-        return ""
+        # F-14 (#586): stesso estrattore della riconciliazione (`core.order_identity.response_bet_id`); betId non
+        # univoco => "" (riga senza identita' verificabile, resta alla riconciliazione).
+        return response_bet_id(response)
 
     def save_observability_snapshot(self, payload):
         sql = """
