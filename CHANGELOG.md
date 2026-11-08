@@ -46,6 +46,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   stesso repository ricevono il ref keep (prima erano classificati `KEEP_REF` senza ref pubblicato); `recover` scarica
   i `refs/pull/<N>/head` per ogni checkpoint candidato, non solo per HEAD; con `--code-repo` la patch di un handoff si
   legge dal repository del checkpoint.
+- **Checkpoint multi-agente: rilievi di Codex su #615.** Il digest canonico fissa anche contesto (3 righe),
+  `interHunkContext` e ordine dei file, così non dipende da `diff.context`/`diff.orderFile` del clone; il `save`
+  risolve gli SHA citati dopo il fetch dei ref durevoli (uno SHA appena pubblicato su main è DURABLE al primo
+  tentativo).
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

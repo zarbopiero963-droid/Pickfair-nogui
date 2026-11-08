@@ -273,7 +273,8 @@ Regole di `verify`:
      - **senza artefatto** (PF-CKPT-CROSS-REPO-PROOF-02, per esempio una catena in pickfair-mcp-, dove il codice
        del motore non può stare): sha256 di `git diff --binary --full-index base_sha handoff_sha`, ricalcolato nel
        `target_repo`, == `patch_sha256`. Il diff usa la configurazione di default di git resa esplicita (rename
-       detection, prefissi `a/` `b/`, algoritmo myers, niente colore, diff esterni o textconv), quindi non dipende
+       detection, prefissi `a/` `b/`, algoritmo myers, 3 righe di
+       contesto, nessun `interHunkContext` né `orderFile`, niente colore, diff esterni o textconv), quindi non dipende
        dalla config del clone. Un digest registrato in un'altra forma (per esempio indici abbreviati) non
        coincide: la prova fallisce, mai il contrario.
 
@@ -314,7 +315,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 120 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 122 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo
