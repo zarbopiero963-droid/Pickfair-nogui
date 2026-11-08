@@ -1,9 +1,9 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 5,
+ "seq": 6,
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "previous_checkpoint_sha": "230eb0ddb528055d70bcccc19126855111f0b13f",
+ "previous_checkpoint_sha": "38fe6dc4fc7a8adab8c3cf803b13569fe66cbec1",
  "updated_at": "2026-11-05T14:22:51Z",
  "agent": {
   "identity": "claude-d",
@@ -14,7 +14,7 @@
  },
  "code": {
   "branch": "claude/d-roserpina-100-sim-report",
-  "sha": "82669be69f490c1ae2572f5da09c7e05b2eca231"
+  "sha": "cfe2a1c16162465c5a396828509107f79610c6f0"
  },
  "main_sha": "89af178e",
  "branches": {
@@ -35,12 +35,12 @@
    "stato": "F-04: dopo F-02 (Claude B)"
   },
   "claude/d-f03-trailing-stop": {
-   "sha": "b2bf8abfba53f0140dd8cc924e28c3b12d1916f8",
-   "stato": "F-03: impilato su F-02 @80b0090 + F-04; dopo F-04"
+   "sha": "3bcb308f619113b6b4581c3dddbe6c2dd42ccebb",
+   "stato": "stack F-02+F-04+F-03 + D-C4-01 (tree 126f2fd8); consegnato a Claude B (pfab-d-20261108-dc401-handoff-001), in attesa di ACCEPTED"
   },
   "claude/d-roserpina-100-sim-report": {
-   "sha": "e9fc3aaf",
-   "stato": "campagne 1-4, G7-S01..S25, S09 xfail condizionato a F-R06"
+   "sha": "cfe2a1c16162465c5a396828509107f79610c6f0",
+   "stato": "campagne 1-4, G7-S01..S26; B3 xfail solo senza D-C4-01; B5/S26 microstake E2E"
   },
   "claude/d-market-book-age": {
    "sha": "ea81e93e2f2dfe2791353ca42480cf4a7d382511",
@@ -117,7 +117,7 @@
   "catena di checkpoint pf-claude-d: seq 1 DURABLE, ripristino READY da clone nuovo",
   "caso sintetico squash+branch cancellato consegnato a Claude B (RED riprodotto: LATEST_CHECKPOINT_CORRUPT)"
  ],
- "next_atomic_action": "Attendere risposta Claude B su D-C4-01 (patch su stack F-03?); a ogni integrazione su main rieseguire run_g7.py --published-sha",
+ "next_atomic_action": "D-C4-02 (commit separato su claude/d-f03-trailing-stop, condizioni Claude B); leggere risposta Claude B su D-C4-01; PF-BLACKBOX-01 matrice completezza",
  "dependencies": {
   "F-04": "F-02 su main (Claude B)",
   "F-03": "F-02 + F-04",
@@ -199,6 +199,26 @@
    "id": "campagna 4 G7-S22..S25: 2 PASS, 2 XFAIL strict (D-C4-01, D-C4-02)",
    "status": "NOT VERIFIED",
    "note": "unpublished_tree d3b2d41+e802ea8"
+  },
+  {
+   "id": "D-C4-01 test mirati tests/f03/test_dc401_sl_sospeso_latch.py (35) + 11 mutanti uccisi",
+   "status": "PASS",
+   "sha": "3bcb308f619113b6b4581c3dddbe6c2dd42ccebb"
+  },
+  {
+   "id": "suite completa claude/d-f03-trailing-stop: 12477 passed, 36 falliti preesistenti identici alla base b2bf8ab",
+   "status": "PASS",
+   "sha": "3bcb308f619113b6b4581c3dddbe6c2dd42ccebb"
+  },
+  {
+   "id": "f026 campagne 2-4 su albero integrato d3b2d41 + D-C4-01: 18 passed, 1 xfail (S25)",
+   "status": "NOT VERIFIED",
+   "note": "unpublished_tree"
+  },
+  {
+   "id": "G7-S26 microstake E2E HeadlessApp (B5)",
+   "status": "NOT VERIFIED",
+   "note": "unpublished_tree d3b2d41+campagna4"
   }
  ],
  "tests_missing": [
@@ -212,8 +232,9 @@
   "F-R06 (P2, su main): riserva fantasma al riavvio per AMBIGUOUS regolato",
   "stack F-02: voce di catalogo recovery_live_bets_inverted (Claude B)",
   "preesistenti su main: test_issue437_pr02, test_trading_engine_internal_contracts, Telegram",
-  "D-C4-01 (P1, catena F-02/F-04): SL su mercato sospeso, latch mai rilasciato dopo NOT_EXECUTED (G7-S24 xfail)",
-  "D-C4-02 (P2, main sl_tp_pnl.position_stake): protezioni su stake richiesto non abbinato (G7-S25 xfail)"
+  "D-C4-02 (P2, main sl_tp_pnl.position_stake): protezioni su stake richiesto non abbinato (G7-S25 xfail)",
+  "D-C4-01 (P1): CORRETTO su claude/d-f03-trailing-stop 3bcb308f, non su main; in verifica da Claude B",
+  "D-C4-03 (candidato, catena F-04/F-05): ROUTED + fallimento terminale provato dell'hedge non riapre la protezione; issue da Claude B"
  ],
  "github_evidence": [
   "#586 c.6640163608",
@@ -226,7 +247,8 @@
   "PR #609",
   "#586 c.6660335325",
   "#586 c.6660379402",
-  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6663479116"
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6663479116",
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728013955"
  ],
  "gate_a": "NOT APPLICABLE (Claude D)",
  "pr_505": "non toccata",

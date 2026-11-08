@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "claude/d-roserpina-100-sim-report",
-  "sha": "82669be69f490c1ae2572f5da09c7e05b2eca231"
+  "sha": "cfe2a1c16162465c5a396828509107f79610c6f0"
  },
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "next_atomic_action": "Attendere risposta Claude B su D-C4-01 (patch su stack F-03?); a ogni integrazione su main rieseguire run_g7.py --published-sha",
- "previous_checkpoint_sha": "230eb0ddb528055d70bcccc19126855111f0b13f",
+ "next_atomic_action": "D-C4-02 (commit separato su claude/d-f03-trailing-stop, condizioni Claude B); leggere risposta Claude B su D-C4-01; PF-BLACKBOX-01 matrice completezza",
+ "previous_checkpoint_sha": "38fe6dc4fc7a8adab8c3cf803b13569fe66cbec1",
  "schema": "pf-current/1",
- "seq": 5
+ "seq": 6
 }

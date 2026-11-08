@@ -27,7 +27,7 @@
  ],
  "lotto_corrente": "G7 campagna finanziaria: scenari G7-S01..S21 + hardening F-R06",
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "next_atomic_action": "Attendere risposta Claude B su D-C4-01 (patch su stack F-03?); a ogni integrazione su main rieseguire run_g7.py --published-sha",
+ "next_atomic_action": "D-C4-02 (commit separato su claude/d-f03-trailing-stop, condizioni Claude B); leggere risposta Claude B su D-C4-01; PF-BLACKBOX-01 matrice completezza",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
