@@ -484,6 +484,10 @@ class HeadlessApp:
             self._ensure_built_components()
 
             self._built = True
+            from core import blackbox_runtime
+            blackbox_runtime.record("COMPONENT_INIT", source="SYSTEM", component="headless_main",
+                                    phase="OBSERVATION", outcome="VERIFIED",
+                                    data={"start_services": bool(start_services)})
 
         except Exception:
             logger.exception("Errore durante build headless")
@@ -1347,12 +1351,22 @@ class HeadlessApp:
         # entering the main loop.  --emergency-stop is the headless operator
         # trigger; it is fail-closed: partial cancel failures do not resume trading.
         if emergency_stop_requested:
+            from core import blackbox_runtime
             logger.warning("EMERGENCY STOP richiesto via --emergency-stop")
+            blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="WARNING",
+                                    phase="ATTEMPT", outcome="PENDING", reason_code="operator_cli_flag")
             try:
                 result = self.runtime.emergency_stop(reason="operator_cli_flag")
                 logger.warning("EMERGENCY_STOP result: %s", result)
+                blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main",
+                                        severity="WARNING", phase="RESULT", outcome="VERIFIED",
+                                        reason_code="operator_cli_flag",
+                                        data={"result": result if isinstance(result, dict) else str(result)})
             except Exception as exc:
                 logger.exception("Errore durante emergency_stop: %s", exc)
+                blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="ERROR",
+                                        phase="RESULT", outcome="FAILED", reason_code=type(exc).__name__,
+                                        reason=str(exc)[:500])
             return 0
 
         try:
@@ -1477,11 +1491,24 @@ class HeadlessApp:
 
 
 def main() -> int:
+    # PF-BLACKBOX-01 (BB-1): la scatola nera parte PRIMA di qualunque componente operativo. Senza registro il
+    # processo non parte (fail-closed): nessuna operazione finanziaria senza cronologia.
+    from core import blackbox_runtime
+    try:
+        blackbox_runtime.install(entrypoint="headless_main")
+    except Exception as exc:      # noqa: BLE001 - qualunque guasto della scatola nera blocca l'avvio
+        logger.critical("Scatola nera non disponibile: avvio rifiutato (%s)", exc)
+        return 1
     app: Optional[HeadlessApp] = None
+    rc = 1
     try:
         app = HeadlessApp()
-        return app.start()
+        rc = app.start()
+        return rc
     except Exception as exc:
+        blackbox_runtime.record("UNCAUGHT_EXCEPTION", source="SYSTEM", component="headless_main",
+                                severity="CRITICAL", phase="OBSERVATION", outcome="VERIFIED",
+                                reason_code=type(exc).__name__, reason=str(exc)[:500])
         if app is not None and app.alerts_manager is not None and app.incidents_manager is not None:
             try:
                 app.alerts_manager.upsert_alert(
@@ -1500,6 +1527,8 @@ def main() -> int:
                 logger.exception("Failed to register fatal observability event")
         logger.exception("Errore fatale in headless_main: %s", exc)
         return 1
+    finally:
+        blackbox_runtime.shutdown("STOP" if rc == 0 else f"EXIT_{rc}")
 
 
 if __name__ == "__main__":
