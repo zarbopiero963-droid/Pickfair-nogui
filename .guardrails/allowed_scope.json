@@ -3482,6 +3482,21 @@
       ],
       "max_files": 7
     },
+    "d_g7_r06_settled_ambiguous": {
+      "description": "G7-R06 (#586): la ricostruzione F018 chiude gli intenti AMBIGUOUS/INFLIGHT con un effetto di settlement applicato (prova = chiave del settlement), invece di ricrearne la riserva su un mercato regolato; registro illeggibile => incerto.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/runtime_controller.py",
+        "database.py",
+        "docs/startup_recovery.md",
+        "guardrails/mutation_catalog.json",
+        "tests/acceptance/test_g7_r06_rebuild_settled.py",
+        "tests/f026/test_g7_r06_settled_ambiguous.py"
+      ],
+      "max_files": 8
+    },
     "pfckpt_squash_durable_refs": {
       "description": "Decisione owner (incidente agent-state/pf-claude-b seq 17, LATEST_CHECKPOINT_CORRUPT dopo squash merge e cancellazione del branch della PR): al save ogni SHA di codice citato deve essere durevole sul remoto (branch durevole main, refs/pull/<N>/head dichiarato o scoperto, oppure transizione integration TREE_EQUAL su main), altrimenti CODE_SHA_NOT_DURABLE e nulla e' pubblicato; il readback lo riverifica. Campo opzionale code.integration / tests_executed[].integration (original_sha, original_tree, integration_sha, integration_tree, equivalence TREE_EQUAL|NOT_PROVEN), confronto di soli tree SHA. Ref refs/agent-state/keep/<sha> solo opt-in (--keep-refs): il proxy delle sessioni rifiuta ref fuori da refs/heads e refs/tags. Dati non provabili => NEEDS_RECONCILIATION, mai READY. Solo tools/agent_checkpoint, i suoi test e la doc; nessun runtime, workflow o scripts/pr_*. ESTENSIONE DICHIARATA (05/11, correzione del design dopo verifica su GitHub reale): tests/agent_checkpoint/test_pfckpt.py, il fixture world pubblica il commit di codice anche su main (branch durevole). ESTENSIONE DICHIARATA (05/11, decisione owner sugli handoff fra agenti): record opzionale handoffs nello STATE (DELIVERED / INTEGRATED_VERIFIED / INTEGRATED_NOT_PROVEN, prova ricalcolata patch su base == tree di integrazione, comando handoff-verify) e il nuovo file tests/agent_checkpoint/test_pfckpt_handoffs.py. ESTENSIONE DICHIARATA (05/11, PF-MCP-CROSS-REPO-HANDOFF-01): risoluzione di ogni riferimento di handoff nel proprio repository (--repo-path NOME=PERCORSO, mai ripiego sulla catena), stato DURABLE provato dal commit di handoff pubblicato, e il nuovo file tests/agent_checkpoint/test_pfckpt_handoff_cross_repo.py. Estensione dichiarata (PF-MCP-CROSS-REPO-HANDOFF-01 e PF-CKPT-CROSS-REPO-PROOF-02, owner 05/11/2026): record handoffs cross-repo (--repo-path) e prova DURABLE senza copia della patch tramite digest canonico ricalcolato nel target; stessi file.",
       "allow_tests": true,

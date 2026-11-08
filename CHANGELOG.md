@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **G7-R06 (#586): AMBIGUOUS gia' regolato non rinasce come riserva al riavvio.** La ricostruzione F018 chiude gli
+  intenti con un effetto di settlement applicato (`Database.settled_customer_refs`, prova = chiave del settlement)
+  invece di ricrearne il tavolo come posizione incerta su un mercato gia' chiuso. Senza prova o con registro
+  illeggibile la riga resta incerta (fail-closed). Documentazione: `docs/startup_recovery.md`.
+
 ### Added
 - **Checkpoint multi-agente: SHA durevoli dopo squash merge (`pfckpt_squash_durable_refs`).** Risolve l'incidente
   di `agent-state/pf-claude-b` seq 17: lo SHA della PR, integrata con squash e con il branch poi cancellato, rendeva

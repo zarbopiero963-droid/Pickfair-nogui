@@ -45,6 +45,23 @@ Test: `tests/f09/test_f09_recover_gating.py` (HeadlessApp reale in SIM tramite l
 - Test: `tests/f08/test_f08_startup_orders_real_db.py` (DB SQLite reale, migrazione di un DB senza tabelle senza
   perdita di ordini); mutazioni `f08_*` in `guardrails/mutation_catalog.json`.
 
+## AMBIGUOUS gia' regolato: nessuna riserva fantasma al riavvio (G7-R06, #586)
+
+Scenario riprodotto su main `911562a` (`tests/f026/test_g7_r06_settled_ambiguous.py`, HeadlessApp in SIM con SQLite
+reale): ingresso con risposta persa dopo l'invio (riga `orders` AMBIGUOUS, senza `betId`), settlement del mercato
+attribuito al suo intento (tavolo rilasciato, P&L contabilizzato, effetto registrato in `settlement_effects`), crash,
+riavvio. La ricostruzione F018 riprendeva la riga AMBIGUOUS come posizione incerta: tavolo occupato e riserva
+trattenuta per sempre su un mercato gia' chiuso (capitale bloccato, cap di esposizione consumati).
+
+Ora `_rebuild_open_positions` (`_drop_settled_candidates`) chiude un candidato solo se **tutte** queste condizioni
+valgono: `Database.settled_customer_refs` (sola lettura) riporta per il suo intento un effetto di settlement
+**applicato** (esito diverso da `held`) **sullo stesso mercato**; gli ordini correnti dell'exchange sono leggibili; e
+l'exchange **non** mostra alcun ordine vivo dell'intento (per `customerOrderRef` o `betId`). La chiave del settlement e'
+la prova (`result["settled"] = {customer_ref: settlement_key}`, `result["closed"]`). In ogni altro caso la riga resta
+incerta e trattenuta: nessun effetto applicato (mai abbinato, decaduto: F028_04), effetto su un altro mercato, exchange
+illeggibile, ordine ancora vivo (dati incoerenti), registro illeggibile (fail-closed). La riga `orders` non viene riscritta. Test: `tests/acceptance/test_g7_r06_rebuild_settled.py`;
+mutazioni `g7r06_*`.
+
 ## Crash fra il settlement nel broker e la sua contabilizzazione (F-10, #586 RST-03)
 
 Scenario provato sul runtime vero (`tests/recovery/test_f10_rst03_crash_debt.py`, HeadlessApp in SIM con SQLite

@@ -8436,6 +8436,54 @@
         "tests/acceptance/test_f14_cancel_single_shot.py"
       ],
       "rationale": "P2-1: report TIMEOUT del cancel di mercato letto come successo."
+    },
+    {
+      "id": "g7r06_held_as_proof",
+      "module": "database",
+      "area": "recovery",
+      "file": "database.py",
+      "original": "            f\"SELECT customer_ref, market_id, settlement_key FROM settlement_effects WHERE outcome != 'held' \"",
+      "mutated": "            f\"SELECT customer_ref, market_id, settlement_key FROM settlement_effects WHERE 1=1 \"",
+      "tests": [
+        "tests/acceptance/test_g7_r06_rebuild_settled.py"
+      ],
+      "rationale": "G7-R06: un settlement trattenuto (held) letto come prova di chiusura."
+    },
+    {
+      "id": "g7r06_settled_not_filtered",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            if key and not alive:",
+      "mutated": "            if key:",
+      "tests": [
+        "tests/acceptance/test_g7_r06_rebuild_settled.py"
+      ],
+      "rationale": "G7-R06: riserva rilasciata per settlement mentre l'exchange mostra ancora un ordine vivo dell'intento."
+    },
+    {
+      "id": "g7r06_market_ignored",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            key = (settled.get(ref) or {}).get(str(c.get(\"market_id\") or \"\"))",
+      "mutated": "            key = next(iter((settled.get(ref) or {}).values()), None)",
+      "tests": [
+        "tests/acceptance/test_g7_r06_rebuild_settled.py"
+      ],
+      "rationale": "G7-R06: un settlement di un altro mercato usato come prova di chiusura."
+    },
+    {
+      "id": "g7r06_live_order_ignored",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            if key and not alive:",
+      "mutated": "            if key:",
+      "tests": [
+        "tests/acceptance/test_g7_r06_rebuild_settled.py"
+      ],
+      "rationale": "G7-R06: un intento con un ordine ancora vivo sull'exchange (per customerOrderRef o betId) viene chiuso per settlement e la sua riserva rilasciata."
     }
   ]
 }
