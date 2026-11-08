@@ -61,6 +61,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   un checkpoint precedente pubblicato (il `code.tree` dello STATE corrente è autodichiarato); `save` ricalcola
   `code.tree` a ogni checkpoint; il commit di integrazione `TREE_EQUAL` deve essere durevole di per sé; nei handoff
   cross-repo `integration_sha` deve stare su `main` del target.
+  Quarto giro: `code.tree` calcolato dopo il fetch dei ref durevoli; gli `integration_sha` entrano nel fallback
+  `refs/pull`; ancore solo da antenati con manifest integro (limite residuo dichiarato in §6-ter).
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

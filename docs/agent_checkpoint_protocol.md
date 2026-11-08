@@ -192,8 +192,13 @@ Regole di `verify`, confrontando solo tree SHA e mai file per file:
 - `original_tree` deve coincidere con i tree già registrati per quello SHA (`code.tree`, `code.patch.tree`).
 - Con l'originale **non** risolvibile, l'`original_tree` vale solo se è **ancorato**: deve coincidere con un `code.tree`
   (o `code.patch.tree`) registrato da un `save` quando l'oggetto esisteva, in un checkpoint **precedente** già
-  pubblicato della catena (first-parent, ultimi 200). Il `code.tree` dello STATE corrente non conta: è
-  un'autodichiarazione. `save` ricalcola `code.tree` dall'oggetto a ogni checkpoint.
+  pubblicato della catena (first-parent, ultimi 200) **con manifest integro**. Il `code.tree` dello STATE corrente
+  non conta: è un'autodichiarazione. `save` ricalcola `code.tree` dall'oggetto a ogni checkpoint, dopo il fetch dei
+  ref durevoli (se l'oggetto non è raggiungibile il campo viene tolto).
+  **Limite dichiarato:** la catena è scritta dagli agenti. Un antenato pubblicato con manifest coerente ma contenuto
+  falso, scritto senza lo strumento, non è distinguibile senza un'attestazione esterna. La protezione residua è la
+  storia pubblicata del branch di stato (nessun force-push, concorrenza ottimistica). Il rimedio sicuro resta
+  recuperare l'oggetto originale da `refs/pull/<N>/head`.
 - Un commit di integrazione `TREE_EQUAL` è un riferimento a sé (`<label>.integration`): deve essere durevole anche
   quando l'originale è raggiungibile.
 - Handoff cross-repo `INTEGRATED_VERIFIED`: `integration_sha` deve essere pubblicato su `main` del target, non solo
@@ -325,7 +330,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 133 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 136 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo

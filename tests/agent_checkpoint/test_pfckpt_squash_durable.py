@@ -614,3 +614,70 @@ def test_tree_equal_integration_commit_must_be_durable_even_with_the_original_on
     err = expect(2, pfckpt.save, a, BR, "origin", exp, "integrazione su branch temporaneo", D, agent="claude")
     assert err.reason == "CODE_SHA_NOT_DURABLE"
     assert any(r["label"] == "code.sha.integration" for r in err.detail["not_durable"])
+
+
+# ================================================================== quarto giro di Sol su #615 (bd0a9a41)
+def test_code_tree_is_computed_after_fetching_a_just_published_sha(world):
+    """Sol #615 (bd0a9a41): code.sha appena pubblicato su main e non ancora locale: il tree si calcola DOPO il
+    fetch dei ref durevoli (prima restava il tree ereditato e il checkpoint veniva rifiutato)."""
+    a = agent(world, "a")
+    exp = next_state(a, world, code={"branch": "main", "sha": world["code"]})
+    pfckpt.save(a, BR, "origin", exp, "ckpt 1", D, agent="claude", release=True)
+    c = _code_clone(world, "pub")
+    sh(c, "checkout", "-q", "-B", "m", "origin/main")
+    with open(os.path.join(c, "y.py"), "w") as fh:
+        fh.write("Y = 1\n")
+    sh(c, "add", "-A"); sh(c, "commit", "-q", "-m", "nuovo")
+    new, ntree = sh(c, "rev-parse", "HEAD"), sh(c, "rev-parse", "HEAD^{tree}")
+    sh(c, "push", "-q", "origin", "HEAD:refs/heads/main")
+    assert pfckpt.resolve_commit(a, new) is None
+    st = json.load(open(os.path.join(a, D, "STATE.json")))
+    exp = next_state(a, world, code=dict(st["code"], sha=new))
+    res = pfckpt.save(a, BR, "origin", exp, "ckpt 2", D, agent="claude", release=True)
+    assert res["status"] == "DURABLE"
+    assert pfckpt.tree_json(a, "HEAD", D, "STATE.json")["code"]["tree"] == ntree
+
+
+def test_integration_commit_kept_only_by_refs_pull_is_fetched_on_bootstrap(world):
+    """Sol #615 (bd0a9a41): un commit di integrazione TREE_EQUAL conservato solo da refs/pull/<N>/head deve essere
+    scaricato dal fallback anche quando l'originale si risolve."""
+    a = agent(world, "a")
+    sh(a, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    orig = sh(a, "rev-parse", "origin/main")
+    c = _code_clone(world, "pr7")
+    sh(c, "checkout", "-q", "-B", "t", "origin/main")
+    sh(c, "commit", "-q", "--allow-empty", "-m", "stesso tree")
+    integ_sha = sh(c, "rev-parse", "HEAD")
+    sh(c, "push", "-q", "origin", "HEAD:refs/heads/pr7-branch")
+    open_pr(world, 7, integ_sha)
+    sh(a, "fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*")
+    integ = pfckpt.build_integration(a, orig, integ_sha)
+    exp = next_state(a, world, code={"branch": "main", "sha": orig, "pr": 7, "integration": integ})
+    res = pfckpt.save(a, BR, "origin", exp, "integrazione su PR", D, agent="claude", release=True)
+    assert res["status"] == "DURABLE" and _vias(res)["code.sha.integration"] == "PULL:7"
+    sh(world["url"], "update-ref", "-d", "refs/heads/pr7-branch")
+    sh(world["url"], "reflog", "expire", "--expire=now", "--all")
+    sh(world["url"], "gc", "-q", "--prune=now")
+    rep = pfckpt.bootstrap(world["url"], BR, str(world["tmp"] / "fresh"), D, CODE_BR)
+    assert rep["status"] == "READY"
+
+
+def test_anchor_from_a_corrupt_ancestor_checkpoint_is_ignored(world):
+    """Sol #615 (bd0a9a41): un antenato con manifest non integro non fornisce ancore (SHA inventato + tree di main
+    scritti in un commit grezzo e alterato)."""
+    invented = "fedcba9876543210fedcba9876543210fedcba98"
+    a = agent(world, "a")
+    sh(a, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    main, mtree = sh(a, "rev-parse", "origin/main"), sh(a, "rev-parse", "origin/main^{tree}")
+    next_state(a, world, code={"branch": "main", "sha": invented, "tree": mtree})
+    pfckpt.write_manifest(a, D)
+    with open(os.path.join(a, D, "HANDOFF.md"), "a") as fh:
+        fh.write("alterato dopo il manifest\n")
+    raw_commit(a, "antenato corrotto con ancora falsa")
+    lie = {"original_sha": invented, "original_tree": mtree, "integration_sha": main, "integration_tree": mtree,
+           "equivalence": "TREE_EQUAL"}
+    next_state(a, world, code={"branch": "main", "sha": invented, "integration": lie})
+    pfckpt.write_manifest(a, D)
+    raw_commit(a, "checkpoint integro che si appoggia all'antenato corrotto")
+    err = expect(2, pfckpt.verify, a, "HEAD", D)
+    assert any("ancor" in p for p in err.detail["problems"]), err.detail["problems"]

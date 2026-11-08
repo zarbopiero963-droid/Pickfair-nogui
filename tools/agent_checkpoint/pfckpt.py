@@ -560,6 +560,21 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
     return problems, refp, info
 
 
+def manifest_intact(repo, commit, d=DEFAULT_DIR):
+    """True se il checkpoint al commit ha STATE.json e un manifest che elenca esattamente i suoi file con gli hash
+    giusti. Usato per accettare ancore dai checkpoint antenati (non sostituisce `verify`)."""
+    try:
+        files = tree_files(repo, commit, d)
+        if MANIFEST not in files or "STATE.json" not in files:
+            return False
+        manifest = parse_manifest(blob(repo, commit, files[MANIFEST]).decode(errors="replace"))
+        if set(manifest) != set(files) - {MANIFEST}:
+            return False
+        return all(hashlib.sha256(blob(repo, commit, files[f])).hexdigest() == manifest[f] for f in manifest)
+    except (CheckpointError, ValueError, OSError):
+        return False
+
+
 def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None):
     """Verifica completa del checkpoint al commit REF. Ritorna un dict di report; solleva CheckpointError(2) se invalido."""
     commit = out(repo, "rev-parse", "--verify", f"{ref}^{{commit}}")
@@ -631,6 +646,8 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None):
             history_loaded.append(True)
             for c in out(repo, "rev-list", "--first-parent", "--max-count=200", f"{commit}~1").splitlines() \
                     if git(repo, "rev-parse", "-q", "--verify", f"{commit}~1", check=False).returncode == 0 else []:
+                if not manifest_intact(repo, c, d):
+                    continue                        # antenato non integro: nessuna ancora (rilievo Sol #615)
                 try:
                     st = tree_json(repo, c, d, "STATE.json")
                 except (ValueError, CheckpointError):
@@ -907,6 +924,10 @@ def _cited_shas_and_prs(state):
         shas.append(str(code["sha"]))
     if isinstance(code.get("pr"), int) and code["pr"] > 0:
         prs.add(code["pr"])
+    for e in [code] + [t for t in (state.get("tests_executed") or []) if isinstance(t, dict)]:
+        integ = e.get("integration")
+        if isinstance(integ, dict) and integ.get("integration_sha"):
+            shas.append(str(integ["integration_sha"]))     # anche l'integrazione puo' vivere solo in refs/pull
     for h, f in _same_repo_handoff_shas(state):
         shas.append(str(h[f]))
     for t in state.get("tests_executed") or []:
@@ -1163,13 +1184,15 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
             st["agent"]["lease_status_at_write"] = status
         if code_repo:
             st.setdefault("code", {})["patch"] = capture_code_patch(code_repo, repo, d)
-        code_full = resolve_commit(repo, (st.get("code") or {}).get("sha"))
-        if code_full:
-            # tree ricalcolato dall'oggetto a ogni save (mai un tree vecchio di un code.sha precedente, rilievo Sol
-            # #615): diventa l'ancora per un futuro `integration.original_tree` quando questo checkpoint e' pubblicato
-            st["code"]["tree"] = tree_of(repo, code_full)
         # durabilita' PRIMA di scrivere/committare: uno SHA che sparirebbe con il branch non entra nel checkpoint
         _rows, missing, branch_only = check_durability(repo, remote, st, durable_branches, keep_refs, _waiver(st))
+        # tree ricalcolato dall'oggetto DOPO il fetch dei ref durevoli (rilievi Sol #615): mai un tree ereditato da un
+        # code.sha precedente; diventa l'ancora per un futuro `integration.original_tree` una volta pubblicato.
+        code_full = resolve_commit(repo, (st.get("code") or {}).get("sha"))
+        if code_full:
+            st["code"]["tree"] = tree_of(repo, code_full)
+        elif isinstance(st.get("code"), dict):
+            st["code"].pop("tree", None)          # non verificabile ora: un tree non ricalcolato non e' un'ancora
         if branch_only and allow_branch_only and not missing:
             w = st["code"].setdefault("durability_waiver", {})
             w["branch_only"] = sorted(set(w.get("branch_only") or []) | {r["original"] for r in branch_only})
