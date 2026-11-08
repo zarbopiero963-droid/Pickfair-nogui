@@ -32,14 +32,15 @@
   "PF-BLACKBOX-01 architettura pubblicata (registro e424d7ae)",
   "Piano integrazione MCP pubblicato (registro f5bfa2b6, #586 c.6663734910)",
   "#610 F-16 merged owner a09d8d61 (tree = 6fdb6398), CI post-merge 12/12",
-  "pfckpt-squash-durable aggiornato su main @5c52cd9f (117 test)"
+  "pfckpt-squash-durable aggiornato su main @5c52cd9f (117 test)",
+  "#614 F-R06 merged 6519794b (auto-merge certificato, c.6728336061)"
  ],
- "lotto_corrente": "#614 F-R06 @34bbf01f: READY_FOR_AUTO_MERGE (tutti i gate PASS sullo stesso SHA); merge in corso",
+ "lotto_corrente": "#614 F-R06 MERGED auto-certificato 6519794b (tree = 34bbf01f), CI post-merge verde. Prossima: PR pfckpt (8779ef7a).",
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "next_atomic_action": "Merge #614 vincolato a 34bbf01f; verifica tree e CI post-merge; poi PR pfckpt (5c52cd9f).",
+ "next_atomic_action": "Aprire PR pfckpt-squash-durable @8779ef7a, gate; poi BB-1.",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
-  "gate CI/review/PRE-LIVE F-R06"
+  "gate PR pfckpt"
  ]
 }

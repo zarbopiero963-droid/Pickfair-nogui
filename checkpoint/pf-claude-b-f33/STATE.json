@@ -1,14 +1,14 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 24,
+ "seq": 25,
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "previous_checkpoint_sha": "0e329b8a5e5d3e1c9a030db3810053c7bb673aca",
+ "previous_checkpoint_sha": "6d451d25819edf0203bdd0c63046f14db6af4f43",
  "code": {
-  "branch": "claude/d-g7-r06-settled-ambiguous",
-  "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e"
+  "branch": "main",
+  "sha": "6519794b125152e62ca02b1821854075f8fc6653"
  },
- "lotto_corrente": "#614 F-R06 @34bbf01f: READY_FOR_AUTO_MERGE (tutti i gate PASS sullo stesso SHA); merge in corso",
+ "lotto_corrente": "#614 F-R06 MERGED auto-certificato 6519794b (tree = 34bbf01f), CI post-merge verde. Prossima: PR pfckpt (8779ef7a).",
  "lotti_completati": [
   "#596 F-01 merged dc83b06",
   "#597 F-09 0d16693",
@@ -31,9 +31,10 @@
   "PF-BLACKBOX-01 architettura pubblicata (registro e424d7ae)",
   "Piano integrazione MCP pubblicato (registro f5bfa2b6, #586 c.6663734910)",
   "#610 F-16 merged owner a09d8d61 (tree = 6fdb6398), CI post-merge 12/12",
-  "pfckpt-squash-durable aggiornato su main @5c52cd9f (117 test)"
+  "pfckpt-squash-durable aggiornato su main @5c52cd9f (117 test)",
+  "#614 F-R06 merged 6519794b (auto-merge certificato, c.6728336061)"
  ],
- "next_atomic_action": "Merge #614 vincolato a 34bbf01f; verifica tree e CI post-merge; poi PR pfckpt (5c52cd9f).",
+ "next_atomic_action": "Aprire PR pfckpt-squash-durable @8779ef7a, gate; poi BB-1.",
  "dependencies": {
   "f16": "dopo merge #609",
   "g1_g2_install": "GO owner specifico",
@@ -55,56 +56,20 @@
  },
  "tests_executed": [
   {
-   "name": "F-R06 mirati",
+   "name": "tree main == tree 34bbf01f",
    "status": "PASS",
-   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
-   "result": "26 passed; 4 mutanti g7r06_* KILLED"
+   "sha": "6519794b125152e62ca02b1821854075f8fc6653",
+   "result": "874c10ab"
   },
   {
-   "name": "F018 collegati",
+   "name": "CI post-merge main",
    "status": "PASS",
-   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
-   "result": "814 passed, 1 xfailed"
-  },
-  {
-   "name": "tests/acceptance",
-   "status": "FAIL",
-   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
-   "result": "1451 passed, 1 failed preesistente #611"
-  },
-  {
-   "name": "tests/f026",
-   "status": "PASS",
-   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
-   "result": "176 passed"
-  },
-  {
-   "name": "tests/recovery+core",
-   "status": "PASS",
-   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
-   "result": "51 + 675 passed"
-  },
-  {
-   "name": "tests/guardrails",
-   "status": "PASS",
-   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
-   "result": "1343 passed, 15 skipped (ambiente: origin/main, xdist)"
-  },
-  {
-   "name": "tests/scripts",
-   "status": "PASS",
-   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
-   "result": "3406 passed"
-  },
-  {
-   "name": "gate #614",
-   "status": "PASS",
-   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e",
-   "result": "CI 127/127, PRE-LIVE success, Sol/Grok VALID_PASS, merge-decision READY_FOR_AUTO_MERGE"
+   "sha": "6519794b125152e62ca02b1821854075f8fc6653",
+   "result": "run push tutti success"
   }
  ],
  "tests_missing": [
-  "gate CI/review/PRE-LIVE F-R06"
+  "gate PR pfckpt"
  ],
  "missing_historical_evidence": [],
  "gate_a": "NON PASS: behaviour_coverage.json 0 comportamenti mappati",
@@ -128,8 +93,8 @@
    "sha": "a09d8d6116aa234e838186f807f62470873def50"
   },
   "614": {
-   "state": "open",
-   "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e"
+   "state": "merged",
+   "sha": "6519794b125152e62ca02b1821854075f8fc6653"
   }
  },
  "worktrees": {

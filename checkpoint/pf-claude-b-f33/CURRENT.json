@@ -2,12 +2,12 @@
  "certification_verdict": "NOT VERIFIED",
  "checkpoint_commit": null,
  "code": {
-  "branch": "claude/d-g7-r06-settled-ambiguous",
-  "sha": "34bbf01faf1ae15c17ba9fb108e26cccc537606e"
+  "branch": "main",
+  "sha": "6519794b125152e62ca02b1821854075f8fc6653"
  },
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "next_atomic_action": "Merge #614 vincolato a 34bbf01f; verifica tree e CI post-merge; poi PR pfckpt (5c52cd9f).",
- "previous_checkpoint_sha": "0e329b8a5e5d3e1c9a030db3810053c7bb673aca",
+ "next_atomic_action": "Aprire PR pfckpt-squash-durable @8779ef7a, gate; poi BB-1.",
+ "previous_checkpoint_sha": "6d451d25819edf0203bdd0c63046f14db6af4f43",
  "schema": "pf-current/1",
- "seq": 24
+ "seq": 25
 }
