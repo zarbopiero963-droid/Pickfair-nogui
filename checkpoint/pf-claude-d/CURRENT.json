@@ -6,8 +6,8 @@
   "sha": "6475b938e930f8e9b83c34a55708d6906e7cb229"
  },
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "next_atomic_action": "PF-BLACKBOX-01: test di completezza offline (tests/blackbox_completeness/) contro schema pf_blackbox_01.md @cb2f04bb; attendere risposta Claude B su D-C4-02",
- "previous_checkpoint_sha": "73b2d69c97280649d1fd816425481b06e4257ab2",
+ "next_atomic_action": "Attendere risposte Claude B (D-C4-02, oracolo); a ogni integrazione su main rieseguire G7 sullo SHA pubblicato; agganciare l'oracolo a core.blackbox_query quando BB-1 e' in PR",
+ "previous_checkpoint_sha": "7e1b5b12bc6e253ba85555a3a236c377f2d9f32c",
  "schema": "pf-current/1",
- "seq": 8
+ "seq": 9
 }

@@ -1,9 +1,9 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 8,
+ "seq": 9,
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "previous_checkpoint_sha": "73b2d69c97280649d1fd816425481b06e4257ab2",
+ "previous_checkpoint_sha": "7e1b5b12bc6e253ba85555a3a236c377f2d9f32c",
  "updated_at": "2026-11-05T14:22:51Z",
  "agent": {
   "identity": "claude-d",
@@ -81,6 +81,10 @@
   "claude/d-bf-readonly-probe": {
    "sha": "36aed333f37141a78ca0098848b22e2006da7873",
    "stato": "guardia/campagna Betfair READ-ONLY"
+  },
+  "claude/d-blackbox-completeness": {
+   "sha": "569284ddfbb956119d23a1e5414bc9d0db119280",
+   "stato": "PF-BLACKBOX-01 oracolo di completezza offline (23 test, 15 mutanti), consegnato a Claude B"
   }
  },
  "integration_queue": [
@@ -117,7 +121,7 @@
   "catena di checkpoint pf-claude-d: seq 1 DURABLE, ripristino READY da clone nuovo",
   "caso sintetico squash+branch cancellato consegnato a Claude B (RED riprodotto: LATEST_CHECKPOINT_CORRUPT)"
  ],
- "next_atomic_action": "PF-BLACKBOX-01: test di completezza offline (tests/blackbox_completeness/) contro schema pf_blackbox_01.md @cb2f04bb; attendere risposta Claude B su D-C4-02",
+ "next_atomic_action": "Attendere risposte Claude B (D-C4-02, oracolo); a ogni integrazione su main rieseguire G7 sullo SHA pubblicato; agganciare l'oracolo a core.blackbox_query quando BB-1 e' in PR",
  "dependencies": {
   "F-04": "F-02 su main (Claude B)",
   "F-03": "F-02 + F-04",
@@ -245,6 +249,11 @@
    "id": "f026 campagne 2-4 + report su d3b2d41 + D-C4-01/02: tutti PASS; senza correzioni campagna 4 = 3 PASS 2 XFAIL",
    "status": "NOT VERIFIED",
    "note": "unpublished_tree"
+  },
+  {
+   "id": "oracolo completezza scatola nera tests/blackbox_completeness (23) + 15 mutanti",
+   "status": "PASS",
+   "sha": "569284ddfbb956119d23a1e5414bc9d0db119280"
   }
  ],
  "tests_missing": [
@@ -275,7 +284,8 @@
   "#586 c.6660379402",
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6663479116",
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728013955",
-  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728261674"
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728261674",
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728318353"
  ],
  "gate_a": "NOT APPLICABLE (Claude D)",
  "pr_505": "non toccata",
@@ -296,6 +306,9 @@
   },
   {
    "note": "D-C4-02 consegnato: pfab-d-20261108-dc402-handoff-001 (consegnato al canale, risposta non ancora ricevuta)"
+  },
+  {
+   "note": "pfab-d-20261108-blackbox-oracle-001 consegnato al canale (risposta non ancora ricevuta); punto aperto disco pieno/uscite"
   }
  ]
 }
