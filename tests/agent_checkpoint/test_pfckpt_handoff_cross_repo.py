@@ -389,3 +389,17 @@ def test_gitlink_change_hidden_by_ignore_submodules_config_is_still_in_the_canon
     r = rec_no_artifact(world, target, "DURABLE", clean, handoff_branch=HBRANCH, handoff_sha=h2, handoff_tree=t2)
     err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c", [r]), "HEAD", D, repo_paths={TARGET: clone})
     assert any("digest canonico" in p for p in err.detail["problems"])
+
+
+def test_cross_repo_integration_commit_must_be_published_on_target_main(world, target):
+    """Sol #615 (319b9b13): un commit di integrazione presente solo nel clone locale del target (mai pubblicato)
+    non rende INTEGRATED_VERIFIED: un clone nuovo perderebbe la prova."""
+    hsha, htree = publish_handoff(target)
+    clone = target_clone(target)
+    sh(clone, "checkout", "-q", "-B", "locale", hsha)
+    sh(clone, "commit", "-q", "--allow-empty", "-m", "integrazione locale, mai pubblicata")
+    local_integ = sh(clone, "rev-parse", "HEAD")
+    r = rec(world, target, "INTEGRATED_VERIFIED", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree,
+            integration_sha=local_integ, integration_tree=htree)
+    err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c", [r]), "HEAD", D, repo_paths={TARGET: clone})
+    assert _only_reference_problems(err) and any("main" in p for p in err.detail["problems"])

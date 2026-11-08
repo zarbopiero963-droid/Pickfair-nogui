@@ -57,6 +57,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Rilievi Codex/Grok sullo stesso giro: negli handoff `DURABLE`/`INTEGRATED_VERIFIED` dello stesso repository anche
   `base_sha` e `integration_sha` devono essere durevoli; i `refs/pull/<N>/head` dichiarati si scaricano uno per volta
   (una PR inesistente non blocca le altre); un errore nel fetch di un candidato non interrompe `recover`.
+- **Checkpoint multi-agente: terzo giro di review su #615.** Con l'originale irraggiungibile vale solo l'ancora di
+  un checkpoint precedente pubblicato (il `code.tree` dello STATE corrente è autodichiarato); `save` ricalcola
+  `code.tree` a ogni checkpoint; il commit di integrazione `TREE_EQUAL` deve essere durevole di per sé; nei handoff
+  cross-repo `integration_sha` deve stare su `main` del target.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

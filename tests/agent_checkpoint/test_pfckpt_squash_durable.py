@@ -240,7 +240,8 @@ def test_tree_equal_transition_new_checkpoint_bootstraps_ready_from_fresh_clone(
     assert exp == legacy
     res = pfckpt.save(a, BR, "origin", exp, "transizione verso main", D, agent="claude", release=True)
     assert res["status"] == "DURABLE"
-    assert _vias(res) == {"code.sha": "INTEGRATION:main", "test 'suite'": "INTEGRATION:main"}
+    assert _vias(res) == {"code.sha": "INTEGRATION:main", "test 'suite'": "INTEGRATION:main",
+                          "code.sha.integration": "BRANCH:main", "test 'suite'.integration": "BRANCH:main"}
     rep = pfckpt.bootstrap(world["url"], BR, str(world["tmp"] / "fresh"), D, CODE_BR)
     assert rep["status"] == "READY" and rep["code_sha"] == feat
     assert rep["code_reference"]["via"] == "INTEGRATION_TREE_EQUAL"
@@ -554,3 +555,62 @@ def test_recover_survives_an_exception_while_fetching_pull_refs(world, monkeypat
     monkeypatch.setattr(pfckpt, "fetch_pull_heads", flaky)
     rep = pfckpt.recover(world["url"], BR, str(world["tmp"] / "rec"), D)
     assert rep["status"] == "RECOVERED" and rep["commit"] == good
+
+
+# ================================================================== terzo giro di review su #615 (319b9b13)
+def test_self_declared_code_tree_in_the_current_state_is_not_an_anchor(world):
+    """Sol #615 (319b9b13): un code.tree scritto nello STATE corrente e' un'autodichiarazione quanto original_tree;
+    con l'originale irraggiungibile vale solo l'ancora di un checkpoint PRECEDENTE gia' pubblicato."""
+    invented = "abcdef1234567890abcdef1234567890abcdef12"
+    a = agent(world, "a")
+    sh(a, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    main = sh(a, "rev-parse", "origin/main")
+    mtree = sh(a, "rev-parse", "origin/main^{tree}")
+    lie = {"original_sha": invented, "original_tree": mtree, "integration_sha": main, "integration_tree": mtree,
+           "equivalence": "TREE_EQUAL"}
+    exp = next_state(a, world, code={"branch": "main", "sha": invented, "tree": mtree, "integration": lie})
+    err = expect(2, pfckpt.save, a, BR, "origin", exp, "SHA inventato con code.tree autodichiarato", D,
+                 agent="claude")
+    assert set(err.detail["problems"]) <= set(err.detail["reference_problems"])
+    assert pfckpt.remote_head(a, "origin", BR) == exp
+
+
+def test_save_refreshes_code_tree_when_code_sha_changes(world):
+    """Sol #615 (319b9b13): save ricalcola code.tree dall'oggetto ad ogni checkpoint (prima solo se assente: un
+    tree vecchio bloccava un nuovo commit regolarmente pubblicato su main)."""
+    a = agent(world, "a")
+    exp = next_state(a, world, code={"branch": "main", "sha": world["code"]})
+    pfckpt.save(a, BR, "origin", exp, "ckpt 1", D, agent="claude", release=True)
+    c = _code_clone(world, "nuovo")
+    sh(c, "checkout", "-q", "-B", "m", "origin/main")
+    with open(os.path.join(c, "x.py"), "w") as fh:
+        fh.write("X = 1\n")
+    sh(c, "add", "-A"); sh(c, "commit", "-q", "-m", "nuovo su main")
+    new = sh(c, "rev-parse", "HEAD")
+    sh(c, "push", "-q", "origin", "HEAD:refs/heads/main")
+    sh(a, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    st = json.load(open(os.path.join(a, D, "STATE.json")))
+    exp = next_state(a, world, code=dict(st["code"], sha=new))                    # code.tree del commit vecchio
+    res = pfckpt.save(a, BR, "origin", exp, "ckpt 2", D, agent="claude", release=True)
+    assert res["status"] == "DURABLE"
+    assert pfckpt.tree_json(a, "HEAD", D, "STATE.json")["code"]["tree"] == sh(c, "rev-parse", "HEAD^{tree}")
+
+
+def test_tree_equal_integration_commit_must_be_durable_even_with_the_original_on_main(world):
+    """Codex #615 (319b9b13): con l'originale durevole su main ma il commit di integrazione TREE_EQUAL solo su un
+    branch temporaneo, il save rifiuta (la verifica richiede quel commit)."""
+    a = agent(world, "a")
+    sh(a, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    orig = sh(a, "rev-parse", "origin/main")
+    c = _code_clone(world, "tmpinteg")
+    sh(c, "checkout", "-q", "-B", "t", "origin/main")
+    sh(c, "commit", "-q", "--allow-empty", "-m", "stesso tree")
+    integ_sha = sh(c, "rev-parse", "HEAD")
+    sh(c, "push", "-q", "origin", "HEAD:refs/heads/tmp-integ")
+    sh(a, "fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*")
+    integ = pfckpt.build_integration(a, orig, integ_sha)
+    assert integ["equivalence"] == "TREE_EQUAL"
+    exp = next_state(a, world, code={"branch": "main", "sha": orig, "integration": integ})
+    err = expect(2, pfckpt.save, a, BR, "origin", exp, "integrazione su branch temporaneo", D, agent="claude")
+    assert err.reason == "CODE_SHA_NOT_DURABLE"
+    assert any(r["label"] == "code.sha.integration" for r in err.detail["not_durable"])

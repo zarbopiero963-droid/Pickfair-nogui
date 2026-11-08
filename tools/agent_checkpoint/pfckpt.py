@@ -521,6 +521,9 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
         isha = resolved(tgt, "integration_sha", "target_repo")
         if not isha:
             return problems, refp, info
+        if not _published_on(tgt, isha, "main"):
+            refp.append(f"{label}: integration_sha non pubblicato su main del target (rilievo Sol #615)")
+            return problems, refp, info
         itree = tree_of(tgt, isha)
         if h.get("integration_tree") and h["integration_tree"] != itree:
             problems.append(f"{label}: {claim}: integration_tree != tree(integration_sha)")
@@ -539,6 +542,9 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
     tgt = repo_of(h["target_repo"], "base_sha/integration_sha")
     base, isha = resolved(tgt, "base_sha", "target_repo"), resolved(tgt, "integration_sha", "target_repo")
     if not (base and isha):
+        return problems, refp, info
+    if not _published_on(tgt, isha, "main"):
+        refp.append(f"{label}: integration_sha non pubblicato su main del target (rilievo Sol #615)")
         return problems, refp, info
     itree = tree_of(tgt, isha)
     applied = apply_patch_tree(tgt, base, patch)
@@ -639,12 +645,14 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None):
 
     def _anchors_for(sha, integ):
         orig = integ.get("original_sha") if isinstance(integ, dict) else None
-        found = [t for k, ts in anchors.items() for t in ts
-                 if sha and (k.startswith(str(sha)) or (orig and k == orig))]
-        if not found and isinstance(integ, dict) and not resolve_commit(lookup, str(sha)):
-            found = [t for k, ts in _history().items() for t in ts
-                     if sha and (k.startswith(str(sha)) or (orig and k == orig))]
-        return found
+        if isinstance(integ, dict) and not resolve_commit(lookup, str(sha)):
+            # originale irraggiungibile: il code.tree dello STATE corrente e' autodichiarato quanto original_tree
+            # (rilievo Sol #615); vale solo l'ancora di un checkpoint PRECEDENTE, verificata quando l'oggetto c'era
+            source = _history()
+        else:
+            source = anchors
+        return [t for k, ts in source.items() for t in ts
+                if sha and (k.startswith(str(sha)) or (orig and k == orig))]
 
     if code_sha:
         rp, ks, code_ref = check_code_reference(lookup, "code.sha", code_sha, code.get("integration"),
@@ -961,6 +969,13 @@ def cited_references(repo, state):
         _p, _k, info = check_code_reference(repo, label, str(e["sha"]), e.get("integration"))
         cited.append({"label": label, "sha": str(e["sha"]), "original": resolve_commit(repo, str(e["sha"])),
                       "integration": info.get("integration_sha")})
+        integ = e.get("integration")
+        if isinstance(integ, dict) and integ.get("equivalence") == "TREE_EQUAL" and integ.get("integration_sha"):
+            # la verifica richiede il commit di integrazione anche con l'originale raggiungibile (rilievo Codex #615):
+            # deve essere durevole di per se'
+            isha = str(integ["integration_sha"])
+            cited.append({"label": f"{label}.integration", "sha": isha, "original": resolve_commit(repo, isha),
+                          "integration": None})
     # handoffs: la sorgente della patch deve essere durevole come code.sha (mai inferita dall'integrazione)
     hs = state.get("handoffs") if isinstance(state.get("handoffs"), list) else []
     for h, f in _same_repo_handoff_shas(state):
@@ -1149,8 +1164,9 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
         if code_repo:
             st.setdefault("code", {})["patch"] = capture_code_patch(code_repo, repo, d)
         code_full = resolve_commit(repo, (st.get("code") or {}).get("sha"))
-        if code_full and "tree" not in st["code"]:
-            # tree registrato finche' l'oggetto esiste: ancora per un futuro `integration.original_tree`
+        if code_full:
+            # tree ricalcolato dall'oggetto a ogni save (mai un tree vecchio di un code.sha precedente, rilievo Sol
+            # #615): diventa l'ancora per un futuro `integration.original_tree` quando questo checkpoint e' pubblicato
             st["code"]["tree"] = tree_of(repo, code_full)
         # durabilita' PRIMA di scrivere/committare: uno SHA che sparirebbe con il branch non entra nel checkpoint
         _rows, missing, branch_only = check_durability(repo, remote, st, durable_branches, keep_refs, _waiver(st))
