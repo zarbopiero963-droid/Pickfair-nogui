@@ -1,6 +1,6 @@
-# HANDOFF Claude B — seq 21 (05/11/2026)
+# HANDOFF Claude B — seq 22 (08/11/2026)
 
-- F-16 pubblicato su claude/d-f16-funds-freshness @ 7fae18d4; PR in apertura.
-- Handoff C: handoff/claude-c/mcp-core-20261105 @ f22d6bfb (DURABLE da provare con pfckpt de40d0cd).
-- pfckpt-squash-durable @ de40d0cd: PR dopo F-16.
+- #610 F-16 @6fdb6398: OWNER_MANUAL_MERGE_REQUIRED, eccezione mutante documentata (c.6727851307).
+- PF-BLACKBOX-01: architettura su registro e424d7ae; codice dopo F-R06/pfckpt.
+- pfckpt-squash-durable @de40d0cd verificato da C (seq 8 d6d1cda0).
 - LIVE OFF.

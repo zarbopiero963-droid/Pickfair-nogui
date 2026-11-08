@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "claude/d-f16-funds-freshness",
-  "sha": "7fae18d4480dc86aa0b77d82fc8f75d46c491871"
+  "sha": "6fdb639829ac4a288cf16215866c83a643457fbc"
  },
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "next_atomic_action": "Aprire PR F-16 [TASK: d_f16_funds_freshness], subscribe, attendere gate; auto-merge solo con tutti PASS sullo stesso SHA. Issue per test_issue437_pr02 (preesistente su main). Attendere verifica C su de40d0cd.",
- "previous_checkpoint_sha": "d85cf3146e9edff895fa3651955357fc0749e350",
+ "next_atomic_action": "Attendere merge owner #610; poi verifica main/CI post-merge, PR F-R06, poi pfckpt (de40d0cd, rebase). BB-1 dopo. Patch 13 attende archivio.",
+ "previous_checkpoint_sha": "f62b1ca3b4b9b5bcf6fc5ac3e7b254abba94c93b",
  "schema": "pf-current/1",
- "seq": 21
+ "seq": 22
 }

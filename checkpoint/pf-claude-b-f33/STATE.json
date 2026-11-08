@@ -1,14 +1,14 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 21,
+ "seq": 22,
  "mandate_id": "PF-FINISH-THE-PRODUCT-02 / PF-FINANCIAL-INTEGRATION-02 / PF-UNIVERSAL-360-TESTING / PF-GOV-PERSISTENT-ROADMAP-01",
- "previous_checkpoint_sha": "d85cf3146e9edff895fa3651955357fc0749e350",
+ "previous_checkpoint_sha": "f62b1ca3b4b9b5bcf6fc5ac3e7b254abba94c93b",
  "code": {
   "branch": "claude/d-f16-funds-freshness",
-  "sha": "7fae18d4480dc86aa0b77d82fc8f75d46c491871"
+  "sha": "6fdb639829ac4a288cf16215866c83a643457fbc"
  },
- "lotto_corrente": "F-16: head 7fae18d4 pubblicato (merge main 89af178e su 64e965b). PR in apertura.",
+ "lotto_corrente": "#610 F-16 @6fdb6398: OWNER_MANUAL_MERGE_REQUIRED (PF-F16-MUTATION-EXCEPTION-01); PRE-LIVE action_required non convertito; rapporto c.6727851307",
  "lotti_completati": [
   "#596 F-01 merged dc83b06",
   "#597 F-09 0d16693",
@@ -27,9 +27,11 @@
   "Roadmap PF-UNIVERSAL-360-TESTING registrata (pf-gov-persistent-roadmap-01 @eacba405)",
   "#609 F-14 merged owner 89af178e (decisione c.6662355106, verifica c.6662369024)",
   "Handoff C pubblicato handoff/claude-c/mcp-core-20261105 @ f22d6bfb (verificato da C)",
-  "PF-CKPT-CROSS-REPO-PROOF-02: pfckpt-squash-durable @ de40d0cd (117 test, 12/12 digest reali)"
+  "PF-CKPT-CROSS-REPO-PROOF-02: pfckpt-squash-durable @ de40d0cd (117 test, 12/12 digest reali)",
+  "PF-BLACKBOX-01 architettura pubblicata (registro e424d7ae)",
+  "Piano integrazione MCP pubblicato (registro f5bfa2b6, #586 c.6663734910)"
  ],
- "next_atomic_action": "Aprire PR F-16 [TASK: d_f16_funds_freshness], subscribe, attendere gate; auto-merge solo con tutti PASS sullo stesso SHA. Issue per test_issue437_pr02 (preesistente su main). Attendere verifica C su de40d0cd.",
+ "next_atomic_action": "Attendere merge owner #610; poi verifica main/CI post-merge, PR F-R06, poi pfckpt (de40d0cd, rebase). BB-1 dopo. Patch 13 attende archivio.",
  "dependencies": {
   "f16": "dopo merge #609",
   "g1_g2_install": "GO owner specifico",
@@ -38,7 +40,8 @@
  "blocks": [
   "LIVE NO-GO",
   "VPS: nessuna modifica senza GO",
-  "Gate A: 0 comportamenti mappati"
+  "#610: merge riservato all'owner (eccezione mutante)",
+  "MCP-A: decisione owner sul package pinnato in CI"
  ],
  "owner_authorizations": {
   "merge_606": "eseguito dall'owner 911562ad",
@@ -51,38 +54,27 @@
  },
  "tests_executed": [
   {
-   "name": "tests/acceptance",
-   "status": "FAIL",
-   "sha": "7fae18d4480dc86aa0b77d82fc8f75d46c491871",
-   "result": "1428 passed, 1 failed (test_issue437_pr02, identico su main 89af178e)"
+   "name": "mutanti F-16 (3) su checkout pulito",
+   "status": "PASS",
+   "sha": "6fdb639829ac4a288cf16215866c83a643457fbc",
+   "result": "3/3 KILLED (18/11/3 test falliti)"
   },
   {
-   "name": "tests/f026",
+   "name": "F-16 + pr28e confini",
    "status": "PASS",
-   "sha": "7fae18d4480dc86aa0b77d82fc8f75d46c491871",
-   "result": "173 passed"
+   "sha": "6fdb639829ac4a288cf16215866c83a643457fbc",
+   "result": "70 passed"
   },
   {
-   "name": "tests/guardrails",
+   "name": "CI #610",
    "status": "PASS",
-   "sha": "7fae18d4480dc86aa0b77d82fc8f75d46c491871",
-   "result": "1348 passed, 10 skipped"
-  },
-  {
-   "name": "tests/core",
-   "status": "PASS",
-   "sha": "7fae18d4480dc86aa0b77d82fc8f75d46c491871",
-   "result": "675 passed"
-  },
-  {
-   "name": "tests/scripts",
-   "status": "PASS",
-   "sha": "7fae18d4480dc86aa0b77d82fc8f75d46c491871",
-   "result": "3406 passed, 1 skipped"
+   "sha": "6fdb639829ac4a288cf16215866c83a643457fbc",
+   "result": "120 check: verdi salvo PRE-LIVE action_required e Merge readiness conseguente"
   }
  ],
  "tests_missing": [
-  "gate CI/review/PRE-LIVE su 7fae18d4"
+  "merge owner #610",
+  "CI post-merge"
  ],
  "missing_historical_evidence": [],
  "gate_a": "NON PASS: behaviour_coverage.json 0 comportamenti mappati",
