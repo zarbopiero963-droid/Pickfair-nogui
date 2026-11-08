@@ -8721,6 +8721,18 @@
         "tests/f03/test_dc402_stake_abbinato.py"
       ],
       "rationale": "D-C4-02: soglia SL/TP sull'importo del richiesto invece che sul rischio abbinato."
+    },
+    {
+      "id": "dc402_stale_cache_used",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "        if entry is not None and time.monotonic() - entry[0] <= RuntimeController._sl_tp_poll_interval(self):",
+      "mutated": "        if entry is not None:",
+      "tests": [
+        "tests/f03/test_dc402_stake_abbinato.py"
+      ],
+      "rationale": "D-C4-02: lettura degli ordini piu' vecchia di un giro usata come fresca."
     }
   ]
 }

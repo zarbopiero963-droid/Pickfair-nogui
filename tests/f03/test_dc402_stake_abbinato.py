@@ -176,3 +176,24 @@ def test_nessuna_lettura_su_mercato_non_negoziabile(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(c.svc, "list_current_orders", lambda market_ids=None: calls.append(1) or [])
     _feed(c, 1.9, 3.0, "SUSPENDED")
     assert calls == []
+
+
+def test_block_cache_piu_vecchia_di_un_giro_mai_usata_come_fresca(tmp_path, monkeypatch) -> None:
+    """Condizione Claude B (pfab-b-20261108-dc402-ack-001): una lettura in cache piu' vecchia di un intervallo del
+    poller non decide: si rilegge (se il limitatore lo consente) o nessuna decisione."""
+    import core.runtime_controller as rcmod
+    c = _chain(tmp_path)
+    _book(c.broker)
+    _enter(c, 11, "2026-11-08T10:00:00.000001+00:00", stop_loss_pct=10)
+    (a,) = c.rc.table_manager.active_tables()
+    _poll(c, 1.9, 2.02)                                # lettura fresca in cache, nessuno scatto
+    now = [rcmod.time.monotonic()]
+    monkeypatch.setattr(rcmod.time, "monotonic", lambda: now[0])
+    now[0] += c.rc._sl_tp_poll_interval() + 0.01       # oltre un intervallo: cache scaduta
+
+    def boom(market_ids=None):
+        raise RuntimeError("CURRENT_ORDERS_MALFORMED")
+    monkeypatch.setattr(c.svc, "list_current_orders", boom)
+    _feed(c, 1.9, 3.0)                                 # dallo stream: rilettura fallita, la cache vecchia non vale
+    assert _events(c, "SL_TRIGGERED") == []
+    assert _live(c, a).meta["sl_tp_wait_reason"] in ("ORDERS_UNREADABLE",)
