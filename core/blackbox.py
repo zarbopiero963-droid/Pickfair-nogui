@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import errno
+import stat
 import hashlib
 import hmac
 import json
@@ -131,14 +132,18 @@ def private_file(path: str) -> None:
     """R2/permessi (decisioni owner PF-BB1-SOL-R2-NEEDS-MANUAL-20261109 e PF-BB1-R2-FINAL-CYCLE-10-20261109): file del
     registro leggibili solo dal proprietario su POSIX (0600). Crea il file se manca e restringe i permessi di un file
     gia' esistente con `fchmod` sul descrittore aperto con `O_NOFOLLOW`: un symlink al posto del file viene RIFIUTATO
-    (OSError), mai seguito, e la sua destinazione non viene toccata. Su Windows `chmod` non gestisce le ACL: il file
+    (OSError), mai seguito, e la sua destinazione non viene toccata; lo stesso per un hardlink o un file non
+    regolare (ciclo 11 #617), rifiutati prima di `fchmod`. Su Windows `chmod` non gestisce le ACL: il file
     eredita quelle della cartella dati (verifica delle ACL NOT_RUN in questo ambiente)."""
     if os.name != "posix":
         return
     if os.path.islink(path):
         raise OSError(errno.ELOOP, "file del registro sostituito da un symlink: rifiutato", path)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0), 0o600)
     try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:   # ciclo 11: hardlink/FIFO mai chmod-ati ne' usati
+            raise OSError(errno.ELOOP, "file del registro non privato (hardlink o non regolare): rifiutato", path)
         os.fchmod(fd, 0o600)
     finally:
         os.close(fd)

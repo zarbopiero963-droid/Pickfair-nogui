@@ -585,3 +585,238 @@ def test_existing_registry_files_are_restricted_and_symlinks_are_refused(tmp_pat
     with pytest.raises(OSError):
         bb.BlackBox(str(tmp_path / "y.sqlite")).open()
     assert stat.S_IMODE(victim.stat().st_mode) == 0o644
+
+
+# --- Ciclo 11 (OWNER AUTHORIZATION PR #617, EXCEPTIONAL REVIEW CYCLE 11): i due P2 di Codex su c59de537 ---------
+
+_C11_FAKE = "FAKE-C11-APPKEY-7x9Qw"
+
+
+def test_r2_persist_error_and_error_lists_are_fingerprinted_with_the_classification_kept(monkeypatch):
+    """Codex P2 su c59de537: `persist_error` e' `str(exc)` del salvataggio fallito e restava in chiaro. Ora ogni campo
+    d'errore (`*_error`, `*_errors`, liste e dizionari annidati) diventa lunghezza + impronta; il codice tecnico noto
+    (`db_save_settings_unavailable`) resta leggibile, e l'esito del RESULT (classificazione) non cambia."""
+    calls = []
+
+    class FakeRuntime:
+        def emergency_stop(self, reason):
+            return {"cancel_error_count": 0, "cancel_errors": [], "markets_attempted": 0,
+                    "persist_error": f"save failed with appKey={_C11_FAKE}",
+                    "errors": [f"a {_C11_FAKE}", {"detail": f"b {_C11_FAKE}"}],
+                    "error": {"detail": f"c {_C11_FAKE}", "nested": [f"d {_C11_FAKE}"]}}
+
+    monkeypatch.setattr(rt, "install", lambda *a, **kw: None)
+    monkeypatch.setattr(rt, "record", lambda event_type, **kw: calls.append(kw))
+    app = object.__new__(headless_main.HeadlessApp)
+    app.runtime = FakeRuntime()
+    app._emergency_stop_with_audit()
+    assert _C11_FAKE not in json.dumps(calls, default=str)
+    res = calls[-1]
+    assert res["outcome"] == "UNKNOWN", "classificazione dell'esito persa"
+    pe = res["data"]["result"]["persist_error"]
+    assert pe["redacted"] is True and pe["len"] == len(f"save failed with appKey={_C11_FAKE}") and "fingerprint" in pe
+    assert rt.scrub_error_texts({"persist_error": "db_save_settings_unavailable"}) == {
+        "persist_error": "db_save_settings_unavailable"}
+    assert rt.scrub_error_texts({"persist_error": ""}) == {"persist_error": ""}
+
+
+def test_r2_cancel_results_response_keeps_structure_and_never_free_error_text():
+    """Audit di `cancel_results[].response` (owner, ciclo 11): la risposta di `BetfairClient.cancel_orders` e' un
+    dizionario strutturato (id, status, outcome, conteggi, risposta Betfair); il solo testo libero e' `error`, che
+    viene impronta anche annidato in `response`. I campi strutturati restano per l'audit."""
+    from betfair_client import BetfairClient
+    client = object.__new__(BetfairClient)
+    resp = client._cancel_result("1.23", ["b1"], {"status": "FAILURE", "errorCode": "BET_ACTION_ERROR",
+                                                 "instructionReports": [{"status": "FAILURE",
+                                                                         "instruction": {"betId": "b1"}}]})
+    resp["error"] = f"{resp.get('error')} {_C11_FAKE}"            # testo libero ipotetico nel campo d'errore
+    resp["result"]["detail_error"] = f"x {_C11_FAKE}"
+    out = rt.scrub_error_texts({"cancel_results": [{"market_id": "1.23", "ok": False, "response": resp}]})
+    blob = json.dumps(out)
+    assert _C11_FAKE not in blob
+    r = out["cancel_results"][0]["response"]
+    assert r["market_id"] == "1.23" and r["status"] == "FAILURE" and r["outcome"] == "FAILED"
+    assert r["bet_ids"] == ["b1"] and r["result"]["errorCode"] == "BET_ACTION_ERROR"
+
+
+def _fake_secret_file(tmp_path, name="credenziali.txt"):
+    victim = tmp_path / name
+    victim.write_text(f"appKey={_C11_FAKE}\n")
+    os.chmod(victim, 0o644)
+    return victim
+
+
+def _assert_untouched(victim):
+    import stat
+    assert victim.read_text() == f"appKey={_C11_FAKE}\n" and not victim.is_symlink()
+    assert stat.S_IMODE(victim.stat().st_mode) == 0o644
+
+
+def _assert_fake_not_persisted(bbpath, victim=None):
+    """Nessun file scritto dalla scatola nera contiene il segreto. Un nome che E' il bersaglio stesso (link non
+    rimovibile messo dall'attaccante: stesso inode) non e' una copia e si esclude."""
+    from core import blackbox_query as bq
+    for p in bbpath.parent.iterdir():
+        if p.is_file() and not p.is_symlink():
+            if victim is not None and os.path.samefile(p, victim):
+                continue
+            assert _C11_FAKE.encode() not in p.read_bytes(), p.name
+    box = bb.BlackBox(str(bbpath)).open()
+    try:
+        assert _C11_FAKE not in json.dumps(bq.BlackBoxReader(box).query({}), default=str)
+    finally:
+        box.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="symlink/hardlink POSIX; su Windows NOT_RUN")
+@pytest.mark.parametrize("name", ["fault.log", "fault.log.pending", "fault.log.1"])
+def test_fault_dump_paths_never_follow_a_symlink(bbpath, tmp_path, name):
+    """Codex P2 su c59de537: un symlink al posto di `fault.log`, `.pending` o `.1` veniva seguito (lettura, append o
+    rotazione) e il contenuto del bersaglio finiva nel CRASH_RECOVERY, leggibile da `query()`. Ora il link viene
+    rimosso (solo il link) senza leggerlo ne' scriverci; il bersaglio resta identico."""
+    bbpath.parent.mkdir(parents=True)
+    victim = _fake_secret_file(tmp_path)
+    os.symlink(victim, bbpath.parent / name)
+    if name != "fault.log":
+        (bbpath.parent / "fault.log").write_text("Fatal Python error: Segmentation fault\n")
+    rt.install()
+    rt.shutdown("STOP")
+    _assert_untouched(victim)
+    _assert_fake_not_persisted(bbpath)
+    for n in ("fault.log", "fault.log.pending", "fault.log.1"):
+        assert not (bbpath.parent / n).is_symlink(), n
+    if name != "fault.log":                                    # il dump legittimo e' comunque importato
+        crash = [e for e in _events(bbpath) if e["type"] == "CRASH_RECOVERY"]
+        assert crash and "Segmentation fault" in json.loads(crash[0]["data"])["tail"]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="hardlink POSIX; su Windows NOT_RUN")
+def test_fault_dump_hardlinked_to_another_file_is_never_read_or_chmodded(bbpath, tmp_path):
+    """Sostituzione del percorso con un hardlink (stesso inode di un altro file): niente lettura, niente append,
+    niente chmod del bersaglio."""
+    bbpath.parent.mkdir(parents=True)
+    victim = _fake_secret_file(tmp_path)
+    os.link(victim, bbpath.parent / "fault.log")
+    rt.install()
+    rt.shutdown("STOP")
+    _assert_untouched(victim)
+    _assert_fake_not_persisted(bbpath)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="O_NOFOLLOW POSIX; su Windows NOT_RUN")
+def test_fault_dump_symlink_swapped_in_after_the_check_is_still_not_followed(bbpath, tmp_path, monkeypatch):
+    """Race (TOCTOU): anche se il controllo preliminare non vede il link (sostituito dopo), l'apertura con
+    O_NOFOLLOW lo rifiuta: il bersaglio non viene letto."""
+    bbpath.parent.mkdir(parents=True)
+    victim = _fake_secret_file(tmp_path)
+    os.symlink(victim, bbpath.parent / "fault.log")
+    monkeypatch.setattr(rt, "_drop_if_not_private", lambda p: None)   # il link compare DOPO il controllo
+    tail = rt._previous_fault_dump(str(bbpath.parent / "fault.log"))
+    assert not tail or _C11_FAKE not in tail
+    monkeypatch.undo()
+    _assert_untouched(victim)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO POSIX")
+def test_fault_dump_fifo_never_blocks_startup(bbpath):
+    """Un FIFO al posto del dump non blocca l'avvio (apertura non bloccante, solo file regolari)."""
+    bbpath.parent.mkdir(parents=True)
+    os.mkfifo(bbpath.parent / "fault.log.pending")
+    out = {}
+    t = threading.Thread(target=lambda: out.setdefault("tail", rt._previous_fault_dump(
+        str(bbpath.parent / "fault.log"))), daemon=True)
+    t.start()
+    t.join(5)
+    assert not t.is_alive(), "avvio bloccato da un FIFO"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="hardlink POSIX; su Windows NOT_RUN")
+def test_private_file_refuses_a_hardlinked_registry_file_without_chmodding_the_target(tmp_path):
+    """Ciclo 11: `private_file` rifiuta un hardlink (stesso inode di un altro file) PRIMA di `fchmod`, cosi' i
+    permessi del bersaglio non cambiano mai."""
+    victim = _fake_secret_file(tmp_path)
+    os.link(victim, tmp_path / "r.sqlite.runtime.owner")
+    with pytest.raises(OSError):
+        bb.private_file(str(tmp_path / "r.sqlite.runtime.owner"))
+    _assert_untouched(victim)
+
+
+# --- Ciclo 11, verifiche richieste dall'owner prima del push -------------------------------------------------------
+
+@pytest.mark.skipif(os.name != "posix", reason="symlink/hardlink POSIX; su Windows NOT_RUN")
+@pytest.mark.parametrize("kind", ["symlink", "hardlink"])
+@pytest.mark.parametrize("name", ["fault.log", "fault.log.pending", "fault.log.1"])
+def test_failed_removal_of_a_suspicious_dump_file_stays_fail_closed(bbpath, tmp_path, monkeypatch, kind, name):
+    """Owner, punto 1: se la rimozione del link fallisce, il bersaglio non viene comunque letto ne' modificato
+    (l'apertura con O_NOFOLLOW e i controlli su file regolare/un solo nome lo rifiutano) e l'avvio prosegue."""
+    bbpath.parent.mkdir(parents=True)
+    victim = _fake_secret_file(tmp_path)
+    (os.symlink if kind == "symlink" else os.link)(victim, bbpath.parent / name)
+    if name != "fault.log":
+        (bbpath.parent / "fault.log").write_text("Fatal Python error: Segmentation fault\n")
+    real_unlink = os.unlink
+
+    def refuse_unlink(p, *a, **kw):
+        if os.path.basename(str(p)) == name:
+            raise PermissionError(errno.EACCES, "rimozione negata", str(p))
+        return real_unlink(p, *a, **kw)
+
+    monkeypatch.setattr(rt.os, "unlink", refuse_unlink)
+    rt.install()
+    rt.shutdown("STOP")
+    monkeypatch.undo()
+    _assert_untouched(victim)
+    _assert_fake_not_persisted(bbpath, victim)
+    if kind == "hardlink" and name != "fault.log.1":   # mai rinominato; `.1` viene solo sostituito dal dump legittimo
+        assert os.path.samefile(bbpath.parent / name, victim)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="O_NOFOLLOW POSIX; su Windows NOT_RUN")
+@pytest.mark.parametrize("name", ["fault.log.pending", "fault.log.1"])
+def test_concurrent_link_swap_on_append_targets_never_writes_the_target(bbpath, tmp_path, monkeypatch, name):
+    """Owner, punto 2: un link che compare su `.pending` o `.1` DOPO il controllo (race) non riceve l'accodamento
+    del dump: il bersaglio resta identico, contenuto e permessi."""
+    bbpath.parent.mkdir(parents=True)
+    victim = _fake_secret_file(tmp_path)
+    fault = bbpath.parent / "fault.log"
+    fault.write_text("Fatal Python error: Segmentation fault\n")
+    os.symlink(victim, bbpath.parent / name)
+    monkeypatch.setattr(rt, "_drop_if_not_private", lambda p: None)   # controllo superato prima dello scambio
+    if name == "fault.log.pending":
+        rt._previous_fault_dump(str(fault))
+    else:
+        rt._consume_fault_dump(str(fault))
+    monkeypatch.undo()
+    _assert_untouched(victim)
+
+
+@pytest.mark.parametrize("result", [
+    {"cancel_error_count": 0, "cancel_errors": [], "cancel_results": [{"ok": True, "market_id": "1.1",
+                                                                         "order_count": 2}],
+     "markets_attempted": 1, "live_client_available": True, "persist_error": None, "cancelled_count": 2},
+    {"cancel_error_count": 2, "cancel_errors": [], "cancel_results": [], "markets_attempted": 1},
+    {"cancel_error_count": 0, "cancel_results": [{"ok": False, "error": "x", "market_id": "1.2"}],
+     "markets_attempted": 1},
+    {"cancel_error_count": 0, "cancel_errors": [{"stage": "get_live_client", "error": "x"}]},
+    {"cancel_error_count": 0, "cancel_errors": [{"stage": "runtime_authority", "market_id": "1.3",
+                                                  "error": "lost"}]},
+    {"cancel_error_count": 0, "cancel_errors": [], "markets_attempted": 2, "live_client_available": False},
+    {"cancel_error_count": 0, "cancel_errors": [], "persist_error": "disco pieno"},
+    {"cancel_error_count": 0, "cancel_errors": [], "persist_error": "db_save_settings_unavailable"},
+    {"cancel_error_count": 0, "cancel_errors": [], "persist_error": ""},
+])
+def test_error_scrubbing_keeps_the_outcome_and_the_recovery_structure(result):
+    """Owner, punto 3: la sanitizzazione non cambia l'esito VERIFIED/FAILED/UNKNOWN (ricalcolato sul risultato
+    sanitizzato) e conserva i campi strutturali necessari alla recovery: conteggi, mercati, stage, ok."""
+    scrubbed = rt.scrub_error_texts(result)
+    assert headless_main._emergency_stop_outcome(scrubbed) == headless_main._emergency_stop_outcome(result)
+    for k, v in result.items():
+        if not rt._is_error_key(k):
+            if k == "cancel_results":
+                for orig, new in zip(v, scrubbed[k]):
+                    for f in ("ok", "market_id", "order_count"):
+                        assert new.get(f) == orig.get(f)
+            else:
+                assert scrubbed[k] == v, k
+    for orig, new in zip(result.get("cancel_errors") or [], scrubbed.get("cancel_errors") or []):
+        assert new.get("stage") == orig.get("stage") and new.get("market_id") == orig.get("market_id")

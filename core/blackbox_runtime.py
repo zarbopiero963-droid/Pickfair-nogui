@@ -15,6 +15,7 @@ Cattura dei crash:
 
 from __future__ import annotations
 
+import errno
 import faulthandler
 import os
 import sys
@@ -28,6 +29,7 @@ _box: Optional[bb.BlackBox] = None
 _fault_file = None
 _prev_excepthook = None
 _prev_threading_hook = None
+_fault_path = ""                                 # percorso di fault.log (il file e' aperto da descrittore)
 _keep_fault_file = False                         # fault.log contiene un dump non ancora consumato: non rimuoverlo
 MAX_TRACE_CHARS = 8000
 FAULT_TAIL_BYTES = 4096
@@ -102,17 +104,45 @@ def _fingerprint(text: str) -> str:
         return ""
 
 
+# Codici tecnici fissi (non testo di eccezione) che restano leggibili nei campi d'errore: la classificazione serve
+# all'audit e non contiene dati (ciclo 11 #617).
+KNOWN_ERROR_CODES = frozenset({"db_save_settings_unavailable"})
+
+
+def _is_error_key(key: Any) -> bool:
+    k = str(key).lower()
+    return k in ("error", "errors", "exception", "message") or k.endswith(("_error", "_errors"))
+
+
+# Dentro un contenitore d'errore (es. `cancel_errors[]`) restano in chiaro solo questi campi strutturali, che
+# classificano l'errore senza testo libero; ogni altra stringa diventa un'impronta (allowlist, fail-closed).
+_ERROR_STRUCT_KEYS = frozenset({"stage", "market_id", "bet_id", "code", "error_code", "classification", "outcome",
+                                "status", "ok", "order_count"})
+
+
+def _scrub_error_value(v: Any) -> Any:
+    """Tutto cio' che sta sotto una chiave d'errore e' testo arbitrario: ogni stringa (anche in liste e dizionari
+    annidati) diventa lunghezza + impronta, tranne la stringa vuota, i codici tecnici fissi e i campi strutturali
+    in allowlist dei dizionari d'errore."""
+    if isinstance(v, str):
+        if not v or v in KNOWN_ERROR_CODES:
+            return v
+        return {"redacted": True, "len": len(v), "fingerprint": _fingerprint(v)}
+    if isinstance(v, dict):
+        return {k: (x if str(k).lower() in _ERROR_STRUCT_KEYS and not isinstance(x, (dict, list, tuple))
+                    else _scrub_error_value(x)) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_scrub_error_value(x) for x in v]
+    return v
+
+
 def scrub_error_texts(value: Any) -> Any:
-    """R2: nei risultati strutturati (es. `emergency_stop()`), i campi `error`/`errors` contengono testo di eccezioni
-    o di API arbitrario: diventano un'impronta (lunghezza + HMAC con la chiave del registro), il resto resta."""
+    """R2: nei risultati strutturati (es. `emergency_stop()`), i campi d'errore (`error`, `errors`, `exception`,
+    `message` e ogni `*_error`/`*_errors`, es. `persist_error`) contengono testo di eccezioni o di API arbitrario:
+    diventano un'impronta (lunghezza + HMAC con la chiave del registro), a ogni profondita'. Il resto (id, stati,
+    esiti, conteggi) resta per l'audit."""
     if isinstance(value, dict):
-        out = {}
-        for k, v in value.items():
-            if str(k).lower() in ("error", "errors", "exception", "message") and isinstance(v, str):
-                out[k] = {"redacted": True, "len": len(v), "fingerprint": _fingerprint(v)}
-            else:
-                out[k] = scrub_error_texts(v)
-        return out
+        return {k: (_scrub_error_value(v) if _is_error_key(k) else scrub_error_texts(v)) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [scrub_error_texts(v) for v in value]
     return value
@@ -140,32 +170,81 @@ def _threading_hook(args):
         _prev_threading_hook(args)
 
 
+def _drop_if_not_private(path: str) -> None:
+    """Ciclo 11 #617 (Codex P2): un symlink o un hardlink al posto di un file del dump nativo viene RIMOSSO (solo il
+    nome nella cartella della scatola nera: il bersaglio resta identico), mai letto, accodato o ruotato."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return
+    import stat as _stat
+    if _stat.S_ISLNK(st.st_mode) or not _stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _is_private(path: str) -> bool:
+    """File regolare con un solo nome, non symlink (lstat: nessun link seguito)."""
+    import stat as _stat
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return _stat.S_ISREG(st.st_mode) and st.st_nlink == 1
+
+
+def _open_private(path: str, flags: int) -> int:
+    """Apre un file del dump SOLO se e' un file regolare con un solo nome, senza seguire symlink (O_NOFOLLOW chiude
+    la finestra fra controllo e apertura) e senza bloccarsi su un FIFO (O_NONBLOCK). Altrimenti OSError."""
+    import stat as _stat
+    fd = os.open(path, flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0), 0o600)
+    try:
+        st = os.fstat(fd)
+        if not _stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
+            raise OSError(errno.ELOOP, "file del dump non privato: rifiutato", path)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _read_private(path: str) -> bytes:
+    fd = _open_private(path, os.O_RDONLY)
+    with os.fdopen(fd, "rb") as fh:
+        return fh.read()
+
+
+def _append_private(path: str, data: bytes) -> None:
+    fd = _open_private(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+    with os.fdopen(fd, "ab") as fh:
+        fh.write(data)
+
+
 def _previous_fault_dump(fault_path: str) -> Optional[str]:
     """Ultima parte dei dump nativi di sessioni precedenti: `fault.log.pending` (in attesa di import) e `fault.log`.
     La LETTURA non dipende dallo spostamento: se `fault.log` non si puo' accodare a `.pending`, viene letto dov'e'.
     Niente viene consumato qui: lo fa `_consume_fault_dump`, solo dopo un CRASH_RECOVERY durevole (rilievi Codex e
-    Sol #617)."""
+    Sol #617). Symlink, hardlink e file non regolari non vengono mai seguiti (ciclo 11)."""
     pending = fault_path + ".pending"
+    for p in (fault_path, pending, fault_path + ".1"):
+        _drop_if_not_private(p)
     try:                                         # best effort: mettere da parte prima del nuovo faulthandler
         if os.path.exists(fault_path) and os.path.getsize(fault_path) > 0:
-            if os.path.exists(pending):
-                with open(fault_path, "rb") as src, open(pending, "ab") as dst:
-                    dst.write(src.read())
-                os.remove(fault_path)
-            else:
-                os.replace(fault_path, pending)
+            data = _read_private(fault_path)
+            _append_private(pending, data)
+            os.remove(fault_path)
     except OSError:
         pass                                     # resta in fault.log: lo si legge li', e non lo si tronca mai
     parts = []
     for p in (pending, fault_path):
         try:
-            size = os.path.getsize(p) if os.path.exists(p) else 0
-            if size > 0:
-                with open(p, "rb") as fh:
-                    fh.seek(max(0, size - FAULT_TAIL_BYTES))
-                    parts.append(fh.read().decode("utf-8", errors="replace"))
+            data = _read_private(p)
         except OSError:
             continue
+        if data:
+            parts.append(data[-FAULT_TAIL_BYTES:].decode("utf-8", errors="replace"))
     return "\n".join(parts) or None
 
 
@@ -174,15 +253,18 @@ def _consume_fault_dump(fault_path: str) -> bool:
     prossimo avvio: meglio un import doppio che un dump perso)."""
     pending, archive = fault_path + ".pending", fault_path + ".1"
     ok = True
+    for p in (pending, archive):
+        _drop_if_not_private(p)
     try:
-        if os.path.exists(pending):
+        if os.path.lexists(pending):
+            if not _is_private(pending):
+                raise OSError(errno.ELOOP, "dump in attesa non privato: non ruotato", pending)
             os.replace(pending, archive)
     except OSError:
         ok = False
     try:
         if os.path.exists(fault_path) and os.path.getsize(fault_path) > 0:
-            with open(fault_path, "rb") as src, open(archive, "ab") as dst:
-                dst.write(src.read())
+            _append_private(archive, _read_private(fault_path))
             os.remove(fault_path)
     except OSError:
         ok = False
@@ -251,8 +333,11 @@ def install(path: Optional[str] = None, **process_data: Any) -> bb.BlackBox:
             raise
     try:
         # append, mai troncatura: un dump non ancora consumato resta leggibile (rilievo Sol #617)
+        _drop_if_not_private(fault_path)
         bb.private_file(fault_path)
-        _fault_file = open(fault_path, "a")
+        # ciclo 11: aperto senza seguire link (race fra controllo e apertura), solo file regolare con un solo nome
+        _fault_file = os.fdopen(_open_private(fault_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT), "a")
+        globals()["_fault_path"] = fault_path
         faulthandler.enable(file=_fault_file, all_threads=True)
     except OSError:
         _fault_file = None
@@ -280,7 +365,7 @@ def shutdown(reason: str = "STOP", **data: Any) -> None:
             try:
                 _fault_file.close()
                 if not _keep_fault_file:           # chiusura pulita: nessun dump da conservare
-                    os.remove(_fault_file.name)
+                    os.remove(_fault_path)
             except OSError:
                 pass
             _fault_file = None

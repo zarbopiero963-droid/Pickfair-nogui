@@ -59,7 +59,13 @@ di vita del processo.
     "pickfair-blackbox/v1/error-fingerprint-key")` (`BlackBox.fingerprint`). È stabile nello stesso registro,
     diversa fra registri con chiavi diverse e inutile per un controllo a dizionario su un export senza la chiave.
     **Non** protegge da chi legge il file del registro, che contiene anche la chiave. Lo
-    stesso vale per i campi `error` del risultato di `--emergency-stop`.
+    stesso vale per i campi d'errore del risultato di `--emergency-stop` (`error`, `errors`, `exception`, `message` e
+    ogni `*_error`/`*_errors`, compreso `persist_error`), a ogni profondità di liste e dizionari annidati (ciclo 11).
+    Restano in chiaro la stringa vuota, i codici tecnici fissi (`db_save_settings_unavailable`) e, dentro i dizionari
+    d'errore, i soli campi strutturali in allowlist (`stage`, `market_id`, `bet_id`, `code`, `error_code`,
+    `classification`, `outcome`, `status`, `ok`, `order_count`). In `cancel_results[].response` restano gli id, lo
+    stato, l'esito, i conteggi e la risposta Betfair strutturata; il suo `error` diventa un'impronta. L'esito del
+    `RESULT` (`VERIFIED`/`FAILED`/`UNKNOWN`) si calcola sul risultato originale, quindi la classificazione non cambia.
   - I valori non JSON (bytes, oggetti) diventano testo e vengono redatti **prima** della serializzazione.
 - **Richiesta ≠ conferma.**
   - `phase` vale ATTEMPT, RESULT oppure OBSERVATION.
@@ -118,7 +124,15 @@ di vita del processo.
    durevole. Se l'avvio o la scrittura falliscono, il dump resta in attesa e viene importato al primo avvio riuscito;
    `CRASH_RECOVERY` è critico: se non si riesce a scriverlo l'avvio viene rifiutato, mai un registro degradato;
    un dump nuovo si accoda a quello in attesa. Il nuovo `faulthandler` apre `fault.log` in append, mai in troncatura,
-   e alla chiusura pulita il file viene rimosso solo se non contiene un dump ancora da consumare.
+   e alla chiusura pulita il file viene rimosso solo se non contiene un dump ancora da consumare. Ciclo 11 (Codex
+   P2): un symlink, un hardlink o un file non regolare al posto di `fault.log`, `fault.log.pending` o `fault.log.1`
+   viene rimosso (solo il nome nella cartella dati; il bersaglio resta identico, contenuto e permessi) **prima** di
+   qualsiasi lettura, accodamento o rotazione. Ogni apertura usa `O_NOFOLLOW` e `O_NONBLOCK` e accetta solo un file
+   regolare con un solo nome, così un link sostituito dopo il controllo (race) non viene seguito e un FIFO non blocca
+   l'avvio. Se la rimozione del link fallisce, il comportamento resta fail-closed: il nome sospetto non viene letto,
+   accodato né rinominato (la rotazione di `.pending` richiede un file regolare con un solo nome) e l'avvio prosegue
+   senza importarlo. Le rimozioni toccano solo questi tre nomi nella cartella della scatola nera. Il registro non può
+   diventare un canale per leggere altri file locali.
 8. **Recupero riprendibile:** se `UNCLEAN_TERMINATION` è stato scritto ma la sua `BLACKBOX_GAP` no (guasto fra i due
    record), il riavvio successivo scrive la GAP mancante: l'intervallo non resta mai senza lacuna dichiarata.
 
@@ -243,7 +257,8 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
   POSIX il registro e i suoi file (`-wal`, `-shm`, `.runtime.lock`, `.runtime.owner`, `fault.log`) sono creati a
   `0600`, oppure ristretti a `0600` se esistono già (`fchmod` sul descrittore aperto con `O_NOFOLLOW`). Un symlink al
   posto di uno di questi file viene rifiutato, mai seguito, e l'avvio fallisce; la sua destinazione non viene
-  toccata. Su Windows `chmod` non gestisce le ACL: i file ereditano quelle della cartella dati, e la verifica delle
+  toccata. Lo stesso per un hardlink o un file non regolare: rifiutati prima di `fchmod`, così i permessi di un
+  altro file non cambiano mai (ciclo 11). Per i file del dump nativo vedi il punto 7 dell'avvio. Su Windows `chmod` non gestisce le ACL: i file ereditano quelle della cartella dati, e la verifica delle
   ACL non è stata eseguita in questo ambiente (**NOT_RUN**, verdetto distinto). La chiave HMAC degli alias (`meta.order_alias_key`) sta nello stesso registro: rende gli alias non
   enumerabili per Control API e MCP, che non la espongono mai (`blackbox_query` non legge `meta`), ma **non** protegge
   da chi legge il file, che vede comunque gli `order_id` interni. La stessa chiave è usata, tramite derivazione con
