@@ -1,9 +1,9 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 18,
+ "seq": 19,
  "mandate_id": "PF-ROSERPINA-FINANCIAL-ORACLE-CLAUDE-D-20261109 (+ mandati precedenti Claude D)",
- "previous_checkpoint_sha": "6d01716347eed2dea7fca15dbbc8220dc6bdaf6d",
+ "previous_checkpoint_sha": "cbcc491cc7867bf69b94cc3cb6eb2d02261cd76c",
  "updated_at": "2026-11-05T14:22:51Z",
  "agent": {
   "identity": "claude-d",
@@ -87,8 +87,8 @@
    "stato": "oracolo sul registro reale BB-1: PR #617 head dd7b7369 tutte le voci PASS (58)"
   },
   "claude/d-roserpina-oracle": {
-   "sha": "8a1afcd9082d7a47b5219f3f3a6ac929be27623a",
-   "stato": "riverifica 3f59fa67: RO-DD-08 chiuso; RO-DD-09 rischio residuo (decisione owner)"
+   "sha": "9f42c815f77820583f32dd902d72c911622acdf4",
+   "stato": "riverifica c2a7a499: RO-DD-09 chiuso (marker), verifiche marker PASS; limite residuo DB+marker all'owner"
   }
  },
  "integration_queue": [
@@ -125,7 +125,7 @@
   "catena di checkpoint pf-claude-d: seq 1 DURABLE, ripristino READY da clone nuovo",
   "caso sintetico squash+branch cancellato consegnato a Claude B (RED riprodotto: LATEST_CHECKPOINT_CORRUPT)"
  ],
- "next_atomic_action": "Attendere SHA della PR 1 (dopo #617) e decisione owner RO-DD-09; rieseguire oracoli e campagna 5 sullo SHA della PR e su main",
+ "next_atomic_action": "Attendere SHA della PR 1 (dopo #617) e decisione owner sul limite residuo; rieseguire oracoli, meccanismo e campagna 5 sullo SHA della PR e su main",
  "dependencies": {
   "F-04": "F-02 su main (Claude B)",
   "F-03": "F-02 + F-04",
@@ -315,6 +315,11 @@
    "id": "riverifica patch D-1 @3f59fa67: oracoli 74/74 --runxfail, campagna 5 10 PASS + 2 xfail attesi, RO-DD-08 XPASS",
    "status": "NOT VERIFIED",
    "note": "unpublished_tree: keep branch + copia oracoli non committata"
+  },
+  {
+   "id": "riverifica patch D-1 @c2a7a499: oracoli+meccanismo 78/78 --runxfail, campagna 5 10 PASS + 2 xfail attesi",
+   "status": "NOT VERIFIED",
+   "note": "unpublished_tree: keep branch + copia oracoli non committata"
   }
  ],
  "tests_missing": [
@@ -338,7 +343,8 @@
   "RO-CAP-01 (P2): tavolo regolato non liberato con recovery OFF (decisione owner: va liberato)",
   "RO-DD-01/02/03/04/05/06/07, RO-DEC-01/02: CHIUSI dalla patch Claude B 15960bac (keep branch, non su main), verificati",
   "RO-DD-08: CHIUSO in 3f59fa67 (keep branch, verificato)",
-  "RO-DD-09 (rischio residuo, doppio guasto, fail-open): rialzo del picco non salvato + perdita + riavvio => picco vecchio; decisione owner (a/b/c), raccomandata (b)"
+  "RO-DD-09: CHIUSO in c2a7a499 (marker su file, verificato)",
+  "Limite residuo (DB e marker non scrivibili + riavvio => picco vecchio, fail-open): richiede accettazione esplicita owner"
  ],
  "github_evidence": [
   "#586 c.6640163608",
@@ -361,7 +367,8 @@
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6747966582",
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6748086371",
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6749360568",
-  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6749637938"
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6749637938",
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6749904944"
  ],
  "gate_a": "NOT APPLICABLE (Claude D)",
  "pr_505": "non toccata",
@@ -412,6 +419,9 @@
   },
   {
    "note": "pfab-d-20261109-roserpina-verify-002: RO-DD-08 VERIFIED, RO-DD-09 all'owner"
+  },
+  {
+   "note": "pfab-d-20261109-roserpina-verify-003: RO-DD-09 VERIFIED; limite residuo all'owner"
   }
  ]
 }
