@@ -149,7 +149,7 @@ namespace solo locale (`refs/pfckpt-durability/*`, mai pubblicato) e classifica 
 | --- | --- |
 | `BRANCH:<b>` | antenato di un branch durevole (default `main`; `--durable-branch` ripetibile) |
 | `PULL:<n>` | antenato di `refs/pull/<n>/head`: `pr` dichiarato (`code.pr` / `tests_executed[].pr`) o, se nessuno è dichiarato, scoperto fra tutti i `refs/pull/*/head` |
-| `INTEGRATION:<b>` | originale irraggiungibile, ma `integration` TREE_EQUAL provata e commit di integrazione antenato di un branch durevole |
+| `INTEGRATION:<b>` | originale irraggiungibile, ma `integration` TREE_EQUAL provata, commit di integrazione antenato di un branch durevole e `original_tree` ancorato da un checkpoint precedente (senza ancora storica il clone pulito non lo riverifica: `CODE_SHA_NOT_DURABLE`) |
 | `KEEP_REF` | solo con `--keep-refs` (opt-in, punto 1-bis) |
 | `BRANCH_ONLY:<b>` | presente solo su un branch di lavoro: sparirebbe con la sua cancellazione |
 
@@ -342,7 +342,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 148 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 149 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo

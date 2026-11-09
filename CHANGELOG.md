@@ -76,6 +76,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   è il repository dichiarato non viene mai contattato.
   Ottavo giro: anche `readback` e `recover` aggiornano i `--repo-path`; un test `unpublished_tree` senza `sha_note`
   (che `verify` deve risolvere) entra nel fallback `refs/pull`.
+  Rilievo Codex sullo stesso giro: `save` accetta una durabilità `INTEGRATION:<branch>` solo se l'`original_tree` ha
+  un'ancora storica (checkpoint precedente), come richiede il `verify` del clone pulito; altrimenti
+  `CODE_SHA_NOT_DURABLE` prima di pubblicare, invece di un readback fallito dopo.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

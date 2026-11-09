@@ -706,6 +706,29 @@ def manifest_intact(repo, commit, d=DEFAULT_DIR):
         return False
 
 
+def historical_code_trees(repo, start, d=DEFAULT_DIR):
+    """{sha: [tree]} registrati da `code.tree` / `code.patch.tree` dei checkpoint da `start` compreso all'indietro
+    (first-parent, max 200), solo da antenati con manifest integro (rilievo Sol #615). Sono le uniche ancore che
+    provano il tree di un originale non piu' raggiungibile."""
+    found = {}
+    if git(repo, "rev-parse", "-q", "--verify", f"{start}^{{commit}}", check=False).returncode != 0:
+        return found
+    for c in out(repo, "rev-list", "--first-parent", "--max-count=200", start).splitlines():
+        if not manifest_intact(repo, c, d):
+            continue                                # antenato non integro: nessuna ancora
+        try:
+            st = tree_json(repo, c, d, "STATE.json")
+        except (ValueError, CheckpointError):
+            continue
+        cd = st.get("code") if isinstance(st, dict) and isinstance(st.get("code"), dict) else {}
+        if cd.get("sha") and cd.get("tree"):
+            found.setdefault(str(cd["sha"]), []).append(str(cd["tree"]))
+        pmh = cd.get("patch") if isinstance(cd.get("patch"), dict) else {}
+        if pmh.get("head") and pmh.get("tree"):
+            found.setdefault(str(pmh["head"]), []).append(str(pmh["tree"]))
+    return found
+
+
 def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None, remote="origin"):
     """Verifica completa del checkpoint al commit REF. Ritorna un dict di report; solleva CheckpointError(2) se invalido."""
     commit = out(repo, "rev-parse", "--verify", f"{ref}^{{commit}}")
@@ -775,20 +798,7 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None, remote="or
         """code.tree / code.patch.tree registrati dai checkpoint PRECEDENTI della catena (first-parent, max 200)."""
         if not history_loaded:
             history_loaded.append(True)
-            for c in out(repo, "rev-list", "--first-parent", "--max-count=200", f"{commit}~1").splitlines() \
-                    if git(repo, "rev-parse", "-q", "--verify", f"{commit}~1", check=False).returncode == 0 else []:
-                if not manifest_intact(repo, c, d):
-                    continue                        # antenato non integro: nessuna ancora (rilievo Sol #615)
-                try:
-                    st = tree_json(repo, c, d, "STATE.json")
-                except (ValueError, CheckpointError):
-                    continue
-                cd = st.get("code") if isinstance(st, dict) and isinstance(st.get("code"), dict) else {}
-                if cd.get("sha") and cd.get("tree"):
-                    history.setdefault(str(cd["sha"]), []).append(str(cd["tree"]))
-                pmh = cd.get("patch") if isinstance(cd.get("patch"), dict) else {}
-                if pmh.get("head") and pmh.get("tree"):
-                    history.setdefault(str(pmh["head"]), []).append(str(pmh["tree"]))
+            history.update(historical_code_trees(repo, f"{commit}~1", d))
         return history
 
     def _anchors_for(sha, integ):
@@ -1122,9 +1132,11 @@ def cited_references(repo, state):
             entries.append((f"test {t.get('id')!r}", t))
     for label, e in entries:
         _p, _k, info = check_code_reference(repo, label, str(e["sha"]), e.get("integration"))
-        cited.append({"label": label, "sha": str(e["sha"]), "original": resolve_commit(repo, str(e["sha"])),
-                      "integration": info.get("integration_sha")})
         integ = e.get("integration")
+        cited.append({"label": label, "sha": str(e["sha"]), "original": resolve_commit(repo, str(e["sha"])),
+                      "integration": info.get("integration_sha"),
+                      "original_sha": integ.get("original_sha") if isinstance(integ, dict) else None,
+                      "original_tree": integ.get("original_tree") if isinstance(integ, dict) else None})
         if isinstance(integ, dict) and integ.get("equivalence") == "TREE_EQUAL" and integ.get("integration_sha"):
             # la verifica richiede il commit di integrazione anche con l'originale raggiungibile (rilievo Codex #615):
             # deve essere durevole di per se'
@@ -1186,7 +1198,8 @@ def _classify(repo, c, tips, durable_branches, keep):
     return None
 
 
-def check_durability(repo, remote, state, durable_branches=DEFAULT_DURABLE_BRANCHES, keep=False, waiver=()):
+def check_durability(repo, remote, state, durable_branches=DEFAULT_DURABLE_BRANCHES, keep=False, waiver=(),
+                     anchor_from=None, d=DEFAULT_DIR):
     """Ogni riferimento citato deve restare risolvibile dopo uno squash merge con cancellazione del branch:
     BRANCH:<durevole> | PULL:<n> | INTEGRATION:<durevole> | KEEP_REF (solo con --keep-refs). BRANCH_ONLY (solo un
     branch di lavoro, che puo' essere cancellato) e' ammesso SOLO per gli SHA dichiarati in
@@ -1199,6 +1212,18 @@ def check_durability(repo, remote, state, durable_branches=DEFAULT_DURABLE_BRANC
         tips = durability_tips(repo, remote, (), all_pulls=True)          # PR non dichiarata: scoperta
         cited = cited_references(repo, state)                             # e risoluzione ripetuta dopo il fetch
         rows = [dict(c, via=_classify(repo, c, tips, durable_branches, keep)) for c in cited]
+    if anchor_from is not None:
+        # INTEGRATION: l'originale non e' durevole, quindi il clone pulito non lo avra': la transizione TREE_EQUAL si
+        # riverifica solo con un'ancora STORICA (checkpoint precedente). Senza, non e' durevole (rilievo Codex #615).
+        hist = None
+        for r in rows:
+            if r["via"] and r["via"].startswith("INTEGRATION:"):
+                hist = historical_code_trees(repo, anchor_from, d) if hist is None else hist
+                ok = r.get("original_tree") and any(
+                    t == r["original_tree"] for k, ts in hist.items() for t in ts
+                    if k.startswith(r["sha"]) or (r.get("original_sha") and k == r["original_sha"]))
+                if not ok:
+                    r["via"], r["reason"] = None, "INTEGRATION senza ancora storica dell'original_tree"
     missing = [r for r in rows if r["via"] is None]
     branch_only = [r for r in rows if r["via"] and r["via"].startswith("BRANCH_ONLY")
                    and r["original"] not in set(waiver)]
@@ -1248,7 +1273,8 @@ def readback(remote_url, branch, d, code_branch=None, expect_commit=None, keep_r
             if ks["missing"]:
                 raise CheckpointError(4, "READBACK_KEEP_REF_MISSING", missing=ks["missing"])
         state = json.loads(blob(tmp, report["commit"], f"{d}/STATE.json"))
-        rows, missing, branch_only = check_durability(tmp, "origin", state, durable_branches, keep_refs, _waiver(state))
+        rows, missing, branch_only = check_durability(tmp, "origin", state, durable_branches, keep_refs, _waiver(state),
+                                                      anchor_from=f"{report['commit']}~1", d=d)
         if missing or branch_only:
             raise _not_durable(4, "READBACK_CODE_SHA_NOT_DURABLE", missing, branch_only)
         report["durability"] = [{"label": r["label"], "sha": r["sha"], "via": r["via"]} for r in rows]
@@ -1323,7 +1349,8 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
         if code_repo:
             st.setdefault("code", {})["patch"] = capture_code_patch(code_repo, repo, d)
         # durabilita' PRIMA di scrivere/committare: uno SHA che sparirebbe con il branch non entra nel checkpoint
-        _rows, missing, branch_only = check_durability(repo, remote, st, durable_branches, keep_refs, _waiver(st))
+        _rows, missing, branch_only = check_durability(repo, remote, st, durable_branches, keep_refs, _waiver(st),
+                                                       anchor_from=expected, d=d)
         # tree ricalcolato dall'oggetto DOPO il fetch dei ref durevoli (rilievi Sol #615): mai un tree ereditato da un
         # code.sha precedente; diventa l'ancora per un futuro `integration.original_tree` una volta pubblicato.
         code_full = resolve_commit(repo, (st.get("code") or {}).get("sha"))
@@ -1351,7 +1378,8 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
         raise CheckpointError(2, "LOCAL_ONLY_FILES", files=untracked[:20])
     if resumed == "after_commit":                   # commit gia' fatto (anche da un altro strumento): stesso controllo
         cst = json.loads(blob(repo, "HEAD", f"{d}/STATE.json"))
-        _rows, missing, branch_only = check_durability(repo, remote, cst, durable_branches, keep_refs, _waiver(cst))
+        _rows, missing, branch_only = check_durability(repo, remote, cst, durable_branches, keep_refs, _waiver(cst),
+                                                       anchor_from=expected, d=d)
         if missing or branch_only:
             raise _not_durable(2, "CODE_SHA_NOT_DURABLE", missing, branch_only)
     # senza force. Default: solo il branch di stato. Con keep_refs: push ATOMICO di checkpoint + ref keep; un ref keep

@@ -219,7 +219,8 @@ def test_legacy_transition_without_a_recorded_tree_anchor_is_needs_reconciliatio
     exp = next_state(a, world, code=dict(st["code"], integration=integ),
                      tests_executed=[dict(t, integration=integ) for t in st["tests_executed"]])
     err = expect(2, pfckpt.save, a, BR, "origin", exp, "transizione senza ancora", D, agent="claude")
-    assert set(err.detail["problems"]) <= set(err.detail["reference_problems"])
+    # rifiutata gia' dalla durabilita' (Codex #615: INTEGRATION senza ancora storica), prima di qualunque commit
+    assert err.reason == "CODE_SHA_NOT_DURABLE"
     assert pfckpt.remote_head(a, "origin", BR) == exp, "nulla pubblicato"
 
 
@@ -571,7 +572,7 @@ def test_self_declared_code_tree_in_the_current_state_is_not_an_anchor(world):
     exp = next_state(a, world, code={"branch": "main", "sha": invented, "tree": mtree, "integration": lie})
     err = expect(2, pfckpt.save, a, BR, "origin", exp, "SHA inventato con code.tree autodichiarato", D,
                  agent="claude")
-    assert set(err.detail["problems"]) <= set(err.detail["reference_problems"])
+    assert err.reason == "CODE_SHA_NOT_DURABLE"          # gia' la durabilita' rifiuta (Codex #615), prima del commit
     assert pfckpt.remote_head(a, "origin", BR) == exp
 
 
@@ -698,3 +699,26 @@ def test_unpublished_tree_without_sha_note_still_enters_the_pull_fallback(world)
     subprocess.run(["git", "clone", "-q", "--no-local", "--branch", BR, world["url"], dest], check=True)
     assert pfckpt.fetch_pull_heads(dest, D) is not None
     assert pfckpt.resolve_commit(dest, feat) == feat
+
+
+
+def test_integration_only_durability_needs_a_historical_anchor_before_publishing(world):
+    """Codex #615 (139fdff5): originale solo nel clone di chi scrive, integrazione TREE_EQUAL su main, nessun
+    checkpoint precedente con il suo tree. Prima `save` pubblicava e poi falliva il readback; ora rifiuta prima."""
+    c = _code_clone(world)
+    sh(c, "checkout", "-q", "-b", "solo-locale")
+    with open(os.path.join(c, "feat.py"), "w") as fh:
+        fh.write("FEATURE = 2\n")
+    sh(c, "add", "-A"); sh(c, "commit", "-q", "-m", "feature mai pubblicata")
+    feat, ftree = sh(c, "rev-parse", "HEAD"), sh(c, "rev-parse", "HEAD^{tree}")
+    sh(c, "fetch", "-q", "origin")
+    squash = sh(c, "commit-tree", ftree, "-p", "origin/main", "-m", "Squash merge")   # stesso tree, su main
+    sh(c, "push", "-q", "origin", f"{squash}:refs/heads/main")
+    a = agent(world, "a")
+    sh(a, "fetch", "-q", c, "solo-locale:refs/locale/feat")             # l'originale vive SOLO in questo clone
+    sh(a, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    integ = pfckpt.build_integration(a, feat, squash, original_tree=ftree)
+    exp = next_state(a, world, code={"branch": "main", "sha": feat, "integration": integ})
+    err = expect(2, pfckpt.save, a, BR, "origin", exp, "integrazione senza ancora", D, agent="claude")
+    assert err.reason == "CODE_SHA_NOT_DURABLE"
+    assert pfckpt.remote_head(a, "origin", BR) == exp, "nulla pubblicato"
