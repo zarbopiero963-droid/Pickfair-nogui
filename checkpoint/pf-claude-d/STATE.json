@@ -1,9 +1,9 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 11,
+ "seq": 12,
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "previous_checkpoint_sha": "69762be9da5b5a4c23884110987cca313782aa5f",
+ "previous_checkpoint_sha": "8ebc018979b80745a54c01db349e1bac79093dff",
  "updated_at": "2026-11-05T14:22:51Z",
  "agent": {
   "identity": "claude-d",
@@ -83,8 +83,8 @@
    "stato": "guardia/campagna Betfair READ-ONLY"
   },
   "claude/d-blackbox-completeness": {
-   "sha": "3b3691113dcf21c7f4318c0721a8c61db8dcc75d",
-   "stato": "oracolo completezza, semantica BB-1 disco pieno (31 test, 21 mutanti); ACCEPTED da Claude B (contratto offline)"
+   "sha": "e284e7086605074e07811c16ea648830e424d38a",
+   "stato": "oracolo offline + test sul registro reale BB-1 (PR #617 @3b6848d6: tutte le voci PASS, 2 NOT_RUN, 2 requisiti BB-3)"
   }
  },
  "integration_queue": [
@@ -121,7 +121,7 @@
   "catena di checkpoint pf-claude-d: seq 1 DURABLE, ripristino READY da clone nuovo",
   "caso sintetico squash+branch cancellato consegnato a Claude B (RED riprodotto: LATEST_CHECKPOINT_CORRUPT)"
  ],
- "next_atomic_action": "Attendere la PR della catena SL/TP (Claude B) e BB-1; rieseguire G7 sullo SHA pubblicato a ogni merge; agganciare l'oracolo a core.blackbox_query",
+ "next_atomic_action": "Dopo il merge di BB-1 rieseguire test_real_bb1 sullo SHA di main; attendere la PR SL/TP per G7",
  "dependencies": {
   "F-04": "F-02 su main (Claude B)",
   "F-03": "F-02 + F-04",
@@ -271,6 +271,11 @@
    "id": "oracolo scatola nera 31 test + 21 mutanti",
    "status": "PASS",
    "sha": "3b3691113dcf21c7f4318c0721a8c61db8dcc75d"
+  },
+  {
+   "id": "oracolo sul registro reale BB-1 PR #617 head 3b6848d6: 49 test (18 reali), tutte le voci PASS",
+   "status": "NOT VERIFIED",
+   "note": "unpublished_tree: PR #617 non mergiata (3b6848d6 + pacchetto oracolo non committato)"
   }
  ],
  "tests_missing": [
@@ -302,7 +307,8 @@
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728013955",
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728261674",
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728318353",
-  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728448873"
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6728448873",
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6742901782"
  ],
  "gate_a": "NOT APPLICABLE (Claude D)",
  "pr_505": "non toccata",
@@ -332,6 +338,9 @@
   },
   {
    "note": "seq 10 (69762be) pubblicato ma readback FALLITO (sha F-R06 d2eb5d29/1d8ca01 non risolvibili dopo squash #614): NON DURABLE; sostituito da seq 11"
+  },
+  {
+   "note": "pfab-d-20261109-bb1-pr617-oracle-001 consegnato al canale (risposta non ancora ricevuta)"
   }
  ]
 }

@@ -27,7 +27,7 @@
  ],
  "lotto_corrente": "G7 campagna finanziaria: scenari G7-S01..S21 + hardening F-R06",
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "next_atomic_action": "Attendere la PR della catena SL/TP (Claude B) e BB-1; rieseguire G7 sullo SHA pubblicato a ogni merge; agganciare l'oracolo a core.blackbox_query",
+ "next_atomic_action": "Dopo il merge di BB-1 rieseguire test_real_bb1 sullo SHA di main; attendere la PR SL/TP per G7",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
