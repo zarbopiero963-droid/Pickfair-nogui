@@ -786,3 +786,34 @@ def test_recover_after_squash_and_branch_deletion_returns_the_transition_checkpo
     rep = pfckpt.recover(world["url"], BR, str(world["tmp"] / "rec"), D)
     assert rep["status"] == "RECOVERED" and rep["commit"] == res["commit"] and rep["skipped_invalid"] == "0"
     assert rep["code_reference"]["effective_sha"] == squash
+
+
+def test_original_sha_must_be_exactly_the_resolved_commit_before_publishing(world):
+    """Sol #615 (3f79e5cb): SHA di test abbreviato che si risolve (originale solo nel clone di chi scrive) e
+    `original_sha` DIVERSO con lo stesso prefisso, ancorato da un checkpoint precedente: prima `save` pubblicava e il
+    readback falliva dopo; ora rifiuta prima, nulla pubblicato."""
+    c = _code_clone(world)
+    sh(c, "checkout", "-q", "-b", "solo-locale-2")
+    with open(os.path.join(c, "feat.py"), "w") as fh:
+        fh.write("FEATURE = 3\n")
+    sh(c, "add", "-A"); sh(c, "commit", "-q", "-m", "feature solo locale")
+    feat, ftree = sh(c, "rev-parse", "HEAD"), sh(c, "rev-parse", "HEAD^{tree}")
+    sh(c, "fetch", "-q", "origin")
+    squash = sh(c, "commit-tree", ftree, "-p", "origin/main", "-m", "Squash merge")
+    sh(c, "push", "-q", "origin", f"{squash}:refs/heads/main")
+    other = feat[:12] + ("0" * 28 if feat[12:] != "0" * 28 else "1" * 28)      # stesso prefisso, commit diverso
+    _legacy_checkpoint_citing(world, other, tree=ftree)                       # ancora storica per `other`
+    a = agent(world, "after")
+    sh(a, "fetch", "-q", c, "solo-locale-2:refs/locale/feat")                 # l'originale vive solo qui
+    sh(a, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    integ = {"original_sha": other, "original_tree": ftree, "integration_sha": squash, "integration_tree": ftree,
+             "equivalence": "TREE_EQUAL"}
+    st = json.load(open(os.path.join(a, D, "STATE.json")))
+    exp = next_state(a, world, code={"branch": "main", "sha": squash},
+                     tests_executed=[{"id": "suite", "status": "PASS", "sha": feat[:12], "integration": integ}])
+    del st
+    err = expect(2, pfckpt.save, a, BR, "origin", exp, "original_sha diverso dal commit risolto", D, agent="claude")
+    assert err.reason in ("CHECKPOINT_INVALID", "CODE_SHA_NOT_DURABLE")
+    assert pfckpt.remote_head(a, "origin", BR) == exp, "nulla pubblicato"
+    assert any("original_sha != commit risolto" in p for p in err.detail.get("problems", [])) \
+        or err.reason == "CODE_SHA_NOT_DURABLE"

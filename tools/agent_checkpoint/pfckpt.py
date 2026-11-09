@@ -288,6 +288,10 @@ def check_code_reference(repo, label, sha, integration, anchors=(), unresolved_m
             bad.append("equivalence")
         if "original_sha" not in bad and not integration["original_sha"].startswith(str(sha)):
             bad.append("original_sha != SHA citato")
+        elif "original_sha" not in bad and full and integration["original_sha"] != full:
+            # lo SHA citato si risolve: original_sha deve essere ESATTAMENTE quel commit, mai un altro con lo stesso
+            # prefisso (rilievo Sol #615)
+            bad.append("original_sha != commit risolto dallo SHA citato")
     if bad:
         problems.append(f"{label}: integration malformata: {', '.join(bad)}")
         if not full:
@@ -457,10 +461,70 @@ def _norm_repo(name):
     return n[:-4] if n.endswith(".git") else n
 
 
+CANONICAL_GIT_HOST = "github.com"
+TRUSTED_TRANSPORTS_ENV = "PFCKPT_TRUSTED_GIT_TRANSPORTS"
+_LOGICAL_REPO = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,38})/[a-z0-9._-]{1,100}")
+
+
+def _logical_repo(rest):
+    """'owner/name' (minuscolo) da un percorso relativo: esattamente due segmenti validi, `.git` facoltativo."""
+    rest = str(rest or "")
+    if rest.endswith(".git"):
+        rest = rest[:-4]
+    rest = rest.lower()
+    parts = rest.split("/")
+    if len(parts) != 2 or any(x in ("", ".", "..") for x in parts) or not _LOGICAL_REPO.fullmatch(rest):
+        return None
+    return rest
+
+
+def repository_identity(url, trusted=None):
+    """Repository logico `owner/name` di un URL git, SOLO se l'autenticita' e' dimostrabile; altrimenti None
+    (`REPOSITORY_IDENTITY_UNVERIFIED`, fail-closed). Decisione owner PF-PR615-FINAL-SECURITY-HARDENING-20261109:
+    - fonte di fiducia indipendente dall'`origin`: l'host canonico e' `github.com`, su `https://github.com/o/n[.git]`
+      (senza credenziali, porta, query o frammento), `ssh://git@github.com/o/n[.git]` o `git@github.com:o/n[.git]`;
+    - un proxy o un percorso locale vale SOLO se elencato in PFCKPT_TRUSTED_GIT_TRANSPORTS (prefissi separati da
+      virgola, configurati dall'operatore): il repository logico si legge dal percorso dopo il prefisso dichiarato;
+    - ogni altro host, schema o forma ambigua: None. Mai l'host dell'origin come autorita' di se stesso."""
+    import urllib.parse
+    u = str(url or "").strip()
+    if not u or any(c.isspace() for c in u):
+        return None
+    m = re.fullmatch(r"git@github\.com:([^:@\s]+)", u)
+    if m:
+        return _logical_repo(m.group(1))
+    if "://" in u:
+        try:
+            sp = urllib.parse.urlsplit(u)
+            port = sp.port
+        except ValueError:
+            return None
+        canonical = (sp.hostname == CANONICAL_GIT_HOST and port is None and not sp.query and not sp.fragment
+                     and sp.password is None and "%" not in sp.path)
+        if canonical and sp.scheme == "https" and sp.username is None and sp.netloc.lower() == CANONICAL_GIT_HOST:
+            return _logical_repo(sp.path[1:] if sp.path.startswith("/") else None)
+        if canonical and sp.scheme == "ssh" and sp.username == "git" and sp.netloc.lower() == f"git@{CANONICAL_GIT_HOST}":
+            return _logical_repo(sp.path[1:] if sp.path.startswith("/") else None)
+    prefixes = trusted if trusted is not None else [
+        x.strip() for x in os.environ.get(TRUSTED_TRANSPORTS_ENV, "").split(",") if x.strip()]
+    for pre in prefixes:
+        if "://" in pre and not pre.startswith("file://"):
+            if u.startswith(pre) and pre.endswith("/"):
+                return _logical_repo(u[len(pre):])
+            continue
+        base = pre[len("file://"):] if pre.startswith("file://") else pre
+        local = u[len("file://"):] if u.startswith("file://") else u
+        if "://" in local or not os.path.isabs(base) or not os.path.isabs(local):
+            continue
+        base, local = os.path.realpath(base), os.path.realpath(local)
+        if os.path.commonpath([base, local]) == base and local != base:
+            return _logical_repo(os.path.relpath(local, base).replace(os.sep, "/"))
+    return None
+
+
 def _repo_identity_ok(path, name):
-    """Il percorso passato con --repo-path NOME=PERCORSO e' davvero NOME: l'URL del suo `origin` (o, per un bare, il
-    percorso stesso) termina con `owner/name` (rilievo Sol #615: la prova di pubblicazione e' vincolata al remoto del
-    target, non a un fork)."""
+    """Il percorso passato con --repo-path NOME=PERCORSO e' davvero NOME: il repository logico dell'URL del suo
+    `origin` (o, per un bare, del percorso stesso), dimostrato da `repository_identity`, coincide con NOME."""
     if out(path, "rev-parse", "--is-bare-repository") == "true":
         where = os.path.abspath(path)
     else:
@@ -468,8 +532,8 @@ def _repo_identity_ok(path, name):
         if p.returncode != 0:
             return False
         where = p.stdout.decode().strip()
-    w, n = _norm_repo(where), _norm_repo(name)
-    return w == n or w.endswith("/" + n) or w.endswith(":" + n)
+    logical = repository_identity(where)
+    return logical is not None and logical == _norm_repo(name)
 
 
 def refresh_published_refs(path, remote="origin"):
@@ -563,8 +627,9 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
             return repo
         if name in paths:
             if not _repo_identity_ok(paths[name], name):
-                refp.append(f"{label}: --repo-path {name}: l'origin del percorso non e' {name!r}; la prova di "
-                            "pubblicazione vale solo sul remoto del repository dichiarato (rilievo Sol #615)")
+                refp.append(f"{label}: REPOSITORY_IDENTITY_UNVERIFIED: --repo-path {name}: l'origin del percorso non "
+                            f"e' {name!r} su un host fidato (github.com o un trasporto in {TRUSTED_TRANSPORTS_ENV}); "
+                            "la prova di pubblicazione vale solo sul remoto autentico del repository dichiarato")
                 return None
             return paths[name]
         refp.append(f"{label}: repository {name!r} non disponibile per {what} (--repo-path {name}=PERCORSO); "

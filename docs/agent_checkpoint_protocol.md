@@ -194,7 +194,7 @@ Regole di `verify`, confrontando solo tree SHA e mai file per file:
   (o `code.patch.tree`) registrato da un `save` quando l'oggetto esisteva, in un checkpoint **precedente** già
   pubblicato della catena (first-parent, ultimi 200) **con manifest integro**. `code.patch` è scritto dall'agente e
   non ricalcolato: vale come ancora solo se git conferma tree(`code.patch.head`) == `code.patch.tree`; anche
-  `code.sha`→`code.tree` deve combaciare con git quando l'oggetto è presente. Il confronto con le ancore è per **uguaglianza** sullo SHA completo
+  `code.sha`→`code.tree` deve combaciare con git quando l'oggetto è presente. Se lo SHA citato si risolve, `integration.original_sha` deve essere esattamente quel commit. Il confronto con le ancore è per **uguaglianza** sullo SHA completo
   (risolto, o `original_sha`), mai per prefisso: uno SHA abbreviato non usa l'ancora di un altro commit con lo stesso
   prefisso. Ogni comando git di `pfckpt` gira con `GIT_NO_REPLACE_OBJECTS=1` e `GIT_GRAFT_FILE` neutro: né un
   `refs/replace/*` né un `info/grafts` locale alterano mai tree, ascendenze o digest usati come prova. Il `code.tree` dello STATE corrente
@@ -276,8 +276,14 @@ uno SHA irrisolto o un commit di handoff non pubblicato sul suo `handoff_branch`
 `refs/remotes/origin/<handoff_branch>` del percorso passato (per la catena: il remote di `save`), oppure in
 `refs/heads/<handoff_branch>` se il percorso è il bare remoto stesso, letto come ref **esatto**: `handoff_branch` deve
 essere un nome di branch valido, mai una sintassi di revisione (`main@{1}`, `main~1`), che darebbe al reflog locale
-valore di prova. Un altro remote dello stesso clone (un fork) non conta mai. Il percorso di `--repo-path NOME=PERCORSO` deve essere davvero NOME: l'URL del suo `origin` (o il percorso,
-per un bare) termina con `owner/name`; altrimenti è un problema di riferimento. `save` e `bootstrap` aggiornano e
+valore di prova. Un altro remote dello stesso clone (un fork) non conta mai. Il percorso di `--repo-path
+NOME=PERCORSO` deve essere davvero NOME **su un host autentico** (decisione owner
+PF-PR615-FINAL-SECURITY-HARDENING-20261109). La fonte di fiducia è indipendente dall'`origin`: l'host canonico è
+`github.com` (`https://github.com/owner/name[.git]` senza credenziali, porta, query o frammento;
+`ssh://git@github.com/…` o `git@github.com:…`). Un proxy o un percorso locale vale solo se l'operatore lo dichiara in
+`PFCKPT_TRUSTED_GIT_TRANSPORTS` (prefissi separati da virgola), e il repository logico si legge dal percorso dopo il
+prefisso. Ogni altro host, schema o forma ambigua dà `REPOSITORY_IDENTITY_UNVERIFIED` (problema di riferimento,
+fail-closed). `save` e `bootstrap` aggiornano e
 potano i remote-tracking dei branch prima della verifica, e riallineano i `refs/remotes/origin/pull/<N>` del fallback a
 `refs/pull/<N>/head` (o li tolgono se la PR non c'è più): un
 branch cancellato sul remoto non vale come prova per un ref locale obsoleto, e un remoto irraggiungibile dà
@@ -347,7 +353,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 155 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 180 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo

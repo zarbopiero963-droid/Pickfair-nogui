@@ -26,6 +26,13 @@ def _git(*args, **kw):
     return subprocess.run(["git", *args], check=True, capture_output=True, **kw)
 
 
+@pytest.fixture(autouse=True)
+def _trusted_local_transport(world, monkeypatch):
+    """I remoti dei test sono bare locali sotto la tmp del test: trasporto dichiarato esplicitamente come fidato,
+    come farebbe l'operatore per un proxy (decisione owner PF-PR615-FINAL-SECURITY-HARDENING-20261109)."""
+    monkeypatch.setenv("PFCKPT_TRUSTED_GIT_TRANSPORTS", str(world["tmp"]))
+
+
 @pytest.fixture
 def target(world):
     """Bare B con main (base), commit di handoff su HBRANCH e integrazione su main; clone fresco per --repo-path."""
@@ -659,3 +666,67 @@ def test_local_graft_never_makes_an_unpublished_integration_look_published(world
     assert _only_reference_problems(err)
     assert any("integration_sha non pubblicato su main" in p for p in err.detail["problems"])
     assert not pfckpt._published_on(clone, lone, "main")
+
+
+# ================================================================== PF-PR615-FINAL-SECURITY-HARDENING-20261109
+_N = "zarbopiero963-droid/pickfair-nogui"
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("https://github.com/zarbopiero963-droid/Pickfair-nogui", _N),
+    ("https://github.com/zarbopiero963-droid/Pickfair-nogui.git", _N),
+    ("https://GITHUB.com/zarbopiero963-droid/Pickfair-nogui", _N),
+    ("git@github.com:zarbopiero963-droid/Pickfair-nogui.git", _N),
+    ("ssh://git@github.com/zarbopiero963-droid/Pickfair-nogui.git", _N),
+    ("https://evil.example/zarbopiero963-droid/Pickfair-nogui", None),           # host estraneo, stesso percorso
+    ("https://github.com.evil.io/zarbopiero963-droid/Pickfair-nogui", None),     # host simile
+    ("https://githuh.com/zarbopiero963-droid/Pickfair-nogui", None),
+    ("https://github.com@evil.io/zarbopiero963-droid/Pickfair-nogui", None),     # userinfo ingannevole
+    ("https://utente:segreto@github.com/zarbopiero963-droid/Pickfair-nogui", None),  # credenziali nell'URL
+    ("http://github.com/zarbopiero963-droid/Pickfair-nogui", None),             # trasporto non ammesso
+    ("https://github.com:8443/zarbopiero963-droid/Pickfair-nogui", None),
+    ("https://github.com/zarbopiero963-droid/Pickfair-nogui/extra", None),
+    ("https://github.com/zarbopiero963-droid/../Pickfair-nogui", None),
+    ("https://github.com/zarbopiero963-droid/Pickfair-nogui?ref=x", None),
+    ("https://github.com/zarbopiero963-droid/Pickfair%2dnogui", None),
+    ("ssh://root@github.com/zarbopiero963-droid/Pickfair-nogui", None),
+    ("git@github.com.evil.io:zarbopiero963-droid/Pickfair-nogui", None),
+    ("not a url", None), ("", None),
+    ("http://local_proxy@127.0.0.1:1234/git/zarbopiero963-droid/Pickfair-nogui", None),  # proxy non dichiarato
+])
+def test_repository_identity_trusts_only_github_or_declared_transports(url, expected):
+    assert pfckpt.repository_identity(url, trusted=[]) == expected
+
+
+def test_declared_proxy_transport_identifies_only_the_repository_after_its_prefix():
+    pre = "http://local_proxy@127.0.0.1:1234/git/"
+    assert pfckpt.repository_identity(pre + "zarbopiero963-droid/Pickfair-nogui", trusted=[pre]) == _N
+    assert pfckpt.repository_identity(pre + "altro/repo", trusted=[pre]) == "altro/repo"            # repo diverso
+    assert pfckpt.repository_identity(pre + "a/b/c", trusted=[pre]) is None
+    assert pfckpt.repository_identity("http://local_proxy@127.0.0.1:9999/git/" + "zarbopiero963-droid/Pickfair-nogui",
+                                      trusted=[pre]) is None                                        # altro proxy
+
+
+def _verify_with_origin(world, target, url):
+    a = _durable_no_artifact(world, target, "c")
+    clone = target_clone(target)
+    sh(clone, "remote", "set-url", "origin", url)
+    return a, clone
+
+
+def test_foreign_host_with_the_same_owner_name_is_repository_identity_unverified(world, target):
+    """Sol #615 (3f79e5cb): un origin su un host estraneo con lo stesso `owner/name` non e' il repository dichiarato,
+    anche con tutti gli oggetti presenti nel clone."""
+    a, clone = _verify_with_origin(world, target, "https://evil.example/" + TARGET)
+    err = expect(2, pfckpt.verify, a, "HEAD", D, repo_paths={TARGET: clone})
+    assert _only_reference_problems(err)
+    assert any("REPOSITORY_IDENTITY_UNVERIFIED" in p for p in err.detail["problems"])
+
+
+def test_undeclared_proxy_is_unverified_and_a_declared_one_is_accepted(world, target, monkeypatch):
+    proxy = "http://local_proxy@127.0.0.1:1234/git/"
+    a, clone = _verify_with_origin(world, target, proxy + TARGET)
+    err = expect(2, pfckpt.verify, a, "HEAD", D, repo_paths={TARGET: clone})
+    assert any("REPOSITORY_IDENTITY_UNVERIFIED" in p for p in err.detail["problems"])
+    monkeypatch.setenv("PFCKPT_TRUSTED_GIT_TRANSPORTS", proxy)                 # dichiarato dall'operatore
+    assert pfckpt.verify(a, "HEAD", D, repo_paths={TARGET: clone})["handoffs"][0]["handoff_proven"] is True

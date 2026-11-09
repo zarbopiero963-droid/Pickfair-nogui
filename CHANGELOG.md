@@ -87,6 +87,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Cicli aggiuntivi autorizzati dall'owner (PF-PR615-EXTRA-FIX-CYCLES-20261109): ancore confrontate per uguaglianza
   sullo SHA completo, mai per prefisso; ogni git di `pfckpt` ignora replacement e graft
   (`GIT_NO_REPLACE_OBJECTS=1`, `GIT_GRAFT_FILE` neutro);
+  decisione owner PF-PR615-FINAL-SECURITY-HARDENING-20261109: `original_sha` deve essere esattamente il commit
+  risolto; identità del `--repo-path` verificata su `github.com` o su trasporti dichiarati in
+  `PFCKPT_TRUSTED_GIT_TRANSPORTS`, altrimenti `REPOSITORY_IDENTITY_UNVERIFIED`;
   prova eseguibile che `recover` da clone pulito dopo squash e cancellazione del branch restituisce il checkpoint di
   transizione.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
