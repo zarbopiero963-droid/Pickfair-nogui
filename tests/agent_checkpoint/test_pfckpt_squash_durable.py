@@ -722,3 +722,25 @@ def test_integration_only_durability_needs_a_historical_anchor_before_publishing
     err = expect(2, pfckpt.save, a, BR, "origin", exp, "integrazione senza ancora", D, agent="claude")
     assert err.reason == "CODE_SHA_NOT_DURABLE"
     assert pfckpt.remote_head(a, "origin", BR) == exp, "nulla pubblicato"
+
+
+def test_forged_code_patch_anchor_from_a_previous_save_is_never_an_anchor(world):
+    """Sol #615 (98c17cbf): `code.patch.head` inventato con `code.patch.tree` copiato da main, pubblicato da un save
+    normale, non diventa l'ancora che rende DURABLE una successiva transizione TREE_EQUAL di quello SHA inventato."""
+    invented = "abcdef1234567890abcdef1234567890abcdef12"
+    a = agent(world, "a")
+    sh(a, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    main = sh(a, "rev-parse", "origin/main")
+    mtree = sh(a, "rev-parse", "origin/main^{tree}")
+    st = json.load(open(os.path.join(a, D, "STATE.json")))
+    forged = {"head": invented, "tree": mtree, "captured_at": "2026-11-09T00:00:00Z", "modified": [], "untracked": []}
+    exp = next_state(a, world, code=dict(st["code"], patch=forged))
+    first = pfckpt.save(a, BR, "origin", exp, "save con code.patch contraffatto", D, agent="claude")
+    assert first["status"] == "DURABLE"
+    assert invented not in pfckpt.historical_code_trees(a, "HEAD", D), "head inesistente: nessuna ancora"
+    lie = {"original_sha": invented, "original_tree": mtree, "integration_sha": main, "integration_tree": mtree,
+           "equivalence": "TREE_EQUAL"}
+    exp2 = next_state(a, world, code={"branch": "main", "sha": invented, "integration": lie})
+    err = expect(2, pfckpt.save, a, BR, "origin", exp2, "transizione sull'ancora contraffatta", D, agent="claude")
+    assert err.reason == "CODE_SHA_NOT_DURABLE"
+    assert pfckpt.remote_head(a, "origin", BR) == exp2, "nulla pubblicato"

@@ -82,6 +82,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Nono giro: gli SHA di `integration` e `handoffs` devono essere stringhe (un numero JSON di 40 cifre non è uno SHA);
   qualunque eccezione inattesa su un checkpoint malformato rende il checkpoint invalido (`CHECKPOINT_INVALID`), mai
   un crash che ferma `recover`/`bootstrap` prima degli antenati validi.
+  Decimo giro: un'ancora storica da `code.patch` (scritto dall'agente, non ricalcolato da `save`) vale solo se git
+  conferma tree(`head`) == `tree`; anche `code.sha`→`code.tree` deve combaciare quando l'oggetto è presente.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

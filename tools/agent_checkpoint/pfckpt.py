@@ -722,11 +722,21 @@ def historical_code_trees(repo, start, d=DEFAULT_DIR):
         except (ValueError, CheckpointError):
             continue
         cd = st.get("code") if isinstance(st, dict) and isinstance(st.get("code"), dict) else {}
-        if cd.get("sha") and cd.get("tree"):
-            found.setdefault(str(cd["sha"]), []).append(str(cd["tree"]))
+        sha, tree = cd.get("sha"), cd.get("tree")
+        if isinstance(sha, str) and isinstance(tree, str) and sha and tree:
+            full = resolve_commit(repo, sha)
+            # con l'oggetto presente l'ancora deve combaciare con git; senza, vale il tree che save ha ricalcolato
+            # dall'oggetto (limite residuo dichiarato: un antenato contraffatto con manifest coerente)
+            if not full or tree_of(repo, full) == tree:
+                found.setdefault(sha, []).append(tree)
         pmh = cd.get("patch") if isinstance(cd.get("patch"), dict) else {}
-        if pmh.get("head") and pmh.get("tree"):
-            found.setdefault(str(pmh["head"]), []).append(str(pmh["tree"]))
+        ph, pt = pmh.get("head"), pmh.get("tree")
+        if isinstance(ph, str) and isinstance(pt, str) and ph and pt:
+            # code.patch e' scritto dall'agente, non ricalcolato da save: vale come ancora SOLO se git conferma
+            # tree(head) == tree (rilievo Sol #615: head inventato + tree di main = ancora contraffatta)
+            pfull = resolve_commit(repo, ph)
+            if pfull and tree_of(repo, pfull) == pt:
+                found.setdefault(ph, []).append(pt)
     return found
 
 
