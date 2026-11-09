@@ -183,7 +183,7 @@ def test_ro_rec_01_crash_con_risposta_in_volo_riconciliato_per_customer_ref() ->
     assert stati and all(s not in ("INFLIGHT", "AMBIGUOUS") for s in stati), (stati, ex, r2["rebuild"])
 
 
-@pytest.mark.xfail(strict=True, reason="RO-CAP-01 (Grok B-2): con recovery OFF un tavolo in perdita non torna libero")
+@pytest.mark.xfail(strict=True, reason="RO-CAP-01 (Grok B-2, contratto owner): tavolo regolato senza esposizione non liberato")
 def test_ro_cap_01_con_recovery_off_i_tavoli_in_perdita_tornano_liberi() -> None:
     """Cinque BACK abbinati, tutti persi (perdita totale ~5 EUR, sotto ogni limite): nessun limite e' superato, ma con
     recovery OFF i tavoli restano in RECOVERY e il nuovo segnale non trova un tavolo. Da decidere (owner): un tavolo
@@ -195,5 +195,33 @@ def test_ro_cap_01_con_recovery_off_i_tavoli_in_perdita_tornano_liberi() -> None
             settings=GROK)
     final = r["snaps"][-1]
     assert D(100) - D(str(final["funds"]["total"])) < 10, describe(final)          # precondizione: sotto i limiti
-    assert [o for o in final["orders"] if o["market_id"] == "1.959"], (
-        "nuovo segnale respinto per tavoli bloccati: " + describe(final))
+    nuovo = [o for o in final["orders"] if o["market_id"] == "1.959"]
+    assert nuovo, "nuovo segnale respinto per tavoli bloccati: " + describe(final)
+    # contratto owner (recovery OFF): nessuna puntata di recupero, stake = target sulla cassa, senza inseguimento
+    assert D(str(nuovo[0]["stake"])) == oracle_stake(final["funds"]["total"], 1, 2.0), nuovo
+
+
+# ------------------------------------------------------------------ contratto owner PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109
+DD12 = dict(DD, **{"roserpina.target_profit_cycle_pct": 6.0})       # 2 perdite da 6 EUR: 12 EUR (< auto-reset 15 %)
+
+
+def _perdita_12():
+    return [{"op": "signal", "m": "1.981", "price": 2.0}, {"op": "signal", "m": "1.982", "price": 2.0},
+            {"op": "settle", "m": "1.981", "win": False, "nowait": True}, {"op": "settle", "m": "1.982", "win": False}]
+
+
+@pytest.mark.xfail(strict=True, reason="RO-DD-07 (contratto): blocco al settlement, non al segnale successivo")
+def test_ro_dd_07_e2e_blocco_alla_variazione_finanziaria() -> None:
+    r = run(_perdita_12(), settings=DD12)
+    after = [s for s in r["snaps"] if s["tag"].endswith(":settle:1.982")][0]
+    assert D(100) - D(str(after["funds"]["total"])) >= 10, describe(after)            # precondizione
+    assert after["mode"] == "LOCKDOWN", describe(after)
+
+
+@pytest.mark.xfail(strict=True, reason="RO-DD-06 (contratto regola 1): picco e blocco persi al riavvio")
+def test_ro_dd_06_e2e_blocco_persistente_dopo_crash_e_riavvio() -> None:
+    r1 = run(_perdita_12() + [{"op": "signal", "m": "1.983", "price": 2.0}, {"op": "crash_now"}], settings=DD12)
+    assert r1["snaps"][-1]["mode"] == "LOCKDOWN", describe(r1["snaps"][-1])          # precondizione: bloccato
+    r2 = run([{"op": "signal", "m": "1.984", "price": 2.0}], home=r1["_home"], settings=DD12)
+    assert [o for o in r2["snaps"][-1]["orders"] if o["market_id"] == "1.984"] == [], (
+        "dopo il riavvio picco ribasato e ingresso ammesso: " + describe(r2["snaps"][-1]))
