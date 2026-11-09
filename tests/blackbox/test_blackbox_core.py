@@ -372,3 +372,20 @@ def test_external_view_never_exposes_the_customer_reference_at_any_depth(tmp_pat
         assert secret not in ext
     assert '"stake": 2' in ext
     assert "CREF-NESTED" in json.dumps(r.query({}, external=False)["records"])
+
+
+def test_request_hook_records_attempt_and_result_with_returned_and_keeps_non_uuid_request_ids(tmp_path):
+    """Contratto MCP 1.15.0: ATTEMPT e RESULT registrati; `returned` nel RESULT; un request_id non uuid
+    (`mcp-<24 hex>`) resta com'e', senza cifre inventate."""
+    from core import blackbox_query as q
+    box = bb.BlackBox(str(tmp_path / "b.sqlite")).open()
+    box.start_session()
+    r = q.BlackBoxReader(box)
+    rid = "mcp-0123456789abcdef01234567"
+    assert r.request_hook({"phase": "ATTEMPT", "route": "/v1/blackbox/events", "request_id": rid})
+    assert r.request_hook({"phase": "RESULT", "route": "/v1/blackbox/events", "status": 200, "returned": 13,
+                           "request_id": rid})
+    recs = r.query({"type": "CONTROL_API_REQUEST"})["records"]
+    assert [(e["phase"], e["outcome"]) for e in recs] == [("ATTEMPT", "PENDING"), ("RESULT", "VERIFIED")]
+    assert all(e["correlation_id"] == rid and e["data"]["request_id"] == rid for e in recs)
+    assert recs[1]["data"]["returned"] == 13

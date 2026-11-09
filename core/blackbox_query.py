@@ -172,7 +172,8 @@ class BlackBoxReader:
                     return True                  # aggregata: contata nel prossimo record scritto
                 self._tokens = max(0.0, self._tokens - 1.0)
                 coalesced, self._coalesced = self._coalesced, 0
-            data = {k: record.get(k) for k in ("route", "params", "status", "code", "request_id", "duration_ms")}
+            data = {k: record.get(k) for k in ("route", "params", "status", "code", "request_id", "duration_ms",
+                                               "returned")}       # elementi letti (contratto MCP 1.15.0)
             data["coalesced_before"] = int(record.get("coalesced_before") or 0) + coalesced
             self.box.record("CONTROL_API_REQUEST", critical=True, source="CONTROL_API", component="control_api",
                             phase=phase, outcome=("VERIFIED" if phase == "RESULT" else "PENDING"),
