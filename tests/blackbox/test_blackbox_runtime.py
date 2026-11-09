@@ -80,7 +80,9 @@ def test_uncaught_exceptions_in_process_and_threads_are_recorded(bbpath):
     types = [e["type"] for e in _events(bbpath)]
     assert "UNCAUGHT_EXCEPTION" in types and "TASK_EXCEPTION" in types
     task = [e for e in _events(bbpath) if e["type"] == "TASK_EXCEPTION"][0]
-    assert task["component"] == "thread:worker-x" and "KeyError" in json.loads(task["data"])["traceback"]
+    diag = json.loads(task["data"])                       # R2: diagnostica strutturata, nessun testo arbitrario
+    assert task["component"] == "thread:worker-x" and diag["exception_type"] == "KeyError" and diag["frames"]
+    assert "segreto-non-qui" not in json.dumps(_events(bbpath))
 
 
 def test_native_crash_dump_of_the_previous_run_is_recorded_and_rotated(bbpath):
@@ -304,7 +306,8 @@ def test_chained_sensitive_flags_never_leak_the_value():
     assert "valore-segreto" not in " ".join(out), out
     assert out == [f"--password={bb.REDACTED}", f"--api-key={bb.REDACTED}", "--live"]
     assert rt.safe_argv(["--token=abc", "--simulation"]) == [f"--token={bb.REDACTED}", "--simulation"]
-    assert rt.safe_argv(["--password", "pw", "--verbose"]) == [f"--password={bb.REDACTED}", "--verbose"]
+    # R2 (allowlist): un flag sconosciuto non e' "sicuro" e non resta in chiaro
+    assert rt.safe_argv(["--password", "pw", "--verbose"]) == [f"--password={bb.REDACTED}", bb.REDACTED]
 
 
 @pytest.mark.parametrize("result,outcome", [
@@ -402,3 +405,183 @@ def test_failed_crash_recovery_import_refuses_start_and_keeps_the_dump(bbpath, m
     rt.shutdown("STOP")
     crash = [e for e in _events(bbpath) if e["type"] == "CRASH_RECOVERY"]
     assert len(crash) == 1 and "Segmentation fault" in json.loads(crash[0]["data"])["tail"]
+
+
+# ------------------------------------------------- R2 (decisione owner PF-BB1-SOL-R2-NEEDS-MANUAL-20261109)
+_FAKE_PW = "FAKEpw-Zq81xLm93Kp"                          # segreti FINTI, mai registrati: il caso R2
+_FAKE_KEY = "FAKEappkey0123456789AbCdEf"
+
+
+@pytest.mark.parametrize("argv", [
+    [_FAKE_PW],                                           # posizionale
+    [f"--bf-pass={_FAKE_PW}"],                            # flag sconosciuto con =
+    ["--login", _FAKE_PW],                                # flag sconosciuto + valore separato
+    ["--simulation", _FAKE_PW, "--live"],
+])
+def test_r2_unregistered_secret_in_argv_never_reaches_the_record(bbpath, monkeypatch, argv):
+    """R2: argv con allowlist. Prima un segreto posizionale o sotto un flag sconosciuto finiva in chiaro in
+    PROCESS_START.data.argv (riprodotto su 487d8dcb)."""
+    monkeypatch.setattr(sys, "argv", ["headless_main.py"] + argv)
+    rt.install()
+    rt.shutdown("STOP")
+    assert _FAKE_PW not in json.dumps(_events(bbpath))
+    start = json.loads([e for e in _events(bbpath) if e["type"] == "PROCESS_START"][0]["data"])
+    assert all(a in rt.OPERATIONAL_FLAGS or a == bb.REDACTED or a.endswith("=" + bb.REDACTED) for a in start["argv"])
+
+
+def test_r2_operational_flags_stay_readable_for_the_audit():
+    assert rt.safe_argv(["--simulation", "--emergency-stop", "--api-id", "12345", "x"]) == [
+        "--simulation", "--emergency-stop", f"--api-id={bb.REDACTED}", bb.REDACTED]
+    assert rt.safe_argv(["LIVE", "sim"]) == ["live", "sim"]           # forme posizionali di _parse_args
+    assert rt.safe_argv(["--betfair-password", "X1", "--pwd", "X2"]) == [bb.REDACTED] * 4   # casi di Claude D
+
+
+@pytest.mark.parametrize("hook", ["process", "thread"])
+def test_r2_unregistered_secret_in_an_exception_never_reaches_the_record(bbpath, hook):
+    """R2: il testo di un'eccezione e' arbitrario (es. un errore di login con la app key nel messaggio). Si registrano
+    tipo, catena delle cause, frame e un'impronta del messaggio, mai il testo (riprodotto su 487d8dcb)."""
+    rt.install()
+    if hook == "process":
+        try:
+            raise ValueError(f"betfair login error appKey={_FAKE_KEY} pw {_FAKE_PW}")
+        except ValueError:
+            sys.excepthook(*sys.exc_info())
+    else:
+        def boom():
+            raise RuntimeError(f"GET https://api.example/x?session={_FAKE_KEY} -> 401")
+        t = threading.Thread(target=boom, name="w-r2")
+        t.start(); t.join()
+    rt.shutdown("STOP")
+    blob = json.dumps(_events(bbpath))
+    assert _FAKE_KEY not in blob and _FAKE_PW not in blob
+    ev = [e for e in _events(bbpath) if e["type"] in ("UNCAUGHT_EXCEPTION", "TASK_EXCEPTION")][0]
+    diag = json.loads(ev["data"])
+    assert diag["message_recorded"] is False and diag["message_len"] > 0 and len(diag["message_fingerprint"]) == 32
+    # impronta con chiave (Claude D): non e' lo sha256 nudo del messaggio, quindi non si verifica a dizionario
+    import hashlib
+    assert all(not hashlib.sha256(m.encode()).hexdigest().startswith(diag["message_fingerprint"][:16])
+               for m in (f"betfair login error appKey={_FAKE_KEY} pw {_FAKE_PW}",
+                         f"GET https://api.example/x?session={_FAKE_KEY} -> 401"))
+    assert diag["frames"] and {"file", "line", "function"} <= set(diag["frames"][-1])   # crash ricostruibile
+
+
+def test_r2_emergency_stop_errors_are_fingerprinted_not_stored(monkeypatch):
+    calls = []
+
+    class FakeRuntime:
+        def emergency_stop(self, reason):
+            return {"cancel_error_count": 1, "cancel_errors": [{"stage": "get_live_client",
+                                                                "error": f"auth failed key={_FAKE_KEY}"}],
+                    "markets_attempted": 0}
+
+    monkeypatch.setattr(rt, "install", lambda *a, **kw: None)
+    monkeypatch.setattr(rt, "record", lambda event_type, **kw: calls.append(kw))
+    app = object.__new__(headless_main.HeadlessApp)
+    app.runtime = FakeRuntime()
+    app._emergency_stop_with_audit()
+    assert _FAKE_KEY not in json.dumps(calls, default=str)
+    err = calls[-1]["data"]["result"]["cancel_errors"][0]
+    assert err["stage"] == "get_live_client" and err["error"]["redacted"] is True
+
+
+@pytest.mark.skipif(os.name != "posix", reason="permessi POSIX; su Windows valgono le ACL della cartella dati")
+def test_registry_files_are_private_to_the_owner(bbpath):
+    """Decisione owner (chiave HMAC accettata nel registro, a permessi corretti): file del registro 0600. Prima 0644,
+    leggibili da ogni utente del sistema (riprodotto su 487d8dcb)."""
+    rt.install()
+    rt.record("API_REQUEST", source="SYSTEM")
+    import stat
+    d = bbpath.parent
+    for name in (bbpath.name, bbpath.name + "-wal", bbpath.name + ".runtime.lock", bbpath.name + ".runtime.owner",
+                 "fault.log"):
+        p = d / name
+        if p.exists():
+            assert stat.S_IMODE(p.stat().st_mode) == 0o600, (name, oct(p.stat().st_mode))
+    rt.shutdown("STOP")
+
+
+# ------------------------------------------- ciclo 10 (decisione owner PF-BB1-R2-FINAL-CYCLE-10-20261109)
+# le sei credenziali FINTE usate da Claude D nella sua riproduzione di R2 su 487d8dcb
+_D_FAKES = ("FAKE-POSITIONAL-PW-111", "FAKE-BETFAIR-PW-222", "FAKE-PWD-333", "FAKEAPPKEY444", "FAKESESSION555",
+            "--api_token_x9")
+
+
+def test_r2_claude_d_fake_credentials_never_reach_any_persistent_file(bbpath, monkeypatch):
+    """Tutti i percorsi R2 insieme; si cercano i sei valori finti in OGNI file persistente accanto al registro (db,
+    -wal, -shm, lock, owner, fault.log) e si controlla che tipo, catena delle cause e frame restino ricostruibili."""
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--simulation", _D_FAKES[0], "--betfair-password",
+                                      _D_FAKES[1], "--pwd", _D_FAKES[2], "--password", _D_FAKES[5]])
+    rt.install()
+    try:
+        try:
+            raise KeyError("causa interna")
+        except KeyError as inner:
+            raise RuntimeError(f"login appKey={_D_FAKES[3]} sessionToken: {_D_FAKES[4]}") from inner
+    except RuntimeError:
+        sys.excepthook(*sys.exc_info())
+    ev = [e for e in _events(bbpath) if e["type"] == "UNCAUGHT_EXCEPTION"][0]
+    diag = json.loads(ev["data"])
+    assert ev["reason"] == "builtins.RuntimeError" and diag["exception_type"] == "RuntimeError"
+    assert diag["cause_chain"] == ["builtins.KeyError"] and diag["frames"][-1]["function"]
+    rt.shutdown("STOP")
+    for p in bbpath.parent.iterdir():
+        if p.is_file():
+            content = p.read_bytes()
+            for fake in _D_FAKES:
+                assert fake.encode() not in content, (p.name, fake)
+
+
+def test_r2_fingerprint_key_is_domain_separated_and_registry_specific(tmp_path):
+    """HMAC con separazione di dominio: chiave derivata dal contesto esplicito, mai la chiave degli alias diretta;
+    stabile nello stesso registro, diversa fra registri; nessuna chiave negli eventi esportati."""
+    import hashlib
+    import hmac as _hmac
+    a = bb.BlackBox(str(tmp_path / "a.sqlite")).open()
+    b = bb.BlackBox(str(tmp_path / "b.sqlite")).open()
+    msg = "login fallito pw hunter2"
+    fa = a.fingerprint(msg)
+    assert fa == a.fingerprint(msg) and fa != b.fingerprint(msg)
+    assert fa != _hmac.new(a._alias_key, msg.encode(), hashlib.sha256).hexdigest()[:32], "chiave degli alias usata diretta"
+    derived = _hmac.new(a._alias_key, bb.FINGERPRINT_KEY_CONTEXT, hashlib.sha256).digest()
+    assert fa == _hmac.new(derived, msg.encode(), hashlib.sha256).hexdigest()[:32]
+    assert fa != hashlib.sha256(msg.encode()).hexdigest()[:32]
+    from core import blackbox_query as bq
+    blob = json.dumps(bq.BlackBoxReader(a).query({}), default=str)
+    assert a._alias_key.hex() not in blob and derived.hex() not in blob
+    a.close(); b.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="permessi POSIX; verifica delle ACL Windows NOT_RUN")
+def test_existing_registry_files_are_restricted_and_symlinks_are_refused(tmp_path):
+    """Permessi: file gia' esistenti a 0644 ristretti a 0600; un symlink al posto di un file del registro e' rifiutato
+    e la sua destinazione non viene toccata."""
+    import stat
+    path = tmp_path / "r.sqlite"
+    for name in ("r.sqlite", "r.sqlite-wal", "r.sqlite-shm", "r.sqlite.runtime.lock", "r.sqlite.runtime.owner"):
+        (tmp_path / name).write_bytes(b"" if name != "r.sqlite.runtime.lock" else b"x")
+        os.chmod(tmp_path / name, 0o644)
+    (tmp_path / "r.sqlite-wal").unlink(); (tmp_path / "r.sqlite-shm").unlink()   # lasciati creare a SQLite
+    box = bb.BlackBox(str(path)).open()
+    box.acquire_runtime()
+    box.record("API_REQUEST", source="SYSTEM")
+    for name in ("r.sqlite", "r.sqlite-wal", "r.sqlite-shm", "r.sqlite.runtime.lock", "r.sqlite.runtime.owner"):
+        p = tmp_path / name
+        if p.exists():
+            assert stat.S_IMODE(p.stat().st_mode) == 0o600, (name, oct(p.stat().st_mode))
+    box.close()
+
+    victim = tmp_path / "vittima.txt"
+    victim.write_text("non toccare")
+    os.chmod(victim, 0o644)
+    link_dir = tmp_path / "s"
+    link_dir.mkdir()
+    os.symlink(victim, link_dir / "x.sqlite.runtime.lock")
+    sbox = bb.BlackBox(str(link_dir / "x.sqlite")).open()
+    with pytest.raises((OSError, bb.RuntimeAlreadyActive, bb.BlackBoxUnavailable)):
+        sbox.acquire_runtime()
+    assert stat.S_IMODE(victim.stat().st_mode) == 0o644 and victim.read_text() == "non toccare"
+    sbox.close()
+    os.symlink(victim, tmp_path / "y.sqlite")
+    with pytest.raises(OSError):
+        bb.BlackBox(str(tmp_path / "y.sqlite")).open()
+    assert stat.S_IMODE(victim.stat().st_mode) == 0o644

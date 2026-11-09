@@ -46,10 +46,20 @@ di vita del processo.
 - **Nessun segreto.**
   - I valori delle chiavi sensibili (password, token, chiavi) diventano `[REDACTED]`.
   - Token e segreti registrati vengono oscurati anche dentro i testi.
-  - Gli argomenti della riga di comando come `--password` sono oscurati anche quando il valore è l'argomento
-    successivo, anche se al suo posto c'è un altro flag sensibile (`--password --api-key valore`). Un flag operativo
-    noto di `headless_main` (`--live`, `--simulation`, `--emergency-stop`…) in quella posizione resta nell'audit;
-    un valore sconosciuto che inizia con `--` viene consumato e non registrato.
+  - **argv con allowlist (R2, decisione owner PF-BB1-SOL-R2-NEEDS-MANUAL-20261109).** In `PROCESS_START.data.argv`
+    restano in chiaro solo i flag operativi noti di `headless_main` (`--live`, `--simulation`, `--emergency-stop`…).
+    Dei flag noti con valore (`--password`, `--api-id`, `--token`, `--api-key`) resta il nome, con `=[REDACTED]`,
+    anche quando il valore è l'argomento successivo. Ogni altro argomento (posizionale, flag sconosciuto, valore)
+    diventa `[REDACTED]`: un segreto mai registrato non finisce nel registro.
+  - **Eccezioni senza testo arbitrario (R2).** Il messaggio di un'eccezione può contenere credenziali mai registrate e
+    non si bonifica con garanzie sufficienti, quindi non viene registrato. Si registrano il tipo (`reason`) e una
+    diagnostica strutturata (`data`): tipo e modulo, catena delle cause, frame (file, riga, funzione; mai il sorgente
+    né le variabili) e un'impronta del messaggio per correlare le occorrenze: lunghezza + HMAC-SHA256 con una chiave
+    **derivata** per separazione di dominio, `k_fp = HMAC-SHA256(order_alias_key,
+    "pickfair-blackbox/v1/error-fingerprint-key")` (`BlackBox.fingerprint`). È stabile nello stesso registro,
+    diversa fra registri con chiavi diverse e inutile per un controllo a dizionario su un export senza la chiave.
+    **Non** protegge da chi legge il file del registro, che contiene anche la chiave. Lo
+    stesso vale per i campi `error` del risultato di `--emergency-stop`.
   - I valori non JSON (bytes, oggetti) diventano testo e vengono redatti **prima** della serializzazione.
 - **Richiesta ≠ conferma.**
   - `phase` vale ATTEMPT, RESULT oppure OBSERVATION.
@@ -93,8 +103,8 @@ di vita del processo.
    L'esito del RESULT viene dal risultato della cancellazione, non dall'assenza di eccezioni: errori di cancellazione
    o ordini pendenti senza client live → `FAILED`; stato di emergenza non persistito o risultato illeggibile →
    `UNKNOWN`; solo una cancellazione completa → `VERIFIED`.
-4. Le eccezioni non gestite vengono registrate con tipo, messaggio e traceback redatti **prima** di essere troncati
-   (500 caratteri il messaggio, 8000 il traceback), così un segreto a cavallo del limite non lascia frammenti:
+4. Le eccezioni non gestite vengono registrate come tipo e diagnostica strutturata (frame, catena delle cause,
+   impronta del messaggio), mai con il testo del messaggio (R2):
    - nel processo: `UNCAUGHT_EXCEPTION`;
    - nei thread: `TASK_EXCEPTION`.
 5. All'uscita si registra `SHUTDOWN`, con `reason_code` uguale a `STOP` oppure `EXIT_<codice>`.
@@ -225,6 +235,16 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
 - `query` restituisce in `gaps_in_range` **tutte** le lacune che toccano l'intervallo, senza limite: con molte lacune
   nella storia la risposta cresce (il lettore MCP di Claude C ne accetta fino a 64). Un limite con flag di troncamento
   va concordato in un passo successivo;
-- la redazione copre le chiavi sensibili, i token Telegram canonici e i segreti registrati con `register_secret`, non
-  un valore segreto sconosciuto scritto in testo libero (per esempio `reason="token=… cambiato"`): i chiamanti non
-  devono mettere segreti in `reason`. Da verificare sui percorsi reali in BB-3.
+- la redazione copre le chiavi sensibili, i token Telegram canonici e i segreti registrati con `register_secret`. In
+  BB-1 argv ed eccezioni non portano più testo arbitrario (R2). Resta il testo libero passato **dai chiamanti** in
+  `reason` o `data` (per esempio `reason="token=… cambiato"`): non deve contenere segreti; i chiamanti reali arrivano
+  in BB-3, dove vanno verificati uno per uno.
+- **Permessi e chiave degli alias (decisioni owner PF-BB1-SOL-R2-NEEDS-MANUAL e PF-BB1-R2-FINAL-CYCLE-10).** Su
+  POSIX il registro e i suoi file (`-wal`, `-shm`, `.runtime.lock`, `.runtime.owner`, `fault.log`) sono creati a
+  `0600`, oppure ristretti a `0600` se esistono già (`fchmod` sul descrittore aperto con `O_NOFOLLOW`). Un symlink al
+  posto di uno di questi file viene rifiutato, mai seguito, e l'avvio fallisce; la sua destinazione non viene
+  toccata. Su Windows `chmod` non gestisce le ACL: i file ereditano quelle della cartella dati, e la verifica delle
+  ACL non è stata eseguita in questo ambiente (**NOT_RUN**, verdetto distinto). La chiave HMAC degli alias (`meta.order_alias_key`) sta nello stesso registro: rende gli alias non
+  enumerabili per Control API e MCP, che non la espongono mai (`blackbox_query` non legge `meta`), ma **non** protegge
+  da chi legge il file, che vede comunque gli `order_id` interni. La stessa chiave è usata, tramite derivazione con
+  contesto separato, solo per le impronte degli errori. Nel registro non si conserva nessuna credenziale Betfair.

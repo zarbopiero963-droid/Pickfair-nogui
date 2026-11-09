@@ -56,15 +56,73 @@ def safe_text(text: Any, limit: int, *, tail: bool = False) -> str:
     return clean[-limit:] if tail else clean[:limit]
 
 
-def _trace(exc_type, exc, tb) -> str:
-    return safe_text("".join(traceback.format_exception(exc_type, exc, tb)), MAX_TRACE_CHARS, tail=True)
+MAX_TRACE_FRAMES = 40
+
+
+def exception_reason(exc: Any) -> str:
+    """R2 (decisione owner PF-BB1-SOL-R2-NEEDS-MANUAL-20261109): il `reason` persistito di un'eccezione e' solo il suo
+    tipo. Il testo del messaggio e' arbitrario (puo' contenere credenziali mai registrate) e non si bonifica con
+    garanzie sufficienti: non viene registrato."""
+    t = type(exc) if isinstance(exc, BaseException) else None
+    return f"{t.__module__}.{t.__qualname__}" if t is not None else "unknown"
+
+
+def exception_diagnostics(exc_type, exc, tb) -> dict:
+    """R2: diagnostica STRUTTURATA di un'eccezione per la ricostruzione del crash, senza testo arbitrario: tipo,
+    catena delle cause, frame (file, riga, funzione; mai il sorgente ne' le variabili) e un'impronta del messaggio
+    (lunghezza + HMAC con la chiave del registro) per correlare due occorrenze senza conservarne il contenuto."""
+    out = {"exception_type": getattr(exc_type, "__qualname__", str(exc_type)),
+           "exception_module": getattr(exc_type, "__module__", ""), "message_recorded": False}
+    try:
+        msg = str(exc)
+    except Exception:
+        msg = ""
+    out["message_len"] = len(msg)
+    out["message_fingerprint"] = _fingerprint(msg)
+    frames = [{"file": f.filename, "line": f.lineno, "function": f.name}
+              for f in traceback.extract_tb(tb)][-MAX_TRACE_FRAMES:] if tb is not None else []
+    out["frames"] = frames
+    chain, cur, seen = [], exc, set()
+    while isinstance(cur, BaseException) and id(cur) not in seen and len(chain) < 5:
+        seen.add(id(cur))
+        nxt = cur.__cause__ or cur.__context__
+        if nxt is not None:
+            chain.append(exception_reason(nxt))
+        cur = nxt
+    out["cause_chain"] = chain
+    return out
+
+
+def _fingerprint(text: str) -> str:
+    """Impronta HMAC con la chiave del registro installato (`BlackBox.fingerprint`); senza registro => ''."""
+    box = _box
+    try:
+        return box.fingerprint(text) if box is not None and text else ""
+    except Exception:
+        return ""
+
+
+def scrub_error_texts(value: Any) -> Any:
+    """R2: nei risultati strutturati (es. `emergency_stop()`), i campi `error`/`errors` contengono testo di eccezioni
+    o di API arbitrario: diventano un'impronta (lunghezza + HMAC con la chiave del registro), il resto resta."""
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if str(k).lower() in ("error", "errors", "exception", "message") and isinstance(v, str):
+                out[k] = {"redacted": True, "len": len(v), "fingerprint": _fingerprint(v)}
+            else:
+                out[k] = scrub_error_texts(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [scrub_error_texts(v) for v in value]
+    return value
 
 
 def _excepthook(exc_type, exc, tb):
     try:
         record("UNCAUGHT_EXCEPTION", source="SYSTEM", component="process", severity="CRITICAL",
                phase="OBSERVATION", outcome="VERIFIED", reason_code=getattr(exc_type, "__name__", "Exception"),
-               reason=safe_text(exc, 500), data={"traceback": _trace(exc_type, exc, tb)})
+               reason=exception_reason(exc), data=exception_diagnostics(exc_type, exc, tb))
     except Exception:
         pass
     (_prev_excepthook or sys.__excepthook__)(exc_type, exc, tb)
@@ -74,8 +132,8 @@ def _threading_hook(args):
     try:
         record("TASK_EXCEPTION", source="SYSTEM", component=f"thread:{getattr(args.thread, 'name', '?')}",
                severity="CRITICAL", phase="OBSERVATION", outcome="VERIFIED",
-               reason_code=getattr(args.exc_type, "__name__", "Exception"), reason=safe_text(args.exc_value, 500),
-               data={"traceback": _trace(args.exc_type, args.exc_value, args.exc_traceback)})
+               reason_code=getattr(args.exc_type, "__name__", "Exception"), reason=exception_reason(args.exc_value),
+               data=exception_diagnostics(args.exc_type, args.exc_value, args.exc_traceback))
     except Exception:
         pass
     if _prev_threading_hook is not None:
@@ -131,45 +189,37 @@ def _consume_fault_dump(fault_path: str) -> bool:
     return ok
 
 
-# Flag operativi di headless_main, senza valore: dopo un flag sensibile senza `=` non possono essere il suo valore
-# (Grok #617). Un valore sconosciuto che inizia con `--` resta consumato e non registrato (prudenza).
+# R2 (decisione owner PF-BB1-SOL-R2-NEEDS-MANUAL-20261109): argv persistito con ALLOWLIST. Restano in chiaro solo i
+# flag operativi di headless_main, senza valore, e il NOME dei flag noti con valore (il valore e' sempre redatto).
+# Ogni altro argomento (posizionale, flag sconosciuto, valore) diventa `[REDACTED]`: un segreto non registrato non
+# finisce mai nel registro persistente.
 OPERATIONAL_FLAGS = frozenset({"--live", "--live-enabled", "--live-disabled", "--sim", "--simulation", "--preflight",
-                               "--emergency-stop", "--telegram-login", "--kill-switch-on", "--kill-switch-off"})
+                               "--emergency-stop", "--telegram-login", "--kill-switch-on", "--kill-switch-off",
+                               # forme posizionali accettate da `HeadlessApp._parse_args` (Claude D su #617)
+                               "live", "sim", "simulation"})
+VALUE_FLAGS = frozenset({"--password", "--api-id", "--token", "--api-key"})
 
 
 def safe_argv(argv) -> list:
-    """Argomenti della riga di comando senza segreti: un flag sensibile (`--password`, `--token`, `--api-key`...)
-    viene registrato come `--flag=[REDACTED]`, anche quando il valore e' l'argomento successivo.
-
-    Sol #617 (44a6a58f): se l'argomento che segue un flag sensibile senza `=` e' a sua volta un flag sensibile
-    (`--password --api-key valore`), anche quello si redige e il suo valore viene consumato: mai in chiaro."""
-    from core import redaction
-
-    def sensitive(token: str):
-        name, sep, _value = token.lstrip("-").partition("=")
-        if redaction.is_sensitive_key(name.replace("-", "_")) or name.lower() in ("password", "token", "pin"):
-            return name, bool(sep)
-        return None
-
-    out, skip = [], False
+    """Argomenti della riga di comando per PROCESS_START, con allowlist (R2): flag operativi noti in chiaro, flag noti
+    con valore come `--flag=[REDACTED]` (anche col valore nell'argomento successivo), tutto il resto `[REDACTED]`."""
+    out, expect_value = [], False
     for a in list(argv):
         a = str(a)
-        flag = sensitive(a) if a.startswith("-") else None
-        if skip:
-            skip = False
-            if flag is not None:                         # flag sensibile al posto del valore atteso: redatto
-                out.append(f"--{flag[0]}={bb.REDACTED}")
-                skip = not flag[1]
-                continue
-            if a.strip().lower() in OPERATIONAL_FLAGS:   # Grok #617: un flag operativo noto non e' il valore
-                out.append(a)                            # (--password --live: l'audit conserva --live)
-                continue
-            continue                                     # valore del flag precedente: consumato, mai registrato
-        if flag is not None:
-            out.append(f"--{flag[0]}={bb.REDACTED}")
-            skip = not flag[1]
+        low = a.strip().lower()
+        name = low.partition("=")[0]
+        if low in OPERATIONAL_FLAGS:
+            out.append(low)                              # flag operativo: mai il valore di un flag precedente
+            expect_value = False
             continue
-        out.append(a)
+        if name in VALUE_FLAGS:
+            out.append(f"{name}={bb.REDACTED}")
+            expect_value = "=" not in low
+            continue
+        if expect_value:
+            expect_value = False                         # valore del flag noto precedente: gia' rappresentato
+            continue
+        out.append(bb.REDACTED)                          # posizionale o flag sconosciuto: mai in chiaro
     return out
 
 
@@ -201,6 +251,7 @@ def install(path: Optional[str] = None, **process_data: Any) -> bb.BlackBox:
             raise
     try:
         # append, mai troncatura: un dump non ancora consumato resta leggibile (rilievo Sol #617)
+        bb.private_file(fault_path)
         _fault_file = open(fault_path, "a")
         faulthandler.enable(file=_fault_file, all_threads=True)
     except OSError:

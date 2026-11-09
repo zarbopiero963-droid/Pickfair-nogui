@@ -1502,11 +1502,14 @@ class HeadlessApp:
             blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main",
                                     severity="WARNING" if outcome == "VERIFIED" else "ERROR",
                                     phase="RESULT", outcome=outcome, reason_code=code,
-                                    data={"result": result if isinstance(result, dict) else str(result)})
+                                    data={"result": blackbox_runtime.scrub_error_texts(result) if isinstance(result, dict)
+                                          else blackbox_runtime.exception_reason(result)})
         else:
             blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="ERROR",
                                     phase="RESULT", outcome="FAILED", reason_code=type(error).__name__,
-                                    reason=blackbox_runtime.safe_text(error, 500))
+                                    reason=blackbox_runtime.exception_reason(error),
+                                    data=blackbox_runtime.exception_diagnostics(type(error), error,
+                                                                                error.__traceback__))
         return 0
 
 
@@ -1557,7 +1560,8 @@ def main() -> int:
     except Exception as exc:
         blackbox_runtime.record("UNCAUGHT_EXCEPTION", source="SYSTEM", component="headless_main",
                                 severity="CRITICAL", phase="OBSERVATION", outcome="VERIFIED",
-                                reason_code=type(exc).__name__, reason=blackbox_runtime.safe_text(exc, 500))
+                                reason_code=type(exc).__name__, reason=blackbox_runtime.exception_reason(exc),
+                                data=blackbox_runtime.exception_diagnostics(type(exc), exc, exc.__traceback__))
         if app is not None and app.alerts_manager is not None and app.incidents_manager is not None:
             try:
                 app.alerts_manager.upsert_alert(

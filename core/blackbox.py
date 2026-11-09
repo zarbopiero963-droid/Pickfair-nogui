@@ -81,6 +81,9 @@ def check_utc_ts(value: Any, field: str) -> str:
         raise ValueError(f"blackbox: {field} non e' una data/ora valida: {s!r}") from None
     return s
 GENESIS_HASH = "0" * 64
+# separazione di dominio della chiave del registro (decisione owner PF-BB1-R2-FINAL-CYCLE-10-20261109): la chiave degli
+# alias firma solo gli alias; le impronte degli errori usano una chiave derivata con questo contesto esplicito
+FINGERPRINT_KEY_CONTEXT = b"pickfair-blackbox/v1/error-fingerprint-key"
 # errno di un lock gia' tenuto da un altro processo: flock (EWOULDBLOCK/EAGAIN), msvcrt.LK_NBLCK (EACCES, EDEADLOCK)
 _LOCK_BUSY_ERRNOS = frozenset(e for e in (getattr(errno, n, None) for n in ("EWOULDBLOCK", "EAGAIN", "EACCES",
                                                                               "EDEADLK", "EDEADLOCK")) if e is not None)
@@ -122,6 +125,23 @@ def _event_epoch(rec: Dict[str, Any], fallback: float) -> float:
         return min(float(fallback), ts.timestamp())
     except (TypeError, ValueError):
         return float(fallback)
+
+
+def private_file(path: str) -> None:
+    """R2/permessi (decisioni owner PF-BB1-SOL-R2-NEEDS-MANUAL-20261109 e PF-BB1-R2-FINAL-CYCLE-10-20261109): file del
+    registro leggibili solo dal proprietario su POSIX (0600). Crea il file se manca e restringe i permessi di un file
+    gia' esistente con `fchmod` sul descrittore aperto con `O_NOFOLLOW`: un symlink al posto del file viene RIFIUTATO
+    (OSError), mai seguito, e la sua destinazione non viene toccata. Su Windows `chmod` non gestisce le ACL: il file
+    eredita quelle della cartella dati (verifica delle ACL NOT_RUN in questo ambiente)."""
+    if os.name != "posix":
+        return
+    if os.path.islink(path):
+        raise OSError(errno.ELOOP, "file del registro sostituito da un symlink: rifiutato", path)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+    finally:
+        os.close(fd)
 
 
 def utc_iso(ts: float) -> str:
@@ -190,6 +210,11 @@ class BlackBox:
             parent = os.path.dirname(self.path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
+            if self.path != ":memory:":
+                private_file(self.path)        # SQLite crea -wal/-shm con gli stessi permessi del database
+                for side in ("-wal", "-shm"):
+                    if os.path.exists(self.path + side):
+                        private_file(self.path + side)
             conn = self._connect(self.path, isolation_level=None, check_same_thread=False, timeout=30)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
@@ -222,12 +247,25 @@ class BlackBox:
         self.open()
         return "ord_" + hmac.new(self._alias_key, str(order_id).encode("utf-8"), hashlib.sha256).hexdigest()[:32]
 
+    def fingerprint(self, text: str) -> str:
+        """R2 (Claude D su #617, decisione owner PF-BB1-R2-FINAL-CYCLE-10-20261109): impronta di un testo NON registrato
+        (messaggio di eccezione, errore). HMAC-SHA256 con una chiave DERIVATA, separata per dominio da quella degli
+        alias degli ordini: k_fp = HMAC-SHA256(order_alias_key, FINGERPRINT_KEY_CONTEXT). Stabile nello stesso
+        registro, diversa fra registri con chiavi diverse, inutile per un controllo a dizionario su un export senza la
+        chiave. NON protegge da chi legge il file del registro, che contiene anche la chiave. Registro non aperto
+        => ''."""
+        if not text or self._alias_key is None:
+            return ""
+        key = hmac.new(self._alias_key, FINGERPRINT_KEY_CONTEXT, hashlib.sha256).digest()
+        return hmac.new(key, str(text).encode("utf-8", "replace"), hashlib.sha256).hexdigest()[:32]
+
     def acquire_runtime(self) -> None:
         """Un solo runtime finanziario per registro (D3): lock esclusivo del file `<registro>.runtime.lock`, tenuto
         fino a `close`. Un secondo runtime riceve RuntimeAlreadyActive con motivo esplicito. I lettori (Control
         API/MCP) non lo chiamano mai. Non certifica il fencing finanziario del motore (#536, separato)."""
         if self._writer_lock is not None:
             return
+        private_file(self.path + ".runtime.lock")
         fh = open(self.path + ".runtime.lock", "a+")
         try:
             if os.name == "nt":
@@ -254,6 +292,7 @@ class BlackBox:
         # il file di lock non si tocca piu' dopo il lock (su Windows il lock e' una regione del file, rilievo Grok
         # #617): il proprietario va in un file separato, solo informativo
         try:
+            private_file(self.path + ".runtime.owner")
             with open(self.path + ".runtime.owner", "w") as owner:
                 owner.write(f"pid={self.pid} session={self.session_id}\n")
         except OSError:
