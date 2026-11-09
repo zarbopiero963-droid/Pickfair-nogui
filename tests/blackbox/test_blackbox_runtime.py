@@ -357,11 +357,14 @@ def test_windows_lock_writes_the_locked_byte_before_locking_an_empty_file(tmp_pa
 
     fake = types.SimpleNamespace(LK_NBLCK=2, locking=locking)
     monkeypatch.setitem(sys.modules, "msvcrt", fake)
-    monkeypatch.setattr(bb.os, "name", "nt")
-    box = bb.BlackBox(str(tmp_path / "w.sqlite"))
-    box.acquire_runtime()
+    box = bb.BlackBox(str(tmp_path / "w.sqlite")).open()   # ciclo 13: su Windows vero il registro non si apre
+    monkeypatch.setattr(bb.os, "name", "nt")              # (rifiuto fail-closed); qui si prova solo il ramo msvcrt
+    try:
+        box.acquire_runtime()
+    finally:
+        monkeypatch.undo()
     assert seen and seen[0] >= 1, "lock su un file vuoto"
-    box._writer_lock.close()
+    box.close()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="backend POSIX (fcntl); il backend Windows ha il suo test con msvcrt finto")
@@ -834,6 +837,11 @@ def _victim_box(tmp_path):
     return victim, d, bb.BlackBox(str(d / "r.sqlite")).open()
 
 
+def _acquire_runtime_source():
+    import inspect
+    return inspect.getsource(bb.BlackBox.acquire_runtime)
+
+
 @_POSIX_ONLY
 @pytest.mark.parametrize("suffix", [".runtime.owner", ".runtime.lock"])
 def test_c12_runtime_file_swapped_after_its_check_never_reaches_the_target(tmp_path, monkeypatch, suffix):
@@ -845,10 +853,13 @@ def test_c12_runtime_file_swapped_after_its_check_never_reaches_the_target(tmp_p
     path = str(d / ("r.sqlite" + suffix))
     real_private = bb.private_file
 
+    fired = []
+
     def racing(p):
         real_private(p)
-        if p == path:                                     # sostituzione subito dopo la verifica
-            os.remove(p)
+        if os.path.basename(p) == os.path.basename(path):   # il codice usa il percorso ancorato (ciclo 13)
+            fired.append(1)
+            os.remove(p)                                  # sostituzione subito dopo la verifica
             os.symlink(victim, p)
 
     monkeypatch.setattr(bb, "private_file", racing)
@@ -857,6 +868,7 @@ def test_c12_runtime_file_swapped_after_its_check_never_reaches_the_target(tmp_p
     except (OSError, bb.BlackBoxUnavailable, bb.RuntimeAlreadyActive):
         pass
     monkeypatch.undo()
+    assert fired or "private_file(" not in _acquire_runtime_source(), "la gara non e' stata simulata"
     _assert_untouched(victim)
     if box._writer_lock is not None:
         st = os.fstat(box._writer_lock.fileno())
@@ -882,7 +894,7 @@ def test_c12_runtime_file_swapped_right_before_the_open_syscall_without_o_nofoll
     swapped = []
 
     def racing_open(p, flags, *a, **kw):
-        if str(p) == path and not swapped:
+        if os.path.basename(str(p)) == os.path.basename(path) and not swapped:   # il codice usa il percorso ancorato
             swapped.append(1)
             os.remove(p)
             os.symlink(victim, p)
@@ -978,11 +990,20 @@ def test_c12_dump_link_not_removable_and_no_o_nofollow_stays_fail_closed(bbpath,
 
     monkeypatch.setattr(rt.os, "unlink", refuse_unlink)
     monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
-    rt.install()
-    rt.shutdown("STOP")
+    # ciclo 13: senza O_NOFOLLOW il registro non si apre affatto (rifiuto di piattaforma); qui si prova che anche
+    # le sole funzioni dei dump, da sole, non seguono il link
+    fault = str(bbpath.parent / "fault.log")
+    tail = rt._previous_fault_dump(fault)
+    rt._consume_fault_dump(fault)
     monkeypatch.undo()
+    assert not tail or _C11_FAKE not in tail
     _assert_untouched(victim)
-    _assert_fake_not_persisted(bbpath, victim)
+    with pytest.raises(bb.BlackBoxUnavailable):           # e il registro, senza O_NOFOLLOW, viene rifiutato
+        monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+        try:
+            bb.BlackBox(str(bbpath)).open()
+        finally:
+            monkeypatch.undo()
 
 
 @_POSIX_ONLY
@@ -1080,3 +1101,361 @@ def test_c12_fifo_is_refused_before_opening_even_without_o_nonblock(tmp_path, mo
     monkeypatch.undo()
     assert not blocked, "apertura bloccata su un FIFO"
     assert "exc" in out
+
+
+# --- Ciclo 13 (OWNER AUTHORIZATION PR #617 — CYCLE 13 / C12-A): cartella privata e aperture ancorate ---------------
+
+_ANCHOR_ONLY = pytest.mark.skipif(os.name != "posix" or not os.path.isdir("/proc/self/fd"),
+                                  reason="ancoraggio /proc/self/fd (Linux); altrove la scatola nera non parte")
+
+
+def _external_db(tmp_path, name="trading.sqlite"):
+    """Database 'esterno' usato come bersaglio: deve restare identico, byte per byte."""
+    ext_dir = tmp_path / "esterno"
+    ext_dir.mkdir(exist_ok=True)
+    p = ext_dir / name
+    c = sqlite3.connect(str(p))
+    c.execute("CREATE TABLE ordini(x)")
+    c.execute("INSERT INTO ordini VALUES (1)")
+    c.commit()
+    c.close()
+    return p, p.read_bytes(), sorted(x.name for x in ext_dir.iterdir())
+
+
+def _assert_external_intact(p, content, listing):
+    assert p.read_bytes() == content, "database esterno modificato"
+    assert sorted(x.name for x in p.parent.iterdir()) == listing, "file creati accanto al database esterno"
+    c = sqlite3.connect(str(p))
+    assert [r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")] == ["ordini"]
+    c.close()
+
+
+@_ANCHOR_ONLY
+@pytest.mark.parametrize("what", ["file", "dir"])
+def test_c13_swap_between_check_and_sqlite_connect_never_touches_an_external_db(tmp_path, monkeypatch, what):
+    """C12-A (riprodotto su 0897de5d): fra la verifica e `sqlite3.connect`, il registro (`file`) o la sua cartella
+    (`dir`) vengono sostituiti da un link verso un altro database; SQLite, aprendo per nome, creava `events`/`meta`
+    la' dentro. Con la cartella ancorata al descrittore verificato, la sostituzione della cartella non ha effetto.
+    Il caso `file` (link creato DENTRO la cartella privata) richiede lo stesso utente: e' rifiutato dal controllo
+    d'identita' prima di qualsiasi scrittura dove possibile; qui si prova che il bersaglio resta intatto."""
+    ext, content, listing = _external_db(tmp_path)
+    reg = tmp_path / "bb"
+    path = reg / "blackbox.sqlite"
+    real_private = bb.private_file
+    done = []
+
+    def racing(p):
+        real_private(p)
+        if str(p).endswith("blackbox.sqlite") and not done:
+            done.append(1)
+            if what == "dir":
+                os.rename(reg, tmp_path / "bb.spostata")
+                reg.mkdir()
+                os.symlink(ext, reg / "blackbox.sqlite")
+            else:
+                os.remove(p)
+                os.symlink(ext, p)
+
+    monkeypatch.setattr(bb, "private_file", racing)
+    box = bb.BlackBox(str(path))
+    try:
+        box.open()
+        box.record("API_REQUEST", source="SYSTEM")
+    except (OSError, bb.BlackBoxUnavailable, sqlite3.Error):
+        pass
+    finally:
+        box.close()
+    monkeypatch.undo()
+    assert done
+    _assert_external_intact(ext, content, listing)
+
+
+@_ANCHOR_ONLY
+@pytest.mark.parametrize("level", ["dir", "parent"])
+def test_c13_directory_or_ancestor_replaced_after_opening_keeps_every_write_anchored(tmp_path, level):
+    """Dopo l'apertura, la cartella del registro (o una cartella superiore) viene spostata e al suo posto ne compare
+    una con un link verso un altro database. Scritture successive, WAL, SHM, lock, owner e una NUOVA connessione
+    SQLite della stessa istanza restano nella cartella verificata; il database esterno resta identico."""
+    ext, content, listing = _external_db(tmp_path)
+    parent = tmp_path / "dati"
+    reg = parent / "bb"
+    box = bb.BlackBox(str(reg / "blackbox.sqlite")).open()
+    box.record("API_REQUEST", source="SYSTEM")
+    victim = parent if level == "parent" else reg
+    moved = tmp_path / "spostata"
+    os.rename(victim, moved)
+    reg.mkdir(parents=True)
+    for n in ("blackbox.sqlite", "blackbox.sqlite-wal", "blackbox.sqlite-shm", "blackbox.sqlite.runtime.lock",
+              "blackbox.sqlite.runtime.owner", "fault.log"):
+        os.symlink(ext, reg / n)
+    box.acquire_runtime()
+    for _ in range(3):
+        box.record("API_REQUEST", source="SYSTEM")
+    assert box.verify()["ok"]
+    box.close()
+    _assert_external_intact(ext, content, listing)
+    real = (moved / "bb") if level == "parent" else moved
+    c = sqlite3.connect(str(real / "blackbox.sqlite"))
+    assert c.execute("SELECT COUNT(*) FROM events").fetchone()[0] >= 4
+    c.close()
+    assert (real / "blackbox.sqlite.runtime.lock").exists()
+
+
+@_ANCHOR_ONLY
+@pytest.mark.parametrize("case", ["dir_symlink", "dir_group_writable", "dir_world_writable", "dir_other_owner",
+                                  "parent_world_writable", "dir_is_file"])
+def test_c13_insecure_registry_directory_refuses_to_open_and_is_never_fixed_up(tmp_path, monkeypatch, case):
+    """Decisione owner C: cartella condivisa, symlink, proprietario diverso o permessi larghi => la scatola nera non
+    parte (BlackBoxUnavailable). Permessi e proprietario di una cartella preesistente NON vengono corretti, e nel
+    bersaglio di un link non viene creato nulla."""
+    import stat
+    parent = tmp_path / "dati"
+    parent.mkdir()
+    reg = parent / "bb"
+    real = tmp_path / "altrove"
+    if case == "dir_symlink":
+        real.mkdir()
+        os.symlink(real, reg)
+    elif case == "dir_is_file":
+        reg.write_text("non una cartella")
+    else:
+        reg.mkdir(mode=0o700)
+    if case == "dir_group_writable":
+        os.chmod(reg, 0o770)
+    elif case == "dir_world_writable":
+        os.chmod(reg, 0o777)
+    elif case == "parent_world_writable":
+        os.chmod(parent, 0o777)                         # senza sticky: chiunque puo' sostituire `bb`
+    elif case == "dir_other_owner":
+        monkeypatch.setattr(bb.os, "geteuid", lambda: os.stat(reg).st_uid + 4242)
+    mode_before = stat.S_IMODE(os.lstat(reg).st_mode)
+    box = bb.BlackBox(str(reg / "blackbox.sqlite"))
+    with pytest.raises(bb.BlackBoxUnavailable):
+        box.open()
+    box.close()
+    monkeypatch.undo()
+    assert stat.S_IMODE(os.lstat(reg).st_mode) == mode_before, "permessi corretti in automatico"
+    if case == "dir_symlink":
+        assert list(real.iterdir()) == []
+    elif case != "dir_is_file":
+        assert list(reg.iterdir()) == []
+    os.chmod(parent, 0o700)
+
+
+@_ANCHOR_ONLY
+def test_c13_new_registry_directory_is_created_private_and_sticky_parents_are_accepted(tmp_path):
+    """Cartelle nuove create a 0700 (anche le intermedie); una cartella superiore scrivibile da tutti ma con lo
+    sticky bit (come /tmp) e' accettata: gli altri utenti non possono sostituire le voci altrui."""
+    import stat
+    parent = tmp_path / "condivisa"
+    parent.mkdir()
+    os.chmod(parent, 0o1777)
+    old = os.umask(0)
+    try:
+        box = bb.BlackBox(str(parent / "a" / "bb" / "blackbox.sqlite")).open()
+    finally:
+        os.umask(old)
+    box.record("API_REQUEST", source="SYSTEM")
+    box.close()
+    for d in (parent / "a", parent / "a" / "bb"):
+        assert stat.S_IMODE(d.stat().st_mode) == 0o700, d
+    for f in (parent / "a" / "bb").iterdir():
+        assert stat.S_IMODE(f.stat().st_mode) == 0o600, f.name
+
+
+@_ANCHOR_ONLY
+@pytest.mark.parametrize("side", ["-wal", "-shm"])
+@pytest.mark.parametrize("kind", ["symlink", "dangling_symlink", "hardlink"])
+def test_c13_wal_and_shm_links_are_refused_before_sqlite_opens(tmp_path, side, kind):
+    """File ausiliari di SQLite preesistenti come link (anche pendenti: `os.path.exists` non li vedeva): rifiutati
+    prima di `sqlite3.connect`. Il bersaglio resta identico e non viene creato nulla nel percorso puntato."""
+    ext, content, listing = _external_db(tmp_path)
+    reg = tmp_path / "bb"
+    reg.mkdir(mode=0o700)
+    link = reg / ("blackbox.sqlite" + side)
+    missing = tmp_path / "esterno" / "non_esiste"
+    if kind == "symlink":
+        os.symlink(ext, link)
+    elif kind == "dangling_symlink":
+        os.symlink(missing, link)
+    else:
+        os.link(ext, link)
+    box = bb.BlackBox(str(reg / "blackbox.sqlite"))
+    with pytest.raises((OSError, bb.BlackBoxUnavailable)):
+        box.open()
+    box.close()
+    if kind == "hardlink":
+        os.remove(link)                                  # il nome in piu' l'ha messo il test
+    assert not missing.exists()
+    _assert_external_intact(ext, content, listing)
+
+
+@pytest.mark.parametrize("case", ["windows", "no_proc"])
+def test_c13_platform_without_a_verified_anchor_refuses_the_blackbox(tmp_path, monkeypatch, case):
+    """Decisione owner B: dove l'ancoraggio non e' disponibile e verificato (Windows, sistemi senza /proc/self/fd) la
+    scatola nera NON viene inizializzata e nessun file viene creato: nessun fallback verso percorsi ordinari.
+    Simulazione: NON e' un PASS Windows (Windows reale: NOT_RUN)."""
+    if case == "windows":
+        monkeypatch.setattr(bb.os, "name", "nt")
+    else:
+        monkeypatch.setattr(bb, "PROC_FD_DIR", str(tmp_path / "proc_assente"))
+    reg = tmp_path / "bb"
+    box = bb.BlackBox(str(reg / "blackbox.sqlite"))
+    with pytest.raises(bb.BlackBoxUnavailable):
+        box.open()
+    monkeypatch.undo()
+    assert not reg.exists() or list(reg.iterdir()) == []
+
+
+@_ANCHOR_ONLY
+def test_c13_main_refuses_to_start_trading_when_the_registry_directory_is_insecure(tmp_path, monkeypatch):
+    """Condizione owner: senza scatola nera funzionante il bot non parte. Cartella del registro scrivibile da
+    altri => `main()` esce con errore e `HeadlessApp.start` non viene mai chiamato."""
+    reg = tmp_path / "bb"
+    reg.mkdir()
+    os.chmod(reg, 0o777)
+    monkeypatch.setenv(bb.ENV_PATH, str(reg / "blackbox.sqlite"))
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--simulation"])
+    started = []
+    monkeypatch.setattr(headless_main.HeadlessApp, "start", lambda self: started.append(1) or 0)
+    try:
+        rc = headless_main.main()
+    finally:
+        rt.shutdown("TEST_TEARDOWN")
+    assert rc != 0 and not started
+    assert list(reg.iterdir()) == []
+
+
+_CRASH_CHILD = r"""
+import os, sys
+sys.path.insert(0, sys.argv[2])
+from core import blackbox as bb
+box = bb.BlackBox(sys.argv[1]).open()
+box.start_session(argv=[])
+for _ in range(5):
+    box.record("API_REQUEST", source="SYSTEM")
+box._conn.execute("BEGIN IMMEDIATE")
+box._conn.execute("INSERT INTO meta(key, value) VALUES ('mezza_transazione', '1')")
+os._exit(9)                                   # crash a transazione aperta: niente commit, niente chiusura
+"""
+
+
+@_ANCHOR_ONLY
+def test_c13_crash_inside_a_transaction_then_recovery_stays_in_the_anchored_directory(tmp_path):
+    """Crash a transazione aperta in un processo vero, poi riavvio: la recovery di SQLite (WAL) e quella del
+    registro (UNCLEAN_TERMINATION + GAP) avvengono nella cartella verificata; catena integra, transazione a meta'
+    assente, database esterno identico."""
+    import subprocess
+    ext, content, listing = _external_db(tmp_path)
+    reg = tmp_path / "bb"
+    path = reg / "blackbox.sqlite"
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    proc = subprocess.run([sys.executable, "-c", _CRASH_CHILD, str(path), repo], capture_output=True, timeout=60)
+    assert proc.returncode == 9, proc.stderr.decode()[-400:]
+    assert (reg / "blackbox.sqlite-wal").exists(), "il crash non ha lasciato un WAL da recuperare"
+    box = bb.BlackBox(str(path)).open()
+    box.start_session(argv=[])
+    types = [r["type"] for r in box._conn.execute("SELECT type FROM events ORDER BY seq")]
+    assert "UNCLEAN_TERMINATION" in types and types.count("API_REQUEST") == 5
+    assert box._conn.execute("SELECT COUNT(*) FROM meta WHERE key = 'mezza_transazione'").fetchone()[0] == 0
+    assert box.verify()["ok"]
+    box.close()
+    assert sorted(p.name for p in reg.iterdir() if not p.name.startswith("fault")) >= ["blackbox.sqlite"]
+    _assert_external_intact(ext, content, listing)
+
+
+_RUNTIME_CHILD = r"""
+import sys, time
+sys.path.insert(0, sys.argv[2])
+from core import blackbox as bb
+box = bb.BlackBox(sys.argv[1]).open()
+try:
+    box.start_session(argv=[])
+except bb.RuntimeAlreadyActive:
+    print("REFUSED", flush=True); sys.exit(3)
+print("RUNNING", flush=True)
+sys.stdin.readline()
+box.end_session("STOP"); box.close()
+"""
+
+
+@_ANCHOR_ONLY
+def test_c13_two_processes_one_runtime_and_a_concurrent_reader(tmp_path):
+    """Avvio concorrente di due processi veri sullo stesso registro ancorato: uno solo diventa runtime, l'altro e'
+    rifiutato; un lettore in un terzo contesto legge mentre il runtime scrive; persistenza e catena integre."""
+    import subprocess
+    path = tmp_path / "bb" / "blackbox.sqlite"
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    cmd = [sys.executable, "-c", _RUNTIME_CHILD, str(path), repo]
+    first = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        assert first.stdout.readline().strip() == "RUNNING"
+        second = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+        assert second.returncode == 3 and "REFUSED" in second.stdout
+        reader = bb.BlackBox(str(path)).open()
+        assert reader._conn.execute("SELECT COUNT(*) FROM events WHERE type='PROCESS_START'").fetchone()[0] == 1
+        reader.close()
+    finally:
+        first.stdin.write("\n")
+        first.stdin.flush()
+        assert first.wait(timeout=60) == 0
+    box = bb.BlackBox(str(path)).open()
+    assert box.verify()["ok"]
+    box.start_session(argv=[])                            # lock rilasciato: il runtime successivo parte
+    box.close()
+
+
+_LOCK_PROBE = ("import sqlite3, sys\n"
+               "c = sqlite3.connect(sys.argv[1], timeout=0, isolation_level=None)\n"
+               "try:\n    c.execute('BEGIN IMMEDIATE'); print('OTTENUTO')\n"
+               "except sqlite3.OperationalError:\n    print('RIFIUTATO')\n")
+
+
+@_ANCHOR_ONLY
+def test_c13_opening_a_second_instance_never_releases_the_sqlite_locks_of_the_first(tmp_path):
+    """Trovato scrivendo il ciclo 13 (misurato su 0897de5d): la verifica dei file apriva e chiudeva un descrittore
+    normale su database, `-wal` e `-shm`. Chiudere un descrittore di un file rilascia TUTTI i lock POSIX del
+    processo su quel file, quindi aprire una seconda istanza (es. il lettore) mentre il runtime era in transazione
+    lasciava entrare un altro scrittore. Ora la verifica usa `O_PATH`: i lock restano."""
+    import subprocess
+    path = str(tmp_path / "bb" / "blackbox.sqlite")
+    a = bb.BlackBox(path).open()
+    a.record("API_REQUEST", source="SYSTEM")
+    a._conn.execute("BEGIN IMMEDIATE")                     # il runtime tiene il lock di scrittura
+
+    def probe():
+        return subprocess.run([sys.executable, "-c", _LOCK_PROBE, path], capture_output=True, text=True,
+                              timeout=60).stdout.strip()
+
+    assert probe() == "RIFIUTATO"
+    b = bb.BlackBox(path, connect=lambda p, **kw: sqlite3.connect(p, **{**kw, "timeout": 0}))
+    try:
+        b.open()                                           # seconda istanza nello stesso processo
+    except sqlite3.OperationalError:
+        pass                                               # trova il registro occupato: corretto
+    assert probe() == "RIFIUTATO", "lock di scrittura del runtime rilasciato da una seconda apertura"
+    a._conn.execute("ROLLBACK")
+    b.close()
+    a.close()
+
+
+@_ANCHOR_ONLY
+def test_c13_registry_swapped_at_the_very_moment_sqlite_opens_is_refused_before_any_write(tmp_path):
+    """Difesa in profondita' (non sostituisce l'ancoraggio): il registro diventa un link verso un altro database
+    DOPO l'ultima verifica, nell'istante in cui SQLite apre. SQLite ha aperto il bersaglio ma non ha ancora
+    eseguito nulla: il confronto d'identita' rifiuta prima della prima istruzione e il bersaglio resta identico.
+    Richiede lo stesso utente (dentro la cartella privata): fuori dal perimetro garantito, coperto dove possibile."""
+    ext, content, listing = _external_db(tmp_path)
+    reg = tmp_path / "bb"
+    path = reg / "blackbox.sqlite"
+
+    def swapping_connect(p, **kw):
+        os.remove(path)
+        os.symlink(ext, path)
+        return sqlite3.connect(p, **kw)
+
+    box = bb.BlackBox(str(path), connect=swapping_connect)
+    with pytest.raises(bb.BlackBoxUnavailable):
+        box.open()
+    assert box._dirfd is None, "descrittore della cartella lasciato aperto"
+    _assert_external_intact(ext, content, listing)

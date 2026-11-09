@@ -304,7 +304,7 @@ def install(path: Optional[str] = None, **process_data: Any) -> bb.BlackBox:
     if _box is not None:
         return _box
     box = bb.BlackBox(path).open()
-    fault_path = os.path.join(os.path.dirname(box.path) or ".", "fault.log")
+    fault_path = os.path.join(box.dir_path, "fault.log")   # ciclo 13: nella cartella ancorata, mai per nome
     dump = _previous_fault_dump(fault_path)
     try:
         box.start_session(argv=safe_argv(sys.argv[1:]), **process_data)

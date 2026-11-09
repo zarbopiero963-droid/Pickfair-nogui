@@ -40,7 +40,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # vocabolario e redazione dai moduli SENZA dipendenze: `core.event_journal`/`core.event_log` trascinerebbero
 # `core.config_store` (Bridge XTrader) nel grafo vivo (tests/percorsi/test_via_dal_bridge.py)
@@ -184,6 +184,89 @@ def private_file(path: str) -> None:
     os.close(open_private(path, os.O_RDWR | os.O_CREAT))
 
 
+# Ciclo 13 #617 (C12-A, decisione owner "SOLUZIONE 2"): SQLite apre database, `-wal` e `-shm` PER NOME, quindi i
+# controlli sul singolo file non bastano. La cartella del registro viene aperta e verificata come descrittore, e
+# ogni percorso usato poi (SQLite compreso) passa da `/proc/self/fd/<dirfd>/<nome>`: resta nella cartella
+# verificata anche se quella cartella o una superiore vengono sostituite. Senza questo ancoraggio la scatola nera
+# non parte (Windows e sistemi senza /proc/self/fd: rifiuto, nessun fallback verso percorsi ordinari).
+PROC_FD_DIR = "/proc/self/fd"
+
+
+def open_private_dir(path: str) -> int:
+    """Apre e verifica la cartella del registro; ritorna il descrittore, da tenere aperto finche' serve.
+
+    - Piattaforma: solo POSIX con `/proc/self/fd` funzionante (verificato sul descrittore ottenuto).
+    - Percorso: la parte superiore viene risolta (`realpath`) e poi percorsa un componente alla volta con
+      `openat(O_DIRECTORY|O_NOFOLLOW)`: nessun symlink seguito durante la discesa, quindi una sostituzione
+      concorrente fa fallire l'apertura invece di deviarla. L'ultima cartella non puo' essere un symlink.
+    - Cartelle superiori: di root o dell'utente del processo, e non scrivibili da gruppo/altri (ammesso lo sticky
+      bit, come /tmp: gli altri non possono sostituire le voci altrui).
+    - Cartella del registro: dell'utente del processo, nessuna scrittura per gruppo/altri. Una cartella
+      preesistente non sicura e' RIFIUTATA: proprietario e permessi non vengono mai corretti in automatico.
+    - Cartelle mancanti: create a 0700 con `mkdirat` (mai attraverso un link) e poi verificate come le altre.
+    Ogni violazione => OSError (fail-closed)."""
+    if (os.name != "posix" or not os.path.isdir(PROC_FD_DIR)
+            or not all(hasattr(os, f) for f in ("O_NOFOLLOW", "O_DIRECTORY", "O_PATH"))):
+        raise OSError(errno.ENOTSUP, "piattaforma senza ancoraggio verificato per la scatola nera", path)
+    full = os.path.abspath(path)
+    parent, name = os.path.split(full)
+    parts = [c for c in os.path.realpath(parent).split(os.sep) if c] + ([name] if name else [])
+    uid = os.geteuid()
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(os.sep, flags)
+    try:
+        for i, comp in enumerate(parts):
+            last = i == len(parts) - 1
+            try:
+                nfd = os.open(comp, flags, dir_fd=fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(comp, 0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass                                   # comparsa nel frattempo: verificata come le altre
+                nfd = os.open(comp, flags, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+            st = os.fstat(fd)
+            shared = bool(st.st_mode & 0o022)
+            if last:
+                if st.st_uid != uid or shared:
+                    raise OSError(errno.EPERM, "cartella del registro non privata (proprietario o permessi)", full)
+            elif st.st_uid not in (0, uid) or (shared and not st.st_mode & stat.S_ISVTX):
+                raise OSError(errno.EPERM, f"cartella superiore non sicura: {comp}", full)
+        anchor = os.stat(f"{PROC_FD_DIR}/{fd}")
+        here = os.fstat(fd)
+        if (anchor.st_dev, anchor.st_ino) != (here.st_dev, here.st_ino):
+            raise OSError(errno.ENOTSUP, "ancoraggio /proc/self/fd non affidabile", full)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def check_private_name(path: str) -> Optional[Tuple[int, int]]:
+    """Verifica un file che SQLITE aprira' per nome (database, `-wal`, `-shm`) senza aprirlo davvero: descrittore
+    `O_PATH|O_NOFOLLOW`. Chiudere un descrittore normale di un file su cui SQLite tiene lock POSIX nello stesso
+    processo li rilascerebbe tutti (misurato su 0897de5d: l'apertura di una seconda istanza lasciava entrare un
+    altro scrittore); un descrittore `O_PATH` non tocca i lock. Rifiuta symlink, hardlink, file non regolari e
+    file di un altro utente; restringe a 0600 i permessi tramite il descrittore. Ritorna (dispositivo, inode) o
+    None se il nome non esiste."""
+    try:
+        pfd = os.open(path, os.O_PATH | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    try:
+        st = os.fstat(pfd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1 or st.st_uid != os.geteuid():
+            raise OSError(errno.ELOOP, "file del registro non privato (link, non regolare o di altri): rifiutato",
+                          path)
+        if stat.S_IMODE(st.st_mode) != 0o600:
+            os.chmod(f"{PROC_FD_DIR}/{pfd}", 0o600)
+        return st.st_dev, st.st_ino
+    finally:
+        os.close(pfd)
+
+
 def utc_iso(ts: float) -> str:
     """ISO-8601 UTC al microsecondo, con `Z`."""
     return _dt.datetime.fromtimestamp(float(ts), tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -241,41 +324,70 @@ class BlackBox:
         self.last_error: Optional[str] = None
         self._alias_key: Optional[bytes] = None
         self._writer_lock = None                       # file lock del runtime (un solo scrittore per registro)
+        self._dirfd: Optional[int] = None              # cartella verificata, tenuta aperta (ciclo 13, C12-A)
+        self._fs_path: str = self.path                 # percorso ancorato usato per OGNI apertura
 
     # ------------------------------------------------------------------ apertura e schema
     def open(self) -> "BlackBox":
         with self._lock:
             if self._conn is not None:
                 return self
-            parent = os.path.dirname(self.path)
-            if parent:
-                os.makedirs(parent, exist_ok=True)
+            identity = None
             if self.path != ":memory:":
-                private_file(self.path)        # SQLite crea -wal/-shm con gli stessi permessi del database
-                for side in ("-wal", "-shm"):
-                    if os.path.exists(self.path + side):
-                        private_file(self.path + side)
-            conn = self._connect(self.path, isolation_level=None, check_same_thread=False, timeout=30)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=FULL")
-            cols = ", ".join(f"{f} {'REAL' if f == 'mono' else 'INTEGER' if f in ('session_seq', 'pid') else 'TEXT'}"
-                             for f in RECORD_FIELDS)
-            conn.execute(f"CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, {cols}, "
-                         "prev_hash TEXT NOT NULL, hash TEXT NOT NULL)")
-            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_events_event_id ON events(event_id)")
-            for f in _INDEXED:
-                conn.execute(f"CREATE INDEX IF NOT EXISTS ix_events_{f} ON events({f})")
-            conn.execute("CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events "
-                         "BEGIN SELECT RAISE(ABORT, 'blackbox: append-only'); END")
-            conn.execute("CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events "
-                         "BEGIN SELECT RAISE(ABORT, 'blackbox: append-only'); END")
-            conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
-            conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
-            # chiave dell'alias esterno di order_id (D1): casuale, per registro, persistita => alias stabile ai riavvii
-            conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('order_alias_key', ?)", (secrets.token_hex(32),))
-            self._alias_key = bytes.fromhex(conn.execute(
-                "SELECT value FROM meta WHERE key = 'order_alias_key'").fetchone()["value"])
+                full = os.path.abspath(self.path)
+                try:
+                    self._dirfd = open_private_dir(os.path.dirname(full))
+                except OSError as exc:
+                    raise BlackBoxUnavailable(f"BLACKBOX_DIR_INSECURE: {type(exc).__name__}: {exc}") from exc
+                self._fs_path = f"{PROC_FD_DIR}/{self._dirfd}/{os.path.basename(full)}"
+                try:
+                    if check_private_name(self._fs_path) is None:
+                        private_file(self._fs_path)    # file nuovo, creato in modo esclusivo a 0600: nessun lock
+                    for side in ("-wal", "-shm"):      # SQLite li crea con gli stessi permessi del database
+                        check_private_name(self._fs_path + side)
+                    identity = check_private_name(self._fs_path)
+                    if identity is None:
+                        raise OSError(errno.ENOENT, "registro sparito durante l'apertura", self.path)
+                except BaseException:
+                    self._release_dir()
+                    raise
+            try:
+                conn = self._connect(self._fs_path, isolation_level=None, check_same_thread=False, timeout=30)
+                if identity is not None:
+                    # difesa in profondita', PRIMA della prima istruzione (SQLite non ha ancora scritto nulla): il
+                    # file che il nome indica ora deve essere quello verificato. Non sostituisce l'ancoraggio.
+                    now = os.stat(self._fs_path)
+                    if (now.st_dev, now.st_ino) != identity:
+                        conn.close()
+                        raise BlackBoxUnavailable("BLACKBOX_FILE_REPLACED: registro sostituito durante l'apertura")
+            except BaseException:
+                self._release_dir()
+                raise
+            try:
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=FULL")
+                cols = ", ".join(f"{f} {'REAL' if f == 'mono' else 'INTEGER' if f in ('session_seq', 'pid') else 'TEXT'}"
+                                 for f in RECORD_FIELDS)
+                conn.execute(f"CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, {cols}, "
+                             "prev_hash TEXT NOT NULL, hash TEXT NOT NULL)")
+                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_events_event_id ON events(event_id)")
+                for f in _INDEXED:
+                    conn.execute(f"CREATE INDEX IF NOT EXISTS ix_events_{f} ON events({f})")
+                conn.execute("CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events "
+                             "BEGIN SELECT RAISE(ABORT, 'blackbox: append-only'); END")
+                conn.execute("CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events "
+                             "BEGIN SELECT RAISE(ABORT, 'blackbox: append-only'); END")
+                conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+                conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
+                # chiave dell'alias esterno di order_id (D1): casuale, per registro, persistita => alias stabile ai riavvii
+                conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('order_alias_key', ?)", (secrets.token_hex(32),))
+                self._alias_key = bytes.fromhex(conn.execute(
+                    "SELECT value FROM meta WHERE key = 'order_alias_key'").fetchone()["value"])
+            except BaseException:
+                conn.close()
+                self._release_dir()
+                raise
             self._conn = conn
             return self
 
@@ -305,8 +417,9 @@ class BlackBox:
         API/MCP) non lo chiamano mai. Non certifica il fencing finanziario del motore (#536, separato)."""
         if self._writer_lock is not None:
             return
+        self.open()                                    # cartella verificata e ancorata prima di ogni file
         # ciclo 12 (Sol su 2847ca0e): il lock si prende sul descrittore verificato, mai su una riapertura per nome
-        fh = os.fdopen(open_private(self.path + ".runtime.lock", os.O_RDWR | os.O_CREAT), "a+")
+        fh = os.fdopen(open_private(self._fs_path + ".runtime.lock", os.O_RDWR | os.O_CREAT), "a+")
         try:
             if os.name == "nt":
                 import msvcrt
@@ -334,7 +447,7 @@ class BlackBox:
         try:
             # ciclo 12 (Sol su 2847ca0e, riprodotto): niente `open(..., "w")` dopo la verifica, che troncava il
             # bersaglio di un symlink sostituito nel frattempo. Si tronca e si scrive il descrittore verificato.
-            ofd = open_private(self.path + ".runtime.owner", os.O_WRONLY | os.O_CREAT)
+            ofd = open_private(self._fs_path + ".runtime.owner", os.O_WRONLY | os.O_CREAT)
             try:
                 os.ftruncate(ofd, 0)
                 os.write(ofd, f"pid={self.pid} session={self.session_id}\n".encode("utf-8"))
@@ -360,6 +473,23 @@ class BlackBox:
                     self._conn.close()
                 finally:
                     self._conn = None
+            self._release_dir()                        # dopo SQLite: l'ancoraggio vale per tutta la sua vita
+
+    def _release_dir(self) -> None:
+        if self._dirfd is not None:
+            try:
+                os.close(self._dirfd)
+            except OSError:
+                pass
+            self._dirfd = None
+            self._fs_path = self.path
+
+    @property
+    def dir_path(self) -> str:
+        """Cartella del registro come percorso ANCORATO al descrittore verificato (valida a registro aperto): chi
+        apre altri file della scatola nera (dump nativi) passa da qui, mai dal percorso ordinario."""
+        self.open()
+        return os.path.dirname(self._fs_path) or "."
 
     # ------------------------------------------------------------------ scrittura
     def _build(self, event_type: str, kw: Dict[str, Any]) -> Dict[str, Any]:

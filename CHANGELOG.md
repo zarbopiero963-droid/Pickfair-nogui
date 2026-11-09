@@ -20,6 +20,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `core/event_vocabulary.py` e `core/text_redaction.py` (riesportati con la stessa API), perche' la scatola nera nel
   percorso vivo non trascini il Bridge XTrader (`core.config_store`). Documentazione:
   `docs/blackbox.md`. Ordini, impostazioni e visualizzatore arrivano in BB-2…BB-6.
+  **Requisiti di avvio:** la cartella del registro deve essere privata (dell'utente del bot, non scrivibile da
+  gruppo/altri, non un symlink) e la piattaforma deve offrire `/proc/self/fd` (Linux). Altrimenti la scatola nera
+  non parte e il bot non si avvia: nessuna correzione automatica dei permessi, nessun avvio su Windows/macOS.
 
 ### Fixed
 - **G7-R06 (#586): AMBIGUOUS gia' regolato non rinasce come riserva al riavvio.** La ricostruzione F018 chiude gli

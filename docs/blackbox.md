@@ -278,12 +278,37 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
   | `fault.log` | lettura, append (`faulthandler`), rimozione del nome | `open_private`; rimozione del solo nome | protetto |
   | `fault.log.pending` | lettura, append, rinomina in `.1` | `open_private`; rinomina solo se file privato | protetto |
   | `fault.log.1` | append, sostituito dalla rinomina | `open_private`; `os.replace` sostituisce il nome, non segue link | protetto |
-  | registro `.sqlite` | creazione e permessi; poi apertura **da SQLite per nome** | `private_file` (= `open_private`), poi `sqlite3.connect(path)` | **residuo C12-A** |
-  | `-wal` / `-shm` | permessi se esistono; creati e aperti **da SQLite** | `private_file`, poi SQLite | **residuo C12-A** |
+  | registro `.sqlite` | creazione esclusiva, poi apertura da SQLite | verifica `O_PATH`, SQLite su percorso **ancorato** alla cartella verificata | protetto (ciclo 13) |
+  | `-wal` / `-shm` | creati e aperti da SQLite | verifica `O_PATH` se esistono; SQLite li apre nella cartella ancorata | protetto (ciclo 13) |
 
-  **Residuo C12-A (aperto, decisione dell'owner).** SQLite apre il registro per nome. Un symlink sostituito fra la
-  verifica e `sqlite3.connect` fa creare le tabelle `events`/`meta` dentro il database puntato (riprodotto in
-  locale). Richiede lo stesso utente, scrittura nella cartella dati e la finestra giusta. Non è corretto in questo
-  ciclo: il mandato del ciclo 12 copre `.runtime.owner`, `.runtime.lock` e i fallback multipiattaforma.
-- **Windows.** I fallback senza `O_NOFOLLOW`/`O_NONBLOCK` sono provati solo con simulazioni POSIX (opzioni rimosse
-  nel test). Nessuna esecuzione reale su Windows: **NOT_RUN**, non un PASS.
+- **Cartella privata e ancoraggio (ciclo 13, C12-A, decisione owner «soluzione 2»).** SQLite apre database, `-wal`
+  e `-shm` per nome: proteggere i singoli file non basta. La regola è sulla cartella.
+  1. **Cartella verificata sul descrittore** (`open_private_dir`). La cartella del registro deve essere una cartella
+     vera (mai un symlink), dell'utente del processo, senza scrittura per gruppo e altri. Le cartelle superiori
+     devono essere di root o dello stesso utente e non scrivibili da altri (ammesso lo sticky bit, come `/tmp`).
+     La discesa avviene un componente alla volta con `openat(O_DIRECTORY|O_NOFOLLOW)`, quindi una sostituzione
+     concorrente fa fallire l'apertura invece di deviarla. Le cartelle mancanti sono create a `0700` con `mkdirat`.
+  2. **Nessuna correzione automatica.** Una cartella preesistente condivisa, di un altro utente o con permessi
+     larghi viene **rifiutata** (`BLACKBOX_DIR_INSECURE`): proprietario e permessi non si toccano. Vale anche per
+     `PICKFAIR_BLACKBOX_PATH`, senza eccezioni. Rimedio operativo: `chmod go-w` sulla cartella indicata, o una
+     cartella dedicata. Attenzione alle cartelle create con `umask 002` (`0775`): vengono rifiutate.
+  3. **Tutto ancorato al descrittore.** Il descrittore resta aperto per tutta la vita del registro. SQLite e ogni
+     altro file (`.runtime.lock`, `.runtime.owner`, dump nativi) usano `/proc/self/fd/<dirfd>/<nome>`: database,
+     WAL, SHM, recovery e nuove connessioni restano nella cartella verificata anche se quella cartella o una
+     superiore vengono sostituite dopo. Nessun fallback verso il percorso ordinario.
+  4. **File di SQLite verificati senza aprirli** (`check_private_name`, descrittore `O_PATH|O_NOFOLLOW`): symlink
+     (anche pendenti), hardlink, file non regolari o di altri utenti sono rifiutati prima di `sqlite3.connect`.
+     Si usa `O_PATH` perché chiudere un descrittore normale di un file rilascia tutti i lock POSIX del processo su
+     quel file: fino al ciclo 12 aprire una seconda istanza nello stesso processo (per esempio il lettore) mentre
+     il runtime era in transazione lasciava entrare un altro scrittore. Difetto trovato e chiuso nel ciclo 13.
+  5. **Difesa in profondità.** Dopo `sqlite3.connect` e prima della prima istruzione si confronta il file che il
+     nome indica con quello verificato; se è cambiato l'apertura è rifiutata (`BLACKBOX_FILE_REPLACED`) senza che
+     SQLite abbia scritto. Non è la protezione principale: quella è l'ancoraggio.
+- **Piattaforme (decisione owner: fail-closed).** La scatola nera parte solo su POSIX con `/proc/self/fd`
+  funzionante, `O_NOFOLLOW`, `O_DIRECTORY` e `O_PATH`: in pratica Linux, il target del runtime. Su **Windows** e
+  sui sistemi senza `/proc/self/fd` (per esempio macOS) non viene inizializzata e, senza scatola nera, il trading
+  non parte. I test «Windows» sono simulazioni su Linux: Windows reale è **NOT_RUN**, mai un PASS.
+- **Modello di minaccia e limite esplicito.** La garanzia copre un **altro utente locale** (o un processo meno
+  privilegiato) che può scrivere in una cartella del percorso. **Non** copre un processo con lo **stesso utente**
+  del bot né root: possono già scrivere direttamente i database, la configurazione e il codice, e nessun controllo
+  sui permessi dello stesso utente li ferma.

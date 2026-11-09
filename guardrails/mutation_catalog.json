@@ -8671,8 +8671,8 @@
       "module": "core.blackbox",
       "area": "blackbox",
       "file": "core/blackbox.py",
-      "original": "            ofd = open_private(self.path + \".runtime.owner\", os.O_WRONLY | os.O_CREAT)",
-      "mutated": "            private_file(self.path + \".runtime.owner\"); ofd = os.open(self.path + \".runtime.owner\", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)",
+      "original": "            ofd = open_private(self._fs_path + \".runtime.owner\", os.O_WRONLY | os.O_CREAT)",
+      "mutated": "            private_file(self._fs_path + \".runtime.owner\"); ofd = os.open(self._fs_path + \".runtime.owner\", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)",
       "tests": [
         "tests/blackbox/test_blackbox_runtime.py"
       ],
@@ -8683,12 +8683,120 @@
       "module": "core.blackbox",
       "area": "blackbox",
       "file": "core/blackbox.py",
-      "original": "        fh = os.fdopen(open_private(self.path + \".runtime.lock\", os.O_RDWR | os.O_CREAT), \"a+\")",
-      "mutated": "        private_file(self.path + \".runtime.lock\"); fh = open(self.path + \".runtime.lock\", \"a+\")",
+      "original": "        fh = os.fdopen(open_private(self._fs_path + \".runtime.lock\", os.O_RDWR | os.O_CREAT), \"a+\")",
+      "mutated": "        private_file(self._fs_path + \".runtime.lock\"); fh = open(self._fs_path + \".runtime.lock\", \"a+\")",
       "tests": [
         "tests/blackbox/test_blackbox_runtime.py"
       ],
       "rationale": "Ciclo 12 #617 (Sol su 2847ca0e): verifica e poi riapertura per nome del lock: un symlink sostituito in mezzo fa prendere il lock (e su Windows scrivere) sul bersaglio."
+    },
+    {
+      "id": "bb_c13_dir_owner_or_mode_unchecked",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                if st.st_uid != uid or shared:",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): una cartella del registro di un altro utente o scrivibile da gruppo/altri verrebbe accettata."
+    },
+    {
+      "id": "bb_c13_ancestor_unchecked",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "            elif st.st_uid not in (0, uid) or (shared and not st.st_mode & stat.S_ISVTX):",
+      "mutated": "            elif False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): una cartella superiore scrivibile da altri (senza sticky) permetterebbe di sostituire la cartella del registro."
+    },
+    {
+      "id": "bb_c13_dir_symlink_followed",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW",
+      "mutated": "    flags = os.O_RDONLY | os.O_DIRECTORY",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): una cartella del registro che e' un symlink verrebbe seguita."
+    },
+    {
+      "id": "bb_c13_sqlite_not_anchored",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                conn = self._connect(self._fs_path, isolation_level=None, check_same_thread=False, timeout=30)",
+      "mutated": "                conn = self._connect(self.path, isolation_level=None, check_same_thread=False, timeout=30)",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): SQLite aprirebbe di nuovo il percorso ordinario: una cartella sostituita dopo la verifica devierebbe database, WAL e SHM verso un altro database."
+    },
+    {
+      "id": "bb_c13_platform_not_refused",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "    if (os.name != \"posix\" or not os.path.isdir(PROC_FD_DIR)",
+      "mutated": "    if (False",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): la scatola nera partirebbe su una piattaforma senza ancoraggio verificato (decisione owner: rifiuto)."
+    },
+    {
+      "id": "bb_c13_check_drops_sqlite_locks",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        pfd = os.open(path, os.O_PATH | os.O_NOFOLLOW)",
+      "mutated": "        pfd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): la verifica con un descrittore normale rilascerebbe i lock POSIX di SQLite alla chiusura: un secondo scrittore entrerebbe a transazione aperta."
+    },
+    {
+      "id": "bb_c13_wal_shm_unchecked",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                        check_private_name(self._fs_path + side)",
+      "mutated": "                        pass",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): un link al posto di -wal/-shm verrebbe aperto da SQLite."
+    },
+    {
+      "id": "bb_c13_identity_before_first_write_removed",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                    if (now.st_dev, now.st_ino) != identity:",
+      "mutated": "                    if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): un registro sostituito fra verifica e apertura verrebbe scritto (difesa in profondita' prima della prima istruzione)."
+    },
+    {
+      "id": "bb_c13_new_dir_not_private",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                    os.mkdir(comp, 0o700, dir_fd=fd)",
+      "mutated": "                    os.mkdir(comp, 0o777, dir_fd=fd)",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): le cartelle nuove non sarebbero create private."
     }
   ]
 }
