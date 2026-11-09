@@ -8797,6 +8797,30 @@
         "tests/blackbox/test_blackbox_runtime.py"
       ],
       "rationale": "Ciclo 13 #617 (C12-A): le cartelle nuove non sarebbero create private."
+    },
+    {
+      "id": "bb_c14_dumps_handled_without_the_runtime_lock",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "    if not box.is_runtime():\n        return None\n    return _previous_fault_dump(fault_path)",
+      "mutated": "    return _previous_fault_dump(fault_path)",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 14 #617 (Sol su 8bfb96d3): un'istanza senza il lock del runtime leggerebbe, sposterebbe e cancellerebbe i dump nativi del runtime attivo."
+    },
+    {
+      "id": "bb_c14_dumps_before_the_lock",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "    try:\n        box.start_session(argv=safe_argv(sys.argv[1:]), **process_data)\n    except BaseException:",
+      "mutated": "    _previous_fault_dump(fault_path)\n    try:\n        box.start_session(argv=safe_argv(sys.argv[1:]), **process_data)\n    except BaseException:",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 14 #617 (Sol su 8bfb96d3): gestire i dump prima del lock permette a un avvio concorrente, poi rifiutato, di scollegare il fault.log del runtime attivo."
     }
   ]
 }

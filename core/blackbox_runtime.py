@@ -240,6 +240,14 @@ def _previous_fault_dump(fault_path: str) -> Optional[str]:
     return "\n".join(parts) or None
 
 
+def _runtime_fault_dump(box: bb.BlackBox, fault_path: str) -> Optional[str]:
+    """Dump nativi precedenti, SOLO per l'istanza che tiene il lock del runtime (ciclo 14 #617): chi non ha il lock
+    (un lettore, un avvio non ammesso) non legge, non sposta e non cancella i file diagnostici di un altro runtime."""
+    if not box.is_runtime():
+        return None
+    return _previous_fault_dump(fault_path)
+
+
 def _consume_fault_dump(fault_path: str) -> bool:
     """Archivia in `fault.log.1` i dump importati. False se qualcosa resta da consumare (verra' reimportato al
     prossimo avvio: meglio un import doppio che un dump perso)."""
@@ -305,12 +313,14 @@ def install(path: Optional[str] = None, **process_data: Any) -> bb.BlackBox:
         return _box
     box = bb.BlackBox(path).open()
     fault_path = os.path.join(box.dir_path, "fault.log")   # ciclo 13: nella cartella ancorata, mai per nome
-    dump = _previous_fault_dump(fault_path)
     try:
         box.start_session(argv=safe_argv(sys.argv[1:]), **process_data)
     except BaseException:
         box.close()                     # rifiuto (es. RUNTIME_ALREADY_ACTIVE) o guasto: nessuna risorsa lasciata aperta
-        raise
+        raise                           # e nessun dump toccato: restano dove sono per il prossimo avvio
+    # Ciclo 14 (Sol su 8bfb96d3): i dump si toccano solo DOPO il lock del runtime. Prima, un avvio concorrente poi
+    # rifiutato spostava o cancellava il `fault.log` gia' aperto dal runtime attivo, che perdeva i dump successivi.
+    dump = _runtime_fault_dump(box, fault_path)
     keep_fault = False
     if dump:
         try:

@@ -119,7 +119,11 @@ di vita del processo.
    `SHUTDOWN` non è un crash. Si registrano:
    - `UNCLEAN_TERMINATION` con la sessione precedente;
    - una `BLACKBOX_GAP` con `outcome UNKNOWN` sull'intervallo `[ultimo evento del runtime precedente, riavvio]`.
-7. **Dump nativo** (`faulthandler`, `fault.log`): al riavvio viene messo da parte in `fault.log.pending` (o letto
+7. **Dump nativo** (`faulthandler`, `fault.log`): i dump si toccano **solo dopo il lock del runtime** (ciclo 14,
+   rilievo Sol su `8bfb96d3`). Un avvio concorrente poi rifiutato (`RUNTIME_ALREADY_ACTIVE`), un lettore o un
+   avvio fallito prima del lock non leggono, non spostano e non cancellano nulla: il `fault.log` del runtime
+   attivo resta suo e il dump precedente viene importato una volta sola. Con il lock preso, al riavvio il dump
+   viene messo da parte in `fault.log.pending` (o letto
    dov'è, se non si può spostare) e archiviato in `fault.log.1` solo dopo che il `CRASH_RECOVERY` è scritto in modo
    durevole. Se l'avvio o la scrittura falliscono, il dump resta in attesa e viene importato al primo avvio riuscito;
    `CRASH_RECOVERY` è critico: se non si riesce a scriverlo l'avvio viene rifiutato, mai un registro degradato;

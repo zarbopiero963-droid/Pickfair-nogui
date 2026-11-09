@@ -1301,9 +1301,16 @@ def test_c13_platform_without_a_verified_anchor_refuses_the_blackbox(tmp_path, m
         monkeypatch.setattr(bb, "PROC_FD_DIR", str(tmp_path / "proc_assente"))
     reg = tmp_path / "bb"
     box = bb.BlackBox(str(reg / "blackbox.sqlite"))
-    with pytest.raises(bb.BlackBoxUnavailable):
-        box.open()
-    monkeypatch.undo()
+    refused = None
+    try:                                    # `os.name` va SEMPRE ripristinato prima di qualsiasi asserzione: con
+        box.open()                          # "nt" ancora attivo pytest non riesce a costruire il rapporto d'errore
+        refused = False                     # (errore interno su Python 3.11: mutante inconcludente in CI, ciclo 13)
+    except bb.BlackBoxUnavailable:
+        refused = True
+    finally:
+        monkeypatch.undo()
+        box.close()
+    assert refused is True, "scatola nera inizializzata su una piattaforma senza ancoraggio verificato"
     assert not reg.exists() or list(reg.iterdir()) == []
 
 
@@ -1459,3 +1466,106 @@ def test_c13_registry_swapped_at_the_very_moment_sqlite_opens_is_refused_before_
         box.open()
     assert box._dirfd is None, "descrittore della cartella lasciato aperto"
     _assert_external_intact(ext, content, listing)
+
+
+# --- Ciclo 14 (OWNER AUTHORIZATION PR #617 — CYCLE 14): rilievo Sol su 8bfb96d3, dump gestiti solo sotto il lock ----
+
+_SECOND_START = r"""
+import sys
+sys.path.insert(0, sys.argv[2])
+from core import blackbox as bb, blackbox_runtime as rt
+try:
+    rt.install(sys.argv[1])
+except bb.RuntimeAlreadyActive:
+    print("REFUSED", flush=True); sys.exit(3)
+print("STARTED", flush=True)
+"""
+
+
+def _second_start(path):
+    import subprocess
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return subprocess.run([sys.executable, "-c", _SECOND_START, str(path), repo], stdin=subprocess.DEVNULL,
+                          capture_output=True, text=True, timeout=60)
+
+
+def _crash_recoveries(path):
+    return [e for e in _events(path) if e["type"] == "CRASH_RECOVERY"]
+
+
+@_ANCHOR_ONLY
+def test_c14_refused_second_start_never_touches_the_dump_file_of_the_active_runtime(bbpath):
+    """Sol su 8bfb96d3 (riprodotto): `install()` spostava i dump PRIMA del lock. Un secondo avvio, poi rifiutato,
+    trovava il `fault.log` del runtime attivo (non vuoto: contiene gia' un dump) e lo spostava/cancellava: il
+    `faulthandler` del runtime attivo restava su un file scollegato e i dump successivi andavano persi. Ora il lock
+    viene preso prima di qualsiasi operazione sui dump: il processo rifiutato non tocca nulla."""
+    import faulthandler
+    bbpath.parent.mkdir(parents=True)
+    fault = bbpath.parent / "fault.log"
+    fault.write_text("Fatal Python error: vecchio crash\n")          # dump di un crash precedente
+    rt.install()                                                       # runtime A: importa, archivia, nuovo file
+    assert len(_crash_recoveries(bbpath)) == 1
+    faulthandler.dump_traceback(file=rt._fault_file)                   # il file vivo di A non e' piu' vuoto
+    rt._fault_file.flush()
+    live = fault.read_bytes()
+    assert live
+    second = _second_start(bbpath)                                     # avvio concorrente B, processo vero
+    assert second.returncode == 3 and "REFUSED" in second.stdout, second.stderr[-400:]
+    assert os.fstat(rt._fault_file.fileno()).st_nlink == 1, "fault.log del runtime attivo scollegato"
+    assert fault.read_bytes() == live, "dump del runtime attivo alterato da un avvio rifiutato"
+    assert not (bbpath.parent / "fault.log.pending").exists()
+    faulthandler.dump_traceback(file=rt._fault_file)                   # un dump successivo arriva ancora sul file
+    rt._fault_file.flush()
+    assert len(fault.read_bytes()) > len(live)
+    assert len(_crash_recoveries(bbpath)) == 1, "dump precedente importato due volte"
+
+
+@_ANCHOR_ONLY
+def test_c14_previous_dump_is_imported_exactly_once_across_refused_and_later_starts(bbpath):
+    """Nessuna duplicazione: il dump del crash precedente entra nel registro una volta sola, anche con un avvio
+    rifiutato in mezzo e con un riavvio pulito dopo."""
+    bbpath.parent.mkdir(parents=True)
+    (bbpath.parent / "fault.log").write_text("Fatal Python error: vecchio crash\n")
+    rt.install()
+    assert _second_start(bbpath).returncode == 3
+    rt.shutdown("STOP")
+    third = _second_start(bbpath)                                      # ora il lock e' libero: parte
+    assert "STARTED" in third.stdout, third.stderr[-400:]
+    crashes = _crash_recoveries(bbpath)
+    assert len(crashes) == 1 and "vecchio crash" in json.loads(crashes[0]["data"])["tail"]
+
+
+@_ANCHOR_ONLY
+def test_c14_dump_handling_requires_the_runtime_lock(bbpath):
+    """Il passaggio che sposta e legge i dump e' riservato all'istanza che tiene il lock del runtime: un'istanza
+    senza lock (un lettore, un avvio non ancora ammesso) non legge, non sposta e non cancella nulla."""
+    bbpath.parent.mkdir(parents=True)
+    fault = bbpath.parent / "fault.log"
+    fault.write_text("Fatal Python error: dump del runtime\n")
+    reader = bb.BlackBox(str(bbpath)).open()
+    assert rt._runtime_fault_dump(reader, str(fault)) is None
+    assert fault.read_text() == "Fatal Python error: dump del runtime\n"
+    assert not (bbpath.parent / "fault.log.pending").exists()
+    reader.start_session(argv=[])                                      # con il lock: il dump viene gestito
+    assert "dump del runtime" in rt._runtime_fault_dump(reader, str(fault))
+    reader.close()
+
+
+@_ANCHOR_ONLY
+def test_c14_failed_start_leaves_the_previous_dump_in_place_for_the_next_start(bbpath, monkeypatch):
+    """Avvio fallito prima del lock (qui: `start_session` solleva): il dump precedente resta dov'era, intatto, e
+    viene importato al primo avvio riuscito. Niente dump perso."""
+    bbpath.parent.mkdir(parents=True)
+    fault = bbpath.parent / "fault.log"
+    fault.write_text("Fatal Python error: vecchio crash\n")
+
+    def boom(self, **kw):
+        raise bb.BlackBoxUnavailable("guasto simulato")
+
+    with monkeypatch.context() as m:      # non `undo()`: annullerebbe anche il percorso impostato dalla fixture
+        m.setattr(bb.BlackBox, "start_session", boom)
+        with pytest.raises(bb.BlackBoxUnavailable):
+            rt.install()
+    assert fault.read_text() == "Fatal Python error: vecchio crash\n"
+    rt.install()
+    assert len(_crash_recoveries(bbpath)) == 1
