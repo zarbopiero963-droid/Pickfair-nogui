@@ -744,3 +744,45 @@ def test_forged_code_patch_anchor_from_a_previous_save_is_never_an_anchor(world)
     err = expect(2, pfckpt.save, a, BR, "origin", exp2, "transizione sull'ancora contraffatta", D, agent="claude")
     assert err.reason == "CODE_SHA_NOT_DURABLE"
     assert pfckpt.remote_head(a, "origin", BR) == exp2, "nulla pubblicato"
+
+
+# ================================================================== PF-PR615-EXTRA-FIX-CYCLES-20261109
+def _transition_setup(world):
+    """Checkpoint legacy con code.tree registrato, squash su main e branch cancellato; agente in un clone nuovo."""
+    feat, ftree = make_feature(world)
+    legacy = _legacy_checkpoint_citing(world, feat, tree=ftree)
+    squash, _ = squash_merge_and_delete(world, feat)
+    a = agent(world, "after")
+    assert pfckpt.resolve_commit(a, feat) is None
+    sh(a, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    integ = pfckpt.build_integration(a, feat, squash, original_tree=ftree)
+    return feat, legacy, squash, a, integ
+
+
+def test_abbreviated_sha_never_borrows_the_anchor_of_a_commit_with_the_same_prefix(world):
+    """Grok #615 (5b8b24ff): un tests_executed[].sha abbreviato, con un original_sha DIVERSO che ne condivide il
+    prefisso, non usa l'ancora registrata per l'altro commit: confronto sullo SHA completo, mai per prefisso."""
+    feat, legacy, squash, a, integ = _transition_setup(world)
+    other = feat[:12] + ("0" * 28 if feat[12:] != "0" * 28 else "1" * 28)     # stesso prefisso, commit diverso
+    assert other != feat and other.startswith(feat[:12])
+    st = json.load(open(os.path.join(a, D, "STATE.json")))
+    fake = dict(integ, original_sha=other)
+    exp = next_state(a, world, code=dict(st["code"], integration=integ),
+                     tests_executed=[{"id": "suite", "status": "PASS", "sha": feat[:12], "integration": fake}])
+    err = expect(2, pfckpt.save, a, BR, "origin", exp, "SHA abbreviato con prefisso comune", D, agent="claude")
+    assert err.reason in ("CODE_SHA_NOT_DURABLE", "CHECKPOINT_INVALID")
+    assert pfckpt.remote_head(a, "origin", BR) == exp, "nulla pubblicato"
+
+
+def test_recover_after_squash_and_branch_deletion_returns_the_transition_checkpoint(world):
+    """Prova eseguibile (Grok #615, rilievo bootstrap/recover): da clone pulito, dopo squash e cancellazione del branch,
+    recover materializza il checkpoint di transizione, perche' il clone scarica i branch durevoli (main)."""
+    feat, legacy, squash, a, integ = _transition_setup(world)
+    st = json.load(open(os.path.join(a, D, "STATE.json")))
+    exp = next_state(a, world, code=dict(st["code"], integration=integ),
+                     tests_executed=[dict(t, integration=integ) for t in st["tests_executed"]])
+    res = pfckpt.save(a, BR, "origin", exp, "transizione verso main", D, agent="claude", release=True)
+    assert res["status"] == "DURABLE"
+    rep = pfckpt.recover(world["url"], BR, str(world["tmp"] / "rec"), D)
+    assert rep["status"] == "RECOVERED" and rep["commit"] == res["commit"] and rep["skipped_invalid"] == "0"
+    assert rep["code_reference"]["effective_sha"] == squash

@@ -84,6 +84,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   un crash che ferma `recover`/`bootstrap` prima degli antenati validi.
   Decimo giro: un'ancora storica da `code.patch` (scritto dall'agente, non ricalcolato da `save`) vale solo se git
   conferma tree(`head`) == `tree`; anche `code.sha`→`code.tree` deve combaciare quando l'oggetto è presente.
+  Cicli aggiuntivi autorizzati dall'owner (PF-PR615-EXTRA-FIX-CYCLES-20261109): ancore confrontate per uguaglianza
+  sullo SHA completo, mai per prefisso; ogni git di `pfckpt` ignora i replacement (`GIT_NO_REPLACE_OBJECTS=1`);
+  prova eseguibile che `recover` da clone pulito dopo squash e cancellazione del branch restituisce il checkpoint di
+  transizione.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

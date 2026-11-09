@@ -621,3 +621,19 @@ def test_recover_skips_a_head_with_a_numeric_original_sha(world):
     assert err.reason == "CHECKPOINT_INVALID"
     rep = pfckpt.recover(world["url"], BR, str(world["tmp"] / "rec"), D)
     assert rep["status"] == "RECOVERED" and rep["commit"] == good
+
+
+def test_local_git_replace_never_fakes_an_integrated_verified_handoff(world, target):
+    """Sol #615 (5b8b24ff): `refs/replace/<integration_sha>` locale che punta al commit di handoff nasconde le modifiche
+    in piu' dell'integrazione su main. pfckpt ignora i replacement: la prova resta quella del tree pubblicato."""
+    hsha, htree = publish_handoff(target)
+    isha, itree = integrate(target, extra="extra_non_nella_patch.py")
+    assert itree != htree
+    clone = target_clone(target)
+    sh(clone, "replace", isha, hsha)
+    assert sh(clone, "rev-parse", f"{isha}^{{tree}}") == htree, "git, di default, vede il tree sostituito"
+    r = rec(world, target, "INTEGRATED_VERIFIED", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree,
+            integration_sha=isha)
+    err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c", [r]), "HEAD", D, repo_paths={TARGET: clone})
+    assert any("tree(integration_sha) != handoff_tree" in p for p in err.detail["problems"])
+    assert pfckpt.tree_of(clone, isha) == itree

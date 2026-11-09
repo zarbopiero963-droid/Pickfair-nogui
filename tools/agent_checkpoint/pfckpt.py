@@ -96,8 +96,14 @@ def _safe_err(raw, keep=-300):
     return _CRED_IN_URL.sub(r"\1[REDACTED]@", text)[keep:]
 
 
+def _git_env(**extra):
+    """Ambiente di ogni git di pfckpt: i replacement locali (`refs/replace/*`, `git replace`) sono IGNORATI, quindi un
+    oggetto sostituito nel clone non altera mai tree, ascendenze o diff usati come prova (rilievo Sol #615)."""
+    return dict(os.environ, GIT_NO_REPLACE_OBJECTS="1", **extra)
+
+
 def git(repo, *args, check=True, input_bytes=None):
-    p = subprocess.run(["git", "-C", repo, *args], capture_output=True, input=input_bytes)
+    p = subprocess.run(["git", "-C", repo, *args], capture_output=True, input=input_bytes, env=_git_env())
     if check and p.returncode != 0:
         raise CheckpointError(5, "GIT_ERROR", cmd=_safe_err(" ".join(map(str, args)), -2000), stderr=_safe_err(p.stderr, -400))
     return p
@@ -355,7 +361,7 @@ def apply_patch_tree(repo, base_sha, patch):
     fd, idx = tempfile.mkstemp(prefix="pfckpt_handoff_idx_")
     os.close(fd)
     os.unlink(idx)
-    env = dict(os.environ, GIT_INDEX_FILE=idx)
+    env = _git_env(GIT_INDEX_FILE=idx)
     try:
         def run(*args, data=None):
             return subprocess.run(["git", "-C", repo, *args], capture_output=True, input=data, env=env)
@@ -399,7 +405,8 @@ _CANONICAL_DIFF_CFG = ("-c", "diff.renames=true", "-c", "diff.noprefix=false", "
 def canonical_diff_sha256(repo, base_sha, head_sha):
     """sha256 di `git diff --binary --full-index base_sha head_sha` in forma canonica; None se git fallisce."""
     p = subprocess.run(["git", "-C", repo, *_CANONICAL_DIFF_CFG, "diff", "--no-color", "--no-ext-diff",
-                        "--no-textconv", "--ignore-submodules=none", "--unified=3", "-O/dev/null", "--binary", "--full-index", base_sha, head_sha, "--"], capture_output=True)
+                        "--no-textconv", "--ignore-submodules=none", "--unified=3", "-O/dev/null", "--binary", "--full-index", base_sha, head_sha, "--"], capture_output=True,
+                       env=_git_env())
     return hashlib.sha256(p.stdout).hexdigest() if p.returncode == 0 else None
 
 
@@ -833,8 +840,11 @@ def _verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None, remote="o
             source = _history()
         else:
             source = anchors
-        return [t for k, ts in source.items() for t in ts
-                if sha and (k.startswith(str(sha)) or (orig and k == orig))]
+        # uguaglianza sullo SHA COMPLETO, mai per prefisso (rilievo Grok #615): uno SHA abbreviato non prende in
+        # prestito l'ancora di un altro commit con lo stesso prefisso
+        full = resolve_commit(lookup, str(sha)) if sha else None
+        keys = {k for k in (full, str(sha) if _SHA40.fullmatch(str(sha or "")) else None, orig) if k}
+        return [t for k, ts in source.items() for t in ts if k in keys]
 
     if code_sha:
         rp, ks, code_ref = check_code_reference(lookup, "code.sha", code_sha, code.get("integration"),
@@ -1245,7 +1255,8 @@ def check_durability(repo, remote, state, durable_branches=DEFAULT_DURABLE_BRANC
                 hist = historical_code_trees(repo, anchor_from, d) if hist is None else hist
                 ok = r.get("original_tree") and any(
                     t == r["original_tree"] for k, ts in hist.items() for t in ts
-                    if k.startswith(r["sha"]) or (r.get("original_sha") and k == r["original_sha"]))
+                    if k in {x for x in (r.get("original"), r["sha"] if _SHA40.fullmatch(str(r["sha"])) else None,
+                                         r.get("original_sha")) if x})
                 if not ok:
                     r["via"], r["reason"] = None, "INTEGRATION senza ancora storica dell'original_tree"
     missing = [r for r in rows if r["via"] is None]
@@ -1275,7 +1286,8 @@ def readback(remote_url, branch, d, code_branch=None, expect_commit=None, keep_r
     keep puntato allo SHA stesso)."""
     tmp = tempfile.mkdtemp(prefix="pfckpt_readback_")
     try:
-        p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, remote_url, tmp], capture_output=True)
+        p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, remote_url, tmp], capture_output=True,
+                           env=_git_env())
         if p.returncode != 0:
             raise CheckpointError(4, "READBACK_CLONE_FAILED", stderr=_safe_err(p.stderr, -300))
         if code_branch:
@@ -1452,7 +1464,8 @@ def code_divergence(repo, code_branch, code_sha):
 
 
 def bootstrap(url, branch, dest, d=DEFAULT_DIR, code_branch=None, agent=None, repo_paths=None):
-    p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, url, dest], capture_output=True)
+    p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, url, dest], capture_output=True,
+                       env=_git_env())
     if p.returncode != 0:
         raise CheckpointError(5, "CLONE_FAILED", stderr=_safe_err(p.stderr, -300))
     if code_branch:
@@ -1495,7 +1508,8 @@ def bootstrap(url, branch, dest, d=DEFAULT_DIR, code_branch=None, agent=None, re
 
 def recover(url, branch, dest, d=DEFAULT_DIR, repo_paths=None):
     """Materializza in DEST l'ultimo checkpoint VALIDO della catena, senza toccare il remoto."""
-    p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, url, dest], capture_output=True)
+    p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, url, dest], capture_output=True,
+                       env=_git_env())
     if p.returncode != 0:
         raise CheckpointError(5, "CLONE_FAILED", stderr=_safe_err(p.stderr, -300))
     fetch_keep_refs(dest)
