@@ -21,6 +21,8 @@ from tests.roserpina_oracle.harness import build, read                     # noq
 from tests.roserpina_oracle.test_drawdown_oracle import _signal            # noqa: E402
 
 KEY = "roserpina.drawdown_hard_stop_state"
+# RO-DD-08 corretto in 3f59fa67 (retry del salvataggio, ingressi negati finche' il picco non e' salvato)
+DD08_FIX = hasattr(__import__("core.drawdown_hard_stop", fromlist=["DrawdownHardStop"]).DrawdownHardStop, "retry_persist")
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -195,7 +197,7 @@ def test_sblocco_rifiutato_con_ordini_incerti(tmp_path) -> None:
     assert _cap(c) != ""
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DD-08 (patch 15960bac): picco non salvato senza hard stop configurato => "
+@pytest.mark.xfail(not DD08_FIX, strict=True, reason="RO-DD-08 (patch 15960bac): picco non salvato senza hard stop configurato => "
                                        "ingressi ammessi e dopo il riavvio il LOCKDOWN cumulativo usa il picco vecchio")
 def test_picco_non_salvato_poi_riavvio_il_lockdown_cumulativo_non_si_perde(tmp_path, monkeypatch) -> None:
     """RO-DD-04 + regola 1: il LOCKDOWN usa il picco persistente. Senza hard stop assoluto/percentuale configurato,
@@ -222,3 +224,27 @@ def test_picco_non_salvato_poi_riavvio_il_lockdown_cumulativo_non_si_perde(tmp_p
     assert entered_before_restart is False or (c2.rc._desk_mode() == DeskMode.LOCKDOWN), (
         "picco non salvato: dopo il riavvio la perdita dal picco reale non e' piu' vista", entered_before_restart,
         _state(c2))
+
+
+@pytest.mark.xfail(strict=True, reason="RO-DD-09 (rischio residuo, doppio guasto): rialzo del picco non salvato, perdita "
+                                       "delle posizioni gia' aperte durante il guasto, riavvio => picco vecchio, LOCKDOWN perso")
+def test_ro_dd_09_rialzo_non_salvato_poi_perdita_e_riavvio(tmp_path, monkeypatch) -> None:
+    """Con 3f59fa67 gli ingressi sono bloccati mentre il picco non e' salvato (RO-DD-08 chiuso). Resta il doppio guasto:
+    cassa 100 -> 120 (salvataggio fallito) -> 100 per settlement di posizioni gia' aperte -> riavvio col disco tornato:
+    il picco ricaricato e' 100, il drawdown reale dal picco verificato 120 e' 16,7 % >= lockdown 15 %."""
+    from core.money_management import DeskMode
+    c = build(tmp_path, max_drawdown_abs=None, lockdown_drawdown_pct=15.0)
+    read(c, 100)
+    real = c.db.save_settings
+
+    def save(values):
+        if KEY in (values or {}):
+            raise OSError("disk full")
+        return real(values)
+    monkeypatch.setattr(c.db, "save_settings", save)
+    read(c, 120)
+    read(c, 100)
+    monkeypatch.undo()
+    c2 = build(tmp_path, max_drawdown_abs=None, lockdown_drawdown_pct=15.0)
+    read(c2, 100)
+    assert c2.rc._desk_mode() == DeskMode.LOCKDOWN and _signal(c2, "1.641") is False, _state(c2)

@@ -116,3 +116,16 @@ base main `6519794b`, nessuna PR), con la copia di Claude D degli oracoli e `--r
 
 Gli xfail dei difetti chiusi sono condizionati alla correzione (`D1_FIX`, presenza di `core.drawdown_hard_stop`): restano
 xfail su un albero senza correzione e devono passare con la correzione. Al merge il condizionale si toglie.
+
+### 5-bis. Riverifica su `3f59fa6798f29c62fe9590df87b6bd458f07472c` (correzione RO-DD-08)
+
+- RO-DD-08: XPASS strict (picco non salvato => nessun nuovo ingresso, con o senza hard stop; ritentativo a ogni ammissione).
+- Non regressione: oracoli 74/74 con `--runxfail`; campagna 5: 10 PASS, 2 xfail attesi (RO-REC-01, RO-CAP-01).
+- **RO-DD-09 (rischio residuo, doppio guasto)**, xfail strict: rialzo del picco non salvato (100 -> 120), perdita delle
+  posizioni gia' aperte durante il guasto (cassa 100: LOCKDOWN corretto nel processo), riavvio col disco tornato =>
+  picco ricaricato 100, desk NORMAL, ingresso ammesso con drawdown reale 16,7 % >= lockdown 15 %. Con un solo supporto
+  di persistenza non e' eliminabile del tutto; e' fail-open sul denaro reale, quindi NON si accetta come limite noto
+  senza decisione owner esplicita. Mitigazioni possibili: ricostruzione prudente del picco all'avvio da un registro
+  durevole indipendente (scatola nera BB-1 su file separato, letture verificate del conto) o dal ledger dei settlement;
+  oppure blocco degli ingressi al riavvio finche' una procedura owner non conferma il picco quando l'ultimo stato
+  conosciuto e' "salvataggio in sospeso".
