@@ -6,8 +6,8 @@
   "sha": "3100239eb088c4a7906c3c2a436ed998b5a90f26"
  },
  "mandate_id": "PF-ROSERPINA-FINANCIAL-ORACLE-CLAUDE-D-20261109 (+ mandati precedenti Claude D)",
- "next_atomic_action": "Riverificare il nuovo SHA di Claude B con la correzione RO-DD-08; poi verifica sullo SHA della PR e su main dopo il merge",
- "previous_checkpoint_sha": "ac5a615bce2f9e719c887129f9583a6280888419",
+ "next_atomic_action": "Attendere SHA della PR 1 (dopo #617) e decisione owner RO-DD-09; rieseguire oracoli e campagna 5 sullo SHA della PR e su main",
+ "previous_checkpoint_sha": "6d01716347eed2dea7fca15dbbc8220dc6bdaf6d",
  "schema": "pf-current/1",
- "seq": 17
+ "seq": 18
 }

@@ -27,7 +27,7 @@
  ],
  "lotto_corrente": "G7 campagna finanziaria: scenari G7-S01..S21 + hardening F-R06",
  "mandate_id": "PF-ROSERPINA-FINANCIAL-ORACLE-CLAUDE-D-20261109 (+ mandati precedenti Claude D)",
- "next_atomic_action": "Riverificare il nuovo SHA di Claude B con la correzione RO-DD-08; poi verifica sullo SHA della PR e su main dopo il merge",
+ "next_atomic_action": "Attendere SHA della PR 1 (dopo #617) e decisione owner RO-DD-09; rieseguire oracoli e campagna 5 sullo SHA della PR e su main",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
