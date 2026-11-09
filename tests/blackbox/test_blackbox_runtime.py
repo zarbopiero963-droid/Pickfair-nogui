@@ -303,3 +303,30 @@ def test_chained_sensitive_flags_never_leak_the_value():
     assert out == [f"--password={bb.REDACTED}", f"--api-key={bb.REDACTED}", "--live"]
     assert rt.safe_argv(["--token=abc", "--simulation"]) == [f"--token={bb.REDACTED}", "--simulation"]
     assert rt.safe_argv(["--password", "pw", "--verbose"]) == [f"--password={bb.REDACTED}", "--verbose"]
+
+
+@pytest.mark.parametrize("result,outcome", [
+    ({"cancel_error_count": 0, "cancel_errors": [], "cancel_results": [{"ok": True}], "markets_attempted": 1,
+      "live_client_available": True, "persist_error": None}, "VERIFIED"),
+    ({"cancel_error_count": 2, "cancel_errors": [], "cancel_results": [], "markets_attempted": 1}, "FAILED"),
+    ({"cancel_error_count": 0, "cancel_results": [{"ok": False, "error": "x"}], "markets_attempted": 1}, "FAILED"),
+    ({"cancel_error_count": 0, "cancel_errors": [{"stage": "get_live_client", "error": "x"}]}, "FAILED"),
+    ({"cancel_error_count": 0, "cancel_errors": [], "markets_attempted": 2, "live_client_available": False}, "FAILED"),
+    ({"cancel_error_count": 0, "cancel_errors": [], "persist_error": "disco pieno"}, "UNKNOWN"),
+    ("non un dict", "UNKNOWN"),
+])
+def test_emergency_stop_result_outcome_comes_from_the_cancellation_result(monkeypatch, result, outcome):
+    """Codex #617 (761a52f2), P2: `emergency_stop()` cattura gli errori di cancellazione e li riporta nel risultato;
+    un cancel fallito o incompleto non deve risultare VERIFIED."""
+    calls = []
+
+    class FakeRuntime:
+        def emergency_stop(self, reason):
+            return result
+
+    monkeypatch.setattr(rt, "install", lambda *a, **kw: None)
+    monkeypatch.setattr(rt, "record", lambda event_type, **kw: calls.append((kw.get("phase"), kw.get("outcome"))))
+    app = object.__new__(headless_main.HeadlessApp)
+    app.runtime = FakeRuntime()
+    assert app._emergency_stop_with_audit() == 0
+    assert calls[-1] == ("RESULT", outcome), calls

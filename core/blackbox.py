@@ -110,6 +110,16 @@ def normalize_uuid(value: Any) -> Any:
     return compact if len(compact) == 32 and all(c in "0123456789abcdef" for c in compact) else s
 
 
+def _event_epoch(rec: Dict[str, Any], fallback: float) -> float:
+    """Istante (epoch) di un record: il suo `ts_utc` (anche se fornito dal chiamante, es. l'ATTEMPT di un emergency
+    stop), mai successivo a ``fallback``; `ts_utc` illeggibile => ``fallback``."""
+    try:
+        ts = _dt.datetime.strptime(str(rec.get("ts_utc")), "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=_dt.timezone.utc)
+        return min(float(fallback), ts.timestamp())
+    except (TypeError, ValueError):
+        return float(fallback)
+
+
 def utc_iso(ts: float) -> str:
     """ISO-8601 UTC al microsecondo, con `Z`."""
     return _dt.datetime.fromtimestamp(float(ts), tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -122,7 +132,8 @@ def _redact(value: Any, key: str = "") -> Any:
     if isinstance(value, str):
         return text_redaction.redact_secrets(value)
     if isinstance(value, dict):
-        return {(text_redaction.redact_secrets(k) if isinstance(k, str) else str(k)): _redact(v, str(k))
+        # Sol #617 (761a52f2): anche una chiave non stringa diventa testo redatto, mai un segreto in chiaro
+        return {text_redaction.redact_secrets(k if isinstance(k, str) else str(k)): _redact(v, str(k))
                 for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_redact(v) for v in value]
@@ -287,6 +298,12 @@ class BlackBox:
         for f in _JSON_FIELDS:
             rec[f] = _redact(rec[f]) if rec[f] is not None else None
         for f in RECORD_FIELDS:
+            if f not in _JSON_FIELDS and rec[f] is not None and not isinstance(rec[f], (str, bool, int, float)):
+                # Sol #617 (761a52f2): bytes o oggetti in un campo testuale (es. `reason`) finivano come BLOB non
+                # redatto. Diventano testo e passano dalla redazione come ogni stringa.
+                value = rec[f]
+                rec[f] = bytes(value).decode("utf-8", errors="replace") if isinstance(value, (bytes, bytearray)) \
+                    else str(value)
             if f not in _JSON_FIELDS and isinstance(rec[f], str):
                 rec[f] = text_redaction.redact_secrets(rec[f])
             if f in ("table_id", "market_id", "selection_id", "order_id", "order_ref", "bet_id") and rec[f] is not None:
@@ -327,6 +344,7 @@ class BlackBox:
         `critical=True`: scrittura durevole o `BlackBoxUnavailable` (il chiamante non esegue l'azione). Con
         `buffer_on_failure=True` (solo uscite protettive) un guasto mette l'evento nel buffer critico e ritorna il
         suo id: verra' scritto al ripristino, coperto da una `BLACKBOX_GAP`."""
+        attempted_at = float(self._clock())               # istante dell'evento, PRIMA di qualunque attesa del lock
         rec = self._build(event_type, dict(fields))      # errori di forma: sempre sollevati (bug del chiamante)
         with self._lock:
             try:
@@ -335,7 +353,7 @@ class BlackBox:
                 self._insert(rec)
                 return rec["event_id"]
             except (sqlite3.Error, OSError) as exc:
-                self._enter_degraded(exc)
+                self._enter_degraded(exc, since=_event_epoch(rec, attempted_at))
                 if critical and buffer_on_failure and len(self._buffer) < MAX_CRITICAL_BUFFER:
                     self._buffer.append(rec)
                     return rec["event_id"]
@@ -344,10 +362,14 @@ class BlackBox:
                 self.dropped += 1
                 return None
 
-    def _enter_degraded(self, exc: BaseException) -> None:
+    def _enter_degraded(self, exc: BaseException, *, since: Optional[float] = None) -> None:
+        """Sol #617 (761a52f2): la finestra della GAP parte dall'istante dell'evento non scritto, non dalla rilevazione
+        dell'errore (che puo' arrivare dopo l'attesa del lock SQLite, fino a 30 s): una query sull'intervallo
+        dell'evento perso trova sempre la lacuna."""
         self.last_error = f"{type(exc).__name__}: {exc}"
-        if self._degraded_since is None:
-            self._degraded_since = float(self._clock())
+        start = float(self._clock()) if since is None else float(since)
+        if self._degraded_since is None or start < self._degraded_since:
+            self._degraded_since = start
 
     def _flush_after_outage(self) -> None:
         """Al ripristino: eventi bufferizzati (ora originale, `buffered=true`), poi GAP con intervallo e ref, poi

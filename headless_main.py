@@ -1498,14 +1498,38 @@ class HeadlessApp:
                                 phase="ATTEMPT", outcome="PENDING", reason_code="operator_cli_flag",
                                 ts_utc=requested_at)
         if error is None:
-            blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="WARNING",
-                                    phase="RESULT", outcome="VERIFIED", reason_code="operator_cli_flag",
+            outcome, code = _emergency_stop_outcome(result)
+            blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main",
+                                    severity="WARNING" if outcome == "VERIFIED" else "ERROR",
+                                    phase="RESULT", outcome=outcome, reason_code=code,
                                     data={"result": result if isinstance(result, dict) else str(result)})
         else:
             blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="ERROR",
                                     phase="RESULT", outcome="FAILED", reason_code=type(error).__name__,
                                     reason=blackbox_runtime.safe_text(error, 500))
         return 0
+
+
+def _emergency_stop_outcome(result: Any) -> tuple:
+    """Esito di `RuntimeController.emergency_stop()` per il RESULT (Codex #617, 761a52f2): l'assenza di eccezione non
+    e' una conferma. Il runtime cattura gli errori di cancellazione e li riporta nel risultato:
+    - risultato non leggibile => UNKNOWN;
+    - errori di cancellazione (`cancel_error_count`, `cancel_errors`, un mercato con ok False) o ordini pendenti
+      senza client live => FAILED: la riduzione del rischio non e' completa;
+    - stato di emergenza non persistito (`persist_error`) => UNKNOWN: cancellazione fatta, blocco non durevole;
+    - altrimenti VERIFIED."""
+    if not isinstance(result, dict):
+        return "UNKNOWN", "EMERGENCY_RESULT_UNREADABLE"
+    failed_markets = [r for r in (result.get("cancel_results") or []) if isinstance(r, dict) and not r.get("ok")]
+    if int(result.get("cancel_error_count") or 0) > 0 or failed_markets:
+        return "FAILED", "CANCEL_ERRORS"
+    if result.get("cancel_errors"):
+        return "FAILED", "CANCEL_INCOMPLETE"
+    if int(result.get("markets_attempted") or 0) > 0 and not result.get("live_client_available", True):
+        return "FAILED", "NO_LIVE_CLIENT"
+    if result.get("persist_error"):
+        return "UNKNOWN", "EMERGENCY_STATE_NOT_PERSISTED"
+    return "VERIFIED", "operator_cli_flag"
 
 
 def main() -> int:

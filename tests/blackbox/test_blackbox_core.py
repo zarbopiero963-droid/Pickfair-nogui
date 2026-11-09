@@ -170,6 +170,48 @@ def test_non_critical_failure_is_counted_and_declared_as_a_gap_on_recovery(tmp_p
     assert _rows(box)[0]["outcome"] == "UNKNOWN", "finestra con eventi persi: mai VERIFIED (contratto Claude C, I2)"
 
 
+def test_outage_gap_starts_at_the_lost_event_not_after_the_lock_wait(tmp_path):
+    """Sol #617 (761a52f2): l'errore SQLite arriva dopo l'attesa del lock (fino a 30 s). La GAP deve partire
+    dall'istante dell'evento perso, cosi' una query sul suo intervallo trova la lacuna."""
+    clock = _Clock()
+    box = _box(tmp_path, clock=clock)
+    fc = _break(box)
+    real_insert = box._insert
+
+    def slow_failing_insert(rec):
+        clock.t += 30.0                                  # attesa del lock prima dell'errore
+        return real_insert(rec)
+
+    box._insert = slow_failing_insert
+    lost_at = clock.t
+    assert box.record("PRICE_SNAPSHOT", data={"p": 2.0}) is None
+    box._insert = real_insert
+    fc.fail = False
+    box.record("API_REQUEST")
+    gap = json.loads([r for r in _rows(box) if r["type"] == "BLACKBOX_GAP"][0]["data"])
+    assert gap["from_ts"] <= bb.utc_iso(lost_at + 0.01), (gap["from_ts"], bb.utc_iso(lost_at))
+
+
+def test_non_string_text_fields_and_keys_are_redacted(tmp_path):
+    """Sol #617 (761a52f2): `reason` in bytes finiva come BLOB non redatto; una chiave non stringa non passava
+    dalla redazione."""
+    secret = "S3cr3t-reason-bytes-ZZZ"
+    event_log.register_secret(secret)
+    try:
+        box = _box(tmp_path)
+
+        class Key:
+            def __str__(self):
+                return f"chiave {secret}"
+
+        box.record("CONFIG_CHANGE", source="USER", reason=f"motivo {secret}".encode(), data={Key(): 1})
+        row = dict(_rows(box)[0])
+        assert isinstance(row["reason"], str) and secret not in row["reason"], row["reason"]
+        assert secret not in json.dumps({k: (v.decode() if isinstance(v, bytes) else v) for k, v in row.items()})
+    finally:
+        event_log.unregister_secret(secret)
+
+
 def test_protective_exit_is_buffered_then_flushed_before_gap_and_recovered(tmp_path):
     """Caso 1 concordato con Claude D: buffer critico -> eventi bufferizzati (ora originale, buffered=true) ->
     BLACKBOX_GAP con from/to e ref -> BLACKBOX_RECOVERED."""

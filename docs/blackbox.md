@@ -86,6 +86,9 @@ di vita del processo.
 3. `--emergency-stop` registra la richiesta (ATTEMPT) e l'esito (RESULT VERIFIED o FAILED) **dopo** la cancellazione:
    una scrittura sul registro può attendere un lock fino al timeout di SQLite e non deve mai ritardare la riduzione del
    rischio. L'ATTEMPT porta l'ora reale della richiesta (`ts_utc`) e precede comunque il RESULT nella sequenza.
+   L'esito del RESULT viene dal risultato della cancellazione, non dall'assenza di eccezioni: errori di cancellazione
+   o ordini pendenti senza client live → `FAILED`; stato di emergenza non persistito o risultato illeggibile →
+   `UNKNOWN`; solo una cancellazione completa → `VERIFIED`.
 4. Le eccezioni non gestite vengono registrate con tipo, messaggio e traceback redatti **prima** di essere troncati
    (500 caratteri il messaggio, 8000 il traceback), così un segreto a cavallo del limite non lascia frammenti:
    - nel processo: `UNCAUGHT_EXCEPTION`;
