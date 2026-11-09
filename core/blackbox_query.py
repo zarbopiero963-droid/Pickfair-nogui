@@ -39,6 +39,18 @@ class QueryError(ValueError):
     """Richiesta di lettura non valida (filtro sconosciuto, limite, cursore)."""
 
 
+_HIDDEN_KEYS = frozenset({"order_ref", "customer_ref", "customerorderref", "customer_order_ref"})
+
+
+def _strip_hidden(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _strip_hidden(v) for k, v in value.items()
+                if not (isinstance(k, str) and k.replace("-", "_").lower() in _HIDDEN_KEYS)}
+    if isinstance(value, list):
+        return [_strip_hidden(v) for v in value]
+    return value
+
+
 def _row_to_event(row, external: bool) -> Dict[str, Any]:
     ev: Dict[str, Any] = {"seq": row["seq"], "hash": row["hash"]}
     for f in bb.RECORD_FIELDS:
@@ -49,8 +61,8 @@ def _row_to_event(row, external: bool) -> Dict[str, Any]:
     if external:
         for f in EXTERNAL_HIDDEN:
             ev.pop(f, None)
-        if isinstance(ev.get("data"), dict):
-            ev["data"] = {k: v for k, v in ev["data"].items() if k not in ("customer_ref", "customerOrderRef")}
+        for f in bb._JSON_FIELDS:                       # a ogni profondita', in data e values_*: mai il riferimento
+            ev[f] = _strip_hidden(ev.get(f))           # cliente nella vista esterna (analisi preventiva BB-1)
     ev["not_recorded"] = sorted(k for k, v in ev.items() if v is None and k not in ("seq", "hash"))
     return ev
 

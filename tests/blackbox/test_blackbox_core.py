@@ -355,3 +355,20 @@ def test_dashed_and_compact_uuid_are_one_identifier_on_write_too(tmp_path):
     assert r.get(dashed)["event_id"] == r.get(eid)["event_id"] == eid
     assert r.query({"causation_id": "00000000000000000000000000000001"})["records"][0]["event_id"] == eid
     assert len(r.query({"type": "API_REQUEST"})["records"]) == 1
+
+
+def test_external_view_never_exposes_the_customer_reference_at_any_depth(tmp_path):
+    """Analisi preventiva BB-1: il riferimento cliente non esce dalla vista esterna nemmeno se annidato in `data` o
+    presente in `values_*`, con qualunque variante del nome; la vista interna lo conserva."""
+    from core import blackbox_query as q
+    box = bb.BlackBox(str(tmp_path / "b.sqlite")).open()
+    box.start_session()
+    box.record("ORDER_PLACE_REQUEST", source="STRATEGY", phase="ATTEMPT", outcome="PENDING",
+               data={"req": {"customer_ref": "CREF-NESTED", "items": [{"Customer-Order-Ref": "CREF-LIST"}]}},
+               values_after={"customerOrderRef": "CREF-VALUES", "stake": 2})
+    r = q.BlackBoxReader(box)
+    ext = json.dumps(r.query({})["records"])
+    for secret in ("CREF-NESTED", "CREF-LIST", "CREF-VALUES"):
+        assert secret not in ext
+    assert '"stake": 2' in ext
+    assert "CREF-NESTED" in json.dumps(r.query({}, external=False)["records"])
