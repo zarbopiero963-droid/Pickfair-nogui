@@ -8,6 +8,7 @@ Catena reale: RuntimeController + MoneyManagement + SimulationBroker (stub offli
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -464,3 +465,44 @@ def test_ro_dd_08_unsaved_peak_blocks_entries_even_without_hard_stops(tmp_path):
     c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK", market_id="1.999"))
     assert json.loads(c.rc.db.get_settings()[STATE_KEY])["peak"] == "120.0"
     assert _ordini(c) == 1, _rifiuti(c)                    # picco salvato, nessuna perdita: ingresso ammesso
+
+
+def test_ro_dd_09_unsaved_rise_then_loss_then_restart_keeps_the_true_peak(tmp_path):
+    """RO-DD-09 (Claude D su 3f59fa67): cassa 100 -> 120 con il salvataggio nel DB fallito -> 100, poi riavvio con il
+    DB di nuovo disponibile. Il picco vero (120) sopravvive nel marker su file separato: drawdown 16,7 % >= 15 % =>
+    LOCKDOWN, mai un riavvio che riparte da 100."""
+    c = _catena(tmp_path, lockdown_drawdown_pct=15.0)
+    _lettura(c, 100.0)
+    real_save = c.rc.db.save_settings
+
+    def failing_save(values):
+        if STATE_KEY in values:
+            raise OSError("DB non scrivibile")
+        return real_save(values)
+
+    c.rc.db.save_settings = failing_save
+    _lettura(c, 120.0)
+    _lettura(c, 100.0)
+    marker = c.rc.db.db_path + ".drawdown_peak_pending.json"
+    assert json.loads(open(marker).read())["peak"] == "120.0"
+
+    c.rc.db.save_settings = real_save                     # riavvio: DB di nuovo scrivibile
+    riavviato = DrawdownHardStop(c.rc.db)
+    riavviato.restore()
+    assert riavviato.snapshot()["peak"] == 120.0 and not riavviato.persist_failed
+    assert json.loads(c.rc.db.get_settings()[STATE_KEY])["peak"] == "120.0"     # riportato nel DB
+    assert not os.path.exists(marker)                     # marker consumato solo dopo il salvataggio nel DB
+    assert riavviato.loss_pct(100.0) == pytest.approx(16.6667, rel=1e-4)
+
+    del c.rc._drawdown_hard_stop                          # il runtime riavviato blocca l'ingresso
+    c.rc.mode = c.rc.mode.__class__.ACTIVE
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0 and _rifiuti(c)[-1] == "desk_lockdown"
+
+
+def test_ro_dd_09_unreadable_marker_fails_closed(tmp_path):
+    c = _catena(tmp_path)
+    open(c.rc.db.db_path + ".drawdown_peak_pending.json", "w").write("{rotto")
+    stop = DrawdownHardStop(c.rc.db)
+    stop.restore()
+    assert stop.unreadable and stop.reason(10.0, 100.0) == REASON_STATE_UNREADABLE

@@ -18,7 +18,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (autorizzazione, motivo, operation_id monouso, conferma, verifiche di cassa/esposizione/AMBIGUOUS, registrazione
   durevole; non ribasa il picco). DEFENSE/LOCKDOWN usano la perdita cumulativa di cassa dal picco persistente:
   l'esposizione aperta non e' piu' una perdita e resta governata dai suoi cap. Stato illeggibile o picco non salvato =>
-  nessun nuovo ingresso, anche senza hard-stop configurati (RO-DD-08). Cap in Decimal esatto, senza tolleranza (`validators.exceeds_cap`, `pct_of`, liability LAY).
+  nessun nuovo ingresso, anche senza hard-stop configurati (RO-DD-08); con il DB non scrivibile il picco va in un marker su file
+  separato, cosi' un riavvio non riparte da un picco vecchio (RO-DD-09). Cap in Decimal esatto, senza tolleranza (`validators.exceeds_cap`, `pct_of`, liability LAY).
   `get_status` espone `loss_drawdown_pct`, `capital_at_risk_pct` e `drawdown_hard_stop`. Prima: l'auto-reset cancellava
   la perdita, il picco seguiva il disponibile, il riavvio lo azzerava, il % valeva solo in LIVE, 60.0000000001 passava
   il cap 60 (campagna Grok 5 tavoli, #586 c.6747305390). Test `tests/d1` (51).

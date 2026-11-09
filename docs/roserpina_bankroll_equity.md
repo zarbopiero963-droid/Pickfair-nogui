@@ -440,5 +440,11 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   dal picco salvato e renderebbe aggirabile il LOCKDOWN cumulativo), con nuovo tentativo di salvataggio a ogni
   ammissione; con hard-stop configurato anche `max_drawdown_abs_picco_non_persistito`; cassa non verificata =>
   `max_drawdown_abs_cassa_non_verificata`.
-- **Limiti dichiarati.** Un solo record persistito: un `seq` regressivo al riavvio non e' rilevabile. Grandezze
+- **Doppio guasto (RO-DD-09).** Se il DB non salva il picco, lo stesso record va in un marker su file separato
+  (`<db>.drawdown_peak_pending.json`, scrittura atomica, stesso schema del marker della perdita giornaliera). Al
+  riavvio vale il picco piu' alto fra DB e marker; il marker si riporta nel DB e si rimuove solo dopo il salvataggio.
+  Marker illeggibile => stato illeggibile (fail-closed).
+- **Limiti dichiarati.** Se non sono scrivibili ne' il DB ne' il marker, il picco piu' alto resta solo in memoria per
+  la sessione (KNOWN_LIMITATION, come per la perdita giornaliera); nel frattempo gli ingressi restano negati. Un `seq`
+  regressivo al riavvio non e' rilevabile. Grandezze
   esposte in `get_status`: `loss_drawdown_pct`, `capital_at_risk_pct` (solo informativo), `drawdown_hard_stop`.

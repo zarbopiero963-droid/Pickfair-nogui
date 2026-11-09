@@ -37,12 +37,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
 from core import validators
+from core.atomic_io import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,29 @@ REASON_PCT_ACTIVE = "drawdown_hard_stop_active"
 REASON_PCT_INVALID = "max_drawdown_hard_stop_pct_non_valido"
 KIND_ABS = "max_drawdown_abs"
 KIND_PCT = "max_drawdown_hard_stop_pct"
+
+
+def _marker_path(db: Any) -> str:
+    """RO-DD-09: marker `<db>.drawdown_peak_pending.json` accanto al DB (stesso schema di `daily_loss_store`). Vuoto
+    se il DB non ha un percorso su disco (es. in memoria)."""
+    try:
+        path = os.fspath(getattr(db, "db_path", None))
+    except TypeError:
+        return ""
+    if not isinstance(path, str) or path in ("", ":memory:"):
+        return ""
+    return path + ".drawdown_peak_pending.json"
+
+
+def _parse_record(raw: Any) -> dict:
+    """Record persistito validato; ValueError se illeggibile o incoerente."""
+    record = json.loads(raw)
+    peak = Decimal(str(record["peak"]))
+    seq = record.get("seq")
+    breached = record.get("breached", False)
+    if not peak.is_finite() or peak <= 0 or type(seq) is not int or seq < 0 or type(breached) is not bool:
+        raise ValueError("record non valido")
+    return {"peak": peak, "seq": seq, "breached": breached, "breach": dict(record.get("breach") or {})}
 
 
 def _now() -> str:
@@ -87,53 +112,70 @@ class DrawdownHardStop:
 
     # ------------------------------------------------------------ persistenza
     def restore(self) -> None:
-        """Rilegge lo stato salvato. Illeggibile => ``unreadable`` (fail-closed finche' non si chiarisce)."""
+        """Rilegge lo stato salvato dal DB e dal marker RO-DD-09 (scritto quando il DB non salvava): vale il picco
+        piu' alto, un superamento in uno dei due vale. Illeggibile => ``unreadable`` (fail-closed). Un marker
+        ricostruito viene riportato nel DB appena possibile."""
         with self._lock:
             self.unreadable = False
+            records = []
             try:
                 getter = getattr(self._db, "get_settings", None)
                 raw = (getter() or {}).get(STATE_KEY) if callable(getter) else None
+                if raw not in (None, ""):
+                    records.append(_parse_record(raw))
+                marker = _marker_path(self._db)
+                if marker and os.path.exists(marker):
+                    with open(marker, encoding="utf-8") as fh:
+                        records.append(dict(_parse_record(fh.read()), from_marker=True))
             except Exception:
-                logger.exception("D-1: stato del picco dell'hard-stop non leggibile")
+                logger.error("D-1: stato del picco dell'hard-stop illeggibile (DB o marker): nuovi ingressi negati",
+                             exc_info=True)
                 self.unreadable = True
                 return
-            if raw in (None, ""):
+            if not records:
                 return                                   # nessuno stato: il picco parte dalla prima cassa verificata
-            try:
-                record = json.loads(raw)
-                peak = Decimal(str(record["peak"]))
-                seq = record.get("seq")
-                breached = record.get("breached", False)
-                if not peak.is_finite() or peak <= 0 or type(seq) is not int or seq < 0 or type(breached) is not bool:
-                    raise ValueError("record non valido")
-            except Exception:
-                logger.error("D-1: stato del picco dell'hard-stop illeggibile (%r): nuovi ingressi negati", raw)
-                self.unreadable = True
-                return
+            best = max(records, key=lambda r: r["peak"])
             # Mai sotto un picco gia' osservato in questo processo (START ripetuto nello stesso processo).
-            if self.peak is None or peak > self.peak:
-                self.peak = peak
-            self.seq = max(self.seq, seq)
+            if self.peak is None or best["peak"] > self.peak:
+                self.peak = best["peak"]
+            self.seq = max([self.seq] + [r["seq"] for r in records])
+            breached = [r for r in records if r["breached"]]
             if breached:                                 # un superamento salvato non si annulla mai rileggendo
                 self.breached = True
-                self.breach = dict(record.get("breach") or {})
+                self.breach = dict(breached[0]["breach"])
+            if any(r.get("from_marker") for r in records):
+                self._persist_locked()                   # RO-DD-09: il picco del marker torna nel DB
 
     def _persist_locked(self) -> bool:
         saver = getattr(self._db, "save_settings", None)
-        if not callable(saver):
-            self.persist_failed = True
-            return False
         seq = self.seq + 1
         record = {"peak": str(self.peak), "seq": seq, "breached": self.breached, "breach": dict(self.breach),
                   "updated_at": _now()}
+        payload = json.dumps(record)
+        marker = _marker_path(self._db)
         try:
-            saver({STATE_KEY: json.dumps(record)})
+            if not callable(saver):
+                raise RuntimeError("DB senza save_settings")
+            saver({STATE_KEY: payload})
         except Exception:
-            logger.exception("D-1: picco dell'hard-stop non salvato: nuovi ingressi negati finche' non si salva")
+            logger.exception("D-1: picco dell'hard-stop non salvato nel DB: nuovi ingressi negati finche' non si salva")
             self.persist_failed = True
+            # RO-DD-09 (Claude D): marker su file separato, cosi' un riavvio non riparte da un picco vecchio anche se
+            # il DB non torna. Marker non scrivibile => KNOWN_LIMITATION (doppio guasto), come per la perdita del giorno.
+            try:
+                if marker:
+                    atomic_write_text(marker, payload)
+                    self.seq = seq
+            except Exception:
+                logger.critical("D-1: neanche il marker del picco e' scrivibile (doppio guasto)", exc_info=True)
             return False
         self.seq = seq
         self.persist_failed = False
+        try:
+            if marker and os.path.exists(marker):
+                os.remove(marker)
+        except OSError:
+            logger.warning("D-1: marker del picco non rimosso (innocuo: il DB ha lo stesso picco o maggiore)")
         return True
 
     # ------------------------------------------------------------ osservazione
