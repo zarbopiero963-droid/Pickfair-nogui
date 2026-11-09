@@ -3496,6 +3496,20 @@
         "tests/f026/test_g7_r06_settled_ambiguous.py"
       ],
       "max_files": 8
+    },
+    "d_roserpina_financial_oracle": {
+      "description": "PF-ROSERPINA-FINANCIAL-ORACLE-CLAUDE-D-20261109: audit indipendente del Money Management Roserpina (drawdown, Decimal, soglie), oracolo Decimal e riproduzioni RED xfail strict sul runtime reale. Solo test e documentazione: nessun codice di prodotto.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "docs/testing/roserpina_financial_oracle.md",
+        "tests/roserpina_oracle/__init__.py",
+        "tests/roserpina_oracle/harness.py",
+        "tests/roserpina_oracle/oracle.py",
+        "tests/roserpina_oracle/test_decimal_oracle.py",
+        "tests/roserpina_oracle/test_drawdown_oracle.py"
+      ],
+      "max_files": 7
     }
   }
 }
