@@ -72,6 +72,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Settimo giro: `handoff_branch` è un nome di branch valido letto come ref esatto (mai `main@{1}` dal reflog); anche
   i `pull/<N>` del fallback si riallineano al remoto prima di valere come prova; uno STATE con `tests_executed` o
   `code` di tipo errato è un checkpoint invalido, mai un `TypeError` che blocca `recover`/`bootstrap`.
+  Rilievi Grok sullo stesso giro: gli errori di git non riportano credenziali (`[REDACTED]`); un `--repo-path` che non
+  è il repository dichiarato non viene mai contattato.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

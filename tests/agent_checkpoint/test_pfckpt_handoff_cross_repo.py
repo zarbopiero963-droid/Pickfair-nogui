@@ -547,3 +547,36 @@ def test_recover_skips_a_head_with_a_malformed_tests_executed(world):
     assert rep["status"] == "RECOVERED" and rep["commit"] == good
     err = expect(2, pfckpt.bootstrap, world["url"], BR, str(world["tmp"] / "boot"), D, CODE_BR)
     assert err.reason != "TypeError"
+
+
+# ================================================================== Grok #615 (a2814322): stderr redatto, identita' prima del fetch
+def test_refresh_error_never_carries_credentials_from_git_stderr(world, target, monkeypatch):
+    clone = target_clone(target)
+    real = pfckpt.git
+
+    def fake(repo, *args, **kw):
+        if args and args[0] in ("fetch", "ls-remote"):
+            return subprocess.CompletedProcess(args, 128, b"", b"fatal: https://x-access-token:ghp_SEGRETO123@host/o/r\n")
+        return real(repo, *args, **kw)
+
+    monkeypatch.setattr(pfckpt, "git", fake)
+    err = expect(5, pfckpt.refresh_published_refs, clone, "origin")
+    assert err.reason == "PUBLISHED_REFS_REFRESH_FAILED"
+    assert "ghp_SEGRETO123" not in repr(err.detail) and "[REDACTED]@host" in err.detail["stderr"]
+
+
+def test_save_never_fetches_a_repo_path_that_is_not_the_declared_repository(world, target):
+    """`--repo-path` il cui origin non e' target_repo: nessun fetch (il remoto estraneo non viene contattato), il
+    checkpoint e' rifiutato come riferimento, non come errore di rete."""
+    hsha, htree = publish_handoff(target)
+    clone = target_clone(target)
+    sh(clone, "remote", "set-url", "origin", str(target["tmp"] / "inesistente" / "estraneo.git"))
+    r = rec(world, target, "DURABLE", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    a = agent(world, "c")
+    os.makedirs(os.path.join(a, D, "handoff"), exist_ok=True)
+    open(os.path.join(a, D, "handoff", "c.patch"), "wb").write(target["patch"])
+    exp = next_state(a, world, repository=CHAIN, handoffs=[r])
+    err = expect(2, pfckpt.save, a, BR, "origin", exp, "repo-path estraneo", D, agent="claude-c",
+                 repo_paths={TARGET: clone})
+    assert any("origin del percorso" in p for p in err.detail["problems"])
+    assert pfckpt.remote_head(a, "origin", BR) == exp

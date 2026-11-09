@@ -86,10 +86,20 @@ class CheckpointError(Exception):
         self.code, self.reason, self.detail = code, reason, detail
 
 
+_CRED_IN_URL = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^/@\s]+@")
+
+
+def _safe_err(raw, keep=-300):
+    """stderr di git per i messaggi d'errore, SENZA credenziali: `scheme://utente:token@host` diventa
+    `scheme://[REDACTED]@host` (rilievo Grok #615). Mai stderr grezzo in un errore che finisce in log o commenti."""
+    text = raw.decode(errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw or "")
+    return _CRED_IN_URL.sub(r"\1[REDACTED]@", text)[keep:]
+
+
 def git(repo, *args, check=True, input_bytes=None):
     p = subprocess.run(["git", "-C", repo, *args], capture_output=True, input=input_bytes)
     if check and p.returncode != 0:
-        raise CheckpointError(5, "GIT_ERROR", cmd=" ".join(args), stderr=p.stderr.decode(errors="replace")[-400:])
+        raise CheckpointError(5, "GIT_ERROR", cmd=_safe_err(" ".join(map(str, args)), -2000), stderr=_safe_err(p.stderr, -400))
     return p
 
 
@@ -466,7 +476,7 @@ def refresh_published_refs(path, remote="origin"):
     q = git(path, "ls-remote", "--heads", remote, check=False) if p.returncode == 0 else p
     if q.returncode != 0:
         raise CheckpointError(5, "PUBLISHED_REFS_REFRESH_FAILED", repo=path, remote=remote,
-                              stderr=q.stderr.decode(errors="replace")[-300:])
+                              stderr=_safe_err(q.stderr, -300))
     live = {ln.split("\t", 1)[1][len("refs/heads/"):] for ln in q.stdout.decode().splitlines() if "\trefs/heads/" in ln}
     pref = f"refs/remotes/{remote}/"
     local = out(path, "for-each-ref", "--format=%(refname) %(objectname)", pref).splitlines()
@@ -483,7 +493,7 @@ def refresh_published_refs(path, remote="origin"):
         q = git(path, "ls-remote", remote, "refs/pull/*/head", check=False)
         if q.returncode != 0:
             raise CheckpointError(5, "PUBLISHED_REFS_REFRESH_FAILED", repo=path, remote=remote,
-                                  stderr=q.stderr.decode(errors="replace")[-300:])
+                                  stderr=_safe_err(q.stderr, -300))
         live_pr = {}
         for ln in q.stdout.decode().splitlines():
             sha, _t, name = ln.partition("\t")
@@ -497,7 +507,15 @@ def refresh_published_refs(path, remote="origin"):
             p = git(path, "fetch", "-q", remote, *[f"+refs/pull/{n}/head:{pref}pull/{n}" for n in stale], check=False)
             if p.returncode != 0:
                 raise CheckpointError(5, "PUBLISHED_REFS_REFRESH_FAILED", repo=path, remote=remote,
-                                      stderr=p.stderr.decode(errors="replace")[-300:])
+                                      stderr=_safe_err(p.stderr, -300))
+
+
+def refresh_repo_paths(repo_paths):
+    """Aggiorna i `--repo-path` SOLO dopo il controllo d'identita' (rilievo Grok #615): nessun fetch su un percorso che
+    non e' il repository dichiarato. Un percorso estraneo non viene toccato e verify lo rifiuta come riferimento."""
+    for name, path in (repo_paths or {}).items():
+        if _repo_identity_ok(path, name):
+            refresh_published_refs(path, "origin")
 
 
 def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, ckpt_repo=None, remote="origin"):
@@ -997,7 +1015,7 @@ def write_derived(worktree, d, state, lease):
 def remote_head(repo, remote, branch):
     p = git(repo, "ls-remote", remote, f"refs/heads/{branch}", check=False)
     if p.returncode != 0:
-        raise CheckpointError(5, "REMOTE_UNREACHABLE", stderr=p.stderr.decode(errors="replace")[-300:])
+        raise CheckpointError(5, "REMOTE_UNREACHABLE", stderr=_safe_err(p.stderr, -300))
     line = p.stdout.decode().strip()
     return line.split()[0] if line else None
 
@@ -1122,7 +1140,7 @@ def cited_references(repo, state):
 def _fetch_into_ns(repo, remote, specs, check):
     p = git(repo, "fetch", "-q", "--no-tags", remote, *specs, check=False)
     if check and p.returncode != 0:
-        raise CheckpointError(5, "REMOTE_UNREACHABLE", stderr=p.stderr.decode(errors="replace")[-300:])
+        raise CheckpointError(5, "REMOTE_UNREACHABLE", stderr=_safe_err(p.stderr, -300))
 
 
 def durability_tips(repo, remote, prs=(), all_pulls=False):
@@ -1207,7 +1225,7 @@ def readback(remote_url, branch, d, code_branch=None, expect_commit=None, keep_r
     try:
         p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, remote_url, tmp], capture_output=True)
         if p.returncode != 0:
-            raise CheckpointError(4, "READBACK_CLONE_FAILED", stderr=p.stderr.decode(errors="replace")[-300:])
+            raise CheckpointError(4, "READBACK_CLONE_FAILED", stderr=_safe_err(p.stderr, -300))
         if code_branch:
             git(tmp, "fetch", "-q", "origin", f"{code_branch}:refs/remotes/origin/{code_branch}", check=False)
         # Gli SHA di `tests_executed` possono stare su qualunque branch pubblicato (ciclo 8 #512: la
@@ -1250,8 +1268,7 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
     url = out(repo, "remote", "get-url", remote)
     # prove di pubblicazione su ref FRESCHI (rilievo Sol #615): branch cancellati sul remoto potati prima di verificare
     refresh_published_refs(repo, remote)
-    for path in dict.fromkeys((repo_paths or {}).values()):
-        refresh_published_refs(path, "origin")
+    refresh_repo_paths(repo_paths)
     current = remote_head(repo, remote, branch)
     head = out(repo, "rev-parse", "HEAD")
     parent = out(repo, "rev-parse", "HEAD^") if git(repo, "rev-parse", "--verify", "HEAD^", check=False).returncode == 0 else None
@@ -1262,7 +1279,7 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
         if keep_refs and local["keep_shas"]:
             p = git(repo, "push", "-q", "--atomic", remote, *keep_refspecs(local["keep_shas"]), check=False)
             if p.returncode != 0:
-                raise CheckpointError(3, "KEEP_REF_PUSH_REJECTED", stderr=p.stderr.decode(errors="replace")[-300:])
+                raise CheckpointError(3, "KEEP_REF_PUSH_REJECTED", stderr=_safe_err(p.stderr, -300))
         report = readback(url, branch, d, code_branch, expect_commit=head, keep_refs=keep_refs,
                           durable_branches=durable_branches, repo_paths=repo_paths)
         return {"status": "DURABLE", "resumed": "after_push", **report}
@@ -1343,7 +1360,7 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
         if now_remote == out(repo, "rev-parse", "HEAD"):
             resumed = "push_reported_error_but_landed"
         else:
-            raise CheckpointError(3, "PUSH_REJECTED", remote=now_remote, stderr=p.stderr.decode(errors="replace")[-300:])
+            raise CheckpointError(3, "PUSH_REJECTED", remote=now_remote, stderr=_safe_err(p.stderr, -300))
     report = readback(url, branch, d, code_branch, expect_commit=out(repo, "rev-parse", "HEAD"), keep_refs=keep_refs,
                       durable_branches=durable_branches, repo_paths=repo_paths)
     return {"status": "DURABLE", "resumed": resumed, **report}
@@ -1381,12 +1398,11 @@ def code_divergence(repo, code_branch, code_sha):
 def bootstrap(url, branch, dest, d=DEFAULT_DIR, code_branch=None, agent=None, repo_paths=None):
     p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, url, dest], capture_output=True)
     if p.returncode != 0:
-        raise CheckpointError(5, "CLONE_FAILED", stderr=p.stderr.decode(errors="replace")[-300:])
+        raise CheckpointError(5, "CLONE_FAILED", stderr=_safe_err(p.stderr, -300))
     if code_branch:
         git(dest, "fetch", "-q", "origin", f"{code_branch}:refs/remotes/origin/{code_branch}", check=False)
     fetch_keep_refs(dest)                           # gli SHA citati restano risolvibili dopo squash + delete branch
-    for path in dict.fromkeys((repo_paths or {}).values()):
-        refresh_published_refs(path, "origin")      # --repo-path: prove di pubblicazione su ref freschi
+    refresh_repo_paths(repo_paths)                  # --repo-path: prove di pubblicazione su ref freschi
     pull_fetch = fetch_pull_heads(dest, d)          # fallback GitHub refs/pull/<N>/head, solo se serve
     try:
         report = verify(dest, "HEAD", d, repo_paths=repo_paths)
@@ -1425,7 +1441,7 @@ def recover(url, branch, dest, d=DEFAULT_DIR, repo_paths=None):
     """Materializza in DEST l'ultimo checkpoint VALIDO della catena, senza toccare il remoto."""
     p = subprocess.run(["git", "clone", "-q", "--no-local", "--branch", branch, url, dest], capture_output=True)
     if p.returncode != 0:
-        raise CheckpointError(5, "CLONE_FAILED", stderr=p.stderr.decode(errors="replace")[-300:])
+        raise CheckpointError(5, "CLONE_FAILED", stderr=_safe_err(p.stderr, -300))
     fetch_keep_refs(dest)
     fetch_pull_heads(dest, d)
     head = out(dest, "rev-parse", "HEAD")

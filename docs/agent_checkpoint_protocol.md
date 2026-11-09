@@ -276,7 +276,10 @@ per un bare) termina con `owner/name`; altrimenti è un problema di riferimento.
 potano i remote-tracking dei branch prima della verifica, e riallineano i `refs/remotes/origin/pull/<N>` del fallback a
 `refs/pull/<N>/head` (o li tolgono se la PR non c'è più): un
 branch cancellato sul remoto non vale come prova per un ref locale obsoleto, e un remoto irraggiungibile dà
-`PUBLISHED_REFS_REFRESH_FAILED` (exit 5) senza pubblicare nulla. In un repository esterno anche `source_sha` (con `source_published: true`) e la `base_sha` di un
+`PUBLISHED_REFS_REFRESH_FAILED` (exit 5) senza pubblicare nulla. Un `--repo-path` che non supera il controllo d'identità non viene mai
+aggiornato (nessun fetch verso un remoto estraneo), e gli errori di git riportano lo stderr senza credenziali
+(`scheme://[REDACTED]@host`). `verify` resta un controllo **locale** sui ref presenti: `READY` e `DURABLE` li danno solo
+`bootstrap` (clone appena fatto della catena più `--repo-path` aggiornati) e `save` (aggiornamento prima della verifica). In un repository esterno anche `source_sha` (con `source_published: true`) e la `base_sha` di un
 `INTEGRATED_VERIFIED` senza commit di handoff devono essere raggiungibili da un ref pubblicato (`refs/remotes/*`,
 oppure `refs/heads/*` nel bare): un commit presente solo nel clone locale non basta. Al `save` e al readback, la sorgente pubblicata e il commit di handoff che stanno nel repository
 della catena passano anche per la classificazione di durabilità (§6-ter, etichette `handoff[i]` e
@@ -339,7 +342,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 144 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 146 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo
