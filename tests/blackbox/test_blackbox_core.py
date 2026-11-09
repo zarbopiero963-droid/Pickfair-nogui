@@ -685,6 +685,6 @@ def test_reader_on_a_separate_instance_never_reports_runtime_health_as_healthy(t
     assert st["health_scope"] == "RUNTIME" and st["degraded"] is False and st["buffered"] == 0
     other = bq.BlackBoxReader(bb.BlackBox(path).open()).status()
     assert other["health_scope"] == "READER_LOCAL"
-    for f in ("degraded", "buffered", "dropped_non_critical"):
-        assert other[f] is None and f in other["not_reported"], f
+    for f in ("ok", "session_id", "degraded", "buffered", "dropped_non_critical"):
+        assert other[f] is None and f in other["not_reported"], f       # mai la sessione o la salute del lettore
     assert other["as_of_seq"] == st["as_of_seq"]

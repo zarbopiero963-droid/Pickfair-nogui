@@ -97,11 +97,12 @@ class BlackBoxReader:
         last = self._rows("SELECT MAX(seq) AS s, COUNT(*) AS n FROM events")[0]
         runtime = self.box.is_runtime()
         not_reported = [] if h["last_error"] is None else ["last_error_detail"]
-        if not runtime:
-            not_reported += ["degraded", "buffered", "dropped_non_critical"]
-        return {"ok": not h["degraded"], "health_scope": "RUNTIME" if runtime else "READER_LOCAL",
+        if not runtime:                  # anche `ok` e `session_id` sarebbero del lettore, non del runtime (Claude C)
+            not_reported += ["ok", "session_id", "degraded", "buffered", "dropped_non_critical"]
+        return {"ok": (not h["degraded"]) if runtime else None,
+                "health_scope": "RUNTIME" if runtime else "READER_LOCAL",
                 "degraded": h["degraded"] if runtime else None, "as_of_seq": last["s"] or 0,
-                "count": last["n"], "session_id": h["session_id"],
+                "count": last["n"], "session_id": h["session_id"] if runtime else None,
                 "buffered": h["buffered"] if runtime else None,
                 "dropped_non_critical": h["dropped_non_critical"] if runtime else None,
                 "not_reported": not_reported}

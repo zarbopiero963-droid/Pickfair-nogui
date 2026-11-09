@@ -133,7 +133,7 @@ alias `ord_<32 hex>` e `exchange_ts`; fixture condivisa sha256 `74be0f92…`):
 
 | Funzione | Cosa restituisce |
 |---|---|
-| `status()` | salute del registro, `as_of_seq`, eventi persi o in buffer, `not_reported`; `health_scope` = `RUNTIME` sull'istanza che scrive (lock D3), `READER_LOCAL` su un'istanza separata, dove `degraded`/`buffered`/`dropped_non_critical` sono `None` e in `not_reported` (mai zeri sani) |
+| `status()` | salute del registro, `as_of_seq`, eventi persi o in buffer, `not_reported`; `health_scope` = `RUNTIME` sull'istanza che scrive (lock D3), `READER_LOCAL` su un'istanza separata, dove `ok`/`session_id`/`degraded`/`buffered`/`dropped_non_critical` sono `None` e in `not_reported` (mai zeri sani) |
 | `sessions()` | le sessioni, con l'indicazione di chiusura pulita |
 | `query(filters, after_seq, limit)` | un `dict` (non una tupla) con `records`, `next_after_seq` (0 se non ci sono altre pagine), `gaps_in_range`, `as_of_seq` |
 | `get(event_id, chain_depth)` | l'evento con la catena di `causation_id`; `chain_depth` da 0 a `MAX_CHAIN_DEPTH = 20`, oltre: `QueryError` |
