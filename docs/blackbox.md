@@ -106,6 +106,7 @@ di vita del processo.
 7. **Dump nativo** (`faulthandler`, `fault.log`): al riavvio viene messo da parte in `fault.log.pending` (o letto
    dov'è, se non si può spostare) e archiviato in `fault.log.1` solo dopo che il `CRASH_RECOVERY` è scritto in modo
    durevole. Se l'avvio o la scrittura falliscono, il dump resta in attesa e viene importato al primo avvio riuscito;
+   `CRASH_RECOVERY` è critico: se non si riesce a scriverlo l'avvio viene rifiutato, mai un registro degradato;
    un dump nuovo si accoda a quello in attesa. Il nuovo `faulthandler` apre `fault.log` in append, mai in troncatura,
    e alla chiusura pulita il file viene rimosso solo se non contiene un dump ancora da consumare.
 8. **Recupero riprendibile:** se `UNCLEAN_TERMINATION` è stato scritto ma la sua `BLACKBOX_GAP` no (guasto fra i due

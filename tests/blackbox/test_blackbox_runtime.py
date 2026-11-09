@@ -361,6 +361,7 @@ def test_windows_lock_writes_the_locked_byte_before_locking_an_empty_file(tmp_pa
     box._writer_lock.close()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="backend POSIX (fcntl); il backend Windows ha il suo test con msvcrt finto")
 @pytest.mark.parametrize("err,expected", [
     (errno.EWOULDBLOCK, "RuntimeAlreadyActive"), (errno.EAGAIN, "RuntimeAlreadyActive"),
     (errno.EIO, "BlackBoxUnavailable"), (errno.ENOLCK, "BlackBoxUnavailable"),
@@ -377,3 +378,27 @@ def test_only_a_busy_lock_means_another_runtime(tmp_path, monkeypatch, err, expe
     box = bb.BlackBox(str(tmp_path / "l.sqlite"))
     with pytest.raises(getattr(bb, expected)):
         box.acquire_runtime()
+
+
+def test_failed_crash_recovery_import_refuses_start_and_keeps_the_dump(bbpath, monkeypatch):
+    """Sol #617 (97b4c8fc): CRASH_RECOVERY e' critico. Se non si scrive, `install()` non deve restituire un registro
+    degradato (il processo partirebbe anche in LIVE): solleva, e il dump resta in attesa per il prossimo avvio."""
+    bbpath.parent.mkdir(parents=True)
+    (bbpath.parent / "fault.log").write_text("Fatal Python error: Segmentation fault\n")
+    real = bb.BlackBox.record
+
+    def fail_crash_recovery(self, event_type, **kw):
+        if event_type == "CRASH_RECOVERY":
+            raise bb.BlackBoxUnavailable("disco pieno")
+        return real(self, event_type, **kw)
+
+    monkeypatch.setattr(bb.BlackBox, "record", fail_crash_recovery)
+    with pytest.raises(bb.BlackBoxUnavailable):
+        rt.install()
+    assert rt._box is None, "registro degradato installato"
+    assert "Segmentation fault" in (bbpath.parent / "fault.log.pending").read_text()
+    monkeypatch.setattr(bb.BlackBox, "record", real)
+    rt.install()                                           # al riavvio successivo il dump viene importato
+    rt.shutdown("STOP")
+    crash = [e for e in _events(bbpath) if e["type"] == "CRASH_RECOVERY"]
+    assert len(crash) == 1 and "Segmentation fault" in json.loads(crash[0]["data"])["tail"]

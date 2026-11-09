@@ -195,7 +195,10 @@ def install(path: Optional[str] = None, **process_data: Any) -> bb.BlackBox:
                        data={"tail": dump})
             keep_fault = not _consume_fault_dump(fault_path)    # solo dopo la scrittura durevole
         except bb.BlackBoxUnavailable:
-            keep_fault = True                    # il dump resta in attesa: nuovo tentativo al prossimo avvio
+            # Sol #617 (97b4c8fc): un guasto accertato del registro su un evento critico non lascia partire il
+            # processo con un registro degradato. Il dump resta in attesa (`fault.log.pending`) per il prossimo avvio.
+            box.close()
+            raise
     try:
         # append, mai troncatura: un dump non ancora consumato resta leggibile (rilievo Sol #617)
         _fault_file = open(fault_path, "a")
