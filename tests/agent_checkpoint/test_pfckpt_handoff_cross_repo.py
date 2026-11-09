@@ -553,16 +553,21 @@ def test_recover_skips_a_head_with_a_malformed_tests_executed(world):
 def test_refresh_error_never_carries_credentials_from_git_stderr(world, target, monkeypatch):
     clone = target_clone(target)
     real = pfckpt.git
+    # valore composto a runtime e senza forma di token: la redazione dei segreti dei workflow di review non lo
+    # altera nel diff (Sol/Grok vedevano il fixture gia' redatto e lo segnalavano come test rotto)
+    secret = "valore" + "-riservato-" + "42"
+    stderr = ("fatal: unable to access 'https://utente:" + secret + "@host/o/r/'\n").encode()
 
     def fake(repo, *args, **kw):
         if args and args[0] in ("fetch", "ls-remote"):
-            return subprocess.CompletedProcess(args, 128, b"", b"fatal: https://x-access-token:ghp_SEGRETO123@host/o/r\n")
+            return subprocess.CompletedProcess(args, 128, b"", stderr)
         return real(repo, *args, **kw)
 
     monkeypatch.setattr(pfckpt, "git", fake)
     err = expect(5, pfckpt.refresh_published_refs, clone, "origin")
     assert err.reason == "PUBLISHED_REFS_REFRESH_FAILED"
-    assert "ghp_SEGRETO123" not in repr(err.detail) and "[REDACTED]@host" in err.detail["stderr"]
+    assert secret not in repr(err.detail)
+    assert "https://[REDACTED]@host/o/r/" in err.detail["stderr"]
 
 
 def test_save_never_fetches_a_repo_path_that_is_not_the_declared_repository(world, target):
