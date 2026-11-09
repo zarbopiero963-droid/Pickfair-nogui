@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "claude/d-roserpina-100-sim-report",
-  "sha": "79cef71804b108a945f5e7d3f48d35801f6a2b81"
+  "sha": "3100239eb088c4a7906c3c2a436ed998b5a90f26"
  },
  "mandate_id": "PF-ROSERPINA-FINANCIAL-ORACLE-CLAUDE-D-20261109 (+ mandati precedenti Claude D)",
- "next_atomic_action": "Verificare la patch D-1/D-3 (e D-2) di Claude B con --runxfail; test di fault injection sul picco persistito; togliere xfail solo su PASS reale",
- "previous_checkpoint_sha": "0cdbd4b8060434cb05bdd3708c673858a64e2e24",
+ "next_atomic_action": "Riverificare il nuovo SHA di Claude B con la correzione RO-DD-08; poi verifica sullo SHA della PR e su main dopo il merge",
+ "previous_checkpoint_sha": "ac5a615bce2f9e719c887129f9583a6280888419",
  "schema": "pf-current/1",
- "seq": 16
+ "seq": 17
 }
