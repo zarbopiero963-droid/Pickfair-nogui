@@ -1,10 +1,10 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 19,
+ "seq": 20,
  "mandate_id": "PF-ROSERPINA-FINANCIAL-ORACLE-CLAUDE-D-20261109 (+ mandati precedenti Claude D)",
- "previous_checkpoint_sha": "cbcc491cc7867bf69b94cc3cb6eb2d02261cd76c",
- "updated_at": "2026-11-05T14:22:51Z",
+ "previous_checkpoint_sha": "a27d5f5c783ccfd6ecd5793c14a077495ddd01c2",
+ "updated_at": "2026-11-09T21:00:00Z",
  "agent": {
   "identity": "claude-d",
   "role": "motore finanziario Pickfair (Claude D)",
@@ -14,7 +14,18 @@
  },
  "code": {
   "branch": "claude/d-roserpina-100-sim-report",
-  "sha": "3100239eb088c4a7906c3c2a436ed998b5a90f26"
+  "sha": "bf3ce01e9b1aa5342eae7da7ad78f752abbef610",
+  "patch": {
+   "head": "bf3ce01e9b1aa5342eae7da7ad78f752abbef610",
+   "tree": "c230bcaa28a5ce52a1a98d97af38b90006c2ba2e",
+   "captured_at": "2026-11-09T20:24:10+00:00",
+   "modified": [],
+   "untracked": [],
+   "files": [
+    "code_patch/BASELINE.json"
+   ],
+   "skipped_symlinks": {}
+  }
  },
  "main_sha": "6519794b125152e62ca02b1821854075f8fc6653",
  "branches": {
@@ -39,8 +50,8 @@
    "stato": "stack F-02+F-04+F-03 + D-C4-01 + D-C4-02 (+test cache 663bd44d); DELIVERED a Claude B, verifica indipendente alla PR SL/TP; semantica soglie = decisione owner aperta"
   },
   "claude/d-roserpina-100-sim-report": {
-   "sha": "3100239eb088c4a7906c3c2a436ed998b5a90f26",
-   "stato": "campagna 5: RO-DD-01/06/07 xfail condizionati a D1_FIX (PASS sulla patch 15960bac)"
+   "sha": "bf3ce01e9b1aa5342eae7da7ad78f752abbef610",
+   "stato": "campagna 5 + op confirm_baseline + e2e RO-DD-09 C (12 PASS + 2 xfail attesi su 2a9cedad)"
   },
   "claude/d-market-book-age": {
    "sha": "ea81e93e2f2dfe2791353ca42480cf4a7d382511",
@@ -87,8 +98,8 @@
    "stato": "oracolo sul registro reale BB-1: PR #617 head dd7b7369 tutte le voci PASS (58)"
   },
   "claude/d-roserpina-oracle": {
-   "sha": "9f42c815f77820583f32dd902d72c911622acdf4",
-   "stato": "riverifica c2a7a499: RO-DD-09 chiuso (marker), verifiche marker PASS; limite residuo DB+marker all'owner"
+   "sha": "21ef6926132b22e8e102e11c70b0ad61d849e611",
+   "stato": "prove RO-DD-09 opzione C: 91/91 su 2a9cedad; su main 38 PASS 1 skip 13 xfail"
   }
  },
  "integration_queue": [
@@ -125,7 +136,7 @@
   "catena di checkpoint pf-claude-d: seq 1 DURABLE, ripristino READY da clone nuovo",
   "caso sintetico squash+branch cancellato consegnato a Claude B (RED riprodotto: LATEST_CHECKPOINT_CORRUPT)"
  ],
- "next_atomic_action": "Attendere SHA della PR 1 (dopo #617) e decisione owner sul limite residuo; rieseguire oracoli, meccanismo e campagna 5 sullo SHA della PR e su main",
+ "next_atomic_action": "Attendere SHA della PR 1 (dopo #617); rieseguire oracoli, meccanismo e campagna 5 sullo SHA della PR e su main; togliere xfail condizionali al merge",
  "dependencies": {
   "F-04": "F-02 su main (Claude B)",
   "F-03": "F-02 + F-04",
@@ -320,6 +331,11 @@
    "id": "riverifica patch D-1 @c2a7a499: oracoli+meccanismo 78/78 --runxfail, campagna 5 10 PASS + 2 xfail attesi",
    "status": "NOT VERIFIED",
    "note": "unpublished_tree: keep branch + copia oracoli non committata"
+  },
+  {
+   "id": "riverifica RO-DD-09 opzione C @2a9cedad (keep/roserpina-d1-drawdown-20261109): oracoli+meccanismo 91/91 con e senza --runxfail; campagna 5 12 PASS + 2 xfail attesi",
+   "status": "NOT VERIFIED",
+   "note": "albero di sviluppo (keep branch di Claude B); prove pubblicate su 21ef6926 e bf3ce01e; non certificativo finche non su main"
   }
  ],
  "tests_missing": [
@@ -330,21 +346,9 @@
   "checkpoint Claude D prima del 05/11/2026: nessuna catena precedente; stato ricostruito solo da evidenze verificabili (branch pubblicati, #586 c.6640163608, c.6655184840, c.6657564484, c.6657579185, c.6657851343, c.6658423247, c.6658460135)"
  ],
  "defects_open": [
-  "stack F-02: voce di catalogo recovery_live_bets_inverted (Claude B)",
-  "preesistenti su main: test_issue437_pr02, test_trading_engine_internal_contracts, Telegram",
-  "D-C4-01 (P1): CORRETTO su claude/d-f03-trailing-stop 3bcb308f, non su main; in verifica da Claude B",
-  "D-C4-03 (candidato, catena F-04/F-05): ROUTED + fallimento terminale provato dell'hedge non riapre la protezione; issue da Claude B",
-  "D-C4-02 (P2): CORRETTO su claude/d-f03-trailing-stop 8ae07efe, non su main; consegnato a Claude B",
-  "RO-DD-03 (P2): esposizione aperta come drawdown",
-  "RO-DD-05 (P2): hard stop % solo LIVE",
-  "RO-DEC-01 (P2): tolleranza 1e-9 in exceeds_cap",
-  "RO-REC-01 (P2): ordine eseguito non riconciliato dopo crash",
-  "RO-DEC-02 (P3): float",
-  "RO-CAP-01 (P2): tavolo regolato non liberato con recovery OFF (decisione owner: va liberato)",
-  "RO-DD-01/02/03/04/05/06/07, RO-DEC-01/02: CHIUSI dalla patch Claude B 15960bac (keep branch, non su main), verificati",
   "RO-DD-08: CHIUSO in 3f59fa67 (keep branch, verificato)",
-  "RO-DD-09: CHIUSO in c2a7a499 (marker su file, verificato)",
-  "Limite residuo (DB e marker non scrivibili + riavvio => picco vecchio, fail-open): richiede accettazione esplicita owner"
+  "RO-DD-09: CHIUSO in 2a9cedad con opzione C owner (blocco al riavvio dopo crash fino a conferma baseline owner; doppio guasto DB+marker coperto), verificato su albero di sviluppo",
+  "RO-REC-01, RO-CAP-01: aperti (PR successive di Claude B)"
  ],
  "github_evidence": [
   "#586 c.6640163608",
@@ -368,60 +372,13 @@
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6748086371",
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6749360568",
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6749637938",
-  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6749904944"
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6749904944",
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6750525657"
  ],
  "gate_a": "NOT APPLICABLE (Claude D)",
  "pr_505": "non toccata",
  "certification_verdict": "NOT VERIFIED",
- "handoffs": [
-  "pfab-d-20261105-ckpt-squash-case-001 (caso sintetico + script a Claude B)",
-  {
-   "note": "seq 4 (230eb0d) pubblicato ma readback FALLITO (sha 5f9ddee non risolvibile dopo squash): NON DURABLE; sostituito da seq 5"
-  },
-  {
-   "note": "seq 6 (90e45e3) pubblicato ma readback FALLITO (sha F-16 64e965b non risolvibile dopo squash #610): NON DURABLE; sostituito da seq 7"
-  },
-  {
-   "note": "D-C4-01 consegnato a Claude B: pfab-d-20261108-dc401-handoff-001 (consegna del messaggio confermata dal canale, risposta non ancora ricevuta)"
-  },
-  {
-   "note": "Claude B pfab-b-20261108-dc401-ack-001: D-C4-01 ACCEPTED (ricevuta), verifica indipendente quando la catena SL/TP sara' la PR; D-C4-03 issue aperta da Claude B"
-  },
-  {
-   "note": "D-C4-02 consegnato: pfab-d-20261108-dc402-handoff-001 (consegnato al canale, risposta non ancora ricevuta)"
-  },
-  {
-   "note": "pfab-d-20261108-blackbox-oracle-001 consegnato al canale (risposta non ancora ricevuta); punto aperto disco pieno/uscite"
-  },
-  {
-   "note": "Claude B: D-C4-02 ACCEPTED (ricevuta, DELIVERED); oracolo ACCEPTED + semantica disco pieno BB-1 recepita in 3b369111"
-  },
-  {
-   "note": "seq 10 (69762be) pubblicato ma readback FALLITO (sha F-R06 d2eb5d29/1d8ca01 non risolvibili dopo squash #614): NON DURABLE; sostituito da seq 11"
-  },
-  {
-   "note": "pfab-d-20261109-bb1-pr617-oracle-001 consegnato al canale (risposta non ancora ricevuta)"
-  },
-  {
-   "note": "D4 confermata (pfab-d-20261109-bb1-gap-outcome-001); verifica d1454af3 consegnata (pfab-d-20261109-bb1-pr617-oracle-002)"
-  },
-  {
-   "note": "verifica dd7b7369 consegnata (pfab-d-20261109-bb1-pr617-oracle-003)"
-  },
-  {
-   "note": "audit MM Roserpina consegnato: pfab-d-20261109-roserpina-oracle-001 (risposta non ancora ricevuta)"
-  },
-  {
-   "note": "criteri di verifica della patch D-1/D-3 a Claude B: pfab-d-20261109-roserpina-oracle-002 (risposta non ancora ricevuta)"
-  },
-  {
-   "note": "verifica patch consegnata: pfab-d-20261109-roserpina-verify-001 NEEDS_CHANGES (RO-DD-08)"
-  },
-  {
-   "note": "pfab-d-20261109-roserpina-verify-002: RO-DD-08 VERIFIED, RO-DD-09 all'owner"
-  },
-  {
-   "note": "pfab-d-20261109-roserpina-verify-003: RO-DD-09 VERIFIED; limite residuo all'owner"
-  }
- ]
+ "handoffs": {
+  "note": "pfab-d-20261109-roserpina-verify-004: RO-DD-09 C VERIFIED inviato a Claude B (delivered, ricezione non confermata)"
+ }
 }

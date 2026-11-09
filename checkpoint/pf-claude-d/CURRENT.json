@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "claude/d-roserpina-100-sim-report",
-  "sha": "3100239eb088c4a7906c3c2a436ed998b5a90f26"
+  "sha": "bf3ce01e9b1aa5342eae7da7ad78f752abbef610"
  },
  "mandate_id": "PF-ROSERPINA-FINANCIAL-ORACLE-CLAUDE-D-20261109 (+ mandati precedenti Claude D)",
- "next_atomic_action": "Attendere SHA della PR 1 (dopo #617) e decisione owner sul limite residuo; rieseguire oracoli, meccanismo e campagna 5 sullo SHA della PR e su main",
- "previous_checkpoint_sha": "cbcc491cc7867bf69b94cc3cb6eb2d02261cd76c",
+ "next_atomic_action": "Attendere SHA della PR 1 (dopo #617); rieseguire oracoli, meccanismo e campagna 5 sullo SHA della PR e su main; togliere xfail condizionali al merge",
+ "previous_checkpoint_sha": "a27d5f5c783ccfd6ecd5793c14a077495ddd01c2",
  "schema": "pf-current/1",
- "seq": 19
+ "seq": 20
 }
