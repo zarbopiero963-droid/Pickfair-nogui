@@ -36,15 +36,15 @@ maturate, cap ammesso solo se importo <= limite, arresto se importo >= limite.
 
 | ID | Esito | Classe | Gravita' | Riproduzione |
 |---|---|---|---|---|
-| RO-DD-01 (Grok D-1) | **RED** | bug implementativo (regola owner «il reset non cancella le perdite» applicata a giornaliera/sessione, non al drawdown) | **P1** | `test_ro_dd_01*` (runtime) + `test_ro_dd_01_e2e_*` (HeadlessApp): 16 EUR realizzati, limite 10, dopo il reset nessun blocco; con limite 20 nessun blocco nemmeno a 38,60 EUR di perdita cumulativa |
-| RO-DD-02 (Grok D-1b) | **RED** | bug implementativo | **P1** | `test_ro_dd_02_*`: numeri di Grok, picco 87,11 (disponibile) invece di 91,07 (cassa), a 77,50 misura 9,61 invece di 13,57 |
+| RO-DD-01 (Grok D-1) | **RED** | bug implementativo (regola owner «il reset non cancella le perdite» applicata a giornaliera/sessione, non al drawdown) | **P0** (blocco LIVE, owner) | `test_ro_dd_01*` (runtime) + `test_ro_dd_01_e2e_*` (HeadlessApp): 16 EUR realizzati, limite 10, dopo il reset nessun blocco; con limite 20 nessun blocco nemmeno a 38,60 EUR di perdita cumulativa |
+| RO-DD-02 (Grok D-1b) | **RED** | bug implementativo | **P0** (blocco LIVE, owner) | `test_ro_dd_02_*`: numeri di Grok, picco 87,11 (disponibile) invece di 91,07 (cassa), a 77,50 misura 9,61 invece di 13,57 |
 | RO-DD-03 (Grok D-2) | **RED** | bug implementativo (contraddice F026 «le puntate aperte non sono perdite») | P2 (fail-safe: blocca di piu') | `test_ro_dd_03_*`: 30 EUR impegnati e zero perdite => `max_drawdown_abs_active` e LOCKDOWN |
-| RO-DD-04 | **RED** | conflitto di requisiti (default auto-reset 15 % < lockdown 20 %) | P2 / decisione owner | `test_ro_dd_04_*`: perdita cumulativa 30 % mai in LOCKDOWN |
+| RO-DD-04 | **RED** | violazione del contratto owner (lockdown sul drawdown cumulativo dal picco persistente) | P0 (famiglia RO-DD-01) | `test_ro_dd_04_*`: perdita cumulativa 30 % mai in LOCKDOWN |
 | RO-DD-05 | **confermato (statico)** | parita' SIM/LIVE violata (PF-OD12) | P2 | `test_ro_dd_05_*`: hard stop % dentro `if LIVE`; riproduzione runtime NOT_RUN |
 | RO-DEC-01 (Grok D-3) | **RED** | bug implementativo vs regola owner «nessuna tolleranza» | P2 (eccesso < 1e-9 relativo: sotto il centesimo fino a ~10 milioni) | `test_ro_dec_01*`: 60.0000000001, 60.00000005, 100000.00009 ammessi; anche `absolute_cap_reason` e `fresh_caps_reason` |
 | RO-DEC-02 | **RED** | rappresentazione float | P3 (nessun effetto al centesimo dimostrato) | `test_ro_dec_02_*`: LAY 2,27 @1,44 = 0.9987999999999999 |
 | RO-REC-01 (Grok B-1) | **RED** | protezione/riconciliazione incompleta (fail-closed preservato) | P2 (capacita'; nessun rischio finanziario) | campagna 5: dopo crash con risposta in volo, ordine EXECUTION_COMPLETE sull'exchange, riga INFLIGHT dopo due riavvii |
-| RO-CAP-01 (Grok B-2) | **RED** | conflitto di requisiti (recovery OFF vs tavoli in RECOVERY) | P2 / decisione owner | campagna 5: 5 perdite da 1 EUR (5 % del capitale) => nessun tavolo, nuovo segnale respinto |
+| RO-CAP-01 (Grok B-2) | **RED** | violazione del contratto owner (tavolo regolato, esposizione 0, nessun incerto => libero) | P2 (capacita') | campagna 5: 5 perdite da 1 EUR (5 % del capitale) => nessun tavolo, nuovo segnale respinto |
 | Stake, rischio, esposizione aggregata, riserve, parziale, perdita simultanea, cashout, settlement, crash/riavvio, assenza di doppia contabilizzazione, liberazione del capitale | **PASS** | — | — | `test_decimal_oracle.py`, campagna 5 |
 | Soglie di arresto (`reaches_limit`) | **PASS** (piu' severe dell'esatto, mai permissive) | — | — | `test_soglia_di_arresto_*` |
 | SL/TP/trailing nel percorso Roserpina (Grok S04/S05) | **protezione non implementata su main** | F-02/F-04/F-03 + D-C4-01/02 su `claude/d-f03-trailing-stop`, consegnati a Claude B | P1 per il LIVE | campagne 2-4, G7-S11..S26 (sul branch) |
@@ -52,6 +52,19 @@ maturate, cap ammesso solo se importo <= limite, arresto se importo >= limite.
 
 Configurazione specifica della simulazione: `lockdown_drawdown_pct` 60 (Grok) maschera RO-DD-04; `max_drawdown_abs` 10 e'
 un valore della campagna, **non** un limite fisso del prodotto (opzionale, None = non attivo, decisione owner 18/10).
+
+| RO-DD-06 | **RED** | violazione del contratto (regola 1: picco persistente) | **P0** | campagna 5 `test_ro_dd_06_*`: dopo crash e riavvio picco 88 (era 100), ingresso ammesso con 12 EUR di perdita e limite 10 |
+| RO-DD-07 | **RED** | violazione del contratto (blocco alla variazione finanziaria) | **P0** | `test_ro_dd_07_*` (runtime ed e2e): dopo il settlement con 12 EUR di perdita il runtime resta ACTIVE fino al segnale successivo |
+
+## 2-bis. Contratto owner (PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109, PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL-20261109)
+
+`drawdown_abs = max(0, verified_cash_peak - verified_cash_current)`; picco persistente (crash/restart), mai ribasato
+dall'auto-reset; riserve ed esposizione non sono perdite (controllo d'esposizione separato e fail-closed); cassa non
+verificabile o riconciliazione incerta => nessun nuovo ingresso; Decimal esatto; limite opzionale; reset della baseline
+solo con procedura owner tracciata; blocco alla variazione finanziaria e mantenuto fino a uno sblocco autorizzato.
+LOCKDOWN (RO-DD-04) sullo stesso picco persistente. Recovery OFF (RO-CAP-01): tavolo con settlement confermato,
+esposizione residua zero e nessun ordine incerto => libero; altrimenti bloccato; nessun ingresso di recupero.
+Test del contratto: `test_contratto_*` (PASS dove il codice gia' rispetta, xfail strict dove no).
 
 ## 3. Condizioni minime per FIXED
 
@@ -62,21 +75,26 @@ un valore della campagna, **non** un limite fisso del prodotto (opzionale, None 
   esposizione aperta; `test_ro_dd_02` passa con i numeri Grok.
 - RO-DD-03: le puntate aperte non generano drawdown; `test_ro_dd_03` passa; i cap di esposizione restano l'unico
   limite sull'esposizione.
-- RO-DD-04: decisione owner esplicita (lockdown cumulativo o di ciclo); il test si adegua alla decisione.
+- RO-DD-04: lockdown sul drawdown dal picco persistente (decisione owner): `test_ro_dd_04` passa.
+- RO-DD-06: picco persistito e ricaricato al riavvio PRIMA di ammettere ingressi; il blocco sopravvive al riavvio
+  (`test_ro_dd_06_e2e`). Cautele owner: il picco non si inizializza ne' si alza da una cassa non verificata
+  (`test_contratto_lettura_non_verificata_non_alza_mai_il_picco`, PASS oggi: deve restare PASS); un errore di lettura o
+  scrittura del picco persistito => nessun nuovo ingresso (fail-closed), da provare con un test sulla patch.
+- RO-DD-07: il superamento rilevato a una lettura del conto/settlement mette il runtime in blocco subito (`test_ro_dd_07*`).
 - RO-DD-05: hard stop % applicato anche in SIM (parita').
 - RO-DEC-01: confronto dei cap in Decimal esatto (o centesimi interi), nessuna tolleranza sul lato permissivo;
   `test_ro_dec_01*` passano. RO-DEC-02: importi monetari in Decimal nei confronti e nei registri.
 - RO-REC-01: un ordine trovato sull'exchange per `customerOrderRef` (stesso mercato, lettura completa) riconcilia la
   riga, che non resta INFLIGHT/AMBIGUOUS; riserva = esposizione reale.
-- RO-CAP-01: decisione owner; se un tavolo in perdita senza recovery deve tornare libero, il test passa.
+- RO-CAP-01: tavolo regolato, esposizione 0, nessun incerto => libero; nuovo ingresso con stake senza inseguimento
+  della perdita (`test_ro_cap_01`); un tavolo incerto resta bloccato (`test_ro_rec_01`, riserva mantenuta).
 - Per ogni correzione: test RED -> PASS senza xfail, mutanti che lo uccidono, suite completa senza regressioni,
   campagna 5 ripetuta sullo SHA pubblicato di `main`.
 
 ## 4. Criteri di riapertura della campagna a 10+ tavoli
 
-1. RO-DD-01 e RO-DD-02 FIXED su `main` (P1): nessuna campagna oltre 5 tavoli con limiti di drawdown aggirabili.
-2. Decisioni owner registrate per RO-DD-04 e RO-CAP-01 (altrimenti la capacita' e il lockdown della campagna non sono
-   interpretabili).
+1. RO-DD-01, RO-DD-02, RO-DD-04, RO-DD-06, RO-DD-07 FIXED su `main` (P0): nessuna campagna con limiti aggirabili.
+2. RO-CAP-01 FIXED secondo la decisione owner; RO-DD-03 (D-2) FIXED senza indebolire il controllo d'esposizione.
 3. RO-REC-01 FIXED o accettato dall'owner come limite noto (con 10+ tavoli i crash moltiplicano i tavoli bloccati).
 4. Campagna 5 e oracoli di questo branch tutti PASS (nessun xfail residuo tra quelli sopra) sullo SHA pubblicato.
 5. Per SL/TP/trailing: catena F-02/F-04/F-03 con D-C4-01/02 integrata, oppure campagna dichiarata senza protezioni.

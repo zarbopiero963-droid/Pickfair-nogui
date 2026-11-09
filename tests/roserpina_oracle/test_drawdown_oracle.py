@@ -101,7 +101,8 @@ def test_ro_dd_03_esposizione_aperta_non_e_drawdown(tmp_path) -> None:
     assert c.rc._desk_mode() != DeskMode.LOCKDOWN
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DD-04: conflitto di requisiti auto-reset 15% < lockdown 20% (owner)")
+@pytest.mark.xfail(strict=True, reason="RO-DD-04 (decisione owner PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL-20261109): "
+                                       "lockdown sul drawdown cumulativo dal picco persistente")
 def test_ro_dd_04_lockdown_raggiungibile_con_perdita_graduale(tmp_path) -> None:
     c = build(tmp_path, max_drawdown_abs=None, lockdown_drawdown_pct=20.0)
     led = O.Ledger()
@@ -122,3 +123,68 @@ def test_ro_dd_05_hard_stop_percentuale_solo_live_evidenza_statica() -> None:
     i = src.index("Enforcement A1: Drawdown Hard Stop")
     window = src[i:i + 400]
     assert 'str(self.execution_mode).upper() == "LIVE"' in window and "max_drawdown_hard_stop_pct" in window
+
+
+# ------------------------------------------------------------------ contratto owner PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109
+# drawdown_abs = max(0, verified_cash_peak - verified_cash_current); picco persistente (crash/restart), mai azzerato
+# dall'auto-reset; riserve/esposizione non sono perdite; blocco alla variazione finanziaria, mantenuto fino a uno sblocco
+# esplicito; limite opzionale (None = disattivo); Decimal esatto.
+def test_contratto_esempio_owner_picco_120_cassa_107_blocca(tmp_path) -> None:
+    c = build(tmp_path)
+    led = O.Ledger()
+    for cassa in (100, 120, 107):
+        read(c, cassa), led.read(cassa)
+    assert led.drawdown_abs() == O.D("13") and O.stop_reached(led.drawdown_abs(), 10)
+    assert _cap(c) == "max_drawdown_abs_active"
+
+
+@pytest.mark.xfail(strict=True, reason="RO-DD-03 (contratto regola 3): la riserva non e' una perdita")
+def test_contratto_esempio_owner_con_riserva_aperta_non_blocca(tmp_path) -> None:
+    """Picco 120, cassa verificata 115 = disponibile 105 + impegnato 10: drawdown 5 < 10 => nessun blocco."""
+    c = build(tmp_path)
+    led = O.Ledger()
+    read(c, 100), led.read(100)
+    read(c, 120), led.read(120)
+    read(c, 105, 10), led.read(105, 10)
+    assert led.drawdown_abs() == O.D("5") and not O.stop_reached(led.drawdown_abs(), 10)
+    assert _cap(c) == "", (c.rc.risk_desk.equity_peak, c.rc.risk_desk.bankroll_current)
+
+
+def test_contratto_limite_non_configurato_nessun_cap(tmp_path) -> None:
+    c = build(tmp_path, max_drawdown_abs=None)
+    read(c, 100)
+    read(c, 40)
+    assert _cap(c) == ""                                              # nessun cap monetario predefinito
+
+
+def test_contratto_cassa_non_verificabile_nessuna_cassa_valida(tmp_path) -> None:
+    """Regola 6: lettura non valida => cassa non verificata (il MM nega i nuovi ingressi con `cassa_non_verificata`)."""
+    c = build(tmp_path)
+    read(c, 100)
+    c.rc._apply_funds_reading({"available": None, "exposure": 0.0, "ok": False, "error": "timeout"}, source="ORACLE")
+    assert c.rc.risk_desk.cash_basis()[0] is None
+
+
+@pytest.mark.xfail(strict=True, reason="RO-DD-07 (contratto): blocco alla variazione finanziaria, non solo al segnale")
+def test_ro_dd_07_blocco_alla_variazione_finanziaria_senza_segnale(tmp_path) -> None:
+    """Una lettura del conto che porta il drawdown oltre il limite deve mettere il runtime in blocco SUBITO; oggi il
+    controllo avviene solo all'ammissione del segnale successivo."""
+    from core.system_state import RuntimeMode
+    c = build(tmp_path)
+    read(c, 100)
+    read(c, 88)                                                      # perdita regolata 12 >= 10
+    assert c.rc.mode == RuntimeMode.LOCKDOWN, c.rc.mode
+
+
+def test_contratto_lettura_non_verificata_non_alza_mai_il_picco(tmp_path) -> None:
+    """Cautela owner: il picco persistente non si inizializza ne' si alza da una cassa NON verificata. Una lettura in
+    errore che dichiara 500 EUR non deve diventare il picco: dopo una lettura verificata a 95 il drawdown e' 5, non 405."""
+    c = build(tmp_path)
+    read(c, 100)
+    c.rc._record_account_snapshot({"available": 500.0, "exposure": 0.0, "ok": False, "error": "timeout"},
+                                  source="ORACLE")
+    c.rc._apply_funds_reading({"available": 500.0, "exposure": 0.0, "ok": False, "error": "timeout"},
+                              source="ORACLE")
+    read(c, 95)
+    assert c.rc.risk_desk.equity_peak == 100.0 and c.rc._cash_equity_peak == 100.0
+    assert _cap(c) == ""

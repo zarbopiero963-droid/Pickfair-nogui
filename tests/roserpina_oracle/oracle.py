@@ -66,7 +66,9 @@ def cash(available: Any, committed: Any) -> Decimal:
 
 
 class Ledger:
-    """Storia delle letture del conto: picco della cassa e perdite maturate, invarianti al reset di ciclo."""
+    """Storia delle letture del conto: picco della cassa VERIFICATA e perdite maturate, invarianti al reset di ciclo,
+    al riavvio e alla liberazione delle riserve (contratto owner PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109):
+    drawdown_abs = max(0, verified_cash_peak - verified_cash_current)."""
 
     def __init__(self) -> None:
         self.peak = Decimal(0)
