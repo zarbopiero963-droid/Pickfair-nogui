@@ -102,6 +102,28 @@ def test_secrets_never_reach_the_store(tmp_path):
     assert json.loads(row["values_after"])["stake"] == 2.0, "i valori non sensibili restano"
 
 
+def test_registered_secret_in_non_json_values_is_redacted(tmp_path):
+    """Sol #617: un segreto registrato passato come bytes (o altro tipo non JSON) diventava testo solo dopo la
+    redazione (`default=str`) e finiva in chiaro nel registro."""
+    secret = "S3cr3t-bytes-value-QWE"
+    event_log.register_secret(secret)
+    try:
+        box = _box(tmp_path)
+
+        class Obj:
+            def __str__(self):
+                return f"oggetto con {secret}"
+
+        box.record("CONFIG_CHANGE", source="USER",
+                   data={"raw": secret.encode(), "buf": bytearray(secret.encode()), "obj": Obj(), "n": 3, "ok": True})
+        raw = json.dumps([dict(r) for r in _rows(box)])
+        assert secret not in raw, raw
+        data = json.loads(_rows(box)[0]["data"])
+        assert data["n"] == 3 and data["ok"] is True, "numeri e booleani restano tali"
+    finally:
+        event_log.unregister_secret(secret)
+
+
 # ================================================================== guasti di scrittura
 class _FailingConn:
     """Connessione che fallisce sulle scritture come un disco pieno, finche' `fail` e' vero."""

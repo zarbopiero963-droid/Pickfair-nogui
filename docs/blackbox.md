@@ -47,7 +47,8 @@ di vita del processo.
   - I valori delle chiavi sensibili (password, token, chiavi) diventano `[REDACTED]`.
   - Token e segreti registrati vengono oscurati anche dentro i testi.
   - Gli argomenti della riga di comando come `--password` sono oscurati anche quando il valore è l'argomento
-    successivo.
+    successivo, anche se al suo posto c'è un altro flag sensibile (`--password --api-key valore`).
+  - I valori non JSON (bytes, oggetti) diventano testo e vengono redatti **prima** della serializzazione.
 - **Richiesta ≠ conferma.**
   - `phase` vale ATTEMPT, RESULT oppure OBSERVATION.
   - `outcome` vale VERIFIED, PENDING, UNKNOWN, REJECTED, FAILED oppure NOT_APPLICABLE.
@@ -75,8 +76,12 @@ di vita del processo.
 
 1. `headless_main.main()` installa la scatola nera **prima** di costruire qualunque componente. Il primo evento è
    `PROCESS_START`. Se il registro non si apre, il processo **non parte** (exit 1): senza cronologia non c'è trading.
-   **Unica eccezione: `--emergency-stop`**, un'uscita protettiva (cancel-all) che il registro non blocca mai: senza
-   scatola nera procede senza registrazione, con un log CRITICAL.
+   Eccezioni, che non avviano il trading e non prendono il lock del runtime (D3):
+   - **`--emergency-stop`** è un'uscita protettiva (cancel-all) che il registro non blocca né ritarda mai: la scatola
+     nera si apre solo **dopo** la cancellazione. Se in quel momento non è disponibile (guasto, oppure un runtime che
+     tiene il registro: `RUNTIME_ALREADY_ACTIVE`), l'esito resta solo nel log CRITICAL;
+   - **`--preflight`** (read-only) e **`--telegram-login`** sono comandi diagnostici: non aprono il registro del
+     runtime, quindi funzionano anche con un runtime attivo sullo stesso registro.
 2. Alla fine della costruzione viene registrato `COMPONENT_INIT`.
 3. `--emergency-stop` registra la richiesta (ATTEMPT) e l'esito (RESULT VERIFIED o FAILED) **dopo** la cancellazione:
    una scrittura sul registro può attendere un lock fino al timeout di SQLite e non deve mai ritardare la riduzione del

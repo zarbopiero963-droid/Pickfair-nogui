@@ -128,7 +128,13 @@ def _redact(value: Any, key: str = "") -> Any:
         return [_redact(v) for v in value]
     if isinstance(value, float) and value != value:          # NaN non e' JSON canonico
         return None
-    return value
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    # Sol #617: tipi non JSON (bytes, oggetti...) diventerebbero testo solo DOPO la redazione (`default=str` di
+    # `canonical_json`), lasciando in chiaro un segreto registrato. Si convertono qui e si redigono.
+    if isinstance(value, (bytes, bytearray)):
+        value = bytes(value).decode("utf-8", errors="replace")
+    return text_redaction.redact_secrets(str(value))
 
 
 def canonical_json(obj: Any) -> str:

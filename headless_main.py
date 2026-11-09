@@ -1488,6 +1488,12 @@ class HeadlessApp:
         except Exception as exc:
             error = exc
             logger.exception("Errore durante emergency_stop: %s", exc)
+        try:
+            # Sol #617: il registro si apre solo ora, a cancellazione eseguita. Non disponibile (guasto, o un runtime
+            # che lo tiene: RUNTIME_ALREADY_ACTIVE) => l'esito resta nel log CRITICAL, mai un blocco.
+            blackbox_runtime.install(entrypoint="headless_main", emergency_stop=True)
+        except Exception as exc:      # noqa: BLE001
+            logger.critical("Scatola nera non disponibile: EMERGENCY STOP eseguito SENZA registrazione (%s)", exc)
         blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="WARNING",
                                 phase="ATTEMPT", outcome="PENDING", reason_code="operator_cli_flag",
                                 ts_utc=requested_at)
@@ -1505,16 +1511,19 @@ class HeadlessApp:
 def main() -> int:
     # PF-BLACKBOX-01 (BB-1): la scatola nera parte PRIMA di qualunque componente operativo. Senza registro il
     # processo non parte (fail-closed): nessuna operazione finanziaria senza cronologia.
-    # Eccezione: `--emergency-stop` e' un'uscita protettiva (cancel-all) e non viene mai bloccata dal registro; senza
-    # scatola nera procede senza registrazione (rilievo Codex #617, priorita' delle uscite protettive in AGENTS.md).
+    # Eccezioni, che non avviano il trading e non prendono il lock del runtime finanziario (D3):
+    # - `--emergency-stop` e' un'uscita protettiva (cancel-all): il registro si apre solo DOPO la cancellazione
+    #   (`HeadlessApp._emergency_stop_with_audit`), cosi' nessuna attesa di lock SQLite la ritarda (Sol #617);
+    # - `--preflight` (read-only) e `--telegram-login` sono comandi diagnostici: funzionano anche con un runtime
+    #   attivo sullo stesso registro (Codex #617, `ops/preflight.md`).
     from core import blackbox_runtime
-    try:
-        blackbox_runtime.install(entrypoint="headless_main")
-    except Exception as exc:      # noqa: BLE001 - qualunque guasto della scatola nera blocca l'avvio
-        if "--emergency-stop" not in sys.argv[1:]:
+    argv = [str(a).strip().lower() for a in sys.argv[1:]]
+    if not any(flag in argv for flag in ("--emergency-stop", "--preflight", "--telegram-login")):
+        try:
+            blackbox_runtime.install(entrypoint="headless_main")
+        except Exception as exc:      # noqa: BLE001 - qualunque guasto della scatola nera blocca l'avvio
             logger.critical("Scatola nera non disponibile: avvio rifiutato (%s)", exc)
             return 1
-        logger.critical("Scatola nera non disponibile: EMERGENCY STOP eseguito SENZA registrazione (%s)", exc)
     app: Optional[HeadlessApp] = None
     rc = 1
     try:

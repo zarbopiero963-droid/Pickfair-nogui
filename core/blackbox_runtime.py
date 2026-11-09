@@ -133,20 +133,32 @@ def _consume_fault_dump(fault_path: str) -> bool:
 
 def safe_argv(argv) -> list:
     """Argomenti della riga di comando senza segreti: un flag sensibile (`--password`, `--token`, `--api-key`...)
-    viene registrato come `--flag=[REDACTED]`, anche quando il valore e' l'argomento successivo."""
+    viene registrato come `--flag=[REDACTED]`, anche quando il valore e' l'argomento successivo.
+
+    Sol #617 (44a6a58f): se l'argomento che segue un flag sensibile senza `=` e' a sua volta un flag sensibile
+    (`--password --api-key valore`), anche quello si redige e il suo valore viene consumato: mai in chiaro."""
     from core import redaction
+
+    def sensitive(token: str):
+        name, sep, _value = token.lstrip("-").partition("=")
+        if redaction.is_sensitive_key(name.replace("-", "_")) or name.lower() in ("password", "token", "pin"):
+            return name, bool(sep)
+        return None
+
     out, skip = [], False
     for a in list(argv):
+        a = str(a)
+        flag = sensitive(a) if a.startswith("-") else None
         if skip:
             skip = False
+            if flag is not None:                         # flag sensibile al posto del valore atteso: redatto
+                out.append(f"--{flag[0]}={bb.REDACTED}")
+                skip = not flag[1]
+            continue                                     # valore del flag precedente: consumato, mai registrato
+        if flag is not None:
+            out.append(f"--{flag[0]}={bb.REDACTED}")
+            skip = not flag[1]
             continue
-        a = str(a)
-        if a.startswith("-"):
-            name, sep, _value = a.lstrip("-").partition("=")
-            if redaction.is_sensitive_key(name.replace("-", "_")) or name.lower() in ("password", "token", "pin"):
-                out.append(f"--{name}={bb.REDACTED}")
-                skip = not sep
-                continue
         out.append(a)
     return out
 

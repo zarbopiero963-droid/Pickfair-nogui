@@ -202,12 +202,16 @@ def test_runtime_lock_file_is_never_rewritten_after_the_lock_is_taken(tmp_path):
     path = str(tmp_path / "b.sqlite")
     box = bb.BlackBox(path).open()
     lock = path + ".runtime.lock"
-    open(lock, "w").write("contenuto preesistente\n")
+    with open(lock, "w") as fh:
+        fh.write("contenuto preesistente\n")
     box.acquire_runtime()
-    assert open(lock).read() == "contenuto preesistente\n", "file di lock modificato dopo il lock"
     owner = open(path + ".runtime.owner").read()
     assert f"pid={box.pid}" in owner and f"session={box.session_id}" in owner
     box.close()
+    # Sol #617 (44a6a58f): su Windows `msvcrt` blocca la regione del file e un secondo handle non la puo' leggere
+    # finche' il lock e' tenuto: il contenuto si verifica dopo il rilascio (nessuna riscrittura nel frattempo).
+    with open(lock) as fh:
+        assert fh.read() == "contenuto preesistente\n", "file di lock modificato dopo il lock"
 
 
 def test_native_dump_survives_when_it_cannot_be_moved_aside(bbpath, monkeypatch):
@@ -246,9 +250,56 @@ def test_emergency_stop_cancels_before_any_audit_write(monkeypatch):
 
     monkeypatch.setattr(rt, "record", lambda event_type, **kw: calls.append((event_type, kw.get("phase"),
                                                                              kw.get("ts_utc"))))
+    monkeypatch.setattr(rt, "install", lambda *a, **kw: calls.append(("install", kw.get("emergency_stop"), None)))
     app = object.__new__(headless_main.HeadlessApp)
     app.runtime = FakeRuntime()
     assert app._emergency_stop_with_audit() == 0
     assert calls[0] == ("stop", "operator_cli_flag"), calls
-    assert [c[:2] for c in calls[1:]] == [("EMERGENCY_STOP", "ATTEMPT"), ("EMERGENCY_STOP", "RESULT")]
-    assert calls[1][2] is not None, "ATTEMPT con l'ora reale della richiesta"
+    assert calls[1] == ("install", True, None), "il registro si apre solo dopo la cancellazione (Sol #617)"
+    assert [c[:2] for c in calls[2:]] == [("EMERGENCY_STOP", "ATTEMPT"), ("EMERGENCY_STOP", "RESULT")]
+    assert calls[2][2] is not None, "ATTEMPT con l'ora reale della richiesta"
+
+
+def test_emergency_stop_audit_survives_an_unavailable_blackbox_after_cancelling(monkeypatch):
+    """Sol #617 (44a6a58f): registro non apribile dopo la cancellazione (guasto o runtime che lo tiene) => nessuna
+    eccezione, cancellazione gia' eseguita, esito nel log."""
+    calls = []
+
+    class FakeRuntime:
+        def emergency_stop(self, reason):
+            calls.append("stop")
+            return {"cancelled": 1}
+
+    def boom(*a, **kw):
+        raise bb.RuntimeAlreadyActive("RUNTIME_ALREADY_ACTIVE")
+
+    monkeypatch.setattr(rt, "install", boom)
+    app = object.__new__(headless_main.HeadlessApp)
+    app.runtime = FakeRuntime()
+    assert app._emergency_stop_with_audit() == 0 and calls == ["stop"]
+
+
+@pytest.mark.parametrize("flag", ["--emergency-stop", "--preflight", "--telegram-login"])
+def test_protective_and_diagnostic_commands_never_open_the_runtime_registry_before_running(monkeypatch, flag):
+    """Sol #617: `--emergency-stop` non scrive nulla (lock SQLite fino a 30 s) prima del cancel-all. Codex #617:
+    `--preflight` e `--telegram-login` non prendono il lock del runtime finanziario, quindi funzionano anche con un
+    runtime attivo. Il normale avvio invece apre sempre il registro per primo."""
+    calls = []
+    monkeypatch.setattr(rt, "install", lambda *a, **kw: calls.append("install"))
+    monkeypatch.setattr(rt, "shutdown", lambda *a, **kw: None)
+    monkeypatch.setattr(headless_main.HeadlessApp, "__init__", lambda self: None)
+    monkeypatch.setattr(headless_main.HeadlessApp, "start", lambda self: calls.append("start") or 0)
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", flag])
+    assert headless_main.main() == 0 and calls == ["start"], calls
+    calls.clear()
+    monkeypatch.setattr(sys, "argv", ["headless_main.py"])
+    assert headless_main.main() == 0 and calls == ["install", "start"], calls
+
+
+def test_chained_sensitive_flags_never_leak_the_value():
+    """Sol #617 (44a6a58f): `--password --api-key valore` lasciava `valore` in chiaro in PROCESS_START.argv."""
+    out = rt.safe_argv(["--password", "--api-key", "valore-segreto", "--live"])
+    assert "valore-segreto" not in " ".join(out), out
+    assert out == [f"--password={bb.REDACTED}", f"--api-key={bb.REDACTED}", "--live"]
+    assert rt.safe_argv(["--token=abc", "--simulation"]) == [f"--token={bb.REDACTED}", "--simulation"]
+    assert rt.safe_argv(["--password", "pw", "--verbose"]) == [f"--password={bb.REDACTED}", "--verbose"]
