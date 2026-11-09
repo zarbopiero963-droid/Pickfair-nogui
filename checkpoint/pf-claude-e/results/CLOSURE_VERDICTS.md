@@ -32,12 +32,12 @@ Già chiuse con prove: #456 (dup #455), #528, #550, #590. Issue aperte esaminate
 | #356 | KEEP_OPEN | — | `finally` di `main()` fa solo `app.destroy()` (`mini_gui.py`) | — | — | no |
 | #359 | KEEP_OPEN | PR-A ConfigRegistry | PR-B…E: `--config-report`, tab GUI, logging gate | #366 | — | no |
 | #367 | **BLOCKED** | fix di codice CatalogSync/login/anomaly su main | verifica reale su VPS richiesta prima di chiudere, mai fatta | #368 #370 #371 #372 | test mockati | no: manca la prova reale |
-| #374 | **OWNER_DECISION** | consolidata in #453/#461 | D-9, D-11, D-12 non registrate altrove | — | — | dopo decisione |
+| #374 | KEEP_OPEN / HISTORICAL_REQUIREMENTS_SUSPENDED | consolidata in #453/#461 | D-9, D-11, D-12 non registrate altrove | — | — | dopo decisione |
 | #380 | KEEP_OPEN | — | sweep finale GUI (PR60) | — | — | no |
 | #388 | KEEP_OPEN | M1 (PR #447), A1 (PR #448) | M2–M10, B1–B3 irrisolte (es. M7 `normalize_mode` non fail-closed, 4 copie in `core/`) | #447 #448 | — | no |
 | #392 | KEEP_OPEN | — | assistente AI sospeso (blueprint) | — | — | no |
 | #394 | KEEP_OPEN | handoff su main (PR #414) | sezioni handoff, nota visivi, percorso screenshot | #414 | — | no |
-| #398 | **OWNER_DECISION** | — | campagna 69 PR: abbandonare o finanziare | — | — | dopo decisione |
+| #398 | **CHIUSA 09/11 NOT_PLANNED** (#426 c.6739424886) | — | campagna 69 PR: abbandonare o finanziare | — | — | dopo decisione |
 | #410 | KEEP_OPEN | — | `chat_id` non numerico accettato (`telegram_module.py:1303-1317`) | — | — | no |
 | #412 | **CHIUSA 09/11** (GO owner, c.6739064636) | valutazione chiusa con decisione owner #426 D19 (opzione 1, status quo); codice coerente: per-bot `invariant_ok=True`, `listener_stale=False` (`telegram_bot_runtime.py:725,736`); doc `ops/telegram_bots.md:185` | nessuno: la decisione esclude modifiche | — (nessuna modifica richiesta) | n/a | **GO richiesto** |
 | #415 | KEEP_OPEN | — | `on_success=` non accettato (`mini_gui.py:2732` vs `:2269`) | — | — | no |
@@ -75,7 +75,7 @@ Già chiuse con prove: #456 (dup #455), #528, #550, #590. Issue aperte esaminate
 | #521 | KEEP_OPEN | identità settlement (PR #535) | aggregazione per bet_id (test `:210` ancora a -2 senza rilascio) | #535 | — | no |
 | #536 | KEEP_OPEN | Linux: lock+inode+lease, 61+227 test, 47/47 mutanti | checklist Windows (criterio MISSING), test 2 processi con sostituzione, limiti FS di rete non registrati | #537 | 61 passed | no finché A/B/C non registrati |
 | #562 | KEEP_OPEN | — | CI VPS | — | — | no |
-| #565 | **OWNER_DECISION** | ruleset con app 15368 configurato | test negativo (check omonimo di altra app) | — | NOT VERIFIED | dopo decisione |
+| #565 | KEEP_OPEN | ruleset con app 15368 configurato | test negativo (check omonimo di altra app) | — | NOT VERIFIED | dopo decisione |
 | #578 | KEEP_OPEN | — | kit recovery, pulizia VPS MatchPilot, revoca vecchio PAT (attività incomplete) | — | — | no |
 | #582 | KEEP_OPEN | — | collaudo Betfair A–D (P0) | — | — | no |
 | #586 | KEEP_OPEN | — | coordinamento | — | — | no |
@@ -85,10 +85,8 @@ Già chiuse con prove: #456 (dup #455), #528, #550, #590. Issue aperte esaminate
 | #612 | KEEP_OPEN | — | `position_stake` usa lo stake richiesto (`core/sl_tp_pnl.py:72-76`) | — | — | no |
 | #613 | KEEP_OPEN | — | latch SL/TP dopo fallimento hedge provato (catena F-04/F-05, non su main) (P1) | — | — | no |
 
-## Totali (aggiornati 09/11 dopo GO owner)
-- Aperte oggi: **78** (79 − #412).
-- Chiuse con prove in totale: **5** → #456, #528, #550, #590, #412.
-- KEEP_OPEN: **74** (le 71 + #388, #514, #578: contengono lavoro incompleto qualunque sia la decisione).
-- BLOCKED: **1** → #367.
-- OWNER_DECISION: **3** → #374, #398, #565.
-- Mandato PF-CLAUDE-E-PHASE3-FULL-DECISIONS-20261109: non trovato (sessione, issue, commenti); nessuna decisione applicata da esso.
+## Totali finali (09/11/2026, decisioni owner applicate — audit concluso)
+- Aperte: **77**. KEEP_OPEN **76** (incl. #374 HISTORICAL_REQUIREMENTS_SUSPENDED, #565 test negativo richiesto), BLOCKED **1** (#367).
+- Chiuse in totale: **6** → #456 (duplicate), #528, #550, #590, #412 (completed), #398 (not planned).
+- OWNER_DECISION residue: **0**.
+- Decisioni registrate in #426 c.6739424886; D-9/D-11/D-12 trasferite in #426 e #461 c.6739428121.

@@ -29,5 +29,11 @@
   "state_reason": "completed",
   "comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/412#issuecomment-6739064636",
   "evidence": "#426 D19 opzione 1; telegram_bot_runtime.py:720-736; ops/telegram_bots.md:185-186 su 6519794b"
+ },
+ {
+  "issue": 398,
+  "state_reason": "not_planned",
+  "comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/398#issuecomment-6739429370",
+  "evidence": "decisione owner #426 c.6739424886 (opzione A, solo il metodo)"
  }
 ]

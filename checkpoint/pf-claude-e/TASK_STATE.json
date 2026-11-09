@@ -1,8 +1,5 @@
 {
- "blocks": [
-  "Decisioni owner su #374, #398, #565 (2 alternative ciascuna)",
-  "Mandato PF-CLAUDE-E-PHASE3-FULL-DECISIONS-20261109 non reperito"
- ],
+ "blocks": [],
  "dependencies": {
   "#426": "decisioni owner",
   "#453": "piano operativo; c.5653916051 \u00a7C non chiudere le fonti raggruppate",
@@ -24,11 +21,12 @@
   "CLOSURE-VERDICTS: 79 aperte \u2192 1 CLOSE_VERIFIED, 71 KEEP_OPEN, 1 BLOCKED, 6 OWNER_DECISION",
   "CLOSE-412 (GO owner)",
   "RICLASSIFICA: #388 #514 #578 \u2192 KEEP_OPEN; OWNER_DECISION residue #374 #398 #565",
-  "CONSEGNA matrice finale a Claude B (#586)"
+  "CONSEGNA matrice finale a Claude B (#586)",
+  "FINAL-DECISIONS: #374 KEEP_OPEN/HIST_SUSPENDED (D-9/11/12 in #426+#461), #398 chiusa NOT_PLANNED, #565 KEEP_OPEN"
  ],
- "lotto_corrente": "AUDIT ORDINARIO CONCLUSO (09/11/2026)",
+ "lotto_corrente": "AUDIT CONCLUSO \u2014 decisioni finali owner applicate (09/11/2026)",
  "mandate_id": "PF-ISSUE-CLEANUP-01 + PF-CLAUDE-E-ISSUE-CLOSURE-ONLY (owner 09/11/2026)",
- "next_atomic_action": "Nessuna. Audit ordinario concluso. Eventuali nuove chiusure solo su GO owner per #374/#398/#565, o quando lo sviluppo completa requisiti (responsabilit\u00e0 di Claude B).",
+ "next_atomic_action": "Nessuna. Claude E fermo; disponibile solo per verifiche puntuali su richiesta owner.",
  "pr_505": "chiusa senza merge (rilevante solo per #509)",
  "schema": "pf-task-state/1",
  "tests_missing": []
