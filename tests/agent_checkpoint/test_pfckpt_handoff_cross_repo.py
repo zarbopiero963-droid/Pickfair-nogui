@@ -766,3 +766,22 @@ def test_chain_declaring_the_target_name_cannot_prove_with_its_own_objects(world
     err = expect(2, pfckpt.verify, a, "HEAD", D)
     assert _only_reference_problems(err)
     assert any("REPOSITORY_IDENTITY_UNVERIFIED" in p and "catena" in p for p in err.detail["problems"])
+
+
+# ================================================================== PF-PR615-FINAL-CORRECTION-CYCLE-15
+def test_head_is_never_a_handoff_branch_even_with_a_locally_repointed_origin_head(world, target):
+    """Sol #615 (ca091290): `refs/remotes/origin/HEAD` ripuntato a mano a un commit mai pubblicato non prova nulla."""
+    publish_handoff(target)
+    clone = target_clone(target)
+    _cfg(clone)
+    sh(clone, "checkout", "-q", "-B", "solo-locale", target["base"])
+    _git("-C", clone, "apply", "--index", "-", input=target["patch"])
+    sh(clone, "commit", "-q", "-m", "handoff mai pubblicato")
+    lone, ltree = sh(clone, "rev-parse", "HEAD"), sh(clone, "rev-parse", "HEAD^{tree}")
+    sh(clone, "update-ref", "--no-deref", "refs/remotes/origin/HEAD", lone)
+    assert subprocess.run(["git", "-C", clone, "ls-remote", "origin", lone], capture_output=True).stdout == b""
+    r = rec(world, target, "DURABLE", handoff_branch="HEAD", handoff_sha=lone, handoff_tree=ltree)
+    err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c", [r]), "HEAD", D, repo_paths={TARGET: clone})
+    assert any("nome di branch valido" in p for p in err.detail["problems"])
+    assert not pfckpt._published_on(clone, lone, "HEAD")
+    assert not pfckpt._published_on(clone, lone, "origin/HEAD")

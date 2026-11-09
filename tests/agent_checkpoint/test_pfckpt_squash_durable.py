@@ -817,3 +817,53 @@ def test_original_sha_must_be_exactly_the_resolved_commit_before_publishing(worl
     assert pfckpt.remote_head(a, "origin", BR) == exp, "nulla pubblicato"
     assert any("original_sha != commit risolto" in p for p in err.detail.get("problems", [])) \
         or err.reason == "CODE_SHA_NOT_DURABLE"
+
+
+def _two_real_commits_with_a_common_7hex_prefix(repo, tree, parent):
+    """Due commit REALI distinti con lo stesso prefisso di 7 hex (ricerca per compleanno, ~2^14 tentativi)."""
+    import hashlib
+    seen = {}
+    for n in range(400000):
+        body = (f"tree {tree}\nparent {parent}\nauthor t <t@t> 1700000000 +0000\n"
+                f"committer t <t@t> 1700000000 +0000\n\nprefisso {n}\n").encode()
+        sha = hashlib.sha1(b"commit %d\x00" % len(body) + body).hexdigest()
+        if sha[:7] in seen:
+            out = []
+            for b in (seen[sha[:7]], body):
+                p = subprocess.run(["git", "-C", repo, "hash-object", "-t", "commit", "-w", "--stdin"], input=b,
+                                   capture_output=True, check=True)
+                out.append(p.stdout.decode().strip())
+            assert out[0] != out[1] and out[0][:7] == out[1][:7]
+            return out
+        seen[sha[:7]] = body
+    raise AssertionError("nessuna collisione trovata")
+
+
+def test_abbreviated_sha_shared_by_two_real_commits_never_proves_an_integration(world):
+    """Grok #615 (ca091290): due commit reali con lo stesso prefisso; il test cita il prefisso e dichiara come
+    original_sha l'ALTRO commit, ancorato da un checkpoint precedente. Prima: DURABLE pubblicato. Ora: con integration
+    serve lo SHA completo, rifiuto prima del push."""
+    c = _code_clone(world)
+    sh(c, "fetch", "-q", "origin")
+    main = sh(c, "rev-parse", "origin/main")
+    mtree = sh(c, "rev-parse", "origin/main^{tree}")
+    x, y = _two_real_commits_with_a_common_7hex_prefix(c, mtree, main)
+    prefix = x[:7]
+    _legacy_checkpoint_citing(world, y, tree=mtree)                     # ancora storica per y
+    a = agent(world, "after")
+    sh(a, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    assert pfckpt.resolve_commit(a, prefix) is None                     # x e y non sono nel clone di chi scrive
+    integ = {"original_sha": y, "original_tree": mtree, "integration_sha": main, "integration_tree": mtree,
+             "equivalence": "TREE_EQUAL"}
+    exp = next_state(a, world, code={"branch": "main", "sha": main},
+                     tests_executed=[{"id": "suite", "status": "PASS", "sha": prefix, "integration": integ}])
+    err = expect(2, pfckpt.save, a, BR, "origin", exp, "prefisso condiviso", D, agent="claude")
+    assert pfckpt.remote_head(a, "origin", BR) == exp, "nulla pubblicato"
+    assert err.reason in ("CHECKPOINT_INVALID", "CODE_SHA_NOT_DURABLE")
+
+
+def test_canonical_digest_uses_a_portable_order_file():
+    """Grok #615: nessun `/dev/null` nella riga di comando del digest canonico (non POSIX su Windows)."""
+    import inspect
+    src = inspect.getsource(pfckpt.canonical_diff_sha256)
+    assert "/dev/null" not in src.replace("`/dev/null`", "")

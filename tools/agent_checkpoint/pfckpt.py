@@ -291,7 +291,11 @@ def check_code_reference(repo, label, sha, integration, anchors=(), unresolved_m
                 bad.append(f)
         if integration.get("equivalence") not in EQUIVALENCES:
             bad.append("equivalence")
-        if "original_sha" not in bad and not integration["original_sha"].startswith(str(sha)):
+        if not _SHA40.fullmatch(str(sha)):
+            # con una transizione dichiarata lo SHA citato deve essere COMPLETO: un prefisso puo' essere condiviso da
+            # commit diversi e farebbe attribuire l'esito a un altro commit (rilievo Grok #615)
+            bad.append("SHA citato abbreviato: con integration serve lo SHA completo")
+        elif "original_sha" not in bad and not integration["original_sha"].startswith(str(sha)):
             bad.append("original_sha != SHA citato")
         elif "original_sha" not in bad and full and integration["original_sha"] != full:
             # lo SHA citato si risolve: original_sha deve essere ESATTAMENTE quel commit, mai un altro con lo stesso
@@ -414,9 +418,16 @@ _CANONICAL_DIFF_CFG = ("-c", "diff.renames=true", "-c", "diff.noprefix=false", "
 
 def canonical_diff_sha256(repo, base_sha, head_sha):
     """sha256 di `git diff --binary --full-index base_sha head_sha` in forma canonica; None se git fallisce."""
-    p = subprocess.run(["git", "-C", repo, *_CANONICAL_DIFF_CFG, "diff", "--no-color", "--no-ext-diff",
-                        "--no-textconv", "--ignore-submodules=none", "--unified=3", "-O/dev/null", "--binary", "--full-index", base_sha, head_sha, "--"], capture_output=True,
-                       env=_git_env())
+    # orderfile esplicito e VUOTO (ordine naturale dei path), portabile: un file temporaneo invece di `/dev/null`,
+    # che non esiste fuori da POSIX (rilievo Grok #615)
+    fd, order = tempfile.mkstemp(prefix="pfckpt_order_")
+    os.close(fd)
+    try:
+        p = subprocess.run(["git", "-C", repo, *_CANONICAL_DIFF_CFG, "diff", "--no-color", "--no-ext-diff",
+                            "--no-textconv", "--ignore-submodules=none", "--unified=3", f"-O{order}", "--binary",
+                            "--full-index", base_sha, head_sha, "--"], capture_output=True, env=_git_env())
+    finally:
+        os.unlink(order)
     return hashlib.sha256(p.stdout).hexdigest() if p.returncode == 0 else None
 
 
@@ -446,6 +457,10 @@ def _published_on(repo, sha, branch, remote="origin"):
 
 def _valid_branch_name(repo, branch):
     b = str(branch or "")
+    # HEAD non e' un branch: `refs/remotes/<remote>/HEAD` e' un puntatore simbolico locale, mai potato e
+    # ripuntabile a mano, quindi mai una prova di pubblicazione (rilievo Sol #615)
+    if b == "HEAD" or b.endswith("/HEAD"):
+        return False
     return bool(b) and "@{" not in b and not b.startswith("-") \
         and git(repo, "check-ref-format", f"refs/heads/{b}", check=False).returncode == 0
 

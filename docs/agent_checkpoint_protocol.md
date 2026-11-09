@@ -285,7 +285,10 @@ PF-PR615-FINAL-SECURITY-HARDENING-20261109). La fonte di fiducia è indipendente
 prefisso. La stessa regola vale per la **catena** quando un riferimento si risolve «nello stesso repository»:
 `STATE.repository` è una dichiarazione, quindi anche l'`origin` della catena deve essere quel repository. Un
 riferimento è valido solo se è un oggetto **commit**: l'hash di un tag annotato (anche solo locale) non è mai uno SHA
-citabile. Ogni altro host, schema o forma ambigua dà `REPOSITORY_IDENTITY_UNVERIFIED` (problema di riferimento,
+citabile. `handoff_branch` non può essere `HEAD` (né un nome che finisce con `/HEAD`): `refs/remotes/<remote>/HEAD` è
+un puntatore locale e non prova la pubblicazione. Con una transizione `integration` lo SHA citato (anche di un test)
+deve essere completo a 40 hex: un prefisso può essere condiviso da commit diversi. Ogni altro host, schema o forma
+ambigua dà `REPOSITORY_IDENTITY_UNVERIFIED` (problema di riferimento,
 fail-closed). `save` e `bootstrap` aggiornano e
 potano i remote-tracking dei branch prima della verifica, e riallineano i `refs/remotes/origin/pull/<N>` del fallback a
 `refs/pull/<N>/head` (o li tolgono se la PR non c'è più): un
@@ -356,7 +359,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 182 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 185 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo
