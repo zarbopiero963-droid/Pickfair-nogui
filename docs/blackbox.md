@@ -197,6 +197,15 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
 - Mutanti `bb_*` in `guardrails/mutation_catalog.json`, area `blackbox`.
 - Suite `blackbox` nel catalogo dei test (`tests/catalog/pf-test-catalog.json`, OFFLINE, campagna `all`).
 
+**Requisiti per BB-3** (emersi dall'oracolo indipendente di Claude D sul registro reale della #617):
+- tutto il ciclo di un'uscita protettiva (richiesta ed esiti: `ORDER_PLACE_RESPONSE`/`ORDER_MATCHED` dell'hedge,
+  `CASHOUT_EXECUTED`, ...) va scritto con `critical=True, buffer_on_failure=True`. Un esito registrato come non
+  critico durante un guasto verrebbe scartato (resta solo nel conteggio `dropped_non_critical` della GAP) e la
+  catena dell'uscita resterebbe senza risultato;
+- il flag `critical` di ogni scrittura non è oggi persistito nel record: la regola «registrato in modo durevole
+  prima dell'invio» si dimostra sul comportamento (`BlackBoxUnavailable`), non leggendo il registro. BB-3 valuta un
+  campo o `data.critical` per renderla verificabile a posteriori.
+
 **Limiti onesti:**
 - l'avvio reale su Windows e il crash nativo vero (segfault) restano MANUAL_ONLY;
 - i test simulano il dump e il disco pieno;
