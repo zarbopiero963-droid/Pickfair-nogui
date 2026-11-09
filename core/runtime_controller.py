@@ -1330,9 +1330,13 @@ class RuntimeController:
         il blocco si scioglie da solo appena il disco torna; uscite, riconciliazione e settlement non passano di qui.
         In coda alla catena: non oscura il motivo dei gate a monte."""
         stop = getattr(self, "_drawdown_hard_stop", None)
-        if stop is None or stop.retry_persist():
+        if stop is None:
             return ""
-        return "drawdown_picco_non_persistito"
+        if not stop.retry_persist():
+            return "drawdown_picco_non_persistito"
+        # RO-DD-09 C: dopo un riavvio non pulito il picco salvato potrebbe non essere il massimo => nessun ingresso
+        # fino alla conferma owner della baseline (`owner_confirm_drawdown_baseline`).
+        return stop.baseline_block_reason()
 
     def _recovery_persist_block_reason(self) -> str:
         """Stato di recovery non durevole (scrittura fallita dopo un reset o un settlement): nessun nuovo
@@ -2661,6 +2665,8 @@ class RuntimeController:
             )
             raise
         self._applica_fondi_avvio(funds, read_at=start_funds)
+        # RO-DD-09 C: sessione di trading aperta su disco fino a uno STOP pulito con picco durevole.
+        RuntimeController._hard_stop(self).open_session()
 
         start_telegram = time.monotonic()
         try:
@@ -3035,6 +3041,10 @@ class RuntimeController:
                 # uno STOP successivo riuscito lo rilascia.
                 self._instance_teardown_pending = not smontato
                 self._release_runtime_instance_lock_if_stopped()
+        # RO-DD-09 C: STOP pulito => sessione chiusa su disco solo se il picco e' durevole.
+        if not RuntimeController._hard_stop(self).close_session():
+            logger.critical("D-1: sessione non chiusa su disco (picco non durevole): il prossimo avvio chiedera' la "
+                            "conferma owner della baseline")
         status = self.get_status()
         self.bus.publish("RUNTIME_STOPPED", status)
         return {
@@ -6815,6 +6825,43 @@ class RuntimeController:
             shown = "n/d" if loss is None else f"{float(loss):.2f}€"
             self.force_lockdown(f"drawdown_hard_stop_triggered:{stop.snapshot()['breach'].get('kind')}:{shown}")
         return reason
+
+    def owner_confirm_drawdown_baseline(self, *, authorization: str, reason: str, operation_id: str, confirm: bool,
+                                        confirm_again: bool, declared_peak: Any = None) -> dict:
+        """RO-DD-09 C (decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109): conferma owner della baseline
+        del drawdown dopo un riavvio non pulito. NON esposta da Control API/MCP. Verifica prima cassa verificata,
+        esposizione leggibile e assenza di ordini AMBIGUOUS; doppia conferma; registrazione durevole. La conferma non e'
+        una prova del massimo storico (BB-3 lo ricostruira' da un registro indipendente)."""
+        stop = RuntimeController._hard_stop(self)
+        out = {"confirmed": False, "reason": "", "checks": {}}
+        if stop.baseline_verified:
+            out["reason"] = "baseline_gia_verificata"
+            return out
+        cash = getattr(self.risk_desk, "cash_equity_current", None)
+        try:
+            exposure = float(self.table_manager.total_exposure())
+        except Exception:
+            exposure = float("nan")
+        try:
+            uncertain = sorted(self._uncertain_reservations_map())
+        except Exception:
+            uncertain = None
+        checks = {"cash_verified": validators.finite_number(cash) is not None and float(cash) > 0, "cash": cash,
+                  "exposure": exposure if math.isfinite(exposure) else None, "uncertain_orders": uncertain}
+        out["checks"] = checks
+        if not checks["cash_verified"]:
+            out["reason"] = "cassa_non_verificata"
+        elif checks["exposure"] is None:
+            out["reason"] = "esposizione_non_leggibile"
+        elif uncertain is None or uncertain:
+            out["reason"] = "ordini_incerti_presenti"
+        elif not stop.owner_confirm_baseline(authorization=authorization, reason=reason, operation_id=operation_id,
+                                             confirm=confirm, confirm_again=confirm_again, cash_equity=cash,
+                                             declared_peak=declared_peak, checks=checks):
+            out["reason"] = "conferma_non_autorizzata_o_non_registrata"
+        else:
+            out["confirmed"] = True
+        return out
 
     def owner_unlock_drawdown_hard_stop(self, *, authorization: str, reason: str, operation_id: str,
                                         confirm: bool) -> dict:

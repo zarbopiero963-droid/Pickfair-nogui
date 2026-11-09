@@ -597,7 +597,9 @@ def test_F032_01_expansion_after_net_profit_and_after_restart():
     assert growth >= 2, "precondizione: crescita netta oltre soglia"
     expected = cash * D("0.03") / (D("2.0") - 1) * D("1.5")       # target 3%, BALANCED, EXPANSION 1.5
     assert q(_stake(s, "1.962")) == q(_cent(expected)), f"stake {_stake(s, '1.962')} != atteso in espansione {_cent(expected)}"
-    second = run([{"op": "signal", "m": "1.963", "price": 2.0}], home=home)
+    # RO-DD-09 C: dopo il crash la baseline del drawdown va confermata dall'owner prima di nuovi ingressi
+    second = run([{"op": "confirm_baseline"}, {"op": "signal", "m": "1.963", "price": 2.0}], home=home)
+    assert second["baseline_confirm"][0]["confirmed"] is True, second["baseline_confirm"]
     s2 = second["snaps"][-1]
     assert _stake(s2, "1.963") > cash * D("0.03"), "dopo il riavvio la baseline del ciclo e' persa (F032)"
 

@@ -56,6 +56,7 @@ REASON_STATE_UNREADABLE = "max_drawdown_abs_stato_illeggibile"
 REASON_NOT_PERSISTED = "max_drawdown_abs_picco_non_persistito"
 REASON_CASH_UNVERIFIED = "max_drawdown_abs_cassa_non_verificata"
 REASON_PCT_ACTIVE = "drawdown_hard_stop_active"
+REASON_BASELINE_UNVERIFIED = "drawdown_baseline_non_verificata"
 REASON_PCT_INVALID = "max_drawdown_hard_stop_pct_non_valido"
 KIND_ABS = "max_drawdown_abs"
 KIND_PCT = "max_drawdown_hard_stop_pct"
@@ -76,12 +77,17 @@ def _marker_path(db: Any) -> str:
 def _parse_record(raw: Any) -> dict:
     """Record persistito validato; ValueError se illeggibile o incoerente."""
     record = json.loads(raw)
-    peak = Decimal(str(record["peak"]))
+    peak = None if record.get("peak") is None else Decimal(str(record["peak"]))
     seq = record.get("seq")
     breached = record.get("breached", False)
-    if not peak.is_finite() or peak <= 0 or type(seq) is not int or seq < 0 or type(breached) is not bool:
+    session_open = record.get("session_open", False)
+    verified = record.get("baseline_verified", True)
+    if (peak is not None and (not peak.is_finite() or peak <= 0)) or type(seq) is not int or seq < 0 \
+            or type(breached) is not bool or type(session_open) is not bool or type(verified) is not bool:
         raise ValueError("record non valido")
-    return {"peak": peak, "seq": seq, "breached": breached, "breach": dict(record.get("breach") or {})}
+    return {"peak": peak, "seq": seq, "breached": breached, "breach": dict(record.get("breach") or {}),
+            "session_open": session_open, "baseline_verified": verified,
+            "baseline": dict(record.get("baseline") or {})}
 
 
 def _now() -> str:
@@ -109,6 +115,12 @@ class DrawdownHardStop:
         self.persist_failed = False
         self.breached = False
         self.breach: dict = {}
+        # RO-DD-09 C (decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109): sessione di trading aperta su
+        # disco e baseline verificata. Riavvio dopo una chiusura non pulita => baseline non verificata => nessun
+        # ingresso finche' l'owner non la conferma (`owner_confirm_baseline`).
+        self.session_open = False
+        self.baseline_verified = True
+        self.baseline: dict = {}
 
     # ------------------------------------------------------------ persistenza
     def restore(self) -> None:
@@ -133,11 +145,19 @@ class DrawdownHardStop:
                 self.unreadable = True
                 return
             if not records:
-                return                                   # nessuno stato: il picco parte dalla prima cassa verificata
-            best = max(records, key=lambda r: r["peak"])
+                return                                   # nessuno stato: nuovo perimetro, picco dalla prima cassa verificata
+            peaks = [r["peak"] for r in records if r["peak"] is not None]
             # Mai sotto un picco gia' osservato in questo processo (START ripetuto nello stesso processo).
-            if self.peak is None or best["peak"] > self.peak:
-                self.peak = best["peak"]
+            if peaks and (self.peak is None or max(peaks) > self.peak):
+                self.peak = max(peaks)
+            self.baseline = dict(max(records, key=lambda r: r["seq"])["baseline"])
+            # RO-DD-09 C: sessione rimasta aperta (crash, stop non pulito, picco mai salvato) o baseline gia' non
+            # verificata => il picco salvato potrebbe non essere il massimo: nessuna presunzione, conferma owner.
+            if any(r["session_open"] for r in records) or not all(r["baseline_verified"] for r in records):
+                if self.baseline_verified:
+                    logger.critical("D-1: chiusura precedente non pulita: baseline del drawdown NON verificata, "
+                                    "nuovi ingressi negati fino alla conferma owner")
+                self.baseline_verified = False
             self.seq = max([self.seq] + [r["seq"] for r in records])
             breached = [r for r in records if r["breached"]]
             if breached:                                 # un superamento salvato non si annulla mai rileggendo
@@ -149,8 +169,9 @@ class DrawdownHardStop:
     def _persist_locked(self) -> bool:
         saver = getattr(self._db, "save_settings", None)
         seq = self.seq + 1
-        record = {"peak": str(self.peak), "seq": seq, "breached": self.breached, "breach": dict(self.breach),
-                  "updated_at": _now()}
+        record = {"peak": None if self.peak is None else str(self.peak), "seq": seq, "breached": self.breached,
+                  "breach": dict(self.breach), "session_open": self.session_open,
+                  "baseline_verified": self.baseline_verified, "baseline": dict(self.baseline), "updated_at": _now()}
         payload = json.dumps(record)
         marker = _marker_path(self._db)
         try:
@@ -177,6 +198,70 @@ class DrawdownHardStop:
         except OSError:
             logger.warning("D-1: marker del picco non rimosso (innocuo: il DB ha lo stesso picco o maggiore)")
         return True
+
+    # ------------------------------------------------------------ sessione e baseline (RO-DD-09 C)
+    def open_session(self) -> bool:
+        """START del trading: la sessione risulta aperta su disco finche' uno STOP pulito non la chiude. Salvataggio
+        fallito => ``persist_failed`` (nessun ingresso, RO-DD-08)."""
+        with self._lock:
+            if self.unreadable:
+                return False
+            self.session_open = True
+            return self._persist_locked()
+
+    def close_session(self) -> bool:
+        """STOP pulito: chiude la sessione su disco SOLO se il picco e' durevole. Picco non salvato o stato
+        illeggibile => la sessione resta aperta e il prossimo avvio chiede la conferma owner della baseline."""
+        with self._lock:
+            if self.unreadable or self.persist_failed:
+                return False
+            self.session_open = False
+            if not self._persist_locked():
+                self.session_open = True
+                return False
+            return True
+
+    def baseline_block_reason(self) -> str:
+        with self._lock:
+            return "" if self.baseline_verified else REASON_BASELINE_UNVERIFIED
+
+    def owner_confirm_baseline(self, *, authorization: str, reason: str, operation_id: str, confirm: bool,
+                               confirm_again: bool, cash_equity: Any, declared_peak: Any = None,
+                               checks: Optional[dict] = None) -> bool:
+        """Conferma owner della baseline dopo un riavvio non pulito (RO-DD-09 C). Doppia conferma esplicita,
+        autorizzazione, motivo, operation_id monouso e cassa verificata. La baseline diventa il massimo fra picco
+        salvato, picco dichiarato dall'owner e cassa corrente: la conferma NON e' una prova del massimo storico e
+        viene registrata come tale. Registrazione durevole prima che valga; salvataggio fallito => resta non
+        verificata."""
+        ref, why, op = (str(v or "").strip() for v in (authorization, reason, operation_id))
+        cash = _cash(cash_equity)
+        declared = None if declared_peak is None else _cash(declared_peak)
+        if not (ref and why and op and confirm is True and confirm_again is True) or cash is None:
+            return False
+        if declared_peak is not None and declared is None:
+            return False
+        with self._lock:
+            if self.unreadable or self.baseline_verified:
+                return False
+            history = list(self.baseline.get("confirmations", []))
+            if any(isinstance(h, dict) and h.get("operation_id") == op for h in history):
+                return False
+            old = (self.peak, dict(self.baseline))
+            candidates = [v for v in (self.peak, declared, cash) if v is not None]
+            self.peak = max(candidates)
+            entry = {"at": _now(), "authorization": ref, "reason": why, "operation_id": op,
+                     "previous_peak": None if old[0] is None else str(old[0]),
+                     "declared_peak": None if declared is None else str(declared), "cash": str(cash),
+                     "baseline_peak": str(self.peak), "checks": dict(checks or {}),
+                     "nota": "conferma owner della baseline: non e' una prova del massimo storico"}
+            self.baseline = {"confirmations": history + [entry]}
+            self.baseline_verified = True
+            if not self._persist_locked():
+                self.peak, self.baseline = old
+                self.baseline_verified = False
+                return False
+            logger.warning("D-1: baseline del drawdown confermata dall'owner (op %s): picco %s", op, self.peak)
+            return True
 
     # ------------------------------------------------------------ osservazione
     def observe(self, cash_equity: Any) -> None:
@@ -347,4 +432,5 @@ class DrawdownHardStop:
         with self._lock:
             return {"peak": None if self.peak is None else float(self.peak), "seq": self.seq,
                     "unreadable": self.unreadable, "persist_failed": self.persist_failed,
-                    "breached": self.breached, "breach": dict(self.breach)}
+                    "breached": self.breached, "breach": dict(self.breach), "session_open": self.session_open,
+                    "baseline_verified": self.baseline_verified, "baseline": dict(self.baseline)}

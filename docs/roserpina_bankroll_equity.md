@@ -444,7 +444,20 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   (`<db>.drawdown_peak_pending.json`, scrittura atomica, stesso schema del marker della perdita giornaliera). Al
   riavvio vale il picco piu' alto fra DB e marker; il marker si riporta nel DB e si rimuove solo dopo il salvataggio.
   Marker illeggibile => stato illeggibile (fail-closed).
-- **Limiti dichiarati.** Se non sono scrivibili ne' il DB ne' il marker, il picco piu' alto resta solo in memoria per
-  la sessione (KNOWN_LIMITATION, come per la perdita giornaliera); nel frattempo gli ingressi restano negati. Un `seq`
-  regressivo al riavvio non e' rilevabile. Grandezze
+- **Baseline dopo un riavvio non pulito (RO-DD-09 C, decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109).**
+  Lo START del trading registra su disco una sessione aperta; solo uno STOP pulito con il picco durevole la chiude.
+  Se al riavvio la sessione risulta aperta (crash, kill, STOP con picco non salvato, DB e marker entrambi non
+  scrivibili) il picco salvato potrebbe non essere il massimo: la baseline e' **non verificata** e nessun nuovo
+  ingresso passa (`drawdown_baseline_non_verificata`), anche dopo piu' riavvii e dopo un reset strategico.
+  Riconciliazione, settlement e riduzione del rischio restano disponibili. Sblocco solo con
+  `RuntimeController.owner_confirm_drawdown_baseline(authorization, reason, operation_id, confirm, confirm_again,
+  declared_peak=None)`: doppia conferma, `operation_id` monouso, verifica di cassa verificata, esposizione leggibile e
+  assenza di ordini AMBIGUOUS, registrazione durevole. La baseline diventa il massimo fra picco salvato, picco
+  dichiarato dall'owner e cassa corrente, ed e' registrata come conferma owner, **non** come prova del massimo storico.
+  Nessun endpoint Control API/MCP. Un primo avvio senza alcuno stato e' un nuovo perimetro contabile (per le
+  installazioni esistenti vale la decisione owner del 13/10, opzione A). Soluzione definitiva prevista in BB-3:
+  ricostruzione del picco da un registro finanziario indipendente.
+- **Limiti dichiarati.** Un `seq` regressivo al riavvio non e' rilevabile. Il marker sta sullo stesso filesystem del DB
+  (stesso dominio di guasto): la sua perdita insieme al DB e' coperta dal blocco della baseline non verificata, non
+  da una ricostruzione. Grandezze
   esposte in `get_status`: `loss_drawdown_pct`, `capital_at_risk_pct` (solo informativo), `drawdown_hard_stop`.

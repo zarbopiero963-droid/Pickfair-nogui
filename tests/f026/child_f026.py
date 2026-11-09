@@ -15,6 +15,8 @@ SCENARIO_JSON: {"steps": [...]} con passi:
   {"op": "mode", "m": "1.701", "mode": "nomatch"}                  book peggiore del prezzo: l'ordine resta non abbinato
   {"op": "book_down"}                                               snapshot del book assente da qui in poi
   {"op": "crash_now"}                                               os._exit(1) subito (stato SIM persistito)
+  {"op": "confirm_baseline"}                                        conferma owner della baseline dopo un riavvio
+                                                                    non pulito (RO-DD-09 C, doppia conferma)
   {"op": "crash_after_settlement"}                                  os._exit(1) appena il settlement e' contabilizzato
   {"op": "crash_before_close_position"}                             os._exit(1) col mercato gia' CLOSED nel broker, PRIMA
                                                                     che il runtime riceva RUNTIME_CLOSE_POSITION (F-10)
@@ -334,6 +336,11 @@ try:
             with brk._lock:
                 brk.state.balance -= float(st["amount"])
             time.sleep(0.5)
+        elif op == "confirm_baseline":
+            # RO-DD-09 C: dopo un crash la baseline del drawdown non e' verificata; la conferma owner la sblocca
+            R.setdefault("baseline_confirm", []).append(rt.owner_confirm_drawdown_baseline(
+                authorization="test owner", reason="riavvio dopo crash nel test", operation_id=f"T-{i}",
+                confirm=True, confirm_again=True))
         elif op == "risk_stop":
             R["risk_stop"] = str(rt.risk_stop("f026_test"))[:200]; time.sleep(4); wait_for(f"{i}:risk_stop", lambda: True)
         elif op == "cashout":

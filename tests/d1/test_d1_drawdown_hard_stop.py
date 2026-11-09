@@ -506,3 +506,151 @@ def test_ro_dd_09_unreadable_marker_fails_closed(tmp_path):
     stop = DrawdownHardStop(c.rc.db)
     stop.restore()
     assert stop.unreadable and stop.reason(10.0, 100.0) == REASON_STATE_UNREADABLE
+
+
+# ------------------------------- RO-DD-09 C (decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109)
+_CONFIRM = dict(authorization="#586 decisione owner baseline", reason="riconciliazione verificata dopo crash",
+                operation_id="PF-BASELINE-0001", confirm=True, confirm_again=True)
+
+
+def _stop_pulito(c):
+    c.rc.betfair_service.disconnect = lambda: None        # stub del servizio senza disconnect
+    c.rc.stop()
+
+
+def _riavvio(c):
+    """Nuovo processo sullo stesso DB: lo stato dell'hard-stop si rilegge come nel costruttore."""
+    del c.rc._drawdown_hard_stop
+    c.rc._hard_stop()
+    c.rc.mode = c.rc.mode.__class__.ACTIVE
+
+
+def _failing_db_and_marker(c, monkeypatch):
+    real_save = c.rc.db.save_settings
+
+    def failing_save(values):
+        if STATE_KEY in values:
+            raise OSError("DB non scrivibile")
+        return real_save(values)
+
+    c.rc.db.save_settings = failing_save
+    import core.drawdown_hard_stop as dhs
+
+    def failing_marker(*a, **k):
+        raise OSError("filesystem non scrivibile")
+
+    monkeypatch.setattr(dhs, "atomic_write_text", failing_marker)
+    return real_save
+
+
+def test_dd09c_db_and_marker_unwritable_then_crash_restart_blocks_entries(tmp_path, monkeypatch):
+    """Punti 3 e 4: DB e marker non scrivibili insieme, picco salito a 120 mai salvato, crash e riavvio con lo storage
+    tornato. Il picco su disco e' 100 ma la sessione risulta aperta: baseline non verificata, nessun ingresso."""
+    c = _catena(tmp_path, lockdown_drawdown_pct=15.0)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()                      # START del trading
+    real_save = _failing_db_and_marker(c, monkeypatch)
+    _lettura(c, 120.0)
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0 and _rifiuti(c)[-1] == "drawdown_picco_non_persistito"     # nel processo: bloccato
+    _lettura(c, 105.0)
+    monkeypatch.undo()                                     # crash; al riavvio lo storage funziona di nuovo
+    c.rc.db.save_settings = real_save
+    _riavvio(c)
+    assert c.rc._hard_stop().snapshot()["peak"] == 100.0  # il picco vero (120) e' perso: nessuna presunzione
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK", market_id="1.777"))
+    assert _ordini(c) == 0 and _rifiuti(c)[-1] == "drawdown_baseline_non_verificata"
+
+
+def test_dd09c_crash_after_a_normal_session_requires_owner_confirmation(tmp_path):
+    """Punti 5 e 7: crash dopo una sessione regolare => baseline non verificata, anche dopo un secondo riavvio."""
+    c = _catena(tmp_path)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)                                            # crash
+    assert not c.rc._hard_stop().baseline_verified
+    _riavvio(c)                                            # secondo riavvio senza conferma
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0 and _rifiuti(c)[-1] == "drawdown_baseline_non_verificata"
+
+
+def test_dd09c_clean_stop_and_restart_keeps_the_baseline_verified(tmp_path):
+    """Punto 6: STOP pulito con picco durevole => riavvio normale, ingressi ammessi."""
+    c = _catena(tmp_path)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _stop_pulito(c)
+    assert json.loads(c.rc.db.get_settings()[STATE_KEY])["session_open"] is False
+    _riavvio(c)
+    assert c.rc._hard_stop().baseline_verified
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 1, _rifiuti(c)
+
+
+def test_dd09c_clean_stop_with_unsaved_peak_leaves_the_session_open(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    real_save = _failing_db_and_marker(c, monkeypatch)
+    _lettura(c, 120.0)
+    _stop_pulito(c)                                        # lo STOP non puo' chiudere: picco non durevole
+    monkeypatch.undo()
+    c.rc.db.save_settings = real_save
+    _riavvio(c)
+    assert not c.rc._hard_stop().baseline_verified
+
+
+@pytest.mark.parametrize("missing", ["authorization", "reason", "operation_id", "confirm", "confirm_again"])
+def test_dd09c_baseline_confirmation_requires_every_field_and_double_confirmation(tmp_path, missing):
+    """Punto 9: conferma incompleta => rifiutata, resta bloccato."""
+    c = _catena(tmp_path)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    args = dict(_CONFIRM, **{missing: False if missing.startswith("confirm") else ""})
+    assert c.rc.owner_confirm_drawdown_baseline(**args)["confirmed"] is False
+    assert not c.rc._hard_stop().baseline_verified
+
+
+def test_dd09c_baseline_confirmation_checks_orders_and_is_recorded_not_as_proof(tmp_path):
+    """Punto 5: conferma owner con verifica degli ordini; baseline = max(picco salvato, dichiarato, cassa); registrata
+    in modo durevole come conferma, non come prova del massimo storico; operation_id monouso."""
+    c = _catena(tmp_path, lockdown_drawdown_pct=15.0)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    _lettura(c, 105.0)
+    c.rc._mark_uncertain("K-AMB", 1, customer_ref="r-amb")
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM)["reason"] == "ordini_incerti_presenti"
+    c.rc._clear_uncertain("K-AMB", 1, customer_ref="r-amb")
+    esito = c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=120.0)
+    assert esito["confirmed"] is True
+    record = json.loads(c.rc.db.get_settings()[STATE_KEY])
+    entry = record["baseline"]["confirmations"][0]
+    assert record["baseline_verified"] is True and record["peak"] == "120.0"
+    assert entry["declared_peak"] == "120.0" and "non e' una prova" in entry["nota"]
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM)["reason"] == "baseline_gia_verificata"
+    # con il picco dichiarato 120 la perdita e' 12,5 %: sotto il 15 % l'ingresso passa; il picco non si e' abbassato
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 1, _rifiuti(c)
+
+
+def test_dd09c_strategic_reset_never_clears_an_unverified_baseline(tmp_path):
+    c = _catena(tmp_path)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    c.rc._reset_recovery_cycle_keeping_losses()
+    c.rc._reset_reservations_keeping_uncertain()
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0 and _rifiuti(c)[-1] == "drawdown_baseline_non_verificata"
+
+
+def test_dd09c_start_opens_and_stop_closes_the_session_in_the_runtime():
+    """Cablaggio: START apre la sessione su disco (prima del trading), STOP la chiude."""
+    import inspect
+    from core.runtime_controller import RuntimeController
+    start_src = inspect.getsource(RuntimeController._start_with_instance_lock)
+    stop_src = inspect.getsource(RuntimeController._stop_serialized)
+    assert "open_session()" in start_src and start_src.index("_applica_fondi_avvio") < start_src.index("open_session()")
+    assert "close_session()" in stop_src
