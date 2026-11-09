@@ -9,6 +9,7 @@ ingressi.
 """
 from __future__ import annotations
 
+import importlib
 import importlib.util
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal as D
 
@@ -228,3 +229,29 @@ def test_ro_dd_06_e2e_blocco_persistente_dopo_crash_e_riavvio() -> None:
     r2 = run([{"op": "signal", "m": "1.984", "price": 2.0}], home=r1["_home"], settings=DD12)
     assert [o for o in r2["snaps"][-1]["orders"] if o["market_id"] == "1.984"] == [], (
         "dopo il riavvio picco ribasato e ingresso ammesso: " + describe(r2["snaps"][-1]))
+
+
+# ------------------------------------------------------------------ RO-DD-09 C (decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109)
+DD09C_FIX = importlib.util.find_spec("core.drawdown_hard_stop") is not None and hasattr(
+    importlib.import_module("core.drawdown_hard_stop").DrawdownHardStop, "open_session")
+
+
+@pytest.mark.skipif(not DD09C_FIX, reason="RO-DD-09 C assente su questo albero")
+def test_ro_dd_09c_e2e_crash_senza_perdite_ripresa_solo_dopo_la_conferma_owner() -> None:
+    """START/STOP reali dell'HeadlessApp: crash con la sessione aperta e nessuna perdita => al riavvio ingressi
+    bloccati (baseline non verificata) finche' l'owner non conferma; dopo la conferma l'ingresso passa."""
+    r1 = run([{"op": "signal", "m": "1.991", "price": 2.0}, {"op": "settle", "m": "1.991", "win": True},
+              {"op": "crash_now"}], settings=GROK)
+    r2 = run([{"op": "signal", "m": "1.992", "price": 2.0}, {"op": "confirm_baseline"},
+              {"op": "signal", "m": "1.993", "price": 2.0}], home=r1["_home"], settings=GROK)
+    last = r2["snaps"][-1]
+    assert [o for o in last["orders"] if o["market_id"] == "1.992"] == [], "ingresso ammesso prima della conferma"
+    assert r2["baseline_confirm"][0]["confirmed"] is True, r2["baseline_confirm"]
+    assert [o for o in last["orders"] if o["market_id"] == "1.993"], "ingresso negato dopo la conferma: " + describe(last)
+
+
+@pytest.mark.skipif(not DD09C_FIX, reason="RO-DD-09 C assente su questo albero")
+def test_ro_dd_09c_e2e_stop_pulito_ripresa_senza_conferma() -> None:
+    r1 = run([{"op": "signal", "m": "1.994", "price": 2.0}, {"op": "settle", "m": "1.994", "win": True}], settings=GROK)
+    r2 = run([{"op": "signal", "m": "1.995", "price": 2.0}], home=r1["_home"], settings=GROK)
+    assert [o for o in r2["snaps"][-1]["orders"] if o["market_id"] == "1.995"], describe(r2["snaps"][-1])

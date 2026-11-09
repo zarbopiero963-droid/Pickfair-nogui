@@ -2,6 +2,7 @@
 
 argv: TREE OUT SCENARIO_JSON HOME
 SCENARIO_JSON: {"steps": [...]} con passi:
+  {"op": "confirm_baseline"}                                        conferma owner della baseline (RO-DD-09 C)
   {"op": "signal", "m": "1.701", "price": 2.0, "side": "BACK"}       ("sel": 12 per la seconda selezione; default 11)       segnale reale (Roserpina decide lo stake;
                                                                     con "stake" lo stake fisso del segnale)
   {"op": "mode", "m": "1.701", "mode": "lost"|"partial"|"ok"}       comportamento del trasporto (SIM)
@@ -355,6 +356,13 @@ try:
             _snap = app.betfair_service.get_market_book_snapshot
             app.betfair_service.get_market_book_snapshot = lambda *a, **k: None
             continue
+        elif op == "confirm_baseline":
+            # RO-DD-09 C (decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109): conferma owner della baseline
+            # del drawdown dopo un riavvio non pulito (doppia conferma). Dove il metodo non esiste: registrato e ignorato.
+            fn = getattr(rt, "owner_confirm_drawdown_baseline", None)
+            R.setdefault("baseline_confirm", []).append(fn(
+                authorization="test owner", reason="riavvio dopo crash nel test", operation_id=f"T-{i}",
+                confirm=True, confirm_again=True) if callable(fn) else {"confirmed": None, "reason": "unsupported"})
         elif op == "crash_now":
             app.betfair_service._persist_simulation_state_if_needed(force=True)
             R["crashed_at"] = "NOW"; snap("crash"); dump(); os._exit(1)

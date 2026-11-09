@@ -117,3 +117,9 @@ del registro, esito per scenario (`PASS`, `FAIL`, `XFAIL` = difetto noto, `NOT_T
 suoi scenari sono PASS**, altrimenti il peggiore (FAIL > XFAIL > UNSUPPORTED > NOT_TESTED). `mode` e' `development`
 salvo albero pulito con SHA uguale a `--published-sha` (`certification_candidate`); la certificazione la decide comunque
 il verificatore, solo su SHA pubblicati (head di PR o main). Nessuna rete, nessun ordine.
+
+### Campagna 5, RO-DD-09 opzione C (riavvio dopo crash)
+Nuova operazione `confirm_baseline` del child f026 (chiama `owner_confirm_drawdown_baseline` se presente, altrimenti
+registra `unsupported`). Prove e2e attive solo con la correzione C: crash senza perdite => ingresso bloccato fino alla
+conferma owner, poi ammesso; stop pulito => ammesso senza conferma. Su `2a9cedad`: 12 PASS, 2 xfail attesi
+(RO-REC-01, RO-CAP-01). Su `main` le due prove si saltano.
