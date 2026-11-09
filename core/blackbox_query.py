@@ -29,7 +29,7 @@ _UUID_FIELDS = ("correlation_id", "causation_id")
 
 
 normalize_event_id = bb.normalize_uuid          # una sola regola per scrittura e lettura
-EXTERNAL_HIDDEN = ("order_ref",)
+EXTERNAL_HIDDEN = ("order_ref", "order_alias")    # order_alias diventa `order_id` nella vista esterna (D1)
 _EQ = {f: f for f in FILTERS if f not in ("from_ts", "to_ts")}
 RATE_PER_S = 20.0
 BURST = 40.0
@@ -59,6 +59,7 @@ def _row_to_event(row, external: bool) -> Dict[str, Any]:
             v = json.loads(v)
         ev[f] = v
     if external:
+        ev["order_id"] = ev.get("order_alias")          # D1: mai l'id progressivo del ledger fuori da Pickfair
         for f in EXTERNAL_HIDDEN:
             ev.pop(f, None)
         for f in bb._JSON_FIELDS:                       # a ogni profondita', in data e values_*: mai il riferimento
@@ -114,6 +115,8 @@ class BlackBoxReader:
                 where.append("ts_utc >= ?"); args.append(str(v))
             elif k == "to_ts":
                 where.append("ts_utc <= ?"); args.append(str(v))
+            elif k == "order_id" and external:          # D1: dall'esterno si filtra per alias, mai per id interno
+                where.append("order_alias = ?"); args.append(str(v))
             elif k in _UUID_FIELDS:
                 where.append(f"{k} = ?"); args.append(normalize_event_id(v))
             else:

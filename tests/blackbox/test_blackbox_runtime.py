@@ -109,3 +109,23 @@ def test_record_without_an_installed_blackbox(monkeypatch):
     assert rt.record("API_REQUEST") is None
     with pytest.raises(bb.BlackBoxUnavailable):
         rt.record("ORDER_PLACE_REQUEST", critical=True)
+
+
+def test_second_runtime_process_is_refused_and_does_not_start(tmp_path):
+    """D3 tra PROCESSI reali: mentre un runtime tiene il registro, un secondo processo che installa la scatola nera
+    viene rifiutato (RUNTIME_ALREADY_ACTIVE) e non scrive nulla; nessun falso UNCLEAN_TERMINATION per il primo."""
+    import os
+    import subprocess
+    path = str(tmp_path / "data" / "blackbox.sqlite")
+    first = bb.BlackBox(path).open()
+    first.start_session()
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    code = ("import sys; sys.path.insert(0, %r)\n"
+            "from core import blackbox_runtime as rt\n"
+            "try:\n    rt.install(%r)\nexcept Exception as e:\n    print(type(e).__name__, e); sys.exit(3)\n"
+            "sys.exit(0)\n") % (root, path)
+    p = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=60)
+    assert p.returncode == 3 and "RUNTIME_ALREADY_ACTIVE" in p.stdout, (p.stdout, p.stderr)
+    types = [e["type"] for e in _events(path)]
+    assert types == ["PROCESS_START"], "il secondo processo non ha scritto nulla"
+    first.end_session("STOP"); first.close()

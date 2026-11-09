@@ -309,21 +309,34 @@ def test_request_hook_returns_false_when_the_store_is_unavailable(tmp_path):
     assert bq.BlackBoxReader(box).request_hook({"phase": "ATTEMPT", "route": "/v1/x", "request_id": "r"}) is False
 
 
-def test_order_id_is_recorded_indexed_filterable_and_visible_outside(tmp_path):
-    """Richiesta di Claude C (MCP-01p): l'id locale dell'ordine del ledger, indicizzato, per la cronologia di un ordine
-    prima che l'exchange restituisca un bet_id. Non e' un segreto: resta nella vista esterna (order_ref no)."""
+def test_order_id_is_recorded_indexed_and_exposed_outside_only_as_a_stable_alias(tmp_path):
+    """D1 (owner PF-BB1-IDENTITY-TIMESTAMP-SESSION-20261109): l'order_id del ledger e' un intero progressivo
+    (`orders.id`): fuori da Pickfair esce solo l'alias `ord_<hmac>`, stabile ai riavvii e non enumerabile;
+    dall'esterno si filtra per alias; la vista interna conserva id e alias."""
     from core import blackbox_query as q
-    box = bb.BlackBox(str(tmp_path / "b.sqlite")).open()
+    path = str(tmp_path / "b.sqlite")
+    box = bb.BlackBox(path).open()
     box.start_session()
     box.record("ORDER_PLACE_REQUEST", source="STRATEGY", phase="ATTEMPT", outcome="PENDING", order_id=42,
                order_ref="cust-ref-riservato")
     box.record("ORDER_PLACE_REQUEST", source="STRATEGY", phase="ATTEMPT", outcome="PENDING", order_id=43)
     idx = [r[1] for r in box._conn.execute("PRAGMA index_list(events)")]
-    assert "ix_events_order_id" in idx
-    res = q.BlackBoxReader(box).query({"order_id": "42"})
-    assert [r["order_id"] for r in res["records"]] == ["42"]
-    assert "order_ref" not in res["records"][0]
-    assert box.verify()["ok"]
+    assert "ix_events_order_id" in idx and "ix_events_order_alias" in idx
+    alias42 = box.order_alias(42)
+    assert alias42.startswith("ord_") and len(alias42) == 36 and "42" not in alias42[4:6]
+    r = q.BlackBoxReader(box)
+    ext = r.query({"order_id": alias42})["records"]
+    assert [e["order_id"] for e in ext] == [alias42] and "order_alias" not in ext[0] and "order_ref" not in ext[0]
+    assert r.query({"order_id": "42"})["records"] == [], "l'id interno non e' un filtro esterno"
+    internal = r.query({"order_id": "42"}, external=False)["records"]
+    assert internal[0]["order_id"] == "42" and internal[0]["order_alias"] == alias42
+    box.close()
+    again = bb.BlackBox(path).open()
+    assert again.order_alias(42) == alias42, "alias stabile dopo il riavvio"
+    assert bb.BlackBox(str(tmp_path / "altro.sqlite")).open().order_alias(42) != alias42, "chiave per registro"
+    assert again.verify()["ok"]
+    with pytest.raises(ValueError):
+        again.record("ORDER_PLACE_REQUEST", source="STRATEGY", phase="ATTEMPT", outcome="PENDING", order_alias="x")
 
 
 def test_get_and_uuid_filters_accept_the_dashed_uuid_form(tmp_path):
@@ -389,3 +402,52 @@ def test_request_hook_records_attempt_and_result_with_returned_and_keeps_non_uui
     assert [(e["phase"], e["outcome"]) for e in recs] == [("ATTEMPT", "PENDING"), ("RESULT", "VERIFIED")]
     assert all(e["correlation_id"] == rid and e["data"]["request_id"] == rid for e in recs)
     assert recs[1]["data"]["returned"] == 13
+
+
+
+@pytest.mark.parametrize("bad", ["2026-11-09T12:34:56Z", "2026-11-09T12:34:56.123Z", "2026-11-09 12:34:56.123456Z",
+                                 "2026-11-09T12:34:56.123456+01:00", "2026-02-30T12:34:56.123456Z",
+                                 "2026-11-09T24:00:00.000000Z", "9/11/2026", ""])
+def test_timestamps_must_be_canonical_utc_rfc3339_microseconds(tmp_path, bad):
+    """D2: ts_utc ed exchange_ts forniti dal chiamante solo come YYYY-MM-DDTHH:MM:SS.ffffffZ validi."""
+    box = bb.BlackBox(str(tmp_path / "b.sqlite")).open()
+    for field in ("ts_utc", "exchange_ts"):
+        with pytest.raises(ValueError):
+            box.record("API_REQUEST", source="SYSTEM", **{field: bad})
+
+
+def test_exchange_time_is_distinct_and_never_invented(tmp_path):
+    """D2: l'ora dell'exchange resta separata dall'ora osservata; se manca e' null (mai inventata); l'ordine fa fede
+    su seq, non sull'orario (anche con un orario osservato fornito fuori ordine o a cavallo di mezzanotte)."""
+    from core import blackbox_query as q
+    box = bb.BlackBox(str(tmp_path / "b.sqlite")).open()
+    box.start_session()
+    box.record("ORDER_MATCHED", source="EXCHANGE", phase="OBSERVATION", outcome="VERIFIED",
+               ts_utc="2026-11-10T00:00:00.000001Z", exchange_ts="2026-11-09T23:59:59.999999Z")
+    box.record("ORDER_MATCHED", source="EXCHANGE", phase="OBSERVATION", outcome="VERIFIED",
+               ts_utc="2026-11-09T23:59:59.000000Z")
+    recs = [e for e in q.BlackBoxReader(box).query({"type": "ORDER_MATCHED"})["records"]]
+    assert [e["seq"] for e in recs] == sorted(e["seq"] for e in recs)
+    assert recs[0]["exchange_ts"] == "2026-11-09T23:59:59.999999Z" and recs[0]["ts_utc"] == "2026-11-10T00:00:00.000001Z"
+    assert recs[1]["exchange_ts"] is None and "exchange_ts" in recs[1]["not_recorded"]
+    t = bb.utc_iso(1762732799.999999)
+    assert bb.check_utc_ts(t, "ts_utc") == t
+
+
+def test_a_second_financial_runtime_on_the_same_register_is_refused(tmp_path):
+    """D3: un solo runtime per registro. Il secondo riceve RuntimeAlreadyActive con motivo esplicito; i lettori non
+    prendono il lock; chiuso il primo, un nuovo runtime parte."""
+    from core import blackbox_query as q
+    path = str(tmp_path / "b.sqlite")
+    first = bb.BlackBox(path).open()
+    first.start_session()
+    second = bb.BlackBox(path).open()
+    with pytest.raises(bb.RuntimeAlreadyActive, match="RUNTIME_ALREADY_ACTIVE"):
+        second.start_session()
+    reader = q.BlackBoxReader(bb.BlackBox(path))
+    assert reader.status()["as_of_seq"] >= 1, "un lettore non e' un runtime e non viene rifiutato"
+    first.end_session("STOP"); first.close()
+    third = bb.BlackBox(path).open()
+    third.start_session()
+    types = [r["type"] for r in third._conn.execute("SELECT type FROM events ORDER BY seq")]
+    assert types[-1] == "PROCESS_START" and "UNCLEAN_TERMINATION" not in types

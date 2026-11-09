@@ -50,6 +50,21 @@ di vita del processo.
   - `outcome` vale VERIFIED, PENDING, UNKNOWN, REJECTED, FAILED oppure NOT_APPLICABLE.
   - Nessuno dei due viene mai dedotto.
 
+## Tempo (decisione owner D2)
+
+- Ogni evento ha `ts_utc` in RFC 3339 UTC canonico `YYYY-MM-DDTHH:MM:SS.ffffffZ`; un orario fornito dal chiamante in
+  altra forma (secondi senza frazione, millisecondi, fuso diverso da `Z`, data impossibile) è rifiutato.
+- `exchange_ts` è l'ora dichiarata dall'exchange, distinta dall'ora osservata da Pickfair; se manca resta `null` (mai
+  inventata).
+- L'ordine degli eventi fa fede su `seq`, mai sull'orario; la GUI converte in ora locale solo per la visualizzazione.
+
+## Un solo runtime per registro (decisione owner D3)
+
+- `start_session` prende un lock esclusivo su `<registro>.runtime.lock` (fcntl su Linux, msvcrt su Windows), tenuto
+  fino alla chiusura. Un secondo runtime riceve `RUNTIME_ALREADY_ACTIVE` e `headless_main` non parte (exit 1).
+- I lettori (Control API, MCP, CLI) non prendono il lock e non aprono sessioni.
+- Non certifica il fencing finanziario del motore (#536, separato).
+
 ## Avvio, arresto e crash
 
 1. `headless_main.main()` installa la scatola nera **prima** di costruire qualunque componente. Il primo evento è
@@ -106,9 +121,13 @@ Dettagli:
   - una richiesta servita produce ATTEMPT e RESULT; una richiesta rifiutata solo RESULT;
   - oltre 20 record/s (raffica 40) le richieste vengono aggregate in `coalesced_before`;
   - se restituisce False, la Control API risponde 503.
-- **`order_id`:** id locale dell'ordine nel ledger, indicizzato; permette la cronologia di un ordine anche prima che
-  l'exchange restituisca un `bet_id`. Nel motore è un uuid casuale (`trading_engine`), senza dati del cliente: è
-  visibile anche nella vista esterna. `order_ref`/`customer_ref` restano nascosti.
+- **Identificativi dell'ordine** (decisione owner D1):
+  - `order_id` interno: `orders.id` del ledger, un intero progressivo (uuid solo con DB degradato);
+  - `customer_ref` (customerOrderRef inviato all'exchange) e `correlation_id`: identificativi applicativi;
+  - `bet_id`: riferimento dell'exchange;
+  - **verso Control API e MCP** esce solo `order_id = ord_<32 hex>`: HMAC-SHA256 dell'id interno con una chiave casuale
+    del registro (`meta.order_alias_key`), stabile ai riavvii e non enumerabile. Dall'esterno si filtra per alias;
+    l'id interno non è un filtro esterno. `order_ref`/`customer_ref` non escono mai, a nessuna profondità.
 - **Identificativi:** `event_id`, `correlation_id` e `causation_id` sono uuid registrati in forma unica, 32 hex
   minuscoli: la forma con trattini (contratto MCP 1.14.0) viene normalizzata sia in scrittura sia in lettura, quindi le
   due forme sono lo stesso id (nessun duplicato, stessi risultati).

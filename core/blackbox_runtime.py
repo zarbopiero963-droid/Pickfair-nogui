@@ -116,7 +116,11 @@ def install(path: Optional[str] = None, **process_data: Any) -> bb.BlackBox:
     box = bb.BlackBox(path).open()
     fault_path = os.path.join(os.path.dirname(box.path) or ".", "fault.log")
     dump = _previous_fault_dump(fault_path)
-    box.start_session(argv=safe_argv(sys.argv[1:]), **process_data)
+    try:
+        box.start_session(argv=safe_argv(sys.argv[1:]), **process_data)
+    except BaseException:
+        box.close()                     # rifiuto (es. RUNTIME_ALREADY_ACTIVE) o guasto: nessuna risorsa lasciata aperta
+        raise
     if dump:
         box.record("CRASH_RECOVERY", source="SYSTEM", component="faulthandler", severity="ERROR",
                    phase="OBSERVATION", outcome="VERIFIED", reason_code="NATIVE_CRASH_DUMP", data={"tail": dump})

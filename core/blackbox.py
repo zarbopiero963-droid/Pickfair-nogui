@@ -29,8 +29,11 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
+import hmac
 import json
 import os
+import re
+import secrets
 import sqlite3
 import threading
 import time
@@ -50,12 +53,30 @@ SEVERITIES = event_journal.LEVELS
 RECORD_FIELDS = (
     "event_id", "ts_utc", "mono", "session_id", "session_seq", "pid", "source", "component", "category", "type",
     "severity", "phase", "outcome", "state_before", "state_after", "values_before", "values_after", "reason_code",
-    "reason", "correlation_id", "causation_id", "table_id", "market_id", "selection_id", "order_id", "order_ref",
-    "bet_id", "strategy", "data",
+    "reason", "correlation_id", "causation_id", "table_id", "market_id", "selection_id", "order_id", "order_alias",
+    "order_ref", "bet_id", "exchange_ts", "strategy", "data",
 )
 _JSON_FIELDS = ("values_before", "values_after", "data")
-_INDEXED = ("ts_utc", "session_id", "type", "category", "table_id", "market_id", "order_id", "order_ref", "bet_id",
-            "correlation_id")
+_INDEXED = ("ts_utc", "session_id", "type", "category", "table_id", "market_id", "order_id", "order_alias", "order_ref",
+            "bet_id", "correlation_id")
+# RFC 3339 canonico del registro (decisione owner D2): UTC, microsecondi, `Z`. Mai ora locale.
+_TS_CANONICAL = re.compile(r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z")
+
+
+class RuntimeAlreadyActive(RuntimeError):
+    """Un secondo runtime finanziario sullo stesso registro: rifiutato (decisione owner D3)."""
+
+
+def check_utc_ts(value: Any, field: str) -> str:
+    """`YYYY-MM-DDTHH:MM:SS.ffffffZ` valido (data e ora reali), altrimenti ValueError: mai un orario ambiguo."""
+    s = str(value)
+    if not _TS_CANONICAL.fullmatch(s):
+        raise ValueError(f"blackbox: {field} non nel formato UTC canonico YYYY-MM-DDTHH:MM:SS.ffffffZ: {s!r}")
+    try:
+        _dt.datetime.strptime(s, "%Y-%m-%dT%H:%M:%S.%fZ")
+    except ValueError:
+        raise ValueError(f"blackbox: {field} non e' una data/ora valida: {s!r}") from None
+    return s
 GENESIS_HASH = "0" * 64
 ENV_PATH = "PICKFAIR_BLACKBOX_PATH"
 MAX_CRITICAL_BUFFER = 1000
@@ -134,6 +155,8 @@ class BlackBox:
         self._degraded_since: Optional[float] = None
         self.dropped = 0                               # eventi non critici persi (mai silenziosi: GAP al ripristino)
         self.last_error: Optional[str] = None
+        self._alias_key: Optional[bytes] = None
+        self._writer_lock = None                       # file lock del runtime (un solo scrittore per registro)
 
     # ------------------------------------------------------------------ apertura e schema
     def open(self) -> "BlackBox":
@@ -160,11 +183,49 @@ class BlackBox:
                          "BEGIN SELECT RAISE(ABORT, 'blackbox: append-only'); END")
             conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
             conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
+            # chiave dell'alias esterno di order_id (D1): casuale, per registro, persistita => alias stabile ai riavvii
+            conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('order_alias_key', ?)", (secrets.token_hex(32),))
+            self._alias_key = bytes.fromhex(conn.execute(
+                "SELECT value FROM meta WHERE key = 'order_alias_key'").fetchone()["value"])
             self._conn = conn
             return self
 
+    def order_alias(self, order_id: Any) -> Optional[str]:
+        """Alias esterno stabile di un order_id del ledger (D1): `ord_` + HMAC-SHA256 con la chiave del registro.
+        Non enumerabile (l'id progressivo non si ricava dall'alias), uguale per lo stesso ordine dopo un riavvio."""
+        if order_id is None:
+            return None
+        self.open()
+        return "ord_" + hmac.new(self._alias_key, str(order_id).encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+
+    def acquire_runtime(self) -> None:
+        """Un solo runtime finanziario per registro (D3): lock esclusivo del file `<registro>.runtime.lock`, tenuto
+        fino a `close`. Un secondo runtime riceve RuntimeAlreadyActive con motivo esplicito. I lettori (Control
+        API/MCP) non lo chiamano mai. Non certifica il fencing finanziario del motore (#536, separato)."""
+        if self._writer_lock is not None:
+            return
+        fh = open(self.path + ".runtime.lock", "a+")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            fh.close()
+            raise RuntimeAlreadyActive(f"RUNTIME_ALREADY_ACTIVE: un altro runtime Pickfair scrive gia' {self.path}")
+        fh.seek(0); fh.truncate(); fh.write(f"pid={self.pid} session={self.session_id}\n"); fh.flush()
+        self._writer_lock = fh
+
     def close(self) -> None:
         with self._lock:
+            if self._writer_lock is not None:
+                try:
+                    self._writer_lock.close()          # chiudere il file rilascia il lock (POSIX e Windows)
+                finally:
+                    self._writer_lock = None
             if self._conn is not None:
                 try:
                     self._conn.close()
@@ -187,6 +248,11 @@ class BlackBox:
         unknown = set(kw) - set(RECORD_FIELDS)
         if unknown:
             raise ValueError(f"blackbox: campi sconosciuti: {sorted(unknown)}")
+        if "order_alias" in kw:
+            raise ValueError("blackbox: order_alias e' calcolato dal registro, mai fornito dal chiamante")
+        for f in ("ts_utc", "exchange_ts"):            # D2: un orario fornito deve essere UTC canonico
+            if kw.get(f) is not None:
+                check_utc_ts(kw[f], f)
         now = float(self._clock())
         rec: Dict[str, Any] = {f: None for f in RECORD_FIELDS}
         rec.update({k: v for k, v in kw.items()})
@@ -198,6 +264,7 @@ class BlackBox:
         )
         for f in ("correlation_id", "causation_id"):
             rec[f] = normalize_uuid(rec[f])
+        rec["order_alias"] = self.order_alias(rec["order_id"])
         for f in _JSON_FIELDS:
             rec[f] = _redact(rec[f]) if rec[f] is not None else None
         for f in RECORD_FIELDS:
@@ -288,6 +355,7 @@ class BlackBox:
         """Apre la sessione: se la precedente non ha chiuso con SHUTDOWN registra UNCLEAN_TERMINATION e una GAP
         UNKNOWN sull'intervallo, poi PROCESS_START. Evento critico: senza registro il processo non parte."""
         self.open()
+        self.acquire_runtime()                         # D3: prima di leggere lo stato della sessione precedente
         with self._lock:
             last = self._conn.execute(
                 "SELECT session_id, type, ts_utc FROM events ORDER BY seq DESC LIMIT 1").fetchone()
