@@ -23,6 +23,8 @@ from tests.roserpina_oracle.test_drawdown_oracle import _signal            # noq
 KEY = "roserpina.drawdown_hard_stop_state"
 # RO-DD-08 corretto in 3f59fa67 (retry del salvataggio, ingressi negati finche' il picco non e' salvato)
 DD08_FIX = hasattr(__import__("core.drawdown_hard_stop", fromlist=["DrawdownHardStop"]).DrawdownHardStop, "retry_persist")
+# RO-DD-09 C (decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109) in 2a9cedad: sessione aperta/baseline
+DD09C_FIX = hasattr(__import__("core.drawdown_hard_stop", fromlist=["DrawdownHardStop"]).DrawdownHardStop, "open_session")
 # RO-DD-09 corretto in c2a7a499 (marker del picco su file se il DB non salva)
 DD09_FIX = hasattr(__import__("core.drawdown_hard_stop", fromlist=["_marker_path"]), "_marker_path")
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -174,7 +176,7 @@ def test_sblocco_e_rebase_mai_chiamati_da_mcp_o_control_api() -> None:
             if f.endswith(".py"):
                 path = os.path.join(root, f)
                 src = open(path, encoding="utf-8", errors="ignore").read()
-                if re.search(r"owner_(unlock_drawdown_hard_stop|clear_breach|rebase_peak)\s*\(", src):
+                if re.search(r"owner_(unlock_drawdown_hard_stop|clear_breach|rebase_peak|confirm_drawdown_baseline)\s*\(", src):
                     hits.append(os.path.relpath(path, REPO))
     allowed = {os.path.join("core", "drawdown_hard_stop.py"), os.path.join("core", "runtime_controller.py")}
     assert set(hits) <= allowed, hits
@@ -317,3 +319,124 @@ def test_marker_con_superamento_vale_al_riavvio(tmp_path, monkeypatch) -> None:
     c2 = build(tmp_path)
     read(c2, 100)
     assert _cap(c2) != "" and _signal(c2, "1.652") is False
+
+
+# ------------------------------------------------------------------ RO-DD-09 C: baseline dopo un riavvio non pulito
+c_only = pytest.mark.skipif(not DD09C_FIX, reason="RO-DD-09 C assente")
+BASELINE = "drawdown_baseline_non_verificata"
+
+
+def _blocked_reason(c):
+    return str(c.rc._loss_block_reason() or "")
+
+
+def _confirm(c, **over):
+    kw = dict(authorization="owner:test", reason="riavvio non pulito", operation_id="cb-1", confirm=True,
+              confirm_again=True)
+    kw.update(over)
+    return c.rc.owner_confirm_drawdown_baseline(**kw)
+
+
+def _crashed_session(tmp_path, **cfg):
+    c = build(tmp_path, **cfg)
+    read(c, 100)
+    assert c.rc._hard_stop().open_session()                          # START (cablaggio reale verificato e2e)
+    return c                                                         # crash: nessun close_session
+
+
+@c_only
+def test_c_crash_poi_riavvio_ingressi_bloccati_fino_alla_conferma(tmp_path) -> None:
+    _crashed_session(tmp_path, max_drawdown_abs=None)
+    c2 = build(tmp_path, max_drawdown_abs=None)
+    read(c2, 100)
+    assert BASELINE in _blocked_reason(c2) and _signal(c2, "1.661") is False
+    out = _confirm(c2)
+    assert out["confirmed"] is True, out
+    assert _signal(c2, "1.662") is True
+
+
+@c_only
+def test_c_stop_pulito_poi_riavvio_ammesso(tmp_path) -> None:
+    c = _crashed_session(tmp_path, max_drawdown_abs=None)
+    assert c.rc._hard_stop().close_session()                         # STOP pulito con picco durevole
+    c2 = build(tmp_path, max_drawdown_abs=None)
+    read(c2, 100)
+    assert BASELINE not in _blocked_reason(c2) and _signal(c2, "1.663") is True
+
+
+@c_only
+def test_c_doppio_guasto_db_e_marker_poi_riavvio_bloccato(tmp_path, monkeypatch) -> None:
+    """Il caso residuo respinto dall'owner come KNOWN_LIMITATION: DB e marker non scrivibili, rialzo 100 -> 120 e
+    perdita a 100, crash, riavvio con lo storage tornato => picco su disco 100 ma ingressi bloccati (baseline)."""
+    import core.drawdown_hard_stop as dhs
+    c = _crashed_session(tmp_path, max_drawdown_abs=None, lockdown_drawdown_pct=15.0)
+    _db_save_fails(c, monkeypatch)
+    monkeypatch.setattr(dhs, "atomic_write_text", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    read(c, 120)
+    read(c, 100)
+    monkeypatch.undo()
+    c2 = build(tmp_path, max_drawdown_abs=None, lockdown_drawdown_pct=15.0)
+    read(c2, 100)
+    assert O.D(_state(c2)["peak"]) == O.D("100")                    # il rialzo e' davvero perso su disco
+    assert BASELINE in _blocked_reason(c2) and _signal(c2, "1.664") is False
+
+
+@c_only
+@pytest.mark.parametrize("over", [{"confirm": False}, {"confirm_again": False}, {"confirm": "yes"},
+                                  {"authorization": ""}, {"reason": ""}, {"operation_id": ""}])
+def test_c_conferma_incompleta_rifiutata(tmp_path, over) -> None:
+    _crashed_session(tmp_path, max_drawdown_abs=None)
+    c2 = build(tmp_path, max_drawdown_abs=None)
+    read(c2, 100)
+    assert _confirm(c2, **over)["confirmed"] is False and _signal(c2, "1.665") is False
+
+
+@c_only
+def test_c_conferma_rifiutata_con_ordini_incerti_e_operation_id_monouso(tmp_path) -> None:
+    _crashed_session(tmp_path, max_drawdown_abs=None)
+    c2 = build(tmp_path, max_drawdown_abs=None)
+    read(c2, 100)
+    c2.rc._mark_uncertain("K", 1, customer_ref="r")
+    out = _confirm(c2, operation_id="cb-u")
+    assert out["confirmed"] is False and out["reason"] == "ordini_incerti_presenti", out
+    c3 = build(tmp_path, max_drawdown_abs=None)                      # nuovo processo senza incerti
+    read(c3, 100)
+    assert _confirm(c3, operation_id="cb-2")["confirmed"] is True     # un tentativo rifiutato non consuma l'id
+    c3.rc._hard_stop().open_session()                                # nuova sessione, poi crash
+    c4 = build(tmp_path, max_drawdown_abs=None)
+    read(c4, 100)
+    assert _confirm(c4, operation_id="cb-2")["confirmed"] is False, "operation_id di una conferma riuscita riusato"
+
+
+@c_only
+def test_c_picco_dichiarato_alza_la_baseline_e_vale_per_il_lockdown(tmp_path) -> None:
+    from core.money_management import DeskMode
+    _crashed_session(tmp_path, max_drawdown_abs=None, lockdown_drawdown_pct=15.0)
+    c2 = build(tmp_path, max_drawdown_abs=None, lockdown_drawdown_pct=15.0)
+    read(c2, 100)
+    assert _confirm(c2, declared_peak=120)["confirmed"] is True
+    assert O.D(_state(c2)["peak"]) == O.D("120")
+    read(c2, 100)
+    assert c2.rc._desk_mode() == DeskMode.LOCKDOWN and _signal(c2, "1.666") is False   # 16,7 % >= 15 %
+
+
+@c_only
+def test_c_conferma_con_salvataggio_fallito_resta_non_verificata(tmp_path, monkeypatch) -> None:
+    _crashed_session(tmp_path, max_drawdown_abs=None)
+    c2 = build(tmp_path, max_drawdown_abs=None)
+    read(c2, 100)
+    _db_save_fails(c2, monkeypatch)
+    import core.drawdown_hard_stop as dhs
+    monkeypatch.setattr(dhs, "atomic_write_text", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    assert _confirm(c2, operation_id="cb-f")["confirmed"] is False
+    assert c2.rc._hard_stop().baseline_verified is False and _signal(c2, "1.668") is False
+
+
+@c_only
+def test_c_reset_strategico_non_sblocca_la_baseline(tmp_path) -> None:
+    _crashed_session(tmp_path, max_drawdown_abs=None)
+    c2 = build(tmp_path, max_drawdown_abs=None)
+    read(c2, 100)
+    read(c2, 84)
+    c2.rc._maybe_auto_reset(0.0)
+    assert BASELINE in _blocked_reason(c2) and _signal(c2, "1.667") is False

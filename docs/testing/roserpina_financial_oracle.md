@@ -146,3 +146,28 @@ riuscito nel DB, marker illeggibile => fail-closed.
   lo storage ripristinato => picco vecchio. Durante il guasto gli ingressi restano negati (RO-DD-08). E' un percorso
   fail-open su denaro reale: per CLAUDE.md una KNOWN_LIMITATION di questo tipo richiede l'accettazione esplicita e
   tracciata dell'owner, non la classificazione di un agente.
+
+### 5-quater. Riverifica su `2a9cedad1858f800e68fac818ac1a16265b34c4b` (RO-DD-09, opzione C owner)
+
+Decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109: opzione C ora (fail-closed al riavvio), B con BB-3,
+A (KNOWN_LIMITATION) respinta. Ogni riavvio dopo una chiusura non pulita (sessione aperta nello stato) blocca gli
+ingressi (`drawdown_baseline_non_verificata`) finche' l'owner non conferma la baseline con
+`owner_confirm_drawdown_baseline` (autorizzazione, motivo, operation_id monouso, doppia conferma, nessun ordine
+incerto); uno STOP pulito non richiede conferma.
+
+Prove indipendenti (`tests/roserpina_oracle/test_hard_stop_patch.py`, attive solo con l'API C presente):
+- crash => riavvio bloccato; conferma owner => ingresso ammesso; stop pulito => ammesso senza conferma;
+- doppio guasto DB + marker, poi riavvio con lo storage ripristinato: picco su disco 100 (vecchio) ma ingressi
+  bloccati fino alla conferma (il residuo di 5-ter e' chiuso in modo fail-closed);
+- conferma incompleta (6 varianti: autorizzazione, motivo, operation_id, `confirm`, `confirm_again` mancanti o
+  falsi) => rifiutata, nessun ingresso;
+- ordini incerti => conferma rifiutata; dopo la risoluzione accettata; operation_id gia' usato con successo =>
+  rifiutato dopo un nuovo crash (un tentativo rifiutato non consuma l'id: accettabile, nessun effetto);
+- `declared_peak=120` => picco 120 e LOCKDOWN al 15 %; salvataggio fallito della conferma => baseline non verificata,
+  ingresso negato (il primo motivo della catena puo' essere `drawdown_picco_non_persistito`);
+- il reset automatico del ciclo non sblocca.
+
+Esito: 91/91 (con e senza `--runxfail`). Campagna 5 e2e con l'operazione `confirm_baseline` del child f026:
+12 PASS, 2 xfail attesi (RO-REC-01, RO-CAP-01); crash senza perdite => bloccato, conferma => ammesso; stop pulito =>
+ammesso. Su `main` (senza la correzione) le prove C si saltano e la suite resta 38 PASS, 1 skip, 13 xfail.
+Verdetto Claude D: RO-DD-09 VERIFICATO sull'albero di sviluppo; va riconfermato sullo SHA della PR e poi su `main`.
