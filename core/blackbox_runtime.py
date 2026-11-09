@@ -28,6 +28,7 @@ _box: Optional[bb.BlackBox] = None
 _fault_file = None
 _prev_excepthook = None
 _prev_threading_hook = None
+_keep_fault_file = False                         # fault.log contiene un dump non ancora consumato: non rimuoverlo
 MAX_TRACE_CHARS = 8000
 FAULT_TAIL_BYTES = 4096
 
@@ -82,33 +83,52 @@ def _threading_hook(args):
 
 
 def _previous_fault_dump(fault_path: str) -> Optional[str]:
-    """Ultima parte del dump nativo di una sessione precedente. Il file NON viene consumato qui: lo e' solo dopo che
-    il CRASH_RECOVERY e' scritto in modo durevole (`_consume_fault_dump`). Prima viene messo da parte in
-    `fault.log.pending`, che il nuovo `faulthandler` non sovrascrive e che resta in attesa di un import riuscito
-    (rilievo Codex #617)."""
+    """Ultima parte dei dump nativi di sessioni precedenti: `fault.log.pending` (in attesa di import) e `fault.log`.
+    La LETTURA non dipende dallo spostamento: se `fault.log` non si puo' accodare a `.pending`, viene letto dov'e'.
+    Niente viene consumato qui: lo fa `_consume_fault_dump`, solo dopo un CRASH_RECOVERY durevole (rilievi Codex e
+    Sol #617)."""
     pending = fault_path + ".pending"
-    try:
+    try:                                         # best effort: mettere da parte prima del nuovo faulthandler
         if os.path.exists(fault_path) and os.path.getsize(fault_path) > 0:
-            if os.path.exists(pending):          # un dump precedente ancora da importare: si accoda, mai si perde
+            if os.path.exists(pending):
                 with open(fault_path, "rb") as src, open(pending, "ab") as dst:
                     dst.write(src.read())
                 os.remove(fault_path)
             else:
                 os.replace(fault_path, pending)
-        if not os.path.exists(pending) or os.path.getsize(pending) <= 0:
-            return None
-        with open(pending, "rb") as fh:
-            fh.seek(max(0, os.path.getsize(pending) - FAULT_TAIL_BYTES))
-            return fh.read().decode("utf-8", errors="replace")
     except OSError:
-        return None
+        pass                                     # resta in fault.log: lo si legge li', e non lo si tronca mai
+    parts = []
+    for p in (pending, fault_path):
+        try:
+            size = os.path.getsize(p) if os.path.exists(p) else 0
+            if size > 0:
+                with open(p, "rb") as fh:
+                    fh.seek(max(0, size - FAULT_TAIL_BYTES))
+                    parts.append(fh.read().decode("utf-8", errors="replace"))
+        except OSError:
+            continue
+    return "\n".join(parts) or None
 
 
-def _consume_fault_dump(fault_path: str) -> None:
+def _consume_fault_dump(fault_path: str) -> bool:
+    """Archivia in `fault.log.1` i dump importati. False se qualcosa resta da consumare (verra' reimportato al
+    prossimo avvio: meglio un import doppio che un dump perso)."""
+    pending, archive = fault_path + ".pending", fault_path + ".1"
+    ok = True
     try:
-        os.replace(fault_path + ".pending", fault_path + ".1")
+        if os.path.exists(pending):
+            os.replace(pending, archive)
     except OSError:
-        pass
+        ok = False
+    try:
+        if os.path.exists(fault_path) and os.path.getsize(fault_path) > 0:
+            with open(fault_path, "rb") as src, open(archive, "ab") as dst:
+                dst.write(src.read())
+            os.remove(fault_path)
+    except OSError:
+        ok = False
+    return ok
 
 
 def safe_argv(argv) -> list:
@@ -145,22 +165,25 @@ def install(path: Optional[str] = None, **process_data: Any) -> bb.BlackBox:
     except BaseException:
         box.close()                     # rifiuto (es. RUNTIME_ALREADY_ACTIVE) o guasto: nessuna risorsa lasciata aperta
         raise
+    keep_fault = False
     if dump:
         try:
             box.record("CRASH_RECOVERY", critical=True, source="SYSTEM", component="faulthandler", severity="ERROR",
                        phase="OBSERVATION", outcome="VERIFIED", reason_code="NATIVE_CRASH_DUMP",
                        data={"tail": dump})
-            _consume_fault_dump(fault_path)      # solo dopo la scrittura durevole
+            keep_fault = not _consume_fault_dump(fault_path)    # solo dopo la scrittura durevole
         except bb.BlackBoxUnavailable:
-            pass                                 # il dump resta in fault.log.pending: nuovo tentativo al prossimo avvio
+            keep_fault = True                    # il dump resta in attesa: nuovo tentativo al prossimo avvio
     try:
-        _fault_file = open(fault_path, "w")
+        # append, mai troncatura: un dump non ancora consumato resta leggibile (rilievo Sol #617)
+        _fault_file = open(fault_path, "a")
         faulthandler.enable(file=_fault_file, all_threads=True)
     except OSError:
         _fault_file = None
     _prev_excepthook, sys.excepthook = sys.excepthook, _excepthook
     _prev_threading_hook, threading.excepthook = threading.excepthook, _threading_hook
     _box = box
+    globals()["_keep_fault_file"] = keep_fault or (os.path.exists(fault_path) and os.path.getsize(fault_path) > 0)
     return box
 
 
@@ -180,7 +203,8 @@ def shutdown(reason: str = "STOP", **data: Any) -> None:
         if _fault_file is not None:
             try:
                 _fault_file.close()
-                os.remove(_fault_file.name)        # chiusura pulita: nessun dump da conservare
+                if not _keep_fault_file:           # chiusura pulita: nessun dump da conservare
+                    os.remove(_fault_file.name)
             except OSError:
                 pass
             _fault_file = None

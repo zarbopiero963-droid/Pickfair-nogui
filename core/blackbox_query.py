@@ -90,12 +90,21 @@ class BlackBoxReader:
             return self.box._conn.execute(sql, args).fetchall()
 
     def status(self) -> Dict[str, Any]:
+        """Stato del registro. La salute del RUNTIME (guasto, buffer, eventi persi) e' nota solo sull'istanza che
+        scrive (quella che tiene il lock di D3): un lettore su un'istanza separata riporta quei campi come None e in
+        `not_reported`, mai come zeri sani (rilievo Codex #617)."""
         h = self.box.health()
         last = self._rows("SELECT MAX(seq) AS s, COUNT(*) AS n FROM events")[0]
-        return {"ok": not h["degraded"], "degraded": h["degraded"], "as_of_seq": last["s"] or 0,
-                "count": last["n"], "session_id": h["session_id"], "buffered": h["buffered"],
-                "dropped_non_critical": h["dropped_non_critical"],
-                "not_reported": [] if h["last_error"] is None else ["last_error_detail"]}
+        runtime = self.box.is_runtime()
+        not_reported = [] if h["last_error"] is None else ["last_error_detail"]
+        if not runtime:
+            not_reported += ["degraded", "buffered", "dropped_non_critical"]
+        return {"ok": not h["degraded"], "health_scope": "RUNTIME" if runtime else "READER_LOCAL",
+                "degraded": h["degraded"] if runtime else None, "as_of_seq": last["s"] or 0,
+                "count": last["n"], "session_id": h["session_id"],
+                "buffered": h["buffered"] if runtime else None,
+                "dropped_non_critical": h["dropped_non_critical"] if runtime else None,
+                "not_reported": not_reported}
 
     def sessions(self) -> List[Dict[str, Any]]:
         rows = self._rows("SELECT session_id, MIN(seq) AS first_seq, MAX(seq) AS last_seq, MIN(ts_utc) AS started, "

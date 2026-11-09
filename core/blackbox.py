@@ -219,8 +219,18 @@ class BlackBox:
         except OSError:
             fh.close()
             raise RuntimeAlreadyActive(f"RUNTIME_ALREADY_ACTIVE: un altro runtime Pickfair scrive gia' {self.path}")
-        fh.seek(0); fh.truncate(); fh.write(f"pid={self.pid} session={self.session_id}\n"); fh.flush()
+        # il file di lock non si tocca piu' dopo il lock (su Windows il lock e' una regione del file, rilievo Grok
+        # #617): il proprietario va in un file separato, solo informativo
+        try:
+            with open(self.path + ".runtime.owner", "w") as owner:
+                owner.write(f"pid={self.pid} session={self.session_id}\n")
+        except OSError:
+            pass
         self._writer_lock = fh
+
+    def is_runtime(self) -> bool:
+        """Vero se questa istanza e' il runtime che scrive il registro (tiene il lock di D3)."""
+        return self._writer_lock is not None
 
     def close(self) -> None:
         with self._lock:
@@ -281,6 +291,7 @@ class BlackBox:
         conn = self._conn
         if conn is None:
             raise sqlite3.OperationalError("blackbox non aperta")
+        saved_session_seq = self._session_seq      # ripristino esatto, mai un decremento alla cieca (Codex #617)
         conn.execute("BEGIN IMMEDIATE")
         try:
             row = conn.execute("SELECT seq, hash FROM events ORDER BY seq DESC LIMIT 1").fetchone()
@@ -296,7 +307,7 @@ class BlackBox:
             conn.execute("COMMIT")
             return seq
         except BaseException:
-            self._session_seq -= 1
+            self._session_seq = saved_session_seq
             try:
                 conn.execute("ROLLBACK")
             except sqlite3.Error:
@@ -372,21 +383,37 @@ class BlackBox:
         # (Control API/MCP) scrive eventi propri dopo lo SHUTDOWN e non e' un runtime (rilievo Codex #617, D3)
         with self._lock:
             life = self._conn.execute(
-                "SELECT session_id, type FROM events WHERE type IN ('PROCESS_START', 'SHUTDOWN', 'UNCLEAN_TERMINATION')"
-                " ORDER BY seq DESC LIMIT 1").fetchone()
+                "SELECT seq, session_id, type, ts_utc, data FROM events"
+                " WHERE type IN ('PROCESS_START', 'SHUTDOWN', 'UNCLEAN_TERMINATION') ORDER BY seq DESC LIMIT 1").fetchone()
             last = None
+            gap_from = None
             if life is not None and life["type"] == "PROCESS_START":
                 last = self._conn.execute(
                     "SELECT session_id, type, ts_utc FROM events WHERE session_id = ? ORDER BY seq DESC LIMIT 1",
                     (life["session_id"],)).fetchone()
+            elif life is not None and life["type"] == "UNCLEAN_TERMINATION":
+                # recupero riprendibile (rilievo Sol #617): UNCLEAN_TERMINATION scritto ma GAP mancante (guasto fra i
+                # due record) => la GAP UNKNOWN si scrive ora, l'intervallo non resta mai senza lacuna dichiarata
+                has_gap = self._conn.execute(
+                    "SELECT 1 FROM events WHERE seq > ? AND type = 'BLACKBOX_GAP' AND reason_code = 'UNCLEAN_TERMINATION'"
+                    " LIMIT 1", (life["seq"],)).fetchone()
+                if has_gap is None:
+                    try:
+                        gap_from = (json.loads(life["data"]) if life["data"] else {}).get("from_ts")
+                    except ValueError:
+                        gap_from = None
+                    gap_from = gap_from or life["ts_utc"]
         if last is not None:
             self.record("UNCLEAN_TERMINATION", critical=True, source="SYSTEM", component="blackbox",
                         severity="ERROR", phase="OBSERVATION", outcome="VERIFIED",
                         reason_code="NO_SHUTDOWN_RECORDED", data={"previous_session": last["session_id"],
-                                                                  "last_event_type": last["type"]})
+                                                                  "last_event_type": last["type"],
+                                                                  "from_ts": last["ts_utc"]})
+            gap_from = last["ts_utc"]
+        if gap_from is not None:
             self.record("BLACKBOX_GAP", critical=True, source="SYSTEM", component="blackbox", severity="ERROR",
                         phase="OBSERVATION", outcome="UNKNOWN", reason_code="UNCLEAN_TERMINATION",
-                        data={"from_ts": last["ts_utc"], "to_ts": utc_iso(self._clock()), "refs": []})
+                        data={"from_ts": gap_from, "to_ts": utc_iso(self._clock()), "refs": []})
         return self.record("PROCESS_START", critical=True, source="SYSTEM", component="process",
                            phase="OBSERVATION", outcome="VERIFIED", data={"pid": self.pid, **data})
 

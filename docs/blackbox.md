@@ -37,7 +37,10 @@ di vita del processo.
   - `seq` è globale e persistente. È assegnato dentro `BEGIN IMMEDIATE`, quindi resta corretto con più thread e più
     processi.
   - `session_seq` numera gli eventi della singola sessione.
-  - Ogni record porta `hash = sha256(prev_hash + JSON canonico)`.
+  - Ogni record porta `hash = sha256((prev_hash + corpo).encode("utf-8"))` in esadecimale, dove `corpo` è il JSON
+    canonico di `{"seq": seq, <ogni campo di RECORD_FIELDS>: valore}` con `sort_keys=True`, separatori compatti
+    `(",", ":")`, `ensure_ascii=False`, `allow_nan=False` (`core.blackbox.compute_hash`/`canonical_json`). Il primo
+    `prev_hash` è `GENESIS_HASH`. I campi JSON (`data`, `values_*`) entrano già decodificati.
   - `BlackBox.verify()` rileva record mancanti (`SEQ_GAP`), alterati (`HASH_MISMATCH`) o riordinati (`CHAIN_BROKEN`).
 - **Durabilità.** WAL, `synchronous=FULL`, una transazione per evento.
 - **Nessun segreto.**
@@ -62,6 +65,9 @@ di vita del processo.
 
 - `start_session` prende un lock esclusivo su `<registro>.runtime.lock` (fcntl su Linux, msvcrt su Windows), tenuto
   fino alla chiusura. Un secondo runtime riceve `RUNTIME_ALREADY_ACTIVE` e `headless_main` non parte (exit 1).
+  Dopo il lock il file di lock non viene più scritto né troncato (su Windows il lock è una regione del file): pid e
+  sessione del proprietario stanno in `<registro>.runtime.owner`, solo informativo. Il lock su Windows non è stato
+  eseguito in questo ambiente (NOT_RUN).
 - I lettori (Control API, MCP, CLI) non prendono il lock e non aprono sessioni.
 - Non certifica il fencing finanziario del motore (#536, separato).
 
@@ -72,7 +78,9 @@ di vita del processo.
    **Unica eccezione: `--emergency-stop`**, un'uscita protettiva (cancel-all) che il registro non blocca mai: senza
    scatola nera procede senza registrazione, con un log CRITICAL.
 2. Alla fine della costruzione viene registrato `COMPONENT_INIT`.
-3. `--emergency-stop` registra la richiesta (ATTEMPT) e l'esito (RESULT VERIFIED o FAILED).
+3. `--emergency-stop` registra la richiesta (ATTEMPT) e l'esito (RESULT VERIFIED o FAILED) **dopo** la cancellazione:
+   una scrittura sul registro può attendere un lock fino al timeout di SQLite e non deve mai ritardare la riduzione del
+   rischio. L'ATTEMPT porta l'ora reale della richiesta (`ts_utc`) e precede comunque il RESULT nella sequenza.
 4. Le eccezioni non gestite vengono registrate con tipo, messaggio e traceback redatti **prima** di essere troncati
    (500 caratteri il messaggio, 8000 il traceback), così un segreto a cavallo del limite non lascia frammenti:
    - nel processo: `UNCAUGHT_EXCEPTION`;
@@ -83,9 +91,13 @@ di vita del processo.
    `SHUTDOWN` non è un crash. Si registrano:
    - `UNCLEAN_TERMINATION` con la sessione precedente;
    - una `BLACKBOX_GAP` con `outcome UNKNOWN` sull'intervallo `[ultimo evento del runtime precedente, riavvio]`.
-7. **Dump nativo** (`faulthandler`, `fault.log`): al riavvio viene spostato in `fault.log.pending` e consumato
-   (`fault.log.1`) solo dopo che il `CRASH_RECOVERY` è scritto in modo durevole. Se l'avvio o la scrittura falliscono,
-   il dump resta in attesa e viene importato al primo avvio riuscito; un dump nuovo si accoda a quello in attesa.
+7. **Dump nativo** (`faulthandler`, `fault.log`): al riavvio viene messo da parte in `fault.log.pending` (o letto
+   dov'è, se non si può spostare) e archiviato in `fault.log.1` solo dopo che il `CRASH_RECOVERY` è scritto in modo
+   durevole. Se l'avvio o la scrittura falliscono, il dump resta in attesa e viene importato al primo avvio riuscito;
+   un dump nuovo si accoda a quello in attesa. Il nuovo `faulthandler` apre `fault.log` in append, mai in troncatura,
+   e alla chiusura pulita il file viene rimosso solo se non contiene un dump ancora da consumare.
+8. **Recupero riprendibile:** se `UNCLEAN_TERMINATION` è stato scritto ma la sua `BLACKBOX_GAP` no (guasto fra i due
+   record), il riavvio successivo scrive la GAP mancante: l'intervallo non resta mai senza lacuna dichiarata.
 
    Ciò che è successo in quell'intervallo non viene mai inventato.
 
@@ -121,9 +133,9 @@ alias `ord_<32 hex>` e `exchange_ts`; fixture condivisa sha256 `74be0f92…`):
 
 | Funzione | Cosa restituisce |
 |---|---|
-| `status()` | salute del registro, `as_of_seq`, eventi persi o in buffer, `not_reported` |
+| `status()` | salute del registro, `as_of_seq`, eventi persi o in buffer, `not_reported`; `health_scope` = `RUNTIME` sull'istanza che scrive (lock D3), `READER_LOCAL` su un'istanza separata, dove `degraded`/`buffered`/`dropped_non_critical` sono `None` e in `not_reported` (mai zeri sani) |
 | `sessions()` | le sessioni, con l'indicazione di chiusura pulita |
-| `query(filters, after_seq, limit)` | `records`, `next_after_seq` (0 se non ci sono altre pagine), `gaps_in_range`, `as_of_seq` |
+| `query(filters, after_seq, limit)` | un `dict` (non una tupla) con `records`, `next_after_seq` (0 se non ci sono altre pagine), `gaps_in_range`, `as_of_seq` |
 | `get(event_id, chain_depth)` | l'evento con la catena di `causation_id`; `chain_depth` da 0 a `MAX_CHAIN_DEPTH = 20`, oltre: `QueryError` |
 | `request_hook(record)` | registra una richiesta HTTP della Control API |
 

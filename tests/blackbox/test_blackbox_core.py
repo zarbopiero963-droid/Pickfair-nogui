@@ -324,7 +324,8 @@ def test_order_id_is_recorded_indexed_and_exposed_outside_only_as_a_stable_alias
     idx = [r[1] for r in box._conn.execute("PRAGMA index_list(events)")]
     assert "ix_events_order_id" in idx and "ix_events_order_alias" in idx
     alias42 = box.order_alias(42)
-    assert alias42.startswith("ord_") and len(alias42) == 36 and "42" not in alias42[4:6]
+    assert alias42.startswith("ord_") and len(alias42) == 36      # HMAC con chiave casuale: nessuna asserzione
+    assert alias42 != box.order_alias(43)                          # sul contenuto (Codex #617: era probabilistica)
     r = q.BlackBoxReader(box)
     ext = r.query({"order_id": alias42})["records"]
     assert [e["order_id"] for e in ext] == [alias42] and "order_alias" not in ext[0] and "order_ref" not in ext[0]
@@ -614,3 +615,76 @@ def test_a_reader_event_after_a_clean_shutdown_is_not_an_unclean_termination(tmp
     assert len(unclean) == 1 and json.loads(unclean[0]["data"])["previous_session"] == second.session_id
     gap = [r for r in rows if r["type"] == "BLACKBOX_GAP"][-1]
     assert json.loads(gap["data"])["from_ts"] == runtime_last_ts
+
+
+def test_unclean_recovery_is_resumed_when_the_gap_was_not_written(tmp_path):
+    """Sol #617 (d1454af3): UNCLEAN_TERMINATION scritto, GAP fallita (guasto tra i due record). Al riavvio successivo
+    la GAP UNKNOWN mancante viene scritta: l'intervallo non resta mai senza lacuna dichiarata."""
+    path = str(tmp_path / "b.sqlite")
+    first = bb.BlackBox(path).open()
+    first.start_session()
+    first.record("API_REQUEST")
+    first.close()                                             # crash: nessuno SHUTDOWN
+    second = bb.BlackBox(path).open()
+    real_record = second.record
+
+    def record_failing_gap(event_type, **kw):
+        if event_type == "BLACKBOX_GAP":
+            raise bb.BlackBoxUnavailable("guasto tra UNCLEAN e GAP")
+        return real_record(event_type, **kw)
+
+    second.record = record_failing_gap
+    with pytest.raises(bb.BlackBoxUnavailable):
+        second.start_session()
+    second.close()
+    third = bb.BlackBox(path).open()
+    third.start_session()
+    rows = _rows(third)
+    types = [r["type"] for r in rows]
+    gaps = [r for r in rows if r["type"] == "BLACKBOX_GAP" and r["reason_code"] == "UNCLEAN_TERMINATION"]
+    assert types.count("UNCLEAN_TERMINATION") == 1 and len(gaps) == 1, types
+    assert gaps[0]["outcome"] == "UNKNOWN"
+    assert third.verify()["ok"]
+
+
+def test_a_failed_tail_read_never_reuses_a_session_sequence(tmp_path):
+    """Codex #617 (d1454af3): se la lettura dell'ultimo record fallisce dopo BEGIN IMMEDIATE, il contatore della
+    sessione non deve scendere sotto il valore gia' committato (prima: session_seq 1, 1, 2, ...)."""
+    box = _box(tmp_path)
+    box.record("API_REQUEST")
+    real = box._conn
+
+    class FailTailOnce:
+        def __init__(self):
+            self.done = False
+
+        def execute(self, sql, *a):
+            if not self.done and sql.startswith("SELECT seq, hash FROM events"):
+                self.done = True
+                raise sqlite3.OperationalError("lettura fallita")
+            return real.execute(sql, *a)
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+    box._conn = FailTailOnce()
+    assert box.record("API_REQUEST") is None
+    box._conn = real
+    box.record("API_REQUEST")
+    seqs = [r["session_seq"] for r in _rows(box) if r["session_id"] == box.session_id]
+    assert len(seqs) == len(set(seqs)), seqs
+
+
+def test_reader_on_a_separate_instance_never_reports_runtime_health_as_healthy(tmp_path):
+    """Codex #617 (d1454af3): un BlackBoxReader su un'istanza separata non conosce buffer e guasti del runtime: i
+    campi di salute del runtime sono None e in `not_reported`, mai zeri sani. Sull'istanza del runtime restano veri."""
+    path = str(tmp_path / "b.sqlite")
+    runtime = bb.BlackBox(path).open()
+    runtime.start_session()
+    st = bq.BlackBoxReader(runtime).status()
+    assert st["health_scope"] == "RUNTIME" and st["degraded"] is False and st["buffered"] == 0
+    other = bq.BlackBoxReader(bb.BlackBox(path).open()).status()
+    assert other["health_scope"] == "READER_LOCAL"
+    for f in ("degraded", "buffered", "dropped_non_critical"):
+        assert other[f] is None and f in other["not_reported"], f
+    assert other["as_of_seq"] == st["as_of_seq"]

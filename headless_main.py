@@ -1351,23 +1351,7 @@ class HeadlessApp:
         # entering the main loop.  --emergency-stop is the headless operator
         # trigger; it is fail-closed: partial cancel failures do not resume trading.
         if emergency_stop_requested:
-            from core import blackbox_runtime
-            logger.warning("EMERGENCY STOP richiesto via --emergency-stop")
-            blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="WARNING",
-                                    phase="ATTEMPT", outcome="PENDING", reason_code="operator_cli_flag")
-            try:
-                result = self.runtime.emergency_stop(reason="operator_cli_flag")
-                logger.warning("EMERGENCY_STOP result: %s", result)
-                blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main",
-                                        severity="WARNING", phase="RESULT", outcome="VERIFIED",
-                                        reason_code="operator_cli_flag",
-                                        data={"result": result if isinstance(result, dict) else str(result)})
-            except Exception as exc:
-                logger.exception("Errore durante emergency_stop: %s", exc)
-                blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="ERROR",
-                                        phase="RESULT", outcome="FAILED", reason_code=type(exc).__name__,
-                                        reason=blackbox_runtime.safe_text(exc, 500))
-            return 0
+            return self._emergency_stop_with_audit()
 
         try:
             if execution_mode == "LIVE":
@@ -1488,6 +1472,34 @@ class HeadlessApp:
             pass
 
         self._signal_handlers_installed = True
+
+    def _emergency_stop_with_audit(self) -> int:
+        """`--emergency-stop`: PRIMA la cancellazione, POI la registrazione (rilievo Codex #617, P1). Una scrittura sul
+        registro puo' attendere un lock fino al timeout di SQLite: non deve mai ritardare la riduzione del rischio.
+        L'ATTEMPT porta l'ora reale della richiesta e precede comunque il RESULT nella sequenza."""
+        from core import blackbox as _bb
+        from core import blackbox_runtime
+        requested_at = _bb.utc_iso(time.time())
+        logger.warning("EMERGENCY STOP richiesto via --emergency-stop")
+        result, error = None, None
+        try:
+            result = self.runtime.emergency_stop(reason="operator_cli_flag")
+            logger.warning("EMERGENCY_STOP result: %s", result)
+        except Exception as exc:
+            error = exc
+            logger.exception("Errore durante emergency_stop: %s", exc)
+        blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="WARNING",
+                                phase="ATTEMPT", outcome="PENDING", reason_code="operator_cli_flag",
+                                ts_utc=requested_at)
+        if error is None:
+            blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="WARNING",
+                                    phase="RESULT", outcome="VERIFIED", reason_code="operator_cli_flag",
+                                    data={"result": result if isinstance(result, dict) else str(result)})
+        else:
+            blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="ERROR",
+                                    phase="RESULT", outcome="FAILED", reason_code=type(error).__name__,
+                                    reason=blackbox_runtime.safe_text(error, 500))
+        return 0
 
 
 def main() -> int:

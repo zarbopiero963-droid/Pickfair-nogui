@@ -194,3 +194,61 @@ def test_a_new_native_dump_is_appended_to_one_still_pending(bbpath):
     tail = json.loads([e for e in _events(bbpath) if e["type"] == "CRASH_RECOVERY"][0]["data"])["tail"]
     assert "primo crash" in tail and "secondo crash" in tail
     assert not (bbpath.parent / "fault.log.pending").exists()
+
+
+def test_runtime_lock_file_is_never_rewritten_after_the_lock_is_taken(tmp_path):
+    """Grok #617 (2919d6bf): dopo il lock il file di lock non viene troncato ne' riscritto (su Windows il lock e' una
+    regione del file). Il proprietario (pid, sessione) sta in un file separato `<registro>.runtime.owner`."""
+    path = str(tmp_path / "b.sqlite")
+    box = bb.BlackBox(path).open()
+    lock = path + ".runtime.lock"
+    open(lock, "w").write("contenuto preesistente\n")
+    box.acquire_runtime()
+    assert open(lock).read() == "contenuto preesistente\n", "file di lock modificato dopo il lock"
+    owner = open(path + ".runtime.owner").read()
+    assert f"pid={box.pid}" in owner and f"session={box.session_id}" in owner
+    box.close()
+
+
+def test_native_dump_survives_when_it_cannot_be_moved_aside(bbpath, monkeypatch):
+    """Sol #617 (d1454af3): se il dump non si puo' spostare/accodare in `.pending`, il nuovo faulthandler non deve
+    troncare `fault.log`: il dump non importato resta leggibile."""
+    bbpath.parent.mkdir(parents=True)
+    (bbpath.parent / "fault.log.pending").write_text("in attesa\n")
+    fault = bbpath.parent / "fault.log"
+    fault.write_text("dump nuovo: Segmentation fault\n")
+    real_open = open
+
+    def guarded_open(file, mode="r", *a, **kw):
+        if str(file).endswith("fault.log.pending") and "a" in mode:
+            raise PermissionError("pending non scrivibile")
+        return real_open(file, mode, *a, **kw)
+
+    monkeypatch.setattr("builtins.open", guarded_open)
+    rt.install()
+    monkeypatch.setattr("builtins.open", real_open)
+    rt.shutdown("STOP")
+    tail = json.loads([e for e in _events(bbpath) if e["type"] == "CRASH_RECOVERY"][0]["data"])["tail"]
+    assert "dump nuovo: Segmentation fault" in tail and "in attesa" in tail, "dump non importato"
+    archived = (bbpath.parent / "fault.log.1").read_text()
+    assert "dump nuovo: Segmentation fault" in archived, "dump perso invece che archiviato"
+
+
+def test_emergency_stop_cancels_before_any_audit_write(monkeypatch):
+    """Codex #617 (d1454af3), P1: nessuna scrittura sul registro (che puo' attendere un lock fino a 30 s) prima della
+    cancellazione. L'ATTEMPT si registra dopo, con l'ora reale della richiesta, e precede comunque il RESULT."""
+    calls = []
+
+    class FakeRuntime:
+        def emergency_stop(self, reason):
+            calls.append(("stop", reason))
+            return {"cancelled": 2}
+
+    monkeypatch.setattr(rt, "record", lambda event_type, **kw: calls.append((event_type, kw.get("phase"),
+                                                                             kw.get("ts_utc"))))
+    app = object.__new__(headless_main.HeadlessApp)
+    app.runtime = FakeRuntime()
+    assert app._emergency_stop_with_audit() == 0
+    assert calls[0] == ("stop", "operator_cli_flag"), calls
+    assert [c[:2] for c in calls[1:]] == [("EMERGENCY_STOP", "ATTEMPT"), ("EMERGENCY_STOP", "RESULT")]
+    assert calls[1][2] is not None, "ATTEMPT con l'ora reale della richiesta"
