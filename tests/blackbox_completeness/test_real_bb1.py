@@ -419,3 +419,99 @@ def test_finestra_della_gap_parte_dall_ultimo_evento_del_runtime_caduto(tmp_path
     gap = [r for r in recs if r["type"] == "BLACKBOX_GAP"][0]
     assert "UNCLEAN_TERMINATION" in [r["type"] for r in recs]
     assert gap["data"]["from_ts"] == last_runtime_ts and gap["reason_code"] == "UNCLEAN_TERMINATION"
+
+
+# ------------------------------------------------------------------ PR #617 head dd7b7369
+def test_recupero_riprendibile_gap_mancante_scritta_al_riavvio_successivo(tmp_path, monkeypatch) -> None:
+    """UNCLEAN_TERMINATION scritto ma la sua GAP no (guasto a meta' recupero): il riavvio successivo scrive la GAP
+    UNKNOWN mancante con from_ts = data.from_ts dell'UNCLEAN, senza un secondo UNCLEAN e con la catena integra."""
+    path = str(tmp_path / "res.sqlite")
+    box = bb.BlackBox(path).open()
+    box.start_session()
+    box.record("CONFIG_CHANGE", source="SYSTEM")
+    box.close()                                                              # crash
+    box2 = bb.BlackBox(path).open()
+    real_insert = box2._insert
+
+    def no_gap(rec):
+        if rec.get("type") == "BLACKBOX_GAP":
+            raise sqlite3.OperationalError("disk full")
+        return real_insert(rec)
+    monkeypatch.setattr(box2, "_insert", no_gap)
+    with pytest.raises(bb.BlackBoxUnavailable):
+        box2.start_session()
+    box2.close()
+    box3 = bb.BlackBox(path).open()
+    box3.start_session()
+    recs = read_all(box3)
+    types = [r["type"] for r in recs]
+    assert types.count("UNCLEAN_TERMINATION") == 1 and types.count("BLACKBOX_GAP") == 1
+    unclean = recs[types.index("UNCLEAN_TERMINATION")]
+    gap = recs[types.index("BLACKBOX_GAP")]
+    assert gap["outcome"] == "UNKNOWN" and gap["reason_code"] == "UNCLEAN_TERMINATION"
+    assert unclean["data"]["from_ts"] and gap["data"]["from_ts"] == unclean["data"]["from_ts"]
+    assert gap["seq"] > unclean["seq"]
+    recs = with_prev(box3, recs)
+    assert [p for p in oracle.check(recs, hash_fn=independent_hash) if p.startswith(("SEQ_", "CHAIN_"))] == []
+
+
+class _FailSelectOnce:
+    """Connessione che fa fallire UNA volta la lettura dell'ultimo seq dentro la transazione (prima dell'incremento)."""
+
+    def __init__(self, conn):
+        self._conn, self.armed = conn, True
+
+    def execute(self, sql, *args):
+        if self.armed and sql.startswith("SELECT seq, hash FROM events"):
+            self.armed = False
+            raise sqlite3.OperationalError("database is locked")
+        return self._conn.execute(sql, *args)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+@pytest.mark.parametrize("fail_on", ["read", "write"])
+def test_session_seq_contigua_anche_dopo_una_lettura_o_scrittura_fallita(tmp_path, monkeypatch, fail_on) -> None:
+    """Rilievo Codex #617: dopo una LETTURA fallita nella transazione session_seq veniva riusato (1, 1, 2, 3)."""
+    box = _box(tmp_path)
+    box.start_session()
+    box.record("CONFIG_CHANGE", source="SYSTEM", data={"i": 0})
+    if fail_on == "read":
+        monkeypatch.setattr(box, "_conn", _FailSelectOnce(box._conn))
+    else:
+        real_insert, calls = box._insert, {"n": 0}
+
+        def once_broken(rec):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise sqlite3.OperationalError("I/O")
+            return real_insert(rec)
+        monkeypatch.setattr(box, "_insert", once_broken)
+    assert box.record("CONFIG_CHANGE", source="SYSTEM", data={"i": 1}) is None         # non critico: perso
+    for i in range(2, 5):
+        box.record("CONFIG_CHANGE", source="SYSTEM", data={"i": i})
+    monkeypatch.undo()
+    by_session = {}
+    for r in read_all(box):
+        by_session.setdefault(r["session_id"], []).append(r["session_seq"])
+    for sid, seqs in by_session.items():
+        assert seqs == list(range(1, len(seqs) + 1)), (sid, seqs)
+
+
+def test_ts_utc_anteriore_a_un_seq_minore_ammesso_l_ordine_e_seq(tmp_path) -> None:
+    """D2: EMERGENCY_STOP registra l'ATTEMPT dopo la cancellazione con ts_utc = ora della richiesta: l'orario puo'
+    precedere eventi con seq minore. Fa fede seq; l'oracolo non deve segnalare nulla e la query per intervallo lo trova."""
+    box = _box(tmp_path)
+    box.start_session()
+    t_req = bb.utc_iso(time.time())
+    time.sleep(0.01)
+    box.record("CONFIG_CHANGE", source="SYSTEM")
+    eid = box.record("EMERGENCY_STOP", source="USER", phase="ATTEMPT", outcome="PENDING", ts_utc=t_req)
+    box.record("EMERGENCY_STOP", source="SYSTEM", phase="RESULT", outcome="VERIFIED", causation_id=eid)
+    recs = with_prev(box, read_all(box))
+    seqs = [r["seq"] for r in recs]
+    assert seqs == sorted(seqs) and recs[-2]["ts_utc"] < recs[-3]["ts_utc"]
+    assert oracle.check(recs, hash_fn=independent_hash) == []
+    got = bq.BlackBoxReader(box).query({"from_ts": t_req, "to_ts": t_req}, external=False)["records"]
+    assert [r["event_id"] for r in got] == [eid]
