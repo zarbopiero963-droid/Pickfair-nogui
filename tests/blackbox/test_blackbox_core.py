@@ -145,6 +145,7 @@ def test_non_critical_failure_is_counted_and_declared_as_a_gap_on_recovery(tmp_p
     assert types == ["BLACKBOX_GAP", "BLACKBOX_RECOVERED", "API_REQUEST"]
     gap = json.loads(_rows(box)[0]["data"])
     assert gap["dropped_non_critical"] == 1 and box.verify()["ok"]
+    assert _rows(box)[0]["outcome"] == "UNKNOWN", "finestra con eventi persi: mai VERIFIED (contratto Claude C, I2)"
 
 
 def test_protective_exit_is_buffered_then_flushed_before_gap_and_recovered(tmp_path):
@@ -163,7 +164,7 @@ def test_protective_exit_is_buffered_then_flushed_before_gap_and_recovered(tmp_p
     assert [r["type"] for r in rows] == ["CASHOUT_REQUEST", "BLACKBOX_GAP", "BLACKBOX_RECOVERED", "API_REQUEST"]
     assert rows[0]["event_id"] == eid and json.loads(rows[0]["data"])["buffered"] is True
     gap = json.loads(rows[1]["data"])
-    assert gap["refs"] == ["hedge:ref-1"] and gap["from_ts"] <= gap["to_ts"] and rows[1]["outcome"] == "VERIFIED"
+    assert gap["refs"] == ["hedge:ref-1"] and gap["from_ts"] <= gap["to_ts"] and rows[1]["outcome"] == "UNKNOWN"
     assert rows[0]["ts_utc"] < rows[1]["ts_utc"], "ora originale dell'evento bufferizzato"
     assert box.verify()["ok"] and box.health()["buffered"] == 0
 
@@ -508,3 +509,108 @@ def test_blackbox_modules_never_import_the_bridge_side_modules():
             for m in mods:
                 for bad in ("event_log", "event_journal", "config_store"):
                     assert bad not in m.split("."), f"{name}:{node.lineno} importa {m}"
+
+
+def test_external_view_never_exposes_customer_refs_listed_in_a_gap(tmp_path):
+    """Sol #617 (3b6848d6): la GAP di un guasto elenca in `data.refs` i riferimenti cliente delle uscite bufferizzate.
+    La vista esterna (record e `gaps_in_range`) non li espone mai; quella interna li conserva per l'oracolo."""
+    box = _box(tmp_path)
+    fc = _break(box)
+    box.record("CASHOUT_REQUEST", critical=True, buffer_on_failure=True, source="STRATEGY", phase="ATTEMPT",
+               order_ref="cust-ref-riservato-77")
+    fc.fail = False
+    box.record("API_REQUEST")
+    r = bq.BlackBoxReader(box)
+    page = r.query({})
+    assert "cust-ref-riservato-77" not in json.dumps(page), "riferimento cliente nella vista esterna"
+    gap = [e for e in page["records"] if e["type"] == "BLACKBOX_GAP"][0]
+    assert gap["data"]["refs_count"] == 1 and "refs" not in gap["data"]
+    internal = [e for e in r.query({}, external=False)["records"] if e["type"] == "BLACKBOX_GAP"][0]
+    assert internal["data"]["refs"] == ["cust-ref-riservato-77"]
+
+
+def test_request_hook_never_reports_success_for_coalesced_requests_while_the_store_is_down(tmp_path):
+    """Sol #617 (3b6848d6): a bucket esaurito la richiesta viene aggregata; con il registro guasto la risposta deve
+    essere False (la Control API risponde 503), mai True senza una scrittura possibile."""
+    box = _box(tmp_path)
+    t = [0.0]
+    r = bq.BlackBoxReader(box, clock=lambda: t[0])
+    rec = {"route": "/v1/blackbox/events", "status": 200, "code": "OK", "request_id": "req-9", "phase": "ATTEMPT"}
+    for _ in range(int(bq.BURST)):                               # svuota il bucket con il registro sano
+        assert r.request_hook(dict(rec)) is True
+    fc = _break(box)
+    assert box.record("PRICE_SNAPSHOT") is None                   # una scrittura fallita: registro degradato
+    assert box.health()["degraded"]
+    assert r.request_hook(dict(rec)) is False, "aggregata durante il guasto: mai True"
+    fc.fail = False
+    t[0] = 10.0
+    assert r.request_hook(dict(rec)) is True                     # ripristino: di nuovo True
+
+
+class _FailNthInsert:
+    """Connessione che fallisce solo sull'n-esimo INSERT (guasto a meta' dello scarico del buffer)."""
+
+    def __init__(self, real, n):
+        self.real, self.n, self.count = real, n, 0
+
+    def execute(self, sql, *a):
+        if sql.startswith("INSERT"):
+            self.count += 1
+            if self.count == self.n:
+                raise sqlite3.OperationalError("database or disk is full")
+        return self.real.execute(sql, *a)
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+def test_partial_flush_keeps_every_reference_and_count_in_the_final_gap(tmp_path):
+    """Codex #617 (3b6848d6): se lo scarico del buffer riesce per la prima uscita e fallisce sulla seconda, la GAP
+    finale elenca comunque entrambi i ref e conta entrambe le uscite bufferizzate."""
+    box = _box(tmp_path)
+    fc = _break(box)
+    for ref in ("r1", "r2"):
+        box.record("CASHOUT_REQUEST", critical=True, buffer_on_failure=True, source="STRATEGY", phase="ATTEMPT",
+                   order_ref=ref)
+    box._conn = _FailNthInsert(fc.real, 2)                    # scarico: r1 scritto, r2 fallisce
+    assert box.record("API_REQUEST") is None and box.health()["buffered"] == 1
+    box._conn = fc.real
+    box.record("API_REQUEST")
+    gap = [r for r in _rows(box) if r["type"] == "BLACKBOX_GAP"][-1]
+    d = json.loads(gap["data"])
+    assert d["refs"] == ["r1", "r2"] and d["buffered"] == 2, d
+    assert box.verify()["ok"]
+
+
+def test_a_reader_event_after_a_clean_shutdown_is_not_an_unclean_termination(tmp_path):
+    """Codex #617 (3b6848d6): dopo lo SHUTDOWN del runtime una richiesta della Control API scrive un evento; il
+    runtime successivo non deve registrare un falso UNCLEAN_TERMINATION. Un crash vero resta rilevato, con la finestra
+    che parte dall'ultimo evento del runtime, non del lettore."""
+    path = str(tmp_path / "b.sqlite")
+    first = bb.BlackBox(path).open()
+    first.start_session()
+    first.end_session("STOP")
+    first.close()
+    reader_box = bb.BlackBox(path).open()
+    assert bq.BlackBoxReader(reader_box).request_hook({"phase": "ATTEMPT", "route": "/v1/blackbox/status",
+                                                       "request_id": "req-r"})
+    reader_box.close()
+    second = bb.BlackBox(path).open()
+    second.start_session()
+    types = [r["type"] for r in _rows(second)]
+    assert "UNCLEAN_TERMINATION" not in types, types
+    second.record("API_REQUEST")
+    runtime_last_ts = _rows(second)[-1]["ts_utc"]
+    second.release_runtime() if hasattr(second, "release_runtime") else None
+    second.close()                                            # crash: nessuno SHUTDOWN
+    reader_box = bb.BlackBox(path).open()
+    bq.BlackBoxReader(reader_box).request_hook({"phase": "ATTEMPT", "route": "/v1/blackbox/status",
+                                                "request_id": "req-r2"})
+    reader_box.close()
+    third = bb.BlackBox(path).open()
+    third.start_session()
+    rows = _rows(third)
+    unclean = [r for r in rows if r["type"] == "UNCLEAN_TERMINATION"]
+    assert len(unclean) == 1 and json.loads(unclean[0]["data"])["previous_session"] == second.session_id
+    gap = [r for r in rows if r["type"] == "BLACKBOX_GAP"][-1]
+    assert json.loads(gap["data"])["from_ts"] == runtime_last_ts

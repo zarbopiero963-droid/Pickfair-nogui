@@ -8539,7 +8539,7 @@
       "module": "core.blackbox",
       "area": "blackbox",
       "file": "core/blackbox.py",
-      "original": "        if last is not None and last[\"type\"] not in (\"SHUTDOWN\", \"UNCLEAN_TERMINATION\"):",
+      "original": "        if last is not None:",
       "mutated": "        if False:",
       "tests": [
         "tests/blackbox/test_blackbox_core.py"

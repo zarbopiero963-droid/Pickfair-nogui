@@ -1366,7 +1366,7 @@ class HeadlessApp:
                 logger.exception("Errore durante emergency_stop: %s", exc)
                 blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="ERROR",
                                         phase="RESULT", outcome="FAILED", reason_code=type(exc).__name__,
-                                        reason=str(exc)[:500])
+                                        reason=blackbox_runtime.safe_text(exc, 500))
             return 0
 
         try:
@@ -1493,12 +1493,16 @@ class HeadlessApp:
 def main() -> int:
     # PF-BLACKBOX-01 (BB-1): la scatola nera parte PRIMA di qualunque componente operativo. Senza registro il
     # processo non parte (fail-closed): nessuna operazione finanziaria senza cronologia.
+    # Eccezione: `--emergency-stop` e' un'uscita protettiva (cancel-all) e non viene mai bloccata dal registro; senza
+    # scatola nera procede senza registrazione (rilievo Codex #617, priorita' delle uscite protettive in AGENTS.md).
     from core import blackbox_runtime
     try:
         blackbox_runtime.install(entrypoint="headless_main")
     except Exception as exc:      # noqa: BLE001 - qualunque guasto della scatola nera blocca l'avvio
-        logger.critical("Scatola nera non disponibile: avvio rifiutato (%s)", exc)
-        return 1
+        if "--emergency-stop" not in sys.argv[1:]:
+            logger.critical("Scatola nera non disponibile: avvio rifiutato (%s)", exc)
+            return 1
+        logger.critical("Scatola nera non disponibile: EMERGENCY STOP eseguito SENZA registrazione (%s)", exc)
     app: Optional[HeadlessApp] = None
     rc = 1
     try:
@@ -1508,7 +1512,7 @@ def main() -> int:
     except Exception as exc:
         blackbox_runtime.record("UNCAUGHT_EXCEPTION", source="SYSTEM", component="headless_main",
                                 severity="CRITICAL", phase="OBSERVATION", outcome="VERIFIED",
-                                reason_code=type(exc).__name__, reason=str(exc)[:500])
+                                reason_code=type(exc).__name__, reason=blackbox_runtime.safe_text(exc, 500))
         if app is not None and app.alerts_manager is not None and app.incidents_manager is not None:
             try:
                 app.alerts_manager.upsert_alert(

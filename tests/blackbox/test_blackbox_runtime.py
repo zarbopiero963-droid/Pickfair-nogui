@@ -129,3 +129,68 @@ def test_second_runtime_process_is_refused_and_does_not_start(tmp_path):
     types = [e["type"] for e in _events(path)]
     assert types == ["PROCESS_START"], "il secondo processo non ha scritto nulla"
     first.end_session("STOP"); first.close()
+
+
+def test_emergency_stop_still_runs_when_the_blackbox_is_unavailable(tmp_path, monkeypatch):
+    """Codex #617 (3b6848d6), P1: `--emergency-stop` e' un'uscita protettiva (cancel-all). Con la scatola nera non
+    disponibile l'avvio normale resta rifiutato, ma l'emergency stop deve partire comunque, senza registro."""
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    monkeypatch.setenv(bb.ENV_PATH, str(blocker / "sub" / "blackbox.sqlite"))   # registro impossibile
+    calls = []
+    monkeypatch.setattr(headless_main.HeadlessApp, "__init__", lambda self: None)
+    monkeypatch.setattr(headless_main.HeadlessApp, "start", lambda self: calls.append("start") or 0)
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--emergency-stop"])
+    assert headless_main.main() == 0 and calls == ["start"], "emergency stop bloccato dal registro"
+    calls.clear()
+    monkeypatch.setattr(sys, "argv", ["headless_main.py"])
+    assert headless_main.main() == 1 and calls == [], "avvio normale senza registro: sempre rifiutato"
+
+
+def test_exception_text_is_redacted_before_it_is_truncated(bbpath):
+    """Codex #617 (3b6848d6): un token Telegram a cavallo del limite di 500 caratteri non lascia frammenti nel
+    `reason` (prima: troncato e poi redatto, il frammento non era piu' riconoscibile)."""
+    token = "1234567" + ":" + "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+    rt.install()
+    try:
+        raise ValueError("x" * 480 + token)
+    except ValueError:
+        sys.excepthook(*sys.exc_info())
+    rt.shutdown("STOP")
+    ev = [e for e in _events(bbpath) if e["type"] == "UNCAUGHT_EXCEPTION"][0]
+    blob = json.dumps(ev)
+    assert "1234567:" not in blob and "AbCdEfGhIj" not in blob, ev["reason"][-40:]
+
+
+def test_native_crash_dump_is_kept_until_its_import_is_durable(bbpath, monkeypatch):
+    """Codex #617 (3b6848d6): se l'avvio della sessione fallisce dopo la lettura del dump nativo, il dump resta
+    disponibile e viene importato al primo avvio riuscito."""
+    bbpath.parent.mkdir(parents=True)
+    fault = bbpath.parent / "fault.log"
+    fault.write_text("Fatal Python error: Segmentation fault\n")
+    real = bb.BlackBox.start_session
+
+    def fail_once(self, **kw):
+        raise bb.BlackBoxUnavailable("guasto all'avvio")
+
+    monkeypatch.setattr(bb.BlackBox, "start_session", fail_once)
+    with pytest.raises(bb.BlackBoxUnavailable):
+        rt.install()
+    monkeypatch.setattr(bb.BlackBox, "start_session", real)
+    rt.install()
+    rt.shutdown("STOP")
+    crash = [e for e in _events(bbpath) if e["type"] == "CRASH_RECOVERY"]
+    assert len(crash) == 1 and "Segmentation fault" in json.loads(crash[0]["data"])["tail"]
+
+
+def test_a_new_native_dump_is_appended_to_one_still_pending(bbpath):
+    """Un dump in attesa di import (`fault.log.pending`) e un dump nuovo (`fault.log`): entrambi vengono importati,
+    nessuno viene sovrascritto dal nuovo faulthandler."""
+    bbpath.parent.mkdir(parents=True)
+    (bbpath.parent / "fault.log.pending").write_text("primo crash: Segmentation fault\n")
+    (bbpath.parent / "fault.log").write_text("secondo crash: Aborted\n")
+    rt.install()
+    rt.shutdown("STOP")
+    tail = json.loads([e for e in _events(bbpath) if e["type"] == "CRASH_RECOVERY"][0]["data"])["tail"]
+    assert "primo crash" in tail and "secondo crash" in tail
+    assert not (bbpath.parent / "fault.log.pending").exists()

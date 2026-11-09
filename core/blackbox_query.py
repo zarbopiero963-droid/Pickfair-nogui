@@ -64,6 +64,13 @@ def _row_to_event(row, external: bool) -> Dict[str, Any]:
             ev.pop(f, None)
         for f in bb._JSON_FIELDS:                       # a ogni profondita', in data e values_*: mai il riferimento
             ev[f] = _strip_hidden(ev.get(f))           # cliente nella vista esterna (analisi preventiva BB-1)
+        if ev.get("type") == "BLACKBOX_GAP" and isinstance(ev.get("data"), dict) and "refs" in ev["data"]:
+            # `refs` elenca i riferimenti cliente delle uscite bufferizzate: fuori da Pickfair solo il conteggio
+            # (rilievo Sol #617); la vista interna e l'oracolo li conservano
+            data = dict(ev["data"])
+            refs = data.pop("refs")
+            data["refs_count"] = len(refs) if isinstance(refs, list) else 0
+            ev["data"] = data
     ev["not_recorded"] = sorted(k for k, v in ev.items() if v is None and k not in ("seq", "hash"))
     return ev
 
@@ -171,8 +178,13 @@ class BlackBoxReader:
                 self._tokens = min(BURST, self._tokens + (now - self._last) * RATE_PER_S)
                 self._last = now
                 if self._tokens < 1.0:
+                    # aggregata: contata nel prossimo record scritto. Con il registro guasto o chiuso nessuna
+                    # scrittura e' possibile: False, la Control API risponde 503 (fail-closed, rilievo Sol #617)
+                    health = self.box.health()
+                    if health["degraded"] or not health["open"]:
+                        return False
                     self._coalesced += 1
-                    return True                  # aggregata: contata nel prossimo record scritto
+                    return True
                 self._tokens = max(0.0, self._tokens - 1.0)
                 coalesced, self._coalesced = self._coalesced, 0
             data = {k: record.get(k) for k in ("route", "params", "status", "code", "request_id", "duration_ms",

@@ -69,15 +69,23 @@ di vita del processo.
 
 1. `headless_main.main()` installa la scatola nera **prima** di costruire qualunque componente. Il primo evento è
    `PROCESS_START`. Se il registro non si apre, il processo **non parte** (exit 1): senza cronologia non c'è trading.
+   **Unica eccezione: `--emergency-stop`**, un'uscita protettiva (cancel-all) che il registro non blocca mai: senza
+   scatola nera procede senza registrazione, con un log CRITICAL.
 2. Alla fine della costruzione viene registrato `COMPONENT_INIT`.
 3. `--emergency-stop` registra la richiesta (ATTEMPT) e l'esito (RESULT VERIFIED o FAILED).
-4. Le eccezioni non gestite vengono registrate con tipo, messaggio e traceback redatti:
+4. Le eccezioni non gestite vengono registrate con tipo, messaggio e traceback redatti **prima** di essere troncati
+   (500 caratteri il messaggio, 8000 il traceback), così un segreto a cavallo del limite non lascia frammenti:
    - nel processo: `UNCAUGHT_EXCEPTION`;
    - nei thread: `TASK_EXCEPTION`.
 5. All'uscita si registra `SHUTDOWN`, con `reason_code` uguale a `STOP` oppure `EXIT_<codice>`.
-6. **Riavvio dopo un crash** (nessun `SHUTDOWN`):
+6. **Riavvio dopo un crash** (nessun `SHUTDOWN`). Lo decidono solo gli eventi del ciclo di vita del runtime
+   (`PROCESS_START`, `SHUTDOWN`, `UNCLEAN_TERMINATION`): una richiesta di un lettore Control API/MCP scritta dopo lo
+   `SHUTDOWN` non è un crash. Si registrano:
    - `UNCLEAN_TERMINATION` con la sessione precedente;
-   - una `BLACKBOX_GAP` con `outcome UNKNOWN` sull'intervallo `[ultimo evento, riavvio]`.
+   - una `BLACKBOX_GAP` con `outcome UNKNOWN` sull'intervallo `[ultimo evento del runtime precedente, riavvio]`.
+7. **Dump nativo** (`faulthandler`, `fault.log`): al riavvio viene spostato in `fault.log.pending` e consumato
+   (`fault.log.1`) solo dopo che il `CRASH_RECOVERY` è scritto in modo durevole. Se l'avvio o la scrittura falliscono,
+   il dump resta in attesa e viene importato al primo avvio riuscito; un dump nuovo si accoda a quello in attesa.
 
    Ciò che è successo in quell'intervallo non viene mai inventato.
 
@@ -87,8 +95,12 @@ di vita del processo.
 
 **Evento non critico (`critical=False`).** Non solleva mai: l'evento perso viene contato. Al ripristino si
 registrano, nell'ordine:
-- una `BLACKBOX_GAP` con il conteggio;
+- una `BLACKBOX_GAP` con il conteggio, `reason_code=BLACKBOX_OUTAGE` e `outcome=UNKNOWN`;
 - `BLACKBOX_RECOVERED`.
+
+La lacuna di un guasto ha sempre `outcome=UNKNOWN`, anche se nessun evento è andato perso: nella finestra il registro
+non era disponibile, quindi cosa sia successo non è verificato. È la stessa semantica della lacuna di
+`UNCLEAN_TERMINATION` (contratto con Claude C, verifica sulla classe reale della #617).
 
 **Evento critico (`critical=True`).** O viene scritto in modo durevole, o solleva `BlackBoxUnavailable`, e il
 chiamante non esegue l'azione. Da BB-3 vale prima di ogni ordine, cancel, hedge o cashout.
@@ -96,7 +108,8 @@ chiamante non esegue l'azione. Da BB-3 vale prima di ogni ordine, cancel, hedge 
 **Uscita protettiva già decisa (`critical=True, buffer_on_failure=True`).** L'evento va nel buffer critico in memoria.
 Al ripristino si scrivono, nell'ordine:
 1. l'evento originale, con `data.buffered=true`;
-2. una `BLACKBOX_GAP` con `from_ts`, `to_ts` e i `refs` degli ordini;
+2. una `BLACKBOX_GAP` con `from_ts`, `to_ts` e i `refs` degli ordini (cumulativi: se lo scarico riesce a metà e
+   poi fallisce, la GAP finale elenca comunque tutti i ref e conta tutte le uscite bufferizzate);
 3. `BLACKBOX_RECOVERED`.
 
 Un nuovo ingresso non si bufferizza mai.
@@ -111,7 +124,7 @@ alias `ord_<32 hex>` e `exchange_ts`; fixture condivisa sha256 `74be0f92…`):
 | `status()` | salute del registro, `as_of_seq`, eventi persi o in buffer, `not_reported` |
 | `sessions()` | le sessioni, con l'indicazione di chiusura pulita |
 | `query(filters, after_seq, limit)` | `records`, `next_after_seq` (0 se non ci sono altre pagine), `gaps_in_range`, `as_of_seq` |
-| `get(event_id, chain_depth)` | l'evento con la catena di `causation_id` |
+| `get(event_id, chain_depth)` | l'evento con la catena di `causation_id`; `chain_depth` da 0 a `MAX_CHAIN_DEPTH = 20`, oltre: `QueryError` |
 | `request_hook(record)` | registra una richiesta HTTP della Control API |
 
 Dettagli:
@@ -121,7 +134,8 @@ Dettagli:
 - **`request_hook(record)`:**
   - una richiesta servita produce ATTEMPT e RESULT; una richiesta rifiutata solo RESULT;
   - oltre 20 record/s (raffica 40) le richieste vengono aggregate in `coalesced_before`;
-  - se restituisce False, la Control API risponde 503.
+  - se restituisce False, la Control API risponde 503. Una richiesta aggregata restituisce False anche quando il
+    registro è degradato o chiuso: nessuna risposta servita senza una scrittura possibile.
 - **Identificativi dell'ordine** (decisione owner D1):
   - `order_id` interno: `orders.id` del ledger, un intero progressivo (uuid solo con DB degradato);
   - `customer_ref` (customerOrderRef inviato all'exchange) e `correlation_id`: identificativi applicativi;
@@ -133,8 +147,10 @@ Dettagli:
   minuscoli: la forma con trattini (contratto MCP 1.14.0) viene normalizzata sia in scrittura sia in lettura, quindi le
   due forme sono lo stesso id (nessun duplicato, stessi risultati).
 - **Vista esterna** (Control API/MCP): `order_ref`/`customer_ref` non vengono esposti. I campi non registrati sono
-  elencati in `not_recorded`, calcolato DOPO aver tolto i campi nascosti: `order_alias` e `order_ref` non vi compaiono
-  mai (il lettore MCP rende CORRUPT un nome sconosciuto); un record senza ordine elenca `order_id`.
+  elencati in `not_recorded`, calcolato DOPO aver tolto i campi nascosti: `order_alias` e `order_ref` non vi
+  compaiono mai (il lettore MCP rende CORRUPT un nome sconosciuto); un record senza ordine elenca `order_id`. Nella
+  `BLACKBOX_GAP` di un guasto, `data.refs` (i riferimenti cliente delle uscite bufferizzate) diventa
+  `data.refs_count`; la vista interna li conserva.
 - **Lacune:** le lacune dichiarate tornano come tali in `gaps_in_range`, mai ricostruite.
 
 ## Vocabolario
@@ -171,4 +187,10 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
 
 **Limiti onesti:**
 - l'avvio reale su Windows e il crash nativo vero (segfault) restano MANUAL_ONLY;
-- i test simulano il dump e il disco pieno.
+- i test simulano il dump e il disco pieno;
+- `query` restituisce in `gaps_in_range` **tutte** le lacune che toccano l'intervallo, senza limite: con molte lacune
+  nella storia la risposta cresce (il lettore MCP di Claude C ne accetta fino a 64). Un limite con flag di troncamento
+  va concordato in un passo successivo;
+- la redazione copre le chiavi sensibili, i token Telegram canonici e i segreti registrati con `register_secret`, non
+  un valore segreto sconosciuto scritto in testo libero (per esempio `reason="token=… cambiato"`): i chiamanti non
+  devono mettere segreti in `reason`. Da verificare sui percorsi reali in BB-3.

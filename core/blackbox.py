@@ -156,6 +156,7 @@ class BlackBox:
         self._buffer: List[Dict[str, Any]] = []        # buffer critico (uscite protettive durante un guasto)
         self._degraded_since: Optional[float] = None
         self.dropped = 0                               # eventi non critici persi (mai silenziosi: GAP al ripristino)
+        self._outage_flushed: Optional[List[Dict[str, Any]]] = None   # uscite gia' scaricate nel guasto corrente
         self.last_error: Optional[str] = None
         self._alias_key: Optional[bytes] = None
         self._writer_lock = None                       # file lock del runtime (un solo scrittore per registro)
@@ -335,22 +336,31 @@ class BlackBox:
         """Al ripristino: eventi bufferizzati (ora originale, `buffered=true`), poi GAP con intervallo e ref, poi
         RECOVERED. Se fallisce, solleva: il buffer resta intatto."""
         start = self._degraded_since if self._degraded_since is not None else float(self._clock())
-        pending = list(self._buffer)
-        for rec in pending:
+        # ref e conteggi CUMULATIVI del guasto: uno scarico riuscito a meta' (prima uscita scritta, seconda fallita)
+        # non li perde, finche' GAP e RECOVERED non sono scritti (rilievo Codex #617)
+        if self._outage_flushed is None:
+            self._outage_flushed = []
+        flushed = self._outage_flushed
+        for rec in list(self._buffer):
             rec = dict(rec)
             rec["data"] = {**(rec.get("data") or {}), "buffered": True}
             self._insert(rec)
             self._buffer.pop(0)
+            flushed.append(rec)
+        pending = list(flushed)
         refs = sorted({str(r["order_ref"]) for r in pending if r.get("order_ref")})
         gap = self._build("BLACKBOX_GAP", dict(
             source="SYSTEM", component="blackbox", severity="ERROR", phase="OBSERVATION",
-            outcome="VERIFIED", reason_code="BLACKBOX_OUTAGE",
+            # UNKNOWN anche senza eventi persi: nella finestra il registro non era disponibile, quindi cosa sia
+            # successo non e' verificato (stessa semantica della GAP di UNCLEAN_TERMINATION; contratto Claude C, I2)
+            outcome="UNKNOWN", reason_code="BLACKBOX_OUTAGE",
             reason=self.last_error, data={"from_ts": utc_iso(start), "to_ts": utc_iso(self._clock()), "refs": refs,
                                           "buffered": len(pending), "dropped_non_critical": self.dropped}))
         self._insert(gap)
         self._insert(self._build("BLACKBOX_RECOVERED", dict(source="SYSTEM", component="blackbox",
                                                             phase="OBSERVATION", outcome="VERIFIED")))
         self._degraded_since, self.dropped = None, 0
+        self._outage_flushed = None
 
     # ------------------------------------------------------------------ sessione
     def start_session(self, **data: Any) -> str:
@@ -358,10 +368,18 @@ class BlackBox:
         UNKNOWN sull'intervallo, poi PROCESS_START. Evento critico: senza registro il processo non parte."""
         self.open()
         self.acquire_runtime()                         # D3: prima di leggere lo stato della sessione precedente
+        # solo gli eventi del CICLO DI VITA del runtime decidono se la sessione precedente e' terminata: un lettore
+        # (Control API/MCP) scrive eventi propri dopo lo SHUTDOWN e non e' un runtime (rilievo Codex #617, D3)
         with self._lock:
-            last = self._conn.execute(
-                "SELECT session_id, type, ts_utc FROM events ORDER BY seq DESC LIMIT 1").fetchone()
-        if last is not None and last["type"] not in ("SHUTDOWN", "UNCLEAN_TERMINATION"):
+            life = self._conn.execute(
+                "SELECT session_id, type FROM events WHERE type IN ('PROCESS_START', 'SHUTDOWN', 'UNCLEAN_TERMINATION')"
+                " ORDER BY seq DESC LIMIT 1").fetchone()
+            last = None
+            if life is not None and life["type"] == "PROCESS_START":
+                last = self._conn.execute(
+                    "SELECT session_id, type, ts_utc FROM events WHERE session_id = ? ORDER BY seq DESC LIMIT 1",
+                    (life["session_id"],)).fetchone()
+        if last is not None:
             self.record("UNCLEAN_TERMINATION", critical=True, source="SYSTEM", component="blackbox",
                         severity="ERROR", phase="OBSERVATION", outcome="VERIFIED",
                         reason_code="NO_SHUTDOWN_RECORDED", data={"previous_session": last["session_id"],

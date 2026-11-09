@@ -47,15 +47,23 @@ def record(event_type: str, **fields: Any) -> Optional[str]:
     return box.record(event_type, **fields)
 
 
+def safe_text(text: Any, limit: int, *, tail: bool = False) -> str:
+    """Testo redatto PRIMA di essere troncato: un segreto a cavallo del limite non lascia un frammento non piu'
+    riconoscibile dalla redazione (rilievo Codex #617)."""
+    from core import text_redaction
+    clean = text_redaction.redact_secrets(str(text))
+    return clean[-limit:] if tail else clean[:limit]
+
+
 def _trace(exc_type, exc, tb) -> str:
-    return "".join(traceback.format_exception(exc_type, exc, tb))[-MAX_TRACE_CHARS:]
+    return safe_text("".join(traceback.format_exception(exc_type, exc, tb)), MAX_TRACE_CHARS, tail=True)
 
 
 def _excepthook(exc_type, exc, tb):
     try:
         record("UNCAUGHT_EXCEPTION", source="SYSTEM", component="process", severity="CRITICAL",
                phase="OBSERVATION", outcome="VERIFIED", reason_code=getattr(exc_type, "__name__", "Exception"),
-               reason=str(exc)[:500], data={"traceback": _trace(exc_type, exc, tb)})
+               reason=safe_text(exc, 500), data={"traceback": _trace(exc_type, exc, tb)})
     except Exception:
         pass
     (_prev_excepthook or sys.__excepthook__)(exc_type, exc, tb)
@@ -65,7 +73,7 @@ def _threading_hook(args):
     try:
         record("TASK_EXCEPTION", source="SYSTEM", component=f"thread:{getattr(args.thread, 'name', '?')}",
                severity="CRITICAL", phase="OBSERVATION", outcome="VERIFIED",
-               reason_code=getattr(args.exc_type, "__name__", "Exception"), reason=str(args.exc_value)[:500],
+               reason_code=getattr(args.exc_type, "__name__", "Exception"), reason=safe_text(args.exc_value, 500),
                data={"traceback": _trace(args.exc_type, args.exc_value, args.exc_traceback)})
     except Exception:
         pass
@@ -74,17 +82,33 @@ def _threading_hook(args):
 
 
 def _previous_fault_dump(fault_path: str) -> Optional[str]:
-    """Ultima parte del dump nativo della sessione precedente (se c'e'), poi rotazione del file."""
+    """Ultima parte del dump nativo di una sessione precedente. Il file NON viene consumato qui: lo e' solo dopo che
+    il CRASH_RECOVERY e' scritto in modo durevole (`_consume_fault_dump`). Prima viene messo da parte in
+    `fault.log.pending`, che il nuovo `faulthandler` non sovrascrive e che resta in attesa di un import riuscito
+    (rilievo Codex #617)."""
+    pending = fault_path + ".pending"
     try:
-        if os.path.getsize(fault_path) <= 0:
+        if os.path.exists(fault_path) and os.path.getsize(fault_path) > 0:
+            if os.path.exists(pending):          # un dump precedente ancora da importare: si accoda, mai si perde
+                with open(fault_path, "rb") as src, open(pending, "ab") as dst:
+                    dst.write(src.read())
+                os.remove(fault_path)
+            else:
+                os.replace(fault_path, pending)
+        if not os.path.exists(pending) or os.path.getsize(pending) <= 0:
             return None
-        with open(fault_path, "rb") as fh:
-            fh.seek(max(0, os.path.getsize(fault_path) - FAULT_TAIL_BYTES))
-            tail = fh.read().decode("utf-8", errors="replace")
-        os.replace(fault_path, fault_path + ".1")
-        return tail
+        with open(pending, "rb") as fh:
+            fh.seek(max(0, os.path.getsize(pending) - FAULT_TAIL_BYTES))
+            return fh.read().decode("utf-8", errors="replace")
     except OSError:
         return None
+
+
+def _consume_fault_dump(fault_path: str) -> None:
+    try:
+        os.replace(fault_path + ".pending", fault_path + ".1")
+    except OSError:
+        pass
 
 
 def safe_argv(argv) -> list:
@@ -122,8 +146,13 @@ def install(path: Optional[str] = None, **process_data: Any) -> bb.BlackBox:
         box.close()                     # rifiuto (es. RUNTIME_ALREADY_ACTIVE) o guasto: nessuna risorsa lasciata aperta
         raise
     if dump:
-        box.record("CRASH_RECOVERY", source="SYSTEM", component="faulthandler", severity="ERROR",
-                   phase="OBSERVATION", outcome="VERIFIED", reason_code="NATIVE_CRASH_DUMP", data={"tail": dump})
+        try:
+            box.record("CRASH_RECOVERY", critical=True, source="SYSTEM", component="faulthandler", severity="ERROR",
+                       phase="OBSERVATION", outcome="VERIFIED", reason_code="NATIVE_CRASH_DUMP",
+                       data={"tail": dump})
+            _consume_fault_dump(fault_path)      # solo dopo la scrittura durevole
+        except bb.BlackBoxUnavailable:
+            pass                                 # il dump resta in fault.log.pending: nuovo tentativo al prossimo avvio
     try:
         _fault_file = open(fault_path, "w")
         faulthandler.enable(file=_fault_file, all_threads=True)
