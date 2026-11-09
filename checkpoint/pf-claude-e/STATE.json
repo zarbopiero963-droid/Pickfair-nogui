@@ -1,10 +1,10 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 2,
- "mandate_id": "PF-ISSUE-CLEANUP-01 (owner 08/11/2026) — audit e razionalizzazione issue GitHub",
- "previous_checkpoint_sha": "afdfca6ba34da3a4fa149627fa9d556529a92a04",
- "updated_at": "2026-11-08T23:59:00Z",
+ "seq": 3,
+ "mandate_id": "PF-ISSUE-CLEANUP-01 + PF-CLAUDE-E-ISSUE-CLOSURE-ONLY (owner 09/11/2026)",
+ "previous_checkpoint_sha": "8f6cc278225ee5dc3fa2bac30cb6479bcbf34614",
+ "updated_at": "2026-11-09T09:00:00Z",
  "agent": {
   "identity": "claude-e",
   "role": "pulizia e razionalizzazione delle issue (Claude E)",
@@ -14,9 +14,9 @@
  },
  "code": {
   "branch": "main",
-  "sha": "a09d8d6116aa234e838186f807f62470873def50"
+  "sha": "6519794b125152e62ca02b1821854075f8fc6653"
  },
- "lotto_corrente": "FASE-2 controllata eseguita (PF-ISSUE-AUDIT-PHASE2-20261108); in attesa decisioni owner residue",
+ "lotto_corrente": "CLOSURE-ONLY: verdetti netti consegnati (results/CLOSURE_VERDICTS.md); in attesa GO owner",
  "lotti_completati": [
   "FASE-1: matrice 82/82 issue aperte (results/MATRIX.md)",
   "DIAG-CKPT: diagnosi catene B/D (results/CHECKPOINT_DIAGNOSIS.md)",
@@ -24,9 +24,11 @@
   "P1-VERDICT: #590 CLOSE_VERIFIED, #536 CLOSE_WITH_TRANSFER (aperte)",
   "IDX-SUPERSEDED: #461 c.6728218170",
   "CONSOLIDATE-6: trasferimenti + backlink pubblicati",
-  "DEC-STAKE: #426 c.6728203497"
+  "DEC-STAKE: #426 c.6728203497",
+  "CLOSE-590 (riconferma su 6519794b)",
+  "CLOSURE-VERDICTS: 79 aperte → 1 CLOSE_VERIFIED, 71 KEEP_OPEN, 1 BLOCKED, 6 OWNER_DECISION"
  ],
- "next_atomic_action": "Attendere decisioni owner: chiusura #590; trasferimento rischi A/B/C di #536; domande NEEDS_REVIEW (D-9/D-11/D-12, #398, PF-C22-01, #565, #578) e consolidamento (#302 modi %, collocazione Banco Prova, percorso screenshot). Dopo il merge di pfckpt-squash-durable: rifare bootstrap da clone pulito su B, D, E, full-delivery.",
+ "next_atomic_action": "Attendere GO owner per #412 (CLOSE_VERIFIED) e le 6 decisioni (#374 #388 #398 #514 #565 #578); poi chiudere solo le issue con GO, con commento conclusivo. Nessun altro lavoro.",
  "dependencies": {
   "#586": "registro di coordinamento (da preservare)",
   "#588": "ricerca adapter (da preservare)",
@@ -36,12 +38,12 @@
   "#426": "decisioni owner"
  },
  "blocks": [
-  "Decisioni owner residue (vedi next_atomic_action)",
-  "Integrazione pfckpt-squash-durable nella coda di Claude B (non di Claude E)"
+  "GO owner per #412 e decisioni sulle 6 OWNER_DECISION"
  ],
  "owner_authorizations": {
   "fase_1": "audit sola lettura (08/11)",
-  "fase_2": "PF-ISSUE-AUDIT-PHASE2-20261108: diagnosi checkpoint; chiusura #528/#550/#456 dopo riverifica; indice SUPERSEDED senza chiusura; verifica P1 senza chiusura; consolidamento senza chiusura; registrazione regola stake in #426"
+  "fase_2": "PF-ISSUE-AUDIT-PHASE2-20261108: diagnosi checkpoint; chiusura #528/#550/#456 dopo riverifica; indice SUPERSEDED senza chiusura; verifica P1 senza chiusura; consolidamento senza chiusura; registrazione regola stake in #426",
+  "closure_only": "PF-CLAUDE-E-ISSUE-CLOSURE-ONLY 09/11: verifiche autonome; chiusura #590 dopo riconferma; altre chiusure solo con un GO complessivo"
  },
  "tests_executed": [
   {
@@ -90,6 +92,16 @@
    "id": "pfckpt verify catena pf-claude-b con refs/pull: 23/23 VALID",
    "status": "PASS",
    "sha": "0e329b8a5e5d3e1c9a030db3810053c7bb673aca"
+  },
+  {
+   "id": "#590 riconferma: test telegram 3 passed + guard 0/200",
+   "status": "PASS",
+   "sha": "6519794b125152e62ca02b1821854075f8fc6653"
+  },
+  {
+   "id": "#611 test_block_firma_non_ispezionabile ancora rosso",
+   "status": "FAIL",
+   "sha": "6519794b125152e62ca02b1821854075f8fc6653"
   }
  ],
  "tests_missing": [],
@@ -100,19 +112,18 @@
  "pr_505": "chiusa senza merge (rilevante solo per #509)",
  "certification_verdict": "NOT VERIFIED",
  "counts": {
-  "audited": 82,
-  "open_now": 79,
-  "closed": 3,
-  "KEEP": 50,
-  "SUPERSEDED": 11,
-  "DUPLICATE": 1,
-  "CLOSE_VERIFIED": 4,
-  "CONSOLIDATE": 6,
-  "NEEDS_REVIEW": 10
+  "open_examined": 79,
+  "CLOSE_VERIFIED": 1,
+  "CLOSE_DUPLICATE_VERIFIED": 0,
+  "KEEP_OPEN": 71,
+  "BLOCKED": 1,
+  "OWNER_DECISION": 6,
+  "closed_total": 4
  },
  "closures": [
   528,
   550,
-  456
+  456,
+  590
  ]
 }

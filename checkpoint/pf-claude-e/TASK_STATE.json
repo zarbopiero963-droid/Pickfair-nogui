@@ -1,7 +1,6 @@
 {
  "blocks": [
-  "Decisioni owner residue (vedi next_atomic_action)",
-  "Integrazione pfckpt-squash-durable nella coda di Claude B (non di Claude E)"
+  "GO owner per #412 e decisioni sulle 6 OWNER_DECISION"
  ],
  "dependencies": {
   "#426": "decisioni owner",
@@ -19,11 +18,13 @@
   "P1-VERDICT: #590 CLOSE_VERIFIED, #536 CLOSE_WITH_TRANSFER (aperte)",
   "IDX-SUPERSEDED: #461 c.6728218170",
   "CONSOLIDATE-6: trasferimenti + backlink pubblicati",
-  "DEC-STAKE: #426 c.6728203497"
+  "DEC-STAKE: #426 c.6728203497",
+  "CLOSE-590 (riconferma su 6519794b)",
+  "CLOSURE-VERDICTS: 79 aperte \u2192 1 CLOSE_VERIFIED, 71 KEEP_OPEN, 1 BLOCKED, 6 OWNER_DECISION"
  ],
- "lotto_corrente": "FASE-2 controllata eseguita (PF-ISSUE-AUDIT-PHASE2-20261108); in attesa decisioni owner residue",
- "mandate_id": "PF-ISSUE-CLEANUP-01 (owner 08/11/2026) \u2014 audit e razionalizzazione issue GitHub",
- "next_atomic_action": "Attendere decisioni owner: chiusura #590; trasferimento rischi A/B/C di #536; domande NEEDS_REVIEW (D-9/D-11/D-12, #398, PF-C22-01, #565, #578) e consolidamento (#302 modi %, collocazione Banco Prova, percorso screenshot). Dopo il merge di pfckpt-squash-durable: rifare bootstrap da clone pulito su B, D, E, full-delivery.",
+ "lotto_corrente": "CLOSURE-ONLY: verdetti netti consegnati (results/CLOSURE_VERDICTS.md); in attesa GO owner",
+ "mandate_id": "PF-ISSUE-CLEANUP-01 + PF-CLAUDE-E-ISSUE-CLOSURE-ONLY (owner 09/11/2026)",
+ "next_atomic_action": "Attendere GO owner per #412 (CLOSE_VERIFIED) e le 6 decisioni (#374 #388 #398 #514 #565 #578); poi chiudere solo le issue con GO, con commento conclusivo. Nessun altro lavoro.",
  "pr_505": "chiusa senza merge (rilevante solo per #509)",
  "schema": "pf-task-state/1",
  "tests_missing": []

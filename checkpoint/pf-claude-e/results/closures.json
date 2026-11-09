@@ -1,3 +1,27 @@
-[{"issue":528,"state_reason":"completed","comment":"https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/528#issuecomment-6728197224","evidence":"PR #538 99250c57; F026_04 5/5+6/6 load, F026_05 6/6 load su a09d8d6"},
- {"issue":550,"state_reason":"completed","comment":"https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/550#issuecomment-6728198867","evidence":"PR #552 35936be; tests/scripts/test_pr_review_recovery.py 161 passed su a09d8d6"},
- {"issue":456,"state_reason":"duplicate","duplicate_of":455,"comment":"https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/456#issuecomment-6728199753","evidence":"614/614 righe del corpo presenti in #455"}]
+[
+ {
+  "issue": 528,
+  "state_reason": "completed",
+  "comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/528#issuecomment-6728197224",
+  "evidence": "PR #538 99250c57; F026_04 5/5+6/6 load, F026_05 6/6 load su a09d8d6"
+ },
+ {
+  "issue": 550,
+  "state_reason": "completed",
+  "comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/550#issuecomment-6728198867",
+  "evidence": "PR #552 35936be; tests/scripts/test_pr_review_recovery.py 161 passed su a09d8d6"
+ },
+ {
+  "issue": 456,
+  "state_reason": "duplicate",
+  "duplicate_of": 455,
+  "comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/456#issuecomment-6728199753",
+  "evidence": "614/614 righe del corpo presenti in #455"
+ },
+ {
+  "issue": 590,
+  "state_reason": "completed",
+  "comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/590#issuecomment-6738883511",
+  "evidence": "PR #592 986bebd3; riconferma su 6519794b: 3 passed, guard 0/200"
+ }
+]
