@@ -8599,12 +8599,12 @@
       "module": "core.blackbox_runtime",
       "area": "blackbox",
       "file": "core/blackbox_runtime.py",
-      "original": "    fd = os.open(path, flags | getattr(os, \"O_NOFOLLOW\", 0) | getattr(os, \"O_NONBLOCK\", 0), 0o600)",
-      "mutated": "    fd = os.open(path, flags | getattr(os, \"O_NONBLOCK\", 0), 0o600)",
+      "original": "    return bb.open_private(path, flags)",
+      "mutated": "    return os.open(path, flags | getattr(os, \"O_NONBLOCK\", 0), 0o600)",
       "tests": [
         "tests/blackbox/test_blackbox_runtime.py"
       ],
-      "rationale": "Ciclo 11 #617 (Codex P2): senza O_NOFOLLOW un symlink sostituito dopo il controllo (race) verrebbe seguito e il file bersaglio importato nel CRASH_RECOVERY."
+      "rationale": "Ciclo 11/12 #617 (Codex P2, Sol): i file del dump aperti senza le verifiche di open_private seguirebbero un symlink/hardlink e importerebbero il bersaglio nel CRASH_RECOVERY."
     },
     {
       "id": "bb_c11_persist_error_in_clear",
@@ -8635,12 +8635,60 @@
       "module": "core.blackbox",
       "area": "blackbox",
       "file": "core/blackbox.py",
-      "original": "        if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:   # ciclo 11: hardlink/FIFO mai chmod-ati ne' usati",
+      "original": "        if not stat.S_ISREG(pre.st_mode) or pre.st_nlink > 1:",
       "mutated": "        if False:",
       "tests": [
         "tests/blackbox/test_blackbox_runtime.py"
       ],
-      "rationale": "Ciclo 11 #617: un file del registro hardlinkato a un altro file verrebbe usato e il bersaglio chmod-ato."
+      "rationale": "Ciclo 11/12 #617: un hardlink o un file non regolare al posto di un file della scatola nera verrebbe aperto, chmod-ato o (FIFO) bloccherebbe l'avvio."
+    },
+    {
+      "id": "bb_c12_open_identity_check_removed",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                or (now.st_dev, now.st_ino) != (st.st_dev, st.st_ino)):",
+      "mutated": "                or False):",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 12 #617 (Sol su 2847ca0e): senza il confronto fra file aperto e nome nella cartella, dove O_NOFOLLOW manca (Windows) un link sostituito prima dell'apertura verrebbe seguito e usato."
+    },
+    {
+      "id": "bb_c12_create_not_exclusive",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        fd = os.open(path, base | os.O_CREAT | os.O_EXCL | extra, 0o600)",
+      "mutated": "        fd = os.open(path, base | os.O_CREAT | extra, 0o600)",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 12 #617: senza O_EXCL un link comparso dopo il controllo di esistenza farebbe creare (o aprire) il file nel percorso puntato."
+    },
+    {
+      "id": "bb_c12_owner_reopened_by_name",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "            ofd = open_private(self.path + \".runtime.owner\", os.O_WRONLY | os.O_CREAT)",
+      "mutated": "            private_file(self.path + \".runtime.owner\"); ofd = os.open(self.path + \".runtime.owner\", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 12 #617 (Sol su 2847ca0e, riprodotto): verifica e poi riapertura per nome con troncamento: un symlink sostituito in mezzo fa troncare e riscrivere il bersaglio."
+    },
+    {
+      "id": "bb_c12_lock_reopened_by_name",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        fh = os.fdopen(open_private(self.path + \".runtime.lock\", os.O_RDWR | os.O_CREAT), \"a+\")",
+      "mutated": "        private_file(self.path + \".runtime.lock\"); fh = open(self.path + \".runtime.lock\", \"a+\")",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 12 #617 (Sol su 2847ca0e): verifica e poi riapertura per nome del lock: un symlink sostituito in mezzo fa prendere il lock (e su Windows scrivere) sul bersaglio."
     }
   ]
 }

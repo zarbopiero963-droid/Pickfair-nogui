@@ -128,25 +128,60 @@ def _event_epoch(rec: Dict[str, Any], fallback: float) -> float:
         return float(fallback)
 
 
-def private_file(path: str) -> None:
-    """R2/permessi (decisioni owner PF-BB1-SOL-R2-NEEDS-MANUAL-20261109 e PF-BB1-R2-FINAL-CYCLE-10-20261109): file del
-    registro leggibili solo dal proprietario su POSIX (0600). Crea il file se manca e restringe i permessi di un file
-    gia' esistente con `fchmod` sul descrittore aperto con `O_NOFOLLOW`: un symlink al posto del file viene RIFIUTATO
-    (OSError), mai seguito, e la sua destinazione non viene toccata; lo stesso per un hardlink o un file non
-    regolare (ciclo 11 #617), rifiutati prima di `fchmod`. Su Windows `chmod` non gestisce le ACL: il file
-    eredita quelle della cartella dati (verifica delle ACL NOT_RUN in questo ambiente)."""
-    if os.name != "posix":
-        return
-    if os.path.islink(path):
-        raise OSError(errno.ELOOP, "file del registro sostituito da un symlink: rifiutato", path)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0), 0o600)
+def open_private(path: str, flags: int) -> int:
+    """Apertura sicura di un file della scatola nera (ciclo 12 #617, rilievi Sol su 2847ca0e): UNICA via per
+    aprire registro, `-wal`/`-shm` (controllo), `.runtime.lock`, `.runtime.owner` e i file del dump nativo.
+    Ritorna un descrittore gia' verificato; il chiamante lo usa direttamente, mai una riapertura per nome.
+
+    Garanzie, senza dare per scontato `O_NOFOLLOW` (assente su Windows):
+    - prima dell'apertura (`lstat`, nessun link seguito): un nome esistente che non e' un file regolare con un solo
+      nome (symlink, hardlink, FIFO, cartella...) e' RIFIUTATO (OSError), fail-closed;
+    - mai `O_TRUNC`: un file esistente si apre senza troncarlo (il troncamento, se serve, lo fa il chiamante sul
+      descrittore verificato); un file assente si crea solo in modo esclusivo (`O_CREAT|O_EXCL`), quindi un link
+      comparso dopo il controllo fa fallire la creazione invece di creare o scrivere il bersaglio;
+    - `O_NOFOLLOW` e `O_NONBLOCK` dove esistono (nessun link seguito, nessun blocco su un FIFO);
+    - dopo l'apertura: il file aperto deve essere regolare, con un solo nome, e LO STESSO (dispositivo + inode) che
+      il nome indica ora nella cartella. Un link seguito nonostante tutto (fallback senza `O_NOFOLLOW`) o una
+      sostituzione concorrente sono rilevati qui, PRIMA di qualsiasi lettura o scrittura, e rifiutati;
+    - su POSIX permessi 0600 (`fchmod` sul descrittore). Su Windows i permessi sono le ACL della cartella dati
+      (NOT_RUN in questo ambiente)."""
+    want_create = bool(flags & os.O_CREAT)
+    base = flags & ~(os.O_CREAT | getattr(os, "O_TRUNC", 0) | getattr(os, "O_EXCL", 0))
+    extra = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        pre = os.lstat(path)
+    except FileNotFoundError:
+        pre = None
+    if pre is not None:
+        if not stat.S_ISREG(pre.st_mode) or pre.st_nlink > 1:
+            raise OSError(errno.ELOOP, "file della scatola nera non privato (link o non regolare): rifiutato", path)
+        fd = os.open(path, base | extra)
+    elif want_create:
+        fd = os.open(path, base | os.O_CREAT | os.O_EXCL | extra, 0o600)
+    else:
+        raise FileNotFoundError(errno.ENOENT, "file della scatola nera assente", path)
     try:
         st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:   # ciclo 11: hardlink/FIFO mai chmod-ati ne' usati
-            raise OSError(errno.ELOOP, "file del registro non privato (hardlink o non regolare): rifiutato", path)
-        os.fchmod(fd, 0o600)
-    finally:
+        now = os.lstat(path)
+        if (not stat.S_ISREG(st.st_mode) or st.st_nlink > 1 or not stat.S_ISREG(now.st_mode)
+                or (now.st_dev, now.st_ino) != (st.st_dev, st.st_ino)):
+            raise OSError(errno.ELOOP, "file della scatola nera sostituito durante l'apertura: rifiutato", path)
+        if os.name == "posix":
+            os.fchmod(fd, 0o600)
+    except BaseException:
         os.close(fd)
+        raise
+    return fd
+
+
+def private_file(path: str) -> None:
+    """R2/permessi (decisioni owner PF-BB1-SOL-R2-NEEDS-MANUAL-20261109 e PF-BB1-R2-FINAL-CYCLE-10-20261109): crea il
+    file se manca e ne verifica/restringe i permessi tramite `open_private` (0600 su POSIX). Un symlink, un
+    hardlink o un file non regolare al posto del file e' RIFIUTATO su OGNI piattaforma (ciclo 12: prima, fuori da
+    POSIX, la funzione non controllava nulla) e la sua destinazione non viene toccata. Serve per i file aperti da
+    altri (SQLite): chi scrive un file della scatola nera usa il descrittore di `open_private`, mai una riapertura
+    per nome."""
+    os.close(open_private(path, os.O_RDWR | os.O_CREAT))
 
 
 def utc_iso(ts: float) -> str:
@@ -270,15 +305,15 @@ class BlackBox:
         API/MCP) non lo chiamano mai. Non certifica il fencing finanziario del motore (#536, separato)."""
         if self._writer_lock is not None:
             return
-        private_file(self.path + ".runtime.lock")
-        fh = open(self.path + ".runtime.lock", "a+")
+        # ciclo 12 (Sol su 2847ca0e): il lock si prende sul descrittore verificato, mai su una riapertura per nome
+        fh = os.fdopen(open_private(self.path + ".runtime.lock", os.O_RDWR | os.O_CREAT), "a+")
         try:
             if os.name == "nt":
                 import msvcrt
                 # Grok #617 (374ce396): il byte bloccato deve esistere. Un file appena creato e' vuoto: si scrive un
                 # byte PRIMA del lock (chi tiene gia' il lock lo ha scritto prima di prenderlo, quindi non si tocca
                 # mai un file bloccato); dopo il lock il file non si tocca piu'.
-                if os.path.getsize(fh.name) == 0:
+                if os.fstat(fh.fileno()).st_size == 0:
                     fh.write("\n")
                     fh.flush()
                 fh.seek(0)
@@ -297,11 +332,16 @@ class BlackBox:
         # il file di lock non si tocca piu' dopo il lock (su Windows il lock e' una regione del file, rilievo Grok
         # #617): il proprietario va in un file separato, solo informativo
         try:
-            private_file(self.path + ".runtime.owner")
-            with open(self.path + ".runtime.owner", "w") as owner:
-                owner.write(f"pid={self.pid} session={self.session_id}\n")
+            # ciclo 12 (Sol su 2847ca0e, riprodotto): niente `open(..., "w")` dopo la verifica, che troncava il
+            # bersaglio di un symlink sostituito nel frattempo. Si tronca e si scrive il descrittore verificato.
+            ofd = open_private(self.path + ".runtime.owner", os.O_WRONLY | os.O_CREAT)
+            try:
+                os.ftruncate(ofd, 0)
+                os.write(ofd, f"pid={self.pid} session={self.session_id}\n".encode("utf-8"))
+            finally:
+                os.close(ofd)
         except OSError:
-            pass
+            pass                                       # owner solo informativo: un file non privato non si scrive
         self._writer_lock = fh
 
     def is_runtime(self) -> bool:

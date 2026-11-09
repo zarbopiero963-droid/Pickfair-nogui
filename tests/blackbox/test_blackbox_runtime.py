@@ -820,3 +820,263 @@ def test_error_scrubbing_keeps_the_outcome_and_the_recovery_structure(result):
                 assert scrubbed[k] == v, k
     for orig, new in zip(result.get("cancel_errors") or [], scrubbed.get("cancel_errors") or []):
         assert new.get("stage") == orig.get("stage") and new.get("market_id") == orig.get("market_id")
+
+
+# --- Ciclo 12 (OWNER AUTHORIZATION PR #617 — CYCLE 12): i due rilievi di Sol su 2847ca0e ----------------------------
+
+_POSIX_ONLY = pytest.mark.skipif(os.name != "posix", reason="symlink/hardlink/FIFO POSIX; su Windows NOT_RUN")
+
+
+def _victim_box(tmp_path):
+    victim = _fake_secret_file(tmp_path)
+    d = tmp_path / "reg"
+    d.mkdir()
+    return victim, d, bb.BlackBox(str(d / "r.sqlite")).open()
+
+
+@_POSIX_ONLY
+@pytest.mark.parametrize("suffix", [".runtime.owner", ".runtime.lock"])
+def test_c12_runtime_file_swapped_after_its_check_never_reaches_the_target(tmp_path, monkeypatch, suffix):
+    """Sol su 2847ca0e (riprodotto): fra la verifica di `private_file` e la riapertura per nome, un symlink al posto
+    di `.runtime.owner` faceva troncare e riscrivere il bersaglio (`open(..., "w")`), e uno al posto di
+    `.runtime.lock` faceva prendere il lock su un altro file. Ora nessuna riapertura per nome: il bersaglio resta
+    identico e il lock, se preso, e' sul file del registro."""
+    victim, d, box = _victim_box(tmp_path)
+    path = str(d / ("r.sqlite" + suffix))
+    real_private = bb.private_file
+
+    def racing(p):
+        real_private(p)
+        if p == path:                                     # sostituzione subito dopo la verifica
+            os.remove(p)
+            os.symlink(victim, p)
+
+    monkeypatch.setattr(bb, "private_file", racing)
+    try:
+        box.acquire_runtime()
+    except (OSError, bb.BlackBoxUnavailable, bb.RuntimeAlreadyActive):
+        pass
+    monkeypatch.undo()
+    _assert_untouched(victim)
+    if box._writer_lock is not None:
+        st = os.fstat(box._writer_lock.fileno())
+        assert (st.st_dev, st.st_ino) != (victim.stat().st_dev, victim.stat().st_ino), "lock preso sul bersaglio"
+    box.close()
+
+
+@_POSIX_ONLY
+@pytest.mark.parametrize("suffix", [".runtime.owner", ".runtime.lock"])
+def test_c12_runtime_file_swapped_right_before_the_open_syscall_without_o_nofollow(tmp_path, monkeypatch, suffix):
+    """Fallback multipiattaforma (simulato: O_NOFOLLOW assente, come su Windows): un link che compare subito prima
+    della chiamata di apertura viene rilevato dal confronto fra il file aperto e il nome nella cartella, e
+    l'operazione e' rifiutata senza scrivere nel bersaglio. Simulazione POSIX: NON e' un PASS Windows."""
+    victim, d, box = _victim_box(tmp_path)
+    path = str(d / ("r.sqlite" + suffix))
+    if suffix == ".runtime.owner":
+        open(path, "w").close()
+    else:
+        with open(path, "w") as fh:
+            fh.write("\n")
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+    real_open = os.open
+    swapped = []
+
+    def racing_open(p, flags, *a, **kw):
+        if str(p) == path and not swapped:
+            swapped.append(1)
+            os.remove(p)
+            os.symlink(victim, p)
+        return real_open(p, flags, *a, **kw)
+
+    monkeypatch.setattr(os, "open", racing_open)
+    try:
+        box.acquire_runtime()
+    except (OSError, bb.BlackBoxUnavailable, bb.RuntimeAlreadyActive):
+        pass
+    monkeypatch.undo()
+    assert swapped, "l'apertura non e' passata da os.open"
+    _assert_untouched(victim)
+    if box._writer_lock is not None:
+        st = os.fstat(box._writer_lock.fileno())
+        assert (st.st_dev, st.st_ino) != (victim.stat().st_dev, victim.stat().st_ino), "lock preso sul bersaglio"
+    box.close()
+
+
+@_POSIX_ONLY
+@pytest.mark.parametrize("suffix", [".runtime.owner", ".runtime.lock"])
+@pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo"])
+def test_c12_runtime_files_refuse_links_and_non_regular_files(tmp_path, kind, suffix):
+    """Hardlink, symlink e FIFO preesistenti al posto di `.runtime.owner`/`.runtime.lock`: mai seguiti ne' scritti;
+    il lock non si prende su un file non privato (avvio rifiutato, fail-closed); l'owner, solo informativo, non
+    viene scritto. Il bersaglio resta identico."""
+    victim, d, box = _victim_box(tmp_path)
+    path = d / ("r.sqlite" + suffix)
+    if kind == "symlink":
+        os.symlink(victim, path)
+    elif kind == "hardlink":
+        os.link(victim, path)
+    else:
+        os.mkfifo(path)
+    out = {}
+
+    def run():
+        try:
+            box.acquire_runtime()
+            out["ok"] = True
+        except (OSError, bb.BlackBoxUnavailable, bb.RuntimeAlreadyActive) as exc:
+            out["exc"] = exc
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(5)
+    assert not t.is_alive(), "bloccato su un FIFO"
+    _assert_untouched(victim)
+    if suffix == ".runtime.lock":
+        assert "exc" in out and box._writer_lock is None, "lock preso su un file non privato"
+    box.close()
+
+
+@_POSIX_ONLY
+def test_c12_runtime_lock_and_owner_keep_exclusivity_and_content(tmp_path):
+    """Il comportamento di ownership e locking resta quello di prima: un secondo runtime e' rifiutato, il file owner
+    contiene pid e sessione del runtime attivo, entrambi a 0600."""
+    import stat
+    path = str(tmp_path / "r.sqlite")
+    a = bb.BlackBox(path).open()
+    a.acquire_runtime()
+    b = bb.BlackBox(path).open()
+    with pytest.raises(bb.RuntimeAlreadyActive):
+        b.acquire_runtime()
+    owner = (tmp_path / "r.sqlite.runtime.owner").read_text()
+    assert owner == f"pid={a.pid} session={a.session_id}\n"
+    for suffix in (".runtime.owner", ".runtime.lock"):
+        assert stat.S_IMODE(os.stat(path + suffix).st_mode) == 0o600
+    a.close()
+    b.acquire_runtime()                                   # rilasciato alla chiusura: il nuovo runtime parte
+    assert (tmp_path / "r.sqlite.runtime.owner").read_text() == f"pid={b.pid} session={b.session_id}\n"
+    b.close()
+
+
+@_POSIX_ONLY
+@pytest.mark.parametrize("name", ["fault.log", "fault.log.pending", "fault.log.1"])
+def test_c12_dump_link_not_removable_and_no_o_nofollow_stays_fail_closed(bbpath, tmp_path, monkeypatch, name):
+    """Sol su 2847ca0e: senza O_NOFOLLOW (Windows) e con la rimozione del link fallita, il link era seguito e il
+    bersaglio importato in CRASH_RECOVERY. Ora il nome che non e' un file regolare con un solo nome viene rifiutato
+    prima dell'apertura e dopo (confronto file aperto / nome): nessuna lettura, nessuna scrittura. Simulazione POSIX
+    del fallback: NON e' un PASS Windows."""
+    bbpath.parent.mkdir(parents=True)
+    victim = _fake_secret_file(tmp_path)
+    os.symlink(victim, bbpath.parent / name)
+    if name != "fault.log":
+        (bbpath.parent / "fault.log").write_text("Fatal Python error: Segmentation fault\n")
+    real_unlink = os.unlink
+
+    def refuse_unlink(p, *a, **kw):
+        if os.path.basename(str(p)) == name:
+            raise PermissionError(errno.EACCES, "rimozione negata", str(p))
+        return real_unlink(p, *a, **kw)
+
+    monkeypatch.setattr(rt.os, "unlink", refuse_unlink)
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+    rt.install()
+    rt.shutdown("STOP")
+    monkeypatch.undo()
+    _assert_untouched(victim)
+    _assert_fake_not_persisted(bbpath, victim)
+
+
+@_POSIX_ONLY
+def test_c12_private_file_without_o_nofollow_refuses_a_symlinked_registry(tmp_path, monkeypatch):
+    """Fallback multipiattaforma di `private_file` (simulato: O_NOFOLLOW assente). Prima, fuori da POSIX la funzione
+    non controllava nulla; ora un symlink al posto di un file del registro e' rifiutato ovunque e il bersaglio non
+    viene toccato. NON e' un PASS Windows."""
+    victim = _fake_secret_file(tmp_path)
+    os.symlink(victim, tmp_path / "x.sqlite")
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+    with pytest.raises(OSError):
+        bb.private_file(str(tmp_path / "x.sqlite"))
+    monkeypatch.undo()
+    _assert_untouched(victim)
+
+
+@_POSIX_ONLY
+def test_c12_creation_never_follows_a_link_that_appears_after_the_existence_check(tmp_path, monkeypatch):
+    """Creazione: se un link (anche pendente) compare fra il controllo di esistenza e la creazione, la creazione e'
+    esclusiva (O_EXCL) e fallisce: nessun file creato nel percorso puntato, anche senza O_NOFOLLOW."""
+    target = tmp_path / "creato_altrove.txt"
+    path = tmp_path / "r.sqlite.runtime.owner"
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+    real_lstat = os.lstat
+    state = {}
+
+    def racing_lstat(p, *a, **kw):
+        if str(p) == str(path) and "done" not in state:
+            state["done"] = True
+            os.symlink(target, path)                     # link pendente creato subito dopo il controllo
+            raise FileNotFoundError(errno.ENOENT, "assente", str(p))
+        return real_lstat(p, *a, **kw)
+
+    monkeypatch.setattr(os, "lstat", racing_lstat)
+    with pytest.raises(OSError):
+        os.close(bb.open_private(str(path), os.O_WRONLY | os.O_CREAT))
+    monkeypatch.undo()
+    assert state.get("done") and not target.exists()
+
+
+@_POSIX_ONLY
+def test_c12_link_swapped_in_for_the_open_and_back_out_is_still_refused(tmp_path, monkeypatch):
+    """Il caso che solo il confronto d'identita' copre: senza O_NOFOLLOW, il nome diventa un link al momento
+    dell'apertura (che quindi apre il bersaglio) e torna subito un file regolare. Il descrittore non e' il file che
+    il nome indica: rifiutato prima di qualsiasi scrittura. Simulazione del fallback: NON e' un PASS Windows."""
+    victim = _fake_secret_file(tmp_path)
+    path = tmp_path / "r.sqlite.runtime.owner"
+    path.write_text("")
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+    real_open = os.open
+    done = []
+
+    def swap_in_and_out(p, flags, *a, **kw):
+        if str(p) == str(path) and not done:
+            done.append(1)
+            os.replace(path, tmp_path / "originale")
+            os.symlink(victim, path)
+            fd = real_open(p, flags, *a, **kw)            # segue il link: e' il bersaglio
+            os.remove(path)
+            path.write_text("")                           # di nuovo un file regolare, ma un altro inode
+            return fd
+        return real_open(p, flags, *a, **kw)
+
+    monkeypatch.setattr(os, "open", swap_in_and_out)
+    with pytest.raises(OSError):
+        os.close(bb.open_private(str(path), os.O_WRONLY | os.O_CREAT))
+    monkeypatch.undo()
+    assert done
+    _assert_untouched(victim)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO POSIX")
+def test_c12_fifo_is_refused_before_opening_even_without_o_nonblock(tmp_path, monkeypatch):
+    """Il caso che solo il controllo PRIMA dell'apertura copre: senza O_NONBLOCK (es. Windows) l'apertura in
+    lettura di un FIFO si bloccherebbe per sempre. Il nome non regolare e' rifiutato senza aprirlo."""
+    fifo = tmp_path / "fault.log.pending"
+    os.mkfifo(fifo)
+    monkeypatch.delattr(os, "O_NONBLOCK", raising=False)
+    out = {}
+
+    def run():
+        try:
+            os.close(bb.open_private(str(fifo), os.O_RDONLY))
+            out["opened"] = True
+        except OSError as exc:
+            out["exc"] = exc
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(5)
+    blocked = t.is_alive()
+    if blocked:                                           # sblocca il thread prima di fallire
+        os.close(os.open(fifo, os.O_WRONLY | getattr(os, "O_NONBLOCK", 0o4000)))
+        t.join(5)
+    monkeypatch.undo()
+    assert not blocked, "apertura bloccata su un FIFO"
+    assert "exc" in out

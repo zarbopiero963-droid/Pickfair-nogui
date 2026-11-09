@@ -263,3 +263,27 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
   enumerabili per Control API e MCP, che non la espongono mai (`blackbox_query` non legge `meta`), ma **non** protegge
   da chi legge il file, che vede comunque gli `order_id` interni. La stessa chiave è usata, tramite derivazione con
   contesto separato, solo per le impronte degli errori. Nel registro non si conserva nessuna credenziale Betfair.
+- **Aperture sicure e inventario dei file (ciclo 12, rilievi Sol su `2847ca0e`).** Ogni file che la scatola nera
+  apre, scrive, tronca, accoda o ruota passa da `blackbox.open_private`, che restituisce un descrittore già
+  verificato: il chiamante usa quello, mai una riapertura per nome. La funzione non dà per scontato `O_NOFOLLOW`
+  (assente su Windows). Prima dell'apertura (`lstat`) rifiuta un nome che non è un file regolare con un solo nome.
+  Non usa mai `O_TRUNC` e crea solo in modo esclusivo (`O_CREAT|O_EXCL`). Dopo l'apertura confronta il file aperto
+  con quello che il nome indica ora (dispositivo + inode) e rifiuta prima di leggere o scrivere. In ogni caso dubbio
+  è fail-closed.
+
+  | File | Operazioni | Come si apre | Stato |
+  |---|---|---|---|
+  | `.runtime.lock` | creazione, lock, su Windows un byte | descrittore di `open_private` | protetto |
+  | `.runtime.owner` | creazione, troncamento, scrittura | descrittore di `open_private`, `ftruncate` sul descrittore | protetto |
+  | `fault.log` | lettura, append (`faulthandler`), rimozione del nome | `open_private`; rimozione del solo nome | protetto |
+  | `fault.log.pending` | lettura, append, rinomina in `.1` | `open_private`; rinomina solo se file privato | protetto |
+  | `fault.log.1` | append, sostituito dalla rinomina | `open_private`; `os.replace` sostituisce il nome, non segue link | protetto |
+  | registro `.sqlite` | creazione e permessi; poi apertura **da SQLite per nome** | `private_file` (= `open_private`), poi `sqlite3.connect(path)` | **residuo C12-A** |
+  | `-wal` / `-shm` | permessi se esistono; creati e aperti **da SQLite** | `private_file`, poi SQLite | **residuo C12-A** |
+
+  **Residuo C12-A (aperto, decisione dell'owner).** SQLite apre il registro per nome. Un symlink sostituito fra la
+  verifica e `sqlite3.connect` fa creare le tabelle `events`/`meta` dentro il database puntato (riprodotto in
+  locale). Richiede lo stesso utente, scrittura nella cartella dati e la finestra giusta. Non è corretto in questo
+  ciclo: il mandato del ciclo 12 copre `.runtime.owner`, `.runtime.lock` e i fallback multipiattaforma.
+- **Windows.** I fallback senza `O_NOFOLLOW`/`O_NONBLOCK` sono provati solo con simulazioni POSIX (opzioni rimosse
+  nel test). Nessuna esecuzione reale su Windows: **NOT_RUN**, non un PASS.

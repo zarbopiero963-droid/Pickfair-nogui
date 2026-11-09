@@ -196,18 +196,10 @@ def _is_private(path: str) -> bool:
 
 
 def _open_private(path: str, flags: int) -> int:
-    """Apre un file del dump SOLO se e' un file regolare con un solo nome, senza seguire symlink (O_NOFOLLOW chiude
-    la finestra fra controllo e apertura) e senza bloccarsi su un FIFO (O_NONBLOCK). Altrimenti OSError."""
-    import stat as _stat
-    fd = os.open(path, flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0), 0o600)
-    try:
-        st = os.fstat(fd)
-        if not _stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
-            raise OSError(errno.ELOOP, "file del dump non privato: rifiutato", path)
-    except BaseException:
-        os.close(fd)
-        raise
-    return fd
+    """Apre un file del dump SOLO tramite `blackbox.open_private` (ciclo 12): file regolare con un solo nome, mai un
+    link seguito (nemmeno senza `O_NOFOLLOW`, es. Windows: controllo prima e confronto dopo l'apertura), nessun
+    blocco su un FIFO, creazione solo esclusiva. Altrimenti OSError, fail-closed."""
+    return bb.open_private(path, flags)
 
 
 def _read_private(path: str) -> bytes:
