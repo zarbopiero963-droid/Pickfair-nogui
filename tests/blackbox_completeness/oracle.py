@@ -124,19 +124,20 @@ def check(records: List[Dict[str, Any]], exchange_orders: Iterable[Dict[str, Any
 
     # --- disco pieno (semantica BB-1, Claude B pfab-b-20261108-blackbox-oracle-ack-001): due casi soltanto.
     # Caso 1, buffer recuperato: la richiesta dell'uscita e' presente con data.buffered=true E una BLACKBOX_GAP
-    # (refs noti) ne dichiara il customerOrderRef. Un ingresso bufferizzato non e' ammesso (ingressi rifiutati).
-    # Caso 2, buffer perso: un'uscita SENZA richiesta e' valida solo se cade nell'intervallo di una BLACKBOX_GAP con
-    # outcome UNKNOWN E ha una RECONCILIATION_RESOLVED (phase OBSERVATION) per il suo bet.
+    # SUCCESSIVA ne elenca il customerOrderRef in data.refs. L'esito della GAP non conta: dopo un guasto e' UNKNOWN
+    # (eventi non critici possibilmente persi, D4). Un ingresso bufferizzato non e' ammesso (ingressi rifiutati).
+    # Caso 2, buffer perso: un'uscita SENZA richiesta e' valida solo se cade nell'intervallo di una BLACKBOX_GAP
+    # UNKNOWN con reason_code UNCLEAN_TERMINATION E ha una RECONCILIATION_RESOLVED (phase OBSERVATION) per il suo bet.
     gaps = [r for r in recs if r.get("type") == "BLACKBOX_GAP"]
-    known_gap_refs = set()
-    for g in gaps:
-        if g.get("outcome") != "UNKNOWN":
-            known_gap_refs.update((g.get("data") or {}).get("refs") or [])
+
+    def covering_gap(attempt):
+        return any(attempt.get("order_ref") in ((g.get("data") or {}).get("refs") or [])
+                   and g["seq"] > attempt["seq"] for g in gaps)
     for a in attempts:
         if (a.get("data") or {}).get("buffered"):
             if (a.get("data") or {}).get("purpose") == "ENTRY":
                 problems.append(f"ENTRY_DURING_OUTAGE:{a.get('order_ref')}")
-            elif a.get("order_ref") not in known_gap_refs:
+            elif not covering_gap(a):
                 problems.append(f"BUFFERED_WITHOUT_GAP:{a.get('order_ref')}")
 
     def in_unknown_gap(order):
@@ -144,7 +145,8 @@ def check(records: List[Dict[str, Any]], exchange_orders: Iterable[Dict[str, Any
         for g in gaps:
             d = g.get("data") or {}
             lo, hi = _ts(d.get("from_ts")), _ts(d.get("to_ts"))
-            if g.get("outcome") == "UNKNOWN" and lo and hi and ts and lo <= ts <= hi:
+            if g.get("outcome") == "UNKNOWN" and g.get("reason_code") == "UNCLEAN_TERMINATION" \
+                    and lo and hi and ts and lo <= ts <= hi:
                 return True
         return False
 

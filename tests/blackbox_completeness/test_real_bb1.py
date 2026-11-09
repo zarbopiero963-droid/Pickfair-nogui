@@ -211,7 +211,8 @@ def test_lacuna_caso1_guasto_di_scrittura_ingresso_rifiutato_uscita_bufferizzata
     box, sc, hedge = _caso1(tmp_path, monkeypatch)
     recs = read_all(box)
     gap = [r for r in recs if r["type"] == "BLACKBOX_GAP"]
-    assert len(gap) == 1 and hedge["order_ref"] in gap[0]["data"]["refs"] and gap[0]["outcome"] != "UNKNOWN"
+    # esito della GAP di guasto: VERIFIED su 3b6848d6, UNKNOWN dopo D4; l'oracolo non dipende dall'esito
+    assert len(gap) == 1 and hedge["order_ref"] in gap[0]["data"]["refs"] and gap[0]["reason_code"] == "BLACKBOX_OUTAGE"
     assert [r["type"] for r in recs if r["seq"] > gap[0]["seq"]][:1] == ["BLACKBOX_RECOVERED"]
     assert _oracle(box, sc) == []
 

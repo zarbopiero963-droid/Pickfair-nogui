@@ -170,6 +170,7 @@ def test_disco_pieno_caso1_buffer_recuperato_richiesta_bufferizzata_e_lacuna() -
     assert len(req) == 1 and req[0]["data"]["buffered"] is True
     gap = [r for r in recs if r["type"] == "BLACKBOX_GAP"]
     assert len(gap) == 1 and hedge["order_ref"] in gap[0]["data"]["refs"] and gap[0]["seq"] > req[0]["seq"]
+    assert gap[0]["reason_code"] == "BLACKBOX_OUTAGE"
     # ordine al ripristino confermato per BB-1: eventi bufferizzati, poi GAP, poi BLACKBOX_RECOVERED
     tail = [r["type"] for r in recs if (r.get("data") or {}).get("buffered") or r["type"] in (
         "BLACKBOX_GAP", "BLACKBOX_RECOVERED")]
@@ -278,13 +279,35 @@ def test_vocabolario_nuovo_tutto_o_niente() -> None:
         assert t in known, t
 
 
-def test_block_richiesta_bufferizzata_coperta_solo_da_una_lacuna_unknown() -> None:
-    """Il caso 1 vuole una lacuna con riferimenti NOTI: una lacuna UNKNOWN (caso 2) non copre una richiesta bufferizzata."""
+def test_block_richiesta_bufferizzata_senza_ref_nella_lacuna() -> None:
+    """Caso 1: copre solo una GAP SUCCESSIVA che elenca il ref; una GAP di riavvio (refs vuoti) o precedente no."""
     sc = Scenario()
+    sc.bb.record("BLACKBOX_GAP", source="SYSTEM", outcome="UNKNOWN", reason_code="BLACKBOX_OUTAGE",
+                 data={"refs": ["hedge:sig-z"]})                                       # precedente: non copre
     sc.bb.record("ORDER_PLACE_REQUEST", source="STRATEGY", phase="ATTEMPT", outcome="PENDING", critical=True,
                  order_ref="hedge:sig-z", market_id="1.5", data={"purpose": "HEDGE", "buffered": True})
-    sc.bb.record("BLACKBOX_GAP", source="SYSTEM", outcome="UNKNOWN", data={"refs": ["hedge:sig-z"]})
+    sc.bb.record("BLACKBOX_GAP", source="SYSTEM", outcome="UNKNOWN", reason_code="UNCLEAN_TERMINATION",
+                 data={"refs": []})
     assert "BUFFERED_WITHOUT_GAP:hedge:sig-z" in _check(sc)
+
+
+def test_esito_della_lacuna_di_guasto_indifferente_per_il_caso1() -> None:
+    """D4 (Claude B/C): la GAP di un guasto ha outcome UNKNOWN; l'oracolo la accetta per il caso 1 se elenca il ref."""
+    sc, _h = _outage_case1()
+    gap = [r for r in records_of(sc.bb) if r["type"] == "BLACKBOX_GAP"][0]
+    assert gap["outcome"] == "UNKNOWN" and gap["reason_code"] == "BLACKBOX_OUTAGE" and _check(sc) == []
+
+
+def test_block_lacuna_di_guasto_non_vale_come_buffer_perso() -> None:
+    """Un'uscita senza richiesta dentro una GAP di GUASTO (BLACKBOX_OUTAGE) non e' il caso 2: serve UNCLEAN_TERMINATION."""
+    sc = Scenario()
+    sc.bb.record("BLACKBOX_GAP", source="SYSTEM", outcome="UNKNOWN", reason_code="BLACKBOX_OUTAGE",
+                 data={"from_ts": "2000-01-01T00:00:00.000000+00:00", "to_ts": "2100-01-01T00:00:00.000000+00:00",
+                       "refs": []})
+    sc.exchange.append({"betId": "BET-O", "customerOrderRef": "hedge:sig-o", "marketId": "1.6", "side": "LAY",
+                        "sizeMatched": 1.0, "status": "EXECUTION_COMPLETE", "placedDate": _now()})
+    sc.reconcile_found("BET-O", "hedge:sig-o", "1.6")
+    assert "MISSING_REQUEST:BET-O" in _check(sc)
 
 
 def test_block_richiesta_successiva_all_esito() -> None:

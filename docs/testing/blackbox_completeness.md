@@ -27,7 +27,7 @@ Campagna con tre ingressi microstake (stub + ordine esatto), un parziale con res
 hedge, settlement; crash fra invio ed esito (riconciliazione per `customerOrderRef` dopo il riavvio); esito ignoto senza
 riconciliazione; mercato sospeso e riaperto (protezione in attesa, nessun hedge a mercato sospeso); concorrenza
 multitavolo (8 thread, `seq` senza buchi ne' duplicati); disco pieno (nessun nuovo ingresso, uscita coperta da lacuna);
-manomissione; segreto nel registro. Ogni anello tolto alla scrittura e' un test BLOCK con il suo codice; 21 mutanti
+manomissione; segreto nel registro. Ogni anello tolto alla scrittura e' un test BLOCK con il suo codice; 22 mutanti
 dell'oracolo (un controllo spento alla volta) sono tutti rilevati.
 
 ## Tipi di evento nuovi richiesti (assenti da `EVENT_CATEGORIES`)
@@ -46,10 +46,12 @@ L'oracolo accetta questi due casi e nient'altro:
 1. **Buffer recuperato.** A store non disponibile la richiesta di un'uscita protettiva (hedge, cashout, chiusura SL/TP)
    va nel buffer critico in memoria PRIMA dell'invio; i nuovi ingressi sono sempre rifiutati (`BLACKBOX_UNAVAILABLE`).
    Al ripristino il buffer si scarica con gli eventi originali (`ts_utc` originale, `data.buffered=true`, nuovo `seq`
-   nell'ordine di scarico) e una `BLACKBOX_GAP` (outcome non UNKNOWN) con intervallo e `customerOrderRef`. Valida solo
-   se la richiesta bufferizzata e' presente E una lacuna con riferimenti noti la copre (`BUFFERED_WITHOUT_GAP`);
-   un ingresso bufferizzato e' `ENTRY_DURING_OUTAGE`.
-2. **Buffer perso** (crash prima dello scarico). Al riavvio `UNCLEAN_TERMINATION` + `BLACKBOX_GAP` con outcome UNKNOWN
+   nell'ordine di scarico) e una `BLACKBOX_GAP` (`reason_code BLACKBOX_OUTAGE`, outcome UNKNOWN dopo D4: nella
+   finestra gli eventi non critici possono essere persi) con intervallo e `customerOrderRef`. Valida solo se la
+   richiesta bufferizzata e' presente E una lacuna SUCCESSIVA ne elenca il ref (`BUFFERED_WITHOUT_GAP`); l'esito della
+   lacuna non conta. Un ingresso bufferizzato e' `ENTRY_DURING_OUTAGE`.
+2. **Buffer perso** (crash prima dello scarico). Al riavvio `UNCLEAN_TERMINATION` + `BLACKBOX_GAP` con outcome UNKNOWN e
+   `reason_code UNCLEAN_TERMINATION` (una lacuna di guasto `BLACKBOX_OUTAGE` non vale come caso 2)
    (`data.from_ts` / `data.to_ts`, riferimenti ignoti); la riconciliazione registra gli ordini trovati come
    `RECONCILIATION_RESOLVED` con phase OBSERVATION. Un'uscita (`hedge:*`) senza richiesta e' valida solo se il suo
    `placedDate` cade nell'intervallo di una lacuna UNKNOWN E ha quella riconciliazione; un ingresso mai.

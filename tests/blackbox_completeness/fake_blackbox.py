@@ -120,8 +120,8 @@ class FakeBlackBox:
             refs = ev.pop("refs")
             data = dict(ev.pop("data") or {}, buffered=True)
             self._write(ev.pop("type"), data=data, **ev, **refs)
-        self._write("BLACKBOX_GAP", source="SYSTEM", phase="OBSERVATION", outcome="VERIFIED", critical=True,
-                    causation_id=None, correlation_id=None, reason_code="DISK_FULL", reason="", state_before=None,
+        self._write("BLACKBOX_GAP", source="SYSTEM", phase="OBSERVATION", outcome="UNKNOWN", critical=True,
+                    causation_id=None, correlation_id=None, reason_code="BLACKBOX_OUTAGE", reason="", state_before=None,
                     state_after=None, values_before=None, values_after=None,
                     data={"from_ts": frm, "to_ts": _now_iso(),
                           "refs": gap_refs})
@@ -138,7 +138,7 @@ class FakeBlackBox:
             self.session_id = self.session_id + "-riavvio"
         self.record("UNCLEAN_TERMINATION", source="SYSTEM")
         return self.record("BLACKBOX_GAP", source="SYSTEM", outcome="UNKNOWN", critical=True,
-                           reason_code="BUFFER_LOST", data={"from_ts": frm, "to_ts": _now_iso(), "refs": []})   # vuota = ignoti (BB-1)
+                           reason_code="UNCLEAN_TERMINATION", data={"from_ts": frm, "to_ts": _now_iso(), "refs": []})   # vuota = ignoti (BB-1)
 
     # ------------------------------------------------------------------ lettura (§4-bis)
     def status(self) -> Dict[str, Any]:
