@@ -681,3 +681,20 @@ def test_anchor_from_a_corrupt_ancestor_checkpoint_is_ignored(world):
     raw_commit(a, "checkpoint integro che si appoggia all'antenato corrotto")
     err = expect(2, pfckpt.verify, a, "HEAD", D)
     assert any("ancor" in p for p in err.detail["problems"]), err.detail["problems"]
+
+
+def test_unpublished_tree_without_sha_note_still_enters_the_pull_fallback(world):
+    """Sol #615 (139fdff5): `unpublished_tree: true` SENZA `sha_note` non esonera dalla risoluzione in verify, quindi lo
+    SHA deve entrare anche nel fallback refs/pull: dopo squash + delete il bootstrap lo trova e non serve riconciliare."""
+    feat, _ = make_feature(world)
+    open_pr(world, 1, feat)
+    squash_merge_and_delete(world, feat)
+    a = agent(world, "a")
+    next_state(a, world, tests_executed=_tests(feat, pr=1, unpublished_tree=True))
+    pfckpt.write_manifest(a, D)
+    raw_commit(a, "ckpt con unpublished_tree senza nota")
+    sh(a, "push", "-q", "origin", f"HEAD:refs/heads/{BR}")
+    dest = str(world["tmp"] / "fresh")
+    subprocess.run(["git", "clone", "-q", "--no-local", "--branch", BR, world["url"], dest], check=True)
+    assert pfckpt.fetch_pull_heads(dest, D) is not None
+    assert pfckpt.resolve_commit(dest, feat) == feat

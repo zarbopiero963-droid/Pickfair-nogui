@@ -74,6 +74,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `code` di tipo errato è un checkpoint invalido, mai un `TypeError` che blocca `recover`/`bootstrap`.
   Rilievi Grok sullo stesso giro: gli errori di git non riportano credenziali (`[REDACTED]`); un `--repo-path` che non
   è il repository dichiarato non viene mai contattato.
+  Ottavo giro: anche `readback` e `recover` aggiornano i `--repo-path`; un test `unpublished_tree` senza `sha_note`
+  (che `verify` deve risolvere) entra nel fallback `refs/pull`.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

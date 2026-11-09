@@ -580,3 +580,20 @@ def test_save_never_fetches_a_repo_path_that_is_not_the_declared_repository(worl
                  repo_paths={TARGET: clone})
     assert any("origin del percorso" in p for p in err.detail["problems"])
     assert pfckpt.remote_head(a, "origin", BR) == exp
+
+
+def test_recover_never_accepts_a_handoff_proven_by_a_stale_repo_path(world, target):
+    """Sol #615 (139fdff5): dopo la cancellazione del branch di handoff, `recover` con un `--repo-path` obsoleto non
+    prende per valido il checkpoint che lo cita: aggiorna il clone e torna al checkpoint valido precedente."""
+    hsha, htree = publish_handoff(target)
+    clone = target_clone(target)
+    r = rec(world, target, "DURABLE", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    a = agent(world, "c")
+    os.makedirs(os.path.join(a, D, "handoff"), exist_ok=True)
+    open(os.path.join(a, D, "handoff", "c.patch"), "wb").write(target["patch"])
+    exp = next_state(a, world, repository=CHAIN, handoffs=[r])
+    res = pfckpt.save(a, BR, "origin", exp, "handoff DURABLE", D, agent="claude-c", repo_paths={TARGET: clone})
+    sh(target["bare"], "update-ref", "-d", f"refs/heads/{HBRANCH}")
+    assert pfckpt._published_on(clone, hsha, HBRANCH), "il tracking del clone e' ora obsoleto"
+    rep = pfckpt.recover(world["url"], BR, str(world["tmp"] / "rec"), D, repo_paths={TARGET: clone})
+    assert rep["commit"] != res["commit"], "il checkpoint con l'handoff non piu' pubblicato non e' recuperato"

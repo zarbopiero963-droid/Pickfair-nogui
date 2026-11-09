@@ -1066,7 +1066,10 @@ def _cited_shas_and_prs(state):
     for t in tests:
         if isinstance(t.get("pr"), int) and t["pr"] > 0:
             prs.add(t["pr"])
-        if t.get("status") in ("PASS", "FAIL") and t.get("unpublished_tree") is not True and t.get("sha"):
+        # esclusi solo i dichiarati non pubblicati CON sha_note, come in verify (rilievo Sol #615): senza nota lo
+        # SHA va risolto, quindi deve entrare anche nel fallback refs/pull
+        declared = t.get("unpublished_tree") is True and bool(str(t.get("sha_note", "")).strip())
+        if t.get("status") in ("PASS", "FAIL") and not declared and t.get("sha"):
             shas.append(str(t["sha"]))
     return shas, sorted(prs)
 
@@ -1233,6 +1236,7 @@ def readback(remote_url, branch, d, code_branch=None, expect_commit=None, keep_r
         git(tmp, "fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*", check=False)
         fetch_keep_refs(tmp)
         fetch_pull_heads(tmp, d)
+        refresh_repo_paths(repo_paths)              # rilievo Sol #615: anche il readback prova su ref freschi
         try:
             report = verify(tmp, "HEAD", d, repo_paths=repo_paths)
         except CheckpointError as exc:
@@ -1444,6 +1448,7 @@ def recover(url, branch, dest, d=DEFAULT_DIR, repo_paths=None):
         raise CheckpointError(5, "CLONE_FAILED", stderr=_safe_err(p.stderr, -300))
     fetch_keep_refs(dest)
     fetch_pull_heads(dest, d)
+    refresh_repo_paths(repo_paths)                  # rilievo Sol #615: recover non accetta prove da ref obsoleti
     head = out(dest, "rev-parse", "HEAD")
     valid = last_valid_checkpoint(dest, d, "HEAD", repo_paths=repo_paths)
     if valid is None:
