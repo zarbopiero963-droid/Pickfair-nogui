@@ -28,6 +28,7 @@ regola che non tocca mai eventi di ordini non riconciliati.
 from __future__ import annotations
 
 import datetime as _dt
+import errno
 import hashlib
 import hmac
 import json
@@ -80,6 +81,9 @@ def check_utc_ts(value: Any, field: str) -> str:
         raise ValueError(f"blackbox: {field} non e' una data/ora valida: {s!r}") from None
     return s
 GENESIS_HASH = "0" * 64
+# errno di un lock gia' tenuto da un altro processo: flock (EWOULDBLOCK/EAGAIN), msvcrt.LK_NBLCK (EACCES, EDEADLOCK)
+_LOCK_BUSY_ERRNOS = frozenset(e for e in (getattr(errno, n, None) for n in ("EWOULDBLOCK", "EAGAIN", "EACCES",
+                                                                              "EDEADLK", "EDEADLOCK")) if e is not None)
 ENV_PATH = "PICKFAIR_BLACKBOX_PATH"
 MAX_CRITICAL_BUFFER = 1000
 REDACTED = "[REDACTED]"
@@ -228,14 +232,25 @@ class BlackBox:
         try:
             if os.name == "nt":
                 import msvcrt
+                # Grok #617 (374ce396): il byte bloccato deve esistere. Un file appena creato e' vuoto: si scrive un
+                # byte PRIMA del lock (chi tiene gia' il lock lo ha scritto prima di prenderlo, quindi non si tocca
+                # mai un file bloccato); dopo il lock il file non si tocca piu'.
+                if os.path.getsize(fh.name) == 0:
+                    fh.write("\n")
+                    fh.flush()
                 fh.seek(0)
                 msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
                 fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+        except OSError as exc:
             fh.close()
-            raise RuntimeAlreadyActive(f"RUNTIME_ALREADY_ACTIVE: un altro runtime Pickfair scrive gia' {self.path}")
+            # Grok #617: solo "gia' bloccato" e' un altro runtime; ogni altro errore e' un registro non disponibile
+            # (l'avvio resta rifiutato in entrambi i casi, ma con il motivo giusto).
+            if exc.errno in _LOCK_BUSY_ERRNOS:
+                raise RuntimeAlreadyActive(
+                    f"RUNTIME_ALREADY_ACTIVE: un altro runtime Pickfair scrive gia' {self.path}") from exc
+            raise BlackBoxUnavailable(f"RUNTIME_LOCK_FAILED: {type(exc).__name__}: {exc}") from exc
         # il file di lock non si tocca piu' dopo il lock (su Windows il lock e' una regione del file, rilievo Grok
         # #617): il proprietario va in un file separato, solo informativo
         try:

@@ -131,6 +131,12 @@ def _consume_fault_dump(fault_path: str) -> bool:
     return ok
 
 
+# Flag operativi di headless_main, senza valore: dopo un flag sensibile senza `=` non possono essere il suo valore
+# (Grok #617). Un valore sconosciuto che inizia con `--` resta consumato e non registrato (prudenza).
+OPERATIONAL_FLAGS = frozenset({"--live", "--live-enabled", "--live-disabled", "--sim", "--simulation", "--preflight",
+                               "--emergency-stop", "--telegram-login", "--kill-switch-on", "--kill-switch-off"})
+
+
 def safe_argv(argv) -> list:
     """Argomenti della riga di comando senza segreti: un flag sensibile (`--password`, `--token`, `--api-key`...)
     viene registrato come `--flag=[REDACTED]`, anche quando il valore e' l'argomento successivo.
@@ -154,6 +160,10 @@ def safe_argv(argv) -> list:
             if flag is not None:                         # flag sensibile al posto del valore atteso: redatto
                 out.append(f"--{flag[0]}={bb.REDACTED}")
                 skip = not flag[1]
+                continue
+            if a.strip().lower() in OPERATIONAL_FLAGS:   # Grok #617: un flag operativo noto non e' il valore
+                out.append(a)                            # (--password --live: l'audit conserva --live)
+                continue
             continue                                     # valore del flag precedente: consumato, mai registrato
         if flag is not None:
             out.append(f"--{flag[0]}={bb.REDACTED}")

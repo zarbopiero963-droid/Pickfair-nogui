@@ -1,5 +1,7 @@
 """PF-BLACKBOX-01 (BB-1): scatola nera del processo e cablaggio nell'entrypoint headless."""
+import errno
 import json
+import os
 import sqlite3
 import sys
 import threading
@@ -330,3 +332,48 @@ def test_emergency_stop_result_outcome_comes_from_the_cancellation_result(monkey
     app.runtime = FakeRuntime()
     assert app._emergency_stop_with_audit() == 0
     assert calls[-1] == ("RESULT", outcome), calls
+
+
+def test_operational_flag_after_a_sensitive_flag_stays_in_the_audit():
+    """Grok #617 (374ce396): `--password --live` scartava `--live` da PROCESS_START.argv."""
+    assert rt.safe_argv(["--password", "--live"]) == [f"--password={bb.REDACTED}", "--live"]
+    assert rt.safe_argv(["--token", "--emergency-stop", "--simulation"]) == [
+        f"--token={bb.REDACTED}", "--emergency-stop", "--simulation"]
+    out = rt.safe_argv(["--password", "--segreto-che-sembra-un-flag", "--live"])
+    assert "--segreto-che-sembra-un-flag" not in out and out == [f"--password={bb.REDACTED}", "--live"]
+
+
+def test_windows_lock_writes_the_locked_byte_before_locking_an_empty_file(tmp_path, monkeypatch):
+    """Grok #617 (374ce396): su Windows `msvcrt.locking` blocca 1 byte; su un file di lock appena creato (vuoto) il
+    byte deve esistere prima del lock. Simulato: os.name='nt' e un msvcrt finto che verifica la dimensione."""
+    import types
+    seen = []
+
+    def locking(fd, mode, nbytes):
+        seen.append(os.fstat(fd).st_size)
+
+    fake = types.SimpleNamespace(LK_NBLCK=2, locking=locking)
+    monkeypatch.setitem(sys.modules, "msvcrt", fake)
+    monkeypatch.setattr(bb.os, "name", "nt")
+    box = bb.BlackBox(str(tmp_path / "w.sqlite"))
+    box.acquire_runtime()
+    assert seen and seen[0] >= 1, "lock su un file vuoto"
+    box._writer_lock.close()
+
+
+@pytest.mark.parametrize("err,expected", [
+    (errno.EWOULDBLOCK, "RuntimeAlreadyActive"), (errno.EAGAIN, "RuntimeAlreadyActive"),
+    (errno.EIO, "BlackBoxUnavailable"), (errno.ENOLCK, "BlackBoxUnavailable"),
+])
+def test_only_a_busy_lock_means_another_runtime(tmp_path, monkeypatch, err, expected):
+    """Grok #617 (374ce396): ogni OSError diventava RuntimeAlreadyActive. Ora solo un lock occupato lo e'; ogni altro
+    errore e' BlackBoxUnavailable (avvio rifiutato comunque, con il motivo giusto)."""
+    import fcntl
+
+    def busy(fd, op):
+        raise OSError(err, os.strerror(err))
+
+    monkeypatch.setattr(fcntl, "flock", busy)
+    box = bb.BlackBox(str(tmp_path / "l.sqlite"))
+    with pytest.raises(getattr(bb, expected)):
+        box.acquire_runtime()

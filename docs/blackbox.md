@@ -47,7 +47,9 @@ di vita del processo.
   - I valori delle chiavi sensibili (password, token, chiavi) diventano `[REDACTED]`.
   - Token e segreti registrati vengono oscurati anche dentro i testi.
   - Gli argomenti della riga di comando come `--password` sono oscurati anche quando il valore è l'argomento
-    successivo, anche se al suo posto c'è un altro flag sensibile (`--password --api-key valore`).
+    successivo, anche se al suo posto c'è un altro flag sensibile (`--password --api-key valore`). Un flag operativo
+    noto di `headless_main` (`--live`, `--simulation`, `--emergency-stop`…) in quella posizione resta nell'audit;
+    un valore sconosciuto che inizia con `--` viene consumato e non registrato.
   - I valori non JSON (bytes, oggetti) diventano testo e vengono redatti **prima** della serializzazione.
 - **Richiesta ≠ conferma.**
   - `phase` vale ATTEMPT, RESULT oppure OBSERVATION.
@@ -65,7 +67,9 @@ di vita del processo.
 ## Un solo runtime per registro (decisione owner D3)
 
 - `start_session` prende un lock esclusivo su `<registro>.runtime.lock` (fcntl su Linux, msvcrt su Windows), tenuto
-  fino alla chiusura. Un secondo runtime riceve `RUNTIME_ALREADY_ACTIVE` e `headless_main` non parte (exit 1).
+  fino alla chiusura. Un secondo runtime riceve `RUNTIME_ALREADY_ACTIVE` e `headless_main` non parte (exit 1). Solo un
+  lock gia' occupato e' «un altro runtime»; ogni altro errore del lock e' `RUNTIME_LOCK_FAILED` (`BlackBoxUnavailable`),
+  con avvio comunque rifiutato. Su Windows il byte bloccato viene scritto prima del lock se il file e' vuoto.
   Dopo il lock il file di lock non viene più scritto né troncato (su Windows il lock è una regione del file): pid e
   sessione del proprietario stanno in `<registro>.runtime.owner`, solo informativo. Il lock su Windows non è stato
   eseguito in questo ambiente (NOT_RUN).
