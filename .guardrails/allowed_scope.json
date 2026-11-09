@@ -3419,6 +3419,7 @@
         "tests/f026/test_roserpina_100_campagna2.py",
         "tests/f026/test_roserpina_100_campagna3.py",
         "tests/f026/test_roserpina_100_campagna4.py",
+        "tests/f026/test_roserpina_100_campagna5_5tavoli.py",
         "tests/f026/test_roserpina_100_report.py",
         "tests/g7/__init__.py",
         "tests/g7/g7_scenarios.json",
@@ -3427,7 +3428,7 @@
         "tools/sim_report/roserpina_report.py",
         "tools/sim_report/run_g7.py"
       ],
-      "max_files": 16
+      "max_files": 17
     }
   }
 }

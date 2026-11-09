@@ -86,6 +86,23 @@ questa campagna: 3 PASS (B1, B2, B5), 2 XFAIL strict (B3, B4). Con le correzioni
 (`claude/d-f03-trailing-stop`) applicate allo stesso albero: 5 PASS; senza: 3 PASS e 2 XFAIL (verificati entrambi). B3 e' xfail solo senza la correzione D-C4-01
 (`sl_tp_close.latch_releasable`, branch `claude/d-f03-trailing-stop`): con la correzione deve passare.
 
+## Campagna 5 (SINTETICO): 5 tavoli, 100 EUR, configurazione Grok PF-ROSERPINA-5T-OFFLINE-20261109
+
+`tests/f026/test_roserpina_100_campagna5_5tavoli.py`, audit PF-ROSERPINA-FINANCIAL-ORACLE-CLAUDE-D-20261109. Gira sul
+runtime di `main` (nessuna dipendenza da F-02/F-03). Oracolo Decimal indipendente: stake per difetto al centesimo,
+rischio BACK/LAY, esposizione = somma dei rischi (anche non abbinati) = riserve dei tavoli, netto di mercato
+dagli ordini abbinati, saldo = 100 + somma dei netti.
+
+- PASS: stake dei 5 tavoli (BACK e LAY), esposizione aggregata = rischi = riserve, riserva intera sugli ordini non
+  abbinati, parziale (riserva sull'intero, netto sull'abbinato), perdita simultanea con capitale liberato e senza
+  doppia contabilizzazione, cashout poi settlement, crash e riavvio senza doppia contabilizzazione.
+- XFAIL strict: RO-DD-01 (dopo l'auto-reset 15 EUR di perdita realizzata con limite 10 non bloccano), RO-REC-01
+  (ordine eseguito sull'exchange mai riconciliato dopo un crash con la risposta in volo, Grok B-1), RO-CAP-01 (con
+  recovery OFF cinque perdite da 1 EUR bloccano tutti i tavoli, Grok B-2).
+
+Esito osservato il 09/11/2026 su main `6519794b` con i file di test di questo branch: 7 PASS, 3 XFAIL. Dettaglio e
+classificazione: `docs/testing/roserpina_financial_oracle.md` (branch `claude/d-roserpina-oracle`).
+
 ## Registro G7 e riesecuzione
 
 Gli scenari della campagna finanziaria G7 hanno ID stabili `G7-Snn` in `tests/g7/g7_scenarios.json`: per ognuno il
