@@ -9,6 +9,7 @@ ingressi.
 """
 from __future__ import annotations
 
+import importlib.util
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal as D
 
 import pytest
@@ -16,6 +17,8 @@ import pytest
 from tests.f026.test_f026_financial import describe, run
 
 pytestmark = pytest.mark.integration
+# Correzione D-1 (Claude B, keep/roserpina-d1-drawdown-20261109 @15960bac), verificata da Claude D il 09/11.
+D1_FIX = importlib.util.find_spec("core.drawdown_hard_stop") is not None
 CENT = D("0.01")
 GROK = {"roserpina.table_count": 5, "roserpina.target_profit_cycle_pct": 1.0, "roserpina.max_single_bet_pct": 5.0,
         "roserpina.max_total_exposure_pct": 60.0, "roserpina.max_event_exposure_pct": 5.0,
@@ -153,7 +156,7 @@ DD = dict(GROK, **{"roserpina.target_profit_cycle_pct": 5.0, "roserpina.max_sing
                    "roserpina.max_event_exposure_pct": 20.0})
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DD-01: dopo l'auto-reset la perdita oltre max_drawdown_abs non blocca")
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DD-01: dopo l'auto-reset la perdita oltre max_drawdown_abs non blocca")
 def test_ro_dd_01_e2e_perdita_realizzata_oltre_il_limite_blocca_anche_dopo_l_auto_reset() -> None:
     r = run([{"op": "signal", "m": m, "price": 2.0} for m in ("1.971", "1.972", "1.973")] +
             [{"op": "settle", "m": m, "win": False, "nowait": True} for m in ("1.971", "1.972")] +
@@ -210,7 +213,7 @@ def _perdita_12():
             {"op": "settle", "m": "1.981", "win": False, "nowait": True}, {"op": "settle", "m": "1.982", "win": False}]
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DD-07 (contratto): blocco al settlement, non al segnale successivo")
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DD-07 (contratto): blocco al settlement, non al segnale successivo")
 def test_ro_dd_07_e2e_blocco_alla_variazione_finanziaria() -> None:
     r = run(_perdita_12(), settings=DD12)
     after = [s for s in r["snaps"] if s["tag"].endswith(":settle:1.982")][0]
@@ -218,7 +221,7 @@ def test_ro_dd_07_e2e_blocco_alla_variazione_finanziaria() -> None:
     assert after["mode"] == "LOCKDOWN", describe(after)
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DD-06 (contratto regola 1): picco e blocco persi al riavvio")
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DD-06 (contratto regola 1): picco e blocco persi al riavvio")
 def test_ro_dd_06_e2e_blocco_persistente_dopo_crash_e_riavvio() -> None:
     r1 = run(_perdita_12() + [{"op": "signal", "m": "1.983", "price": 2.0}, {"op": "crash_now"}], settings=DD12)
     assert r1["snaps"][-1]["mode"] == "LOCKDOWN", describe(r1["snaps"][-1])          # precondizione: bloccato
