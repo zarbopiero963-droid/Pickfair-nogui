@@ -34,12 +34,12 @@ Già chiuse con prove: #456 (dup #455), #528, #550, #590. Issue aperte esaminate
 | #367 | **BLOCKED** | fix di codice CatalogSync/login/anomaly su main | verifica reale su VPS richiesta prima di chiudere, mai fatta | #368 #370 #371 #372 | test mockati | no: manca la prova reale |
 | #374 | **OWNER_DECISION** | consolidata in #453/#461 | D-9, D-11, D-12 non registrate altrove | — | — | dopo decisione |
 | #380 | KEEP_OPEN | — | sweep finale GUI (PR60) | — | — | no |
-| #388 | **OWNER_DECISION** | M1 (PR #447), A1 (PR #448) | decisioni su M2–M10, B1–B3 | #447 #448 | — | dopo decisione |
+| #388 | KEEP_OPEN | M1 (PR #447), A1 (PR #448) | M2–M10, B1–B3 irrisolte (es. M7 `normalize_mode` non fail-closed, 4 copie in `core/`) | #447 #448 | — | no |
 | #392 | KEEP_OPEN | — | assistente AI sospeso (blueprint) | — | — | no |
 | #394 | KEEP_OPEN | handoff su main (PR #414) | sezioni handoff, nota visivi, percorso screenshot | #414 | — | no |
 | #398 | **OWNER_DECISION** | — | campagna 69 PR: abbandonare o finanziare | — | — | dopo decisione |
 | #410 | KEEP_OPEN | — | `chat_id` non numerico accettato (`telegram_module.py:1303-1317`) | — | — | no |
-| #412 | **CLOSE_VERIFIED** | valutazione chiusa con decisione owner #426 D19 (opzione 1, status quo); codice coerente: per-bot `invariant_ok=True`, `listener_stale=False` (`telegram_bot_runtime.py:725,736`); doc `ops/telegram_bots.md:185` | nessuno: la decisione esclude modifiche | — (nessuna modifica richiesta) | n/a | **GO richiesto** |
+| #412 | **CHIUSA 09/11** (GO owner, c.6739064636) | valutazione chiusa con decisione owner #426 D19 (opzione 1, status quo); codice coerente: per-bot `invariant_ok=True`, `listener_stale=False` (`telegram_bot_runtime.py:725,736`); doc `ops/telegram_bots.md:185` | nessuno: la decisione esclude modifiche | — (nessuna modifica richiesta) | n/a | **GO richiesto** |
 | #415 | KEEP_OPEN | — | `on_success=` non accettato (`mini_gui.py:2732` vs `:2269`) | — | — | no |
 | #416 | KEEP_OPEN | — | invarianti in AGENTS.md, regola screenshot | — | — | no |
 | #426 | KEEP_OPEN | — | registro decisioni owner | — | — | no |
@@ -65,7 +65,7 @@ Già chiuse con prove: #456 (dup #455), #528, #550, #590. Issue aperte esaminate
 | #510 | KEEP_OPEN | Round 1 SIM | Round 2 multi-tavolo, replay | — | — | no |
 | #511 | KEEP_OPEN | — | `roserpina_config_*`, dutching misto (`dutching.py:382`) (P1) | — | — | no |
 | #513 | KEEP_OPEN | cap 10 cicli (`scripts/pr_fix_loop_policy.py:22`) | `docs/pf_qa_02.md`, punti 3–11 | #530 | — | no |
-| #514 | **OWNER_DECISION** | molte decisioni ratificate (#522, #610) | PF-C22-01, freshness Delayed/Live, migrazione pre-v9 | #522 #610 | — | dopo decisione |
+| #514 | KEEP_OPEN | molte decisioni ratificate (#522, #610) | PF-C22-01 (già OWNER DECISION REQUIRED in #586 §C), freshness Delayed/Live, migrazione pre-v9 | #522 #610 | — | no |
 | #515 | KEEP_OPEN | — | motore auto-sblocco non implementato | — | — | no |
 | #516 | KEEP_OPEN | — | ref hedge uuid per chiamata (`core/order_router.py:166`), saghe ACTIVE escluse (P1) | — | — | no |
 | #517 | KEEP_OPEN | — | floor 0,10 € (`core/microstake_safe.py:83`) | — | — | no |
@@ -76,7 +76,7 @@ Già chiuse con prove: #456 (dup #455), #528, #550, #590. Issue aperte esaminate
 | #536 | KEEP_OPEN | Linux: lock+inode+lease, 61+227 test, 47/47 mutanti | checklist Windows (criterio MISSING), test 2 processi con sostituzione, limiti FS di rete non registrati | #537 | 61 passed | no finché A/B/C non registrati |
 | #562 | KEEP_OPEN | — | CI VPS | — | — | no |
 | #565 | **OWNER_DECISION** | ruleset con app 15368 configurato | test negativo (check omonimo di altra app) | — | NOT VERIFIED | dopo decisione |
-| #578 | **OWNER_DECISION** | — | kit recovery, pulizia MatchPilot, revoca PAT; checklist backup superata da t257 | — | — | dopo decisione |
+| #578 | KEEP_OPEN | — | kit recovery, pulizia VPS MatchPilot, revoca vecchio PAT (attività incomplete) | — | — | no |
 | #582 | KEEP_OPEN | — | collaudo Betfair A–D (P0) | — | — | no |
 | #586 | KEEP_OPEN | — | coordinamento | — | — | no |
 | #588 | KEEP_OPEN | — | ricerca adapter | — | — | no |
@@ -85,9 +85,10 @@ Già chiuse con prove: #456 (dup #455), #528, #550, #590. Issue aperte esaminate
 | #612 | KEEP_OPEN | — | `position_stake` usa lo stake richiesto (`core/sl_tp_pnl.py:72-76`) | — | — | no |
 | #613 | KEEP_OPEN | — | latch SL/TP dopo fallimento hedge provato (catena F-04/F-05, non su main) (P1) | — | — | no |
 
-## Totali
-- Esaminate: **79** aperte (più 4 già chiuse con prove: #456, #528, #550, #590).
-- Chiudibili con prove: **1** → #412 (CLOSE_VERIFIED). CLOSE_DUPLICATE_VERIFIED: 0.
-- Da tenere aperte: **71** KEEP_OPEN.
-- Bloccate per mancanza di prove: **1** → #367.
-- Decisione owner: **6** → #374, #388, #398, #514, #565, #578.
+## Totali (aggiornati 09/11 dopo GO owner)
+- Aperte oggi: **78** (79 − #412).
+- Chiuse con prove in totale: **5** → #456, #528, #550, #590, #412.
+- KEEP_OPEN: **74** (le 71 + #388, #514, #578: contengono lavoro incompleto qualunque sia la decisione).
+- BLOCKED: **1** → #367.
+- OWNER_DECISION: **3** → #374, #398, #565.
+- Mandato PF-CLAUDE-E-PHASE3-FULL-DECISIONS-20261109: non trovato (sessione, issue, commenti); nessuna decisione applicata da esso.

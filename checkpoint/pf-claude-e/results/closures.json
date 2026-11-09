@@ -23,5 +23,11 @@
   "state_reason": "completed",
   "comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/590#issuecomment-6738883511",
   "evidence": "PR #592 986bebd3; riconferma su 6519794b: 3 passed, guard 0/200"
+ },
+ {
+  "issue": 412,
+  "state_reason": "completed",
+  "comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/412#issuecomment-6739064636",
+  "evidence": "#426 D19 opzione 1; telegram_bot_runtime.py:720-736; ops/telegram_bots.md:185-186 su 6519794b"
  }
 ]

@@ -6,8 +6,8 @@
   "sha": "6519794b125152e62ca02b1821854075f8fc6653"
  },
  "mandate_id": "PF-ISSUE-CLEANUP-01 + PF-CLAUDE-E-ISSUE-CLOSURE-ONLY (owner 09/11/2026)",
- "next_atomic_action": "Attendere GO owner per #412 (CLOSE_VERIFIED) e le 6 decisioni (#374 #388 #398 #514 #565 #578); poi chiudere solo le issue con GO, con commento conclusivo. Nessun altro lavoro.",
- "previous_checkpoint_sha": "8f6cc278225ee5dc3fa2bac30cb6479bcbf34614",
+ "next_atomic_action": "Nessuna. Audit ordinario concluso. Eventuali nuove chiusure solo su GO owner per #374/#398/#565, o quando lo sviluppo completa requisiti (responsabilit\u00e0 di Claude B).",
+ "previous_checkpoint_sha": "019cedd913184fd10bb4fdc4a567ebad4bef46a3",
  "schema": "pf-current/1",
- "seq": 3
+ "seq": 4
 }
