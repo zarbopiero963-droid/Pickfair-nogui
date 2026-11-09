@@ -1,9 +1,9 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 13,
+ "seq": 14,
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "previous_checkpoint_sha": "7db11f7e4b184d726a9eb2d01a0f645e2b75332d",
+ "previous_checkpoint_sha": "04301cff037aabfa866feb67ed57f18f21ee1a38",
  "updated_at": "2026-11-05T14:22:51Z",
  "agent": {
   "identity": "claude-d",
@@ -83,8 +83,8 @@
    "stato": "guardia/campagna Betfair READ-ONLY"
   },
   "claude/d-blackbox-completeness": {
-   "sha": "376f4e6a780e7b744f01fa1d583870b6de02b9ed",
-   "stato": "oracolo sul registro reale BB-1: PR #617 head d1454af3 tutte le voci PASS (54), D4 recepita"
+   "sha": "4d113ed819deab4c7c42b2b5aadac364d1fbee3d",
+   "stato": "oracolo sul registro reale BB-1: PR #617 head dd7b7369 tutte le voci PASS (58)"
   }
  },
  "integration_queue": [
@@ -281,6 +281,11 @@
    "id": "oracolo sul registro reale BB-1 PR #617 head d1454af3: 54 test (21 reali), novita' con prova di blocco su 2919d6bf",
    "status": "NOT VERIFIED",
    "note": "unpublished_tree: PR #617 non mergiata"
+  },
+  {
+   "id": "oracolo sul registro reale BB-1 PR #617 head dd7b7369: 58 test (25 reali), novita' con prova di blocco su d1454af3",
+   "status": "NOT VERIFIED",
+   "note": "unpublished_tree: PR #617 non mergiata"
   }
  ],
  "tests_missing": [
@@ -350,6 +355,9 @@
   },
   {
    "note": "D4 confermata (pfab-d-20261109-bb1-gap-outcome-001); verifica d1454af3 consegnata (pfab-d-20261109-bb1-pr617-oracle-002)"
+  },
+  {
+   "note": "verifica dd7b7369 consegnata (pfab-d-20261109-bb1-pr617-oracle-003)"
   }
  ]
 }
