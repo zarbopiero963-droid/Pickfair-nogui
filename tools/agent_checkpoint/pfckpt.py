@@ -97,9 +97,10 @@ def _safe_err(raw, keep=-300):
 
 
 def _git_env(**extra):
-    """Ambiente di ogni git di pfckpt: i replacement locali (`refs/replace/*`, `git replace`) sono IGNORATI, quindi un
-    oggetto sostituito nel clone non altera mai tree, ascendenze o diff usati come prova (rilievo Sol #615)."""
-    return dict(os.environ, GIT_NO_REPLACE_OBJECTS="1", **extra)
+    """Ambiente di ogni git di pfckpt: i replacement locali (`refs/replace/*`, `git replace`) e i graft
+    (`info/grafts`, `GIT_GRAFT_FILE`) sono IGNORATI, quindi un oggetto sostituito o una parentela inventata nel clone
+    non altera mai tree, ascendenze o diff usati come prova (rilievi Sol #615)."""
+    return dict(os.environ, GIT_NO_REPLACE_OBJECTS="1", GIT_GRAFT_FILE=os.devnull, **extra)
 
 
 def git(repo, *args, check=True, input_bytes=None):

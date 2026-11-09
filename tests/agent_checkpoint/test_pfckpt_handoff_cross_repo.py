@@ -637,3 +637,25 @@ def test_local_git_replace_never_fakes_an_integrated_verified_handoff(world, tar
     err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c", [r]), "HEAD", D, repo_paths={TARGET: clone})
     assert any("tree(integration_sha) != handoff_tree" in p for p in err.detail["problems"])
     assert pfckpt.tree_of(clone, isha) == itree
+
+
+def test_local_graft_never_makes_an_unpublished_integration_look_published(world, target):
+    """Sol #615 (51617538): un `info/grafts` locale che rende un commit mai pubblicato «antenato» di origin/main non
+    prova la pubblicazione: pfckpt ignora i graft (GIT_GRAFT_FILE neutro)."""
+    hsha, htree = publish_handoff(target)
+    clone = target_clone(target)
+    _cfg(clone)
+    sh(clone, "checkout", "-q", "-B", "solo-locale", hsha)
+    sh(clone, "commit", "-q", "--allow-empty", "-m", "integrazione mai pubblicata")    # stesso tree dell'handoff
+    lone = sh(clone, "rev-parse", "HEAD")
+    main = sh(clone, "rev-parse", "origin/main")
+    with open(os.path.join(clone, ".git", "info", "grafts"), "w") as fh:
+        fh.write(f"{main} {lone}\n")                                             # main "figlio" del commit locale
+    assert subprocess.run(["git", "-C", clone, "merge-base", "--is-ancestor", lone, "origin/main"],
+                          capture_output=True).returncode == 0, "git, di default, segue il graft"
+    r = rec(world, target, "INTEGRATED_VERIFIED", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree,
+            integration_sha=lone)
+    err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c", [r]), "HEAD", D, repo_paths={TARGET: clone})
+    assert _only_reference_problems(err)
+    assert any("integration_sha non pubblicato su main" in p for p in err.detail["problems"])
+    assert not pfckpt._published_on(clone, lone, "main")
