@@ -3507,9 +3507,10 @@
         "tests/roserpina_oracle/harness.py",
         "tests/roserpina_oracle/oracle.py",
         "tests/roserpina_oracle/test_decimal_oracle.py",
-        "tests/roserpina_oracle/test_drawdown_oracle.py"
+        "tests/roserpina_oracle/test_drawdown_oracle.py",
+        "tests/roserpina_oracle/test_hard_stop_patch.py"
       ],
-      "max_files": 7
+      "max_files": 8
     }
   }
 }
