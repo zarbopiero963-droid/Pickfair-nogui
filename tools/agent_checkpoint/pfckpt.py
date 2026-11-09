@@ -144,6 +144,18 @@ def parse_manifest(text):
     return entries
 
 
+def _code_dict(state):
+    c = state.get("code")
+    return c if isinstance(c, dict) else {}
+
+
+def _tests_list(state):
+    """`tests_executed` come lista; un tipo errato (gia' segnalato da validate_state) non diventa mai un TypeError che
+    fermerebbe verify/recover/bootstrap (rilievo Sol #615)."""
+    t = state.get("tests_executed")
+    return t if isinstance(t, list) else []
+
+
 def validate_state(state):
     errors = []
     for k, t in REQUIRED.items():
@@ -153,10 +165,10 @@ def validate_state(state):
             errors.append(f"tipo errato: {k}")
     if state.get("schema") != SCHEMA:
         errors.append(f"schema {state.get('schema')!r} != {SCHEMA}")
-    code = state.get("code") or {}
+    code = state.get("code") if isinstance(state.get("code"), dict) else {}
     if not re.fullmatch(r"[0-9a-f]{40}", str(code.get("sha", ""))):
         errors.append("code.sha deve essere uno SHA completo di 40 caratteri")
-    for t in state.get("tests_executed") or []:
+    for t in _tests_list(state):
         if not isinstance(t, dict) or t.get("status") not in STATUSES:
             errors.append(f"test con stato non ammesso: {t!r:.120}")
         elif t.get("status") in ("PASS", "FAIL") and not re.fullmatch(r"[0-9a-f]{7,40}", str(t.get("sha", ""))):
@@ -169,7 +181,7 @@ def validate_state(state):
 def derived_current(state, commit=None):
     """CURRENT.json: puntatore minimo, leggibile da qualunque agente con un solo `git show`."""
     return {"schema": "pf-current/1", "seq": state["seq"], "previous_checkpoint_sha": state.get("previous_checkpoint_sha"),
-            "code": {"branch": (state.get("code") or {}).get("branch"), "sha": (state.get("code") or {}).get("sha")},
+            "code": {"branch": _code_dict(state).get("branch"), "sha": _code_dict(state).get("sha")},
             "mandate_id": state["mandate_id"], "next_atomic_action": state["next_atomic_action"],
             "certification_verdict": state["certification_verdict"], "checkpoint_commit": commit}
 
@@ -395,14 +407,19 @@ def _published_on(repo, sha, branch, remote="origin"):
     """`sha` e' contenuto nel branch pubblicato `branch` di `repo`: via il remote-tracking `refs/remotes/<remote>/<branch>`
     del SOLO remote del repository (mai un fork o un altro remote aggiunto, rilievo Sol #615) o, se `repo` e' esso stesso
     il remoto (bare), via `refs/heads/<branch>`."""
-    cands = [f"refs/remotes/{remote}/{branch}"]
-    if out(repo, "rev-parse", "--is-bare-repository") == "true":
-        cands = [f"refs/heads/{branch}"]
-    for ref in cands:
-        if git(repo, "rev-parse", "-q", "--verify", ref, check=False).returncode == 0 \
-                and git(repo, "merge-base", "--is-ancestor", sha, ref, check=False).returncode == 0:
-            return True
-    return False
+    if not _valid_branch_name(repo, branch):
+        return False                # mai una sintassi di revisione (`main@{1}`, `main~1`): solo un nome di branch
+    ref = f"refs/heads/{branch}" if out(repo, "rev-parse", "--is-bare-repository") == "true" \
+        else f"refs/remotes/{remote}/{branch}"
+    p = git(repo, "show-ref", "--verify", "-s", ref, check=False)   # ref ESATTO, niente reflog (rilievo Sol #615)
+    tip = p.stdout.decode().strip() if p.returncode == 0 else ""
+    return bool(tip) and git(repo, "merge-base", "--is-ancestor", sha, tip, check=False).returncode == 0
+
+
+def _valid_branch_name(repo, branch):
+    b = str(branch or "")
+    return bool(b) and "@{" not in b and not b.startswith("-") \
+        and git(repo, "check-ref-format", f"refs/heads/{b}", check=False).returncode == 0
 
 
 def _published_anywhere(repo, sha, remote="origin"):
@@ -439,8 +456,9 @@ def _repo_identity_ok(path, name):
 def refresh_published_refs(path, remote="origin"):
     """Remote-tracking dei branch aggiornati E potati prima di usarli come prova di pubblicazione (rilievo Sol #615): un
     branch cancellato sul remoto non resta «pubblicato» per un ref locale obsoleto. Prima il fetch, poi l'elenco dei
-    branch vivi: un branch cancellato nel mezzo viene comunque potato. I `refs/remotes/<remote>/pull/*` del fallback
-    restano. Remoto irraggiungibile => errore, mai una prova su ref vecchi."""
+    branch vivi: un branch cancellato nel mezzo viene comunque potato. I `refs/remotes/<remote>/pull/<N>` del fallback
+    si riallineano a `refs/pull/<N>/head` del remoto o si tolgono. Remoto irraggiungibile => errore, mai una prova su
+    ref vecchi."""
     if out(path, "rev-parse", "--is-bare-repository") == "true" \
             or git(path, "remote", "get-url", remote, check=False).returncode != 0:
         return                  # nessun remote: nessuna prova possibile, lo rifiuta il controllo d'identita'/pubblicazione
@@ -451,10 +469,35 @@ def refresh_published_refs(path, remote="origin"):
                               stderr=q.stderr.decode(errors="replace")[-300:])
     live = {ln.split("\t", 1)[1][len("refs/heads/"):] for ln in q.stdout.decode().splitlines() if "\trefs/heads/" in ln}
     pref = f"refs/remotes/{remote}/"
-    for ref in out(path, "for-each-ref", "--format=%(refname)", pref).splitlines():
+    local = out(path, "for-each-ref", "--format=%(refname) %(objectname)", pref).splitlines()
+    for line in local:
+        ref = line.split(" ", 1)[0]
         name = ref[len(pref):]
         if name != "HEAD" and not name.startswith("pull/") and name not in live:
             git(path, "update-ref", "-d", ref)
+    # anche i `pull/<N>` del fallback valgono come prova: si riallineano a refs/pull/<N>/head del remoto (dopo un
+    # force-push della PR) o si tolgono se la PR non c'e' piu' (rilievo Sol #615)
+    pulls = {ln.split(" ", 1)[0][len(pref) + len("pull/"):]: ln.split(" ", 1)[1]
+             for ln in local if ln.startswith(pref + "pull/")}
+    if pulls:
+        q = git(path, "ls-remote", remote, "refs/pull/*/head", check=False)
+        if q.returncode != 0:
+            raise CheckpointError(5, "PUBLISHED_REFS_REFRESH_FAILED", repo=path, remote=remote,
+                                  stderr=q.stderr.decode(errors="replace")[-300:])
+        live_pr = {}
+        for ln in q.stdout.decode().splitlines():
+            sha, _t, name = ln.partition("\t")
+            if name.startswith("refs/pull/") and name.endswith("/head"):
+                live_pr[name[len("refs/pull/"):-len("/head")]] = sha
+        stale = [n for n, sha in pulls.items() if n in live_pr and live_pr[n] != sha]
+        for n in pulls:
+            if n not in live_pr:
+                git(path, "update-ref", "-d", f"{pref}pull/{n}")
+        if stale:
+            p = git(path, "fetch", "-q", remote, *[f"+refs/pull/{n}/head:{pref}pull/{n}" for n in stale], check=False)
+            if p.returncode != 0:
+                raise CheckpointError(5, "PUBLISHED_REFS_REFRESH_FAILED", repo=path, remote=remote,
+                                      stderr=p.stderr.decode(errors="replace")[-300:])
 
 
 def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, ckpt_repo=None, remote="origin"):
@@ -542,6 +585,10 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
         missing = [f for f in ("handoff_branch", "handoff_sha", "handoff_tree", "base_sha") if not h.get(f)]
         if missing:
             problems.append(f"{label}: {claim}: mancano {', '.join(missing)}")
+            return problems, refp, info
+        if not _valid_branch_name(repo, h["handoff_branch"]):
+            problems.append(f"{label}: handoff_branch non e' un nome di branch valido: {h['handoff_branch']!r} "
+                            "(nessuna sintassi di revisione: reflog, ~, ^, @{...})")
             return problems, refp, info
         tgt = repo_of(h["target_repo"], "handoff_sha/base_sha")
         hsha, base = resolved(tgt, "handoff_sha", "target_repo"), resolved(tgt, "base_sha", "target_repo")
@@ -743,7 +790,7 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None, remote="or
                                                 f"SHA del codice inesistente nel repository: {code_sha}")
         ref_problems += rp
         keep_shas += ks
-    for t in state.get("tests_executed") or []:
+    for t in _tests_list(state):
         if isinstance(t, dict) and t.get("status") in ("PASS", "FAIL"):
             # rilievo Codex #512 su 034af59: lo SHA di un test eseguito deve risolversi a un commit reale,
             # con la stessa lookup di code.sha (altrimenti un esito e' attribuibile a codice inesistente)
@@ -800,7 +847,7 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None, remote="or
     else:
         problems += validate_derived(state, derived.get(CURRENT), derived.get(TASK_STATE))
         problems += validate_lease(derived.get(LEASE), state["seq"])
-    patch_meta = (state.get("code") or {}).get("patch")
+    patch_meta = _code_dict(state).get("patch")
     if isinstance(patch_meta, dict):
         for f in patch_meta.get("files") or []:
             if f not in files:
@@ -990,15 +1037,15 @@ def _cited_shas_and_prs(state):
         shas.append(str(code["sha"]))
     if isinstance(code.get("pr"), int) and code["pr"] > 0:
         prs.add(code["pr"])
-    for e in [code] + [t for t in (state.get("tests_executed") or []) if isinstance(t, dict)]:
+    tests = [t for t in state.get("tests_executed") if isinstance(t, dict)] \
+        if isinstance(state.get("tests_executed"), list) else []      # STATE malformato: mai un TypeError (Sol #615)
+    for e in [code] + tests:
         integ = e.get("integration")
         if isinstance(integ, dict) and integ.get("integration_sha"):
             shas.append(str(integ["integration_sha"]))     # anche l'integrazione puo' vivere solo in refs/pull
     for h, f in _same_repo_handoff_shas(state):
         shas.append(str(h[f]))
-    for t in state.get("tests_executed") or []:
-        if not isinstance(t, dict):
-            continue
+    for t in tests:
         if isinstance(t.get("pr"), int) and t["pr"] > 0:
             prs.add(t["pr"])
         if t.get("status") in ("PASS", "FAIL") and t.get("unpublished_tree") is not True and t.get("sha"):
@@ -1048,7 +1095,7 @@ def cited_references(repo, state):
     cited = []
     code = state.get("code") if isinstance(state.get("code"), dict) else {}
     entries = [("code.sha", code)] if code.get("sha") else []
-    for t in state.get("tests_executed") or []:
+    for t in _tests_list(state):
         if isinstance(t, dict) and t.get("status") in ("PASS", "FAIL") and t.get("sha") \
                 and not (t.get("unpublished_tree") is True and str(t.get("sha_note", "")).strip()):
             entries.append((f"test {t.get('id')!r}", t))
@@ -1138,7 +1185,7 @@ def check_durability(repo, remote, state, durable_branches=DEFAULT_DURABLE_BRANC
 
 
 def _waiver(state):
-    w = ((state.get("code") or {}).get("durability_waiver") or {}) if isinstance(state.get("code"), dict) else {}
+    w = (_code_dict(state).get("durability_waiver") or {}) if isinstance(state.get("code"), dict) else {}
     return [str(x) for x in (w.get("branch_only") or [])] if isinstance(w, dict) else []
 
 
@@ -1361,8 +1408,8 @@ def bootstrap(url, branch, dest, d=DEFAULT_DIR, code_branch=None, agent=None, re
     status, _ = lease_status(lease, agent)
     result = {"status": "READY", **report, "mandate_id": state["mandate_id"],
               "owner_authorizations": state["owner_authorizations"], "blocks": state["blocks"],
-              "code_branch": (state.get("code") or {}).get("branch"), "lease": status,
-              "code_patch": bool((state.get("code") or {}).get("patch")),
+              "code_branch": _code_dict(state).get("branch"), "lease": status,
+              "code_patch": bool(_code_dict(state).get("patch")),
               "keep_refs": keep_ref_status(dest, report["keep_shas"]), "pull_refs_fetched": pull_fetch,
               "handoffs": report["handoffs"]}
     if code_branch:

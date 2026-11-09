@@ -69,6 +69,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Sesto giro: la prova di pubblicazione vale solo sul remoto del repository dichiarato (`origin` con URL
   `owner/name`, mai un fork o un altro remote); `save` e `bootstrap` aggiornano e potano i remote-tracking prima di
   verificare, quindi un branch cancellato sul remoto non fa pubblicare un checkpoint invalido.
+  Settimo giro: `handoff_branch` è un nome di branch valido letto come ref esatto (mai `main@{1}` dal reflog); anche
+  i `pull/<N>` del fallback si riallineano al remoto prima di valere come prova; uno STATE con `tests_executed` o
+  `code` di tipo errato è un checkpoint invalido, mai un `TypeError` che blocca `recover`/`bootstrap`.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

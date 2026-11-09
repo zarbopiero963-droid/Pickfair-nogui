@@ -499,3 +499,51 @@ def test_save_never_proves_publication_on_a_stale_remote_tracking_ref(world, tar
            repo_paths={TARGET: clone})
     assert pfckpt.remote_head(a, "origin", BR) == exp, "nessun checkpoint pubblicato"
     assert not pfckpt._published_on(clone, hsha, HBRANCH), "remote-tracking potato"
+
+
+# ================================================================== Sol #615 (a2814322): ref esatto, pull freschi, recover
+def test_handoff_branch_with_revision_syntax_is_never_a_proof(world, target):
+    """`handoff_branch` = `<branch>@{1}`: il reflog locale non e' un ref pubblicato."""
+    hsha, htree = publish_handoff(target)
+    clone = target_clone(target)
+    sh(target["work"], "push", "-q", "-f", "origin", f"{target['base']}:refs/heads/{HBRANCH}")   # handoff tolto
+    sh(clone, "fetch", "-q", "origin")
+    assert sh(clone, "rev-parse", f"refs/remotes/origin/{HBRANCH}@{{1}}") == hsha, "il reflog lo ricorda ancora"
+    r = rec(world, target, "DURABLE", handoff_branch=f"{HBRANCH}@{{1}}", handoff_sha=hsha, handoff_tree=htree)
+    err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c", [r]), "HEAD", D, repo_paths={TARGET: clone})
+    assert any("nome di branch valido" in p for p in err.detail["problems"])
+    assert not pfckpt._published_on(clone, hsha, f"{HBRANCH}@{{1}}")
+
+
+def test_save_realigns_a_stale_pull_ref_before_using_it_as_proof(world, target):
+    """`origin/pull/7` locale fermo a una testa vecchia (la PR e' stata force-pushata): `save` lo riallinea a
+    refs/pull/7/head e la sorgente rimasta solo li' non vale piu' come pubblicata."""
+    clone = target_clone(target)
+    old = _local_only_commit(clone, tag="vecchia testa della PR 7")
+    sh(clone, "update-ref", "refs/remotes/origin/pull/7", old)
+    sh(target["bare"], "update-ref", "refs/pull/7/head", target["base"])                   # testa attuale della PR
+    assert pfckpt._published_anywhere(clone, old)
+    r = rec(world, target, "DELIVERED", source_repo=TARGET, source_sha=old)
+    a = agent(world, "c")
+    os.makedirs(os.path.join(a, D, "handoff"), exist_ok=True)
+    open(os.path.join(a, D, "handoff", "c.patch"), "wb").write(target["patch"])
+    exp = next_state(a, world, repository=CHAIN, handoffs=[r])
+    expect(2, pfckpt.save, a, BR, "origin", exp, "sorgente su pull obsoleto", D, agent="claude-c",
+           repo_paths={TARGET: clone})
+    assert pfckpt.remote_head(a, "origin", BR) == exp, "nessun checkpoint pubblicato"
+    assert sh(clone, "rev-parse", "refs/remotes/origin/pull/7") == target["base"], "pull riallineato"
+
+
+def test_recover_skips_a_head_with_a_malformed_tests_executed(world):
+    """HEAD corrotto con `tests_executed: 1`: niente TypeError, si recupera il checkpoint valido precedente."""
+    a = agent(world, "a")
+    exp = next_state(a, world)
+    good = pfckpt.save(a, BR, "origin", exp, "buono", D, agent="claude")["commit"]
+    next_state(a, world, tests_executed=1)
+    pfckpt.write_manifest(a, D)
+    raw_commit(a, "rotto")
+    sh(a, "push", "-q", "origin", f"HEAD:refs/heads/{BR}")
+    rep = pfckpt.recover(world["url"], BR, str(world["tmp"] / "rec"), D)
+    assert rep["status"] == "RECOVERED" and rep["commit"] == good
+    err = expect(2, pfckpt.bootstrap, world["url"], BR, str(world["tmp"] / "boot"), D, CODE_BR)
+    assert err.reason != "TypeError"
