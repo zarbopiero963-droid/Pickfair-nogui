@@ -65,14 +65,16 @@ def test_ro_dd_01_reset_non_cancella_la_perdita_ai_fini_del_drawdown_assoluto(tm
 def test_ro_dd_01b_perdita_cumulativa_attraverso_piu_reset(tmp_path) -> None:
     c = build(tmp_path, max_drawdown_abs=20.0)
     led = O.Ledger()
-    blocked_at = None
+    blocked_at = expected_at = None
     for cassa in (100, 92, 85, 78.5, 72.25, 66, 61.4):     # perdite graduali, mai 20 EUR in un solo ciclo
         read(c, cassa), led.read(cassa)
+        if expected_at is None and O.stop_reached(led.drawdown_abs(), 20):
+            expected_at = cassa                             # oracolo: primo punto con perdita cumulativa >= 20
         c.rc._maybe_auto_reset(0.0)
         if _cap(c) == "max_drawdown_abs_active" and blocked_at is None:
             blocked_at = cassa
-    assert led.drawdown_abs() == O.D("38.6")                # perdita reale cumulativa
-    assert blocked_at is not None and blocked_at >= 80, f"limite 20 EUR mai applicato (bloccato a {blocked_at})"
+    assert led.drawdown_abs() == O.D("38.6") and expected_at == 78.5   # perdita reale cumulativa
+    assert blocked_at == expected_at, f"limite 20 EUR: atteso blocco a {expected_at}, bloccato a {blocked_at}"
 
 
 @pytest.mark.xfail(strict=True, reason="RO-DD-02: picco del RiskDesk sul disponibile, non sulla cassa")
@@ -114,15 +116,32 @@ def test_ro_dd_04_lockdown_raggiungibile_con_perdita_graduale(tmp_path) -> None:
     assert O.stop_reached(led.drawdown_pct(), 20) and locked, "perdita cumulativa 30 % mai in LOCKDOWN"
 
 
-def test_ro_dd_05_hard_stop_percentuale_solo_live_evidenza_statica() -> None:
-    """RO-DD-05 (parita' SIM/LIVE): il controllo `max_drawdown_hard_stop_pct` all'ammissione e' dentro un
-    `if execution_mode == "LIVE"`: in SIM non esiste. Evidenza dal sorgente (riproduzione runtime: NOT_RUN)."""
-    import inspect
-    from core.runtime_controller import RuntimeController
-    src = inspect.getsource(RuntimeController)
-    i = src.index("Enforcement A1: Drawdown Hard Stop")
-    window = src[i:i + 400]
-    assert 'str(self.execution_mode).upper() == "LIVE"' in window and "max_drawdown_hard_stop_pct" in window
+def _signal(c, market, price=2.0):
+    c.broker.update_market_book(market, {"marketId": market, "status": "OPEN", "inplay": False, "runners": [
+        {"selectionId": 11, "status": "ACTIVE", "ex": {"availableToBack": [{"price": price, "size": 500.0}],
+                                                       "availableToLay": [{"price": price + 0.02, "size": 500.0}]}}]})
+    before = len(c.broker.get_current_orders(None) or [])
+    c.rc._on_signal_received({"market_id": market, "selection_id": 11, "price": price, "bet_type": "BACK",
+                              "simulation_mode": True, "chat_id": -100123, "event": f"Ev {market}",
+                              "market": "Match Odds", "selection": "S11"})
+    return len(c.broker.get_current_orders(None) or []) > before
+
+
+def test_ro_dd_05_controllo_ingresso_ammesso_senza_perdita(tmp_path) -> None:
+    """Controllo dell'harness: stesso percorso, nessuna perdita => l'ingresso passa (il test RED sotto e' significativo)."""
+    c = build(tmp_path, max_drawdown_abs=None, max_drawdown_hard_stop_pct=10.0)
+    read(c, 100)
+    assert _signal(c, "1.501") is True
+
+
+@pytest.mark.xfail(strict=True, reason="RO-DD-05: max_drawdown_hard_stop_pct applicato solo in LIVE (parita' SIM/LIVE)")
+def test_ro_dd_05_hard_stop_percentuale_anche_in_sim(tmp_path) -> None:
+    """Parita' (PF-OD12-12, contratto regola 5): in SIM, picco 100 e cassa 89 (11 % >= 10 %) => nessun ingresso."""
+    c = build(tmp_path, max_drawdown_abs=None, max_drawdown_hard_stop_pct=10.0)
+    assert str(c.rc.execution_mode).upper() != "LIVE"
+    read(c, 100)
+    read(c, 89)
+    assert _signal(c, "1.502") is False, "ingresso ammesso in SIM oltre l'hard stop percentuale"
 
 
 # ------------------------------------------------------------------ contratto owner PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109
