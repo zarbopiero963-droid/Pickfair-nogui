@@ -45,6 +45,8 @@ from direct_best_price import SOURCE_FALLBACK_MASTER, resolve_direct_best_price
 from direct_unmatched_ttl import select_expired_unmatched
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from core.order_ref import customer_order_ref
+from core.drawdown_hard_stop import (DrawdownHardStop, REASON_ACTIVE as DRAWDOWN_ABS_ACTIVE,
+                                     REASON_PCT_ACTIVE as DRAWDOWN_PCT_ACTIVE)
 from core.order_identity import (
     response_bet_id,
     derive_customer_ref,
@@ -345,6 +347,9 @@ class RuntimeController:
         self._daily_loss_monitor_state.update(loss_limits.restore_daily_loss(  # F4
             self.db, today_utc=self._daily_loss_monitor_state["day_utc"], realized_pnl=float(self.risk_desk.realized_pnl)))
         self._daily_loss_persisted = loss_limits.persist_daily_loss(self.db, self._daily_loss_monitor_state, None)
+        # D-1 (P0): picco di cassa dell'hard-stop `max_drawdown_abs`, persistente e mai ribasato
+        self._drawdown_hard_stop = DrawdownHardStop(self.db)
+        self._drawdown_hard_stop.restore()
 
         self._subscribe_bus()
 
@@ -2069,9 +2074,12 @@ class RuntimeController:
             self._daily_loss_monitor_state["threshold"] = self._safe_daily_loss_threshold()
 
     def _desk_mode(self) -> DeskMode:
+        persistent = RuntimeController._persistent_drawdown_pct(self)
         return self.mm.determine_desk_mode(
             bankroll_current=self.risk_desk.bankroll_current,
             equity_peak=self.risk_desk.equity_peak,
+            persistent_drawdown_pct=persistent,
+            persistent_drawdown_given=persistent is not RuntimeController._NO_PERSISTENT_DRAWDOWN,
         )
 
     def _runtime_active(self) -> bool:
@@ -3932,7 +3940,9 @@ class RuntimeController:
         market_cap = self._configured_optional(cfg, "max_market_exposure")
         event_cap = self._configured_optional(cfg, "max_event_exposure_abs")
         drawdown_cap = self._configured_optional(cfg, "max_drawdown_abs")
-        if order_cap is None and market_cap is None and event_cap is None and drawdown_cap is None:
+        if order_cap is None and market_cap is None and event_cap is None and drawdown_cap is None \
+                and self._configured_optional(cfg, "max_drawdown_hard_stop_pct") is None \
+                and not RuntimeController._hard_stop(self).snapshot()["breached"]:
             return ""
         lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
         with lock:
@@ -3966,16 +3976,9 @@ class RuntimeController:
                     "max_event_exposure_abs", event_cap, self._event_current_exposure(sample), added)
                 if reason:
                     return reason
-            if drawdown_cap is not None:
-                cap = validators.finite_number(drawdown_cap)
-                bankroll = validators.finite_number(getattr(self.risk_desk, "bankroll_current", None))
-                peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
-                if cap is None or cap <= 0 or bankroll is None or peak is None:
-                    return "max_drawdown_abs_non_valido"
-                drawdown_abs = max(0.0, peak - bankroll)
-                if validators.reaches_limit(drawdown_abs, cap):
-                    self.force_lockdown(f"drawdown_abs_hard_stop_triggered:{drawdown_abs:.2f}€")
-                    return "max_drawdown_abs_active"
+            reason = RuntimeController._drawdown_hard_stop_reason(self)
+            if reason:
+                return reason
         return ""
 
     # ---- fence fino al piazzamento (rilievo Codex #522 su c4ac69e) ----
@@ -4557,38 +4560,18 @@ class RuntimeController:
         event_identity = self._event_identity(signal)
         event_exposure = self._event_current_exposure(signal)
 
-        # Enforcement A1: Drawdown Hard Stop (#320)
-        if str(self.execution_mode).upper() == "LIVE":
-            drawdown_limit = getattr(self.config, "max_drawdown_hard_stop_pct", None)
-            if drawdown_limit is not None:
-                current_bankroll = float(self.risk_desk.bankroll_current)
-                peak = float(self.risk_desk.equity_peak)
-                if peak > 0 and current_bankroll < peak:
-                    current_dd = ((peak - current_bankroll) / peak) * 100.0
-                    if current_dd >= float(drawdown_limit):
-                        self.force_lockdown(f"drawdown_hard_stop_triggered:{current_dd:.2f}%")
-                        self._reject_signal(signal, "drawdown_hard_stop_active")
-                        return
-
+        # Enforcement A1 (#320) e PR28-d: hard-stop di drawdown % e assoluto, entrambi sul picco PERSISTENTE della
+        # cassa verificata (core/drawdown_hard_stop.py), con blocco memorizzato fino allo sblocco owner. RO-DD-05:
+        # stessa regola in SIM e LIVE (parita' decisionale PF-OD12-12; prima il % valeva solo in LIVE).
         # PR28-d: drawdown assoluto owner, stessa semantica SIM/LIVE. Un limite
         # configurato ma illeggibile o uno stato equity non verificabile nega.
-        drawdown_abs_raw = self._configured_optional(self.config, "max_drawdown_abs")
-        if drawdown_abs_raw is not None:
-            cap = validators.finite_number(drawdown_abs_raw)
-            bankroll = validators.finite_number(getattr(self.risk_desk, "bankroll_current", None))
-            peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
-            if cap is None or cap <= 0 or bankroll is None or peak is None:
-                if self.config.anti_duplication_enabled:
-                    self.duplication_guard.release(event_key)
-                self._reject_signal(signal, "max_drawdown_abs_non_valido")
-                return
-            drawdown_abs = max(0.0, peak - bankroll)
-            if validators.reaches_limit(drawdown_abs, cap):
-                self.force_lockdown(f"drawdown_abs_hard_stop_triggered:{drawdown_abs:.2f}€")
-                if self.config.anti_duplication_enabled:
-                    self.duplication_guard.release(event_key)
-                self._reject_signal(signal, "max_drawdown_abs_active")
-                return
+        # D-1: picco di cassa persistente, mai ribasato (core/drawdown_hard_stop.py).
+        drawdown_reason = RuntimeController._drawdown_hard_stop_reason(self)
+        if drawdown_reason:
+            if self.config.anti_duplication_enabled:
+                self.duplication_guard.release(event_key)
+            self._reject_signal(signal, drawdown_reason)
+            return
 
         # PFC-008: base dei cap ed esposizione oltre i tavoli da un'unica lettura coerente della cassa, contro
         # lo stesso totale dei tavoli passato come esposizione corrente (nessuna seconda lettura).
@@ -4632,7 +4615,7 @@ class RuntimeController:
                 # bool, testo): fail-closed. `projected > NaN` e' sempre falso e
                 # disattivava il cap (PR27, #461).
                 cap_value = validators.finite_number(max_abs_exposure)
-                projected_total = total_exposure + order_exposure
+                projected_total = (total_exposure, order_exposure)   # D-3: somma in Decimal
                 if cap_value is None:
                     decision.approved = False
                     decision.reason = "max_open_exposure_non_valido"
@@ -6183,6 +6166,19 @@ class RuntimeController:
                                                       read_at=read_at)
         if not applicata:
             return False
+        cassa = getattr(self.risk_desk, "cash_equity_current", None)
+        if cassa is not None:
+            # D-1: ogni cassa verificata alza (mai abbassa) il picco persistente dell'hard-stop e, con il limite
+            # configurato, ne verifica subito il superamento: blocco persistente e LOCKDOWN senza attendere il
+            # segnale successivo (contratto owner PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109).
+            stop = RuntimeController._hard_stop(self)
+            if stop.evaluate(self._configured_optional(self.config, "max_drawdown_abs"), cassa,
+                             pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct")):
+                # Il LOCKDOWN (che legge lo stato) si applica dal chiamante DOPO il lock della lettura del conto:
+                # qui siamo dentro `_account_state_lock` (non rientrante).
+                self._pending_drawdown_lockdown = (f"drawdown_hard_stop_triggered:"
+                                                   f"{stop.snapshot()['breach'].get('kind')}:"
+                                                   f"{float(stop.loss(cassa)):.2f}€")
         motivo = str(getattr(self.risk_desk, "cash_equity_reason", "") or "")
         if motivo and motivo != getattr(self, "_cash_warning_reason", ""):
             # Una volta per motivo, non a ogni lettura di stato (la GUI legge i fondi periodicamente).
@@ -6355,6 +6351,10 @@ class RuntimeController:
                 self._account_state = state
                 self._account_state_source = str(source)
             current = str(getattr(self, "_account_state", "") or "")
+        pending_lockdown = getattr(self, "_pending_drawdown_lockdown", None)
+        if pending_lockdown:
+            self._pending_drawdown_lockdown = None
+            self.force_lockdown(pending_lockdown)          # D-1: superamento rilevato alla lettura del conto
         if applied and state == self.ACCOUNT_FUNDS_VERIFIED and getattr(self, "_expansion_baseline_deferred", False):
             self._open_deferred_expansion_baseline(funds)
         return {"state": state if applied else current, "applied": bool(applied), "account": account}
@@ -6539,9 +6539,14 @@ class RuntimeController:
         return (float(account["cash_equity"]) - baseline) / baseline * 100.0
 
     def _with_expansion_snapshot(self, signal: dict) -> dict:
-        """Copia del segnale con la crescita per il money management (None = nessuna espansione)."""
+        """Copia del segnale con la crescita per il money management (None = nessuna espansione) e, se valutabile,
+        il drawdown % dal picco PERSISTENTE della cassa verificata (D-2 / RO-DD-04; None = stato non affidabile =>
+        LOCKDOWN)."""
         out = dict(signal or {})
         out["expansion_growth_snapshot"] = self._expansion_growth_pct()
+        persistent = RuntimeController._persistent_drawdown_pct(self)
+        if persistent is not RuntimeController._NO_PERSISTENT_DRAWDOWN:
+            out["persistent_drawdown_snapshot"] = persistent
         return out
 
     def _active_recovery_count(self) -> int:
@@ -6742,6 +6747,104 @@ class RuntimeController:
             logger.error("RSR-12: stato dei tavoli di recovery illeggibile (%s): capacita' bloccata", exc)
             self._recovery_state_unreadable = True
             return False
+
+    _NO_PERSISTENT_DRAWDOWN = object()
+
+    def _persistent_drawdown_pct(self):
+        """D-2 / RO-DD-04 (contratto owner PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL-20261109): drawdown % della cassa
+        verificata dal picco PERSISTENTE, che l'auto-reset Roserpina e il riavvio non ribasano.
+
+        - float: perdita di cassa dal picco (l'esposizione aperta e le riserve restano nella cassa: non contano);
+        - None: stato del picco illeggibile o non salvato => chi decide DEFENSE/LOCKDOWN nega (fail-closed);
+        - ``_NO_PERSISTENT_DRAWDOWN``: nessuna cassa verificata o nessun picco ancora osservato => nessun dato in
+          piu' (gli ingressi sono comunque negati dai controlli della cassa)."""
+        stop = RuntimeController._hard_stop(self)
+        if not stop.state_reliable():
+            return None
+        pct = stop.loss_pct(getattr(getattr(self, "risk_desk", None), "cash_equity_current", None))
+        return RuntimeController._NO_PERSISTENT_DRAWDOWN if pct is None else pct
+
+    def _protective_drawdown_pct(self) -> Optional[float]:
+        """La misura che decide LOCKDOWN e hard-stop %: la perdita cumulativa di cassa dal picco persistente (contratto
+        owner PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL-20261109). None = stato del picco non affidabile (fail-closed).
+        Solo senza alcuna cassa verificata resta la misura storica del desk (gli ingressi sono comunque negati)."""
+        persistent = RuntimeController._persistent_drawdown_pct(self)
+        if persistent is None:
+            return None
+        if persistent is RuntimeController._NO_PERSISTENT_DRAWDOWN:
+            return float(self.risk_desk.drawdown_pct())
+        return float(persistent)
+
+    def _hard_stop(self) -> DrawdownHardStop:
+        """D-1: lo stato dell'hard-stop; un controller costruito senza ``__init__`` lo rilegge dal DB (mai vuoto)."""
+        stop = getattr(self, "_drawdown_hard_stop", None)
+        if stop is None:
+            stop = self._drawdown_hard_stop = DrawdownHardStop(getattr(self, "db", None))
+            stop.restore()
+        return stop
+
+    def _drawdown_hard_stop_reason(self) -> str:
+        """D-1 (P0) e RO-DD-04/05/06/07 (contratti owner PF-ROSERPINA-D1-D2-B2-B3-FINANCIAL-SAFETY-20261109,
+        PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL-20261109): '' se l'ingresso
+        e' ammesso, altrimenti il motivo.
+
+        Perdita = picco persistente della cassa verificata - cassa verificata corrente, in Decimal, contro
+        `max_drawdown_abs` (euro) e `max_drawdown_hard_stop_pct` (% del picco), in SIM e LIVE. L'auto-reset, il
+        riavvio e il settlement non ribasano il picco ne' sbloccano un superamento memorizzato: lo sblocca solo
+        `owner_unlock_drawdown_hard_stop`. Le riserve e le puntate aperte non sono perdite. Cassa non verificata,
+        stato illeggibile o picco non salvato => rifiuto esplicito. Superamento => LOCKDOWN. Blocca solo i NUOVI
+        ingressi: riconciliazione, settlement e riduzione dell'esposizione non passano di qui."""
+        stop = RuntimeController._hard_stop(self)
+        cash = getattr(self.risk_desk, "cash_equity_current", None)
+        reason = stop.reason(self._configured_optional(self.config, "max_drawdown_abs"), cash,
+                             pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct"))
+        if reason in (DRAWDOWN_ABS_ACTIVE, DRAWDOWN_PCT_ACTIVE):
+            loss = stop.loss(cash)
+            shown = "n/d" if loss is None else f"{float(loss):.2f}€"
+            self.force_lockdown(f"drawdown_hard_stop_triggered:{stop.snapshot()['breach'].get('kind')}:{shown}")
+        return reason
+
+    def owner_unlock_drawdown_hard_stop(self, *, authorization: str, reason: str, operation_id: str,
+                                        confirm: bool) -> dict:
+        """Procedura owner-only di sblocco di un hard-stop memorizzato (contratto PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-
+        FINAL-20261109, punto 5). NON esposta da Control API/MCP ne' da nessun endpoint: la chiama solo un comando
+        owner locale ancora da approvare (progettata e verificata offline).
+
+        Fail-closed: richiede autorizzazione, motivo, identificativo dell'operazione e conferma esplicita; verifica
+        PRIMA cassa verificata, esposizione leggibile e assenza di ordini incerti (AMBIGUOUS) e li registra nello
+        stato durevole; qualunque verifica fallita o salvataggio fallito => resta bloccato. Non ribasa il picco:
+        se la perdita supera ancora il limite, la lettura successiva blocca di nuovo (nuova baseline = operazione
+        distinta `owner_rebase_peak`). Non riattiva il runtime: la ripresa resta un comando separato."""
+        stop = RuntimeController._hard_stop(self)
+        out = {"unlocked": False, "reason": "", "checks": {}}
+        if not stop.snapshot()["breached"]:
+            out["reason"] = "nessun_hard_stop_attivo"
+            return out
+        cash = getattr(self.risk_desk, "cash_equity_current", None)
+        try:
+            exposure = float(self.table_manager.total_exposure())
+        except Exception:
+            exposure = float("nan")
+        try:
+            uncertain = sorted(self._uncertain_reservations_map())
+        except Exception:
+            uncertain = None
+        checks = {"cash_verified": validators.finite_number(cash) is not None and float(cash) > 0,
+                  "cash": cash, "exposure": exposure if math.isfinite(exposure) else None,
+                  "uncertain_orders": uncertain}
+        out["checks"] = checks
+        if not checks["cash_verified"]:
+            out["reason"] = "cassa_non_verificata"
+        elif checks["exposure"] is None:
+            out["reason"] = "esposizione_non_leggibile"
+        elif uncertain is None or uncertain:
+            out["reason"] = "ordini_incerti_presenti"
+        elif not stop.owner_clear_breach(authorization=authorization, reason=reason, operation_id=operation_id,
+                                         confirm=confirm, checks=checks):
+            out["reason"] = "sblocco_non_autorizzato_o_non_registrato"
+        else:
+            out["unlocked"] = True
+        return out
 
     def _maybe_auto_reset(self, available_drawdown: float) -> bool:
         """PF-ALL-F026: auto-reset Roserpina deciso sul drawdown dell'equity di cassa (il regolato).
@@ -7438,7 +7541,14 @@ class RuntimeController:
         # protettivi (lockdown sotto, difesa nel MM) restano sulla base invariata.
         self._maybe_auto_reset(current_drawdown)
 
-        if current_drawdown >= self.config.lockdown_drawdown_pct:
+        # RO-DD-04 (contratto owner PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL-20261109): il LOCKDOWN guarda anche il
+        # drawdown dal picco persistente della cassa, che l'auto-reset appena eseguito non ha ribasato. Stato del picco
+        # non affidabile => LOCKDOWN (fail-closed).
+        # Stato del picco non affidabile (lettura/salvataggio falliti): nessun LOCKDOWN del runtime qui, perche' le
+        # nuove entrate sono gia' negate a ogni ammissione (desk in LOCKDOWN, hard-stop con motivo esplicito) e il
+        # salvataggio si ritenta alla lettura successiva; il guasto non deve oscurare il motivo dei gate a monte.
+        protective = RuntimeController._protective_drawdown_pct(self)
+        if protective is not None and protective >= self.config.lockdown_drawdown_pct:
             self.force_lockdown("Drawdown oltre soglia lockdown")
 
     def _apply_realized_pnl_without_mutating_bankroll(self, pnl: float) -> None:
@@ -8082,24 +8192,8 @@ class RuntimeController:
                     if risk_reason:
                         break
                 else:
-                    drawdown_raw = self._configured_optional(self.config, "max_drawdown_abs")
-                    if drawdown_raw is None:
-                        risk_reason = "risk_approved"
-                    else:
-                        cap = validators.finite_number(drawdown_raw)
-                        bankroll = validators.finite_number(getattr(self.risk_desk, "bankroll_current", None))
-                        peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
-                        if cap is None or cap <= 0 or bankroll is None or peak is None:
-                            risk_reason = "max_drawdown_abs_non_valido"
-                        else:
-                            drawdown_abs = max(0.0, peak - bankroll)
-                            if validators.reaches_limit(drawdown_abs, cap):
-                                self.force_lockdown(
-                                    f"drawdown_abs_hard_stop_triggered:{drawdown_abs:.2f}€"
-                                )
-                                risk_reason = "max_drawdown_abs_active"
-                            else:
-                                risk_reason = "risk_approved"
+                    # D-1: picco di cassa persistente, mai ribasato (core/drawdown_hard_stop.py).
+                    risk_reason = RuntimeController._drawdown_hard_stop_reason(self) or "risk_approved"
                 if risk_reason == "risk_approved":
                     # #461 PR28-e: l'auto-next e' una nuova entrata; fondi dallo snapshot appena registrato dal
                     # settlement (nessuna rete sotto il lock) contro le riserve non ancora a mercato + l'ordine.
@@ -8554,6 +8648,14 @@ class RuntimeController:
         # PFC-008: diagnostica della base dei cap percentuali (None = cassa non verificata, entrate bloccate).
         data["cash_equity_verified"] = getattr(self.risk_desk, "cash_equity_current", None)
         data["cash_equity_reason"] = str(getattr(self.risk_desk, "cash_equity_reason", "") or "")
+        # D-2 (decisione owner): grandezze tenute separate. `loss_drawdown_pct` e' la perdita di cassa dal picco
+        # persistente, che decide DEFENSE/LOCKDOWN e gli hard-stop (None = non valutabile); `capital_at_risk_pct` e'
+        # la misura storica sul disponibile (perdita + capitale impegnato), solo informativa; l'esposizione resta in
+        # `total_exposure` e nei suoi limiti separati.
+        persistent = RuntimeController._persistent_drawdown_pct(self)
+        data["capital_at_risk_pct"] = data.get("drawdown_pct")
+        data["loss_drawdown_pct"] = None if persistent is RuntimeController._NO_PERSISTENT_DRAWDOWN else persistent
+        data["drawdown_hard_stop"] = RuntimeController._hard_stop(self).snapshot()
         data["execution_mode"] = str(self.execution_mode)
         data["live_enabled"] = bool(self.live_enabled)
         data["live_readiness_ok"] = bool(self.live_readiness_ok)

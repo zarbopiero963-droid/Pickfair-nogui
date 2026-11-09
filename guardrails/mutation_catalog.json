@@ -113,7 +113,7 @@
       "module": "core.validators",
       "area": "lay_liability",
       "file": "core/validators.py",
-      "original": "    return importo * (order_price(price) - 1.0)",
+      "original": "    return float(money_decimal(importo) * (money_decimal(order_price(price)) - Decimal(1)))",
       "mutated": "    return importo",
       "tests": [
         "tests/acceptance/test_issue437_pr28.py",
@@ -138,8 +138,8 @@
       "module": "core.validators",
       "area": "exposure",
       "file": "core/validators.py",
-      "original": "    if exceeds_cap(total_exposure + order_risk, cap):",
-      "mutated": "    if exceeds_cap(order_risk, cap):",
+      "original": "    if exceeds_cap((total_exposure, order_risk), cap):",
+      "mutated": "    if exceeds_cap((order_risk,), cap):",
       "tests": [
         "tests/acceptance/test_issue437_pr28.py",
         "tests/unit/test_runtime_controller_best_price_direct.py",
@@ -152,8 +152,8 @@
       "module": "core.money_management",
       "area": "exposure",
       "file": "core/money_management.py",
-      "original": "        if validators.exceeds_cap(current_total_exposure + external + exposure, max_total):",
-      "mutated": "        if validators.exceeds_cap(external + exposure, max_total):",
+      "original": "        if validators.exceeds_cap((current_total_exposure, external, exposure), max_total):",
+      "mutated": "        if validators.exceeds_cap((external, exposure), max_total):",
       "tests": [
         "tests/core/test_money_management_caps_and_malformed.py"
       ],
@@ -164,7 +164,7 @@
       "module": "core.money_management",
       "area": "exposure",
       "file": "core/money_management.py",
-      "original": "        if validators.exceeds_cap(event_current_exposure + exposure, max_event):",
+      "original": "        if validators.exceeds_cap((event_current_exposure, exposure), max_event):",
       "mutated": "        if False:",
       "tests": [
         "tests/core/test_money_management_caps_and_malformed.py"
@@ -3191,8 +3191,8 @@
       "module": "core.money_management",
       "area": "money_management",
       "file": "core/money_management.py",
-      "original": "        if validators.exceeds_cap(current_total_exposure + external + exposure, max_total):",
-      "mutated": "        if validators.exceeds_cap(current_total_exposure + exposure, max_total):",
+      "original": "        if validators.exceeds_cap((current_total_exposure, external, exposure), max_total):",
+      "mutated": "        if validators.exceeds_cap((current_total_exposure, exposure), max_total):",
       "tests": [
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
