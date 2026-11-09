@@ -223,7 +223,13 @@ def test_funds_freshness_follows_the_core_gate(sim_runtime: Any) -> None:
     rc._account_snapshot_read_at = time.monotonic() - 10_000
     assert items(rc)["funds_freshness"]["reason"] == "FONDI_NON_VERIFICABILI"
     rc._account_snapshot_read_at = None
-    assert items(rc)["funds_freshness"]["reason"] == "FUNDS_READ_TIME_UNKNOWN"
+    p = items(rc)["funds_freshness"]
+    # La regola è del core: su main un istante di lettura ignoto non è controllato (UNKNOWN dichiarato);
+    # con F-16 il core stesso nega l'entrata (fail-closed) e la protezione risulta TRIGGERED.
+    if rc._entry_funds_reason(rc._account_snapshot, 0.0, read_at=None):
+        assert (p["state"], p["reason"]) == ("TRIGGERED", "FONDI_NON_VERIFICABILI")
+    else:
+        assert (p["state"], p["reason"]) == ("UNKNOWN", "FUNDS_READ_TIME_UNKNOWN")
 
 
 def test_status_with_protections_passes_the_server_contract(sim_runtime: Any) -> None:

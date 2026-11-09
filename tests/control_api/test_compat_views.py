@@ -76,18 +76,32 @@ def funds(rc: Any) -> dict[str, Any]:
     return protections_view(rc)["items"]["funds_freshness"]
 
 
-def test_funds_limit_on_main_is_the_reservation_ttl(sim_runtime: Any) -> None:
+def test_funds_limit_is_the_core_one_in_either_core_shape(sim_runtime: Any) -> None:
+    # main prima di F-16: il TTL delle tracce delle riserve; con F-16 integrato: l'accessore unico del core
+    # (min(LIVE_FUNDS_MAX_AGE_S, TTL) = 30). Il ponte non ricalcola: riporta ciò che il core dichiara.
     from core.table_manager import TableManager
 
-    assert funds(sim_runtime)["limit"] == str(int(TableManager.PLACED_TOMBSTONE_TTL_S))
+    accessor = getattr(RuntimeController, "funds_max_age_s", None)
+    expected = accessor() if callable(accessor) else TableManager.PLACED_TOMBSTONE_TTL_S
+    assert funds(sim_runtime)["limit"] == str(int(expected))
 
 
-def test_funds_limit_not_declared_when_f16_threshold_exists_without_accessor(
-        sim_runtime: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    # forma di F-16: costante di classe, nessun accessore unico => nessun limite inventato (prima: 120)
-    monkeypatch.setattr(RuntimeController, "LIVE_FUNDS_MAX_AGE_S", 30.0, raising=False)
-    p = funds(sim_runtime)
-    assert p["limit"] is None and p["state"] == "ACTIVE"
+@pytest.mark.parametrize(
+    ("attrs", "expected"),
+    [
+        ({}, "120"),                                                        # main prima di F-16: TTL
+        ({"LIVE_FUNDS_MAX_AGE_S": 30.0}, None),                             # soglia senza accessore
+        ({"LIVE_FUNDS_MAX_AGE_S": 30.0,
+          "funds_max_age_s": classmethod(lambda cls: 30.0)}, "30"),         # F-16: accessore unico
+    ],
+)
+def test_funds_limit_for_each_core_shape(attrs: dict[str, Any], expected: str | None) -> None:
+    # Le tre forme del core su una classe finta: simularle cancellando attributi dal core reale romperebbe la
+    # regola dei fondi di F-16, che li usa.
+    from control_api.views import _funds_limit
+
+    shape = type("CoreShape", (), dict(attrs))
+    assert _funds_limit(shape(), 120.0) == expected
 
 
 def test_funds_limit_from_the_core_accessor(sim_runtime: Any, monkeypatch: pytest.MonkeyPatch) -> None:
