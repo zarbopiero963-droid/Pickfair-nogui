@@ -351,3 +351,71 @@ def test_block_esiti_delle_uscite_non_critici_persi_nel_guasto(tmp_path, monkeyp
     problems = _oracle(box, sc)
     assert f"MISSING_RESULT:{hedge['order_ref']}" in problems and any(
         p.startswith("CASHOUT_WITHOUT_RESULT") for p in problems), problems
+
+
+# ------------------------------------------------------------------ PR #617 head d1454af3 (I2 di Claude C)
+def test_gap_di_guasto_unknown_e_ref_cumulativi_con_scarico_a_meta(tmp_path, monkeypatch) -> None:
+    """Tre uscite nel buffer; lo scarico riesce per la prima e fallisce sulla seconda; al ripristino completo la GAP
+    finale elenca TUTTI i ref ed e' UNKNOWN (D4); l'oracolo copre ogni richiesta bufferizzata."""
+    box = _box(tmp_path)
+    box.start_session()
+    sc = Scenario(bb=RealAdapter(box))
+    entries = [sc.place(f"sig-{i}", f"1.{i}", "BACK", 2.0, 4.0, matched=4.0, table_id=i) for i in (1, 2, 3)]
+    real_insert = box._insert
+    state = {"mode": "down", "ok": 0}
+
+    def flaky(rec):
+        if state["mode"] == "down":
+            raise sqlite3.OperationalError("database or disk is full")
+        if state["mode"] == "half":
+            if state["ok"] >= 1:
+                raise sqlite3.OperationalError("disk full again")
+            state["ok"] += 1
+        return real_insert(rec)
+    monkeypatch.setattr(box, "_insert", flaky)
+    hedges = [sc.exit_during_outage(e, 2.6, 3.0) for e in entries]
+    state["mode"] = "half"
+    assert box.record("CONFIG_CHANGE", source="SYSTEM") is None              # scarico a meta': fallisce di nuovo
+    state["mode"] = "up"
+    box.record("CONFIG_CHANGE", source="SYSTEM")                             # ripristino completo
+    recs = read_all(box)
+    gaps = [r for r in recs if r["type"] == "BLACKBOX_GAP"]
+    assert len(gaps) == 1 and gaps[0]["outcome"] == "UNKNOWN" and gaps[0]["reason_code"] == "BLACKBOX_OUTAGE"
+    assert {h["order_ref"] for h in hedges} <= set(gaps[0]["data"]["refs"])
+    assert _oracle(box, sc) == []
+    ext = read_all(box, external=True)
+    g_ext = [r for r in ext if r["type"] == "BLACKBOX_GAP"][0]
+    assert "refs" not in (g_ext["data"] or {}) and g_ext["data"].get("refs_count") == len(gaps[0]["data"]["refs"])
+
+
+def test_evento_di_un_lettore_dopo_lo_shutdown_non_e_un_crash(tmp_path) -> None:
+    path = str(tmp_path / "rd.sqlite")
+    box = bb.BlackBox(path).open()
+    box.start_session()
+    box.end_session()
+    box.close()
+    reader_box = bb.BlackBox(path).open()                                    # lettore (Control API): niente runtime
+    assert bq.BlackBoxReader(reader_box).request_hook({"phase": "ATTEMPT", "route": "/v1/blackbox/status"})
+    reader_box.close()
+    box2 = bb.BlackBox(path).open()
+    box2.start_session()
+    assert "UNCLEAN_TERMINATION" not in [r["type"] for r in read_all(box2)]
+
+
+def test_finestra_della_gap_parte_dall_ultimo_evento_del_runtime_caduto(tmp_path) -> None:
+    path = str(tmp_path / "win.sqlite")
+    box = bb.BlackBox(path).open()
+    box.start_session()
+    box.record("CONFIG_CHANGE", source="SYSTEM")
+    box.close()                                                              # crash: nessuno SHUTDOWN
+    last_runtime_ts = read_all(bb.BlackBox(path).open())[-1]["ts_utc"]
+    time.sleep(0.01)
+    reader_box = bb.BlackBox(path).open()
+    bq.BlackBoxReader(reader_box).request_hook({"phase": "ATTEMPT", "route": "/v1/blackbox/query"})
+    reader_box.close()
+    box2 = bb.BlackBox(path).open()
+    box2.start_session()
+    recs = read_all(box2)
+    gap = [r for r in recs if r["type"] == "BLACKBOX_GAP"][0]
+    assert "UNCLEAN_TERMINATION" in [r["type"] for r in recs]
+    assert gap["data"]["from_ts"] == last_runtime_ts and gap["reason_code"] == "UNCLEAN_TERMINATION"
