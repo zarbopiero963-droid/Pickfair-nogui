@@ -524,11 +524,11 @@ def test_handoff_branch_with_revision_syntax_is_never_a_proof(world, target):
 
 
 def test_save_realigns_a_stale_pull_ref_before_using_it_as_proof(world, target):
-    """`origin/pull/7` locale fermo a una testa vecchia (la PR e' stata force-pushata): `save` lo riallinea a
-    refs/pull/7/head e la sorgente rimasta solo li' non vale piu' come pubblicata."""
+    """Cache locale della PR 7 (`refs/pfckpt-pull/7`) ferma a una testa vecchia (la PR e' stata force-pushata): `save`
+    la riallinea a refs/pull/7/head e la sorgente rimasta solo li' non vale piu' come pubblicata."""
     clone = target_clone(target)
     old = _local_only_commit(clone, tag="vecchia testa della PR 7")
-    sh(clone, "update-ref", "refs/remotes/origin/pull/7", old)
+    sh(clone, "update-ref", "refs/pfckpt-pull/7", old)
     sh(target["bare"], "update-ref", "refs/pull/7/head", target["base"])                   # testa attuale della PR
     assert pfckpt._published_anywhere(clone, old)
     r = rec(world, target, "DELIVERED", source_repo=TARGET, source_sha=old)
@@ -539,7 +539,7 @@ def test_save_realigns_a_stale_pull_ref_before_using_it_as_proof(world, target):
     expect(2, pfckpt.save, a, BR, "origin", exp, "sorgente su pull obsoleto", D, agent="claude-c",
            repo_paths={TARGET: clone})
     assert pfckpt.remote_head(a, "origin", BR) == exp, "nessun checkpoint pubblicato"
-    assert sh(clone, "rev-parse", "refs/remotes/origin/pull/7") == target["base"], "pull riallineato"
+    assert sh(clone, "rev-parse", "refs/pfckpt-pull/7") == target["base"], "cache PR riallineata"
 
 
 def test_recover_skips_a_head_with_a_malformed_tests_executed(world):
@@ -785,3 +785,169 @@ def test_head_is_never_a_handoff_branch_even_with_a_locally_repointed_origin_hea
     assert any("nome di branch valido" in p for p in err.detail["problems"])
     assert not pfckpt._published_on(clone, lone, "HEAD")
     assert not pfckpt._published_on(clone, lone, "origin/HEAD")
+
+
+# ================================================================== Codex #615 (fcfb53ff): cache PR separata dai branch
+PULL_CACHE = "refs/pfckpt-pull/"
+
+
+def _ref_absent(repo, ref):
+    return subprocess.run(["git", "-C", repo, "show-ref", "--verify", "-q", ref]).returncode != 0
+
+
+def _save_durable(world, target, branch, hsha, htree, clone):
+    r = rec(world, target, "DURABLE", handoff_branch=branch, handoff_sha=hsha, handoff_tree=htree)
+    a = agent(world, "c")
+    os.makedirs(os.path.join(a, D, "handoff"), exist_ok=True)
+    open(os.path.join(a, D, "handoff", "c.patch"), "wb").write(target["patch"])
+    exp = next_state(a, world, repository=CHAIN, handoffs=[r])
+    return a, exp, r
+
+
+def test_pr_head_never_proves_publication_on_a_real_branch_named_like_the_pr(world, target):
+    """Branch reale `pull/7` SENZA il commit di handoff, PR #7 che lo contiene: la testa della PR non deve mai
+    sovrascrivere il remote-tracking del branch, quindi `handoff_branch: pull/7` non e' provato (ne' save ne'
+    bootstrap)."""
+    hsha, htree = publish_handoff(target)
+    sh(target["bare"], "update-ref", "refs/heads/pull/7", target["base"])        # branch vero, senza handoff
+    sh(target["bare"], "update-ref", "refs/pull/7/head", hsha)                   # solo la PR lo contiene
+    sh(target["bare"], "update-ref", "-d", f"refs/heads/{HBRANCH}")
+    clone = target_clone(target)
+    a, exp, r = _save_durable(world, target, "pull/7", hsha, htree, clone)
+    expect(2, pfckpt.save, a, BR, "origin", exp, "handoff su pull/7", D, agent="claude-c",
+           repo_paths={TARGET: clone})
+    assert pfckpt.remote_head(a, "origin", BR) == exp, "nessun checkpoint pubblicato"
+    assert sh(clone, "rev-parse", "refs/remotes/origin/pull/7") == target["base"], "il branch resta il branch"
+    assert not pfckpt._published_on(clone, hsha, "pull/7")
+    chain_ckpt(world, target, "c2", [r], push=True)
+    err = expect(2, pfckpt.bootstrap, world["url"], BR, str(world["tmp"] / "bpull"), D, CODE_BR,
+                 repo_paths={TARGET: target_clone(target, "t-boot")})
+    assert err.reason == "NEEDS_RECONCILIATION"
+
+
+def test_real_branch_named_pull_n_that_contains_the_handoff_is_still_a_proof(world, target):
+    """Controllo positivo: un branch vero `pull/7` che contiene il commit di handoff resta una prova valida."""
+    hsha, htree = publish_handoff(target)
+    sh(target["bare"], "update-ref", "refs/heads/pull/7", hsha)
+    sh(target["bare"], "update-ref", "refs/pull/7/head", target["base"])          # la PR dice altro: irrilevante
+    sh(target["bare"], "update-ref", "-d", f"refs/heads/{HBRANCH}")
+    clone = target_clone(target)
+    a, exp, _r = _save_durable(world, target, "pull/7", hsha, htree, clone)
+    res = pfckpt.save(a, BR, "origin", exp, "handoff su branch pull/7", D, agent="claude-c",
+                      repo_paths={TARGET: clone})
+    assert res["status"] == "DURABLE" and res["handoffs"][0]["handoff_proven"] is True
+    assert sh(clone, "rev-parse", "refs/remotes/origin/pull/7") == hsha
+
+
+def test_pr_cache_lives_outside_remote_tracking_branches_and_is_realigned_or_pruned(world, target):
+    """La cache delle PR sta in `refs/pfckpt-pull/<N>`: riallineata alla testa attuale della PR, tolta se la PR non
+    esiste piu', mai mescolata ai `refs/remotes/origin/*`. Un vecchio `refs/remotes/origin/pull/<N>` senza branch
+    reale viene potato come ogni branch scomparso."""
+    clone = target_clone(target)
+    old = _local_only_commit(clone, tag="vecchia testa della PR 9")
+    sh(clone, "update-ref", f"{PULL_CACHE}9", old)
+    sh(clone, "update-ref", f"{PULL_CACHE}11", old)                               # PR 11 non esiste sul remoto
+    sh(clone, "update-ref", "refs/remotes/origin/pull/9", old)                    # cache del formato precedente
+    sh(target["bare"], "update-ref", "refs/pull/9/head", target["base"])
+    pfckpt.refresh_published_refs(clone)
+    assert sh(clone, "rev-parse", f"{PULL_CACHE}9") == target["base"], "cache PR riallineata"
+    assert _ref_absent(clone, f"{PULL_CACHE}11"), "PR inesistente: cache tolta"
+    assert _ref_absent(clone, "refs/remotes/origin/pull/9"), "nessun branch pull/9 sul remoto: potato"
+    assert not pfckpt._published_on(clone, target["base"], "pull/9")
+
+
+def test_chain_pull_fallback_fetches_into_the_dedicated_namespace(world):
+    """`fetch_pull_heads` scarica i refs/pull/<N>/head nella cache dedicata, mai in refs/remotes/origin/pull/<N>."""
+    a = agent(world, "a")
+    lone = sh(a, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "solo nella PR 5")
+    sh(a, "push", "-q", "origin", f"{lone}:refs/pull/5/head")
+    fresh = str(world["tmp"] / "fresh-pull")
+    _git("clone", "-q", "--no-local", world["url"], fresh)
+    next_state(a, world, code={"sha": lone, "pr": 5})
+    pfckpt.write_manifest(a, D)
+    raw_commit(a, "cita uno SHA solo in PR")
+    sh(a, "push", "-q", "origin", f"HEAD:refs/heads/{BR}")
+    sh(fresh, "fetch", "-q", "origin", f"+refs/heads/{BR}:refs/remotes/origin/{BR}")
+    got = pfckpt.fetch_pull_heads(fresh, D, f"refs/remotes/origin/{BR}")
+    assert got and got["refspecs"] == ["+refs/pull/5/head:refs/pfckpt-pull/5"]
+    assert sh(fresh, "rev-parse", f"{PULL_CACHE}5") == lone
+    assert _ref_absent(fresh, "refs/remotes/origin/pull/5")
+
+
+# ================================================================== Codex/Sol #615 (fcfb53ff): attributi e config di apply locali
+def test_canonical_digest_ignores_local_attributes(world, target):
+    """`*.py -diff` in `.git/info/attributes`, in un `core.attributesFile` o in un `.gitattributes` non versionato del
+    clone non cambiano il digest canonico: la prova resta valida (era LATEST_CHECKPOINT_CORRUPT)."""
+    hsha, htree = publish_handoff(target)
+    digest = hashlib.sha256(canonical_patch(target, hsha)).hexdigest()
+    r = rec_no_artifact(world, target, "DURABLE", digest, handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    a = chain_ckpt(world, target, "c", [r])
+    for how in ("info", "attributesFile", "worktree"):
+        clone = target_clone(target, f"attr-{how}")
+        if how == "info":
+            open(os.path.join(clone, ".git", "info", "attributes"), "w").write("*.py -diff\n")
+        elif how == "attributesFile":
+            f = os.path.join(str(target["tmp"]), "attrs-globali")
+            open(f, "w").write("*.py -diff\n")
+            sh(clone, "config", "core.attributesFile", f)
+        else:
+            open(os.path.join(clone, ".gitattributes"), "w").write("*.py -diff\n")
+        rep = pfckpt.verify(a, "HEAD", D, repo_paths={TARGET: clone})
+        assert rep["handoffs"][0]["handoff_proven"] is True, how
+
+
+def _ws_repo(tmp, base_text):
+    r = str(tmp)
+    _git("init", "-q", r); _cfg(r)
+    open(os.path.join(r, "f.txt"), "w").write(base_text)
+    sh(r, "add", "-A"); sh(r, "commit", "-q", "-m", "base")
+    return r, sh(r, "rev-parse", "HEAD")
+
+
+def _commit_text(r, base, text, msg):
+    sh(r, "checkout", "-q", "-B", msg, base)
+    open(os.path.join(r, "f.txt"), "w").write(text)
+    sh(r, "commit", "-q", "-am", msg)
+    return sh(r, "rev-parse", "HEAD")
+
+
+def test_local_apply_whitespace_fix_never_fakes_an_integrated_verified(tmp_path):
+    """Sol #615 (fcfb53ff): la patch aggiunge spazi finali significativi, l'integrazione li ha tolti. Con
+    `apply.whitespace=fix` nel clone `git apply` li riscriverebbe e i tree coinciderebbero: deve restare NOT_PROVEN."""
+    r, base = _ws_repo(tmp_path / "ws", "uno\n")
+    with_ws = _commit_text(r, base, "uno\ndue   \n", "con-spazi")
+    patch = _git("-C", r, "diff", "--binary", base, with_ws).stdout
+    stripped = _commit_text(r, base, "uno\ndue\n", "senza-spazi")
+    sh(r, "config", "apply.whitespace", "fix")
+    assert pfckpt.handoff_verify(r, base, patch, base, stripped)["status"] == "INTEGRATED_NOT_PROVEN"
+    assert pfckpt.handoff_verify(r, base, patch, base, with_ws)["status"] == "INTEGRATED_VERIFIED"
+
+
+def test_local_apply_ignore_whitespace_never_applies_a_patch_to_a_different_base(tmp_path):
+    """`apply.ignoreWhitespace=change` nel clone: una patch scritta per un'altra base (contesto con spazi diversi) non
+    deve applicarsi e risultare INTEGRATED_VERIFIED."""
+    r, base = _ws_repo(tmp_path / "ign", "a  b\n")
+    other = _commit_text(r, base, "a b\n", "altra-base")
+    other_plus = _commit_text(r, other, "a b\nnuova\n", "altra-piu")
+    patch = _git("-C", r, "diff", "--binary", other, other_plus).stdout
+    integ = _commit_text(r, base, "a  b\nnuova\n", "integrata")
+    sh(r, "config", "apply.ignoreWhitespace", "change")
+    assert pfckpt.handoff_verify(r, base, patch, base, integ)["status"] == "INTEGRATED_NOT_PROVEN"
+
+
+def test_global_git_config_never_changes_the_applied_tree_or_the_digest(world, target, tmp_path, monkeypatch):
+    """Anche la config GLOBALE dell'utente (`apply.whitespace=fix`, `apply.ignoreWhitespace`, `core.attributesFile`)
+    non altera la prova: il repository neutro non legge la config del clone, i `-c` espliciti coprono la globale."""
+    r, base = _ws_repo(tmp_path / "gws", "uno\n")
+    with_ws = _commit_text(r, base, "uno\ndue   \n", "con-spazi")
+    patch = _git("-C", r, "diff", "--binary", base, with_ws).stdout
+    stripped = _commit_text(r, base, "uno\ndue\n", "senza-spazi")
+    hsha, htree = publish_handoff(target)
+    digest = hashlib.sha256(canonical_patch(target, hsha)).hexdigest()
+    attrs = tmp_path / "attrs"
+    attrs.write_text("*.py -diff\n")
+    gcfg = tmp_path / "globale.gitconfig"
+    gcfg.write_text(f"[apply]\n\twhitespace = fix\n\tignoreWhitespace = change\n[core]\n\tattributesFile = {attrs}\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gcfg))
+    assert pfckpt.handoff_verify(r, base, patch, base, stripped)["status"] == "INTEGRATED_NOT_PROVEN"
+    assert pfckpt.canonical_diff_sha256(target["bare"], target["base"], hsha) == digest

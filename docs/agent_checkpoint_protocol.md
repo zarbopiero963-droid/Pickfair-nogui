@@ -290,8 +290,10 @@ un puntatore locale e non prova la pubblicazione. Con una transizione `integrati
 deve essere completo a 40 hex: un prefisso può essere condiviso da commit diversi. Ogni altro host, schema o forma
 ambigua dà `REPOSITORY_IDENTITY_UNVERIFIED` (problema di riferimento,
 fail-closed). `save` e `bootstrap` aggiornano e
-potano i remote-tracking dei branch prima della verifica, e riallineano i `refs/remotes/origin/pull/<N>` del fallback a
-`refs/pull/<N>/head` (o li tolgono se la PR non c'è più): un
+potano i remote-tracking dei branch prima della verifica (anche un branch che si chiama `pull/<N>`), e riallineano la
+cache locale delle PR a `refs/pull/<N>/head` (o la tolgono se la PR non c'è più). La cache delle PR sta in
+`refs/pfckpt-pull/<N>`, mai sotto `refs/remotes/`: la testa di una PR non sovrascrive mai il branch vero `pull/<N>`
+e non prova mai la pubblicazione su quel branch (vale solo come ref pubblicato per `source_sha`/`base_sha`). Un
 branch cancellato sul remoto non vale come prova per un ref locale obsoleto, e un remoto irraggiungibile dà
 `PUBLISHED_REFS_REFRESH_FAILED` (exit 5) senza pubblicare nulla. Un `--repo-path` che non supera il controllo d'identità non viene mai
 aggiornato (nessun fetch verso un remoto estraneo), e gli errori di git riportano lo stderr senza credenziali
@@ -319,7 +321,11 @@ Regole di `verify`:
        `target_repo`, == `patch_sha256`. Il diff usa la configurazione di default di git resa esplicita (rename
        detection, prefissi `a/` `b/`, algoritmo myers, 3 righe di
        contesto, nessun `interHunkContext` né `orderFile`, sottomoduli sempre inclusi, niente colore, diff esterni o textconv), quindi non dipende
-       dalla config del clone. Un digest registrato in un'altra forma (per esempio indici abbreviati) non
+       dalla config del clone. Il diff si calcola in un repository bare temporaneo che vede solo gli oggetti del
+       clone: gli attributi locali (`.git/info/attributes`, `core.attributesFile`, un `.gitattributes` non
+       versionato, attributi di sistema) non cambiano il digest. Allo stesso modo il tree della patch applicata
+       (`git apply --cached`) ignora `apply.whitespace` e `apply.ignoreWhitespace` del clone: gli spazi non vengono
+       mai corretti e il contesto non viene mai confrontato ignorando gli spazi. Un digest registrato in un'altra forma (per esempio indici abbreviati) non
        coincide: la prova fallisce, mai il contrario.
 
    Un `artifact` dichiarato ma assente o alterato resta un errore: non si ripiega mai sul digest ricalcolato.
@@ -359,7 +365,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 185 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 193 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo

@@ -33,6 +33,7 @@ Esiti: una riga JSON; exit 0 = OK, 2 = checkpoint non valido, 3 = conflitto di c
 5 = errore git/ambiente, 6 = lease tenuto da un altro agente / scrittore stale.
 """
 import argparse
+import contextlib
 import datetime as _dt
 import hashlib
 import json
@@ -70,6 +71,9 @@ SECRET_SCAN_EXEMPT = frozenset({"tools/pfckpt.py"})
 KEEP_REF_PREFIX = "refs/agent-state/keep/"
 DEFAULT_DURABLE_BRANCHES = ("main",)
 DURABILITY_NS = "refs/pfckpt-durability/"          # namespace SOLO locale (mai pubblicato) per le punte remote
+# cache SOLO locale dei refs/pull/<N>/head del remoto: mai sotto refs/remotes/, dove un branch vero `pull/<N>` verrebbe
+# sovrascritto dalla testa della PR e la PR varrebbe come prova di pubblicazione su quel branch (rilievo Codex #615)
+PULL_CACHE_NS = "refs/pfckpt-pull/"
 KEEP_REFSPEC = f"+{KEEP_REF_PREFIX}*:{KEEP_REF_PREFIX}*"
 EQUIVALENCES = ("TREE_EQUAL", "NOT_PROVEN")
 INTEGRATION_FIELDS = ("original_sha", "original_tree", "integration_sha", "integration_tree", "equivalence")
@@ -368,23 +372,62 @@ def build_integration(repo, original_sha, integration_sha, original_tree=None):
             "equivalence": "TREE_EQUAL" if itree == otree else "NOT_PROVEN", "original_tree_source": source}
 
 
+@contextlib.contextmanager
+def _neutral_git(repo):
+    """Esecutore git per le PROVE (tree della patch applicata, digest canonico): un repository bare TEMPORANEO che vede
+    gli oggetti di `repo` solo tramite `objects/info/alternates`, senza la sua config, i suoi `info/attributes`, il suo
+    worktree (`.gitattributes` non versionati) ne' i suoi ref. Config di sistema ignorata, `core.attributesFile` e
+    attributi di sistema neutralizzati: la prova non dipende mai dalle personalizzazioni locali del clone (rilievi Codex
+    e Sol #615). Restituisce run(*args, data=None, env=None) -> CompletedProcess."""
+    p = git(repo, "rev-parse", "--path-format=absolute", "--git-path", "objects", check=False)
+    objects = p.stdout.decode().strip() if p.returncode == 0 else ""
+    tmp = tempfile.mkdtemp(prefix="pfckpt_neutral_")
+    try:
+        gd = os.path.join(tmp, "g.git")
+        empty = os.path.join(tmp, "vuoto")
+        open(empty, "w").close()
+        base_env = _git_env(GIT_CONFIG_NOSYSTEM="1", GIT_ATTR_NOSYSTEM="1")
+        ok = bool(objects) and os.path.isdir(objects) and subprocess.run(
+            ["git", "init", "-q", "--bare", "--template=", gd], capture_output=True, env=base_env).returncode == 0
+        if ok:
+            os.makedirs(os.path.join(gd, "objects", "info"), exist_ok=True)
+            with open(os.path.join(gd, "objects", "info", "alternates"), "w") as fh:
+                fh.write(objects + "\n")
+
+        def run(*args, data=None, env=None):
+            if not ok:
+                return subprocess.CompletedProcess(args, 128, b"", b"neutral git dir non disponibile")
+            return subprocess.run(["git", f"--git-dir={gd}", "-c", f"core.attributesFile={empty}", *args],
+                                  capture_output=True, input=data, env=dict(base_env, **(env or {})))
+        yield run
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# `git apply` con il comportamento di default reso esplicito: nessuna correzione degli spazi (`apply.whitespace=fix`
+# riscriverebbe gli spazi finali significativi), nessun confronto del contesto che ignora gli spazi
+# (`apply.ignoreWhitespace` applicherebbe la patch a una base diversa). Rilievo Sol #615 (fcfb53ff).
+_CANONICAL_APPLY_CFG = ("-c", "apply.whitespace=nowarn", "-c", "apply.ignoreWhitespace=no")
+
+
 def apply_patch_tree(repo, base_sha, patch):
-    """Tree ottenuto applicando `patch` su `base_sha`, in un indice TEMPORANEO (nessun checkout, nessun effetto sul
-    repository): `read-tree base` + `git apply --cached` + `write-tree`, equivalente a `git apply --index` in un
-    worktree temporaneo. None se la patch non si applica."""
+    """Tree ottenuto applicando `patch` su `base_sha`, in un indice TEMPORANEO e in un repository git neutro
+    (`_neutral_git`: nessun checkout, nessun effetto su `repo`, nessuna sua config o attributo): `read-tree base` +
+    `git apply --cached` + `write-tree`, equivalente a `git apply --index` in un worktree temporaneo. None se la patch
+    non si applica."""
     fd, idx = tempfile.mkstemp(prefix="pfckpt_handoff_idx_")
     os.close(fd)
     os.unlink(idx)
-    env = _git_env(GIT_INDEX_FILE=idx)
+    env = {"GIT_INDEX_FILE": idx}
     try:
-        def run(*args, data=None):
-            return subprocess.run(["git", "-C", repo, *args], capture_output=True, input=data, env=env)
-        if run("read-tree", base_sha).returncode != 0:
-            return None
-        if run("apply", "--cached", "--binary", "-", data=patch).returncode != 0:
-            return None
-        p = run("write-tree")
-        return p.stdout.decode().strip() if p.returncode == 0 else None
+        with _neutral_git(repo) as run:
+            if run("read-tree", base_sha, env=env).returncode != 0:
+                return None
+            if run(*_CANONICAL_APPLY_CFG, "apply", "--cached", "--binary", "--whitespace=nowarn", "-", data=patch,
+                   env=env).returncode != 0:
+                return None
+            p = run("write-tree", env=env)
+            return p.stdout.decode().strip() if p.returncode == 0 else None
     finally:
         if os.path.exists(idx):
             os.unlink(idx)
@@ -420,12 +463,15 @@ def canonical_diff_sha256(repo, base_sha, head_sha):
     """sha256 di `git diff --binary --full-index base_sha head_sha` in forma canonica; None se git fallisce."""
     # orderfile esplicito e VUOTO (ordine naturale dei path), portabile: un file temporaneo invece di `/dev/null`,
     # che non esiste fuori da POSIX (rilievo Grok #615)
+    # in un repository neutro: gli attributi locali (`*.py -diff` in info/attributes, core.attributesFile, un
+    # `.gitattributes` non versionato) cambierebbero il testo del diff, quindi il digest (rilievo Codex #615)
     fd, order = tempfile.mkstemp(prefix="pfckpt_order_")
     os.close(fd)
     try:
-        p = subprocess.run(["git", "-C", repo, *_CANONICAL_DIFF_CFG, "diff", "--no-color", "--no-ext-diff",
-                            "--no-textconv", "--ignore-submodules=none", "--unified=3", f"-O{order}", "--binary",
-                            "--full-index", base_sha, head_sha, "--"], capture_output=True, env=_git_env())
+        with _neutral_git(repo) as run:
+            p = run(*_CANONICAL_DIFF_CFG, "diff", "--no-color", "--no-ext-diff", "--no-textconv",
+                    "--ignore-submodules=none", "--unified=3", f"-O{order}", "--binary", "--full-index",
+                    base_sha, head_sha, "--")
     finally:
         os.unlink(order)
     return hashlib.sha256(p.stdout).hexdigest() if p.returncode == 0 else None
@@ -466,12 +512,13 @@ def _valid_branch_name(repo, branch):
 
 
 def _published_anywhere(repo, sha, remote="origin"):
-    """`sha` raggiungibile da un ref PUBBLICATO di `repo`: un remote-tracking `refs/remotes/<remote>/*` (branch o
-    `pull/*`) del solo remote del repository o, se `repo` e' esso stesso il remoto (bare), `refs/heads/*`. Un commit solo
-    locale, o presente solo su un altro remote (fork), no."""
+    """`sha` raggiungibile da un ref PUBBLICATO di `repo`: un remote-tracking `refs/remotes/<remote>/*` del solo remote
+    del repository, o la cache `refs/pfckpt-pull/<N>` dei refs/pull/<N>/head dello stesso remote (riallineata da
+    `refresh_published_refs`); se `repo` e' esso stesso il remoto (bare), `refs/heads/*`. Un commit solo locale, o
+    presente solo su un altro remote (fork), no."""
     bare = out(repo, "rev-parse", "--is-bare-repository") == "true"
-    ns = "refs/heads/" if bare else f"refs/remotes/{remote}/"
-    p = git(repo, "for-each-ref", "--contains", sha, "--format=%(refname)", ns, check=False)
+    ns = ["refs/heads/"] if bare else [f"refs/remotes/{remote}/", PULL_CACHE_NS]
+    p = git(repo, "for-each-ref", "--contains", sha, "--format=%(refname)", *ns, check=False)
     refs = [r for r in p.stdout.decode().splitlines() if r and not r.endswith("/HEAD")] if p.returncode == 0 else []
     return bool(refs)
 
@@ -559,9 +606,9 @@ def _repo_identity_ok(path, name):
 def refresh_published_refs(path, remote="origin"):
     """Remote-tracking dei branch aggiornati E potati prima di usarli come prova di pubblicazione (rilievo Sol #615): un
     branch cancellato sul remoto non resta «pubblicato» per un ref locale obsoleto. Prima il fetch, poi l'elenco dei
-    branch vivi: un branch cancellato nel mezzo viene comunque potato. I `refs/remotes/<remote>/pull/<N>` del fallback
-    si riallineano a `refs/pull/<N>/head` del remoto o si tolgono. Remoto irraggiungibile => errore, mai una prova su
-    ref vecchi."""
+    branch vivi: un branch cancellato nel mezzo viene comunque potato, compreso un branch che si chiama `pull/<N>`. La
+    cache delle PR (`refs/pfckpt-pull/<N>`, mai sotto refs/remotes/) si riallinea a `refs/pull/<N>/head` del remoto o si
+    toglie. Remoto irraggiungibile => errore, mai una prova su ref vecchi."""
     if out(path, "rev-parse", "--is-bare-repository") == "true" \
             or git(path, "remote", "get-url", remote, check=False).returncode != 0:
         return                  # nessun remote: nessuna prova possibile, lo rifiuta il controllo d'identita'/pubblicazione
@@ -576,12 +623,12 @@ def refresh_published_refs(path, remote="origin"):
     for line in local:
         ref = line.split(" ", 1)[0]
         name = ref[len(pref):]
-        if name != "HEAD" and not name.startswith("pull/") and name not in live:
-            git(path, "update-ref", "-d", ref)
-    # anche i `pull/<N>` del fallback valgono come prova: si riallineano a refs/pull/<N>/head del remoto (dopo un
-    # force-push della PR) o si tolgono se la PR non c'e' piu' (rilievo Sol #615)
-    pulls = {ln.split(" ", 1)[0][len(pref) + len("pull/"):]: ln.split(" ", 1)[1]
-             for ln in local if ln.startswith(pref + "pull/")}
+        if name != "HEAD" and name not in live:
+            git(path, "update-ref", "-d", ref)   # anche un `pull/<N>` locale senza branch vero: e' un ref obsoleto
+    # la cache delle PR vale come prova (solo per `_published_anywhere`): si riallinea a refs/pull/<N>/head del remoto
+    # (dopo un force-push della PR) o si toglie se la PR non c'e' piu' (rilievi Sol e Codex #615)
+    pulls = {ln.split(" ", 1)[0][len(PULL_CACHE_NS):]: ln.split(" ", 1)[1]
+             for ln in out(path, "for-each-ref", "--format=%(refname) %(objectname)", PULL_CACHE_NS).splitlines()}
     if pulls:
         q = git(path, "ls-remote", remote, "refs/pull/*/head", check=False)
         if q.returncode != 0:
@@ -595,9 +642,9 @@ def refresh_published_refs(path, remote="origin"):
         stale = [n for n, sha in pulls.items() if n in live_pr and live_pr[n] != sha]
         for n in pulls:
             if n not in live_pr:
-                git(path, "update-ref", "-d", f"{pref}pull/{n}")
+                git(path, "update-ref", "-d", f"{PULL_CACHE_NS}{n}")
         if stale:
-            p = git(path, "fetch", "-q", remote, *[f"+refs/pull/{n}/head:{pref}pull/{n}" for n in stale], check=False)
+            p = git(path, "fetch", "-q", remote, *[f"+refs/pull/{n}/head:{PULL_CACHE_NS}{n}" for n in stale], check=False)
             if p.returncode != 0:
                 raise CheckpointError(5, "PUBLISHED_REFS_REFRESH_FAILED", repo=path, remote=remote,
                                       stderr=_safe_err(p.stderr, -300))
@@ -1225,8 +1272,9 @@ def fetch_pull_heads(repo, d, ref="HEAD"):
     shas, prs = _cited_shas_and_prs(state)
     if all(resolve_commit(repo, s) for s in shas if re.fullmatch(r"[0-9a-f]{7,40}", s)):
         return None
-    specs = ([f"+refs/pull/{n}/head:refs/remotes/origin/pull/{n}" for n in prs] if prs
-             else ["+refs/pull/*/head:refs/remotes/origin/pull/*"])
+    # nella cache dedicata, mai in refs/remotes/origin/pull/<N>: li' starebbe un branch vero `pull/<N>` (rilievo Codex #615)
+    specs = ([f"+refs/pull/{n}/head:{PULL_CACHE_NS}{n}" for n in prs] if prs
+             else [f"+refs/pull/*/head:{PULL_CACHE_NS}*"])
     for spec in specs:                      # uno per volta: una PR inesistente non blocca le altre (rilievo Codex #615)
         git(repo, "fetch", "-q", "origin", spec, check=False)
     return {"declared_prs": prs, "refspecs": specs}

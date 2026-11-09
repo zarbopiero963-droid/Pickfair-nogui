@@ -96,6 +96,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `integration`, orderfile del digest canonico su file temporaneo vuoto (portabile, digest invariati);
   prova eseguibile che `recover` da clone pulito dopo squash e cancellazione del branch restituisce il checkpoint di
   transizione.
+  ciclo 16 (PF-PR615-SECURITY-CLOSURE-CYCLE-16): la cache dei `refs/pull/<N>/head` sta in `refs/pfckpt-pull/<N>`,
+  mai in `refs/remotes/origin/pull/<N>`, dove sovrascriveva un branch vero `pull/<N>` e dava falsi `DURABLE`/`READY`;
+  digest canonico e tree della patch applicata calcolati in un repository neutro (attributi locali,
+  `apply.whitespace=fix` e `apply.ignoreWhitespace` del clone non alterano piu' la prova); digest invariati sui
+  commit reali.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;
