@@ -418,6 +418,12 @@ class BlackBox:
         if self._writer_lock is not None:
             return
         self.open()                                    # cartella verificata e ancorata prima di ogni file
+        # Ciclo 15 (Sol su 10c5728b, confermato da Grok sulla VPS): il runtime esiste solo su un registro DUREVOLE,
+        # cioe' un file nella cartella privata ancorata. `:memory:` (ammesso per test e letture isolate) non ha
+        # cartella verificata: come runtime e' rifiutato qui, prima di creare lock o owner da qualsiasi parte.
+        if self._dirfd is None:
+            raise BlackBoxUnavailable(
+                f"BLACKBOX_NOT_DURABLE: il runtime richiede un registro su disco, non {self.path!r}")
         # ciclo 12 (Sol su 2847ca0e): il lock si prende sul descrittore verificato, mai su una riapertura per nome
         fh = os.fdopen(open_private(self._fs_path + ".runtime.lock", os.O_RDWR | os.O_CREAT), "a+")
         try:

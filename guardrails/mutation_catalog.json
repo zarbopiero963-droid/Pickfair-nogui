@@ -8821,6 +8821,18 @@
         "tests/blackbox/test_blackbox_runtime.py"
       ],
       "rationale": "Ciclo 14 #617 (Sol su 8bfb96d3): gestire i dump prima del lock permette a un avvio concorrente, poi rifiutato, di scollegare il fault.log del runtime attivo."
+    },
+    {
+      "id": "bb_c15_runtime_on_volatile_registry",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        if self._dirfd is None:\n            raise BlackBoxUnavailable(\n                f\"BLACKBOX_NOT_DURABLE",
+      "mutated": "        if False:\n            raise BlackBoxUnavailable(\n                f\"BLACKBOX_NOT_DURABLE",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 15 #617 (Sol su 10c5728b): con PICKFAIR_BLACKBOX_PATH=:memory: il runtime partirebbe con il registro solo in RAM (eventi critici persi al riavvio) e creerebbe lock e owner fuori dalla cartella privata."
     }
   ]
 }

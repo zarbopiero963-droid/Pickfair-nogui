@@ -308,6 +308,15 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
   5. **Difesa in profondità.** Dopo `sqlite3.connect` e prima della prima istruzione si confronta il file che il
      nome indica con quello verificato; se è cambiato l'apertura è rifiutata (`BLACKBOX_FILE_REPLACED`) senza che
      SQLite abbia scritto. Non è la protezione principale: quella è l'ancoraggio.
+- **Registro durevole obbligatorio per il runtime (ciclo 15, rilievo Sol su `10c5728b`).** Il runtime parte solo
+  su un registro **su disco**, nella cartella privata ancorata. `PICKFAIR_BLACKBOX_PATH=:memory:` (o qualsiasi
+  registro senza cartella verificata) viene rifiutato con `BLACKBOX_NOT_DURABLE` da `acquire_runtime`, quindi da
+  `start_session` e da `blackbox_runtime.install()`, **prima** di creare lock, owner o qualsiasi altro file: il
+  bot non si avvia. Non esiste un ripiego dal disco alla RAM. La modalità in memoria resta utilizzabile solo da
+  un `BlackBox` isolato (test, letture), che non può mai diventare il runtime.
+- **Invarianti di avvio, verificati dai test a ogni esecuzione:** la scatola nera rifiuta l'avvio se (1) la
+  piattaforma non offre `/proc/self/fd`, (2) la cartella del registro o una superiore non è sicura, (3) il
+  registro non è durevole. In tutti e tre i casi `headless_main.main()` non chiama `HeadlessApp.start`.
 - **Piattaforme (decisione owner: fail-closed).** La scatola nera parte solo su POSIX con `/proc/self/fd`
   funzionante, `O_NOFOLLOW`, `O_DIRECTORY` e `O_PATH`: in pratica Linux, il target del runtime. Su **Windows** e
   sui sistemi senza `/proc/self/fd` (per esempio macOS) non viene inizializzata e, senza scatola nera, il trading

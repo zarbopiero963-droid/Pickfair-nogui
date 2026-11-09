@@ -1569,3 +1569,77 @@ def test_c14_failed_start_leaves_the_previous_dump_in_place_for_the_next_start(b
     assert fault.read_text() == "Fatal Python error: vecchio crash\n"
     rt.install()
     assert len(_crash_recoveries(bbpath)) == 1
+
+
+# --- Ciclo 15 (OWNER AUTHORIZATION PR #617 — CYCLE 15): il runtime non parte senza un registro durevole -----------
+
+def _cwd_listing(tmp_path, monkeypatch):
+    work = tmp_path / "cwd"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    return work
+
+
+@pytest.mark.parametrize("value", [":memory:", " :memory: "])
+def test_c15_runtime_install_refuses_a_non_durable_registry(tmp_path, monkeypatch, value):
+    """Sol su 10c5728b (riprodotto, confermato da Grok sulla VPS): con `PICKFAIR_BLACKBOX_PATH=:memory:` il runtime
+    partiva con il registro solo in RAM (eventi critici "scritti" ma persi al riavvio) e creava
+    `:memory:.runtime.lock/.owner` nella cartella corrente. Ora l'installazione del runtime e' rifiutata prima di
+    creare qualsiasi file."""
+    work = _cwd_listing(tmp_path, monkeypatch)
+    monkeypatch.setenv(bb.ENV_PATH, value)
+    try:
+        with pytest.raises(bb.BlackBoxUnavailable):
+            rt.install()
+        assert rt._box is None
+    finally:
+        rt.shutdown("TEST_TEARDOWN")
+    assert sorted(p.name for p in work.iterdir()) == [], "file del runtime creati fuori dalla cartella privata"
+
+
+def test_c15_main_never_starts_trading_on_a_non_durable_registry(tmp_path, monkeypatch):
+    """Entrypoint reale: con un registro non durevole `main()` esce con errore e `HeadlessApp.start` non viene mai
+    chiamato. Nessun degrado silenzioso dal disco alla RAM."""
+    work = _cwd_listing(tmp_path, monkeypatch)
+    monkeypatch.setenv(bb.ENV_PATH, ":memory:")
+    monkeypatch.setattr(sys, "argv", ["headless_main.py", "--simulation"])
+    started = []
+    monkeypatch.setattr(headless_main.HeadlessApp, "start", lambda self: started.append(1) or 0)
+    try:
+        rc = headless_main.main()
+    finally:
+        rt.shutdown("TEST_TEARDOWN")
+    assert rc != 0 and not started
+    assert sorted(p.name for p in work.iterdir()) == []
+
+
+def test_c15_in_memory_registry_can_never_become_the_runtime(tmp_path, monkeypatch):
+    """La modalita' in memoria resta per test e letture isolate, mai come runtime: si apre, registra e verifica, ma
+    `start_session`/`acquire_runtime` la rifiutano e non creano lock ne' owner da nessuna parte."""
+    work = _cwd_listing(tmp_path, monkeypatch)
+    box = bb.BlackBox(":memory:").open()
+    box.record("API_REQUEST", source="SYSTEM")
+    assert box.verify()["ok"] and not box.is_runtime()
+    for call in (box.acquire_runtime, lambda: box.start_session(argv=[])):
+        with pytest.raises(bb.BlackBoxUnavailable):
+            call()
+    assert not box.is_runtime()
+    box.close()
+    assert sorted(p.name for p in work.iterdir()) == []
+
+
+@_ANCHOR_ONLY
+def test_c15_runtime_registry_is_on_disk_in_the_private_directory_and_durable(bbpath):
+    """Invariante positivo: il registro del runtime e' un file nella cartella privata verificata, in WAL con
+    `synchronous=FULL`; lock e owner stanno nella stessa cartella; gli eventi sopravvivono alla chiusura."""
+    import stat
+    rt.install()
+    box = rt._box
+    assert box.is_runtime() and box._dirfd is not None
+    assert box._conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    assert box._conn.execute("PRAGMA synchronous").fetchone()[0] == 2
+    names = {p.name for p in bbpath.parent.iterdir()}
+    assert {"blackbox.sqlite", "blackbox.sqlite.runtime.lock", "blackbox.sqlite.runtime.owner"} <= names
+    assert stat.S_IMODE(bbpath.parent.stat().st_mode) & 0o022 == 0
+    rt.shutdown("STOP")
+    assert [e["type"] for e in _events(bbpath)][0] == "PROCESS_START"
