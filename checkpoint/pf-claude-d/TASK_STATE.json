@@ -26,8 +26,8 @@
   "caso sintetico squash+branch cancellato consegnato a Claude B (RED riprodotto: LATEST_CHECKPOINT_CORRUPT)"
  ],
  "lotto_corrente": "G7 campagna finanziaria: scenari G7-S01..S21 + hardening F-R06",
- "mandate_id": "PF-UNIVERSAL-CHECKPOINT-ALL-AGENTS + mandati owner Claude D (motore finanziario, G7)",
- "next_atomic_action": "Dopo il merge di BB-1 rieseguire test_real_bb1 sullo SHA di main; attendere la PR SL/TP per G7",
+ "mandate_id": "PF-ROSERPINA-FINANCIAL-ORACLE-CLAUDE-D-20261109 (+ mandati precedenti Claude D)",
+ "next_atomic_action": "Attendere Claude B sulle correzioni RO-DD-01/02 e le decisioni owner RO-DD-04/RO-CAP-01; poi rieseguire oracolo e campagna 5 sullo SHA pubblicato",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
