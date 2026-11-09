@@ -101,6 +101,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   digest canonico e tree della patch applicata calcolati in un repository neutro (attributi locali,
   `apply.whitespace=fix` e `apply.ignoreWhitespace` del clone non alterano piu' la prova); digest invariati sui
   commit reali.
+  ciclo 17 (PF-PR615-FINAL-CONVERGENCE-CYCLE-17-20261109, ultimo): repository neutro con ambiente git controllato
+  (nessuna `GIT_*` ereditata, config globale vuota: `diff.submodule` globale o iniettato non cambia il digest);
+  identita' della catena verificata sul `--remote` di `save` prima del push (prima: sempre `origin`); `save` rifiuta
+  un `pushurl`/`pushInsteadOf` diverso dall'URL verificato (`REMOTE_PUSH_URL_MISMATCH`); test con percorso di
+  config portabile su Windows (non eseguito su Windows).
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

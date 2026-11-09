@@ -22,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "tools", "agent_checkpoint"))
 import pfckpt  # noqa: E402
-from test_pfckpt import BR, CODE_BR, D, _cfg, agent, expect, next_state, raw_commit, sh, world  # noqa: E402,F401
+from test_pfckpt import BR, CODE_BR, D, _cfg, agent, expect, failing_push, next_state, raw_commit, sh, world  # noqa: E402,F401
 
 FEATURE = "feature/pr-123"
 KEEP = getattr(pfckpt, "KEEP_REF_PREFIX", "refs/agent-state/keep/")   # getattr: RED leggibile sul pfckpt di main
@@ -371,11 +371,11 @@ def test_crash_after_commit_resume_is_durable_without_duplicates(world):
     open_pr(world, 1, feat)
     a = ckpt_agent(world, "a")
     exp = next_state(a, world, code={"branch": FEATURE, "sha": feat, "pr": 1})
-    sh(a, "remote", "set-url", "--push", "origin", str(world["tmp"] / "inesistente.git"))
+    restore = failing_push(world["url"])                 # push rifiutato dal remoto di verita' (ciclo 17 #615)
     with pytest.raises(pfckpt.CheckpointError):
         pfckpt.save(a, BR, "origin", exp, "ckpt 2", D, agent="claude")
     assert pfckpt.remote_head(a, "origin", BR) == exp
-    sh(a, "remote", "set-url", "--push", "origin", world["url"])
+    restore()
     res = pfckpt.save(a, BR, "origin", exp, "ckpt 2", D, agent="claude")
     assert res["status"] == "DURABLE" and res["resumed"] == "after_commit" and _vias(res) == {"code.sha": "PULL:1"}
     assert sh(a, "rev-list", "--count", f"{exp}..HEAD") == "1"

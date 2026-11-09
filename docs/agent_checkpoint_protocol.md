@@ -283,7 +283,10 @@ PF-PR615-FINAL-SECURITY-HARDENING-20261109). La fonte di fiducia è indipendente
 `ssh://git@github.com/…` o `git@github.com:…`). Un proxy o un percorso locale vale solo se l'operatore lo dichiara in
 `PFCKPT_TRUSTED_GIT_TRANSPORTS` (prefissi separati da virgola), e il repository logico si legge dal percorso dopo il
 prefisso. La stessa regola vale per la **catena** quando un riferimento si risolve «nello stesso repository»:
-`STATE.repository` è una dichiarazione, quindi anche l'`origin` della catena deve essere quel repository. Un
+`STATE.repository` è una dichiarazione, quindi anche il remote della catena usato da `save` (`--remote`, `origin`
+per default) deve essere quel repository: l'identità si verifica su quel remote prima di qualsiasi push, e `save`
+rifiuta (`REMOTE_PUSH_URL_MISMATCH`, exit 5) un remote il cui URL di push (`pushurl`, `pushInsteadOf`) differisce
+dall'URL verificato. Un
 riferimento è valido solo se è un oggetto **commit**: l'hash di un tag annotato (anche solo locale) non è mai uno SHA
 citabile. `handoff_branch` non può essere `HEAD` (né un nome che finisce con `/HEAD`): `refs/remotes/<remote>/HEAD` è
 un puntatore locale e non prova la pubblicazione. Con una transizione `integration` lo SHA citato (anche di un test)
@@ -323,7 +326,9 @@ Regole di `verify`:
        contesto, nessun `interHunkContext` né `orderFile`, sottomoduli sempre inclusi, niente colore, diff esterni o textconv), quindi non dipende
        dalla config del clone. Il diff si calcola in un repository bare temporaneo che vede solo gli oggetti del
        clone: gli attributi locali (`.git/info/attributes`, `core.attributesFile`, un `.gitattributes` non
-       versionato, attributi di sistema) non cambiano il digest. Allo stesso modo il tree della patch applicata
+       versionato, attributi di sistema) non cambiano il digest, e nemmeno la config globale o di sistema o quella
+       iniettata dall'ambiente (`GIT_CONFIG_*`, per esempio `diff.submodule=log`): nessuna variabile `GIT_*`
+       viene ereditata. Allo stesso modo il tree della patch applicata
        (`git apply --cached`) ignora `apply.whitespace` e `apply.ignoreWhitespace` del clone: gli spazi non vengono
        mai corretti e il contesto non viene mai confrontato ignorando gli spazi. Un digest registrato in un'altra forma (per esempio indici abbreviati) non
        coincide: la prova fallisce, mai il contrario.
@@ -365,7 +370,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 193 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 199 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo

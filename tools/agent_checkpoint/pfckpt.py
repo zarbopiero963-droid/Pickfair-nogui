@@ -386,7 +386,13 @@ def _neutral_git(repo):
         gd = os.path.join(tmp, "g.git")
         empty = os.path.join(tmp, "vuoto")
         open(empty, "w").close()
-        base_env = _git_env(GIT_CONFIG_NOSYSTEM="1", GIT_ATTR_NOSYSTEM="1")
+        # ambiente git CONTROLLATO: nessuna variabile GIT_* ereditata (config iniettata con GIT_CONFIG_COUNT/
+        # GIT_CONFIG_PARAMETERS, GIT_DIR, GIT_DIFF_OPTS...), config globale vuota, di sistema ignorata: un
+        # `diff.submodule=log` dell'agente non cambia piu' il digest (rilievo Codex #615). La config dei repository
+        # dell'utente non viene toccata: vale solo per questo repository temporaneo.
+        base_env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+        base_env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=empty, GIT_ATTR_NOSYSTEM="1",
+                        GIT_NO_REPLACE_OBJECTS="1", GIT_GRAFT_FILE=empty)
         ok = bool(objects) and os.path.isdir(objects) and subprocess.run(
             ["git", "init", "-q", "--bare", "--template=", gd], capture_output=True, env=base_env).returncode == 0
         if ok:
@@ -589,13 +595,14 @@ def repository_identity(url, trusted=None):
     return None
 
 
-def _repo_identity_ok(path, name):
-    """Il percorso passato con --repo-path NOME=PERCORSO e' davvero NOME: il repository logico dell'URL del suo
-    `origin` (o, per un bare, del percorso stesso), dimostrato da `repository_identity`, coincide con NOME."""
+def _repo_identity_ok(path, name, remote="origin"):
+    """Il repository in `path` e' davvero NOME: il repository logico dell'URL del remote che fa da prova (`origin` per
+    un --repo-path, il `--remote` di save per la catena: rilievo Sol #615) o, per un bare, del percorso stesso,
+    dimostrato da `repository_identity`, coincide con NOME. Remote assente => False (fail-closed)."""
     if out(path, "rev-parse", "--is-bare-repository") == "true":
         where = os.path.abspath(path)
     else:
-        p = git(path, "remote", "get-url", "origin", check=False)
+        p = git(path, "remote", "get-url", remote, check=False)
         if p.returncode != 0:
             return False
         where = p.stdout.decode().strip()
@@ -693,8 +700,11 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
         if name == h["checkpoint_repo"] and (chain_repo is None or name == chain_repo):
             # anche la catena deve essere davvero `name` (rilievo Sol #615): STATE.repository e' una dichiarazione,
             # impostarla al nome del target farebbe usare come prova gli oggetti di un altro repository
-            if not _repo_identity_ok(repo, name):
-                refp.append(f"{label}: REPOSITORY_IDENTITY_UNVERIFIED: il repository della catena non e' {name!r} su "
+            # sul remote usato per pubblicare e provare (`--remote` di save), mai su `origin` per default: verificato
+            # da verify PRIMA del push, quindi nessuna scrittura su una destinazione non autentica (rilievo Sol #615)
+            if not _repo_identity_ok(repo, name, remote):
+                refp.append(f"{label}: REPOSITORY_IDENTITY_UNVERIFIED: il repository della catena (remote {remote!r}) "
+                            f"non e' {name!r} su "
                             f"un host fidato (github.com o un trasporto in {TRUSTED_TRANSPORTS_ENV})")
                 return None
             return repo
@@ -1472,6 +1482,14 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
     uno SHA presente solo su un branch di lavoro, dichiarandolo nello STATE (code.durability_waiver)."""
     durable_branches = tuple(durable_branches or DEFAULT_DURABLE_BRANCHES)
     url = out(repo, "remote", "get-url", remote)
+    # la destinazione del push deve essere ESATTAMENTE l'URL verificato (identita', readback): un `pushurl` diverso
+    # (o piu' d'uno, o `pushInsteadOf`) scriverebbe il checkpoint altrove. Rifiuto prima di ogni scrittura (revisione
+    # preventiva ciclo 17, rilievo Sol #615 sul remote realmente usato)
+    push_urls = out(repo, "remote", "get-url", "--push", "--all", remote).splitlines()
+    if push_urls != [url]:
+        raise CheckpointError(5, "REMOTE_PUSH_URL_MISMATCH", remote=remote, url=_safe_err(url, -300),
+                              push_urls=[_safe_err(u, -300) for u in push_urls],
+                              action=f"rimuovere remote.{remote}.pushurl / pushInsteadOf: si pubblica solo sull'URL verificato")
     # prove di pubblicazione su ref FRESCHI (rilievo Sol #615): branch cancellati sul remoto potati prima di verificare
     refresh_published_refs(repo, remote)
     refresh_repo_paths(repo_paths)

@@ -935,6 +935,26 @@ def test_local_apply_ignore_whitespace_never_applies_a_patch_to_a_different_base
     assert pfckpt.handoff_verify(r, base, patch, base, integ)["status"] == "INTEGRATED_NOT_PROVEN"
 
 
+def _gitcfg_path(p):
+    """Percorso scritto in un file di config git in forma portabile: con `\\` (Windows, `C:\\Users\\...`) git legge
+    escape non validi e rifiuta il file (rilievo Sol #615); `/` e' accettato da git anche su Windows."""
+    return str(p).replace("\\", "/")
+
+
+def test_gitcfg_path_of_a_windows_path_is_readable_by_git(tmp_path):
+    """Sol #615 (5d429004): un percorso Windows scritto cosi' com'e' in un file di config rende il file illeggibile."""
+    import ntpath
+    win = ntpath.join("C:\\", "Users", "agente", "attrs")
+    cfg = tmp_path / "c.gitconfig"
+    cfg.write_text(f"[core]\n\tattributesFile = {_gitcfg_path(win)}\n")
+    got = subprocess.run(["git", "config", "-f", str(cfg), "--get", "core.attributesFile"], capture_output=True, text=True)
+    assert got.returncode == 0 and got.stdout.strip() == "C:/Users/agente/attrs"
+    raw = tmp_path / "raw.gitconfig"                         # la forma precedente del test: git la rifiuta
+    raw.write_text(f"[core]\n\tattributesFile = {win}\n")
+    assert subprocess.run(["git", "config", "-f", str(raw), "--get", "core.attributesFile"],
+                          capture_output=True).returncode != 0
+
+
 def test_global_git_config_never_changes_the_applied_tree_or_the_digest(world, target, tmp_path, monkeypatch):
     """Anche la config GLOBALE dell'utente (`apply.whitespace=fix`, `apply.ignoreWhitespace`, `core.attributesFile`)
     non altera la prova: il repository neutro non legge la config del clone, i `-c` espliciti coprono la globale."""
@@ -947,7 +967,110 @@ def test_global_git_config_never_changes_the_applied_tree_or_the_digest(world, t
     attrs = tmp_path / "attrs"
     attrs.write_text("*.py -diff\n")
     gcfg = tmp_path / "globale.gitconfig"
-    gcfg.write_text(f"[apply]\n\twhitespace = fix\n\tignoreWhitespace = change\n[core]\n\tattributesFile = {attrs}\n")
+    gcfg.write_text(f"[apply]\n\twhitespace = fix\n\tignoreWhitespace = change\n[core]\n\tattributesFile = "
+                    f"{_gitcfg_path(attrs)}\n")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gcfg))
     assert pfckpt.handoff_verify(r, base, patch, base, stripped)["status"] == "INTEGRATED_NOT_PROVEN"
     assert pfckpt.canonical_diff_sha256(target["bare"], target["base"], hsha) == digest
+
+
+# ================================================================== ciclo 17 (5d429004): config esterna e remote reale
+def _gitlink_repo(tmp):
+    r = str(tmp)
+    _git("init", "-q", r); _cfg(r)
+    sh(r, "commit", "-q", "--allow-empty", "-m", "base")
+    base = sh(r, "rev-parse", "HEAD")
+    sh(r, "update-index", "--add", "--cacheinfo", "160000,1111111111111111111111111111111111111111,sub")
+    sh(r, "commit", "-q", "-m", "gitlink")
+    return r, base, sh(r, "rev-parse", "HEAD")
+
+
+def test_canonical_digest_ignores_global_and_environment_git_config(tmp_path, monkeypatch):
+    """Codex #615 (5d429004): `diff.submodule=log` nella config GLOBALE, o iniettato dall'ambiente (GIT_CONFIG_COUNT,
+    GIT_CONFIG_PARAMETERS), non cambia il digest canonico di un gitlink (prima: LATEST_CHECKPOINT_CORRUPT)."""
+    r, base, head = _gitlink_repo(tmp_path / "gl")
+    ref = pfckpt.canonical_diff_sha256(r, base, head)
+    assert ref
+    g = tmp_path / "g.gitconfig"
+    g.write_text("[diff]\n\tsubmodule = log\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(g))
+    assert pfckpt.canonical_diff_sha256(r, base, head) == ref, "config globale"
+    monkeypatch.delenv("GIT_CONFIG_GLOBAL")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "diff.submodule")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "log")
+    assert pfckpt.canonical_diff_sha256(r, base, head) == ref, "config dall'ambiente"
+    for k in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
+        monkeypatch.delenv(k)
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'diff.submodule'='log'")
+    assert pfckpt.canonical_diff_sha256(r, base, head) == ref, "git -c ereditato"
+
+
+def _chain_agent_with_handoff(world, target, name):
+    a = agent(world, name)
+    os.makedirs(os.path.join(a, D, "handoff"), exist_ok=True)
+    open(os.path.join(a, D, "handoff", "c.patch"), "wb").write(target["patch"])
+    exp = next_state(a, world, repository=CHAIN, handoffs=[rec(world, target, "DELIVERED")])
+    return a, exp
+
+
+def _foreign_copy(world, rel):
+    import shutil
+    dst = str(world["tmp"] / rel)
+    shutil.copytree(world["url"], dst)
+    return dst
+
+
+def test_save_verifies_the_identity_of_the_remote_it_publishes_to_origin_fork(world, target):
+    """Sol #615 (5d429004), caso A: `origin` e' un fork, `--remote upstream` il repository autentico. L'identita'
+    si verifica su `upstream`: handoff valido, DURABLE (prima: REPOSITORY_IDENTITY_UNVERIFIED)."""
+    a, exp = _chain_agent_with_handoff(world, target, "c")
+    fork = _foreign_copy(world, "altro/pickfair-mcp-.git")
+    sh(a, "remote", "add", "upstream", world["url"])
+    sh(a, "remote", "set-url", "origin", fork)
+    sh(a, "fetch", "-q", "upstream")
+    res = pfckpt.save(a, BR, "upstream", exp, "remote autentico", D, agent="claude-c")
+    assert res["status"] == "DURABLE"
+
+
+def test_save_never_pushes_to_a_remote_that_is_not_the_declared_repository(world, target):
+    """Caso B: `origin` autentico, `--remote` su un fork (altro owner). Rifiuto PRIMA del push: il fork resta
+    intatto (prima: checkpoint scritto sul fork, poi READBACK_VERIFY_FAILED)."""
+    a, exp = _chain_agent_with_handoff(world, target, "c")
+    fork = _foreign_copy(world, "altro/pickfair-mcp-.git")
+    sh(a, "remote", "add", "fork", fork)
+    sh(a, "fetch", "-q", "fork")
+    before = sh(fork, "rev-parse", f"refs/heads/{BR}")
+    err = expect(2, pfckpt.save, a, BR, "fork", exp, "remote estraneo", D, agent="claude-c")
+    assert err.reason == "CHECKPOINT_INVALID"
+    assert any("REPOSITORY_IDENTITY_UNVERIFIED" in p for p in err.detail["problems"])
+    assert sh(fork, "rev-parse", f"refs/heads/{BR}") == before, "nessuna scrittura sul fork"
+    assert sh(world["url"], "rev-parse", f"refs/heads/{BR}") == exp, "remoto autentico intatto"
+
+
+def test_save_never_pushes_to_a_remote_whose_identity_is_unverifiable(world, target, tmp_path_factory):
+    """Remote fuori da ogni trasporto fidato (identita' non dimostrabile): rifiuto prima del push, nessuna scrittura."""
+    import shutil
+    a, exp = _chain_agent_with_handoff(world, target, "c")
+    outside = str(tmp_path_factory.mktemp("fuori") / "pickfair-mcp-.git")
+    shutil.copytree(world["url"], outside)
+    sh(a, "remote", "add", "ignoto", outside)
+    sh(a, "fetch", "-q", "ignoto")
+    assert pfckpt.repository_identity(outside) is None
+    before = sh(outside, "rev-parse", f"refs/heads/{BR}")
+    err = expect(2, pfckpt.save, a, BR, "ignoto", exp, "remote non verificabile", D, agent="claude-c")
+    assert any("REPOSITORY_IDENTITY_UNVERIFIED" in p for p in err.detail["problems"])
+    assert sh(outside, "rev-parse", f"refs/heads/{BR}") == before, "nessuna scrittura"
+
+
+def test_save_never_pushes_to_a_push_url_different_from_the_verified_url(world, target):
+    """Revisione preventiva ciclo 17: `remote.<nome>.pushurl` diverso dall'URL verificato. L'identita' si prova
+    sull'URL, il push andrebbe altrove: rifiuto prima di ogni scrittura, nessun commit sul pushurl."""
+    a, exp = _chain_agent_with_handoff(world, target, "c")
+    fork = _foreign_copy(world, "altro/pickfair-mcp-.git")
+    sh(a, "config", "--add", "remote.origin.pushurl", fork)
+    before = sh(fork, "rev-parse", f"refs/heads/{BR}")
+    err = expect(5, pfckpt.save, a, BR, "origin", exp, "pushurl estraneo", D, agent="claude-c")
+    assert err.reason == "REMOTE_PUSH_URL_MISMATCH"
+    assert sh(fork, "rev-parse", f"refs/heads/{BR}") == before, "nessuna scrittura sul pushurl"
+    assert sh(world["url"], "rev-parse", f"refs/heads/{BR}") == exp

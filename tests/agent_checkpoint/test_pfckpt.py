@@ -213,15 +213,26 @@ def test_crash_after_commit_before_push_resumes(world):
     assert sh(a, "rev-list", "--count", f"{exp}..HEAD") == "1", "nessun commit duplicato"
 
 
+def failing_push(bare):
+    """Push che fallisce SUL remoto di verita' (hook pre-receive che rifiuta): simula rete o server in errore senza
+    un `pushurl` diverso, che `save` rifiuta a priori (REMOTE_PUSH_URL_MISMATCH, ciclo 17 #615). Ritorna il ripristino."""
+    hook = os.path.join(str(bare), "hooks", "pre-receive")
+    os.makedirs(os.path.dirname(hook), exist_ok=True)
+    with open(hook, "w") as fh:
+        fh.write("#!/bin/sh\necho 'rete simulata in errore' >&2\nexit 1\n")
+    os.chmod(hook, 0o755)
+    return lambda: os.unlink(hook)
+
+
 def test_crash_during_push_network_failure_then_resume(world):
     a = agent(world, "a")
     exp = next_state(a, world)
     add_artifact(a, "r.txt", "x\n")
-    sh(a, "remote", "set-url", "--push", "origin", str(world["tmp"] / "inesistente.git"))
+    restore = failing_push(world["url"])
     with pytest.raises(pfckpt.CheckpointError):
         pfckpt.save(a, BR, "origin", exp, "ckpt 2", D, agent="A")               # push fallito: non DURABLE
     assert pfckpt.remote_head(a, "origin", BR) == exp
-    sh(a, "remote", "set-url", "--push", "origin", world["url"])
+    restore()
     res = pfckpt.save(a, BR, "origin", exp, "ckpt 2", D, agent="A")
     assert res["status"] == "DURABLE" and res["resumed"] == "after_commit"
 
@@ -251,16 +262,18 @@ def test_resume_after_commit_refuses_artifact_left_only_on_disk(world):
 
 
 def test_push_that_does_not_reach_the_source_of_truth_is_not_durable(world):
-    """DURABLE solo dal readback sul remoto di verita': un push finito altrove non conta."""
+    """DURABLE solo sul remoto di verita': un `pushurl` che porterebbe il push altrove e' rifiutato PRIMA di scrivere
+    (ciclo 17 #615: prima il push finiva altrove e solo il readback se ne accorgeva, READBACK_SHA_MISMATCH)."""
     other = world["tmp"] / "altrove.git"
     subprocess.run(["git", "clone", "-q", "--bare", world["url"], str(other)], check=True)
     a = agent(world, "a")
     exp = next_state(a, world)
     add_artifact(a, "r.txt", "x\n")
     sh(a, "remote", "set-url", "--push", "origin", str(other))
-    err = expect(4, pfckpt.save, a, BR, "origin", exp, "ckpt 2", D, agent="A")
-    assert err.reason == "READBACK_SHA_MISMATCH"
+    err = expect(5, pfckpt.save, a, BR, "origin", exp, "ckpt 2", D, agent="A")
+    assert err.reason == "REMOTE_PUSH_URL_MISMATCH"
     assert pfckpt.remote_head(a, "origin", BR) == exp
+    assert sh(str(other), "rev-parse", f"refs/heads/{BR}") == exp, "nessuna scrittura altrove"
 
 
 def test_restart_after_complete_checkpoint_bootstraps(world):
