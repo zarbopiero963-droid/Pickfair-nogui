@@ -597,3 +597,22 @@ def test_recover_never_accepts_a_handoff_proven_by_a_stale_repo_path(world, targ
     assert pfckpt._published_on(clone, hsha, HBRANCH), "il tracking del clone e' ora obsoleto"
     rep = pfckpt.recover(world["url"], BR, str(world["tmp"] / "rec"), D, repo_paths={TARGET: clone})
     assert rep["commit"] != res["commit"], "il checkpoint con l'handoff non piu' pubblicato non e' recuperato"
+
+
+def test_recover_skips_a_head_with_a_numeric_original_sha(world):
+    """Sol #615 (2f176231): `original_sha` numero JSON di 40 cifre supera la regex ma non e' una stringa: il
+    checkpoint e' invalido (mai AttributeError) e recover torna al checkpoint valido precedente."""
+    a = agent(world, "a")
+    exp = next_state(a, world)
+    good = pfckpt.save(a, BR, "origin", exp, "buono", D, agent="claude")["commit"]
+    n40 = int("1234567890" * 4)
+    integ = {"original_sha": n40, "original_tree": "a" * 40, "integration_sha": world["code"],
+             "integration_tree": "b" * 40, "equivalence": "TREE_EQUAL"}
+    next_state(a, world, code={"branch": "main", "sha": str(n40), "integration": integ})
+    pfckpt.write_manifest(a, D)
+    raw_commit(a, "rotto: original_sha numerico")
+    sh(a, "push", "-q", "origin", f"HEAD:refs/heads/{BR}")
+    err = expect(2, pfckpt.verify, a, "HEAD", D)
+    assert err.reason == "CHECKPOINT_INVALID"
+    rep = pfckpt.recover(world["url"], BR, str(world["tmp"] / "rec"), D)
+    assert rep["status"] == "RECOVERED" and rep["commit"] == good

@@ -274,7 +274,8 @@ def check_code_reference(repo, label, sha, integration, anchors=(), unresolved_m
     bad = [] if isinstance(integration, dict) else ["non un oggetto"]
     if not bad:
         for f in ("original_sha", "original_tree", "integration_sha", "integration_tree"):
-            if not _SHA40.fullmatch(str(integration.get(f, ""))):
+            v = integration.get(f, "")
+            if not isinstance(v, str) or not _SHA40.fullmatch(v):      # un numero JSON non e' uno SHA (Sol #615)
                 bad.append(f)
         if integration.get("equivalence") not in EQUIVALENCES:
             bad.append("equivalence")
@@ -543,7 +544,7 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
     if h.get("status") not in HANDOFF_STATUSES:
         problems.append(f"{label}: status non ammesso: {h.get('status')!r}")
     for f in HANDOFF_SHA_FIELDS:
-        if f in h and h[f] is not None and not _SHA40.fullmatch(str(h[f])):
+        if f in h and h[f] is not None and not (isinstance(h[f], str) and _SHA40.fullmatch(h[f])):
             problems.append(f"{label}: {f} deve essere uno SHA completo")
     if problems:
         return problems, refp, info
@@ -730,7 +731,20 @@ def historical_code_trees(repo, start, d=DEFAULT_DIR):
 
 
 def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None, remote="origin"):
-    """Verifica completa del checkpoint al commit REF. Ritorna un dict di report; solleva CheckpointError(2) se invalido."""
+    """Verifica completa del checkpoint al commit REF. Ritorna un dict di report; solleva CheckpointError(2) se invalido.
+    Un'eccezione inattesa su contenuti malformati (tipi JSON imprevisti) rende il checkpoint INVALIDO, mai valido e mai
+    un crash che fermerebbe recover/bootstrap prima degli antenati (rilievi Sol #615)."""
+    try:
+        return _verify(repo, ref, d, code_repo, repo_paths, remote)
+    except CheckpointError:
+        raise
+    except (TypeError, AttributeError, KeyError, ValueError, IndexError) as exc:
+        raise CheckpointError(2, "CHECKPOINT_INVALID", ref=str(ref),
+                              problems=[f"checkpoint malformato: {type(exc).__name__}: {str(exc)[:160]}"],
+                              reference_problems=[])
+
+
+def _verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None, remote="origin"):
     commit = out(repo, "rev-parse", "--verify", f"{ref}^{{commit}}")
     files = tree_files(repo, commit, d)
     problems = []
