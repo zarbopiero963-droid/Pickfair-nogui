@@ -103,7 +103,8 @@ Un nuovo ingresso non si bufferizza mai.
 
 ## Lettura (`core/blackbox_query.BlackBoxReader`)
 
-Contratto con il lato Control API/MCP di Claude C (`BLACKBOX_READ_CONTRACT.md` 1.13.0):
+Contratto con il lato Control API/MCP di Claude C (`BLACKBOX_READ_CONTRACT.md` 1.15.0, più l'allineamento D1–D2:
+alias `ord_<32 hex>` e `exchange_ts`; fixture condivisa sha256 `74be0f92…`):
 
 | Funzione | Cosa restituisce |
 |---|---|
@@ -132,17 +133,26 @@ Dettagli:
   minuscoli: la forma con trattini (contratto MCP 1.14.0) viene normalizzata sia in scrittura sia in lettura, quindi le
   due forme sono lo stesso id (nessun duplicato, stessi risultati).
 - **Vista esterna** (Control API/MCP): `order_ref`/`customer_ref` non vengono esposti. I campi non registrati sono
-  elencati in `not_recorded`.
+  elencati in `not_recorded`, calcolato DOPO aver tolto i campi nascosti: `order_alias` e `order_ref` non vi compaiono
+  mai (il lettore MCP rende CORRUPT un nome sconosciuto); un record senza ordine elenca `order_id`.
 - **Lacune:** le lacune dichiarate tornano come tali in `gaps_in_range`, mai ricostruite.
 
 ## Vocabolario
 
-È lo stesso di `core.event_journal.EVENT_CATEGORIES`, esteso con:
+È lo stesso di `core.event_journal.EVENT_CATEGORIES`, definito in `core/event_vocabulary.py` e riesportato da
+`core.event_journal` con la stessa API, esteso con:
 - le categorie `BLACKBOX` e `CONTROL`;
 - i tipi del ciclo di vita, della catena di protezione SL/TP/trailing, delle riserve di fondi e della riconciliazione
   per ordine.
 
 Un tipo sconosciuto viene rifiutato.
+
+**Dipendenze nel percorso vivo.** La scatola nera è installata da `headless_main`, quindi tutto ciò che importa è nel
+grafo vivo di Pickfair. `core.event_journal` e `core.event_log` importano `core.config_store`, cioè il Bridge
+XTrader, che non deve essere raggiungibile da Pickfair (`tests/percorsi/test_via_dal_bridge.py`). Per questo il
+vocabolario (`core/event_vocabulary.py`) e la redazione dei segreti nel testo (`core/text_redaction.py`: token
+Telegram canonici e segreti registrati con `register_secret`) stanno in moduli senza dipendenze. `core.event_journal`
+e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segreti è uno solo.
 
 ## Test
 

@@ -12,7 +12,7 @@ Garanzie:
   alterati o riordinati.
 - **Durevole**: WAL + `synchronous=FULL`, una transazione per evento.
 - **Redazione in scrittura**: chiavi sensibili (`core.redaction.is_sensitive_key`) e segreti registrati
-  (`core.event_log.redact_secrets`); mai un token nel registro.
+  (`core.text_redaction.redact_secrets`, riesportato da `core.event_log`); mai un token nel registro.
 - **Due modalita'** nella stessa API (§2): `critical=False` best-effort, non solleva mai (semantica del recorder);
   `critical=True` scrittura sincrona e durevole, un fallimento solleva `BlackBoxUnavailable` (il chiamante finanziario
   NON invia). `buffer_on_failure=True` (solo uscite protettive gia' decise) mette l'evento nel buffer critico in
@@ -40,7 +40,9 @@ import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
-from core import event_journal, event_log, redaction
+# vocabolario e redazione dai moduli SENZA dipendenze: `core.event_journal`/`core.event_log` trascinerebbero
+# `core.config_store` (Bridge XTrader) nel grafo vivo (tests/percorsi/test_via_dal_bridge.py)
+from core import event_vocabulary as event_journal, redaction, text_redaction
 
 SCHEMA_VERSION = 1
 
@@ -118,9 +120,9 @@ def _redact(value: Any, key: str = "") -> Any:
     if key and redaction.is_sensitive_key(key):
         return REDACTED
     if isinstance(value, str):
-        return event_log.redact_secrets(value)
+        return text_redaction.redact_secrets(value)
     if isinstance(value, dict):
-        return {(event_log.redact_secrets(k) if isinstance(k, str) else str(k)): _redact(v, str(k))
+        return {(text_redaction.redact_secrets(k) if isinstance(k, str) else str(k)): _redact(v, str(k))
                 for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_redact(v) for v in value]
@@ -269,7 +271,7 @@ class BlackBox:
             rec[f] = _redact(rec[f]) if rec[f] is not None else None
         for f in RECORD_FIELDS:
             if f not in _JSON_FIELDS and isinstance(rec[f], str):
-                rec[f] = event_log.redact_secrets(rec[f])
+                rec[f] = text_redaction.redact_secrets(rec[f])
             if f in ("table_id", "market_id", "selection_id", "order_id", "order_ref", "bet_id") and rec[f] is not None:
                 rec[f] = str(rec[f])
         return rec

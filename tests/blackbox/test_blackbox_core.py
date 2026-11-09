@@ -451,3 +451,60 @@ def test_a_second_financial_runtime_on_the_same_register_is_refused(tmp_path):
     third.start_session()
     types = [r["type"] for r in third._conn.execute("SELECT type FROM events ORDER BY seq")]
     assert types[-1] == "PROCESS_START" and "UNCLEAN_TERMINATION" not in types
+
+
+def test_external_not_recorded_never_names_hidden_fields(tmp_path):
+    """Contratto Claude C (pfab-c-20261109-bb1-fixtures-delivery-ack-003): nella vista esterna `order_alias` e
+    `order_ref` non compaiono mai, nemmeno dentro `not_recorded` (il lettore MCP rende CORRUPT un nome sconosciuto).
+    Un record senza ordine elenca `order_id` come non registrato, mai l'alias."""
+    box = bb.BlackBox(str(tmp_path / "b.sqlite")).open()
+    box.start_session()
+    req = box.record("ORDER_PLACE_REQUEST", source="STRATEGY", phase="ATTEMPT", outcome="PENDING", order_id=7,
+                     order_ref="cust-ref-riservato")
+    box.record("PRICE_SNAPSHOT", source="EXCHANGE", phase="OBSERVATION", market_id="1.9", causation_id=req)
+    r = bq.BlackBoxReader(box)
+    events = r.query({})["records"] + [r.get(req, chain_depth=2)]
+    for ev in events:
+        for hidden in bq.EXTERNAL_HIDDEN:
+            assert hidden not in ev and hidden not in ev["not_recorded"], (hidden, ev["type"])
+        assert set(ev["not_recorded"]) <= set(bb.RECORD_FIELDS) - set(bq.EXTERNAL_HIDDEN)
+    snap = [e for e in events if e["type"] == "PRICE_SNAPSHOT"][0]
+    assert snap["order_id"] is None and "order_id" in snap["not_recorded"]
+    internal = r.query({}, external=False)["records"]
+    assert "order_alias" in [e for e in internal if e["type"] == "PRICE_SNAPSHOT"][0]["not_recorded"]
+
+
+def test_vocabulary_and_redaction_are_one_api_reexported_by_journal_and_log():
+    """Estrazione senza dipendenze (grafo vivo senza il Bridge XTrader): `core.event_journal` e `core.event_log`
+    riesportano gli STESSI oggetti, quindi un segreto registrato da chiunque vale anche per la scatola nera."""
+    from core import event_journal, event_vocabulary, text_redaction
+    assert event_journal.EVENT_TYPES is event_vocabulary.EVENT_TYPES
+    assert event_journal.category_of is event_vocabulary.category_of
+    assert event_log.redact_secrets is text_redaction.redact_secrets
+    assert event_log.register_secret is text_redaction.register_secret
+    secret = "x" * 6 + "valore-registrato-runtime"
+    try:
+        event_log.register_secret(secret)
+        assert secret not in text_redaction.redact_secrets(f"prima {secret} dopo")
+    finally:
+        event_log.unregister_secret(secret)
+
+
+def test_blackbox_modules_never_import_the_bridge_side_modules():
+    """La scatola nera e' nel percorso vivo: nessun suo import (anche dentro funzioni) tocca `core.event_log`,
+    `core.event_journal` o `core.config_store` (che trascinano il Bridge XTrader)."""
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2] / "core"
+    for name in ("blackbox.py", "blackbox_query.py", "blackbox_runtime.py", "event_vocabulary.py",
+                 "text_redaction.py"):
+        tree = ast.parse((root / name).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            mods = []
+            if isinstance(node, ast.ImportFrom):
+                mods = [node.module or ""] + [f"{node.module}.{a.name}" for a in node.names]
+            elif isinstance(node, ast.Import):
+                mods = [a.name for a in node.names]
+            for m in mods:
+                for bad in ("event_log", "event_journal", "config_store"):
+                    assert bad not in m.split("."), f"{name}:{node.lineno} importa {m}"

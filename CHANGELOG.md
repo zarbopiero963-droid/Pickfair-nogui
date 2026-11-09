@@ -16,7 +16,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `EMERGENCY_STOP` (richiesta ed esito), eccezioni non gestite di processo e thread, dump nativi (`faulthandler`),
   `SHUTDOWN`, e al riavvio dopo un crash `UNCLEAN_TERMINATION` + `BLACKBOX_GAP` UNKNOWN. Eventi critici fail-closed
   (`BlackBoxUnavailable`), buffer critico per le sole uscite protettive. Lettura unica `core/blackbox_query`
-  (contratto Control API/MCP 1.13.0 di Claude C). Vocabolario esteso in `core.event_journal`. Documentazione:
+  (contratto Control API/MCP 1.15.0 di Claude C, alias `ord_` e `exchange_ts` per D1–D2). Vocabolario esteso in `core.event_journal`; vocabolario e redazione dei segreti estratti senza dipendenze in
+  `core/event_vocabulary.py` e `core/text_redaction.py` (riesportati con la stessa API), perche' la scatola nera nel
+  percorso vivo non trascini il Bridge XTrader (`core.config_store`). Documentazione:
   `docs/blackbox.md`. Ordini, impostazioni e visualizzatore arrivano in BB-2…BB-6.
 
 ### Fixed

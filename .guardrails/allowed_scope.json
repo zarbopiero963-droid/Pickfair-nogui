@@ -1576,13 +1576,13 @@
       "max_files": 4,
       "allow_tests": true
     },
-    "secret_redaction_unify": {
+    "text_redaction_unify": {
       "description": "M1 (#437/#388): unificazione della redazione segreti. Esistevano DUE predicati _is_sensitive_key indipendenti e divergenti — telegram_sanitizer (log/alert Telegram) e observability/sanitizers (snapshot + bundle diagnostici) — con set di chiavi diversi: un segreto oscurato su un path trapelava sull'altro (es. bot_token in un bundle diagnostico condivisibile; app_key/ssoid/session_string/api_hash in un log Telegram). Fix: predicato UNICO condiviso core/redaction.is_sensitive_key = unione dei set esatti + suffisso-dopo-punto + combo-2-frammenti, fail-closed (sovra-redige piuttosto che lasciar trapelare). Entrambi i sanitizer delegano ad esso mantenendo il proprio marker ([REDACTED] vs ***REDACTED***) e la ricorsione; i nomi pubblici SENSITIVE_KEYS/_SENSITIVE_KEY_SUFFIXES/_is_sensitive_key restano esportati (compat test). Test hard red-first (44 fail sul codice divergente) => PASS: ogni segreto oscurato su ENTRAMBI i path, nessuna sovra-redazione dei campi non-segreti, i due path concordano. Aggiornata 1 asserzione marker-agnostica in test_sanitizers_coverage: l'alert service doppio-sanitizza (observability->telegram), col fix telegram ri-oscura anche api_hash => marker uniforme [REDACTED], segreti comunque assenti. core/ init leggero, packaging via import statico (nessun hiddenimport). Nessuna soglia/livello safety toccata.",
       "files": [
         "core/redaction.py",
         "telegram_sanitizer.py",
         "observability/sanitizers.py",
-        "tests/observability/test_secret_redaction_unified.py",
+        "tests/observability/test_text_redaction_unified.py",
         "tests/observability/test_sanitizers_coverage.py",
         ".guardrails/allowed_scope.json"
       ],
@@ -3498,7 +3498,7 @@
       "max_files": 8
     },
     "bb1_blackbox_core": {
-      "description": "PF-BLACKBOX-01 BB-1 (#586, direttiva owner 08/11/2026): scatola nera unica blackbox.sqlite (append-only, seq globale, catena di hash, redazione, fail-closed critico, buffer per uscite protettive), installata in headless_main.main prima dei componenti (PROCESS_START/COMPONENT_INIT/EMERGENCY_STOP/eccezioni/faulthandler/SHUTDOWN/UNCLEAN_TERMINATION), lettura core/blackbox_query (contratto Claude C 1.13.0), vocabolario esteso in core/event_journal, mutanti bb_*. Nessun aggancio al percorso del denaro (BB-3).",
+      "description": "PF-BLACKBOX-01 BB-1 (#586, direttiva owner 08/11/2026): scatola nera unica blackbox.sqlite (append-only, seq globale, catena di hash, redazione, fail-closed critico, buffer per uscite protettive), installata in headless_main.main prima dei componenti (PROCESS_START/COMPONENT_INIT/EMERGENCY_STOP/eccezioni/faulthandler/SHUTDOWN/UNCLEAN_TERMINATION), lettura core/blackbox_query (contratto Claude C 1.15.0 + D1-D3 owner PF-BB1-IDENTITY-TIMESTAMP-SESSION-20261109: alias ord_, UTC canonico + exchange_ts, un solo runtime per registro), vocabolario esteso in core/event_journal, mutanti bb_*. Nessun aggancio al percorso del denaro (BB-3). Estensione dichiarata (09/11/2026): vocabolario e redazione dei segreti estratti senza dipendenze in core/event_vocabulary.py e core/text_redaction.py, riesportati da core/event_journal.py e core/event_log.py con la stessa API, perche' la scatola nera nel percorso vivo non trascini core.config_store (Bridge XTrader): tests/percorsi/test_via_dal_bridge.py.",
       "allow_tests": true,
       "files": [
         ".guardrails/allowed_scope.json",
@@ -3507,15 +3507,18 @@
         "core/blackbox_query.py",
         "core/blackbox_runtime.py",
         "core/event_journal.py",
+        "core/event_log.py",
+        "core/event_vocabulary.py",
         "docs/blackbox.md",
         "guardrails/mutation_catalog.json",
+        "core/text_redaction.py",
         "headless_main.py",
         "scripts/ci_changed_modules.py",
         "tests/blackbox/test_blackbox_core.py",
         "tests/blackbox/test_blackbox_runtime.py",
         "tests/catalog/pf-test-catalog.json"
       ],
-      "max_files": 13
+      "max_files": 16
     }
   }
 }
