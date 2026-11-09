@@ -435,7 +435,10 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   configurati (`max_total_exposure_pct`, evento, singolo, `max_open_exposure`, liability LAY, riserve). Senza alcuna
   cassa verificata resta la misura storica (gli ingressi sono comunque negati dai controlli della cassa).
 - **Fail-closed.** Stato persistito illeggibile => desk in LOCKDOWN e hard-stop `*_stato_illeggibile`, mai
-  sovrascritto; picco non salvato => hard-stop configurato nega (`max_drawdown_abs_picco_non_persistito`) e il
-  salvataggio si ritenta; cassa non verificata => `max_drawdown_abs_cassa_non_verificata`.
+  sovrascritto; picco non salvato => nessun nuovo ingresso su ogni percorso, con o senza hard-stop configurati
+  (`drawdown_picco_non_persistito`, in coda ai motivi dei gate a monte; RO-DD-08: altrimenti un riavvio ripartirebbe
+  dal picco salvato e renderebbe aggirabile il LOCKDOWN cumulativo), con nuovo tentativo di salvataggio a ogni
+  ammissione; con hard-stop configurato anche `max_drawdown_abs_picco_non_persistito`; cassa non verificata =>
+  `max_drawdown_abs_cassa_non_verificata`.
 - **Limiti dichiarati.** Un solo record persistito: un `seq` regressivo al riavvio non e' rilevabile. Grandezze
   esposte in `get_status`: `loss_drawdown_pct`, `capital_at_risk_pct` (solo informativo), `drawdown_hard_stop`.

@@ -257,6 +257,13 @@ class DrawdownHardStop:
                 return None
             return float(loss / self.peak * Decimal(100))
 
+    def retry_persist(self) -> bool:
+        """Ritenta il salvataggio di un picco non persistito; True se lo stato ora e' durevole."""
+        with self._lock:
+            if self.persist_failed and self.peak is not None and not self.unreadable:
+                self._persist_locked()
+            return not self.persist_failed
+
     def state_reliable(self) -> bool:
         """False se lo stato persistito e' illeggibile: il picco non e' noto e il desk va in LOCKDOWN (fail-closed).
         Un salvataggio fallito NON lo rende inaffidabile in memoria (il picco osservato resta valido nel processo):

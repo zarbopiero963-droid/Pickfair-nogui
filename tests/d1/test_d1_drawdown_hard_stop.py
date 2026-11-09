@@ -440,3 +440,27 @@ def test_unlock_operation_id_is_single_use():
     assert stop.evaluate(10.0, 85.0) is True                  # perdita ancora oltre il limite: nuovo blocco
     assert stop.owner_clear_breach(**_OWNER) is False and stop.breached   # stesso operation_id: rifiutato
     assert stop.owner_clear_breach(**dict(_OWNER, operation_id="PF-UNLOCK-0002")) is True
+
+
+def test_ro_dd_08_unsaved_peak_blocks_entries_even_without_hard_stops(tmp_path):
+    """RO-DD-08 (Claude D su 15960bac): picco salito a 120 ma non salvato, nessun hard-stop configurato. Senza blocco,
+    un riavvio ripartirebbe dal picco salvato 100 e il LOCKDOWN cumulativo (RO-DD-04) sarebbe aggirabile."""
+    c = _catena(tmp_path, lockdown_drawdown_pct=15.0)
+    _lettura(c, 100.0)
+    real_save = c.rc.db.save_settings
+
+    def failing_save(values):
+        if "roserpina.drawdown_hard_stop_state" in values:
+            raise OSError("disco pieno")
+        return real_save(values)
+
+    c.rc.db.save_settings = failing_save
+    _lettura(c, 120.0)
+    assert c.rc._hard_stop().persist_failed
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0 and _rifiuti(c)[-1] == "drawdown_picco_non_persistito"
+
+    c.rc.db.save_settings = real_save                     # il disco torna: il salvataggio si ritenta e il blocco cade
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK", market_id="1.999"))
+    assert json.loads(c.rc.db.get_settings()[STATE_KEY])["peak"] == "120.0"
+    assert _ordini(c) == 1, _rifiuti(c)                    # picco salvato, nessuna perdita: ingresso ammesso

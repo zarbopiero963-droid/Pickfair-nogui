@@ -1320,7 +1320,19 @@ class RuntimeController:
     def _loss_block_reason(self) -> str:
         stopped = getattr(self, "_risk_stop_reason", "")
         return (self._limits_block_reason() or (f"risk_stop_active:{stopped}" if stopped else "")
-                or self._recovery_persist_block_reason())
+                or self._recovery_persist_block_reason()
+                or RuntimeController._drawdown_persist_block_reason(self))
+
+    def _drawdown_persist_block_reason(self) -> str:
+        """RO-DD-08 (Claude D su 15960bac): picco di cassa non persistito => nessun nuovo ingresso, con o senza
+        hard-stop configurati, perche' DEFENSE/LOCKDOWN dipendono sempre dal picco persistente (RO-DD-04): un picco
+        non salvato renderebbe il LOCKDOWN cumulativo aggirabile con un riavvio. Il salvataggio si ritenta qui, cosi'
+        il blocco si scioglie da solo appena il disco torna; uscite, riconciliazione e settlement non passano di qui.
+        In coda alla catena: non oscura il motivo dei gate a monte."""
+        stop = getattr(self, "_drawdown_hard_stop", None)
+        if stop is None or stop.retry_persist():
+            return ""
+        return "drawdown_picco_non_persistito"
 
     def _recovery_persist_block_reason(self) -> str:
         """Stato di recovery non durevole (scrittura fallita dopo un reset o un settlement): nessun nuovo
