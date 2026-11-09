@@ -43,9 +43,14 @@ def _state(code_sha, seq, prev, **over):
 
 
 @pytest.fixture
-def world(tmp_path):
-    """remote bare con un branch di codice e un primo checkpoint valido; ritorna (url, code_sha, first_ckpt)."""
-    remote = tmp_path / "remote.git"
+def world(tmp_path, request, monkeypatch):
+    """remote bare con un branch di codice e un primo checkpoint valido; ritorna (url, code_sha, first_ckpt).
+    Il percorso del remoto e' `<tmp>/<owner>/<name>.git` del repository della catena (CHAIN_REPO_NAME del modulo) e la
+    tmp e' un trasporto dichiarato: l'identita' della catena si verifica come in produzione (Sol #615)."""
+    name = getattr(request.module, "CHAIN_REPO_NAME", "zarbopiero963-droid/Pickfair-nogui")
+    remote = tmp_path / (name + ".git")
+    os.makedirs(remote.parent, exist_ok=True)
+    monkeypatch.setenv("PFCKPT_TRUSTED_GIT_TRANSPORTS", str(tmp_path))
     subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
     seed = tmp_path / "seed"
     subprocess.run(["git", "init", "-q", str(seed)], check=True); _cfg(str(seed))

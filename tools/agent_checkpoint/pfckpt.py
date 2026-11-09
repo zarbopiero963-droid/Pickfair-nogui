@@ -248,6 +248,11 @@ def resolve_commit(repo, sha):
     """SHA completo del commit, o None. Solo id esadecimali: mai un riferimento mobile (HEAD, main, main~1)."""
     if not re.fullmatch(r"[0-9a-f]{7,40}", str(sha or "")):
         return None
+    # solo un oggetto COMMIT: `^{commit}` sbuccerebbe un tag annotato (anche solo locale) fino al commit puntato,
+    # lasciando nel record l'hash del tag, che un clone nuovo non ha (rilievo Sol #615)
+    t = git(repo, "cat-file", "-t", str(sha), check=False)
+    if t.returncode != 0 or t.stdout.decode().strip() != "commit":
+        return None
     p = git(repo, "rev-parse", "-q", "--verify", f"{sha}^{{commit}}", check=False)
     return p.stdout.decode().strip() if p.returncode == 0 else None
 
@@ -624,6 +629,12 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
 
     def repo_of(name, what):
         if name == h["checkpoint_repo"] and (chain_repo is None or name == chain_repo):
+            # anche la catena deve essere davvero `name` (rilievo Sol #615): STATE.repository e' una dichiarazione,
+            # impostarla al nome del target farebbe usare come prova gli oggetti di un altro repository
+            if not _repo_identity_ok(repo, name):
+                refp.append(f"{label}: REPOSITORY_IDENTITY_UNVERIFIED: il repository della catena non e' {name!r} su "
+                            f"un host fidato (github.com o un trasporto in {TRUSTED_TRANSPORTS_ENV})")
+                return None
             return repo
         if name in paths:
             if not _repo_identity_ok(paths[name], name):

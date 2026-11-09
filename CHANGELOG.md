@@ -90,6 +90,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   decisione owner PF-PR615-FINAL-SECURITY-HARDENING-20261109: `original_sha` deve essere esattamente il commit
   risolto; identità del `--repo-path` verificata su `github.com` o su trasporti dichiarati in
   `PFCKPT_TRUSTED_GIT_TRANSPORTS`, altrimenti `REPOSITORY_IDENTITY_UNVERIFIED`;
+  ultimo ciclo: solo oggetti commit come riferimenti (mai l'hash di un tag annotato) e identità verificata anche per
+  la catena nel ramo «stesso repository»;
   prova eseguibile che `recover` da clone pulito dopo squash e cancellazione del branch restituisce il checkpoint di
   transizione.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**

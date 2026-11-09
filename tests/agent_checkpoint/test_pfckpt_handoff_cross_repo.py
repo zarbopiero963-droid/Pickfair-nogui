@@ -18,6 +18,7 @@ import pfckpt  # noqa: E402
 from test_pfckpt import BR, CODE_BR, D, _cfg, agent, expect, next_state, raw_commit, sh, world  # noqa: E402,F401
 
 CHAIN = "zarbopiero963-droid/pickfair-mcp-"
+CHAIN_REPO_NAME = CHAIN                                           # remoto della catena = pickfair-mcp-
 TARGET = "zarbopiero963-droid/Pickfair-nogui"
 HBRANCH = "handoff/claude-c-1"
 
@@ -728,5 +729,40 @@ def test_undeclared_proxy_is_unverified_and_a_declared_one_is_accepted(world, ta
     a, clone = _verify_with_origin(world, target, proxy + TARGET)
     err = expect(2, pfckpt.verify, a, "HEAD", D, repo_paths={TARGET: clone})
     assert any("REPOSITORY_IDENTITY_UNVERIFIED" in p for p in err.detail["problems"])
-    monkeypatch.setenv("PFCKPT_TRUSTED_GIT_TRANSPORTS", proxy)                 # dichiarato dall'operatore
+    monkeypatch.setenv("PFCKPT_TRUSTED_GIT_TRANSPORTS", f"{proxy},{world['tmp']}")   # dichiarato dall'operatore
     assert pfckpt.verify(a, "HEAD", D, repo_paths={TARGET: clone})["handoffs"][0]["handoff_proven"] is True
+
+
+# ================================================================== Sol #615 (2870c8e5): solo commit, identita' della catena
+def test_annotated_tag_hash_is_never_a_handoff_commit(world, target):
+    """`handoff_sha` = hash di un tag annotato locale: `^{commit}` lo sbuccerebbe fino al commit pubblicato, ma un clone
+    nuovo non ha il tag. Solo oggetti commit sono riferimenti validi."""
+    hsha, htree = publish_handoff(target)
+    clone = target_clone(target)
+    _cfg(clone)
+    sh(clone, "tag", "-a", "solo-locale", hsha, "-m", "tag mai pubblicato")
+    tag = sh(clone, "rev-parse", "solo-locale")
+    assert tag != hsha and sh(clone, "cat-file", "-t", tag) == "tag"
+    r = rec(world, target, "DURABLE", handoff_branch=HBRANCH, handoff_sha=tag, handoff_tree=htree)
+    err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c", [r]), "HEAD", D, repo_paths={TARGET: clone})
+    assert any("handoff_sha irrisolto" in p for p in err.detail["problems"])
+    assert pfckpt.resolve_commit(clone, tag) is None and pfckpt.resolve_commit(clone, hsha) == hsha
+
+
+def test_chain_declaring_the_target_name_cannot_prove_with_its_own_objects(world, target):
+    """STATE.repository = nome del target: la catena (remoto pickfair-mcp-) non diventa il target. Gli oggetti del
+    target copiati nella catena non provano nulla."""
+    hsha, htree = publish_handoff(target)
+    sh(target["work"], "push", "-q", world["url"], f"{hsha}:refs/heads/{HBRANCH}")    # copia nella catena
+    r = rec(world, target, "DURABLE", checkpoint_repo=TARGET, source_repo=TARGET, source_sha=hsha,
+            handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    a = agent(world, "c")
+    os.makedirs(os.path.join(a, D, "handoff"), exist_ok=True)
+    open(os.path.join(a, D, "handoff", "c.patch"), "wb").write(target["patch"])
+    next_state(a, world, repository=TARGET, handoffs=[r])
+    pfckpt.write_manifest(a, D)
+    raw_commit(a, "catena che si dichiara target")
+    sh(a, "fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*")
+    err = expect(2, pfckpt.verify, a, "HEAD", D)
+    assert _only_reference_problems(err)
+    assert any("REPOSITORY_IDENTITY_UNVERIFIED" in p and "catena" in p for p in err.detail["problems"])
