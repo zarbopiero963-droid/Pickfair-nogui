@@ -391,13 +391,13 @@ def parse_repo_paths(items):
     return paths
 
 
-def _published_on(repo, sha, branch):
-    """`sha` e' contenuto nel branch pubblicato `branch` di `repo`: via un remote-tracking `refs/remotes/*/<branch>`
-    o, se `repo` e' esso stesso il remoto (bare), via `refs/heads/<branch>`."""
-    refs = out(repo, "for-each-ref", "--format=%(refname)", "refs/remotes/").splitlines()
-    cands = [r for r in refs if r.split("/", 3)[-1] == branch]
+def _published_on(repo, sha, branch, remote="origin"):
+    """`sha` e' contenuto nel branch pubblicato `branch` di `repo`: via il remote-tracking `refs/remotes/<remote>/<branch>`
+    del SOLO remote del repository (mai un fork o un altro remote aggiunto, rilievo Sol #615) o, se `repo` e' esso stesso
+    il remoto (bare), via `refs/heads/<branch>`."""
+    cands = [f"refs/remotes/{remote}/{branch}"]
     if out(repo, "rev-parse", "--is-bare-repository") == "true":
-        cands.append(f"refs/heads/{branch}")
+        cands = [f"refs/heads/{branch}"]
     for ref in cands:
         if git(repo, "rev-parse", "-q", "--verify", ref, check=False).returncode == 0 \
                 and git(repo, "merge-base", "--is-ancestor", sha, ref, check=False).returncode == 0:
@@ -405,18 +405,59 @@ def _published_on(repo, sha, branch):
     return False
 
 
-def _published_anywhere(repo, sha):
-    """`sha` raggiungibile da un ref PUBBLICATO di `repo`: un remote-tracking `refs/remotes/*` (branch o
-    `refs/remotes/*/pull/*`) o, se `repo` e' esso stesso il remoto (bare), `refs/heads/*`. Un commit solo locale no."""
-    p = git(repo, "for-each-ref", "--contains", sha, "--format=%(refname)", "refs/remotes/", check=False)
+def _published_anywhere(repo, sha, remote="origin"):
+    """`sha` raggiungibile da un ref PUBBLICATO di `repo`: un remote-tracking `refs/remotes/<remote>/*` (branch o
+    `pull/*`) del solo remote del repository o, se `repo` e' esso stesso il remoto (bare), `refs/heads/*`. Un commit solo
+    locale, o presente solo su un altro remote (fork), no."""
+    bare = out(repo, "rev-parse", "--is-bare-repository") == "true"
+    ns = "refs/heads/" if bare else f"refs/remotes/{remote}/"
+    p = git(repo, "for-each-ref", "--contains", sha, "--format=%(refname)", ns, check=False)
     refs = [r for r in p.stdout.decode().splitlines() if r and not r.endswith("/HEAD")] if p.returncode == 0 else []
-    if not refs and out(repo, "rev-parse", "--is-bare-repository") == "true":
-        p = git(repo, "for-each-ref", "--contains", sha, "--format=%(refname)", "refs/heads/", check=False)
-        refs = [r for r in p.stdout.decode().splitlines() if r] if p.returncode == 0 else []
     return bool(refs)
 
 
-def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, ckpt_repo=None):
+def _norm_repo(name):
+    n = str(name).strip().replace("\\", "/").rstrip("/").lower()
+    return n[:-4] if n.endswith(".git") else n
+
+
+def _repo_identity_ok(path, name):
+    """Il percorso passato con --repo-path NOME=PERCORSO e' davvero NOME: l'URL del suo `origin` (o, per un bare, il
+    percorso stesso) termina con `owner/name` (rilievo Sol #615: la prova di pubblicazione e' vincolata al remoto del
+    target, non a un fork)."""
+    if out(path, "rev-parse", "--is-bare-repository") == "true":
+        where = os.path.abspath(path)
+    else:
+        p = git(path, "remote", "get-url", "origin", check=False)
+        if p.returncode != 0:
+            return False
+        where = p.stdout.decode().strip()
+    w, n = _norm_repo(where), _norm_repo(name)
+    return w == n or w.endswith("/" + n) or w.endswith(":" + n)
+
+
+def refresh_published_refs(path, remote="origin"):
+    """Remote-tracking dei branch aggiornati E potati prima di usarli come prova di pubblicazione (rilievo Sol #615): un
+    branch cancellato sul remoto non resta «pubblicato» per un ref locale obsoleto. Prima il fetch, poi l'elenco dei
+    branch vivi: un branch cancellato nel mezzo viene comunque potato. I `refs/remotes/<remote>/pull/*` del fallback
+    restano. Remoto irraggiungibile => errore, mai una prova su ref vecchi."""
+    if out(path, "rev-parse", "--is-bare-repository") == "true" \
+            or git(path, "remote", "get-url", remote, check=False).returncode != 0:
+        return                  # nessun remote: nessuna prova possibile, lo rifiuta il controllo d'identita'/pubblicazione
+    p = git(path, "fetch", "-q", remote, f"+refs/heads/*:refs/remotes/{remote}/*", check=False)
+    q = git(path, "ls-remote", "--heads", remote, check=False) if p.returncode == 0 else p
+    if q.returncode != 0:
+        raise CheckpointError(5, "PUBLISHED_REFS_REFRESH_FAILED", repo=path, remote=remote,
+                              stderr=q.stderr.decode(errors="replace")[-300:])
+    live = {ln.split("\t", 1)[1][len("refs/heads/"):] for ln in q.stdout.decode().splitlines() if "\trefs/heads/" in ln}
+    pref = f"refs/remotes/{remote}/"
+    for ref in out(path, "for-each-ref", "--format=%(refname)", pref).splitlines():
+        name = ref[len(pref):]
+        if name != "HEAD" and not name.startswith("pull/") and name not in live:
+            git(path, "update-ref", "-d", ref)
+
+
+def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, ckpt_repo=None, remote="origin"):
     """Un record di `handoffs` (PF-MCP-CROSS-REPO-HANDOFF-01). Ogni riferimento si risolve nel PROPRIO repository:
     quello della catena (`checkpoint_repo` == STATE.repository) o uno passato con --repo-path NOME=PERCORSO; mai nel
     repository della catena per ripiego. Ritorna (problemi di integrita', problemi di riferimento, info)."""
@@ -451,10 +492,17 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
         if name == h["checkpoint_repo"] and (chain_repo is None or name == chain_repo):
             return repo
         if name in paths:
+            if not _repo_identity_ok(paths[name], name):
+                refp.append(f"{label}: --repo-path {name}: l'origin del percorso non e' {name!r}; la prova di "
+                            "pubblicazione vale solo sul remoto del repository dichiarato (rilievo Sol #615)")
+                return None
             return paths[name]
         refp.append(f"{label}: repository {name!r} non disponibile per {what} (--repo-path {name}=PERCORSO); "
                     "mai risolto nel repository della catena")
         return None
+
+    def rem(r):                       # il remote che conta: quello di `save` per la catena, `origin` per --repo-path
+        return remote if r is repo else "origin"
 
     def resolved(r, f, what):
         if r is None:
@@ -467,7 +515,7 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
     if published is not False:
         src_repo = repo_of(h["source_repo"], "source_sha")
         src_full = resolve_commit(src_repo, h["source_sha"]) if src_repo is not None else None
-        if src_full and src_repo is not repo and not _published_anywhere(src_repo, src_full):
+        if src_full and src_repo is not repo and not _published_anywhere(src_repo, src_full, rem(src_repo)):
             # repository esterno (--repo-path): un commit solo nel clone locale non e' pubblicato (rilievo Sol #615)
             refp.append(f"{label}: source_sha non raggiungibile da un ref pubblicato di {h['source_repo']!r}")
         elif src_full:
@@ -497,9 +545,9 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
             return problems, refp, info
         tgt = repo_of(h["target_repo"], "handoff_sha/base_sha")
         hsha, base = resolved(tgt, "handoff_sha", "target_repo"), resolved(tgt, "base_sha", "target_repo")
-        if hsha and not _published_on(tgt, hsha, h["handoff_branch"]):
+        if hsha and not _published_on(tgt, hsha, h["handoff_branch"], rem(tgt)):
             refp.append(f"{label}: handoff_sha non pubblicato sul branch {h['handoff_branch']!r} del target")
-        if base and not _published_on(tgt, base, h["handoff_branch"]):
+        if base and not _published_on(tgt, base, h["handoff_branch"], rem(tgt)):
             refp.append(f"{label}: base_sha non raggiungibile dal branch {h['handoff_branch']!r} del target")
         if not (hsha and base):
             return problems, refp, info
@@ -536,7 +584,7 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
         isha = resolved(tgt, "integration_sha", "target_repo")
         if not isha:
             return problems, refp, info
-        if not _published_on(tgt, isha, "main"):
+        if not _published_on(tgt, isha, "main", rem(tgt)):
             refp.append(f"{label}: integration_sha non pubblicato su main del target (rilievo Sol #615)")
             return problems, refp, info
         itree = tree_of(tgt, isha)
@@ -558,10 +606,10 @@ def check_handoff(repo, commit, files, i, h, chain_repo=None, repo_paths=None, c
     base, isha = resolved(tgt, "base_sha", "target_repo"), resolved(tgt, "integration_sha", "target_repo")
     if not (base and isha):
         return problems, refp, info
-    if tgt is not repo and not _published_anywhere(tgt, base):
+    if tgt is not repo and not _published_anywhere(tgt, base, rem(tgt)):
         refp.append(f"{label}: base_sha non raggiungibile da un ref pubblicato del target (rilievo Sol #615)")
         return problems, refp, info
-    if not _published_on(tgt, isha, "main"):
+    if not _published_on(tgt, isha, "main", rem(tgt)):
         refp.append(f"{label}: integration_sha non pubblicato su main del target (rilievo Sol #615)")
         return problems, refp, info
     itree = tree_of(tgt, isha)
@@ -593,7 +641,7 @@ def manifest_intact(repo, commit, d=DEFAULT_DIR):
         return False
 
 
-def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None):
+def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None, remote="origin"):
     """Verifica completa del checkpoint al commit REF. Ritorna un dict di report; solleva CheckpointError(2) se invalido."""
     commit = out(repo, "rev-parse", "--verify", f"{ref}^{{commit}}")
     files = tree_files(repo, commit, d)
@@ -730,7 +778,7 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None, repo_paths=None):
         else:
             for i, h in enumerate(hs):
                 hp, hr, hinfo = check_handoff(lookup, commit, files, i, h, state.get("repository"), repo_paths,
-                                              ckpt_repo=repo)
+                                              ckpt_repo=repo, remote=remote)
                 problems += hp
                 ref_problems += hr
                 handoff_report.append(hinfo)
@@ -1153,13 +1201,17 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
     uno SHA presente solo su un branch di lavoro, dichiarandolo nello STATE (code.durability_waiver)."""
     durable_branches = tuple(durable_branches or DEFAULT_DURABLE_BRANCHES)
     url = out(repo, "remote", "get-url", remote)
+    # prove di pubblicazione su ref FRESCHI (rilievo Sol #615): branch cancellati sul remoto potati prima di verificare
+    refresh_published_refs(repo, remote)
+    for path in dict.fromkeys((repo_paths or {}).values()):
+        refresh_published_refs(path, "origin")
     current = remote_head(repo, remote, branch)
     head = out(repo, "rev-parse", "HEAD")
     parent = out(repo, "rev-parse", "HEAD^") if git(repo, "rev-parse", "--verify", "HEAD^", check=False).returncode == 0 else None
     if current == head and head != expected and parent == expected:
         # crash dopo il push (prima del readback): il remoto ha gia' il NOSTRO checkpoint figlio di expected.
         # I ref keep potrebbero mancare (crash fra i due, strumento precedente): si pubblicano, senza force.
-        local = verify(repo, "HEAD", d, repo_paths=repo_paths)
+        local = verify(repo, "HEAD", d, repo_paths=repo_paths, remote=remote)
         if keep_refs and local["keep_shas"]:
             p = git(repo, "push", "-q", "--atomic", remote, *keep_refspecs(local["keep_shas"]), check=False)
             if p.returncode != 0:
@@ -1224,7 +1276,7 @@ def save(repo, branch, remote, expected, message, d=DEFAULT_DIR, code_branch=Non
         write_manifest(repo, d)
         git(repo, "add", "-A", "-f", "--", d)          # -f: un .gitignore non puo' escludere artefatti in silenzio
         git(repo, "commit", "-q", "-m", message)
-    local = verify(repo, "HEAD", d, repo_paths=repo_paths)   # verifica del TREE committato prima di pubblicare
+    local = verify(repo, "HEAD", d, repo_paths=repo_paths, remote=remote)   # verifica del TREE committato prima di pubblicare
     untracked = [l for l in out(repo, "status", "--porcelain", "--ignored", "--", d).splitlines()
                  if not l.endswith(".pyc") and "__pycache__" not in l]
     if untracked:
@@ -1286,6 +1338,8 @@ def bootstrap(url, branch, dest, d=DEFAULT_DIR, code_branch=None, agent=None, re
     if code_branch:
         git(dest, "fetch", "-q", "origin", f"{code_branch}:refs/remotes/origin/{code_branch}", check=False)
     fetch_keep_refs(dest)                           # gli SHA citati restano risolvibili dopo squash + delete branch
+    for path in dict.fromkeys((repo_paths or {}).values()):
+        refresh_published_refs(path, "origin")      # --repo-path: prove di pubblicazione su ref freschi
     pull_fetch = fetch_pull_heads(dest, d)          # fallback GitHub refs/pull/<N>/head, solo se serve
     try:
         report = verify(dest, "HEAD", d, repo_paths=repo_paths)

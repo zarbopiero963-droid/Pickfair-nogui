@@ -66,6 +66,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Quinto giro: in un repository esterno (`--repo-path`) `source_sha` pubblicato e la `base_sha` di un
   `INTEGRATED_VERIFIED` senza commit di handoff devono essere raggiungibili da un ref pubblicato, non solo presenti
   nel clone locale.
+  Sesto giro: la prova di pubblicazione vale solo sul remoto del repository dichiarato (`origin` con URL
+  `owner/name`, mai un fork o un altro remote); `save` e `bootstrap` aggiornano e potano i remote-tracking prima di
+  verificare, quindi un branch cancellato sul remoto non fa pubblicare un checkpoint invalido.
 - **Test automation universale, lato GitHub (#586, PF-VPS-UNIVERSAL-TEST-AUTOMATION-01), in dry-run:**
   - catalogo versionato delle suite (`tests/catalog/pf-test-catalog.json`, argv fisso, ambiente, rischio, risorse, timeout);
   - richiesta di test firmata Sigstore da `pf-test-request.yml`, solo da main;

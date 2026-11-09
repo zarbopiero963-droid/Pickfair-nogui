@@ -267,9 +267,14 @@ Sono obbligatori `checkpoint_repo`, `source_repo`, `target_repo`, `handoff_ref`,
 
 **Mai** nel repository della catena per ripiego, nemmeno se l'oggetto si trova lì. Un repository non disponibile,
 uno SHA irrisolto o un commit di handoff non pubblicato sul suo `handoff_branch` sono problemi di **riferimento**
-⇒ `NEEDS_RECONCILIATION`, mai `READY`, `DURABLE` o `VERIFIED`. «Pubblicato» significa contenuto in un remote-tracking
-`refs/remotes/*/<handoff_branch>` del percorso passato, oppure in `refs/heads/<handoff_branch>` se il percorso è il
-bare remoto stesso. In un repository esterno anche `source_sha` (con `source_published: true`) e la `base_sha` di un
+⇒ `NEEDS_RECONCILIATION`, mai `READY`, `DURABLE` o `VERIFIED`. «Pubblicato» significa contenuto nel remote-tracking
+`refs/remotes/origin/<handoff_branch>` del percorso passato (per la catena: il remote di `save`), oppure in
+`refs/heads/<handoff_branch>` se il percorso è il bare remoto stesso. Un altro remote dello stesso clone (un fork) non
+conta mai. Il percorso di `--repo-path NOME=PERCORSO` deve essere davvero NOME: l'URL del suo `origin` (o il percorso,
+per un bare) termina con `owner/name`; altrimenti è un problema di riferimento. `save` e `bootstrap` aggiornano e
+potano i remote-tracking dei branch prima della verifica (i `refs/remotes/origin/pull/*` del fallback restano): un
+branch cancellato sul remoto non vale come prova per un ref locale obsoleto, e un remoto irraggiungibile dà
+`PUBLISHED_REFS_REFRESH_FAILED` (exit 5) senza pubblicare nulla. In un repository esterno anche `source_sha` (con `source_published: true`) e la `base_sha` di un
 `INTEGRATED_VERIFIED` senza commit di handoff devono essere raggiungibili da un ref pubblicato (`refs/remotes/*`,
 oppure `refs/heads/*` nel bare): un commit presente solo nel clone locale non basta. Al `save` e al readback, la sorgente pubblicata e il commit di handoff che stanno nel repository
 della catena passano anche per la classificazione di durabilità (§6-ter, etichette `handoff[i]` e
@@ -332,7 +337,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali: 138 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 141 test, inclusi lease/fencing, patch del codice, recover, durabilità degli SHA, transizione squash e handoff di patch anche fra repository) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo

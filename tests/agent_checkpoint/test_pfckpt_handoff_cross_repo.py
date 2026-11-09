@@ -30,7 +30,8 @@ def _git(*args, **kw):
 def target(world):
     """Bare B con main (base), commit di handoff su HBRANCH e integrazione su main; clone fresco per --repo-path."""
     t = world["tmp"]
-    bare = str(t / "target.git")
+    bare = str(t / (TARGET + ".git"))                 # percorso del remoto = owner/name, come su GitHub
+    os.makedirs(os.path.dirname(bare), exist_ok=True)
     _git("init", "-q", "--bare", bare)
     w = str(t / "target_work")
     _git("init", "-q", w); _cfg(w)
@@ -445,3 +446,56 @@ def test_external_base_of_a_verified_handoff_must_be_published(world, target):
     err = expect(2, pfckpt.verify, chain_ckpt(world, target, "bad", [r2]), "HEAD", D, repo_paths={TARGET: other})
     assert _only_reference_problems(err) and any("base_sha" in p for p in err.detail["problems"])
 
+
+
+# ================================================================== Sol #615 (8e40302e): remoto del target, ref freschi
+def test_integration_only_on_a_fork_remote_is_not_published_on_target_main(world, target):
+    """Un commit su `fork/main` (altro remote dello stesso clone) non e' sul main di target_repo."""
+    hsha, htree = publish_handoff(target)
+    clone = target_clone(target)
+    _cfg(clone)
+    sh(clone, "checkout", "-q", "-B", "fk", target["base"])
+    _git("-C", clone, "apply", "--index", "-", input=target["patch"])
+    sh(clone, "commit", "-q", "-m", "integrazione solo nel fork")
+    fsha = sh(clone, "rev-parse", "HEAD")
+    fork = str(target["tmp"] / "fork.git")
+    _git("init", "-q", "--bare", fork)
+    sh(clone, "remote", "add", "fork", fork)
+    sh(clone, "push", "-q", "fork", "HEAD:refs/heads/main")
+    sh(clone, "fetch", "-q", "fork")
+    assert sh(clone, "rev-parse", "HEAD^{tree}") == htree
+    r = rec(world, target, "INTEGRATED_VERIFIED", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree,
+            integration_sha=fsha, integration_tree=htree)
+    err = expect(2, pfckpt.verify, chain_ckpt(world, target, "c", [r]), "HEAD", D, repo_paths={TARGET: clone})
+    assert _only_reference_problems(err)
+    assert any("integration_sha non pubblicato su main" in p for p in err.detail["problems"])
+
+
+def test_repo_path_whose_origin_is_a_fork_is_not_the_target(world, target):
+    """Un clone il cui origin e' un fork (stessi oggetti, altro repository) non vale come target_repo."""
+    a = _durable_no_artifact(world, target, "c")
+    fork = str(target["tmp"] / "evil" / "Pickfair-nogui.git")
+    _git("clone", "-q", "--bare", "--no-local", target["bare"], fork)
+    fclone = str(target["tmp"] / "fork_clone")
+    _git("clone", "-q", "--no-local", fork, fclone)
+    assert pfckpt.verify(a, "HEAD", D, repo_paths={TARGET: target_clone(target)})["handoffs"][0]["handoff_proven"]
+    err = expect(2, pfckpt.verify, a, "HEAD", D, repo_paths={TARGET: fclone})
+    assert _only_reference_problems(err) and any("origin del percorso" in p for p in err.detail["problems"])
+
+
+def test_save_never_proves_publication_on_a_stale_remote_tracking_ref(world, target):
+    """Branch di handoff cancellato sul remoto dopo il clone: il remote-tracking locale e' obsoleto. `save` lo
+    aggiorna prima di verificare e non pubblica nulla."""
+    hsha, htree = publish_handoff(target)
+    clone = target_clone(target)
+    assert pfckpt._published_on(clone, hsha, HBRANCH)
+    sh(target["bare"], "update-ref", "-d", f"refs/heads/{HBRANCH}")      # l'oggetto resta, il branch no
+    r = rec(world, target, "DURABLE", handoff_branch=HBRANCH, handoff_sha=hsha, handoff_tree=htree)
+    a = agent(world, "c")
+    os.makedirs(os.path.join(a, D, "handoff"), exist_ok=True)
+    open(os.path.join(a, D, "handoff", "c.patch"), "wb").write(target["patch"])
+    exp = next_state(a, world, repository=CHAIN, handoffs=[r])
+    expect(2, pfckpt.save, a, BR, "origin", exp, "handoff su ref obsoleto", D, agent="claude-c",
+           repo_paths={TARGET: clone})
+    assert pfckpt.remote_head(a, "origin", BR) == exp, "nessun checkpoint pubblicato"
+    assert not pfckpt._published_on(clone, hsha, HBRANCH), "remote-tracking potato"
