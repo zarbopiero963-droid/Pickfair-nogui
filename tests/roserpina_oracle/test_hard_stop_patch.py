@@ -184,3 +184,41 @@ def test_esposizione_non_e_drawdown_ma_i_cap_di_esposizione_restano(tmp_path) ->
     assert _cap(c) == "" and c.rc.mode != RuntimeMode.LOCKDOWN
     assert c.rc.mm.fresh_caps_reason(cash=100, order_exposure=1, total_exposure=31, event_exposure=1) == \
         "supera_max_total_exposure"
+
+
+def test_sblocco_rifiutato_con_ordini_incerti(tmp_path) -> None:
+    c = _breach(tmp_path)
+    read(c, 100)
+    c.rc._mark_uncertain("K", 1, customer_ref="r")
+    out = _unlock(c, operation_id="op-u")
+    assert out["unlocked"] is False and out["reason"] == "ordini_incerti_presenti", out
+    assert _cap(c) != ""
+
+
+@pytest.mark.xfail(strict=True, reason="RO-DD-08 (patch 15960bac): picco non salvato senza hard stop configurato => "
+                                       "ingressi ammessi e dopo il riavvio il LOCKDOWN cumulativo usa il picco vecchio")
+def test_picco_non_salvato_poi_riavvio_il_lockdown_cumulativo_non_si_perde(tmp_path, monkeypatch) -> None:
+    """RO-DD-04 + regola 1: il LOCKDOWN usa il picco persistente. Senza hard stop assoluto/percentuale configurato,
+    un picco salito (100 -> 120) ma NON salvato, seguito da un riavvio, non deve far ripartire dal vecchio picco:
+    cassa 100 dopo il riavvio = 16,7 % dal picco reale 120 >= lockdown 15 % => nessun nuovo ingresso."""
+    from core.money_management import DeskMode
+    c = build(tmp_path, max_drawdown_abs=None, lockdown_drawdown_pct=15.0)
+    read(c, 100)
+    real = c.db.save_settings
+
+    def save(values):
+        if KEY in (values or {}):
+            raise OSError("disk full")
+        return real(values)
+    monkeypatch.setattr(c.db, "save_settings", save)
+    read(c, 120)                                                   # picco reale 120, non salvato
+    entered_before_restart = _signal(c, "1.631")
+    monkeypatch.undo()
+    c2 = build(tmp_path, max_drawdown_abs=None, lockdown_drawdown_pct=15.0)
+    read(c2, 100)
+    led = O.Ledger()
+    led.read(100), led.read(120), led.read(100)
+    assert O.stop_reached(led.drawdown_pct(), 15)
+    assert entered_before_restart is False or (c2.rc._desk_mode() == DeskMode.LOCKDOWN), (
+        "picco non salvato: dopo il riavvio la perdita dal picco reale non e' piu' vista", entered_before_restart,
+        _state(c2))

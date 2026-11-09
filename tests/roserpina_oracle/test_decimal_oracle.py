@@ -11,6 +11,8 @@ from __future__ import annotations
 from decimal import Decimal
 from fractions import Fraction
 
+import importlib.util
+
 import pytest
 
 from core import stake_precision, validators
@@ -18,6 +20,10 @@ from core.money_management import RoserpinaMoneyManagement
 from core.pnl_engine import PnLEngine
 from tests.risk_config_fixtures import legacy_test_config
 from tests.roserpina_oracle import oracle as O
+
+# Correzione D-1/D-2/D-3 (Claude B, keep/roserpina-d1-drawdown-20261109 @15960bac): verificata da Claude D il 09/11.
+# Su un albero senza la correzione i difetti restano xfail strict; con la correzione devono passare.
+D1_FIX = importlib.util.find_spec("core.drawdown_hard_stop") is not None
 
 
 # ------------------------------------------------------------------ soglie esatte
@@ -33,14 +39,14 @@ def test_cap_rifiuta_oltre_il_limite(amount, cap) -> None:
     assert validators.exceeds_cap(float(amount), float(cap)) is True
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DEC-01: tolleranza relativa 1e-9 in exceeds_cap")
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DEC-01: tolleranza relativa 1e-9 in exceeds_cap")
 @pytest.mark.parametrize("amount,cap", [("60.0000000001", "60"), ("60.00000005", "60"), ("100000.00009", "100000")])
 def test_ro_dec_01_nessuna_tolleranza_oltre_il_limite(amount, cap) -> None:
     assert not O.admitted_by_cap(amount, cap)
     assert validators.exceeds_cap(float(amount), float(cap)) is True, f"{amount} ammesso con limite {cap}"
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DEC-01: il cap assoluto Roserpina eredita la tolleranza")
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DEC-01: il cap assoluto Roserpina eredita la tolleranza")
 def test_ro_dec_01b_cap_assoluto_e_cap_percentuale_del_mm() -> None:
     assert validators.absolute_cap_reason("max_order_exposure", 60, 0, 60.0000000001) != ""
     mm = RoserpinaMoneyManagement(legacy_test_config(max_single_bet_pct=5.0, max_total_exposure_pct=60.0,
@@ -73,7 +79,7 @@ def test_rischio_back_lay_al_centesimo(side, stake, price, rischio) -> None:
     assert O.cents(code) == O.cents(rischio)
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DEC-02 (P3): rischio LAY in float binario, non Decimal esatto")
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DEC-02 (P3): rischio LAY in float binario, non Decimal esatto")
 def test_ro_dec_02_rischio_lay_esatto() -> None:
     assert Decimal(str(validators.order_exposure_or_inf("LAY", 2.27, 1.44))) == Decimal("0.9988")
 

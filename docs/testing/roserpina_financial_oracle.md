@@ -98,3 +98,21 @@ Test del contratto: `test_contratto_*` (PASS dove il codice gia' rispetta, xfail
 3. RO-REC-01 FIXED o accettato dall'owner come limite noto (con 10+ tavoli i crash moltiplicano i tavoli bloccati).
 4. Campagna 5 e oracoli di questo branch tutti PASS (nessun xfail residuo tra quelli sopra) sullo SHA pubblicato.
 5. Per SL/TP/trailing: catena F-02/F-04/F-03 con D-C4-01/02 integrata, oppure campagna dichiarata senza protezioni.
+
+## 5. Verifica indipendente della correzione D-1/D-2/D-3 (09/11/2026)
+
+SHA `15960bac13883113c0445da5fb15328e99586c0f` (Claude B, branch di conservazione `keep/roserpina-d1-drawdown-20261109`,
+base main `6519794b`, nessuna PR), con la copia di Claude D degli oracoli e `--runxfail`.
+
+| Voce | Esito |
+|---|---|
+| RO-DD-01, 01b (reset), RO-DD-02 (picco sulla cassa), RO-DD-03 x2 (esposizione/riserva non sono perdita), RO-DD-04 (lockdown cumulativo), RO-DD-05 (hard stop % in SIM), RO-DD-07 (blocco alla lettura) | PASS |
+| RO-DEC-01 x4 (nessuna tolleranza), RO-DEC-02 (LAY in Decimal) | PASS |
+| e2e campagna 5: RO-DD-01, RO-DD-06 (blocco dopo riavvio), RO-DD-07 (blocco al settlement); 7 verifiche gia' PASS | PASS (nessuna regressione) |
+| `test_hard_stop_patch.py`: picco persistito, blocco dopo riavvio / rientro / limite tolto, auto-reset, 6 stati corrotti, lettura e scrittura che falliscono, sblocco (requisiti, ordini incerti, picco non ribasato, riblocco, operation_id monouso, salvataggio fallito), nessun chiamante MCP/Control API, cap di esposizione invariati | PASS (22) |
+| **RO-DD-08** (nuovo, patch): picco NON salvato senza hard stop configurato => ingressi ammessi e, dopo un riavvio, il LOCKDOWN cumulativo (RO-DD-04) riparte dal picco salvato piu' basso (100 invece di 120: 16,7 % reale, nessun LOCKDOWN al 15 %) | **FAIL** (xfail strict) |
+| RO-REC-01, RO-CAP-01 | aperti (PR successive, fuori dalla patch) |
+| Windows; `seq` regressivo fra processi (record unico, limite dichiarato da Claude B); comando owner locale di sblocco (non ancora scritto) | NOT_RUN |
+
+Gli xfail dei difetti chiusi sono condizionati alla correzione (`D1_FIX`, presenza di `core.drawdown_hard_stop`): restano
+xfail su un albero senza correzione e devono passare con la correzione. Al merge il condizionale si toglie.

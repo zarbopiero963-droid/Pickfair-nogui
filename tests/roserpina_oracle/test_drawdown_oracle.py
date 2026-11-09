@@ -13,10 +13,16 @@ I difetti sono xfail STRICT: diventano PASS (e il marcatore va tolto) solo quand
 """
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 from core.money_management import DeskMode
 from tests.roserpina_oracle import oracle as O
+
+# Correzione D-1/D-2/D-3 (Claude B, keep/roserpina-d1-drawdown-20261109 @15960bac): verificata da Claude D il 09/11.
+# Su un albero senza la correzione i difetti restano xfail strict; con la correzione devono passare.
+D1_FIX = importlib.util.find_spec("core.drawdown_hard_stop") is not None
 from tests.roserpina_oracle.harness import build, read
 
 
@@ -50,7 +56,7 @@ def test_auto_reset_scatta_sul_drawdown_di_cassa_e_non_sotto_soglia(tmp_path) ->
 
 
 # ------------------------------------------------------------------ RED
-@pytest.mark.xfail(strict=True, reason="RO-DD-01: l'auto-reset cancella perdite maturate per max_drawdown_abs")
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DD-01: l'auto-reset cancella perdite maturate per max_drawdown_abs")
 def test_ro_dd_01_reset_non_cancella_la_perdita_ai_fini_del_drawdown_assoluto(tmp_path) -> None:
     c = build(tmp_path)
     led = O.Ledger()
@@ -61,7 +67,7 @@ def test_ro_dd_01_reset_non_cancella_la_perdita_ai_fini_del_drawdown_assoluto(tm
     assert _cap(c) == "max_drawdown_abs_active", "il reset ha cancellato 16 EUR di perdita"
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DD-01: perdita cumulativa oltre il limite assoluto attraverso piu' reset")
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DD-01: perdita cumulativa oltre il limite assoluto attraverso piu' reset")
 def test_ro_dd_01b_perdita_cumulativa_attraverso_piu_reset(tmp_path) -> None:
     c = build(tmp_path, max_drawdown_abs=20.0)
     led = O.Ledger()
@@ -77,7 +83,7 @@ def test_ro_dd_01b_perdita_cumulativa_attraverso_piu_reset(tmp_path) -> None:
     assert blocked_at == expected_at, f"limite 20 EUR: atteso blocco a {expected_at}, bloccato a {blocked_at}"
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DD-02: picco del RiskDesk sul disponibile, non sulla cassa")
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DD-02: picco del RiskDesk sul disponibile, non sulla cassa")
 def test_ro_dd_02_picco_sulla_cassa_non_sul_disponibile(tmp_path) -> None:
     """Grok DD5: reset con esposizione aperta (cassa 91,07 = disponibile 87,11 + impegnato 3,96), poi perdite fino a
     cassa 77,50 senza esposizione: perdita dal picco di cassa 13,57 >= 10 => blocco; il codice misura 9,61."""
@@ -92,7 +98,7 @@ def test_ro_dd_02_picco_sulla_cassa_non_sul_disponibile(tmp_path) -> None:
     assert _cap(c) == "max_drawdown_abs_active", (c.rc.risk_desk.equity_peak, c.rc.risk_desk.bankroll_current)
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DD-03: l'esposizione aperta conta come perdita (falso LOCKDOWN)")
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DD-03: l'esposizione aperta conta come perdita (falso LOCKDOWN)")
 def test_ro_dd_03_esposizione_aperta_non_e_drawdown(tmp_path) -> None:
     c = build(tmp_path)
     led = O.Ledger()
@@ -103,7 +109,7 @@ def test_ro_dd_03_esposizione_aperta_non_e_drawdown(tmp_path) -> None:
     assert c.rc._desk_mode() != DeskMode.LOCKDOWN
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DD-04 (decisione owner PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL-20261109): "
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DD-04 (decisione owner PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL-20261109): "
                                        "lockdown sul drawdown cumulativo dal picco persistente")
 def test_ro_dd_04_lockdown_raggiungibile_con_perdita_graduale(tmp_path) -> None:
     c = build(tmp_path, max_drawdown_abs=None, lockdown_drawdown_pct=20.0)
@@ -134,7 +140,7 @@ def test_ro_dd_05_controllo_ingresso_ammesso_senza_perdita(tmp_path) -> None:
     assert _signal(c, "1.501") is True
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DD-05: max_drawdown_hard_stop_pct applicato solo in LIVE (parita' SIM/LIVE)")
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DD-05: max_drawdown_hard_stop_pct applicato solo in LIVE (parita' SIM/LIVE)")
 def test_ro_dd_05_hard_stop_percentuale_anche_in_sim(tmp_path) -> None:
     """Parita' (PF-OD12-12, contratto regola 5): in SIM, picco 100 e cassa 89 (11 % >= 10 %) => nessun ingresso."""
     c = build(tmp_path, max_drawdown_abs=None, max_drawdown_hard_stop_pct=10.0)
@@ -157,7 +163,7 @@ def test_contratto_esempio_owner_picco_120_cassa_107_blocca(tmp_path) -> None:
     assert _cap(c) == "max_drawdown_abs_active"
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DD-03 (contratto regola 3): la riserva non e' una perdita")
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DD-03 (contratto regola 3): la riserva non e' una perdita")
 def test_contratto_esempio_owner_con_riserva_aperta_non_blocca(tmp_path) -> None:
     """Picco 120, cassa verificata 115 = disponibile 105 + impegnato 10: drawdown 5 < 10 => nessun blocco."""
     c = build(tmp_path)
@@ -184,7 +190,7 @@ def test_contratto_cassa_non_verificabile_nessuna_cassa_valida(tmp_path) -> None
     assert c.rc.risk_desk.cash_basis()[0] is None
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DD-07 (contratto): blocco alla variazione finanziaria, non solo al segnale")
+@pytest.mark.xfail(not D1_FIX, strict=True, reason="RO-DD-07 (contratto): blocco alla variazione finanziaria, non solo al segnale")
 def test_ro_dd_07_blocco_alla_variazione_finanziaria_senza_segnale(tmp_path) -> None:
     """Una lettura del conto che porta il drawdown oltre il limite deve mettere il runtime in blocco SUBITO; oggi il
     controllo avviene solo all'ammissione del segnale successivo."""
