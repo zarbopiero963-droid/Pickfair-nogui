@@ -77,6 +77,16 @@ def default_path() -> str:
     return percorsi.dentro("blackbox", "blackbox.sqlite")
 
 
+def normalize_uuid(value: Any) -> Any:
+    """Forma unica degli identificativi uuid nel registro: 32 hex minuscoli. La forma con trattini (contratto MCP
+    1.14.0) e quella compatta sono lo STESSO id, in scrittura e in lettura: mai due righe o due risultati diversi."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    compact = s.replace("-", "").lower()
+    return compact if len(compact) == 32 and all(c in "0123456789abcdef" for c in compact) else s
+
+
 def utc_iso(ts: float) -> str:
     """ISO-8601 UTC al microsecondo, con `Z`."""
     return _dt.datetime.fromtimestamp(float(ts), tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -181,11 +191,13 @@ class BlackBox:
         rec: Dict[str, Any] = {f: None for f in RECORD_FIELDS}
         rec.update({k: v for k, v in kw.items()})
         rec.update(
-            event_id=str(kw.get("event_id") or uuid.uuid4().hex), ts_utc=kw.get("ts_utc") or utc_iso(now),
+            event_id=normalize_uuid(kw.get("event_id") or uuid.uuid4().hex), ts_utc=kw.get("ts_utc") or utc_iso(now),
             mono=float(self._mono()), session_id=self.session_id, pid=self.pid, source=source,
             category=event_journal.category_of(event_type), type=event_type,
             severity=event_journal.normalize_level(kw.get("severity")), phase=phase, outcome=outcome,
         )
+        for f in ("correlation_id", "causation_id"):
+            rec[f] = normalize_uuid(rec[f])
         for f in _JSON_FIELDS:
             rec[f] = _redact(rec[f]) if rec[f] is not None else None
         for f in RECORD_FIELDS:

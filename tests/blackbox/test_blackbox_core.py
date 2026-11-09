@@ -337,3 +337,21 @@ def test_get_and_uuid_filters_accept_the_dashed_uuid_form(tmp_path):
     assert r.get(dashed)["event_id"] == eid
     assert r.query({"correlation_id": "01234567-89ab-cdef-0123-456789abcdef"})["records"][0]["event_id"] == eid
     assert r.get("non-un-uuid") is None
+
+
+def test_dashed_and_compact_uuid_are_one_identifier_on_write_too(tmp_path):
+    """Owner: le due forme dell'uuid devono risolversi allo stesso id interno, senza duplicati."""
+    from core import blackbox_query as q
+    box = bb.BlackBox(str(tmp_path / "b.sqlite")).open()
+    box.start_session()
+    dashed = "ABCDEF01-2345-6789-ABCD-EF0123456789"
+    eid = box.record("API_REQUEST", source="CONTROL_API", phase="RESULT", outcome="VERIFIED", event_id=dashed,
+                     causation_id="00000000-0000-0000-0000-000000000001")
+    assert eid == "abcdef0123456789abcdef0123456789"
+    with pytest.raises(Exception):                                     # stesso id nell'altra forma: nessun duplicato
+        box.record("API_REQUEST", source="CONTROL_API", phase="RESULT", outcome="VERIFIED", critical=True,
+                   event_id="abcdef0123456789abcdef0123456789")
+    r = q.BlackBoxReader(box)
+    assert r.get(dashed)["event_id"] == r.get(eid)["event_id"] == eid
+    assert r.query({"causation_id": "00000000000000000000000000000001"})["records"][0]["event_id"] == eid
+    assert len(r.query({"type": "API_REQUEST"})["records"]) == 1

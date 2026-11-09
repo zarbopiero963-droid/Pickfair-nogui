@@ -107,9 +107,11 @@ Dettagli:
   - oltre 20 record/s (raffica 40) le richieste vengono aggregate in `coalesced_before`;
   - se restituisce False, la Control API risponde 503.
 - **`order_id`:** id locale dell'ordine nel ledger, indicizzato; permette la cronologia di un ordine anche prima che
-  l'exchange restituisca un `bet_id`. È visibile anche nella vista esterna (non è un segreto).
-- **Identificativi:** `event_id` è un uuid a 32 hex; `get` e i filtri `correlation_id`/`causation_id` accettano anche
-  la forma con trattini (contratto MCP 1.14.0).
+  l'exchange restituisca un `bet_id`. Nel motore è un uuid casuale (`trading_engine`), senza dati del cliente: è
+  visibile anche nella vista esterna. `order_ref`/`customer_ref` restano nascosti.
+- **Identificativi:** `event_id`, `correlation_id` e `causation_id` sono uuid registrati in forma unica, 32 hex
+  minuscoli: la forma con trattini (contratto MCP 1.14.0) viene normalizzata sia in scrittura sia in lettura, quindi le
+  due forme sono lo stesso id (nessun duplicato, stessi risultati).
 - **Vista esterna** (Control API/MCP): `order_ref`/`customer_ref` non vengono esposti. I campi non registrati sono
   elencati in `not_recorded`.
 - **Lacune:** le lacune dichiarate tornano come tali in `gaps_in_range`, mai ricostruite.

@@ -28,11 +28,7 @@ FILTERS = ("from_ts", "to_ts", "session_id", "table_id", "market_id", "selection
 _UUID_FIELDS = ("correlation_id", "causation_id")
 
 
-def normalize_event_id(value: Any) -> str:
-    """Un uuid nella forma con trattini (MCP, contratto 1.14.0) e' lo stesso id della forma registrata a 32 hex."""
-    s = str(value).strip()
-    compact = s.replace("-", "").lower()
-    return compact if len(compact) == 32 and all(c in "0123456789abcdef" for c in compact) else s
+normalize_event_id = bb.normalize_uuid          # una sola regola per scrittura e lettura
 EXTERNAL_HIDDEN = ("order_ref",)
 _EQ = {f: f for f in FILTERS if f not in ("from_ts", "to_ts")}
 RATE_PER_S = 20.0
