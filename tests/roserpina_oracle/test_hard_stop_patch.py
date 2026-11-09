@@ -23,6 +23,8 @@ from tests.roserpina_oracle.test_drawdown_oracle import _signal            # noq
 KEY = "roserpina.drawdown_hard_stop_state"
 # RO-DD-08 corretto in 3f59fa67 (retry del salvataggio, ingressi negati finche' il picco non e' salvato)
 DD08_FIX = hasattr(__import__("core.drawdown_hard_stop", fromlist=["DrawdownHardStop"]).DrawdownHardStop, "retry_persist")
+# RO-DD-09 corretto in c2a7a499 (marker del picco su file se il DB non salva)
+DD09_FIX = hasattr(__import__("core.drawdown_hard_stop", fromlist=["_marker_path"]), "_marker_path")
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -226,7 +228,7 @@ def test_picco_non_salvato_poi_riavvio_il_lockdown_cumulativo_non_si_perde(tmp_p
         _state(c2))
 
 
-@pytest.mark.xfail(strict=True, reason="RO-DD-09 (rischio residuo, doppio guasto): rialzo del picco non salvato, perdita "
+@pytest.mark.xfail(not DD09_FIX, strict=True, reason="RO-DD-09 (rischio residuo, doppio guasto): rialzo del picco non salvato, perdita "
                                        "delle posizioni gia' aperte durante il guasto, riavvio => picco vecchio, LOCKDOWN perso")
 def test_ro_dd_09_rialzo_non_salvato_poi_perdita_e_riavvio(tmp_path, monkeypatch) -> None:
     """Con 3f59fa67 gli ingressi sono bloccati mentre il picco non e' salvato (RO-DD-08 chiuso). Resta il doppio guasto:
@@ -248,3 +250,70 @@ def test_ro_dd_09_rialzo_non_salvato_poi_perdita_e_riavvio(tmp_path, monkeypatch
     c2 = build(tmp_path, max_drawdown_abs=None, lockdown_drawdown_pct=15.0)
     read(c2, 100)
     assert c2.rc._desk_mode() == DeskMode.LOCKDOWN and _signal(c2, "1.641") is False, _state(c2)
+
+
+# ------------------------------------------------------------------ marker RO-DD-09 (<db>.drawdown_peak_pending.json)
+def _marker(c):
+    return c.db.db_path + ".drawdown_peak_pending.json"
+
+
+def _db_save_fails(c, monkeypatch):
+    real = c.db.save_settings
+
+    def save(values):
+        if KEY in (values or {}):
+            raise OSError("disk full")
+        return real(values)
+    monkeypatch.setattr(c.db, "save_settings", save)
+
+
+def test_marker_consumato_solo_dopo_il_salvataggio_riuscito(tmp_path, monkeypatch) -> None:
+    if not DD09_FIX:
+        pytest.skip("marker RO-DD-09 assente")
+    c = build(tmp_path, max_drawdown_abs=None)
+    read(c, 100)
+    _db_save_fails(c, monkeypatch)
+    read(c, 120)
+    assert os.path.exists(_marker(c))
+    monkeypatch.undo()
+    from database import Database
+    real_cls_save = Database.save_settings
+
+    def cls_save(self, values):
+        if KEY in (values or {}):
+            raise OSError("disk full")
+        return real_cls_save(self, values)
+    monkeypatch.setattr(Database, "save_settings", cls_save)      # guasto attivo PRIMA del riavvio (restore in __init__)
+    c2 = build(tmp_path, max_drawdown_abs=None)                     # riavvio con il DB ANCORA in errore
+    assert os.path.exists(_marker(c2)), "marker cancellato senza che il picco sia tornato nel DB"
+    assert O.D(str(c2.rc._hard_stop().peak)) == O.D("120") if hasattr(c2.rc._hard_stop(), "peak") else True
+    monkeypatch.undo()
+    c3 = build(tmp_path, max_drawdown_abs=None)                     # DB disponibile
+    read(c3, 100)
+    assert O.D(_state(c3)["peak"]) == O.D("120") and not os.path.exists(_marker(c3))
+
+
+def test_marker_corrotto_nessun_ingresso(tmp_path) -> None:
+    if not DD09_FIX:
+        pytest.skip("marker RO-DD-09 assente")
+    c0 = build(tmp_path)
+    read(c0, 100)
+    with open(_marker(c0), "w") as fh:
+        fh.write("{rotto")
+    c = build(tmp_path)
+    read(c, 100)
+    assert "stato_illeggibile" in _cap(c) and _signal(c, "1.651") is False
+
+
+def test_marker_con_superamento_vale_al_riavvio(tmp_path, monkeypatch) -> None:
+    """Superamento registrato SOLO nel marker (DB in errore): al riavvio il blocco resta."""
+    if not DD09_FIX:
+        pytest.skip("marker RO-DD-09 assente")
+    c = build(tmp_path)
+    read(c, 100)
+    _db_save_fails(c, monkeypatch)
+    read(c, 88)                                                     # superamento 12 >= 10 col DB in errore
+    monkeypatch.undo()
+    c2 = build(tmp_path)
+    read(c2, 100)
+    assert _cap(c2) != "" and _signal(c2, "1.652") is False

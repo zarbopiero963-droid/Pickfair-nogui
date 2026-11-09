@@ -129,3 +129,20 @@ xfail su un albero senza correzione e devono passare con la correzione. Al merge
   durevole indipendente (scatola nera BB-1 su file separato, letture verificate del conto) o dal ledger dei settlement;
   oppure blocco degli ingressi al riavvio finche' una procedura owner non conferma il picco quando l'ultimo stato
   conosciuto e' "salvataggio in sospeso".
+
+### 5-ter. Riverifica su `c2a7a49944c74bcaa4f407bb568ddcc59fb3e726` (correzione RO-DD-09)
+
+Marker `<db>.drawdown_peak_pending.json` scritto in modo atomico quando il DB non salva il picco; al riavvio vale il
+picco piu' alto fra DB e marker, un superamento in uno dei due vale, il marker si cancella solo dopo il salvataggio
+riuscito nel DB, marker illeggibile => fail-closed.
+
+- RO-DD-09: PASS (picco 120 ritrovato dopo il riavvio, LOCKDOWN al 15 %).
+- Verifiche indipendenti del marker: consumato solo dopo il salvataggio riuscito (guasto attivo prima del riavvio,
+  marker conservato); marker corrotto => nessun ingresso; superamento registrato solo nel marker => blocco al riavvio.
+  Tutte PASS.
+- Non regressione: oracoli e meccanismo 78/78 con `--runxfail`; campagna 5: 10 PASS, 2 xfail attesi (RO-REC-01,
+  RO-CAP-01).
+- Limite residuo dichiarato da Claude B come KNOWN_LIMITATION: DB e marker entrambi non scrivibili, poi riavvio con
+  lo storage ripristinato => picco vecchio. Durante il guasto gli ingressi restano negati (RO-DD-08). E' un percorso
+  fail-open su denaro reale: per CLAUDE.md una KNOWN_LIMITATION di questo tipo richiede l'accettazione esplicita e
+  tracciata dell'owner, non la classificazione di un agente.
