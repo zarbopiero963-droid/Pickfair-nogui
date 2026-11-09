@@ -17,6 +17,7 @@ SL/TP/trailing con un esito di chiusura, nessun segreto nei record, ordini uscit
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -62,10 +63,20 @@ def _ref(o: Dict[str, Any]) -> str:
     return str(o.get("customerOrderRef") or o.get("order_ref") or o.get("ref") or "")
 
 
+def _ts(value: Any) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
 def check(records: List[Dict[str, Any]], exchange_orders: Iterable[Dict[str, Any]] = (),
-          settlements: Iterable[Dict[str, Any]] = (), secrets: Iterable[str] = ()) -> List[str]:
+          settlements: Iterable[Dict[str, Any]] = (), secrets: Iterable[str] = (),
+          hash_fn=None) -> List[str]:
     """``exchange_orders`` = STORICO completo degli ordini sull'exchange (anche annullati/decaduti, es. lo stub del
-    microstake); ``settlements`` = netti per mercato dell'exchange; ``secrets`` = valori che non devono comparire."""
+    microstake); ``settlements`` = netti per mercato dell'exchange; ``secrets`` = valori che non devono comparire;
+    ``hash_fn(prev_hash, record)`` = verifica della catena (default: quella della scatola finta)."""
+    hash_fn = hash_fn or chain_hash
     problems: List[str] = []
     recs = sorted(records, key=lambda r: r.get("seq") or 0)
     by_id = {r["event_id"]: r for r in recs if r.get("event_id")}
@@ -78,7 +89,7 @@ def check(records: List[Dict[str, Any]], exchange_orders: Iterable[Dict[str, Any
         problems.append("SEQ_GAP")
     prev = GENESIS if recs and recs[0].get("seq") == 1 else (recs[0].get("prev_hash") if recs else GENESIS)
     for r in recs:
-        if r.get("prev_hash") != prev or chain_hash(prev, r) != r.get("hash"):
+        if r.get("prev_hash", prev) != prev or hash_fn(prev, r) != r.get("hash"):
             problems.append(f"CHAIN_BROKEN:{r.get('seq')}")
             break
         prev = r["hash"]
@@ -129,11 +140,11 @@ def check(records: List[Dict[str, Any]], exchange_orders: Iterable[Dict[str, Any
                 problems.append(f"BUFFERED_WITHOUT_GAP:{a.get('order_ref')}")
 
     def in_unknown_gap(order):
-        ts = str(order.get("placedDate") or "")
+        ts = _ts(order.get("placedDate"))
         for g in gaps:
             d = g.get("data") or {}
-            if g.get("outcome") == "UNKNOWN" and d.get("from_ts") and d.get("to_ts") and ts \
-                    and str(d["from_ts"]) <= ts <= str(d["to_ts"]):
+            lo, hi = _ts(d.get("from_ts")), _ts(d.get("to_ts"))
+            if g.get("outcome") == "UNKNOWN" and lo and hi and ts and lo <= ts <= hi:
                 return True
         return False
 

@@ -266,11 +266,13 @@ def test_block_segreto_nel_registro() -> None:
     assert "SECRET_LEAK" not in _check(_campagna(), secrets=["SEGRETO-XYZ"])
 
 
-def test_vocabolario_nuovo_dichiarato_e_assente_da_event_categories() -> None:
-    """I tipi che l'oracolo richiede e che oggi mancano sono esattamente quelli in NEW_TYPES (lista per Claude B)."""
+def test_vocabolario_nuovo_tutto_o_niente() -> None:
+    """I tipi nuovi richiesti dall'oracolo (NEW_TYPES, lista consegnata a Claude B) sono tutti assenti prima di BB-1 e
+    tutti presenti da BB-1 in poi: mai una parte sola (un anello della catena non registrabile)."""
     from core.event_journal import EVENT_CATEGORIES                       # {categoria: frozenset(tipi)}
     known = {t for types in EVENT_CATEGORIES.values() for t in types}
-    assert not (set(oracle.NEW_TYPES) & known), set(oracle.NEW_TYPES) & known
+    present = set(oracle.NEW_TYPES) & known
+    assert present in (set(), set(oracle.NEW_TYPES)), sorted(set(oracle.NEW_TYPES) - present)
     for t in (oracle.REQUEST, oracle.RESPONSE, oracle.MATCHED, oracle.CANCEL_REQUEST, oracle.CANCEL_RESPONSE,
               oracle.CASHOUT_REQUEST, oracle.CASHOUT_EXECUTED, oracle.SETTLEMENT):
         assert t in known, t

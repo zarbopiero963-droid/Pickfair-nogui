@@ -3492,9 +3492,10 @@
         "tests/blackbox_completeness/fake_blackbox.py",
         "tests/blackbox_completeness/oracle.py",
         "tests/blackbox_completeness/scenario.py",
-        "tests/blackbox_completeness/test_completeness_oracle.py"
+        "tests/blackbox_completeness/test_completeness_oracle.py",
+        "tests/blackbox_completeness/test_real_bb1.py"
       ],
-      "max_files": 7
+      "max_files": 8
     }
   }
 }

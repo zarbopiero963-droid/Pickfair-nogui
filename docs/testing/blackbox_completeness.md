@@ -56,3 +56,14 @@ L'oracolo accetta questi due casi e nient'altro:
 
 Una richiesta mancante fuori da questi due casi resta `MISSING_REQUEST`. La regola provvisoria precedente («uscita senza
 richiesta se una lacuna successiva ne dichiara il ref») e' rifiutata da un test BLOCK.
+
+## Verifica sul registro reale di BB-1 (`test_real_bb1.py`)
+
+Saltato dove `core.blackbox` non esiste; sull'albero di BB-1 legge il registro reale con `BlackBoxReader.query`
+(vista interna; esterna per D1) e verifica la catena di hash con una reimplementazione propria (`independent_hash`),
+non con `verify()`. Voci: catena finanziaria completa e BLOCK per anello; causation/correlation; `seq` contigua con 4
+processi; manomissione; caso 1 (guasto di scrittura: ingresso rifiutato, uscita nel buffer, GAP e RECOVERED); crash
+con SIGKILL e `UNCLEAN_TERMINATION`; caso 2; D1 alias `ord_`; D2 UTC canonico ed `exchange_ts`; D3 secondo runtime.
+Due requisiti emersi: il record non dichiara se la scrittura era critica (la durabilita' prima dell'invio e' provata
+sul comportamento) e gli ESITI delle uscite devono essere registrati critici e bufferizzabili (BB-3), altrimenti un
+guasto li scarta (`test_block_esiti_delle_uscite_non_critici_persi_nel_guasto`).
