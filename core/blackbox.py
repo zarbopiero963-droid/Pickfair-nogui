@@ -50,11 +50,11 @@ SEVERITIES = event_journal.LEVELS
 RECORD_FIELDS = (
     "event_id", "ts_utc", "mono", "session_id", "session_seq", "pid", "source", "component", "category", "type",
     "severity", "phase", "outcome", "state_before", "state_after", "values_before", "values_after", "reason_code",
-    "reason", "correlation_id", "causation_id", "table_id", "market_id", "selection_id", "order_ref", "bet_id",
-    "strategy", "data",
+    "reason", "correlation_id", "causation_id", "table_id", "market_id", "selection_id", "order_id", "order_ref",
+    "bet_id", "strategy", "data",
 )
 _JSON_FIELDS = ("values_before", "values_after", "data")
-_INDEXED = ("ts_utc", "session_id", "type", "category", "table_id", "market_id", "order_ref", "bet_id",
+_INDEXED = ("ts_utc", "session_id", "type", "category", "table_id", "market_id", "order_id", "order_ref", "bet_id",
             "correlation_id")
 GENESIS_HASH = "0" * 64
 ENV_PATH = "PICKFAIR_BLACKBOX_PATH"
@@ -191,7 +191,7 @@ class BlackBox:
         for f in RECORD_FIELDS:
             if f not in _JSON_FIELDS and isinstance(rec[f], str):
                 rec[f] = event_log.redact_secrets(rec[f])
-            if f in ("table_id", "market_id", "selection_id", "order_ref", "bet_id") and rec[f] is not None:
+            if f in ("table_id", "market_id", "selection_id", "order_id", "order_ref", "bet_id") and rec[f] is not None:
                 rec[f] = str(rec[f])
         return rec
 

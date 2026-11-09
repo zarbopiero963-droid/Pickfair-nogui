@@ -307,3 +307,33 @@ def test_request_hook_returns_false_when_the_store_is_unavailable(tmp_path):
     box = _box(tmp_path)
     _break(box)
     assert bq.BlackBoxReader(box).request_hook({"phase": "ATTEMPT", "route": "/v1/x", "request_id": "r"}) is False
+
+
+def test_order_id_is_recorded_indexed_filterable_and_visible_outside(tmp_path):
+    """Richiesta di Claude C (MCP-01p): l'id locale dell'ordine del ledger, indicizzato, per la cronologia di un ordine
+    prima che l'exchange restituisca un bet_id. Non e' un segreto: resta nella vista esterna (order_ref no)."""
+    from core import blackbox_query as q
+    box = bb.BlackBox(str(tmp_path / "b.sqlite")).open()
+    box.start_session()
+    box.record("ORDER_PLACE_REQUEST", source="STRATEGY", phase="ATTEMPT", outcome="PENDING", order_id=42,
+               order_ref="cust-ref-riservato")
+    box.record("ORDER_PLACE_REQUEST", source="STRATEGY", phase="ATTEMPT", outcome="PENDING", order_id=43)
+    idx = [r[1] for r in box._conn.execute("PRAGMA index_list(events)")]
+    assert "ix_events_order_id" in idx
+    res = q.BlackBoxReader(box).query({"order_id": "42"})
+    assert [r["order_id"] for r in res["records"]] == ["42"]
+    assert "order_ref" not in res["records"][0]
+    assert box.verify()["ok"]
+
+
+def test_get_and_uuid_filters_accept_the_dashed_uuid_form(tmp_path):
+    from core import blackbox_query as q
+    box = bb.BlackBox(str(tmp_path / "b.sqlite")).open()
+    box.start_session()
+    eid = box.record("API_REQUEST", source="CONTROL_API", phase="RESULT", outcome="VERIFIED",
+                     correlation_id="0123456789abcdef0123456789abcdef")
+    dashed = f"{eid[:8]}-{eid[8:12]}-{eid[12:16]}-{eid[16:20]}-{eid[20:]}".upper()
+    r = q.BlackBoxReader(box)
+    assert r.get(dashed)["event_id"] == eid
+    assert r.query({"correlation_id": "01234567-89ab-cdef-0123-456789abcdef"})["records"][0]["event_id"] == eid
+    assert r.get("non-un-uuid") is None

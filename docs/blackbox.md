@@ -99,13 +99,17 @@ Contratto con il lato Control API/MCP di Claude C (`BLACKBOX_READ_CONTRACT.md` 1
 | `request_hook(record)` | registra una richiesta HTTP della Control API |
 
 Dettagli:
-- **Filtri ammessi:** `from_ts`, `to_ts` (ISO UTC), `session_id`, `table_id`, `market_id`, `selection_id`, `bet_id`,
+- **Filtri ammessi:** `from_ts`, `to_ts` (ISO UTC), `session_id`, `table_id`, `market_id`, `selection_id`, `order_id`, `bet_id`,
   `strategy`, `type`, `category`, `source`, `severity`, `phase`, `outcome`, `correlation_id`, `causation_id`. Un
   filtro sconosciuto è un errore.
 - **`request_hook(record)`:**
   - una richiesta servita produce ATTEMPT e RESULT; una richiesta rifiutata solo RESULT;
   - oltre 20 record/s (raffica 40) le richieste vengono aggregate in `coalesced_before`;
   - se restituisce False, la Control API risponde 503.
+- **`order_id`:** id locale dell'ordine nel ledger, indicizzato; permette la cronologia di un ordine anche prima che
+  l'exchange restituisca un `bet_id`. È visibile anche nella vista esterna (non è un segreto).
+- **Identificativi:** `event_id` è un uuid a 32 hex; `get` e i filtri `correlation_id`/`causation_id` accettano anche
+  la forma con trattini (contratto MCP 1.14.0).
 - **Vista esterna** (Control API/MCP): `order_ref`/`customer_ref` non vengono esposti. I campi non registrati sono
   elencati in `not_recorded`.
 - **Lacune:** le lacune dichiarate tornano come tali in `gaps_in_range`, mai ricostruite.

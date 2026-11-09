@@ -23,8 +23,16 @@ from core import blackbox as bb
 MAX_LIMIT = 500
 DEFAULT_LIMIT = 100
 MAX_CHAIN_DEPTH = 20
-FILTERS = ("from_ts", "to_ts", "session_id", "table_id", "market_id", "selection_id", "bet_id", "strategy", "type",
-           "category", "source", "severity", "phase", "outcome", "correlation_id", "causation_id")
+FILTERS = ("from_ts", "to_ts", "session_id", "table_id", "market_id", "selection_id", "order_id", "bet_id", "strategy",
+           "type", "category", "source", "severity", "phase", "outcome", "correlation_id", "causation_id")
+_UUID_FIELDS = ("correlation_id", "causation_id")
+
+
+def normalize_event_id(value: Any) -> str:
+    """Un uuid nella forma con trattini (MCP, contratto 1.14.0) e' lo stesso id della forma registrata a 32 hex."""
+    s = str(value).strip()
+    compact = s.replace("-", "").lower()
+    return compact if len(compact) == 32 and all(c in "0123456789abcdef" for c in compact) else s
 EXTERNAL_HIDDEN = ("order_ref",)
 _EQ = {f: f for f in FILTERS if f not in ("from_ts", "to_ts")}
 RATE_PER_S = 20.0
@@ -98,6 +106,8 @@ class BlackBoxReader:
                 where.append("ts_utc >= ?"); args.append(str(v))
             elif k == "to_ts":
                 where.append("ts_utc <= ?"); args.append(str(v))
+            elif k in _UUID_FIELDS:
+                where.append(f"{k} = ?"); args.append(normalize_event_id(v))
             else:
                 where.append(f"{k} = ?"); args.append(str(v))
         as_of = self._rows("SELECT COALESCE(MAX(seq), 0) AS s FROM events")[0]["s"]
@@ -121,7 +131,7 @@ class BlackBoxReader:
     def get(self, event_id: str, chain_depth: int = 0, *, external: bool = True) -> Optional[Dict[str, Any]]:
         if not isinstance(chain_depth, int) or isinstance(chain_depth, bool) or not 0 <= chain_depth <= MAX_CHAIN_DEPTH:
             raise QueryError(f"chain_depth fuori da 0..{MAX_CHAIN_DEPTH}")
-        rows = self._rows("SELECT * FROM events WHERE event_id = ?", (str(event_id),))
+        rows = self._rows("SELECT * FROM events WHERE event_id = ?", (normalize_event_id(event_id),))
         if not rows:
             return None
         ev = _row_to_event(rows[0], external)
