@@ -93,6 +93,8 @@ def run() -> tuple[bool, list[str]]:
 
 def main() -> int:
     allowed, why = ref_allowed(dict(os.environ))
+    if allowed and not os.environ.get("GITHUB_ACTIONS"):
+        print("RELEASE_GATE: controllo dei ref NON applicato (esecuzione fuori da GitHub Actions)")
     if not allowed:
         print("RELEASE_GATE: FAIL")
         print(f"  - {why}")

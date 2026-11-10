@@ -17,18 +17,40 @@ passano solo se il rifiuto sicuro e' vero. Nessun test apre finestre, avvia il r
 from __future__ import annotations
 
 import importlib
+import os
 import sys
+import threading
 from contextlib import contextmanager
 
 # (modulo, classe, metodo): raggiungere uno di questi punti senza scatola nera = percorso operativo non protetto.
+# Costruttori e avvio dei componenti operativi, piu' i metodi d'invio (coprono istanze create senza __init__).
 OPERATIVE_ENTRY_POINTS = (
     ("core.runtime_controller", "RuntimeController", "__init__"),
     ("core.runtime_controller", "RuntimeController", "start"),
     ("core.trading_engine", "TradingEngine", "__init__"),
     ("headless_main", "HeadlessApp", "__init__"),
     ("mini_gui", "MiniPickfairGUI", "__init__"),
+    ("order_manager", "OrderManager", "__init__"),
+    ("services.betfair_service", "BetfairService", "__init__"),
+    ("services.betfair_service", "BetfairService", "connect"),
+    ("services.betfair_service", "BetfairService", "get_live_client"),
     ("betfair_client", "BetfairClient", "__init__"),
+    ("betfair_client", "BetfairClient", "place_bet"),
+    ("betfair_client", "BetfairClient", "cancel_orders"),
+    ("betfair_client", "BetfairClient", "replace_orders"),
+    ("simulation_broker", "SimulationBroker", "__init__"),
+    ("simulation_broker", "SimulationBroker", "place_bet"),
+    ("simulation_broker", "SimulationBroker", "cancel_orders"),
+    ("simulation_broker", "SimulationBroker", "replace_orders"),
 )
+# Avvio di processi figli: un runtime in un sottoprocesso sfuggirebbe alle sentinelle (audit Claude D).
+PROCESS_SPAWN_POINTS = (
+    ("subprocess", "Popen", "__init__"),
+    ("multiprocessing.process", "BaseProcess", "start"),
+)
+OS_SPAWN_FUNCTIONS = ("fork", "forkpty", "execv", "execve", "execvp", "execvpe", "execl", "execle", "execlp",
+                      "execlpe", "posix_spawn", "posix_spawnp", "spawnv", "spawnve", "spawnl", "spawnle", "system")
+THREAD_JOIN_TIMEOUT_S = 5.0
 
 
 class OperativePathReached(BaseException):
@@ -38,14 +60,19 @@ class OperativePathReached(BaseException):
 @contextmanager
 def operative_paths_guarded(monkeypatch):
     reached = []
-    for module_name, class_name, method in OPERATIVE_ENTRY_POINTS:
+
+    def make_sentinel(where):
+        def sentinel(*args, **kwargs):
+            reached.append(where)
+            raise OperativePathReached(where)
+        return sentinel
+
+    for module_name, class_name, method in OPERATIVE_ENTRY_POINTS + PROCESS_SPAWN_POINTS:
         cls = getattr(importlib.import_module(module_name), class_name)
-
-        def sentinel(self, *args, _where=f"{module_name}.{class_name}.{method}", **kwargs):
-            reached.append(_where)
-            raise OperativePathReached(_where)
-
-        monkeypatch.setattr(cls, method, sentinel)
+        monkeypatch.setattr(cls, method, make_sentinel(f"{module_name}.{class_name}.{method}"))
+    for name in OS_SPAWN_FUNCTIONS:
+        if hasattr(os, name):
+            monkeypatch.setattr(os, name, make_sentinel(f"os.{name}"))
     yield reached
 
 
@@ -60,15 +87,25 @@ def blackbox_unavailable(monkeypatch):
 
 
 def assert_launcher_is_safe(monkeypatch, launcher, argv):
-    """Con la scatola nera non disponibile `launcher()` non raggiunge alcun punto operativo e termina con errore."""
+    """Con la scatola nera non disponibile `launcher()` non raggiunge alcun punto operativo, non avvia processi figli,
+    non lascia thread che lo facciano dopo, e termina con errore. `sys.exit(n)` vale come rc n; rc 0 o None => rosso.
+    (`os._exit` nel launcher termina pytest: il test manca dal rapporto e `scripts/release_gate.py` e' rosso.)"""
     blackbox_unavailable(monkeypatch)
     monkeypatch.setattr(sys, "argv", list(argv))
+    threads_before = set(threading.enumerate())
     with operative_paths_guarded(monkeypatch) as reached:
         try:
             rc = launcher()
         except OperativePathReached:
             rc = None
+        except SystemExit as exc:
+            rc = exc.code
+        late = [t for t in threading.enumerate() if t not in threads_before]
+        for thread in late:
+            thread.join(THREAD_JOIN_TIMEOUT_S)
+        still_running = [t.name for t in late if t.is_alive()]
     assert reached == [], f"percorso operativo raggiunto senza scatola nera: {reached}"
+    assert not still_running, f"thread avviati dal launcher ancora attivi: {still_running}"
     assert rc not in (0, None), f"il launcher deve terminare con errore senza scatola nera, rc={rc!r}"
 
 

@@ -8942,6 +8942,30 @@
         "tests/packaging/test_release_requires_blackbox.py"
       ],
       "rationale": "Audit Claude D L1 (#626): un workflow_dispatch su un branch diverso da main produrrebbe artifact con workflow e test di quel branch."
+    },
+    {
+      "id": "rg_threads_not_joined",
+      "module": "tests.packaging.release_gate_launchers",
+      "area": "release_gate",
+      "file": "tests/packaging/release_gate_launchers.py",
+      "original": "        still_running = [t.name for t in late if t.is_alive()]\n",
+      "mutated": "        still_running = []\n",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Audit Claude D (#626): un launcher che avvia il motore in un thread differito passerebbe il gate, perche' la verifica avverrebbe prima che il thread raggiunga il motore."
+    },
+    {
+      "id": "rg_child_processes_not_guarded",
+      "module": "tests.packaging.release_gate_launchers",
+      "area": "release_gate",
+      "file": "tests/packaging/release_gate_launchers.py",
+      "original": "    for module_name, class_name, method in OPERATIVE_ENTRY_POINTS + PROCESS_SPAWN_POINTS:\n",
+      "mutated": "    for module_name, class_name, method in OPERATIVE_ENTRY_POINTS:\n",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Audit Claude D (#626): un launcher che avvia il runtime in un sottoprocesso sfuggirebbe alle sentinelle del processo del gate."
     }
   ]
 }

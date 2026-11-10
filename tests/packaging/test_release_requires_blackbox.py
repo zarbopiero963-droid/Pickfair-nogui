@@ -102,6 +102,9 @@ def test_build_and_release_cannot_run_without_a_green_release_gate(workflow):
     gate_runs = [str(step["run"]).strip() for step in gate["steps"] if "run" in step]
     assert GATE_COMMAND in gate_runs, f"il gate deve eseguire esattamente {GATE_COMMAND!r}"
     assert not any("pytest" in run for run in gate_runs), "il gate non chiama pytest direttamente (niente -k/-m/filtri)"
+    for block in [gate, *gate["steps"]]:
+        overridden = {"GITHUB_ACTIONS", "GITHUB_REF", "PYTEST_ADDOPTS"} & set(block.get("env") or {})
+        assert not overridden, f"{workflow}: il gate non deve sovrascrivere {sorted(overridden)}"
     for name, job in jobs.items():
         for where, block in [(name, job), *((f"{name}/step", st) for st in job.get("steps", []))]:
             assert "continue-on-error" not in block, f"{workflow}: continue-on-error in {where}"
@@ -137,7 +140,7 @@ def test_wiring_check_detects_status_bypasses(mutation, tmp_path, monkeypatch):
         test_build_and_release_cannot_run_without_a_green_release_gate("build-linux.yml")
 
 
-@pytest.mark.parametrize("mutation", ["needs_removed", "gate_pytest_filter", "gate_command_changed"])
+@pytest.mark.parametrize("mutation", ["needs_removed", "gate_pytest_filter", "gate_command_changed", "ref_suppressed"])
 def test_wiring_check_detects_dependency_and_command_bypasses(mutation, tmp_path, monkeypatch):
     jobs = _jobs("build-windows-exe.yml")
     gate_steps = jobs["release-gate"]["steps"]
@@ -145,6 +148,8 @@ def test_wiring_check_detects_dependency_and_command_bypasses(mutation, tmp_path
         jobs["build"].pop("needs")
     elif mutation == "gate_pytest_filter":
         gate_steps.append({"run": "python -m pytest -k headless tests/packaging/release_gate_launchers.py"})
+    elif mutation == "ref_suppressed":
+        jobs["release-gate"]["env"] = {"GITHUB_ACTIONS": ""}
     else:
         for step in gate_steps:
             if str(step.get("run", "")).strip() == GATE_COMMAND:
@@ -368,9 +373,53 @@ def _fake_bb1g_refuses_but_exits_zero():
     return 0
 
 
+def _fake_bb1g_builds_engine_in_a_thread():
+    import threading
+    from core.trading_engine import TradingEngine
+
+    def later():
+        try:
+            TradingEngine()
+        except BaseException:  # noqa: BLE001
+            pass
+
+    threading.Thread(target=later, name="motore-in-ritardo").start()
+    return 1
+
+
+def _fake_bb1g_runs_the_runtime_in_a_child_process():
+    import subprocess
+    import sys as _sys
+
+    try:
+        subprocess.Popen([_sys.executable, "-c", "import headless_main; headless_main.HeadlessApp()"])
+    except BaseException:  # noqa: BLE001
+        pass
+    return 1
+
+
+def _fake_bb1g_sys_exit_zero():
+    import sys as _sys
+
+    _sys.exit(0)
+
+
+def _fake_bb1g_sends_through_an_instance_without_init():
+    import simulation_broker
+
+    broker = simulation_broker.SimulationBroker.__new__(simulation_broker.SimulationBroker)
+    try:
+        broker.place_bet()
+    except BaseException:  # noqa: BLE001
+        pass
+    return 1
+
+
 @pytest.mark.parametrize("fake", [
     _fake_bb1g_builds_runtime_then_fails, _fake_bb1g_hides_the_engine, _fake_bb1g_ignores_install_failure,
-    _fake_bb1g_logs_in_to_betfair, _fake_bb1g_refuses_but_exits_zero,
+    _fake_bb1g_logs_in_to_betfair, _fake_bb1g_refuses_but_exits_zero, _fake_bb1g_builds_engine_in_a_thread,
+    _fake_bb1g_runs_the_runtime_in_a_child_process, _fake_bb1g_sys_exit_zero,
+    _fake_bb1g_sends_through_an_instance_without_init,
 ])
 def test_gate_check_rejects_fake_bb1g(fake, monkeypatch):
     checks = _gate_checks()
@@ -395,6 +444,17 @@ def test_gate_check_accepts_a_real_safe_refusal(monkeypatch):
     checks.assert_launcher_is_safe(monkeypatch, correct_bb1g, ["pickfair"])
 
 
+def test_gate_check_accepts_a_safe_refusal_by_sys_exit(monkeypatch):
+    checks = _gate_checks()
+
+    def refuses_with_sys_exit():
+        import sys as _sys
+
+        _sys.exit(1)
+
+    checks.assert_launcher_is_safe(monkeypatch, refuses_with_sys_exit, ["pickfair"])
+
+
 def test_gate_guards_every_operative_entry_point():
     """Le sentinelle coprono costruzione e avvio del runtime, motore, app headless, GUI e client Betfair."""
     points = set(_gate_checks().OPERATIVE_ENTRY_POINTS)
@@ -403,7 +463,15 @@ def test_gate_guards_every_operative_entry_point():
             ("core.trading_engine", "TradingEngine", "__init__"),
             ("headless_main", "HeadlessApp", "__init__"),
             ("mini_gui", "MiniPickfairGUI", "__init__"),
-            ("betfair_client", "BetfairClient", "__init__")} <= points
+            ("betfair_client", "BetfairClient", "__init__"),
+            ("order_manager", "OrderManager", "__init__"),
+            ("services.betfair_service", "BetfairService", "get_live_client"),
+            ("simulation_broker", "SimulationBroker", "__init__"),
+            ("simulation_broker", "SimulationBroker", "place_bet"),
+            ("betfair_client", "BetfairClient", "place_bet")} <= points
+    spawn = set(_gate_checks().PROCESS_SPAWN_POINTS)
+    assert ("subprocess", "Popen", "__init__") in spawn
+    assert {"fork", "execv", "system", "posix_spawn"} <= set(_gate_checks().OS_SPAWN_FUNCTIONS)
 
 
 # --- ref ammessi (audit Claude D, L1): niente artifact da branch diversi da main ---
@@ -427,3 +495,22 @@ def test_gate_main_refuses_an_unauthorized_ref_before_running_tests(monkeypatch)
     monkeypatch.setenv("GITHUB_REF", "refs/heads/feature-x")
     monkeypatch.setattr(gate, "run", lambda: (_ for _ in ()).throw(AssertionError("non deve eseguire i test")))
     assert gate.main() == 1
+
+
+def test_gate_check_rejects_a_thread_still_running_after_the_launcher(monkeypatch):
+    """Un thread lasciato vivo dal launcher potrebbe costruire il motore DOPO la verifica: il gate lo rifiuta."""
+    import threading
+
+    checks = _gate_checks()
+    monkeypatch.setattr(checks, "THREAD_JOIN_TIMEOUT_S", 0.1)
+    release = threading.Event()
+
+    def launcher_leaving_a_thread():
+        threading.Thread(target=release.wait, args=(5,), name="motore-differito").start()
+        return 1
+
+    try:
+        with pytest.raises(AssertionError, match="ancora attivi"):
+            checks.assert_launcher_is_safe(monkeypatch, launcher_leaving_a_thread, ["pickfair"])
+    finally:
+        release.set()
