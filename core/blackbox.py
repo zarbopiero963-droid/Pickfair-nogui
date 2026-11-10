@@ -186,9 +186,15 @@ def private_file(path: str) -> None:
 
 # Ciclo 13 #617 (C12-A, decisione owner "SOLUZIONE 2"): SQLite apre database, `-wal` e `-shm` PER NOME, quindi i
 # controlli sul singolo file non bastano. La cartella del registro viene aperta e verificata come descrittore, e
-# ogni percorso usato poi (SQLite compreso) passa da `/proc/self/fd/<dirfd>/<nome>`: resta nella cartella
-# verificata anche se quella cartella o una superiore vengono sostituite. Senza questo ancoraggio la scatola nera
-# non parte (Windows e sistemi senza /proc/self/fd: rifiuto, nessun fallback verso percorsi ordinari).
+# ogni percorso usato poi passa da `/proc/self/fd/<dirfd>/<nome>`. Per i file aperti da PYTHON (lock, owner, dump
+# nativi) questo e' un vero ancoraggio: restano nella cartella verificata anche se quella cartella o una superiore
+# vengono sostituite. SQLITE invece NON e' ancorato (ciclo 17, harness 19 di Grok su 49d05a8b): risolve
+# `/proc/self/fd/<dirfd>` nel percorso testuale della cartella al momento della connessione (`PRAGMA
+# database_list`) e da li' apre per nome database, `-wal`, `-shm` e journal. La protezione dei file di SQLite e'
+# quindi data dalle regole sui permessi del percorso (nessun symlink, cartelle superiori di root o del bot non
+# scrivibili da altri salvo sticky, cartella del registro privata): vale contro un ALTRO utente locale, non contro
+# lo stesso utente o root. Senza `/proc/self/fd` la scatola nera non parte (Windows e sistemi senza
+# /proc/self/fd: rifiuto, nessun fallback verso percorsi ordinari).
 PROC_FD_DIR = "/proc/self/fd"
 
 
@@ -327,7 +333,7 @@ class BlackBox:
         self._alias_key: Optional[bytes] = None
         self._writer_lock = None                       # file lock del runtime (un solo scrittore per registro)
         self._dirfd: Optional[int] = None              # cartella verificata, tenuta aperta (ciclo 13, C12-A)
-        self._fs_path: str = self.path                 # percorso ancorato usato per OGNI apertura
+        self._fs_path: str = self.path                 # /proc/self/fd: ancorato per Python, non per SQLite
 
     # ------------------------------------------------------------------ apertura e schema
     def open(self) -> "BlackBox":
@@ -357,7 +363,7 @@ class BlackBox:
                 conn = self._connect(self._fs_path, isolation_level=None, check_same_thread=False, timeout=30)
                 if identity is not None:
                     # difesa in profondita', PRIMA della prima istruzione (SQLite non ha ancora scritto nulla): il
-                    # file che il nome indica ora deve essere quello verificato. Non sostituisce l'ancoraggio.
+                    # file che il nome indica ora deve essere quello verificato. Riduce la finestra, non la chiude.
                     now = os.stat(self._fs_path)
                     if (now.st_dev, now.st_ino) != identity:
                         conn.close()
@@ -481,7 +487,7 @@ class BlackBox:
                     self._conn.close()
                 finally:
                     self._conn = None
-            self._release_dir()                        # dopo SQLite: l'ancoraggio vale per tutta la sua vita
+            self._release_dir()                        # dopo SQLite: il descrittore resta aperto finche' serve
 
     def _release_dir(self) -> None:
         if self._dirfd is not None:

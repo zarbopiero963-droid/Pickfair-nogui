@@ -23,6 +23,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   **Requisiti di avvio:** la cartella del registro deve essere privata (dell'utente del bot, non scrivibile da
   gruppo/altri, non un symlink) e la piattaforma deve offrire `/proc/self/fd` (Linux). Altrimenti la scatola nera
   non parte e il bot non si avvia: nessuna correzione automatica dei permessi, nessun avvio su Windows/macOS.
+  **Limite dichiarato:** nessun symlink in nessun componente del percorso; la protezione dei file di SQLite vale
+  contro un altro utente locale, non contro lo stesso utente del bot o root (SQLite apre per percorso risolto,
+  vedi `docs/blackbox.md`).
 
 ### Fixed
 - **G7-R06 (#586): AMBIGUOUS gia' regolato non rinasce come riserva al riavvio.** La ricostruzione F018 chiude gli

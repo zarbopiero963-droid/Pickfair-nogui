@@ -282,8 +282,8 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
   | `fault.log` | lettura, append (`faulthandler`), rimozione del nome | `open_private`; rimozione del solo nome | protetto |
   | `fault.log.pending` | lettura, append, rinomina in `.1` | `open_private`; rinomina solo se file privato | protetto |
   | `fault.log.1` | append, sostituito dalla rinomina | `open_private`; `os.replace` sostituisce il nome, non segue link | protetto |
-  | registro `.sqlite` | creazione esclusiva, poi apertura da SQLite | verifica `O_PATH`, SQLite su percorso **ancorato** alla cartella verificata | protetto (ciclo 13) |
-  | `-wal` / `-shm` | creati e aperti da SQLite | verifica `O_PATH` se esistono; SQLite li apre nella cartella ancorata | protetto (ciclo 13) |
+  | registro `.sqlite` | creazione esclusiva, poi apertura da SQLite | verifica `O_PATH`; SQLite apre per **percorso risolto**, non ancorato (ciclo 17) | protetto dai permessi del percorso contro un altro utente locale; **non** contro lo stesso utente o root |
+  | `-wal` / `-shm` | creati e aperti da SQLite | verifica `O_PATH` se esistono; SQLite li apre per percorso risolto | come il registro `.sqlite` |
 
 - **Cartella privata e ancoraggio (ciclo 13, C12-A, decisione owner «soluzione 2»).** SQLite apre database, `-wal`
   e `-shm` per nome: proteggere i singoli file non basta. La regola è sulla cartella.
@@ -301,10 +301,19 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
      larghi viene **rifiutata** (`BLACKBOX_DIR_INSECURE`): proprietario e permessi non si toccano. Vale anche per
      `PICKFAIR_BLACKBOX_PATH`, senza eccezioni. Rimedio operativo: `chmod go-w` sulla cartella indicata, o una
      cartella dedicata. Attenzione alle cartelle create con `umask 002` (`0775`): vengono rifiutate.
-  3. **Tutto ancorato al descrittore.** Il descrittore resta aperto per tutta la vita del registro. SQLite e ogni
-     altro file (`.runtime.lock`, `.runtime.owner`, dump nativi) usano `/proc/self/fd/<dirfd>/<nome>`: database,
-     WAL, SHM, recovery e nuove connessioni restano nella cartella verificata anche se quella cartella o una
-     superiore vengono sostituite dopo. Nessun fallback verso il percorso ordinario.
+  3. **File aperti da Python ancorati al descrittore.** Il descrittore resta aperto per tutta la vita del
+     registro. `.runtime.lock`, `.runtime.owner` e i dump nativi si aprono con `/proc/self/fd/<dirfd>/<nome>`:
+     restano nella cartella verificata anche se quella cartella o una superiore vengono sostituite. Nessun
+     fallback verso il percorso ordinario.
+
+     **SQLite non è ancorato** (ciclo 17, correzione di quanto dichiarato nei cicli 13 e 16). Riceve lo stesso
+     percorso `/proc/self/fd/<dirfd>/blackbox.sqlite`, ma alla connessione lo risolve nel percorso testuale della
+     cartella (`PRAGMA database_list` lo mostra) e da lì apre **per nome** database, `-wal`, `-shm` e journal,
+     anche più tardi. Chi riesce a sostituire un componente del percorso tra la verifica e quelle aperture può
+     far finire i file di SQLite in un'altra cartella. Contro un altro utente locale la protezione è la catena di
+     permessi del punto 1: nessun symlink, cartelle superiori non scrivibili da altri (salvo sticky bit),
+     cartella del registro privata. Con queste regole un altro utente non può rinominare né sostituire i
+     componenti del bot.
   4. **File di SQLite verificati senza aprirli** (`check_private_name`, descrittore `O_PATH|O_NOFOLLOW`): symlink
      (anche pendenti), hardlink, file non regolari o di altri utenti sono rifiutati prima di `sqlite3.connect`.
      Si usa `O_PATH` perché chiudere un descrittore normale di un file rilascia tutti i lock POSIX del processo su
@@ -312,7 +321,8 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
      il runtime era in transazione lasciava entrare un altro scrittore. Difetto trovato e chiuso nel ciclo 13.
   5. **Difesa in profondità.** Dopo `sqlite3.connect` e prima della prima istruzione si confronta il file che il
      nome indica con quello verificato; se è cambiato l'apertura è rifiutata (`BLACKBOX_FILE_REPLACED`) senza che
-     SQLite abbia scritto. Non è la protezione principale: quella è l'ancoraggio.
+     SQLite abbia scritto. Non è la protezione principale, che resta la catena di permessi del punto 1, e riduce
+     la finestra senza chiuderla: `-wal` e `-shm` vengono aperti da SQLite più tardi.
 - **Registro durevole obbligatorio per il runtime (ciclo 15, rilievo Sol su `10c5728b`).** Il runtime parte solo
   su un registro **su disco**, nella cartella privata ancorata. `PICKFAIR_BLACKBOX_PATH=:memory:` (o qualsiasi
   registro senza cartella verificata) viene rifiutato con `BLACKBOX_NOT_DURABLE` da `acquire_runtime`, quindi da
@@ -330,3 +340,15 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
   privilegiato) che può scrivere in una cartella del percorso. **Non** copre un processo con lo **stesso utente**
   del bot né root: possono già scrivere direttamente i database, la configurazione e il codice, e nessun controllo
   sui permessi dello stesso utente li ferma.
+  - **Limite provato con lo stesso utente (ciclo 17).** Harness 19 di Grok su `49d05a8b`: un processo dello stesso
+    utente scambia in modo concorrente un componente del percorso con un symlink verso un'altra cartella privata.
+    I file di SQLite finiscono in quella cartella in 4 esecuzioni su 4. Il risultato **resta FAIL**: è un limite
+    noto e documentato, non un PASS.
+  - **Controprova con utenti diversi (Claude D, `49d05a8b`).** Attaccante `nobody` con 8 operazioni sul percorso
+    (rinomine, unlink, symlink, scritture) in tre layout: cartella privata, cartella sticky di root, genitore di
+    root `0755`. Esito: 0 deviazioni, 0 operazioni riuscite sui componenti del bot, database esterno intatto.
+    Il controllo con lo stesso utente nelle stesse condizioni riproduce la deviazione (11 e 16 su 40).
+  - Sono due evidenze distinte. La garanzia provata vale contro un **altro** utente locale. La garanzia «SQLite
+    resta nella cartella verificata anche se sostituita» è **ritirata**.
+  - Chiudere la finestra anche per lo stesso utente richiederebbe un VFS SQLite personalizzato, respinto
+    dall'owner.
