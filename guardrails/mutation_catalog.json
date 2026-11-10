@@ -18,7 +18,8 @@
     "trusted_gate",
     "trusted_dispatcher",
     "fullscope_tooling",
-    "blackbox"
+    "blackbox",
+    "release_gate"
   ],
   "mutations": [
     {
@@ -8845,6 +8846,174 @@
         "tests/blackbox/test_blackbox_runtime.py"
       ],
       "rationale": "Ciclo 16 #617 (Sol su 3b11e82a, decisione owner A1): risolvendo i symlink prima dei controlli, un link in una cartella scrivibile da altri aggira la verifica delle cartelle superiori e permette di deviare il registro."
+    },
+    {
+      "id": "rg_skipped_counted_as_passed",
+      "module": "scripts.release_gate",
+      "area": "release_gate",
+      "file": "scripts/release_gate.py",
+      "original": "_NOT_PASSED = (\"failure\", \"error\", \"skipped\")",
+      "mutated": "_NOT_PASSED = (\"failure\", \"error\")",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Addendum owner RELEASE GATE INTEGRITY (#626): un test obbligatorio saltato o xfail (skipped nel JUnit) conterebbe come superato e il gate diventerebbe verde senza prova."
+    },
+    {
+      "id": "rg_missing_test_ignored",
+      "module": "scripts.release_gate",
+      "area": "release_gate",
+      "file": "scripts/release_gate.py",
+      "original": "            reasons.append(f\"{name}: non raccolto o non eseguito\")",
+      "mutated": "            pass",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "#626: un test obbligatorio cancellato, rinominato o deselezionato non comparirebbe nel rapporto e il gate resterebbe verde."
+    },
+    {
+      "id": "rg_pytest_rc_ignored",
+      "module": "scripts.release_gate",
+      "area": "release_gate",
+      "file": "scripts/release_gate.py",
+      "original": "    if proc.returncode != 0:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "#626: un pytest fallito (rc != 0) con un rapporto apparentemente pulito non renderebbe rosso il gate."
+    },
+    {
+      "id": "rg_pytest_addopts_kept",
+      "module": "scripts.release_gate",
+      "area": "release_gate",
+      "file": "scripts/release_gate.py",
+      "original": "    env = {k: v for k, v in os.environ.items() if k not in (\"PYTEST_ADDOPTS\", \"PYTEST_PLUGINS\")}",
+      "mutated": "    env = dict(os.environ)",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "#626: filtri -k/-m iniettati con PYTEST_ADDOPTS potrebbero deselezionare i test di sicurezza. Vale anche per PYTEST_PLUGINS (plugin iniettati)."
+    },
+    {
+      "id": "rg_module_identity_not_checked",
+      "module": "scripts.release_gate",
+      "area": "release_gate",
+      "file": "scripts/release_gate.py",
+      "original": "        if case.get(\"classname\") != _CLASSNAME or name not in required:",
+      "mutated": "        if name not in required:",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "#626 (identita' dei test): un test omonimo in un altro modulo, innocuo, potrebbe sostituire il test di sicurezza."
+    },
+    {
+      "id": "rg_runtime_controller_not_guarded",
+      "module": "tests.packaging.release_gate_launchers",
+      "area": "release_gate",
+      "file": "tests/packaging/release_gate_launchers.py",
+      "original": "    (\"core.runtime_controller\", \"RuntimeController\", \"__init__\"),\n",
+      "mutated": "",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "OWNER GO PF-OWNER-626-SECURITY-HARDENING (D04): senza sentinella sul costruttore del runtime, una finta BB-1G che costruisce il motore per un'altra strada e poi esce con 1 passerebbe il gate."
+    },
+    {
+      "id": "rg_exit_code_not_checked",
+      "module": "tests.packaging.release_gate_launchers",
+      "area": "release_gate",
+      "file": "tests/packaging/release_gate_launchers.py",
+      "original": "    assert rc not in (0, None), f\"il launcher deve terminare con errore senza scatola nera, rc={rc!r}\"\n",
+      "mutated": "",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "#626: un launcher che non raggiunge il motore ma termina con 0 (avvio 'riuscito' senza scatola nera) passerebbe il gate."
+    },
+    {
+      "id": "rg_any_ref_allowed",
+      "module": "scripts.release_gate",
+      "area": "release_gate",
+      "file": "scripts/release_gate.py",
+      "original": "    if ref == \"refs/heads/main\" or ref.startswith(\"refs/tags/v\"):\n",
+      "mutated": "    if True:\n",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Audit Claude D L1 (#626): un workflow_dispatch su un branch diverso da main produrrebbe artifact con workflow e test di quel branch."
+    },
+    {
+      "id": "rg_threads_not_joined",
+      "module": "tests.packaging.release_gate_launchers",
+      "area": "release_gate",
+      "file": "tests/packaging/release_gate_launchers.py",
+      "original": "        still_running = [t.name for t in late if t.is_alive()]\n",
+      "mutated": "        still_running = []\n",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Audit Claude D (#626): un launcher che avvia il motore in un thread differito passerebbe il gate, perche' la verifica avverrebbe prima che il thread raggiunga il motore."
+    },
+    {
+      "id": "rg_child_processes_not_guarded",
+      "module": "tests.packaging.release_gate_launchers",
+      "area": "release_gate",
+      "file": "tests/packaging/release_gate_launchers.py",
+      "original": "    for module_name, class_name, method in OPERATIVE_ENTRY_POINTS + PROCESS_SPAWN_POINTS:\n",
+      "mutated": "    for module_name, class_name, method in OPERATIVE_ENTRY_POINTS:\n",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Audit Claude D (#626): un launcher che avvia il runtime in un sottoprocesso sfuggirebbe alle sentinelle del processo del gate."
+    },
+    {
+      "id": "rg_plugin_autoload_kept",
+      "module": "scripts.release_gate",
+      "area": "release_gate",
+      "file": "scripts/release_gate.py",
+      "original": "    env[\"PYTEST_DISABLE_PLUGIN_AUTOLOAD\"] = \"1\"\n",
+      "mutated": "",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Audit Claude D (#626): un plugin pytest caricato automaticamente o da PYTEST_PLUGINS potrebbe riscrivere gli esiti (makereport) e rendere verde il gate."
+    },
+    {
+      "id": "rg_integrity_not_run",
+      "module": "scripts.release_gate",
+      "area": "release_gate",
+      "file": "scripts/release_gate.py",
+      "original": "               f\"--junitxml={report}\", GATE_MODULE, INTEGRITY_MODULE]",
+      "mutated": "               f\"--junitxml={report}\", GATE_MODULE]",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Rilievo GPT-6.1 Sol su b5c7c117 (#626): senza inventario e cablaggio nel gate, una build da tag con un launcher non censito passerebbe."
+    },
+    {
+      "id": "rg_descendant_threads_not_rechecked",
+      "module": "tests.packaging.release_gate_launchers",
+      "area": "release_gate",
+      "file": "tests/packaging/release_gate_launchers.py",
+      "original": "            if not late or remaining <= 0:\n                break\n",
+      "mutated": "            break\n",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Rilievo GPT-6.1 Sol su b5c7c117 (#626): un thread che crea un discendente e termina lascerebbe il discendente fuori dal controllo."
+    },
+    {
+      "id": "rg_missing_integrity_check_ignored",
+      "module": "scripts.release_gate",
+      "area": "release_gate",
+      "file": "scripts/release_gate.py",
+      "original": "        reasons.append(f\"integrita' {name}: non raccolto o non eseguito\")\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Audit Claude D (#626): cancellare un controllo d'integrita' (per esempio quello sulle funzioni di stato negli if) lascerebbe il gate verde."
     }
   ]
 }

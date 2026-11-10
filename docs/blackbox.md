@@ -332,10 +332,13 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
 - **Invarianti di avvio, verificati dai test a ogni esecuzione:** la scatola nera rifiuta l'avvio se (1) la
   piattaforma non offre `/proc/self/fd`, (2) la cartella del registro o una superiore non è sicura, (3) il
   registro non è durevole. In tutti e tre i casi `headless_main.main()` non chiama `HeadlessApp.start`.
-- **Piattaforme (decisione owner: fail-closed).** La scatola nera parte solo su POSIX con `/proc/self/fd`
+- **Piattaforme: fail-closed temporaneo (#625, parità Windows/Linux).** La scatola nera parte solo su POSIX con `/proc/self/fd`
   funzionante, `O_NOFOLLOW`, `O_DIRECTORY` e `O_PATH`: in pratica Linux, il target del runtime. Su **Windows** e
   sui sistemi senza `/proc/self/fd` (per esempio macOS) non viene inizializzata e, senza scatola nera, il trading
-  non parte. I test «Windows» sono simulazioni su Linux: Windows reale è **NOT_RUN**, mai un PASS.
+  non parte. I test «Windows» sono simulazioni su Linux: Windows reale è **NOT_RUN**, mai un PASS. Non è
+  un'esclusione permanente: la decisione owner `PICKFAIR-CROSS-PLATFORM-PARITY-20261110` (#625) richiede parità
+  completa; il rifiuto resta finché BB-1W non fornisce garanzie equivalenti. Il fail-closed vale oggi solo per
+  l'entrypoint headless: la GUI non installa ancora la scatola nera (BB-1G, P0 per la distribuzione).
 - **Modello di minaccia e limite esplicito.** La garanzia copre un **altro utente locale** (o un processo meno
   privilegiato) che può scrivere in una cartella del percorso. **Non** copre un processo con lo **stesso utente**
   del bot né root: possono già scrivere direttamente i database, la configurazione e il codice, e nessun controllo

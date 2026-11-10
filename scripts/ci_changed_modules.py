@@ -207,6 +207,7 @@ MODULE_RULES = [
             "scripts/pr_autonomy_policy.py",  # §0.9-bis: mutazioni dell'auto-merge finanziario certificato
             "scripts/pr_trusted_dispatcher.py",  # #562: mutazioni del dispatcher trusted
             "scripts/pr_full_suite_pipeline.py",  # #562 PR-B: mutazioni degli step M2 della full-suite
+            "scripts/release_gate.py",  # #626: mutazioni rg_* del gate di rilascio (nessun falso PASS)
             "tests/",
             "core/",
             "order_manager.py",

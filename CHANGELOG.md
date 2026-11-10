@@ -27,6 +27,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   contro un altro utente locale, non contro lo stesso utente del bot o root (SQLite apre per percorso risolto,
   vedi `docs/blackbox.md`).
 
+### Security
+- **PF-RELEASE-GATE (#625, decisioni owner D02/D04):** job `release-gate` fail-closed in `build-linux.yml` e
+  `build-windows-exe.yml`; nessun eseguibile si costruisce o si pubblica se un launcher capace di trading puo'
+  partire senza scatola nera. `scripts/release_gate.py` pretende che ogni test di sicurezza obbligatorio sia raccolto,
+  eseguito e superato (mancante, saltato, xfail o deselezionato => rosso); oggi la GUI non installa BB-1, quindi il
+  gate e' rosso, e diventa verde solo quando il rifiuto sicuro e' vero (BB-1G). Integrita', cablaggio e inventario dei
+  launcher in `tests/packaging/test_release_requires_blackbox.py`; mutanti `rg_*`.
+- **Ritiro dell'API legacy (PF-BETFAIR-API-RETIREMENT-20261110):** rimossi `betfair_market_api.py`, `AVVIA_API.bat` e
+  `INSTALLA.bat` (login Betfair reale senza scatola nera, API su `0.0.0.0:8765` senza autenticazione, CORS `*`). Nessun
+  consumatore; catalogo in-process `services/catalog_sync_service.py`; la consultazione esterna passera' dalla Control
+  API (#491). Il gate fallisce se tornano.
+
+### Docs
+- **Parità Windows/Linux, decisione owner vincolante (#625, `PICKFAIR-CROSS-PLATFORM-PARITY-20261110`).**
+  `docs/cross_platform_parity.md` e richiamo in `CLAUDE.md`: stesse funzionalità, garanzie di sicurezza e
+  certificazione su entrambe le piattaforme; fail-closed finché le garanzie non sono equivalenti; nessuna
+  piattaforma dichiarata supportata senza le proprie evidenze. Solo documentazione, nessun cambiamento funzionale.
+
 ### Fixed
 - **G7-R06 (#586): AMBIGUOUS gia' regolato non rinasce come riserva al riavvio.** La ricostruzione F018 chiude gli
   intenti con un effetto di settlement applicato (`Database.settled_customer_refs`, prova = chiave del settlement)
