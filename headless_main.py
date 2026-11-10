@@ -1497,6 +1497,7 @@ class HeadlessApp:
         blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="WARNING",
                                 phase="ATTEMPT", outcome="PENDING", reason_code="operator_cli_flag",
                                 ts_utc=requested_at)
+        outcome = "FAILED"
         if error is None:
             outcome, code = _emergency_stop_outcome(result)
             blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main",
@@ -1510,6 +1511,11 @@ class HeadlessApp:
                                     reason=blackbox_runtime.exception_reason(error),
                                     data=blackbox_runtime.exception_diagnostics(type(error), error,
                                                                                 error.__traceback__))
+        # P0 AUD-BF-016: rc 0 solo con cancellazione VERIFICATA sull'exchange. Altrimenti rc 3 (arresto eseguito,
+        # trading bloccato, ma ordini aperti, verifica mancante o intervento manuale richiesto).
+        if outcome != "VERIFIED":
+            logger.critical("EMERGENCY STOP non verificato (%s): intervento manuale richiesto", outcome)
+            return 3
         return 0
 
 
@@ -1530,6 +1536,17 @@ def _emergency_stop_outcome(result: Any) -> tuple:
         return "FAILED", "CANCEL_INCOMPLETE"
     if int(result.get("markets_attempted") or 0) > 0 and not result.get("live_client_available", True):
         return "FAILED", "NO_LIVE_CLIENT"
+    # P0 AUD-BF-016: l'esito si decide sull'exchange. Ordini ancora aperti => FAILED; verifica non eseguita o non
+    # riuscita, ordini aperti non attribuibili al bot o un risultato senza verifica => mai VERIFIED.
+    verification = result.get("verification")
+    if result.get("open_after_cancel") or verification == "OPEN_ORDERS_REMAIN":
+        return "FAILED", "ORDERS_STILL_OPEN"
+    if verification == "CANCEL_INCOMPLETE":
+        return "FAILED", "CANCEL_INCOMPLETE"
+    if verification != "VERIFIED":
+        return "UNKNOWN", "CANCEL_NOT_VERIFIED"
+    if result.get("unattributed_open_orders"):
+        return "UNKNOWN", "UNATTRIBUTED_OPEN_ORDERS"
     if result.get("persist_error"):
         return "UNKNOWN", "EMERGENCY_STATE_NOT_PERSISTED"
     return "VERIFIED", "operator_cli_flag"

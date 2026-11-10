@@ -108,7 +108,9 @@ di vita del processo.
    rischio. L'ATTEMPT porta l'ora reale della richiesta (`ts_utc`) e precede comunque il RESULT nella sequenza.
    L'esito del RESULT viene dal risultato della cancellazione, non dall'assenza di eccezioni: errori di cancellazione
    o ordini pendenti senza client live → `FAILED`; stato di emergenza non persistito o risultato illeggibile →
-   `UNKNOWN`; solo una cancellazione completa → `VERIFIED`.
+   `UNKNOWN`; solo una cancellazione completa **e verificata sull'exchange** → `VERIFIED` (P0 AUD-BF-016,
+   `docs/emergency_stop.md`: ordini ancora aperti → `FAILED`, verifica mancante o ordini non attribuibili →
+   `UNKNOWN`). Codice di uscita 0 solo con `VERIFIED`, altrimenti 3.
 4. Le eccezioni non gestite vengono registrate come tipo e diagnostica strutturata (frame, catena delle cause,
    impronta del messaggio), mai con il testo del messaggio (R2):
    - nel processo: `UNCAUGHT_EXCEPTION`;

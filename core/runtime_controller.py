@@ -2257,89 +2257,18 @@ class RuntimeController:
         self.execution_mode = "SIMULATION"
         self.set_simulation_mode(True)
 
-        # Attempt cancel-all open/pending orders
-        cancelled_count = 0
-        error_count = 0
-
-        try:
-            pending = self.db.get_pending_sagas() if hasattr(self.db, "get_pending_sagas") else []
-        except Exception as exc:
-            logger.exception("emergency_stop: get_pending_sagas failed")
-            pending = []
-            cancel_errors.append({"stage": "get_pending_sagas", "error": str(exc)})
-
-        # Group by market_id for efficient batch cancel
-        by_market: dict = {}
-        for saga in pending:
-            mid = str(saga.get("market_id") or "").strip()
-            bet_id = str(saga.get("bet_id") or "").strip()
-            customer_ref = str(saga.get("customer_ref") or "").strip()
-            if mid:
-                by_market.setdefault(mid, []).append({
-                    "bet_id": bet_id,
-                    "customer_ref": customer_ref,
-                })
-
-        live_client = None
-        try:
-            live_client = self.betfair_service.get_live_client()
-        except Exception as exc:
-            logger.warning("emergency_stop: cannot get live client: %s", exc)
-            cancel_errors.append({"stage": "get_live_client", "error": str(exc)})
-
-        # #536 (Codex su 1542b5d, Sol su 9a80162): un runtime superato non cancella gli unmatched di mercato (possono
-        # essere del nuovo proprietario); l'autorita' si riverifica prima di OGNI mercato, il LOCKDOWN locale resta.
-        # Autorita' solo illeggibile sul momento: cancel ammesso.
-        if live_client is not None and by_market:
-            for market_id, orders in by_market.items():
-                market_block = self._authority_definitively_lost()   # Sol su 9a80162: prima di ogni mercato
-                if market_block:
-                    logger.critical("emergency_stop: cancel-all interrotto su %s, %s", market_id, market_block)
-                    cancel_errors.append({"stage": "runtime_authority", "market_id": market_id,
-                                          "error": market_block})
-                    break
-                try:
-                    response = live_client.cancel_orders(
-                        market_id=market_id,
-                        # bet_ids omitted → cancel ALL unmatched orders on market
-                    )
-                    if response.get("ok"):
-                        cancel_results.append({
-                            "market_id": market_id,
-                            "order_count": len(orders),
-                            "ok": True,
-                            "response": response,
-                        })
-                        cancelled_count += response.get("cancelled_count", len(orders))
-                    else:
-                        err_msg = response.get("error", "cancel_orders returned ok=False")
-                        logger.warning(
-                            "emergency_stop: cancel_orders ok=False for market %s: %s",
-                            market_id,
-                            err_msg,
-                        )
-                        cancel_results.append({
-                            "market_id": market_id,
-                            "order_count": len(orders),
-                            "ok": False,
-                            "error": err_msg,
-                        })
-                        error_count += len(orders)
-                except Exception as exc:
-                    logger.warning(
-                        "emergency_stop: cancel_orders failed for market %s: %s",
-                        market_id,
-                        exc,
-                    )
-                    cancel_results.append({
-                        "market_id": market_id,
-                        "order_count": len(orders),
-                        "ok": False,
-                        "error": str(exc),
-                    })
-                    error_count += len(orders)
-        elif not by_market:
-            logger.info("emergency_stop: no open/pending orders to cancel")
+        # P0 AUD-BF-016 (PF-OWNER-P0-EMERGENCY-STOP-20261110): fonti affidabili + cancellazione + verifica sull'exchange.
+        # Prima leggeva solo `order_saga` (mai scritta in produzione) e dichiarava successo con zero cancellazioni.
+        was_live = (getattr(self, "_settlement_source_before_emergency", "") or
+                    ("SIM" if self.simulation_mode else "LIVE")) == "LIVE"
+        sweep = self._emergency_cancel_and_verify(was_live=was_live)
+        cancel_errors.extend(sweep.pop("cancel_errors"))
+        pending = sweep.pop("candidates")
+        by_market = sweep.pop("markets")
+        cancel_results = sweep.pop("cancel_results")
+        cancelled_count = sweep.pop("cancelled_count")
+        error_count = sweep.pop("error_count")
+        live_client = sweep.pop("client")
 
         result = {
             "emergency_stopped": True,
@@ -2353,7 +2282,22 @@ class RuntimeController:
             "cancel_errors": cancel_errors,
             "live_client_available": live_client is not None,
             "persist_error": persist_error,
+            # P0 AUD-BF-016: esito verificato sull'exchange, per ordine
+            **sweep,
         }
+        if result.get("manual_action_required"):
+            logger.critical("EMERGENCY STOP: INTERVENTO MANUALE RICHIESTO (verifica=%s, ordini ancora aperti=%d, "
+                            "non attribuiti=%d, errori=%d)", result.get("verification"),
+                            len(result.get("open_after_cancel") or []),
+                            len(result.get("unattributed_open_orders") or []), error_count)
+            try:
+                self.bus.publish("EMERGENCY_STOP_MANUAL_ACTION_REQUIRED", {
+                    "triggered_at": triggered_at, "verification": result.get("verification"),
+                    "open_after_cancel": result.get("open_after_cancel"),
+                    "unattributed_open_orders": result.get("unattributed_open_orders"),
+                    "matched_positions": result.get("matched_positions"), "cancel_errors": cancel_errors})
+            except Exception:
+                logger.exception("emergency_stop: notifica di intervento manuale non pubblicata")
 
         # Emit observable structured event
         self.bus.publish("EMERGENCY_STOP_TRIGGERED", result)
@@ -2368,6 +2312,214 @@ class RuntimeController:
         )
 
         return result
+
+    # Stati di `orders` senza alcuna possibilita' di ordine aperto sull'exchange. Tutto il resto (SUBMITTED, PLACED,
+    # PARTIAL, INFLIGHT, AMBIGUOUS, HEDGE_*, stati futuri) e' candidato: denylist, mai allowlist (fail-closed).
+    _EMERGENCY_CLOSED_ORDER_STATUSES = frozenset({
+        "CANCELLED", "FAILED", "REJECTED", "SETTLED", "ROLLED_BACK", "LAPSED", "VOIDED", "EXPIRED",
+        "DUPLICATE_BLOCKED", "NOT_ATTEMPTED", "HEDGE_FAILED",
+    })
+
+    def _emergency_candidates(self, cancel_errors: list) -> list:
+        """Ordini del bot potenzialmente aperti, da TUTTE le fonti locali: la tabella `orders` (motore, cashout,
+        Microstake: lo store autorevole in produzione) e le saghe `order_saga` (compatibilita'). Una fonte illeggibile
+        e' un errore dichiarato, mai «nessun ordine»."""
+        out = []
+        try:
+            rows = self.db._execute("SELECT id, customer_ref, status, payload_json, response_json FROM orders",
+                                    fetch=True, commit=False) if hasattr(self.db, "_execute") else []
+            for row in rows or []:
+                item = dict(row)
+                status = str(item.get("status") or "").upper()
+                if status in self._EMERGENCY_CLOSED_ORDER_STATUSES:
+                    continue
+                payload = self.db._safe_json_loads(item.get("payload_json"), {}) or {}
+                response = self.db._safe_json_loads(item.get("response_json"), {}) or {}
+                payload = payload if isinstance(payload, dict) else {}
+                out.append({"source": "orders", "order_id": str(item.get("id") or ""),
+                            "market_id": str(payload.get("market_id") or payload.get("marketId") or "").strip(),
+                            "bet_id": self.db._order_bet_id(response) if response else "",
+                            "customer_ref": str(item.get("customer_ref") or ""), "status": status})
+        except Exception as exc:
+            logger.exception("emergency_stop: lettura della tabella orders fallita")
+            cancel_errors.append({"stage": "read_orders", "error": str(exc)})
+        try:
+            sagas = self.db.get_pending_sagas() if hasattr(self.db, "get_pending_sagas") else []
+            for saga in sagas or []:
+                out.append({"source": "order_saga", "order_id": "",
+                            "market_id": str(saga.get("market_id") or "").strip(),
+                            "bet_id": str(saga.get("bet_id") or "").strip(),
+                            "customer_ref": str(saga.get("customer_ref") or "").strip(),
+                            "status": str(saga.get("status") or "").upper()})
+        except Exception as exc:
+            logger.exception("emergency_stop: get_pending_sagas failed")
+            cancel_errors.append({"stage": "get_pending_sagas", "error": str(exc)})
+        return out
+
+    @staticmethod
+    def _emergency_call(fn, **kwargs):
+        """Chiama `fn` passando `emergency=True` solo se lo accetta (client LIVE: bypass del circuit breaker per le
+        sole uscite protettive; broker SIM e doppi di test: invariati)."""
+        import inspect
+        try:
+            params = inspect.signature(fn).parameters
+            if "emergency" in params or any(p.kind == p.VAR_KEYWORD for p in params.values()):
+                kwargs["emergency"] = True
+        except (TypeError, ValueError):
+            pass
+        return fn(**kwargs)
+
+    @staticmethod
+    def _exchange_open(order: dict) -> bool:
+        try:
+            remaining = float(order.get("sizeRemaining") or 0.0)
+        except (TypeError, ValueError):
+            remaining = 0.0
+        return str(order.get("status") or "").upper() == "EXECUTABLE" and remaining > 0.0
+
+    def _emergency_cancel_and_verify(self, *, was_live: bool) -> dict:
+        """Cancel-all verificato (P0 AUD-BF-016).
+
+        1. candidati locali (`orders` + `order_saga`) e fotografia dell'exchange PRIMA (tutti i mercati);
+        2. mercati da cancellare = mercati dei candidati locali + mercati di ordini APERTI sull'exchange attribuibili
+           al bot (betId o customerOrderRef noti). Un ordine aperto non attribuibile non si cancella alla cieca: e'
+           elencato e richiede l'operatore;
+        3. cancel per mercato (riverificando l'autorita' #536 prima di ognuno);
+        4. fotografia DOPO sui mercati tentati: un residuo ancora aperto o una lettura fallita => mai VERIFIED.
+        Esito per ordine: CANCELLED, PARTIALLY_MATCHED, ALREADY_MATCHED, NOT_FOUND, STILL_OPEN, UNKNOWN."""
+        cancel_errors: list = []
+        verification_errors: list = []      # letture dell'exchange: esito UNKNOWN, non un cancel fallito
+        candidates = self._emergency_candidates(cancel_errors)
+        venue = "LIVE" if was_live else "SIM"
+        client = None
+        try:
+            client = (self.betfair_service.get_live_client() if was_live
+                      else self.betfair_service.get_simulation_broker())
+        except Exception as exc:
+            logger.warning("emergency_stop: client %s non disponibile: %s", venue, exc)
+            cancel_errors.append({"stage": "get_client", "venue": venue, "error": str(exc)})
+
+        known_bets = {c["bet_id"] for c in candidates if c["bet_id"]}
+        known_refs = {c["customer_ref"] for c in candidates if c["customer_ref"]}
+        before = None
+        if client is not None and hasattr(client, "get_current_orders"):
+            try:
+                before = list(self._emergency_call(client.get_current_orders, market_ids=None) or [])
+            except Exception as exc:
+                logger.warning("emergency_stop: lettura degli ordini correnti (prima) fallita: %s", exc)
+                verification_errors.append({"stage": "read_exchange_before", "error": str(exc)})
+
+        markets = {}
+        for c in candidates:
+            if c["market_id"]:
+                markets.setdefault(c["market_id"], []).append({"bet_id": c["bet_id"], "customer_ref": c["customer_ref"]})
+        bot_remote, foreign = {}, []
+        for o in before or []:
+            bid = str(o.get("betId") or o.get("bet_id") or "")
+            ref = str(o.get("customerOrderRef") or o.get("customer_ref") or "")
+            mid = str(o.get("marketId") or o.get("market_id") or "")
+            if bid in known_bets or (ref and ref in known_refs):
+                bot_remote[bid] = o
+                if self._exchange_open(o) and mid:
+                    markets.setdefault(mid, [])
+            elif self._exchange_open(o):
+                foreign.append(o)
+        # Un ordine aperto non riconosciuto su un mercato gia' in cancellazione (es. stub Microstake noto solo al suo
+        # registro) e' coperto dal cancel di mercato e dalla verifica dopo; solo quelli su ALTRI mercati restano
+        # all'operatore: mai cancellati alla cieca, mai taciuti.
+        unattributed = [{"bet_id": str(o.get("betId") or ""), "market_id": str(o.get("marketId") or ""),
+                         "size_remaining": o.get("sizeRemaining")}
+                        for o in foreign if str(o.get("marketId") or o.get("market_id") or "") not in markets]
+
+        cancel_results, cancelled_count, error_count = [], 0, 0
+        if markets and client is None:
+            cancel_errors.append({"stage": "cancel", "venue": venue, "error": "client non disponibile"})
+            error_count = sum(max(1, len(v)) for v in markets.values())
+        elif client is not None:
+            for market_id, orders in markets.items():
+                market_block = self._authority_definitively_lost()   # Sol su 9a80162: prima di ogni mercato
+                if market_block:
+                    logger.critical("emergency_stop: cancel-all interrotto su %s, %s", market_id, market_block)
+                    cancel_errors.append({"stage": "runtime_authority", "market_id": market_id,
+                                          "error": market_block})
+                    break
+                try:
+                    response = self._emergency_call(client.cancel_orders, market_id=market_id) or {}
+                    ok = bool(response.get("ok")) if "ok" in response else \
+                        str(response.get("status") or "").upper() == "SUCCESS"
+                    if ok:
+                        reports = response.get("instructionReports") or []
+                        cancelled_count += int(response.get("cancelled_count") or len(reports) or 0)
+                        cancel_results.append({"market_id": market_id, "order_count": len(orders), "ok": True,
+                                               "response": response})
+                    else:
+                        err = response.get("error") or response.get("errorCode") or "cancel_orders non riuscito"
+                        logger.warning("emergency_stop: cancel_orders ok=False su %s: %s", market_id, err)
+                        cancel_results.append({"market_id": market_id, "order_count": len(orders), "ok": False,
+                                               "error": err})
+                        error_count += max(1, len(orders))
+                except Exception as exc:
+                    logger.warning("emergency_stop: cancel_orders fallito su %s: %s", market_id, exc)
+                    cancel_results.append({"market_id": market_id, "order_count": len(orders), "ok": False,
+                                           "error": str(exc)})
+                    error_count += max(1, len(orders))
+
+        after = None
+        if client is not None and markets and hasattr(client, "get_current_orders"):
+            try:
+                after = list(self._emergency_call(client.get_current_orders, market_ids=sorted(markets)) or [])
+            except Exception as exc:
+                logger.warning("emergency_stop: verifica degli ordini correnti (dopo) fallita: %s", exc)
+                verification_errors.append({"stage": "read_exchange_after", "error": str(exc)})
+        elif not markets and before is not None:
+            after = []
+        open_after = [{"bet_id": str(o.get("betId") or ""), "market_id": str(o.get("marketId") or ""),
+                       "size_remaining": o.get("sizeRemaining")} for o in (after or []) if self._exchange_open(o)]
+        open_after_ids = {o["bet_id"] for o in open_after}
+
+        outcomes, matched_positions = [], []
+        for bid in sorted(known_bets | set(bot_remote)):
+            pre = bot_remote.get(bid)
+            if after is None or before is None:
+                outcome = "UNKNOWN"
+            elif bid in open_after_ids:
+                outcome = "STILL_OPEN"
+            elif pre is None:
+                outcome = "NOT_FOUND"
+            else:
+                matched = float(pre.get("sizeMatched") or 0.0)
+                if self._exchange_open(pre):
+                    outcome = "PARTIALLY_MATCHED" if matched > 0.0 else "CANCELLED"
+                else:
+                    outcome = "ALREADY_MATCHED" if matched > 0.0 else "NOT_FOUND"
+                if matched > 0.0:
+                    matched_positions.append({"bet_id": bid, "market_id": str(pre.get("marketId") or ""),
+                                              "selection_id": pre.get("selectionId"), "side": pre.get("side"),
+                                              "size_matched": matched,
+                                              "average_price_matched": pre.get("averagePriceMatched")})
+            outcomes.append({"bet_id": bid, "outcome": outcome})
+        no_bet = [c for c in candidates if not c["bet_id"] and c["market_id"]]
+        for c in no_bet:   # INFLIGHT/AMBIGUOUS senza betId: coperti dal cancel di mercato, verificati per mercato
+            market_open = any(o["market_id"] == c["market_id"] for o in open_after)
+            outcome = "UNKNOWN" if after is None else ("STILL_OPEN" if market_open else "NO_OPEN_ORDER_ON_MARKET")
+            outcomes.append({"order_id": c["order_id"], "customer_ref": c["customer_ref"],
+                             "market_id": c["market_id"], "status": c["status"], "outcome": outcome})
+
+        if after is None or (before is None and markets):
+            verification = "UNVERIFIED"
+        elif open_after or error_count or any(e.get("stage") == "runtime_authority" for e in cancel_errors):
+            verification = "OPEN_ORDERS_REMAIN" if open_after else "CANCEL_INCOMPLETE"
+        else:
+            verification = "VERIFIED"
+        return {
+            "client": client, "candidates": candidates, "markets": markets, "cancel_results": cancel_results,
+            "cancelled_count": cancelled_count, "error_count": error_count, "cancel_errors": cancel_errors,
+            "venue": venue, "verification": verification, "verification_errors": verification_errors,
+            "order_outcomes": outcomes,
+            "open_after_cancel": open_after, "unattributed_open_orders": unattributed,
+            "matched_positions": matched_positions,
+            "manual_action_required": verification != "VERIFIED" or bool(unattributed),
+        }
 
     def reset_emergency(self) -> dict:
         """

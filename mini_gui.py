@@ -2368,10 +2368,16 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._run_runtime_command_async("RESET", self.runtime.reset_cycle)
 
     def _runtime_emergency_stop(self):
-        self._run_runtime_command_async(
-            "EMERGENCY STOP",
-            lambda: self.runtime.emergency_stop(reason="operator_gui_button"),
-        )
+        def _stop_and_check():
+            result = self.runtime.emergency_stop(reason="operator_gui_button")
+            # P0 AUD-BF-016: un arresto non verificato sull'exchange non si confonde con un successo.
+            if isinstance(result, dict) and result.get("manual_action_required"):
+                self.uiq.post(lambda: self._safe_show_error(
+                    "EMERGENCY STOP: intervento manuale richiesto",
+                    _emergency_manual_action_text(result)))
+            return result
+
+        self._run_runtime_command_async("EMERGENCY STOP", _stop_and_check)
 
     # =========================================================
     # BUS EVENTS
@@ -3064,6 +3070,22 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         except Exception:
             pass
         self.destroy()
+
+
+def _emergency_manual_action_text(result: dict) -> str:
+    """Testo dell'avviso di intervento manuale dopo un EMERGENCY STOP (P0 AUD-BF-016)."""
+    lines = [f"Verifica sull'exchange: {result.get('verification') or 'NON ESEGUITA'}"]
+    open_after = result.get("open_after_cancel") or []
+    if open_after:
+        lines.append(f"Ordini ancora aperti: {len(open_after)}")
+    unattributed = result.get("unattributed_open_orders") or []
+    if unattributed:
+        lines.append(f"Ordini aperti non attribuibili al bot (non cancellati): {len(unattributed)}")
+    errors = result.get("cancel_error_count") or 0
+    if errors:
+        lines.append(f"Cancellazioni non riuscite: {errors}")
+    lines.append("Il trading resta bloccato. Controllare gli ordini sull'exchange.")
+    return "\n".join(lines)
 
 
 def main() -> int:

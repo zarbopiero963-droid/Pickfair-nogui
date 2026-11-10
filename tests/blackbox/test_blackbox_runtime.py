@@ -250,7 +250,7 @@ def test_emergency_stop_cancels_before_any_audit_write(monkeypatch):
     class FakeRuntime:
         def emergency_stop(self, reason):
             calls.append(("stop", reason))
-            return {"cancelled": 2}
+            return {"cancelled": 2, "verification": "VERIFIED"}
 
     monkeypatch.setattr(rt, "record", lambda event_type, **kw: calls.append((event_type, kw.get("phase"),
                                                                              kw.get("ts_utc"))))
@@ -272,7 +272,7 @@ def test_emergency_stop_audit_survives_an_unavailable_blackbox_after_cancelling(
     class FakeRuntime:
         def emergency_stop(self, reason):
             calls.append("stop")
-            return {"cancelled": 1}
+            return {"cancelled": 1, "verification": "VERIFIED"}
 
     def boom(*a, **kw):
         raise bb.RuntimeAlreadyActive("RUNTIME_ALREADY_ACTIVE")
@@ -312,13 +312,20 @@ def test_chained_sensitive_flags_never_leak_the_value():
 
 @pytest.mark.parametrize("result,outcome", [
     ({"cancel_error_count": 0, "cancel_errors": [], "cancel_results": [{"ok": True}], "markets_attempted": 1,
-      "live_client_available": True, "persist_error": None}, "VERIFIED"),
+      "live_client_available": True, "persist_error": None, "verification": "VERIFIED"}, "VERIFIED"),
     ({"cancel_error_count": 2, "cancel_errors": [], "cancel_results": [], "markets_attempted": 1}, "FAILED"),
     ({"cancel_error_count": 0, "cancel_results": [{"ok": False, "error": "x"}], "markets_attempted": 1}, "FAILED"),
     ({"cancel_error_count": 0, "cancel_errors": [{"stage": "get_live_client", "error": "x"}]}, "FAILED"),
     ({"cancel_error_count": 0, "cancel_errors": [], "markets_attempted": 2, "live_client_available": False}, "FAILED"),
-    ({"cancel_error_count": 0, "cancel_errors": [], "persist_error": "disco pieno"}, "UNKNOWN"),
+    ({"cancel_error_count": 0, "cancel_errors": [], "persist_error": "disco pieno", "verification": "VERIFIED"},
+     "UNKNOWN"),
     ("non un dict", "UNKNOWN"),
+    # P0 AUD-BF-016: nessun VERIFIED senza verifica sull'exchange
+    ({"cancel_error_count": 0, "cancel_errors": [], "cancel_results": [{"ok": True}]}, "UNKNOWN"),
+    ({"verification": "UNVERIFIED"}, "UNKNOWN"),
+    ({"verification": "OPEN_ORDERS_REMAIN", "open_after_cancel": [{"bet_id": "1"}]}, "FAILED"),
+    ({"verification": "CANCEL_INCOMPLETE"}, "FAILED"),
+    ({"verification": "VERIFIED", "unattributed_open_orders": [{"bet_id": "x"}]}, "UNKNOWN"),
 ])
 def test_emergency_stop_result_outcome_comes_from_the_cancellation_result(monkeypatch, result, outcome):
     """Codex #617 (761a52f2), P2: `emergency_stop()` cattura gli errori di cancellazione e li riporta nel risultato;
@@ -333,7 +340,8 @@ def test_emergency_stop_result_outcome_comes_from_the_cancellation_result(monkey
     monkeypatch.setattr(rt, "record", lambda event_type, **kw: calls.append((kw.get("phase"), kw.get("outcome"))))
     app = object.__new__(headless_main.HeadlessApp)
     app.runtime = FakeRuntime()
-    assert app._emergency_stop_with_audit() == 0
+    # P0 AUD-BF-016: rc 0 solo per una cancellazione VERIFICATA; altrimenti rc 3 (intervento manuale)
+    assert app._emergency_stop_with_audit() == (0 if outcome == "VERIFIED" else 3)
     assert calls[-1] == ("RESULT", outcome), calls
 
 
