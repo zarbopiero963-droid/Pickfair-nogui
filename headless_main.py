@@ -484,6 +484,10 @@ class HeadlessApp:
             self._ensure_built_components()
 
             self._built = True
+            from core import blackbox_runtime
+            blackbox_runtime.record("COMPONENT_INIT", source="SYSTEM", component="headless_main",
+                                    phase="OBSERVATION", outcome="VERIFIED",
+                                    data={"start_services": bool(start_services)})
 
         except Exception:
             logger.exception("Errore durante build headless")
@@ -1347,13 +1351,7 @@ class HeadlessApp:
         # entering the main loop.  --emergency-stop is the headless operator
         # trigger; it is fail-closed: partial cancel failures do not resume trading.
         if emergency_stop_requested:
-            logger.warning("EMERGENCY STOP richiesto via --emergency-stop")
-            try:
-                result = self.runtime.emergency_stop(reason="operator_cli_flag")
-                logger.warning("EMERGENCY_STOP result: %s", result)
-            except Exception as exc:
-                logger.exception("Errore durante emergency_stop: %s", exc)
-            return 0
+            return self._emergency_stop_with_audit()
 
         try:
             if execution_mode == "LIVE":
@@ -1475,13 +1473,95 @@ class HeadlessApp:
 
         self._signal_handlers_installed = True
 
+    def _emergency_stop_with_audit(self) -> int:
+        """`--emergency-stop`: PRIMA la cancellazione, POI la registrazione (rilievo Codex #617, P1). Una scrittura sul
+        registro puo' attendere un lock fino al timeout di SQLite: non deve mai ritardare la riduzione del rischio.
+        L'ATTEMPT porta l'ora reale della richiesta e precede comunque il RESULT nella sequenza."""
+        from core import blackbox as _bb
+        from core import blackbox_runtime
+        requested_at = _bb.utc_iso(time.time())
+        logger.warning("EMERGENCY STOP richiesto via --emergency-stop")
+        result, error = None, None
+        try:
+            result = self.runtime.emergency_stop(reason="operator_cli_flag")
+            logger.warning("EMERGENCY_STOP result: %s", result)
+        except Exception as exc:
+            error = exc
+            logger.exception("Errore durante emergency_stop: %s", exc)
+        try:
+            # Sol #617: il registro si apre solo ora, a cancellazione eseguita. Non disponibile (guasto, o un runtime
+            # che lo tiene: RUNTIME_ALREADY_ACTIVE) => l'esito resta nel log CRITICAL, mai un blocco.
+            blackbox_runtime.install(entrypoint="headless_main", emergency_stop=True)
+        except Exception as exc:      # noqa: BLE001
+            logger.critical("Scatola nera non disponibile: EMERGENCY STOP eseguito SENZA registrazione (%s)", exc)
+        blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="WARNING",
+                                phase="ATTEMPT", outcome="PENDING", reason_code="operator_cli_flag",
+                                ts_utc=requested_at)
+        if error is None:
+            outcome, code = _emergency_stop_outcome(result)
+            blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main",
+                                    severity="WARNING" if outcome == "VERIFIED" else "ERROR",
+                                    phase="RESULT", outcome=outcome, reason_code=code,
+                                    data={"result": blackbox_runtime.scrub_error_texts(result) if isinstance(result, dict)
+                                          else blackbox_runtime.exception_reason(result)})
+        else:
+            blackbox_runtime.record("EMERGENCY_STOP", source="CLI", component="headless_main", severity="ERROR",
+                                    phase="RESULT", outcome="FAILED", reason_code=type(error).__name__,
+                                    reason=blackbox_runtime.exception_reason(error),
+                                    data=blackbox_runtime.exception_diagnostics(type(error), error,
+                                                                                error.__traceback__))
+        return 0
+
+
+def _emergency_stop_outcome(result: Any) -> tuple:
+    """Esito di `RuntimeController.emergency_stop()` per il RESULT (Codex #617, 761a52f2): l'assenza di eccezione non
+    e' una conferma. Il runtime cattura gli errori di cancellazione e li riporta nel risultato:
+    - risultato non leggibile => UNKNOWN;
+    - errori di cancellazione (`cancel_error_count`, `cancel_errors`, un mercato con ok False) o ordini pendenti
+      senza client live => FAILED: la riduzione del rischio non e' completa;
+    - stato di emergenza non persistito (`persist_error`) => UNKNOWN: cancellazione fatta, blocco non durevole;
+    - altrimenti VERIFIED."""
+    if not isinstance(result, dict):
+        return "UNKNOWN", "EMERGENCY_RESULT_UNREADABLE"
+    failed_markets = [r for r in (result.get("cancel_results") or []) if isinstance(r, dict) and not r.get("ok")]
+    if int(result.get("cancel_error_count") or 0) > 0 or failed_markets:
+        return "FAILED", "CANCEL_ERRORS"
+    if result.get("cancel_errors"):
+        return "FAILED", "CANCEL_INCOMPLETE"
+    if int(result.get("markets_attempted") or 0) > 0 and not result.get("live_client_available", True):
+        return "FAILED", "NO_LIVE_CLIENT"
+    if result.get("persist_error"):
+        return "UNKNOWN", "EMERGENCY_STATE_NOT_PERSISTED"
+    return "VERIFIED", "operator_cli_flag"
+
 
 def main() -> int:
+    # PF-BLACKBOX-01 (BB-1): la scatola nera parte PRIMA di qualunque componente operativo. Senza registro il
+    # processo non parte (fail-closed): nessuna operazione finanziaria senza cronologia.
+    # Eccezioni, che non avviano il trading e non prendono il lock del runtime finanziario (D3):
+    # - `--emergency-stop` e' un'uscita protettiva (cancel-all): il registro si apre solo DOPO la cancellazione
+    #   (`HeadlessApp._emergency_stop_with_audit`), cosi' nessuna attesa di lock SQLite la ritarda (Sol #617);
+    # - `--preflight` (read-only) e `--telegram-login` sono comandi diagnostici: funzionano anche con un runtime
+    #   attivo sullo stesso registro (Codex #617, `ops/preflight.md`).
+    from core import blackbox_runtime
+    argv = [str(a).strip().lower() for a in sys.argv[1:]]
+    if not any(flag in argv for flag in ("--emergency-stop", "--preflight", "--telegram-login")):
+        try:
+            blackbox_runtime.install(entrypoint="headless_main")
+        except Exception as exc:      # noqa: BLE001 - qualunque guasto della scatola nera blocca l'avvio
+            logger.critical("Scatola nera non disponibile: avvio rifiutato (%s)", exc)
+            return 1
     app: Optional[HeadlessApp] = None
+    rc = 1
     try:
         app = HeadlessApp()
-        return app.start()
+        rc = app.start()
+        return rc
     except Exception as exc:
+        blackbox_runtime.record("UNCAUGHT_EXCEPTION", source="SYSTEM", component="headless_main",
+                                severity="CRITICAL", phase="OBSERVATION", outcome="VERIFIED",
+                                reason_code=type(exc).__name__, reason=blackbox_runtime.exception_reason(exc),
+                                data=blackbox_runtime.exception_diagnostics(type(exc), exc, exc.__traceback__))
         if app is not None and app.alerts_manager is not None and app.incidents_manager is not None:
             try:
                 app.alerts_manager.upsert_alert(
@@ -1500,6 +1580,8 @@ def main() -> int:
                 logger.exception("Failed to register fatal observability event")
         logger.exception("Errore fatale in headless_main: %s", exc)
         return 1
+    finally:
+        blackbox_runtime.shutdown("STOP" if rc == 0 else f"EXIT_{rc}")
 
 
 if __name__ == "__main__":

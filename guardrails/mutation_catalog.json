@@ -17,7 +17,8 @@
     "check_dedupe",
     "trusted_gate",
     "trusted_dispatcher",
-    "fullscope_tooling"
+    "fullscope_tooling",
+    "blackbox"
   ],
   "mutations": [
     {
@@ -8484,6 +8485,366 @@
         "tests/acceptance/test_g7_r06_rebuild_settled.py"
       ],
       "rationale": "G7-R06: un intento con un ordine ancora vivo sull'exchange (per customerOrderRef o betId) viene chiuso per settlement e la sua riserva rilasciata."
+    },
+    {
+      "id": "bb_critical_write_failure_ignored",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                if critical:",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: un evento critico non scritto non solleva BlackBoxUnavailable: l'azione finanziaria partirebbe senza registro."
+    },
+    {
+      "id": "bb_redaction_removed",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        return REDACTED",
+      "mutated": "        pass",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: i valori delle chiavi sensibili (password, token, app_key) finiscono nel registro."
+    },
+    {
+      "id": "bb_verify_seq_gap_ignored",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "            if row[\"seq\"] != expected:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: un record mancante non viene rilevato dalla verifica."
+    },
+    {
+      "id": "bb_verify_hash_ignored",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "            if compute_hash(row[\"prev_hash\"], row[\"seq\"], rec) != row[\"hash\"]:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: un record alterato non viene rilevato dalla verifica."
+    },
+    {
+      "id": "bb_unclean_termination_ignored",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        if last is not None:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: un crash della sessione precedente non lascia ne' UNCLEAN_TERMINATION ne' la lacuna dichiarata."
+    },
+    {
+      "id": "bb_entry_buffered_during_outage",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                if critical and buffer_on_failure and len(self._buffer) < MAX_CRITICAL_BUFFER:",
+      "mutated": "                if critical and len(self._buffer) < MAX_CRITICAL_BUFFER:",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: con il registro guasto anche un nuovo ingresso viene bufferizzato invece di essere bloccato."
+    },
+    {
+      "id": "bb_external_view_exposes_customer_ref",
+      "module": "core.blackbox_query",
+      "area": "blackbox",
+      "file": "core/blackbox_query.py",
+      "original": "            ev.pop(f, None)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/blackbox/test_blackbox_core.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: la vista esterna (Control API/MCP) espone il customerOrderRef."
+    },
+    {
+      "id": "bb_not_started_before_components",
+      "module": "headless_main",
+      "area": "blackbox",
+      "file": "headless_main.py",
+      "original": "        blackbox_runtime.install(entrypoint=\"headless_main\")",
+      "mutated": "        pass",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "PF-BLACKBOX-01: il processo parte senza scatola nera (nessun PROCESS_START prima dei componenti)."
+    },
+    {
+      "id": "bb_c11_fault_dump_link_kept",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "    if _stat.S_ISLNK(st.st_mode) or not _stat.S_ISREG(st.st_mode) or st.st_nlink > 1:",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 11 #617 (Codex P2): un symlink/hardlink al posto di fault.log, .pending o .1 resterebbe nella cartella della scatola nera invece di essere rimosso (solo il link)."
+    },
+    {
+      "id": "bb_c11_fault_dump_follows_symlink",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "    return bb.open_private(path, flags)",
+      "mutated": "    return os.open(path, flags | getattr(os, \"O_NONBLOCK\", 0), 0o600)",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 11/12 #617 (Codex P2, Sol): i file del dump aperti senza le verifiche di open_private seguirebbero un symlink/hardlink e importerebbero il bersaglio nel CRASH_RECOVERY."
+    },
+    {
+      "id": "bb_c11_persist_error_in_clear",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "    return k in (\"error\", \"errors\", \"exception\", \"message\") or k.endswith((\"_error\", \"_errors\"))",
+      "mutated": "    return k in (\"error\", \"errors\", \"exception\", \"message\")",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 11 #617 (Codex P2): persist_error (str(exc) del salvataggio) tornerebbe nel registro in chiaro."
+    },
+    {
+      "id": "bb_c11_error_text_kept",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "        if not v or v in KNOWN_ERROR_CODES:",
+      "mutated": "        if True:",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 11 #617: il testo sotto le chiavi d'errore (anche annidato in liste/dizionari) resterebbe in chiaro."
+    },
+    {
+      "id": "bb_c11_private_file_chmods_hardlink",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        if not stat.S_ISREG(pre.st_mode) or pre.st_nlink > 1:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 11/12 #617: un hardlink o un file non regolare al posto di un file della scatola nera verrebbe aperto, chmod-ato o (FIFO) bloccherebbe l'avvio."
+    },
+    {
+      "id": "bb_c12_open_identity_check_removed",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                or (now.st_dev, now.st_ino) != (st.st_dev, st.st_ino)):",
+      "mutated": "                or False):",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 12 #617 (Sol su 2847ca0e): senza il confronto fra file aperto e nome nella cartella, dove O_NOFOLLOW manca (Windows) un link sostituito prima dell'apertura verrebbe seguito e usato."
+    },
+    {
+      "id": "bb_c12_create_not_exclusive",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        fd = os.open(path, base | os.O_CREAT | os.O_EXCL | extra, 0o600)",
+      "mutated": "        fd = os.open(path, base | os.O_CREAT | extra, 0o600)",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 12 #617: senza O_EXCL un link comparso dopo il controllo di esistenza farebbe creare (o aprire) il file nel percorso puntato."
+    },
+    {
+      "id": "bb_c12_owner_reopened_by_name",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "            ofd = open_private(self._fs_path + \".runtime.owner\", os.O_WRONLY | os.O_CREAT)",
+      "mutated": "            private_file(self._fs_path + \".runtime.owner\"); ofd = os.open(self._fs_path + \".runtime.owner\", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 12 #617 (Sol su 2847ca0e, riprodotto): verifica e poi riapertura per nome con troncamento: un symlink sostituito in mezzo fa troncare e riscrivere il bersaglio."
+    },
+    {
+      "id": "bb_c12_lock_reopened_by_name",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        fh = os.fdopen(open_private(self._fs_path + \".runtime.lock\", os.O_RDWR | os.O_CREAT), \"a+\")",
+      "mutated": "        private_file(self._fs_path + \".runtime.lock\"); fh = open(self._fs_path + \".runtime.lock\", \"a+\")",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 12 #617 (Sol su 2847ca0e): verifica e poi riapertura per nome del lock: un symlink sostituito in mezzo fa prendere il lock (e su Windows scrivere) sul bersaglio."
+    },
+    {
+      "id": "bb_c13_dir_owner_or_mode_unchecked",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                if st.st_uid != uid or shared:",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): una cartella del registro di un altro utente o scrivibile da gruppo/altri verrebbe accettata."
+    },
+    {
+      "id": "bb_c13_ancestor_unchecked",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "            elif st.st_uid not in (0, uid) or (shared and not st.st_mode & stat.S_ISVTX):",
+      "mutated": "            elif False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): una cartella superiore scrivibile da altri (senza sticky) permetterebbe di sostituire la cartella del registro."
+    },
+    {
+      "id": "bb_c13_dir_symlink_followed",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW",
+      "mutated": "    flags = os.O_RDONLY | os.O_DIRECTORY",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): una cartella del registro che e' un symlink verrebbe seguita."
+    },
+    {
+      "id": "bb_c13_sqlite_not_anchored",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                conn = self._connect(self._fs_path, isolation_level=None, check_same_thread=False, timeout=30)",
+      "mutated": "                conn = self._connect(self.path, isolation_level=None, check_same_thread=False, timeout=30)",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): SQLite aprirebbe di nuovo il percorso ordinario: una cartella sostituita dopo la verifica devierebbe database, WAL e SHM verso un altro database."
+    },
+    {
+      "id": "bb_c13_platform_not_refused",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "    if (os.name != \"posix\" or not os.path.isdir(PROC_FD_DIR)",
+      "mutated": "    if (False",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): la scatola nera partirebbe su una piattaforma senza ancoraggio verificato (decisione owner: rifiuto)."
+    },
+    {
+      "id": "bb_c13_check_drops_sqlite_locks",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        pfd = os.open(path, os.O_PATH | os.O_NOFOLLOW)",
+      "mutated": "        pfd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): la verifica con un descrittore normale rilascerebbe i lock POSIX di SQLite alla chiusura: un secondo scrittore entrerebbe a transazione aperta."
+    },
+    {
+      "id": "bb_c13_wal_shm_unchecked",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                        check_private_name(self._fs_path + side)",
+      "mutated": "                        pass",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): un link al posto di -wal/-shm verrebbe aperto da SQLite."
+    },
+    {
+      "id": "bb_c13_identity_before_first_write_removed",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                    if (now.st_dev, now.st_ino) != identity:",
+      "mutated": "                    if False:",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): un registro sostituito fra verifica e apertura verrebbe scritto (difesa in profondita' prima della prima istruzione)."
+    },
+    {
+      "id": "bb_c13_new_dir_not_private",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                    os.mkdir(comp, 0o700, dir_fd=fd)",
+      "mutated": "                    os.mkdir(comp, 0o777, dir_fd=fd)",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 13 #617 (C12-A): le cartelle nuove non sarebbero create private."
+    },
+    {
+      "id": "bb_c14_dumps_handled_without_the_runtime_lock",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "    if not box.is_runtime():\n        return None\n    return _previous_fault_dump(fault_path)",
+      "mutated": "    return _previous_fault_dump(fault_path)",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 14 #617 (Sol su 8bfb96d3): un'istanza senza il lock del runtime leggerebbe, sposterebbe e cancellerebbe i dump nativi del runtime attivo."
+    },
+    {
+      "id": "bb_c14_dumps_before_the_lock",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "    try:\n        box.start_session(argv=safe_argv(sys.argv[1:]), **process_data)\n    except BaseException:",
+      "mutated": "    _previous_fault_dump(fault_path)\n    try:\n        box.start_session(argv=safe_argv(sys.argv[1:]), **process_data)\n    except BaseException:",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 14 #617 (Sol su 8bfb96d3): gestire i dump prima del lock permette a un avvio concorrente, poi rifiutato, di scollegare il fault.log del runtime attivo."
+    },
+    {
+      "id": "bb_c15_runtime_on_volatile_registry",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        if self._dirfd is None:\n            raise BlackBoxUnavailable(\n                f\"BLACKBOX_NOT_DURABLE",
+      "mutated": "        if False:\n            raise BlackBoxUnavailable(\n                f\"BLACKBOX_NOT_DURABLE",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 15 #617 (Sol su 10c5728b): con PICKFAIR_BLACKBOX_PATH=:memory: il runtime partirebbe con il registro solo in RAM (eventi critici persi al riavvio) e creerebbe lock e owner fuori dalla cartella privata."
+    },
+    {
+      "id": "bb_c16_symlinks_resolved_before_the_checks",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "    parts = [c for c in full.split(os.sep) if c]       # A1: il percorso COSI' COM'E', nessun symlink risolto",
+      "mutated": "    parts = [c for c in os.path.realpath(full).split(os.sep) if c]",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 16 #617 (Sol su 3b11e82a, decisione owner A1): risolvendo i symlink prima dei controlli, un link in una cartella scrivibile da altri aggira la verifica delle cartelle superiori e permette di deviare il registro."
     }
   ]
 }

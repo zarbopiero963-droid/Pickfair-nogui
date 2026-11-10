@@ -8,6 +8,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Scatola nera universale, BB-1: nucleo e ciclo di vita (PF-BLACKBOX-01).** Un solo registro cronologico
+  permanente, `blackbox.sqlite` nella cartella dati: append-only (trigger), `seq` globale, catena di hash con
+  `verify()`, WAL + `synchronous=FULL`, redazione dei segreti in scrittura. `headless_main.main()` lo installa prima
+  di qualunque componente (`PROCESS_START`) e senza registro rifiuta l'avvio; registra `COMPONENT_INIT`,
+  `EMERGENCY_STOP` (richiesta ed esito), eccezioni non gestite di processo e thread, dump nativi (`faulthandler`),
+  `SHUTDOWN`, e al riavvio dopo un crash `UNCLEAN_TERMINATION` + `BLACKBOX_GAP` UNKNOWN. Eventi critici fail-closed
+  (`BlackBoxUnavailable`), buffer critico per le sole uscite protettive. Lettura unica `core/blackbox_query`
+  (contratto Control API/MCP 1.15.0 di Claude C, alias `ord_` e `exchange_ts` per D1–D2). Vocabolario esteso in `core.event_journal`; vocabolario e redazione dei segreti estratti senza dipendenze in
+  `core/event_vocabulary.py` e `core/text_redaction.py` (riesportati con la stessa API), perche' la scatola nera nel
+  percorso vivo non trascini il Bridge XTrader (`core.config_store`). Documentazione:
+  `docs/blackbox.md`. Ordini, impostazioni e visualizzatore arrivano in BB-2…BB-6.
+  **Requisiti di avvio:** la cartella del registro deve essere privata (dell'utente del bot, non scrivibile da
+  gruppo/altri, non un symlink) e la piattaforma deve offrire `/proc/self/fd` (Linux). Altrimenti la scatola nera
+  non parte e il bot non si avvia: nessuna correzione automatica dei permessi, nessun avvio su Windows/macOS.
+  **Limite dichiarato:** nessun symlink in nessun componente del percorso; la protezione dei file di SQLite vale
+  contro un altro utente locale, non contro lo stesso utente del bot o root (SQLite apre per percorso risolto,
+  vedi `docs/blackbox.md`).
+
 ### Docs
 - **Parità Windows/Linux, decisione owner vincolante (#625, `PICKFAIR-CROSS-PLATFORM-PARITY-20261110`).**
   `docs/cross_platform_parity.md` e richiamo in `CLAUDE.md`: stesse funzionalità, garanzie di sicurezza e
