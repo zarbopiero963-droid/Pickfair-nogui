@@ -104,9 +104,9 @@ def test_default_launcher_main_py_never_builds_the_runtime_without_the_blackbox(
 # Script di ingresso noti degli eseguibili e dei pacchetti. Aggiungerne uno richiede un test sopra.
 PACKAGED_ENTRY_SCRIPTS = ["main.py"]
 # Launcher .bat -> script Python; quelli che non possono operare sono elencati con il motivo.
-BAT_SCRIPTS_NOT_TRADING = {
-    "betfair_market_api.py": "dati di mercato in sola lettura, nessun endpoint di ordine (in ritiro, #491)",
-}
+# Vuoto dal ritiro di betfair_market_api.py, AVVIA_API.bat e INSTALLA.bat (decisione owner
+# PF-BETFAIR-API-RETIREMENT-20261110): nessun launcher legacy puo' fare login Betfair senza scatola nera.
+BAT_SCRIPTS_NOT_TRADING: dict = {}
 ORDER_MARKERS = re.compile(r"placeOrders|place_order|cancelOrders|cancel_order|replaceOrders|RuntimeController")
 
 
@@ -181,3 +181,11 @@ def test_root_scripts_that_can_start_the_runtime_are_inventoried():
                 text):
             found.add(script.name)
     assert found <= ROOT_SCRIPTS_STARTING_THE_RUNTIME, f"script non inventariati: {found - ROOT_SCRIPTS_STARTING_THE_RUNTIME}"
+
+
+def test_legacy_market_api_is_retired():
+    """PF-BETFAIR-API-RETIREMENT-20261110: login Betfair reale senza scatola nera, API su 0.0.0.0 senza
+    autenticazione e CORS '*'. Ritirata; il catalogo mercati resta in-process (services/catalog_sync_service.py) e
+    la lettura esterna passa dalla Control API (#491). Il ritorno del file o del launcher fa fallire il gate."""
+    for name in ("betfair_market_api.py", "AVVIA_API.bat", "INSTALLA.bat"):
+        assert not (ROOT / name).exists(), f"{name} ritirato non deve tornare"
