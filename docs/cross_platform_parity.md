@@ -57,12 +57,23 @@ Inventario dei launcher al 10/11/2026:
 **Enforcement materiale (`PF-RELEASE-GATE`).**
 1. **Job `release-gate` nei workflow di build** (`build-linux.yml`, `build-windows-exe.yml`): `build` ne dipende
    (`needs:`), `release` dipende da `build`, per i tag `v*` come per i `workflow_dispatch` (anche gli artifact sono un
-   canale di distribuzione). Esegue `tests/packaging/test_release_requires_blackbox.py` con `--runxfail`: i test della
-   GUI marcati `xfail(strict=True)` per BB-1G **falliscono**, quindi oggi **nessun eseguibile si costruisce o si
-   pubblica**. Quando BB-1G chiude la lacuna i test diventano XPASS strict e il marker va tolto nella stessa PR.
+   canale di distribuzione). Il gate esegue `python scripts/release_gate.py`, che separa due condizioni:
+   - **integrita'**: ogni test di `REQUIRED_TESTS` (identificato per nome e modulo, non contato) e' raccolto, eseguito
+     e superato; mancante, rinominato, deselezionato, saltato, xfail o in errore => rosso. Il rapporto JUnit e' generato
+     nella stessa esecuzione, in una cartella temporanea nuova; `PYTEST_ADDOPTS` e' ignorato; pytest con rc != 0 => rosso;
+   - **sicurezza effettiva**: i test di `tests/packaging/release_gate_launchers.py` (non raccolti dalla CI ordinaria)
+     rendono la scatola nera non disponibile e verificano che nessun launcher costruisca il motore. Oggi la GUI lo
+     costruisce, quindi il gate e' rosso; dopo BB-1G diventa verde **solo** perche' il rifiuto sicuro e' vero, senza
+     marker da togliere ne' criteri da cambiare. Il criterio non e' l'exit code: sentinelle a livello di classe
+     bloccano e registrano l'accesso a runtime, motore, app headless, GUI e client Betfair; una finta BB-1G che
+     costruisce il motore per un'altra strada e poi esce con 1 rende il gate rosso;
+   - **ref ammessi**: in GitHub Actions il gate e' verde solo su `refs/heads/main` o su un tag `v*` (un
+     `workflow_dispatch` su altri branch non produce artifact). Limite: un branch puo' modificare questo stesso
+     controllo; la protezione completa resta nelle impostazioni GitHub.
 2. **Inventario dei launcher** nello stesso test: script della spec PyInstaller, `AppRun`, launcher `.bat`, script
-   alla radice che avviano il runtime; un launcher nuovo non inventariato fa fallire il gate. Il test verifica anche il
-   cablaggio (`needs`, `--runxfail`, nessun `if`/`continue-on-error`).
+   alla radice che avviano il runtime; un launcher nuovo non inventariato fa fallire il gate. I test d'integrita' della CI
+   ordinaria verificano anche il cablaggio: comando esatto del gate, dipendenza transitiva di ogni job dal gate,
+   nessuna funzione di stato (`always()`/`failure()`/`cancelled()`) e nessun `continue-on-error`.
 3. **BB-1G nel codice** (enforcement principale, PR successiva): gate all'avvio (`RuntimeController.start`) e
    all'invio (ordini, cashout, ripresa).
 4. **Percorso manuale (azione owner):** un'app o un token con `contents: write` può creare tag o release fuori dai

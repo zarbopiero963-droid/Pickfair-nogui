@@ -22,10 +22,11 @@ concurrency:
 
 jobs:
   # PF-RELEASE-GATE (decisione owner PF-CROSS-PLATFORM-EXECUTION-20261110, D02/D04; #625): nessun eseguibile si
-  # costruisce o si pubblica se un launcher capace di trading puo' partire SENZA la scatola nera BB-1. Il test gira
-  # con --runxfail: una lacuna nota (BB-1G non integrata) fa FALLIRE il gate. `build` e `release` ne dipendono, per
-  # i tag v* come per i workflow_dispatch (anche gli artifact sono un canale di distribuzione). Fail-closed: nessun
-  # ramo che salti il gate.
+  # costruisce o si pubblica se un launcher capace di trading puo' partire SENZA la scatola nera BB-1.
+  # scripts/release_gate.py esegue i test di sicurezza dei launcher e pretende che OGNI test obbligatorio sia raccolto,
+  # eseguito e superato (mancante, saltato, xfail, deselezionato => rosso). Oggi la GUI non installa BB-1 (BB-1G),
+  # quindi il gate e' rosso; diventa verde solo quando il rifiuto sicuro e' vero. `build` e `release` ne dipendono, per
+  # i tag v* come per i workflow_dispatch. Fail-closed: nessun ramo che salti il gate.
   release-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -47,7 +48,7 @@ jobs:
           pip install -r requirements-test.txt
 
       - name: Launchers require the black box (fail-closed)
-        run: python -m pytest -q -p no:cacheprovider --runxfail tests/packaging/test_release_requires_blackbox.py
+        run: python scripts/release_gate.py
 
   build:
     needs: release-gate

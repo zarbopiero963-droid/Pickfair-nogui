@@ -3521,7 +3521,7 @@
       "max_files": 16
     },
     "pf_release_gate": {
-      "description": "PF-RELEASE-GATE (decisioni owner PF-CROSS-PLATFORM-EXECUTION-20261110 D02/D04, PF-BETFAIR-API-RETIREMENT-20261110, OWNER FINAL GO 617 §6; #625): job release-gate fail-closed nei workflow di build Linux/Windows, test dei launcher e del cablaggio, ritiro di betfair_market_api.py/AVVIA_API.bat/INSTALLA.bat, documentazione parita' Windows/Linux (docs/cross_platform_parity.md, CLAUDE.md), riformulazione Piattaforme in docs/blackbox.md, CHANGELOG. PR a merge owner (workflow e CLAUDE.md).",
+      "description": "PF-RELEASE-GATE (decisioni owner PF-CROSS-PLATFORM-EXECUTION-20261110 D02/D04, PF-BETFAIR-API-RETIREMENT-20261110, OWNER FINAL GO 617 §6; #625): job release-gate fail-closed nei workflow di build Linux/Windows, test dei launcher e del cablaggio, ritiro di betfair_market_api.py/AVVIA_API.bat/INSTALLA.bat, documentazione parita' Windows/Linux (docs/cross_platform_parity.md, CLAUDE.md), riformulazione Piattaforme in docs/blackbox.md, CHANGELOG. PR a merge owner (workflow e CLAUDE.md). Estensione dichiarata (addendum owner RELEASE GATE INTEGRITY, #626): scripts/release_gate.py, tests/packaging/release_gate_launchers.py e mutanti rg_* in guardrails/mutation_catalog.json, per impedire falsi PASS del gate. Hardening OWNER GO PF-OWNER-626-SECURITY-HARDENING-20261110: sentinelle sui punti operativi (finta BB-1G rifiutata), ref ammessi main/tag v*, mutanti rg_*; scripts/ci_changed_modules.py attiva la lane mutation per scripts/release_gate.py.",
       "allow_tests": true,
       "files": [
         ".github/workflows/build-linux.yml",
@@ -3534,9 +3534,13 @@
         "betfair_market_api.py",
         "docs/blackbox.md",
         "docs/cross_platform_parity.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/ci_changed_modules.py",
+        "scripts/release_gate.py",
+        "tests/packaging/release_gate_launchers.py",
         "tests/packaging/test_release_requires_blackbox.py"
       ],
-      "max_files": 11
+      "max_files": 15
     }
   }
 }

@@ -30,9 +30,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Security
 - **PF-RELEASE-GATE (#625, decisioni owner D02/D04):** job `release-gate` fail-closed in `build-linux.yml` e
   `build-windows-exe.yml`; nessun eseguibile si costruisce o si pubblica se un launcher capace di trading puo'
-  partire senza scatola nera (oggi la GUI: i test BB-1G sono `xfail` strict ed eseguiti con `--runxfail`, quindi il
-  gate e' rosso finche' BB-1G non e' integrata). Inventario dei launcher e del cablaggio in
-  `tests/packaging/test_release_requires_blackbox.py`.
+  partire senza scatola nera. `scripts/release_gate.py` pretende che ogni test di sicurezza obbligatorio sia raccolto,
+  eseguito e superato (mancante, saltato, xfail o deselezionato => rosso); oggi la GUI non installa BB-1, quindi il
+  gate e' rosso, e diventa verde solo quando il rifiuto sicuro e' vero (BB-1G). Integrita', cablaggio e inventario dei
+  launcher in `tests/packaging/test_release_requires_blackbox.py`; mutanti `rg_*`.
 - **Ritiro dell'API legacy (PF-BETFAIR-API-RETIREMENT-20261110):** rimossi `betfair_market_api.py`, `AVVIA_API.bat` e
   `INSTALLA.bat` (login Betfair reale senza scatola nera, API su `0.0.0.0:8765` senza autenticazione, CORS `*`). Nessun
   consumatore; catalogo in-process `services/catalog_sync_service.py`; la consultazione esterna passera' dalla Control
