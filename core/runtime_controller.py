@@ -2259,8 +2259,9 @@ class RuntimeController:
 
         # P0 AUD-BF-016 (PF-OWNER-P0-EMERGENCY-STOP-20261110): fonti affidabili + cancellazione + verifica sull'exchange.
         # Prima leggeva solo `order_saga` (mai scritta in produzione) e dichiarava successo con zero cancellazioni.
+        # Provenienza ignota (UNKNOWN, marker legacy ripristinato) = LIVE: fail-closed (Codex su c8338ef3).
         was_live = (getattr(self, "_settlement_source_before_emergency", "") or
-                    ("SIM" if self.simulation_mode else "LIVE")) == "LIVE"
+                    ("SIM" if self.simulation_mode else "LIVE")) != "SIM"
         sweep = self._emergency_cancel_and_verify(was_live=was_live)
         cancel_errors.extend(sweep.pop("cancel_errors"))
         pending = sweep.pop("candidates")
@@ -2320,7 +2321,7 @@ class RuntimeController:
         "DUPLICATE_BLOCKED", "NOT_ATTEMPTED", "HEDGE_FAILED",
     })
 
-    def _emergency_candidates(self, cancel_errors: list) -> list:
+    def _emergency_candidates(self, cancel_errors: list, *, venue: str = "LIVE") -> list:
         """Ordini del bot potenzialmente aperti, da TUTTE le fonti locali: la tabella `orders` (motore, cashout,
         Microstake: lo store autorevole in produzione) e le saghe `order_saga` (compatibilita'). Una fonte illeggibile
         e' un errore dichiarato, mai «nessun ordine»."""
@@ -2336,6 +2337,11 @@ class RuntimeController:
                 payload = self.db._safe_json_loads(item.get("payload_json"), {}) or {}
                 response = self.db._safe_json_loads(item.get("response_json"), {}) or {}
                 payload = payload if isinstance(payload, dict) else {}
+                # Sede dell'ordine (Codex su c8338ef3): una riga di una sessione SIM non e' un candidato LIVE e
+                # viceversa. Sede non dichiarata => resta candidata (fail-closed).
+                sim_flag = payload.get("simulation_mode")
+                if isinstance(sim_flag, bool) and sim_flag != (venue == "SIM"):
+                    continue
                 out.append({"source": "orders", "order_id": str(item.get("id") or ""),
                             "market_id": str(payload.get("market_id") or payload.get("marketId") or "").strip(),
                             "bet_id": self.db._order_bet_id(response) if response else "",
@@ -2369,6 +2375,22 @@ class RuntimeController:
             pass
         return fn(**kwargs)
 
+    def _emergency_cancel(self, client, market_id: str, bet_ids):
+        """Cancel d'emergenza: per `betId` del bot quando l'exchange e' stato letto, di mercato solo se illeggibile.
+        Firma LIVE (`bet_ids`) o SIM (`instructions`); mai una lista vuota, che per Betfair vuol dire «tutto»."""
+        import inspect
+        kwargs = {"market_id": market_id}
+        if bet_ids is not None:
+            try:
+                params = inspect.signature(client.cancel_orders).parameters
+            except (TypeError, ValueError):
+                params = {}
+            if "bet_ids" in params:
+                kwargs["bet_ids"] = list(bet_ids)
+            else:
+                kwargs["instructions"] = [{"betId": b} for b in bet_ids]
+        return self._emergency_call(client.cancel_orders, **kwargs)
+
     @staticmethod
     def _exchange_open(order: dict) -> bool:
         try:
@@ -2389,8 +2411,8 @@ class RuntimeController:
         Esito per ordine: CANCELLED, PARTIALLY_MATCHED, ALREADY_MATCHED, NOT_FOUND, STILL_OPEN, UNKNOWN."""
         cancel_errors: list = []
         verification_errors: list = []      # letture dell'exchange: esito UNKNOWN, non un cancel fallito
-        candidates = self._emergency_candidates(cancel_errors)
         venue = "LIVE" if was_live else "SIM"
+        candidates = self._emergency_candidates(cancel_errors, venue=venue)
         client = None
         try:
             client = (self.betfair_service.get_live_client() if was_live
@@ -2409,11 +2431,13 @@ class RuntimeController:
                 logger.warning("emergency_stop: lettura degli ordini correnti (prima) fallita: %s", exc)
                 verification_errors.append({"stage": "read_exchange_before", "error": str(exc)})
 
+        # Mercati da verificare: quelli dei candidati locali e quelli di ordini del bot aperti sull'exchange.
         markets = {}
         for c in candidates:
             if c["market_id"]:
                 markets.setdefault(c["market_id"], []).append({"bet_id": c["bet_id"], "customer_ref": c["customer_ref"]})
         bot_remote, foreign = {}, []
+        targets = {}                     # mercato -> betId APERTI del bot da cancellare (Sol su c8338ef3)
         for o in before or []:
             bid = str(o.get("betId") or o.get("bet_id") or "")
             ref = str(o.get("customerOrderRef") or o.get("customer_ref") or "")
@@ -2421,22 +2445,25 @@ class RuntimeController:
             if bid in known_bets or (ref and ref in known_refs):
                 bot_remote[bid] = o
                 if self._exchange_open(o) and mid:
+                    targets.setdefault(mid, []).append(bid)
                     markets.setdefault(mid, [])
             elif self._exchange_open(o):
                 foreign.append(o)
-        # Un ordine aperto non riconosciuto su un mercato gia' in cancellazione (es. stub Microstake noto solo al suo
-        # registro) e' coperto dal cancel di mercato e dalla verifica dopo; solo quelli su ALTRI mercati restano
-        # all'operatore: mai cancellati alla cieca, mai taciuti.
+        # Ordini aperti non riconosciuti come del bot (manuali, altri programmi, ordini senza riferimento): mai
+        # cancellati, nemmeno sullo stesso mercato, e sempre elencati all'operatore (Sol su c8338ef3).
         unattributed = [{"bet_id": str(o.get("betId") or ""), "market_id": str(o.get("marketId") or ""),
-                         "size_remaining": o.get("sizeRemaining")}
-                        for o in foreign if str(o.get("marketId") or o.get("market_id") or "") not in markets]
+                         "size_remaining": o.get("sizeRemaining")} for o in foreign]
 
         cancel_results, cancelled_count, error_count = [], 0, 0
+        blind = before is None           # exchange illeggibile: unica via e' il cancel di mercato (comportamento storico)
         if markets and client is None:
             cancel_errors.append({"stage": "cancel", "venue": venue, "error": "client non disponibile"})
             error_count = sum(max(1, len(v)) for v in markets.values())
         elif client is not None:
             for market_id, orders in markets.items():
+                bet_ids = None if blind else targets.get(market_id, [])
+                if bet_ids == []:
+                    continue             # nessun ordine del bot aperto su questo mercato: solo verifica
                 market_block = self._authority_definitively_lost()   # Sol su 9a80162: prima di ogni mercato
                 if market_block:
                     logger.critical("emergency_stop: cancel-all interrotto su %s, %s", market_id, market_block)
@@ -2444,13 +2471,14 @@ class RuntimeController:
                                           "error": market_block})
                     break
                 try:
-                    response = self._emergency_call(client.cancel_orders, market_id=market_id) or {}
+                    response = self._emergency_cancel(client, market_id, bet_ids) or {}
                     ok = bool(response.get("ok")) if "ok" in response else \
                         str(response.get("status") or "").upper() == "SUCCESS"
                     if ok:
                         reports = response.get("instructionReports") or []
                         cancelled_count += int(response.get("cancelled_count") or len(reports) or 0)
                         cancel_results.append({"market_id": market_id, "order_count": len(orders), "ok": True,
+                                               "scope": "MARKET" if bet_ids is None else "BET_IDS",
                                                "response": response})
                     else:
                         err = response.get("error") or response.get("errorCode") or "cancel_orders non riuscito"
@@ -2473,13 +2501,22 @@ class RuntimeController:
                 verification_errors.append({"stage": "read_exchange_after", "error": str(exc)})
         elif not markets and before is not None:
             after = []
+        def _is_bot(o):
+            ref = str(o.get("customerOrderRef") or o.get("customer_ref") or "")
+            return str(o.get("betId") or "") in known_bets or str(o.get("betId") or "") in bot_remote or \
+                bool(ref and ref in known_refs)
+        # Dopo il cancel contano gli ordini del BOT ancora aperti; quelli estranei restano in `unattributed`.
         open_after = [{"bet_id": str(o.get("betId") or ""), "market_id": str(o.get("marketId") or ""),
-                       "size_remaining": o.get("sizeRemaining")} for o in (after or []) if self._exchange_open(o)]
+                       "size_remaining": o.get("sizeRemaining")}
+                      for o in (after or []) if self._exchange_open(o) and (blind or _is_bot(o))]
         open_after_ids = {o["bet_id"] for o in open_after}
 
+        post_by_bet = {str(o.get("betId") or ""): o for o in (after or [])}
         outcomes, matched_positions = [], []
         for bid in sorted(known_bets | set(bot_remote)):
-            pre = bot_remote.get(bid)
+            # Lo stato FINALE dell'exchange prevale: un abbinamento avvenuto durante il cancel resta un'esposizione
+            # (Sol su c8338ef3).
+            pre = post_by_bet.get(bid) or bot_remote.get(bid)
             if after is None or before is None:
                 outcome = "UNKNOWN"
             elif bid in open_after_ids:
@@ -2487,8 +2524,9 @@ class RuntimeController:
             elif pre is None:
                 outcome = "NOT_FOUND"
             else:
-                matched = float(pre.get("sizeMatched") or 0.0)
-                if self._exchange_open(pre):
+                matched = max(float(pre.get("sizeMatched") or 0.0),
+                              float((bot_remote.get(bid) or {}).get("sizeMatched") or 0.0))
+                if self._exchange_open(bot_remote.get(bid) or pre):
                     outcome = "PARTIALLY_MATCHED" if matched > 0.0 else "CANCELLED"
                 else:
                     outcome = "ALREADY_MATCHED" if matched > 0.0 else "NOT_FOUND"
@@ -2498,12 +2536,23 @@ class RuntimeController:
                                               "size_matched": matched,
                                               "average_price_matched": pre.get("averagePriceMatched")})
             outcomes.append({"bet_id": bid, "outcome": outcome})
+        by_ref = {str(o.get("customerOrderRef") or ""): str(o.get("betId") or "") for o in bot_remote.values()}
         no_bet = [c for c in candidates if not c["bet_id"] and c["market_id"]]
-        for c in no_bet:   # INFLIGHT/AMBIGUOUS senza betId: coperti dal cancel di mercato, verificati per mercato
-            market_open = any(o["market_id"] == c["market_id"] for o in open_after)
-            outcome = "UNKNOWN" if after is None else ("STILL_OPEN" if market_open else "NO_OPEN_ORDER_ON_MARKET")
+        for c in no_bet:
+            # INFLIGHT/AMBIGUOUS senza betId: ritrovato per customerOrderRef => il suo esito e' quello del betId;
+            # altrimenti un ordine aperto non attribuibile sullo stesso mercato potrebbe essere il suo => UNKNOWN.
+            foreign_here = any(u["market_id"] == c["market_id"] for u in unattributed)
+            if after is None or before is None:
+                outcome = "UNKNOWN"
+            elif c["customer_ref"] and c["customer_ref"] in by_ref:
+                outcome = "SEE_BET_ID"
+            elif any(o["market_id"] == c["market_id"] for o in open_after):
+                outcome = "STILL_OPEN"
+            else:
+                outcome = "UNKNOWN" if foreign_here else "NO_OPEN_ORDER_ON_MARKET"
             outcomes.append({"order_id": c["order_id"], "customer_ref": c["customer_ref"],
-                             "market_id": c["market_id"], "status": c["status"], "outcome": outcome})
+                             "market_id": c["market_id"], "status": c["status"], "outcome": outcome,
+                             "bet_id_by_ref": by_ref.get(c["customer_ref"]) or None})
 
         if after is None or (before is None and markets):
             verification = "UNVERIFIED"

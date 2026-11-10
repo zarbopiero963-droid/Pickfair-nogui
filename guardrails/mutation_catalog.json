@@ -9056,8 +9056,8 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "                if self._exchange_open(o) and mid:\n                    markets.setdefault(mid, [])\n",
-      "mutated": "                if self._exchange_open(o) and mid:\n                    pass\n",
+      "original": "                    targets.setdefault(mid, []).append(bid)\n",
+      "mutated": "                    pass\n",
       "tests": [
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
@@ -9112,6 +9112,54 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "P0 AUD-BF-016 / AUD-BF-010: il circuit breaker aperto da timeout di lettura impedirebbe il cancel d'emergenza."
+    },
+    {
+      "id": "p0_estop_market_wide_cancel",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                bet_ids = None if blind else targets.get(market_id, [])\n",
+      "mutated": "                bet_ids = None\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su c8338ef3: il cancel di mercato annullerebbe ordini manuali o di altri programmi sullo stesso mercato."
+    },
+    {
+      "id": "p0_estop_final_fill_ignored",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            pre = post_by_bet.get(bid) or bot_remote.get(bid)\n",
+      "mutated": "            pre = bot_remote.get(bid)\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su c8338ef3: un abbinamento avvenuto durante il cancel non risulterebbe come esposizione."
+    },
+    {
+      "id": "p0_estop_unknown_provenance_as_sim",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                    (\"SIM\" if self.simulation_mode else \"LIVE\")) != \"SIM\"\n",
+      "mutated": "                    (\"SIM\" if self.simulation_mode else \"LIVE\")) == \"LIVE\"\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su c8338ef3: un'emergenza con provenienza UNKNOWN non cancellerebbe nulla in LIVE."
+    },
+    {
+      "id": "p0_estop_sim_rows_as_live_candidates",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                if isinstance(sim_flag, bool) and sim_flag != (venue == \"SIM\"):\n                    continue\n",
+      "mutated": "                if isinstance(sim_flag, bool) and sim_flag != (venue == \"SIM\"):\n                    pass\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su c8338ef3: righe di sessioni SIM deciderebbero cancellazioni LIVE."
     }
   ]
 }

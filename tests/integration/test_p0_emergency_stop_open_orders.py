@@ -97,6 +97,7 @@ class FakeExchange:
         self.read_fail = set(read_fail)           # "before" | "after"
         self.reads = 0
         self.cancel_calls = []
+        self.cancel_bet_ids = []
         self.emergency_seen = emergency_seen if emergency_seen is not None else []
 
     def get_current_orders(self, market_ids=None, emergency=False):
@@ -110,13 +111,20 @@ class FakeExchange:
     def cancel_orders(self, *, market_id, bet_ids=None, emergency=False):
         self.emergency_seen.append(("cancel", emergency))
         self.cancel_calls.append(market_id)
+        self.cancel_bet_ids.append(None if bet_ids is None else list(bet_ids))
         if self.cancel_mode == "raise":
             raise RuntimeError("REQUEST_FAILED: TIMEOUT")
         if self.cancel_mode == "fail":
             return {"ok": False, "market_id": market_id, "error": "API_ERROR"}
+        if self.cancel_mode == "match_during":       # abbinamento di 2.0 un istante prima del cancel
+            for o in self.orders:
+                if o["marketId"] == market_id and (bet_ids is None or o["betId"] in bet_ids):
+                    o.update(status="EXECUTION_COMPLETE", sizeMatched=2.0, sizeRemaining=0.0, averagePriceMatched=2.0)
+            return {"ok": True, "market_id": market_id, "cancelled_count": 1}
         if self.cancel_mode == "ok":
             for o in self.orders:
-                if o["marketId"] == market_id and o["status"] == "EXECUTABLE":
+                if o["marketId"] == market_id and o["status"] == "EXECUTABLE" and \
+                        (bet_ids is None or o["betId"] in bet_ids):
                     o["status"], o["sizeRemaining"] = "EXECUTION_COMPLETE", 0.0
                     if not o["sizeMatched"]:
                         o["gone"] = True
@@ -185,15 +193,30 @@ def test_exchange_unreadable_means_unverified_never_success(tmp_path, monkeypatc
     assert headless_main._emergency_stop_outcome(res)[0] == "UNKNOWN"
 
 
-def test_ambiguous_order_without_bet_id_is_covered_by_the_market_cancel(tmp_path, monkeypatch):
+def test_ambiguous_order_without_bet_id_is_found_by_its_customer_order_ref_and_cancelled(tmp_path, monkeypatch):
     app = _app(tmp_path, monkeypatch)
-    ex = FakeExchange([_o("X9", market="1.7")])                 # risposta persa: il bot non conosce il betId
+    oid = _engine_order(app.runtime.db, market_id="1.7", bet_id=None, status="AMBIGUOUS")
+    ref = app.runtime.db.get_order(oid)["customer_ref"]
+    ex = FakeExchange([_o("X9", market="1.7", ref=ref)])        # risposta persa: betId ignoto, ref inviato (F-13)
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert ex.cancel_bet_ids == [["X9"]] and res["verification"] == "VERIFIED", res
+    amb = [o for o in res["order_outcomes"] if o.get("status") == "AMBIGUOUS"]
+    assert amb[0]["outcome"] == "SEE_BET_ID" and amb[0]["bet_id_by_ref"] == "X9"
+    assert {o.get("bet_id"): o["outcome"] for o in res["order_outcomes"]}["X9"] == "CANCELLED"
+
+
+def test_ambiguous_order_without_any_identity_is_never_guessed(tmp_path, monkeypatch):
+    """Ordine AMBIGUOUS senza betId ne' customerOrderRef sull'exchange: non si distingue da un ordine manuale sullo
+    stesso mercato, quindi nessuna cancellazione alla cieca, esito UNKNOWN e intervento manuale."""
+    app = _app(tmp_path, monkeypatch)
+    ex = FakeExchange([_o("X9", market="1.7")])
     _engine_order(app.runtime.db, market_id="1.7", bet_id=None, status="AMBIGUOUS")
     _live(app, ex, monkeypatch)
     res = app.runtime.emergency_stop(reason="t")
-    assert ex.cancel_calls == ["1.7"] and res["verification"] == "VERIFIED", res
-    amb = [o for o in res["order_outcomes"] if o.get("status") == "AMBIGUOUS"]
-    assert amb and amb[0]["outcome"] == "NO_OPEN_ORDER_ON_MARKET"
+    assert ex.cancel_calls == [] and res["unattributed_open_orders"][0]["bet_id"] == "X9", res
+    assert [o["outcome"] for o in res["order_outcomes"] if o.get("status") == "AMBIGUOUS"] == ["UNKNOWN"]
+    assert res["manual_action_required"] is True
 
 
 def test_open_order_known_only_on_the_exchange_by_customer_order_ref_is_cancelled(tmp_path, monkeypatch):
@@ -305,13 +328,63 @@ def test_gui_emergency_button_alerts_the_operator_when_the_stop_is_not_verified(
     assert shown == [], "nessun avviso per un arresto verificato"
 
 
-def test_unrecognised_order_on_a_market_being_cancelled_is_covered_not_flagged(tmp_path, monkeypatch):
-    """Uno stub noto solo a un altro registro (es. Microstake) sullo stesso mercato di un ordine del bot: il cancel di
-    mercato lo copre e la verifica dopo lo controlla; non e' un ordine «non attribuibile» da lasciare all'operatore."""
+def test_foreign_order_on_the_same_market_is_never_cancelled(tmp_path, monkeypatch):
+    """Rilievo Sol su c8338ef3: il cancel di mercato annullava anche ordini manuali o di altri programmi sullo stesso
+    mercato. Ora si cancellano solo i betId del bot; l'ordine estraneo resta, elencato all'operatore."""
     app = _app(tmp_path, monkeypatch)
-    ex = FakeExchange([_o("B1"), _o("STUB")])
+    ex = FakeExchange([_o("B1"), _o("MANUALE")])
     _engine_order(app.runtime.db, market_id="1.5", bet_id="B1")
     _live(app, ex, monkeypatch)
     res = app.runtime.emergency_stop(reason="t")
-    assert res["unattributed_open_orders"] == [] and res["verification"] == "VERIFIED", res
-    assert ex.get_current_orders(["1.5"]) == []
+    assert ex.cancel_bet_ids == [["B1"]], "solo il betId del bot, mai il mercato intero"
+    assert [o["betId"] for o in ex.orders] == ["MANUALE"]
+    assert res["verification"] == "VERIFIED" and res["unattributed_open_orders"][0]["bet_id"] == "MANUALE"
+    assert res["manual_action_required"] is True
+
+
+def test_fill_during_the_cancel_is_reported_as_exposure(tmp_path, monkeypatch):
+    """Rilievo Sol su c8338ef3: un abbinamento fra la fotografia e il cancel deve risultare dallo stato finale."""
+    app = _app(tmp_path, monkeypatch)
+    ex = FakeExchange([_o("B1")], cancel_mode="match_during")
+    _engine_order(app.runtime.db, market_id="1.5", bet_id="B1")
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert {o["bet_id"]: o["outcome"] for o in res["order_outcomes"]}["B1"] == "PARTIALLY_MATCHED", res
+    assert res["matched_positions"][0]["size_matched"] == 2.0
+
+
+def test_market_cancel_only_when_the_exchange_cannot_be_read(tmp_path, monkeypatch):
+    app = _app(tmp_path, monkeypatch)
+    ex = FakeExchange([_o("B1")], read_fail={"before"})
+    _engine_order(app.runtime.db, market_id="1.5", bet_id="B1")
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert ex.cancel_bet_ids == [None] and res["verification"] == "UNVERIFIED"
+    assert res["cancel_results"][0]["scope"] == "MARKET"
+
+
+def test_sim_ledger_rows_are_not_live_candidates(tmp_path, monkeypatch):
+    """Codex su c8338ef3: una riga `orders` di una sessione SIM (payload simulation_mode=True) non decide cosa si
+    cancella in LIVE; l'ordine reale sullo stesso mercato, non del bot, resta e va all'operatore."""
+    app = _app(tmp_path, monkeypatch)
+    ref = "pf-sim-" + uuid.uuid4().hex[:8]
+    app.runtime.db.insert_order({
+        "customer_ref": ref, "correlation_id": uuid.uuid4().hex, "status": "SUBMITTED",
+        "payload": {"market_id": "1.5", "selection_id": 3, "simulation_mode": True, "customer_ref": ref},
+        "response": {"bet_id": "SIMBET-1", "status": "SUCCESS"}})
+    ex = FakeExchange([_o("REALE")], read_fail={"before"})       # anche nel caso cieco: nessun cancel di mercato
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert ex.cancel_calls == [] and res["pending_count"] == 0, res
+
+
+def test_unknown_provenance_is_handled_as_live(tmp_path, monkeypatch):
+    """Codex su c8338ef3: emergenza ripristinata con provenienza UNKNOWN => si cancella e verifica in LIVE."""
+    app = _app(tmp_path, monkeypatch)
+    ex = FakeExchange([_o("B1")])
+    _engine_order(app.runtime.db, market_id="1.5", bet_id="B1")
+    _live(app, ex, monkeypatch)
+    app.runtime.simulation_mode = True
+    app.runtime._settlement_source_before_emergency = "UNKNOWN"
+    res = app.runtime.emergency_stop(reason="t")
+    assert res["venue"] == "LIVE" and ex.cancel_bet_ids == [["B1"]] and res["verification"] == "VERIFIED", res

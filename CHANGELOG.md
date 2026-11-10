@@ -11,10 +11,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 - **P0 AUD-BF-016 — l'arresto d'emergenza cancellava zero ordini e si dichiarava riuscito**
   (`PF-OWNER-P0-EMERGENCY-STOP-20261110`). Leggeva solo `order_saga`, mai scritta in produzione; ora usa la tabella
-  `orders` (e `order_saga`), fotografa l'exchange prima e dopo, cancella per mercato gli ordini del bot (anche quelli
-  noti solo sull'exchange per `betId`/`customerOrderRef`), riporta l'esito per ordine (CANCELLED, PARTIALLY_MATCHED,
-  ALREADY_MATCHED, NOT_FOUND, STILL_OPEN, UNKNOWN), le posizioni abbinate rimaste e gli ordini aperti non attribuibili
-  (mai cancellati alla cieca). Mai `VERIFIED` senza verifica sull'exchange; `--emergency-stop` esce con 3 se serve
+  `orders` (e `order_saga`), fotografa l'exchange prima e dopo, cancella per `betId` i soli ordini aperti del bot (anche
+  quelli noti solo sull'exchange per `customerOrderRef`; cancel di mercato solo con l'exchange illeggibile), riporta
+  l'esito per ordine dallo stato finale (CANCELLED, PARTIALLY_MATCHED, ALREADY_MATCHED, NOT_FOUND, STILL_OPEN, UNKNOWN),
+  le posizioni abbinate rimaste e gli ordini aperti non attribuibili (mai cancellati, nemmeno sullo stesso mercato). Mai `VERIFIED` senza verifica sull'exchange; `--emergency-stop` esce con 3 se serve
   l'operatore; evento `EMERGENCY_STOP_MANUAL_ACTION_REQUIRED` e dialogo nella GUI. In emergenza cancel e verifica
   attraversano il circuit breaker del client LIVE (AUD-BF-010). Documentazione: `docs/emergency_stop.md`.
 
