@@ -9226,7 +9226,7 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "        out.extend(self._emergency_microstake_candidates(cancel_errors, venue=venue))\n",
+      "original": "        out.extend(saga_candidates)\n",
       "mutated": "        pass\n",
       "tests": [
         "tests/integration/test_p0_emergency_stop_open_orders.py"
