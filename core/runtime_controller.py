@@ -2326,6 +2326,8 @@ class RuntimeController:
         Microstake: lo store autorevole in produzione) e le saghe `order_saga` (compatibilita'). Una fonte illeggibile
         e' un errore dichiarato, mai «nessun ordine»."""
         out = []
+        foreign_refs: set = set()
+        saga_candidates = self._emergency_microstake_candidates(cancel_errors, venue=venue, foreign_refs=foreign_refs)
         try:
             rows = self.db._execute("SELECT id, customer_ref, status, payload_json, response_json FROM orders",
                                     fetch=True, commit=False) if hasattr(self.db, "_execute") else []
@@ -2346,6 +2348,8 @@ class RuntimeController:
                 # (`raw.microstake_ref`), non la `customer_ref` della riga.
                 raw = response.get("raw") if isinstance(response, dict) else None
                 ms_ref = str(raw.get("microstake_ref") or "").strip() if isinstance(raw, dict) else ""
+                if ms_ref in foreign_refs:
+                    ms_ref = ""                  # ref con ordine preesistente di origine non dimostrata: mai del bot
                 out.append({"source": "orders", "order_id": str(item.get("id") or ""),
                             "market_id": str(payload.get("market_id") or payload.get("marketId") or "").strip(),
                             "bet_id": self.db._order_bet_id(response) if response else "",
@@ -2353,7 +2357,7 @@ class RuntimeController:
         except Exception as exc:
             logger.exception("emergency_stop: lettura della tabella orders fallita")
             cancel_errors.append({"stage": "read_orders", "error": str(exc)})
-        out.extend(self._emergency_microstake_candidates(cancel_errors, venue=venue))
+        out.extend(saga_candidates)
         try:
             sagas = self.db.get_pending_sagas() if hasattr(self.db, "get_pending_sagas") else []
             for saga in sagas or []:
@@ -2369,7 +2373,7 @@ class RuntimeController:
 
     _EMERGENCY_SAGA_NO_ORDER_PHASES = frozenset({"FAILED", "ROLLED_BACK"})
 
-    def _emergency_microstake_candidates(self, cancel_errors: list, *, venue: str) -> list:
+    def _emergency_microstake_candidates(self, cancel_errors: list, *, venue: str, foreign_refs: set = None) -> list:
         """Saghe del Microstake nativo della sede (store `microstake.sagas[.live]`): stub, riduzione e sostituto
         portano il ref della saga e possono essere aperti anche se la riga `orders` non ha `betId` (Codex su
         82bbd010). Store illeggibile = fonte incompleta, mai «nessun ordine»."""
@@ -2384,6 +2388,13 @@ class RuntimeController:
             for ref, rec in sorted(sagas.items()):
                 rec = rec if isinstance(rec, dict) else {}
                 phase = str(rec.get("phase") or "").upper()
+                if rec.get("foreign_ref") is True:
+                    # DUPLICATE_CUSTOMER_REF: l'ordine con questo ref esisteva gia' e la sua origine non e'
+                    # dimostrabile; il recovery non lo adotta ne' lo cancella, e nemmeno l'arresto (Codex su c1db40c3).
+                    # Se e' aperto resta tra gli ordini non attribuibili, all'operatore.
+                    if foreign_refs is not None:
+                        foreign_refs.add(str(ref))
+                    continue
                 if phase in self._EMERGENCY_SAGA_NO_ORDER_PHASES:
                     continue
                 request = rec.get("request")

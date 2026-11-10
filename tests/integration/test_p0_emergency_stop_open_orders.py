@@ -549,3 +549,25 @@ def test_sim_cancel_not_persisted_is_never_verified_unless_the_retry_persists_it
     assert retries == [1], res
     assert res["verification"] == expected, res
     assert res["manual_action_required"] is (expected != "VERIFIED"), res
+
+
+def test_foreign_ref_saga_order_is_never_cancelled_and_goes_to_the_operator(tmp_path, monkeypatch):
+    """Codex su c1db40c3: saga con `foreign_ref` (DUPLICATE_CUSTOMER_REF: un ordine con quel ref esisteva gia', origine
+    non dimostrabile). Il recovery non lo adotta ne' lo cancella; l'arresto nemmeno: resta all'operatore. Vale anche
+    se la riga `orders` dell'hedge porta lo stesso ref in `raw.microstake_ref`."""
+    app = _app(tmp_path, monkeypatch)
+    ref = "hedge:src-ms-feedfacecafe"
+    _save_live_saga(app.runtime.db, ref, phase="AMBIGUOUS", reason="existing_customer_ref", foreign_ref=True,
+                    bet_id="", stub_bet_id="", request={"market_id": "1.11", "selection_id": 3, "side": "LAY"})
+    app.runtime.db.insert_order({
+        "customer_ref": "hedge:src", "correlation_id": uuid.uuid4().hex, "status": "HEDGE_AMBIGUOUS",
+        "payload": {"market_id": "1.11", "selection_id": 3, "bet_type": "LAY", "price": 1.01, "stake": 0.5},
+        "response": {"ok": False, "status": "AMBIGUOUS", "order_unknown": True, "bet_id": None,
+                     "raw": {"status": "AMBIGUOUS", "microstake_ref": ref}},
+    })
+    ex = FakeExchange([_o("FOREIGN1", market="1.11", ref=ref)])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert ex.cancel_calls == [], res
+    assert [o["bet_id"] for o in res["unattributed_open_orders"]] == ["FOREIGN1"], res
+    assert res["manual_action_required"] is True, res

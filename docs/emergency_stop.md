@@ -21,7 +21,9 @@ sull'exchange.
    aperto: CANCELLED, FAILED, REJECTED, SETTLED, ROLLED_BACK, LAPSED, VOIDED, EXPIRED, DUPLICATE_BLOCKED, NOT_ATTEMPTED,
    HEDGE_FAILED; quindi anche INFLIGHT, AMBIGUOUS, HEDGE_* e stati futuri), `order_saga` e lo store delle saghe del
    **Microstake nativo** della sede (`microstake.sagas.live` / `microstake.sagas`; ogni fase tranne FAILED e
-   ROLLED_BACK: stub, riduzione e sostituto con il ref della saga). Per l'hedge nativo del cashout il riferimento
+   ROLLED_BACK: stub, riduzione e sostituto con il ref della saga). Una saga `foreign_ref` (ordine preesistente con lo
+   stesso ref, origine non dimostrabile) non è mai un'identità del bot: come nel recovery, non si adotta né si
+   cancella; se è aperto resta tra gli ordini non attribuibili. Per l'hedge nativo del cashout il riferimento
    sull'exchange è `response.raw.microstake_ref`, non la `customer_ref` della riga. Una fonte illeggibile è un
    errore dichiarato, mai «nessun ordine».
 3. **Fotografia dell'exchange prima** (`get_current_orders`, tutti i mercati) sulla sede in cui il runtime operava

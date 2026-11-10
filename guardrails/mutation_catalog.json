@@ -9268,6 +9268,30 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "Codex su 82bbd010: un cancel SIM non persistito nello snapshot di reload tornerebbe aperto al riavvio; non puo' valere VERIFIED."
+    },
+    {
+      "id": "p0_estop_foreign_ref_saga_adopted",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                if rec.get(\"foreign_ref\") is True:\n",
+      "mutated": "                if False:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su c1db40c3: una saga foreign_ref (ordine preesistente di origine non dimostrata) diventerebbe un'identita' del bot e l'arresto cancellerebbe un ordine altrui."
+    },
+    {
+      "id": "p0_estop_foreign_ms_ref_adopted",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                if ms_ref in foreign_refs:\n",
+      "mutated": "                if False:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su c1db40c3: il raw.microstake_ref della riga dell'hedge con saga foreign_ref renderebbe del bot un ordine altrui."
     }
   ]
 }
