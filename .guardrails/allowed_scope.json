@@ -3496,6 +3496,17 @@
         "tests/f026/test_g7_r06_settled_ambiguous.py"
       ],
       "max_files": 8
+    },
+    "owner_cross_platform_parity_doc": {
+      "description": "Registrazione documentale della decisione owner PICKFAIR-CROSS-PLATFORM-PARITY-20261110 (#625): docs/cross_platform_parity.md, richiamo in CLAUDE.md (file a merge owner), CHANGELOG. Solo documentazione, nessun codice.",
+      "allow_tests": false,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "CLAUDE.md",
+        "docs/cross_platform_parity.md"
+      ],
+      "max_files": 4
     }
   }
 }

@@ -118,6 +118,17 @@ PF-BEST-EXECUTION-DYNAMIC-01 (c.6235560755). Dettaglio tecnico in
   STOP persistente; settlement exchange autorevole; storico verificabile;
   parità decisionale SIM/LIVE con simulatore realistico.
 
+## Parità Windows/Linux (decisione owner vincolante 10/11/2026)
+
+Fonte: #625 (`PICKFAIR-CROSS-PLATFORM-PARITY-20261110`), dettaglio in
+[docs/cross_platform_parity.md](docs/cross_platform_parity.md). Pickfair deve avere su Windows e Linux le stesse
+funzionalità, garanzie di sicurezza e criteri di certificazione; vietato trattare Windows come piattaforma
+secondaria o permanentemente non supportata. Finché una piattaforma non offre garanzie equivalenti la funzionalità
+resta fail-closed su quella piattaforma; vietati fallback insicuri, disabilitazione della scatola nera o controlli
+ridotti. Nessuna piattaforma si dichiara supportata o certificata senza evidenze prodotte su di essa. Ogni deroga
+richiede una nuova autorizzazione owner esplicita e tracciata. La decisione autorizza progettazione e
+pianificazione; lo sviluppo richiede GO separati.
+
 ## REGOLA PRINCIPALE
 
 Prima di lavorare su questo repository, leggi e segui AGENTS.md: contiene le

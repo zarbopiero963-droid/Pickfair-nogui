@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs
+- **Parità Windows/Linux, decisione owner vincolante (#625, `PICKFAIR-CROSS-PLATFORM-PARITY-20261110`).**
+  `docs/cross_platform_parity.md` e richiamo in `CLAUDE.md`: stesse funzionalità, garanzie di sicurezza e
+  certificazione su entrambe le piattaforme; fail-closed finché le garanzie non sono equivalenti; nessuna
+  piattaforma dichiarata supportata senza le proprie evidenze. Solo documentazione, nessun cambiamento funzionale.
+
 ### Fixed
 - **G7-R06 (#586): AMBIGUOUS gia' regolato non rinasce come riserva al riavvio.** La ricostruzione F018 chiude gli
   intenti con un effetto di settlement applicato (`Database.settled_customer_refs`, prova = chiave del settlement)
