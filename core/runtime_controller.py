@@ -2517,24 +2517,24 @@ class RuntimeController:
             # Lo stato FINALE dell'exchange prevale: un abbinamento avvenuto durante il cancel resta un'esposizione
             # (Sol su c8338ef3).
             pre = post_by_bet.get(bid) or bot_remote.get(bid)
+            # Esposizione abbinata NOTA, qualunque sia l'esito del cancel o della verifica (Codex su d85a62ff).
+            matched = max(float((pre or {}).get("sizeMatched") or 0.0),
+                          float((bot_remote.get(bid) or {}).get("sizeMatched") or 0.0))
             if after is None or before is None:
                 outcome = "UNKNOWN"
             elif bid in open_after_ids:
                 outcome = "STILL_OPEN"
             elif pre is None:
                 outcome = "NOT_FOUND"
+            elif self._exchange_open(bot_remote.get(bid) or pre):
+                outcome = "PARTIALLY_MATCHED" if matched > 0.0 else "CANCELLED"
             else:
-                matched = max(float(pre.get("sizeMatched") or 0.0),
-                              float((bot_remote.get(bid) or {}).get("sizeMatched") or 0.0))
-                if self._exchange_open(bot_remote.get(bid) or pre):
-                    outcome = "PARTIALLY_MATCHED" if matched > 0.0 else "CANCELLED"
-                else:
-                    outcome = "ALREADY_MATCHED" if matched > 0.0 else "NOT_FOUND"
-                if matched > 0.0:
-                    matched_positions.append({"bet_id": bid, "market_id": str(pre.get("marketId") or ""),
-                                              "selection_id": pre.get("selectionId"), "side": pre.get("side"),
-                                              "size_matched": matched,
-                                              "average_price_matched": pre.get("averagePriceMatched")})
+                outcome = "ALREADY_MATCHED" if matched > 0.0 else "NOT_FOUND"
+            if matched > 0.0 and pre is not None:
+                matched_positions.append({"bet_id": bid, "market_id": str(pre.get("marketId") or ""),
+                                          "selection_id": pre.get("selectionId"), "side": pre.get("side"),
+                                          "size_matched": matched,
+                                          "average_price_matched": pre.get("averagePriceMatched")})
             outcomes.append({"bet_id": bid, "outcome": outcome})
         by_ref = {str(o.get("customerOrderRef") or ""): str(o.get("betId") or "") for o in bot_remote.values()}
         no_bet = [c for c in candidates if not c["bet_id"] and c["market_id"]]
@@ -2554,8 +2554,13 @@ class RuntimeController:
                              "market_id": c["market_id"], "status": c["status"], "outcome": outcome,
                              "bet_id_by_ref": by_ref.get(c["customer_ref"]) or None})
 
+        source_errors = [e for e in cancel_errors if e.get("stage") in ("read_orders", "get_pending_sagas")]
         if after is None or (before is None and markets):
             verification = "UNVERIFIED"
+        elif source_errors:
+            # Fonti locali illeggibili: l'exchange vuoto non basta, gli ordini del bot non sono stati attribuiti
+            # (Codex su d85a62ff).
+            verification = "SOURCES_INCOMPLETE"
         elif open_after or error_count or any(e.get("stage") == "runtime_authority" for e in cancel_errors):
             verification = "OPEN_ORDERS_REMAIN" if open_after else "CANCEL_INCOMPLETE"
         else:

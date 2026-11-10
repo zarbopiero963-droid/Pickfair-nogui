@@ -9160,6 +9160,30 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "Codex su c8338ef3: righe di sessioni SIM deciderebbero cancellazioni LIVE."
+    },
+    {
+      "id": "p0_estop_source_errors_verified",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            verification = \"SOURCES_INCOMPLETE\"\n",
+      "mutated": "            verification = \"VERIFIED\"\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su d85a62ff: con le fonti locali illeggibili l'arresto risulterebbe verificato."
+    },
+    {
+      "id": "p0_estop_exposure_dropped_on_failure",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            if matched > 0.0 and pre is not None:\n",
+      "mutated": "            if matched > 0.0 and outcome in (\"PARTIALLY_MATCHED\", \"ALREADY_MATCHED\"):\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su d85a62ff: la parte abbinata sparirebbe dal risultato quando il cancel fallisce o la verifica non si legge."
     }
   ]
 }

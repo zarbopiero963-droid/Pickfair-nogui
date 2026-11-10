@@ -38,9 +38,11 @@ sull'exchange.
    senza `betId` (risposta persa): `SEE_BET_ID` se ritrovati per `customerOrderRef` (con `bet_id_by_ref`),
    `NO_OPEN_ORDER_ON_MARKET`, oppure `UNKNOWN` se sul mercato c'è un ordine aperto non attribuibile.
 7. **Verifica** (`verification`): `VERIFIED` solo se la lettura finale riesce e non resta nulla di aperto, nessun cancel
-   è fallito e l'autorità non è stata persa. Altrimenti `OPEN_ORDERS_REMAIN`, `CANCEL_INCOMPLETE` o `UNVERIFIED`.
+   è fallito, l'autorità non è stata persa e le fonti locali sono state lette. Altrimenti `OPEN_ORDERS_REMAIN`,
+   `CANCEL_INCOMPLETE`, `UNVERIFIED` o `SOURCES_INCOMPLETE` (tabella `orders` o `order_saga` illeggibile: gli ordini
+   del bot non sono attribuibili, quindi un exchange vuoto non basta).
 8. **Posizioni reali** abbinate prima dell'arresto: elencate in `matched_positions` (mercato, selezione, lato, importo,
-   prezzo medio). La fonte dei settlement resta quella precedente all'arresto (`_settlement_source_before_emergency`).
+   prezzo medio) qualunque sia l'esito del cancel o della verifica. La fonte dei settlement resta quella precedente all'arresto (`_settlement_source_before_emergency`).
 9. **Intervento manuale** (`manual_action_required`): verifica non `VERIFIED` o ordini non attribuibili. Log CRITICAL,
    evento `EMERGENCY_STOP_MANUAL_ACTION_REQUIRED` sul bus e, nella GUI, il dialogo
    «EMERGENCY STOP: intervento manuale richiesto».
@@ -59,6 +61,9 @@ sull'exchange.
   rilievo separato. Le posizioni sono comunque elencate nel risultato e nella notifica.
 - Il caso in cui l'arresto non parte affatto (DB corrotto, #622) è un difetto distinto, non coperto da questa
   correzione.
+- `--emergency-stop` lanciato in un processo nuovo, senza una sessione LIVE autenticata, non può leggere né cancellare
+  sull'exchange: l'esito è `UNVERIFIED` con rc 3 (onesto, mai un falso VERIFIED). L'arresto dalla GUI o dal runtime
+  attivo usa la sessione già aperta (rilievo D-629-03 di Claude D).
 
 ## Test
 

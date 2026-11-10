@@ -388,3 +388,35 @@ def test_unknown_provenance_is_handled_as_live(tmp_path, monkeypatch):
     app.runtime._settlement_source_before_emergency = "UNKNOWN"
     res = app.runtime.emergency_stop(reason="t")
     assert res["venue"] == "LIVE" and ex.cancel_bet_ids == [["B1"]] and res["verification"] == "VERIFIED", res
+
+
+@pytest.mark.parametrize("mode,read_fail", [("fail", ()), ("ok", ("after",))])
+def test_matched_exposure_is_kept_when_cancel_or_verification_fails(tmp_path, monkeypatch, mode, read_fail):
+    """Codex su d85a62ff: la parte abbinata di un ordine resta nel risultato anche se il cancel fallisce o la
+    verifica non si legge."""
+    app = _app(tmp_path, monkeypatch)
+    ex = FakeExchange([_o("B1", matched=2.0, remaining=3.0)], cancel_mode=mode, read_fail=set(read_fail))
+    _engine_order(app.runtime.db, market_id="1.5", bet_id="B1", status="PARTIAL")
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert res["verification"] != "VERIFIED" and res["manual_action_required"] is True
+    assert [p["bet_id"] for p in res["matched_positions"]] == ["B1"], res
+    assert res["matched_positions"][0]["size_matched"] == 2.0
+
+
+def test_unreadable_local_ledger_is_never_verified(tmp_path, monkeypatch):
+    """Codex su d85a62ff: `orders` illeggibile (es. database is locked) con exchange vuoto non e' VERIFIED."""
+    app = _app(tmp_path, monkeypatch)
+    _live(app, FakeExchange([]), monkeypatch)
+    real = app.runtime.db._execute
+
+    def locked(sql, *a, **k):
+        if "FROM orders" in sql:
+            import sqlite3
+            raise sqlite3.OperationalError("database is locked")
+        return real(sql, *a, **k)
+
+    monkeypatch.setattr(app.runtime.db, "_execute", locked)
+    res = app.runtime.emergency_stop(reason="t")
+    assert res["verification"] == "SOURCES_INCOMPLETE" and res["manual_action_required"] is True, res
+    assert headless_main._emergency_stop_outcome(res)[0] != "VERIFIED"
