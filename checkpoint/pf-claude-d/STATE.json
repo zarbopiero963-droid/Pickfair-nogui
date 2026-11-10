@@ -1,10 +1,10 @@
 {
  "schema": "pf-checkpoint/3",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "seq": 20,
- "mandate_id": "PF-ROSERPINA-FINANCIAL-ORACLE-CLAUDE-D-20261109 (+ mandati precedenti Claude D)",
- "previous_checkpoint_sha": "a27d5f5c783ccfd6ecd5793c14a077495ddd01c2",
- "updated_at": "2026-11-09T21:00:00Z",
+ "seq": 21,
+ "mandate_id": "PF-BB1-SOL-R2-NEEDS-MANUAL-20261109 + EMERGENCY STOP BOOT DEPENDENCY (+ mandati precedenti Claude D)",
+ "previous_checkpoint_sha": "b54d801e2c7230d33ed3e7df5357724a736b701e",
+ "updated_at": "2026-11-10T09:10:00Z",
  "agent": {
   "identity": "claude-d",
   "role": "motore finanziario Pickfair (Claude D)",
@@ -18,7 +18,7 @@
   "patch": {
    "head": "bf3ce01e9b1aa5342eae7da7ad78f752abbef610",
    "tree": "c230bcaa28a5ce52a1a98d97af38b90006c2ba2e",
-   "captured_at": "2026-11-09T20:24:10+00:00",
+   "captured_at": "2026-11-10T09:03:55+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -136,7 +136,7 @@
   "catena di checkpoint pf-claude-d: seq 1 DURABLE, ripristino READY da clone nuovo",
   "caso sintetico squash+branch cancellato consegnato a Claude B (RED riprodotto: LATEST_CHECKPOINT_CORRUPT)"
  ],
- "next_atomic_action": "Attendere SHA della PR 1 (dopo #617); rieseguire oracoli, meccanismo e campagna 5 sullo SHA della PR e su main; togliere xfail condizionali al merge",
+ "next_atomic_action": "Verificare il ciclo 16 della #617 (A1) sul nuovo SHA con sonde in-process e uid reali e controprova su 3b11e82a; poi PR finanziaria P0 (D-1/D-2/D-3 + RO-DD-09 C); #622 solo dopo autorizzazione owner",
  "dependencies": {
   "F-04": "F-02 su main (Claude B)",
   "F-03": "F-02 + F-04",
@@ -336,6 +336,16 @@
    "id": "riverifica RO-DD-09 opzione C @2a9cedad (keep/roserpina-d1-drawdown-20261109): oracoli+meccanismo 91/91 con e senza --runxfail; campagna 5 12 PASS + 2 xfail attesi",
    "status": "NOT VERIFIED",
    "note": "albero di sviluppo (keep branch di Claude B); prove pubblicate su 21ef6926 e bf3ce01e; non certificativo finche non su main"
+  },
+  {
+   "id": "#617 verifiche indipendenti cicli 10-15 (R2, dump, cartella ancorata, lock SQLite, uid reali, registro durevole, emergency-stop senza blackbox, gate NETWORK_OR_SECRET_SURFACE) fino a 3b11e82a: nessun bloccante; minori M1-M3",
+   "status": "NOT VERIFIED",
+   "note": "albero PR #617 non mergiato; esiti su #617 c.6754829861 e precedenti"
+  },
+  {
+   "id": "#622 riproduzione: --emergency-stop con DB corrotto/non apribile => rc 1 da build(), nessun tentativo di cancellazione, su main 6519794b e 3b11e82a",
+   "status": "NOT VERIFIED",
+   "note": "SIM; test sandbox non committato (scratchpad es/)"
   }
  ],
  "tests_missing": [
@@ -348,7 +358,9 @@
  "defects_open": [
   "RO-DD-08: CHIUSO in 3f59fa67 (keep branch, verificato)",
   "RO-DD-09: CHIUSO in 2a9cedad con opzione C owner (blocco al riavvio dopo crash fino a conferma baseline owner; doppio guasto DB+marker coperto), verificato su albero di sviluppo",
-  "RO-REC-01, RO-CAP-01: aperti (PR successive di Claude B)"
+  "RO-REC-01, RO-CAP-01: aperti (PR successive di Claude B)",
+  "#622 P1 bloccante pre-LIVE: emergency stop dipende da build() (owner 10/11/2026)",
+  "#617: A1 symlink intermedi in triage Claude B (ciclo 16); M1/M2/M3 follow-up"
  ],
  "github_evidence": [
   "#586 c.6640163608",
@@ -373,7 +385,10 @@
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6749360568",
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6749637938",
   "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6749904944",
-  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6750525657"
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/586#issuecomment-6750525657",
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/617#issuecomment-6754829861",
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/617#issuecomment-6762892680",
+  "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/622"
  ],
  "gate_a": "NOT APPLICABLE (Claude D)",
  "pr_505": "non toccata",

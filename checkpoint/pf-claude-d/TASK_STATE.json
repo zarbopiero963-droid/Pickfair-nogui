@@ -26,8 +26,8 @@
   "caso sintetico squash+branch cancellato consegnato a Claude B (RED riprodotto: LATEST_CHECKPOINT_CORRUPT)"
  ],
  "lotto_corrente": "G7 campagna finanziaria: scenari G7-S01..S21 + hardening F-R06",
- "mandate_id": "PF-ROSERPINA-FINANCIAL-ORACLE-CLAUDE-D-20261109 (+ mandati precedenti Claude D)",
- "next_atomic_action": "Attendere SHA della PR 1 (dopo #617); rieseguire oracoli, meccanismo e campagna 5 sullo SHA della PR e su main; togliere xfail condizionali al merge",
+ "mandate_id": "PF-BB1-SOL-R2-NEEDS-MANUAL-20261109 + EMERGENCY STOP BOOT DEPENDENCY (+ mandati precedenti Claude D)",
+ "next_atomic_action": "Verificare il ciclo 16 della #617 (A1) sul nuovo SHA con sonde in-process e uid reali e controprova su 3b11e82a; poi PR finanziaria P0 (D-1/D-2/D-3 + RO-DD-09 C); #622 solo dopo autorizzazione owner",
  "pr_505": "non toccata",
  "schema": "pf-task-state/1",
  "tests_missing": [
