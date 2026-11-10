@@ -37,6 +37,31 @@ nera obbligatoria su entrambe, test E2E reali e certificazione indipendente per 
 | Build eseguibile | binario OK, AppImage FAIL | workflow presente, pubblicazione da sospendere (#623) |
 | Certificazione | PRE-LIVE su VPS Linux | nessun ambiente: NOT_CERTIFIED |
 
+## Gate di rilascio (decisione owner `PF-CROSS-PLATFORM-EXECUTION-20261110`, D02)
+
+**Vietato distribuire o attivare operativamente** un eseguibile o launcher che possa avviare il trading senza
+scatola nera obbligatoria: EXE Windows, GUI Linux, AppImage e ogni altro launcher che aggiri BB-1. La lacuna GUI
+(`main.py` / `mini_gui.py` → `RuntimeController` senza `blackbox_runtime.install`) è **P0 per la distribuzione** su
+entrambe le piattaforme, finché **BB-1G** non la chiude in modo fail-closed.
+
+Inventario dei launcher al 10/11/2026:
+
+| Launcher | Percorso | Scatola nera |
+|---|---|---|
+| `main.py --headless`, `pickfair-headless` | `headless_main.main()` | installata (Linux); Windows: avvio rifiutato |
+| `main.py` senza `--headless`, `pickfair` / `pickfair.exe`, AppImage (`AppRun` → `pickfair`) | `mini_gui.main()` | **assente** |
+| `python mini_gui.py` | `mini_gui.main()` | **assente** |
+| `AVVIA_API.bat` → `betfair_market_api.py` | dati di mercato in sola lettura, nessun ordine | assente (non opera; in ritiro, #491) |
+
+**Enforcement materiale oggi: assente.** I job `release` di `build-linux.yml` e `build-windows-exe.yml` pubblicano
+sui tag `v*` senza alcun controllo sulla scatola nera: una nota documentale non impedisce un rilascio. Meccanismi da
+introdurre e verificare, ognuno con PR e review propri (workflow e impostazioni a merge o azione dell'owner):
+1. **BB-1G nel codice** (enforcement principale): ogni entrypoint che può avviare il trading installa la scatola nera
+   prima di costruire il runtime, oppure rifiuta l'avvio; test che falliscono se un nuovo launcher la aggira.
+2. **Gate nei workflow di rilascio**: il job `release` parte solo se un controllo versionato (entrypoint, test BB-1G)
+   è verde sullo SHA del tag.
+3. **Protezione dei tag `v*`** nelle impostazioni del repository (azione owner).
+
 ## Requisiti di accettazione per piattaforma (A1–A9, testo completo in #625)
 
 A1 suite completa 3.11/3.12 in CI sulla piattaforma; A2 `tests/blackbox` senza skip sui test di garanzia e mutazioni
