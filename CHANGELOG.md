@@ -27,6 +27,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   contro un altro utente locale, non contro lo stesso utente del bot o root (SQLite apre per percorso risolto,
   vedi `docs/blackbox.md`).
 
+### Security
+- **PF-RELEASE-GATE (#625, decisioni owner D02/D04):** job `release-gate` fail-closed in `build-linux.yml` e
+  `build-windows-exe.yml`; nessun eseguibile si costruisce o si pubblica se un launcher capace di trading puo'
+  partire senza scatola nera (oggi la GUI: i test BB-1G sono `xfail` strict ed eseguiti con `--runxfail`, quindi il
+  gate e' rosso finche' BB-1G non e' integrata). Inventario dei launcher e del cablaggio in
+  `tests/packaging/test_release_requires_blackbox.py`.
+- **Ritiro dell'API legacy (PF-BETFAIR-API-RETIREMENT-20261110):** rimossi `betfair_market_api.py`, `AVVIA_API.bat` e
+  `INSTALLA.bat` (login Betfair reale senza scatola nera, API su `0.0.0.0:8765` senza autenticazione, CORS `*`). Nessun
+  consumatore; catalogo in-process `services/catalog_sync_service.py`; la consultazione esterna passera' dalla Control
+  API (#491). Il gate fallisce se tornano.
+
 ### Docs
 - **Parità Windows/Linux, decisione owner vincolante (#625, `PICKFAIR-CROSS-PLATFORM-PARITY-20261110`).**
   `docs/cross_platform_parity.md` e richiamo in `CLAUDE.md`: stesse funzionalità, garanzie di sicurezza e

@@ -51,16 +51,23 @@ Inventario dei launcher al 10/11/2026:
 | `main.py --headless`, `pickfair-headless` | `headless_main.main()` | installata (Linux); Windows: avvio rifiutato |
 | `main.py` senza `--headless`, `pickfair` / `pickfair.exe`, AppImage (`AppRun` → `pickfair`) | `mini_gui.main()` | **assente** |
 | `python mini_gui.py` | `mini_gui.main()` | **assente** |
-| `AVVIA_API.bat` → `betfair_market_api.py` | dati di mercato in sola lettura, nessun ordine | assente (non opera; in ritiro, #491) |
+| ~~`AVVIA_API.bat` / `INSTALLA.bat` → `betfair_market_api.py`~~ | **ritirati** (PF-BETFAIR-API-RETIREMENT-20261110): login Betfair reale senza scatola nera, API su `0.0.0.0:8765` senza autenticazione | il gate fallisce se tornano |
+| script di sviluppo alla radice (`hard_verify_issue_320.py`, `test_zero_touch_sync.py`, `test_gui_hard.py`, `test_gui_parser_management.py`) | non impacchettati | coperti dal gate comune di BB-1G |
 
-**Enforcement materiale oggi: assente.** I job `release` di `build-linux.yml` e `build-windows-exe.yml` pubblicano
-sui tag `v*` senza alcun controllo sulla scatola nera: una nota documentale non impedisce un rilascio. Meccanismi da
-introdurre e verificare, ognuno con PR e review propri (workflow e impostazioni a merge o azione dell'owner):
-1. **BB-1G nel codice** (enforcement principale): ogni entrypoint che può avviare il trading installa la scatola nera
-   prima di costruire il runtime, oppure rifiuta l'avvio; test che falliscono se un nuovo launcher la aggira.
-2. **Gate nei workflow di rilascio**: il job `release` parte solo se un controllo versionato (entrypoint, test BB-1G)
-   è verde sullo SHA del tag.
-3. **Protezione dei tag `v*`** nelle impostazioni del repository (azione owner).
+**Enforcement materiale (`PF-RELEASE-GATE`).**
+1. **Job `release-gate` nei workflow di build** (`build-linux.yml`, `build-windows-exe.yml`): `build` ne dipende
+   (`needs:`), `release` dipende da `build`, per i tag `v*` come per i `workflow_dispatch` (anche gli artifact sono un
+   canale di distribuzione). Esegue `tests/packaging/test_release_requires_blackbox.py` con `--runxfail`: i test della
+   GUI marcati `xfail(strict=True)` per BB-1G **falliscono**, quindi oggi **nessun eseguibile si costruisce o si
+   pubblica**. Quando BB-1G chiude la lacuna i test diventano XPASS strict e il marker va tolto nella stessa PR.
+2. **Inventario dei launcher** nello stesso test: script della spec PyInstaller, `AppRun`, launcher `.bat`, script
+   alla radice che avviano il runtime; un launcher nuovo non inventariato fa fallire il gate. Il test verifica anche il
+   cablaggio (`needs`, `--runxfail`, nessun `if`/`continue-on-error`).
+3. **BB-1G nel codice** (enforcement principale, PR successiva): gate all'avvio (`RuntimeController.start`) e
+   all'invio (ordini, cashout, ripresa).
+4. **Percorso manuale (azione owner):** un'app o un token con `contents: write` può creare tag o release fuori dai
+   workflow. Serve un **ruleset su `refs/tags/v*`** che limiti creazione/aggiornamento/cancellazione all'admin senza
+   bypass per le app (ed eventualmente le release immutabili). Finché manca: nessun tag `v*`.
 
 ## Requisiti di accettazione per piattaforma (A1–A9, testo completo in #625)
 

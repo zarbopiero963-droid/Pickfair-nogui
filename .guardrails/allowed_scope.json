@@ -3519,6 +3519,24 @@
         "tests/catalog/pf-test-catalog.json"
       ],
       "max_files": 16
+    },
+    "pf_release_gate": {
+      "description": "PF-RELEASE-GATE (decisioni owner PF-CROSS-PLATFORM-EXECUTION-20261110 D02/D04, PF-BETFAIR-API-RETIREMENT-20261110, OWNER FINAL GO 617 §6; #625): job release-gate fail-closed nei workflow di build Linux/Windows, test dei launcher e del cablaggio, ritiro di betfair_market_api.py/AVVIA_API.bat/INSTALLA.bat, documentazione parita' Windows/Linux (docs/cross_platform_parity.md, CLAUDE.md), riformulazione Piattaforme in docs/blackbox.md, CHANGELOG. PR a merge owner (workflow e CLAUDE.md).",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/build-linux.yml",
+        ".github/workflows/build-windows-exe.yml",
+        ".guardrails/allowed_scope.json",
+        "AVVIA_API.bat",
+        "CHANGELOG.md",
+        "CLAUDE.md",
+        "INSTALLA.bat",
+        "betfair_market_api.py",
+        "docs/blackbox.md",
+        "docs/cross_platform_parity.md",
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "max_files": 11
     }
   }
 }
