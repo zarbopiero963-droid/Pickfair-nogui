@@ -39,8 +39,15 @@ sull'exchange.
    `unattributed_open_orders` e richiede l'operatore (rilievo Sol su `c8338ef3`). **Mai il cancel dell'intero
    mercato**, nemmeno se l'exchange non si può leggere (Sol su `7094b1a6`): in quel caso si cancellano per `betId`
    solo gli ordini del bot noti nel ledger, gli invii senza `betId` restano irrisolti e l'esito è `UNVERIFIED`.
-5. **Cancel**, riverificando l'autorità del runtime (#536) prima di ogni mercato **e prima di ogni lotto**: se il
-   runtime viene superato durante un lotto, i lotti e i mercati successivi non partono (`runtime_authority`). Nel client LIVE la
+5. **Cancel**, riverificando l'autorità del runtime (#536) prima di ogni mercato **e dopo ogni lotto**. Ogni lotto
+   ha il suo record in `cancel_results[].batches` (`index`, `bet_ids`, `status`): `OK`, `FAILED` (rifiuto esplicito),
+   `UNKNOWN` (eccezione, timeout o esito `AMBIGUOUS`: il cancel può essere avvenuto) o `NOT_SENT`. Se l'autorità si
+   perde con un lotto in volo, quel lotto **conserva il proprio stato di risposta** (successo confermato, errore
+   confermato o `UNKNOWN`) ed è marcato `authority_lost_during`; i lotti e i mercati successivi non partono
+   (`NOT_SENT`, `runtime_authority`) e l'esito non è mai `VERIFIED` (sonde owner B4/B5). La perdita dell'autorità è un **incidente distinto** (`authority_lost`, anche
+   nell'evento sul bus), registrato anche quando la lettura finale mostra gli ordini cancellati: l'esito della
+   richiesta (lotto `UNKNOWN`) resta separato dallo stato effettivo degli ordini, deciso dalla lettura finale
+   (direttiva owner `PF-OWNER-ESTOP-B5-BATCH-AUDIT-20261110`). Nel client LIVE la
    cancellazione e la lettura di verifica dell'emergenza attraversano il circuit breaker (`emergency=True`): un breaker
    aperto da timeout di lettura (AUD-BF-010) non blocca più l'uscita protettiva. Fuori dall'emergenza il breaker è
    rispettato come prima. Sul broker SIM un cancel riuscito in memoria ma con lo snapshot di reload non scritto

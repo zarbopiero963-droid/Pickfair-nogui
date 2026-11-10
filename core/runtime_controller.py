@@ -2300,7 +2300,8 @@ class RuntimeController:
                     "open_after_cancel": result.get("open_after_cancel"),
                     "unattributed_open_orders": result.get("unattributed_open_orders"),
                     "matched_positions": result.get("matched_positions"), "cancel_errors": cancel_errors,
-                    "unresolved_submissions": result.get("unresolved_submissions"), "persist_error": persist_error})
+                    "unresolved_submissions": result.get("unresolved_submissions"), "persist_error": persist_error,
+                    "authority_lost": result.get("authority_lost")})
             except Exception:
                 logger.exception("emergency_stop: notifica di intervento manuale non pubblicata")
 
@@ -2460,40 +2461,57 @@ class RuntimeController:
     _EMERGENCY_CANCEL_BATCH = 60        # Betfair: massimo 60 istruzioni per cancelOrders (Sol su 44164b44)
 
     def _emergency_cancel(self, client, market_id: str, bet_ids):
-        """Cancel d'emergenza, in lotti di al massimo 60 `betId` (limite Betfair di cancelOrders): un lotto respinto
-        non impedisce gli altri. Esito combinato: ok solo se tutti i lotti riescono."""
-        if bet_ids is None or len(bet_ids) <= self._EMERGENCY_CANCEL_BATCH:
-            return self._emergency_cancel_once(client, market_id, bet_ids)
+        """Cancel d'emergenza in lotti di al massimo 60 `betId` (limite Betfair di cancelOrders), con un record per lotto.
+
+        Stato del lotto: OK, FAILED (rifiuto esplicito), UNKNOWN (eccezione, timeout o esito AMBIGUOUS: il cancel puo'
+        essere avvenuto) o NOT_SENT. Un lotto respinto non impedisce gli altri. L'autorita' del runtime si riverifica
+        dopo OGNI lotto (Sol su 7094b1a6, sonda owner B5): se e' persa, il lotto appena inviato CONSERVA il proprio
+        stato di risposta (successo confermato, errore confermato o UNKNOWN: direttiva owner, requisito 3) ed e'
+        marcato `authority_lost_during`; i lotti successivi non partono (NOT_SENT, uno per lotto). Esito combinato:
+        ok solo se tutti i lotti sono OK e l'autorita' non e' stata persa."""
+        if bet_ids is None:
+            return self._emergency_cancel_once(client, market_id, None)
         bet_ids = list(bet_ids)
+        size = self._EMERGENCY_CANCEL_BATCH
+        chunks = [bet_ids[i:i + size] for i in range(0, len(bet_ids), size)]
         combined = {"ok": True, "market_id": market_id, "cancelled_count": 0, "instructionReports": [], "batches": []}
-        for start in range(0, len(bet_ids), self._EMERGENCY_CANCEL_BATCH):
-            chunk = bet_ids[start:start + self._EMERGENCY_CANCEL_BATCH]
-            if start:
-                # Autorita' riverificata prima di OGNI lotto (Sol su 7094b1a6): se il runtime e' stato superato durante
-                # il lotto precedente, nessuna cancellazione ulteriore interferisce con il nuovo proprietario.
-                block = self._authority_definitively_lost()
-                if block:
-                    combined["ok"] = False
-                    combined["authority_lost"] = block
-                    combined.setdefault("error", "runtime_authority")
-                    combined["batches"].append({"bet_ids": bet_ids[start:], "ok": False, "error": "runtime_authority"})
-                    break
+        for index, chunk in enumerate(chunks):
             try:
                 response = self._emergency_cancel_once(client, market_id, chunk) or {}
-            except Exception as exc:                   # un lotto fallito non ferma gli altri
-                response = {"ok": False, "error": str(exc)}
-            ok = bool(response.get("ok")) if "ok" in response else \
-                str(response.get("status") or "").upper() == "SUCCESS"
-            reports = response.get("instructionReports") or []
-            combined["batches"].append({"bet_ids": chunk, "ok": ok, "error": response.get("error")})
-            combined["instructionReports"].extend(reports)
-            if ok:
-                combined["cancelled_count"] += int(response.get("cancelled_count") or len(reports) or 0)
-            else:
-                combined["ok"] = False
-                combined.setdefault("error", response.get("error") or response.get("errorCode") or "cancel_orders")
+                ok = bool(response.get("ok")) if "ok" in response else \
+                    str(response.get("status") or "").upper() == "SUCCESS"
+                if ok:
+                    status = "OK"
+                elif str(response.get("outcome") or "").upper() == "AMBIGUOUS":
+                    status = "UNKNOWN"              # timeout / risposta persa nel client: esito ignoto, non fallito
+                else:
+                    status = "FAILED"
+                error = response.get("error") or response.get("errorCode")
+            except Exception as exc:                # eccezione durante l'invio: esito ignoto, mai «fallito»
+                response, status, error = {}, "UNKNOWN", str(exc)
+            record = {"index": index, "bet_ids": chunk, "status": status, "ok": status == "OK", "error": error}
+            combined["batches"].append(record)
+            combined["instructionReports"].extend(response.get("instructionReports") or [])
             if response.get("snapshot_persisted") is False:
                 combined["snapshot_persisted"] = False
+            block = self._authority_definitively_lost()
+            if block:
+                # Autorita' persa con il lotto in volo: lo stato di risposta resta quello vero (un successo confermato
+                # e' un fatto, non un'incertezza); la perdita e' un incidente distinto, registrato sul lotto e sopra.
+                record["authority_lost_during"] = block
+                combined["authority_lost"] = block
+                for later, rest in enumerate(chunks[index + 1:], start=index + 1):
+                    combined["batches"].append({"index": later, "bet_ids": rest, "status": "NOT_SENT", "ok": False,
+                                                "error": "runtime_authority"})
+            if record["status"] == "OK":
+                combined["cancelled_count"] += int(response.get("cancelled_count") or
+                                                   len(response.get("instructionReports") or []) or 0)
+            else:
+                combined["ok"] = False
+                combined.setdefault("error", record["error"] or record["status"])
+            if block:
+                combined["ok"] = False
+                break
         return combined
 
     def _emergency_cancel_once(self, client, market_id: str, bet_ids):
@@ -2743,6 +2761,9 @@ class RuntimeController:
             "order_outcomes": outcomes,
             "open_after_cancel": open_after, "unattributed_open_orders": unattributed,
             "matched_positions": matched_positions, "unresolved_submissions": unresolved,
+            # Perdita dell'autorita' durante l'arresto: incidente distinto, registrato anche se la lettura finale mostra
+            # gli ordini cancellati, e mai compatibile con VERIFIED (direttiva owner PF-OWNER-ESTOP-B5-BATCH-AUDIT).
+            "authority_lost": [e for e in cancel_errors if e.get("stage") == "runtime_authority"],
             "manual_action_required": verification != "VERIFIED" or bool(unattributed),
         }
 

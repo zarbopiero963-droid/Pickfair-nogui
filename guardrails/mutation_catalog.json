@@ -9358,8 +9358,8 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "        if bet_ids is None or len(bet_ids) <= self._EMERGENCY_CANCEL_BATCH:\n",
-      "mutated": "        if True:\n",
+      "original": "        size = self._EMERGENCY_CANCEL_BATCH\n",
+      "mutated": "        size = max(1, len(bet_ids))\n",
       "tests": [
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
@@ -9382,12 +9382,48 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "                block = self._authority_definitively_lost()\n",
-      "mutated": "                block = None\n",
+      "original": "            block = self._authority_definitively_lost()\n",
+      "mutated": "            block = None\n",
       "tests": [
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
-      "rationale": "Sol su 7094b1a6: un runtime superato durante un lotto continuerebbe a cancellare con i lotti successivi."
+      "rationale": "Sol su 7094b1a6, sonde owner B4/B5: un runtime superato continuerebbe a cancellare con i lotti successivi."
+    },
+    {
+      "id": "p0_estop_in_flight_batch_unmarked",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                record[\"authority_lost_during\"] = block\n",
+      "mutated": "                pass\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sonda owner B5: il lotto in volo quando l'autorita' si perde deve restare marcato (incidente distinto), con il suo stato di risposta vero."
+    },
+    {
+      "id": "p0_estop_cancel_timeout_as_failed",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                response, status, error = {}, \"UNKNOWN\", str(exc)\n",
+      "mutated": "                response, status, error = {}, \"FAILED\", str(exc)\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sonda owner B5 [timeout]: un timeout sul cancel non prova che il cancel non sia avvenuto; FAILED sarebbe un fallimento dedotto."
+    },
+    {
+      "id": "p0_estop_authority_incident_dropped",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            \"authority_lost\": [e for e in cancel_errors if e.get(\"stage\") == \"runtime_authority\"],\n",
+      "mutated": "            \"authority_lost\": [],\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Direttiva owner PF-OWNER-ESTOP-B5-BATCH-AUDIT: la perdita dell'autorita' deve restare un incidente distinto anche se l'exchange conferma le cancellazioni."
     }
   ]
 }

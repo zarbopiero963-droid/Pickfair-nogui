@@ -826,21 +826,58 @@ def test_batch_matched_during_cancel_is_exposure_not_cancelled(tmp_path, monkeyp
     assert all(by_bet[b] == "CANCELLED" for b in bets[:60] + bets[120:])
 
 
-def test_authority_lost_between_batches_stops_further_cancels(tmp_path, monkeypatch):
-    """Sol su 7094b1a6: autorita' riverificata prima di ogni lotto. Se il runtime viene superato durante il primo
-    lotto, i lotti successivi non partono (nessuna interferenza col nuovo proprietario) e l'esito non e' VERIFIED."""
+@pytest.mark.parametrize("in_flight", ["ok", "timeout"])
+def test_authority_lost_while_a_batch_is_in_flight(tmp_path, monkeypatch, in_flight):
+    """Sol su 7094b1a6, sonde owner B4/B5: l'autorita' del runtime si perde mentre il primo lotto e' in volo. Nessun
+    altro lotto parte; il lotto in volo conserva i suoi betId e il proprio stato di risposta (successo confermato con
+    [ok], UNKNOWN con [timeout]) ed e' marcato authority_lost_during; un record per lotto (NOT_SENT per i successivi);
+    mai VERIFIED, intervento manuale."""
     app = _app(tmp_path, monkeypatch)
     bets = [f"A{i:03d}" for i in range(121)]
     for b in bets:
         _engine_order(app.runtime.db, market_id="1.31", bet_id=b)
     ex = FakeExchange([_o(b, market="1.31") for b in bets])
+    real_cancel = ex.cancel_orders
+
+    def cancel(*, market_id, bet_ids=None, emergency=False):
+        result = real_cancel(market_id=market_id, bet_ids=bet_ids, emergency=emergency)
+        if in_flight == "timeout":
+            raise RuntimeError("REQUEST_FAILED: TIMEOUT")
+        return result
+
+    ex.cancel_orders = cancel
     _live(app, ex, monkeypatch)
     monkeypatch.setattr(app.runtime, "_authority_definitively_lost",
                         lambda: "AUTHORITY_SUPERSEDED" if ex.cancel_calls else None)
     res = app.runtime.emergency_stop(reason="t")
-    assert [len(c) for c in ex.cancel_bet_ids] == [60], [len(c) for c in ex.cancel_bet_ids]
+    assert [len(c) for c in ex.cancel_bet_ids] == [60], "dopo la perdita di autorita' nessun altro lotto"
+    assert res["verification"] != "VERIFIED" and res["manual_action_required"] is True, res["verification"]
     assert any(e.get("stage") == "runtime_authority" for e in res["cancel_errors"]), res["cancel_errors"]
-    assert res["verification"] != "VERIFIED" and res["manual_action_required"] is True
     (market_result,) = res["cancel_results"]
-    assert [b["ok"] for b in market_result["batches"]] == [True, False]
-    assert market_result["batches"][1]["error"] == "runtime_authority"
+    batches = market_result["batches"]
+    in_flight_status = "OK" if in_flight == "ok" else "UNKNOWN"     # requisito owner 3: stato di risposta vero
+    assert [b["status"] for b in batches] == [in_flight_status, "NOT_SENT", "NOT_SENT"], batches
+    assert batches[0]["authority_lost_during"] == "AUTHORITY_SUPERSEDED", batches[0]
+    assert [len(b["bet_ids"]) for b in batches] == [60, 60, 1]
+    assert batches[0]["bet_ids"] == bets[:60], "betId del lotto in volo conservati per la riconciliazione"
+    assert res["cancelled_count"] == (60 if in_flight == "ok" else 0), "solo un successo confermato conta"
+    # Incidente distinto, registrato anche se l'exchange conferma le cancellazioni.
+    assert res["authority_lost"] and res["authority_lost"][0]["error"] == "AUTHORITY_SUPERSEDED", res["authority_lost"]
+    # Esito della RICHIESTA (lotto UNKNOWN) separato dallo stato EFFETTIVO degli ordini, deciso dalla lettura finale:
+    # l'exchange ha cancellato i primi 60 (conferma successiva), gli altri 61 restano aperti e non sono mai CANCELLED.
+    by_bet = {o["bet_id"]: o["outcome"] for o in res["order_outcomes"] if o.get("bet_id")}
+    assert all(by_bet[b] == "CANCELLED" for b in bets[:60]), {b: by_bet[b] for b in bets[:2]}
+    assert all(by_bet[b] == "STILL_OPEN" for b in bets[60:])
+    assert sorted(o["bet_id"] for o in res["open_after_cancel"]) == bets[60:]
+
+
+def test_cancel_timeout_is_unknown_not_failed(tmp_path, monkeypatch):
+    """Un timeout sul cancel non prova che il cancel non sia avvenuto: il lotto e' UNKNOWN, non FAILED."""
+    app = _app(tmp_path, monkeypatch)
+    _engine_order(app.runtime.db, market_id="1.32", bet_id="T1")
+    ex = FakeExchange([_o("T1", market="1.32")], cancel_mode="raise")
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    (market_result,) = res["cancel_results"]
+    assert [b["status"] for b in market_result["batches"]] == ["UNKNOWN"], market_result
+    assert res["verification"] != "VERIFIED" and res["manual_action_required"] is True
