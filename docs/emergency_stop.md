@@ -19,7 +19,10 @@ sull'exchange.
 2. **Candidati da tutte le fonti locali:** solo righe della stessa sede (`payload.simulation_mode`; sede non dichiarata
    = candidata); tabella `orders` (ogni stato tranne quelli che non possono avere un ordine
    aperto: CANCELLED, FAILED, REJECTED, SETTLED, ROLLED_BACK, LAPSED, VOIDED, EXPIRED, DUPLICATE_BLOCKED, NOT_ATTEMPTED,
-   HEDGE_FAILED; quindi anche INFLIGHT, AMBIGUOUS, HEDGE_* e stati futuri) e `order_saga`. Una fonte illeggibile è un
+   HEDGE_FAILED; quindi anche INFLIGHT, AMBIGUOUS, HEDGE_* e stati futuri), `order_saga` e lo store delle saghe del
+   **Microstake nativo** della sede (`microstake.sagas.live` / `microstake.sagas`; ogni fase tranne FAILED e
+   ROLLED_BACK: stub, riduzione e sostituto con il ref della saga). Per l'hedge nativo del cashout il riferimento
+   sull'exchange è `response.raw.microstake_ref`, non la `customer_ref` della riga. Una fonte illeggibile è un
    errore dichiarato, mai «nessun ordine».
 3. **Fotografia dell'exchange prima** (`get_current_orders`, tutti i mercati) sulla sede in cui il runtime operava
    (LIVE: client Betfair; SIM: broker simulato).
@@ -31,16 +34,21 @@ sull'exchange.
 5. **Cancel**, riverificando l'autorità del runtime (#536) prima di ogni mercato. Nel client LIVE la
    cancellazione e la lettura di verifica dell'emergenza attraversano il circuit breaker (`emergency=True`): un breaker
    aperto da timeout di lettura (AUD-BF-010) non blocca più l'uscita protettiva. Fuori dall'emergenza il breaker è
-   rispettato come prima.
+   rispettato come prima. Sul broker SIM un cancel riuscito in memoria ma con lo snapshot di reload non scritto
+   (`snapshot_persisted: false`) si ripara con `ensure_durable()`; se resta non persistito è un cancel incompleto
+   (`snapshot_not_persisted`, esito `CANCEL_INCOMPLETE`), perché al riavvio l'ordine tornerebbe aperto.
 6. **Fotografia dopo**, sempre e su tutti i mercati (un ordine accettato dopo la prima lettura compare; gli ordini non
    attribuibili si ricalcolano sullo stato finale), e **esito per ordine** (`order_outcomes`), deciso sullo **stato finale**
    dell'exchange (un abbinamento avvenuto durante il cancel resta un'esposizione): `CANCELLED`, `PARTIALLY_MATCHED`
    (residuo cancellato, parte abbinata resta), `ALREADY_MATCHED`, `NOT_FOUND`, `STILL_OPEN`, `UNKNOWN`. Per gli ordini
    senza `betId` (risposta persa): `SEE_BET_ID` se ritrovati per `customerOrderRef` (con `bet_id_by_ref`),
-   `NO_OPEN_ORDER_ON_MARKET`, oppure `UNKNOWN` se sul mercato c'è un ordine aperto non attribuibile.
+   `NO_OPEN_ORDER_ON_MARKET`, `NO_OPEN_ORDER_FOUND` (riga senza mercato, nessun ordine con il suo riferimento), oppure
+   `UNKNOWN` se sul mercato c'è un ordine aperto non attribuibile. Le identità del bot si riconoscono anche nella
+   fotografia finale: un ordine ritrovato solo dopo il cancel, già abbinato, entra in `matched_positions`.
 7. **Verifica** (`verification`): `VERIFIED` solo se la lettura finale riesce e non resta nulla di aperto, nessun cancel
    è fallito, l'autorità non è stata persa e le fonti locali sono state lette. Altrimenti `OPEN_ORDERS_REMAIN`,
-   `CANCEL_INCOMPLETE`, `UNVERIFIED` o `SOURCES_INCOMPLETE` (tabella `orders` o `order_saga` illeggibile: gli ordini
+   `CANCEL_INCOMPLETE`, `UNVERIFIED` o `SOURCES_INCOMPLETE` (tabella `orders`, `order_saga` o store delle saghe
+   Microstake illeggibile: gli ordini
    del bot non sono attribuibili, quindi un exchange vuoto non basta).
 8. **Posizioni reali** abbinate prima dell'arresto: elencate in `matched_positions` (mercato, selezione, lato, importo,
    prezzo medio) qualunque sia l'esito del cancel o della verifica. La fonte dei settlement resta quella precedente all'arresto (`_settlement_source_before_emergency`).

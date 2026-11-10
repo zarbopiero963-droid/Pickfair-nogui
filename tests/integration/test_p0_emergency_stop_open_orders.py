@@ -448,3 +448,104 @@ def test_unattributed_order_seen_only_in_the_final_read_is_reported(tmp_path, mo
     res = app.runtime.emergency_stop(reason="t")
     assert res["unattributed_open_orders"][0]["bet_id"] == "X9" and res["manual_action_required"] is True, res
     assert [o["outcome"] for o in res["order_outcomes"] if o.get("status") == "AMBIGUOUS"] == ["UNKNOWN"]
+
+
+def test_matched_bot_order_seen_only_in_the_final_read_is_reported_as_exposure(tmp_path, monkeypatch):
+    """Sol su 82bbd010: INFLIGHT senza betId, comparso solo nella lettura finale gia' abbinato e ritrovato per
+    customerOrderRef: la sua esposizione va riportata."""
+    app = _app(tmp_path, monkeypatch)
+    oid = _engine_order(app.runtime.db, market_id="", bet_id=None, status="INFLIGHT")
+    ref = app.runtime.db.get_order(oid)["customer_ref"]
+    ex = FakeExchange([], appear_after=[_o("LATE", market="3.3", ref=ref, status="EXECUTION_COMPLETE",
+                                           matched=5.0, remaining=0.0)])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert [p["bet_id"] for p in res["matched_positions"]] == ["LATE"], res
+    assert {o.get("bet_id"): o["outcome"] for o in res["order_outcomes"] if o.get("bet_id")}["LATE"] == \
+        "ALREADY_MATCHED"
+    assert [o["outcome"] for o in res["order_outcomes"] if o.get("status") == "INFLIGHT"] == ["SEE_BET_ID"]
+
+
+# ------------------------------------------------------------------------- Microstake nativo (Codex su 82bbd010)
+
+def test_native_cashout_hedge_is_recognised_by_its_microstake_ref(tmp_path, monkeypatch):
+    """Hedge nativo del cashout con esito ignoto: la riga `orders` ha la `customer_ref` della sorgente, l'ordine
+    sull'exchange porta il ref della saga (`response.raw.microstake_ref`). Va riconosciuto e cancellato."""
+    app = _app(tmp_path, monkeypatch)
+    ms_ref = "hedge:src-ms-0123456789ab"
+    app.runtime.db.insert_order({
+        "customer_ref": "hedge:src", "correlation_id": uuid.uuid4().hex, "status": "HEDGE_AMBIGUOUS",
+        "payload": {"market_id": "1.8", "selection_id": 3, "bet_type": "LAY", "price": 1.01, "stake": 0.5},
+        "response": {"ok": False, "status": "AMBIGUOUS", "order_unknown": True, "bet_id": None,
+                     "raw": {"status": "AMBIGUOUS", "microstake_ref": ms_ref}},
+    })
+    ex = FakeExchange([_o("MS1", market="1.8", ref=ms_ref)])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert ex.cancel_bet_ids == [["MS1"]], res
+    assert res["unattributed_open_orders"] == [] and res["verification"] == "VERIFIED", res
+
+
+def _save_live_saga(db, ref, **record):
+    import json
+    from core.microstake_live_port import LIVE_SAGA_SETTINGS_KEY
+    db.save_settings({LIVE_SAGA_SETTINGS_KEY: json.dumps({ref: record})})
+
+
+def test_microstake_saga_stub_known_only_to_the_saga_store_is_cancelled(tmp_path, monkeypatch):
+    """Stub della saga (minimo exchange, prezzo non abbinabile) noto solo allo store `microstake.sagas.live`."""
+    app = _app(tmp_path, monkeypatch)
+    _save_live_saga(app.runtime.db, "abc-ms-1", phase="STUB_ACCEPTED", bet_id="ST1", stub_bet_id="ST1",
+                    request={"market_id": "1.9", "selection_id": 3, "side": "BACK"})
+    ex = FakeExchange([_o("ST1", market="1.9", ref="abc-ms-1")])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert ex.cancel_bet_ids == [["ST1"]], res
+    assert res["unattributed_open_orders"] == [] and res["verification"] == "VERIFIED", res
+    assert {o.get("bet_id"): o["outcome"] for o in res["order_outcomes"] if o.get("bet_id")}["ST1"] == "CANCELLED"
+
+
+def test_concluded_microstake_sagas_are_not_candidates(tmp_path, monkeypatch):
+    app = _app(tmp_path, monkeypatch)
+    _save_live_saga(app.runtime.db, "abc-ms-2", phase="ROLLED_BACK", bet_id="", stub_bet_id="",
+                    request={"market_id": "1.9"})
+    ex = FakeExchange([])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert res["order_outcomes"] == [] and res["verification"] == "VERIFIED", res
+
+
+def test_unreadable_microstake_saga_store_is_never_verified(tmp_path, monkeypatch):
+    from core.microstake_live_port import LIVE_SAGA_SETTINGS_KEY
+    app = _app(tmp_path, monkeypatch)
+    app.runtime.db.save_settings({LIVE_SAGA_SETTINGS_KEY: "{corrotto"})
+    ex = FakeExchange([])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert res["verification"] == "SOURCES_INCOMPLETE" and res["manual_action_required"] is True, res
+
+
+@pytest.mark.parametrize("durable_on_retry, expected", [(False, "CANCEL_INCOMPLETE"), (True, "VERIFIED")])
+def test_sim_cancel_not_persisted_is_never_verified_unless_the_retry_persists_it(tmp_path, monkeypatch,
+                                                                                 durable_on_retry, expected):
+    """Codex su 82bbd010: cancel SIM eseguito in memoria con lo snapshot di reload non scritto (`snapshot_persisted`
+    False): al riavvio l'ordine tornerebbe aperto. VERIFIED solo se `ensure_durable` lo rende persistente."""
+    app = _app(tmp_path, monkeypatch)
+    broker = SimulationBroker(starting_balance=1000.0)
+    monkeypatch.setattr(app.runtime.betfair_service, "get_simulation_broker", lambda: broker)
+    bet_id = _open_on_exchange(broker, market_id="1.43")
+    _engine_order(app.runtime.db, market_id="1.43", bet_id=bet_id)
+    real_cancel = broker.cancel_orders
+    retries = []
+
+    def cancel_not_persisted(*, market_id=None, instructions=None, customer_ref=""):   # firma del broker reale
+        return dict(real_cancel(market_id=market_id, instructions=instructions, customer_ref=customer_ref),
+                    snapshot_persisted=False)
+
+    monkeypatch.setattr(broker, "cancel_orders", cancel_not_persisted)
+    monkeypatch.setattr(broker, "ensure_durable", lambda: retries.append(1) or durable_on_retry)
+    app.runtime.simulation_mode = True
+    res = app.runtime.emergency_stop(reason="t")
+    assert retries == [1], res
+    assert res["verification"] == expected, res
+    assert res["manual_action_required"] is (expected != "VERIFIED"), res

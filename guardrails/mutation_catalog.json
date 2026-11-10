@@ -9208,6 +9208,66 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "Sol su d85a62ff: un ordine non attribuibile comparso dopo la prima lettura non arriverebbe all'operatore."
+    },
+    {
+      "id": "p0_estop_final_identities_ignored",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        final_bot = {bid: o for bid, o in post_by_bet.items() if bid and _is_bot(o)}\n",
+      "mutated": "        final_bot = {}\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su 82bbd010: un ordine del bot ritrovato solo nella lettura finale, gia' abbinato, sparirebbe dall'esposizione riportata."
+    },
+    {
+      "id": "p0_estop_microstake_sagas_ignored",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        out.extend(self._emergency_microstake_candidates(cancel_errors, venue=venue))\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su 82bbd010: gli stub/sostituti del Microstake noti solo allo store delle saghe non sarebbero attribuiti ne' cancellati."
+    },
+    {
+      "id": "p0_estop_microstake_ref_ignored",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                            \"customer_ref\": ms_ref or str(item.get(\"customer_ref\") or \"\"), \"status\": status})\n",
+      "mutated": "                            \"customer_ref\": str(item.get(\"customer_ref\") or \"\"), \"status\": status})\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su 82bbd010: l'hedge nativo del cashout porta sull'exchange il ref della saga; senza, resta aperto e non attribuito."
+    },
+    {
+      "id": "p0_estop_saga_store_error_not_a_source_error",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                         if e.get(\"stage\") in (\"read_orders\", \"get_pending_sagas\", \"read_microstake_sagas\")]\n",
+      "mutated": "                         if e.get(\"stage\") in (\"read_orders\", \"get_pending_sagas\")]\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Store delle saghe Microstake illeggibile: senza, un exchange vuoto darebbe VERIFIED con ordini del bot non attribuibili."
+    },
+    {
+      "id": "p0_estop_sim_cancel_not_persisted_accepted",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            if not durable:\n                logger.critical(\"emergency_stop: cancel SIM non persistito, al riavvio gli ordini tornerebbero aperti\")\n",
+      "mutated": "            if False:\n                logger.critical(\"emergency_stop: cancel SIM non persistito, al riavvio gli ordini tornerebbero aperti\")\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su 82bbd010: un cancel SIM non persistito nello snapshot di reload tornerebbe aperto al riavvio; non puo' valere VERIFIED."
     }
   ]
 }

@@ -354,9 +354,11 @@ def test_production_readers_of_snapshot_persisted():
         if "snapshot_persisted" in text:
             readers.append(rel)
     # core/microstake_live_port.py: dichiara solo che l'exchange LIVE non ha uno snapshot locale (sempre True).
+    # core/runtime_controller.py: arresto d'emergenza, cancel SIM non persistito = cancel incompleto (P0 AUD-BF-016).
     assert sorted(readers) == ["cashout_cancel_adapter.py", "core/microstake_live_port.py", "core/microstake_safe.py",
                                "core/microstake_sim_port.py",
-                               "core/order_router.py", "core/trading_engine.py", "simulation_broker.py"]
+                               "core/order_router.py", "core/runtime_controller.py", "core/trading_engine.py",
+                               "simulation_broker.py"]
 
 
 # ----------------------------------------------------------------------------- 8. riconsegna (rilievo Codex P1 su 6c2d462)

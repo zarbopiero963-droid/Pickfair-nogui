@@ -2342,13 +2342,18 @@ class RuntimeController:
                 sim_flag = payload.get("simulation_mode")
                 if isinstance(sim_flag, bool) and sim_flag != (venue == "SIM"):
                     continue
+                # Hedge nativo del cashout (Codex su 82bbd010): sull'exchange l'ordine porta il ref della saga
+                # (`raw.microstake_ref`), non la `customer_ref` della riga.
+                raw = response.get("raw") if isinstance(response, dict) else None
+                ms_ref = str(raw.get("microstake_ref") or "").strip() if isinstance(raw, dict) else ""
                 out.append({"source": "orders", "order_id": str(item.get("id") or ""),
                             "market_id": str(payload.get("market_id") or payload.get("marketId") or "").strip(),
                             "bet_id": self.db._order_bet_id(response) if response else "",
-                            "customer_ref": str(item.get("customer_ref") or ""), "status": status})
+                            "customer_ref": ms_ref or str(item.get("customer_ref") or ""), "status": status})
         except Exception as exc:
             logger.exception("emergency_stop: lettura della tabella orders fallita")
             cancel_errors.append({"stage": "read_orders", "error": str(exc)})
+        out.extend(self._emergency_microstake_candidates(cancel_errors, venue=venue))
         try:
             sagas = self.db.get_pending_sagas() if hasattr(self.db, "get_pending_sagas") else []
             for saga in sagas or []:
@@ -2360,6 +2365,40 @@ class RuntimeController:
         except Exception as exc:
             logger.exception("emergency_stop: get_pending_sagas failed")
             cancel_errors.append({"stage": "get_pending_sagas", "error": str(exc)})
+        return out
+
+    _EMERGENCY_SAGA_NO_ORDER_PHASES = frozenset({"FAILED", "ROLLED_BACK"})
+
+    def _emergency_microstake_candidates(self, cancel_errors: list, *, venue: str) -> list:
+        """Saghe del Microstake nativo della sede (store `microstake.sagas[.live]`): stub, riduzione e sostituto
+        portano il ref della saga e possono essere aperti anche se la riga `orders` non ha `betId` (Codex su
+        82bbd010). Store illeggibile = fonte incompleta, mai «nessun ordine»."""
+        out = []
+        if not (callable(getattr(self.db, "get_settings", None)) and callable(getattr(self.db, "save_settings", None))):
+            return out
+        try:
+            from core.microstake_live_port import LIVE_SAGA_SETTINGS_KEY
+            from core.microstake_sim_port import SAGA_SETTINGS_KEY, DbSagaStore
+            store = DbSagaStore(self.db, LIVE_SAGA_SETTINGS_KEY if venue != "SIM" else SAGA_SETTINGS_KEY)
+            sagas = store._all()
+            for ref, rec in sorted(sagas.items()):
+                rec = rec if isinstance(rec, dict) else {}
+                phase = str(rec.get("phase") or "").upper()
+                if phase in self._EMERGENCY_SAGA_NO_ORDER_PHASES:
+                    continue
+                request = rec.get("request")
+                if isinstance(request, str):
+                    request = self.db._safe_json_loads(request, {}) if hasattr(self.db, "_safe_json_loads") else {}
+                request = request if isinstance(request, dict) else {}
+                market_id = str(request.get("market_id") or request.get("marketId") or "").strip()
+                bets = {str(rec.get(k) or "").strip() for k in ("bet_id", "stub_bet_id", "replacement_bet_id")}
+                bets.discard("")
+                for bid in sorted(bets) or [""]:
+                    out.append({"source": "microstake_saga", "order_id": "", "market_id": market_id, "bet_id": bid,
+                                "customer_ref": str(ref), "status": phase})
+        except Exception as exc:
+            logger.exception("emergency_stop: lettura delle saghe Microstake fallita")
+            cancel_errors.append({"stage": "read_microstake_sagas", "error": str(exc)})
         return out
 
     @staticmethod
@@ -2492,6 +2531,21 @@ class RuntimeController:
                                            "error": str(exc)})
                     error_count += max(1, len(orders))
 
+        # Broker SIM: un cancel eseguito in memoria ma con lo snapshot di reload NON scritto tornerebbe aperto al
+        # riavvio (Codex su 82bbd010). Si ritenta la persistenza; se non riesce il cancel non e' completo.
+        if any(r.get("ok") and (r.get("response") or {}).get("snapshot_persisted") is False for r in cancel_results):
+            durable = False
+            try:
+                ensure = getattr(client, "ensure_durable", None)
+                durable = bool(ensure()) if callable(ensure) else False
+            except Exception as exc:
+                logger.warning("emergency_stop: ensure_durable fallito: %s", exc)
+            if not durable:
+                logger.critical("emergency_stop: cancel SIM non persistito, al riavvio gli ordini tornerebbero aperti")
+                cancel_errors.append({"stage": "snapshot_not_persisted", "venue": venue,
+                                      "error": "cancel non persistito nello snapshot di reload"})
+                error_count += 1
+
         # Lettura finale SEMPRE, su tutti i mercati: un ordine accettato dopo la prima fotografia (INFLIGHT senza
         # mercato, AMBIGUOUS senza riferimento) deve comparire nella verifica (Sol su d85a62ff).
         after = None
@@ -2519,7 +2573,10 @@ class RuntimeController:
 
         post_by_bet = {str(o.get("betId") or ""): o for o in (after or [])}
         outcomes, matched_positions = [], []
-        for bid in sorted(known_bets | set(bot_remote)):
+        # Identita' del bot anche dalla fotografia FINALE (Sol su 82bbd010): un ordine ritrovato per customerOrderRef
+        # solo dopo il cancel, gia' abbinato, e' comunque un'esposizione da riportare.
+        final_bot = {bid: o for bid, o in post_by_bet.items() if bid and _is_bot(o)}
+        for bid in sorted(known_bets | set(bot_remote) | set(final_bot)):
             # Lo stato FINALE dell'exchange prevale: un abbinamento avvenuto durante il cancel resta un'esposizione
             # (Sol su c8338ef3).
             pre = post_by_bet.get(bid) or bot_remote.get(bid)
@@ -2542,8 +2599,10 @@ class RuntimeController:
                                           "size_matched": matched,
                                           "average_price_matched": pre.get("averagePriceMatched")})
             outcomes.append({"bet_id": bid, "outcome": outcome})
-        by_ref = {str(o.get("customerOrderRef") or ""): str(o.get("betId") or "") for o in bot_remote.values()}
-        no_bet = [c for c in candidates if not c["bet_id"] and c["market_id"]]
+        by_ref = {str(o.get("customerOrderRef") or ""): str(o.get("betId") or "")
+                  for o in list(bot_remote.values()) + list(final_bot.values()) if o.get("customerOrderRef")}
+        # Tutte le righe senza betId, anche senza mercato (INFLIGHT pre-invio): nessuna resta fuori dall'esito.
+        no_bet = [c for c in candidates if not c["bet_id"]]
         for c in no_bet:
             # INFLIGHT/AMBIGUOUS senza betId: ritrovato per customerOrderRef => il suo esito e' quello del betId;
             # altrimenti un ordine aperto non attribuibile sullo stesso mercato potrebbe essere il suo => UNKNOWN.
@@ -2552,15 +2611,18 @@ class RuntimeController:
                 outcome = "UNKNOWN"
             elif c["customer_ref"] and c["customer_ref"] in by_ref:
                 outcome = "SEE_BET_ID"
-            elif any(o["market_id"] == c["market_id"] for o in open_after):
+            elif c["market_id"] and any(o["market_id"] == c["market_id"] for o in open_after):
                 outcome = "STILL_OPEN"
+            elif not c["market_id"]:
+                outcome = "NO_OPEN_ORDER_FOUND"     # nessun mercato e nessun ordine con il suo ref sull'exchange
             else:
                 outcome = "UNKNOWN" if foreign_here else "NO_OPEN_ORDER_ON_MARKET"
             outcomes.append({"order_id": c["order_id"], "customer_ref": c["customer_ref"],
                              "market_id": c["market_id"], "status": c["status"], "outcome": outcome,
                              "bet_id_by_ref": by_ref.get(c["customer_ref"]) or None})
 
-        source_errors = [e for e in cancel_errors if e.get("stage") in ("read_orders", "get_pending_sagas")]
+        source_errors = [e for e in cancel_errors
+                         if e.get("stage") in ("read_orders", "get_pending_sagas", "read_microstake_sagas")]
         if after is None or (before is None and markets):
             verification = "UNVERIFIED"
         elif source_errors:
