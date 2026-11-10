@@ -9340,6 +9340,18 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "Sol su ff0f9ea1: un INFLIGHT senza mercato con prima lettura fallita (esito UNKNOWN) darebbe VERIFIED e rc 0."
+    },
+    {
+      "id": "p0_estop_denied_rows_as_submissions",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        \"DENIED\",                       # rifiuto PRE-invio (risk gate, safe mode, durabilita'): mai sull'exchange\n",
+      "mutated": "        # DENIED non chiuso (mutante)\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "D-629-05: una riga DENIED (rifiuto pre-invio) renderebbe ogni arresto SUBMISSIONS_UNRESOLVED con rc 3."
     }
   ]
 }

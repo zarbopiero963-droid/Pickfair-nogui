@@ -628,3 +628,16 @@ def test_inflight_without_market_is_unresolved_even_when_the_first_read_fails(tm
     res = app.runtime.emergency_stop(reason="t")
     assert res["verification"] != "VERIFIED" and res["manual_action_required"] is True, res
     assert len(res["unresolved_submissions"]) == 1, res
+
+
+def test_denied_rows_are_not_unresolved_submissions(tmp_path, monkeypatch):
+    """D-629-05 (Claude D su 44164b44): una riga DENIED e' un rifiuto PRE-invio (risk gate, safe mode, durabilita',
+    autorita'), mai un ordine sull'exchange. Non e' un invio irrisolto: senza altri ordini l'arresto e' VERIFIED."""
+    app = _app(tmp_path, monkeypatch)
+    for _ in range(3):
+        _engine_order(app.runtime.db, market_id="1.14", bet_id=None, status="DENIED")
+    ex = FakeExchange([])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert res["unresolved_submissions"] == [] and res["verification"] == "VERIFIED", res
+    assert res["manual_action_required"] is False, res

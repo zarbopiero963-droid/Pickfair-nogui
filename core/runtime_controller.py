@@ -2323,6 +2323,7 @@ class RuntimeController:
     _EMERGENCY_CLOSED_ORDER_STATUSES = frozenset({
         "CANCELLED", "FAILED", "REJECTED", "SETTLED", "ROLLED_BACK", "LAPSED", "VOIDED", "EXPIRED",
         "DUPLICATE_BLOCKED", "NOT_ATTEMPTED", "HEDGE_FAILED",
+        "DENIED",                       # rifiuto PRE-invio (risk gate, safe mode, durabilita'): mai sull'exchange
     })
 
     def _emergency_candidates(self, cancel_errors: list, *, venue: str = "LIVE", exposure_bets: set = None) -> list:
