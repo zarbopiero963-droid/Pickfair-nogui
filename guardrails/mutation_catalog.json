@@ -9292,6 +9292,42 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "Codex su c1db40c3: il raw.microstake_ref della riga dell'hedge con saga foreign_ref renderebbe del bot un ordine altrui."
+    },
+    {
+      "id": "p0_estop_unresolved_submissions_verified",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        elif unresolved:\n",
+      "mutated": "        elif False:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su c1db40c3: un invio INFLIGHT/AMBIGUOUS non ritrovato puo' essere accettato dopo l'ultima lettura; VERIFIED sarebbe un falso successo."
+    },
+    {
+      "id": "p0_estop_closed_rows_exposure_dropped",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                            exposure_bets.add(str(bid))\n",
+      "mutated": "                            pass\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su c1db40c3: la parte abbinata di una riga CANCELLED sparirebbe da matched_positions."
+    },
+    {
+      "id": "p0_estop_persist_error_no_manual_action",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if persist_error:\n            # Stato d'emergenza non persistito",
+      "mutated": "        if False:\n            # Stato d'emergenza non persistito",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su c1db40c3: LOCKDOWN non salvato senza avviso all'operatore; il blocco potrebbe perdersi al riavvio."
     }
   ]
 }

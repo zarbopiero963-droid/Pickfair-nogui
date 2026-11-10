@@ -571,3 +571,48 @@ def test_foreign_ref_saga_order_is_never_cancelled_and_goes_to_the_operator(tmp_
     assert ex.cancel_calls == [], res
     assert [o["bet_id"] for o in res["unattributed_open_orders"]] == ["FOREIGN1"], res
     assert res["manual_action_required"] is True, res
+
+
+# ------------------------------------------------------------------------------------------- Sol su c1db40c3
+
+def test_inflight_submission_not_found_on_the_exchange_is_never_verified(tmp_path, monkeypatch):
+    """Invio INFLIGHT senza betId e nessun ordine sull'exchange: il placeOrders puo' essere ancora in volo e venire
+    accettato dopo l'ultima lettura. «Nessun ordine» non e' dimostrato: mai VERIFIED, all'operatore."""
+    app = _app(tmp_path, monkeypatch)
+    oid = _engine_order(app.runtime.db, market_id="1.12", bet_id=None, status="INFLIGHT")
+    ex = FakeExchange([])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert res["verification"] == "SUBMISSIONS_UNRESOLVED" and res["manual_action_required"] is True, res
+    assert [o["order_id"] for o in res["unresolved_submissions"]] == [str(oid)], res
+
+
+def test_cancelled_row_with_matched_part_keeps_its_exposure_visible(tmp_path, monkeypatch):
+    """Riga CANCELLED (residuo annullato) di un ordine parzialmente abbinato: nessun cancel, ma la parte abbinata e'
+    esposizione reale sull'exchange e va riportata in matched_positions."""
+    app = _app(tmp_path, monkeypatch)
+    _engine_order(app.runtime.db, market_id="1.13", bet_id="PM1", status="CANCELLED")
+    ex = FakeExchange([_o("PM1", market="1.13", status="EXECUTION_COMPLETE", matched=2.0, remaining=0.0)])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert ex.cancel_calls == [], res
+    assert [p["bet_id"] for p in res["matched_positions"]] == ["PM1"], res
+    assert res["unattributed_open_orders"] == [] and res["verification"] == "VERIFIED", res
+
+
+def test_emergency_state_not_persisted_requires_manual_action(tmp_path, monkeypatch):
+    """Cancellazione verificata ma stato d'emergenza (LOCKDOWN) non salvato: il blocco potrebbe perdersi al riavvio,
+    quindi intervento manuale, evento sul bus e avviso nella GUI."""
+    import mini_gui
+    app = _app(tmp_path, monkeypatch)
+    monkeypatch.setattr(app.runtime, "_persist_emergency_state", lambda: "disk I/O error")
+    events, publish = [], app.runtime.bus.publish
+    monkeypatch.setattr(app.runtime.bus, "publish", lambda name, payload=None, *a, **k: (
+        events.append(payload) if name == "EMERGENCY_STOP_MANUAL_ACTION_REQUIRED" else None,
+        publish(name, payload, *a, **k))[1])
+    ex = FakeExchange([])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert res["verification"] == "VERIFIED" and res["manual_action_required"] is True, res
+    assert events and events[-1]["persist_error"] == "disk I/O error"
+    assert "NON salvato" in mini_gui._emergency_manual_action_text(res)

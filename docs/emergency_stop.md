@@ -50,11 +50,15 @@ sull'exchange.
 7. **Verifica** (`verification`): `VERIFIED` solo se la lettura finale riesce e non resta nulla di aperto, nessun cancel
    è fallito, l'autorità non è stata persa e le fonti locali sono state lette. Altrimenti `OPEN_ORDERS_REMAIN`,
    `CANCEL_INCOMPLETE`, `UNVERIFIED` o `SOURCES_INCOMPLETE` (tabella `orders`, `order_saga` o store delle saghe
-   Microstake illeggibile: gli ordini
-   del bot non sono attribuibili, quindi un exchange vuoto non basta).
+   Microstake illeggibile: gli ordini del bot non sono attribuibili, quindi un exchange vuoto non basta) o
+   `SUBMISSIONS_UNRESOLVED`: un invio senza `betId` (INFLIGHT, AMBIGUOUS, saga pre-invio) non ritrovato
+   sull'exchange (`NO_OPEN_ORDER_ON_MARKET` / `NO_OPEN_ORDER_FOUND`, elencato in `unresolved_submissions`) può
+   ancora essere accettato dopo l'ultima lettura, quindi «nessun ordine» non è dimostrato.
 8. **Posizioni reali** abbinate prima dell'arresto: elencate in `matched_positions` (mercato, selezione, lato, importo,
-   prezzo medio) qualunque sia l'esito del cancel o della verifica. La fonte dei settlement resta quella precedente all'arresto (`_settlement_source_before_emergency`).
-9. **Intervento manuale** (`manual_action_required`): verifica non `VERIFIED` o ordini non attribuibili. Log CRITICAL,
+   prezzo medio) qualunque sia l'esito del cancel o della verifica. Anche le righe chiuse (es. `CANCELLED` con il
+   residuo annullato) restano identità del bot per le posizioni: la parte abbinata è esposizione reale. La fonte dei settlement resta quella precedente all'arresto (`_settlement_source_before_emergency`).
+9. **Intervento manuale** (`manual_action_required`): verifica non `VERIFIED`, ordini non attribuibili o stato
+   d'emergenza non salvato (`persist_error`: il blocco potrebbe non sopravvivere al riavvio). Log CRITICAL,
    evento `EMERGENCY_STOP_MANUAL_ACTION_REQUIRED` sul bus e, nella GUI, il dialogo
    «EMERGENCY STOP: intervento manuale richiesto».
 

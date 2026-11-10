@@ -3084,6 +3084,11 @@ def _emergency_manual_action_text(result: dict) -> str:
     errors = result.get("cancel_error_count") or 0
     if errors:
         lines.append(f"Cancellazioni non riuscite: {errors}")
+    unresolved = result.get("unresolved_submissions") or []
+    if unresolved:
+        lines.append(f"Invii con esito non accertato (possono comparire sull'exchange): {len(unresolved)}")
+    if result.get("persist_error"):
+        lines.append("Stato di emergenza NON salvato: il blocco potrebbe non sopravvivere al riavvio.")
     lines.append("Il trading resta bloccato. Controllare gli ordini sull'exchange.")
     return "\n".join(lines)
 

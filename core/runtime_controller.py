@@ -2286,6 +2286,9 @@ class RuntimeController:
             # P0 AUD-BF-016: esito verificato sull'exchange, per ordine
             **sweep,
         }
+        if persist_error:
+            # Stato d'emergenza non persistito: al riavvio il blocco potrebbe perdersi (Sol su c1db40c3).
+            result["manual_action_required"] = True
         if result.get("manual_action_required"):
             logger.critical("EMERGENCY STOP: INTERVENTO MANUALE RICHIESTO (verifica=%s, ordini ancora aperti=%d, "
                             "non attribuiti=%d, errori=%d)", result.get("verification"),
@@ -2296,7 +2299,8 @@ class RuntimeController:
                     "triggered_at": triggered_at, "verification": result.get("verification"),
                     "open_after_cancel": result.get("open_after_cancel"),
                     "unattributed_open_orders": result.get("unattributed_open_orders"),
-                    "matched_positions": result.get("matched_positions"), "cancel_errors": cancel_errors})
+                    "matched_positions": result.get("matched_positions"), "cancel_errors": cancel_errors,
+                    "unresolved_submissions": result.get("unresolved_submissions"), "persist_error": persist_error})
             except Exception:
                 logger.exception("emergency_stop: notifica di intervento manuale non pubblicata")
 
@@ -2321,7 +2325,7 @@ class RuntimeController:
         "DUPLICATE_BLOCKED", "NOT_ATTEMPTED", "HEDGE_FAILED",
     })
 
-    def _emergency_candidates(self, cancel_errors: list, *, venue: str = "LIVE") -> list:
+    def _emergency_candidates(self, cancel_errors: list, *, venue: str = "LIVE", exposure_bets: set = None) -> list:
         """Ordini del bot potenzialmente aperti, da TUTTE le fonti locali: la tabella `orders` (motore, cashout,
         Microstake: lo store autorevole in produzione) e le saghe `order_saga` (compatibilita'). Una fonte illeggibile
         e' un errore dichiarato, mai «nessun ordine»."""
@@ -2334,11 +2338,17 @@ class RuntimeController:
             for row in rows or []:
                 item = dict(row)
                 status = str(item.get("status") or "").upper()
-                if status in self._EMERGENCY_CLOSED_ORDER_STATUSES:
-                    continue
                 payload = self.db._safe_json_loads(item.get("payload_json"), {}) or {}
                 response = self.db._safe_json_loads(item.get("response_json"), {}) or {}
                 payload = payload if isinstance(payload, dict) else {}
+                if status in self._EMERGENCY_CLOSED_ORDER_STATUSES:
+                    # Nessun ordine aperto da cancellare, ma il betId resta un'identita' del bot per le POSIZIONI:
+                    # un CANCELLED parzialmente abbinato conserva esposizione sull'exchange (Sol su c1db40c3).
+                    if exposure_bets is not None and response:
+                        bid = self.db._order_bet_id(response)
+                        if bid:
+                            exposure_bets.add(str(bid))
+                    continue
                 # Sede dell'ordine (Codex su c8338ef3): una riga di una sessione SIM non e' un candidato LIVE e
                 # viceversa. Sede non dichiarata => resta candidata (fail-closed).
                 sim_flag = payload.get("simulation_mode")
@@ -2462,7 +2472,8 @@ class RuntimeController:
         cancel_errors: list = []
         verification_errors: list = []      # letture dell'exchange: esito UNKNOWN, non un cancel fallito
         venue = "LIVE" if was_live else "SIM"
-        candidates = self._emergency_candidates(cancel_errors, venue=venue)
+        exposure_bets: set = set()
+        candidates = self._emergency_candidates(cancel_errors, venue=venue, exposure_bets=exposure_bets)
         client = None
         try:
             client = (self.betfair_service.get_live_client() if was_live
@@ -2471,7 +2482,8 @@ class RuntimeController:
             logger.warning("emergency_stop: client %s non disponibile: %s", venue, exc)
             cancel_errors.append({"stage": "get_client", "venue": venue, "error": str(exc)})
 
-        known_bets = {c["bet_id"] for c in candidates if c["bet_id"]}
+        candidate_bets = {c["bet_id"] for c in candidates if c["bet_id"]}
+        known_bets = candidate_bets | exposure_bets   # identita' del bot; gli esiti per ordine restano sui candidati
         known_refs = {c["customer_ref"] for c in candidates if c["customer_ref"]}
         before = None
         if client is not None and hasattr(client, "get_current_orders"):
@@ -2587,7 +2599,7 @@ class RuntimeController:
         # Identita' del bot anche dalla fotografia FINALE (Sol su 82bbd010): un ordine ritrovato per customerOrderRef
         # solo dopo il cancel, gia' abbinato, e' comunque un'esposizione da riportare.
         final_bot = {bid: o for bid, o in post_by_bet.items() if bid and _is_bot(o)}
-        for bid in sorted(known_bets | set(bot_remote) | set(final_bot)):
+        for bid in sorted(candidate_bets | set(bot_remote) | set(final_bot)):
             # Lo stato FINALE dell'exchange prevale: un abbinamento avvenuto durante il cancel resta un'esposizione
             # (Sol su c8338ef3).
             pre = post_by_bet.get(bid) or bot_remote.get(bid)
@@ -2632,6 +2644,9 @@ class RuntimeController:
                              "market_id": c["market_id"], "status": c["status"], "outcome": outcome,
                              "bet_id_by_ref": by_ref.get(c["customer_ref"]) or None})
 
+        # Invii senza betId non ritrovati sull'exchange (INFLIGHT/AMBIGUOUS/saga pre-invio): un placeOrders ancora in
+        # volo puo' essere accettato DOPO l'ultima lettura, quindi «nessun ordine» non e' dimostrato (Sol su c1db40c3).
+        unresolved = [o for o in outcomes if o.get("outcome") in ("NO_OPEN_ORDER_ON_MARKET", "NO_OPEN_ORDER_FOUND")]
         source_errors = [e for e in cancel_errors
                          if e.get("stage") in ("read_orders", "get_pending_sagas", "read_microstake_sagas")]
         if after is None or (before is None and markets):
@@ -2642,6 +2657,8 @@ class RuntimeController:
             verification = "SOURCES_INCOMPLETE"
         elif open_after or error_count or any(e.get("stage") == "runtime_authority" for e in cancel_errors):
             verification = "OPEN_ORDERS_REMAIN" if open_after else "CANCEL_INCOMPLETE"
+        elif unresolved:
+            verification = "SUBMISSIONS_UNRESOLVED"
         else:
             verification = "VERIFIED"
         return {
@@ -2650,7 +2667,7 @@ class RuntimeController:
             "venue": venue, "verification": verification, "verification_errors": verification_errors,
             "order_outcomes": outcomes,
             "open_after_cancel": open_after, "unattributed_open_orders": unattributed,
-            "matched_positions": matched_positions,
+            "matched_positions": matched_positions, "unresolved_submissions": unresolved,
             "manual_action_required": verification != "VERIFIED" or bool(unattributed),
         }
 

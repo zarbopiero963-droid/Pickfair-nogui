@@ -336,7 +336,9 @@ Telegram e il dialog regole leggono `theme.COLORS`.
 - Arresto non verificato (P0 AUD-BF-016): dopo il pulsante `EMERGENCY STOP`, se l'esito richiede un intervento
   manuale, dialogo d'errore `EMERGENCY STOP: intervento manuale richiesto` con «Verifica sull'exchange: <esito>»,
   «Ordini ancora aperti: N», «Ordini aperti non attribuibili al bot (non cancellati): N», «Cancellazioni non riuscite:
-  N» (righe presenti solo se pertinenti) e «Il trading resta bloccato. Controllare gli ordini sull'exchange.».
+  N», «Invii con esito non accertato (possono comparire sull'exchange): N», «Stato di emergenza NON salvato: il
+  blocco potrebbe non sopravvivere al riavvio.» (righe presenti solo se pertinenti) e «Il trading resta bloccato.
+  Controllare gli ordini sull'exchange.».
   Nessun dialogo per un arresto verificato.
 - Dialog di salvataggio per tab (`OK` / `Errore ...`).
 - Regole parser: `showwarning("Attenzione", ...)` su selezione mancante;
