@@ -19,13 +19,17 @@ sull'exchange.
 2. **Candidati da tutte le fonti locali:** solo righe della stessa sede (`payload.simulation_mode`; sede non dichiarata
    = candidata); tabella `orders` (ogni stato tranne quelli che non possono avere un ordine
    aperto: CANCELLED, FAILED, REJECTED, SETTLED, ROLLED_BACK, LAPSED, VOIDED, EXPIRED, DUPLICATE_BLOCKED, NOT_ATTEMPTED,
-   HEDGE_FAILED, DENIED (rifiuto pre-invio); quindi anche INFLIGHT, AMBIGUOUS, HEDGE_* e stati futuri), `order_saga` e lo store delle saghe del
+   HEDGE_FAILED e DENIED pre-invio; quindi anche INFLIGHT, AMBIGUOUS, HEDGE_* e stati futuri), `order_saga` e lo store delle saghe del
    **Microstake nativo** della sede (`microstake.sagas.live` / `microstake.sagas`; ogni fase tranne FAILED e
    ROLLED_BACK: stub, riduzione e sostituto con il ref della saga). Una saga `foreign_ref` (ordine preesistente con lo
    stesso ref, origine non dimostrabile) non è mai un'identità del bot: come nel recovery, non si adotta né si
    cancella; se è aperto resta tra gli ordini non attribuibili. Per l'hedge nativo del cashout il riferimento
    sull'exchange è `response.raw.microstake_ref`, non la `customer_ref` della riga. Una fonte illeggibile è un
    errore dichiarato, mai «nessun ordine».
+   `DENIED` (direttiva owner D-629-05) è chiuso solo se è un rifiuto **pre-invio dimostrato**: la macchina a
+   stati del motore lo ammette solo da INFLIGHT (risk gate, prima di `_atomic_submit`), mai da SUBMITTED o
+   AMBIGUOUS, e la riga non porta alcuna traccia di trasmissione (`betId`, `order_unknown`, `placed`, esito
+   AMBIGUOUS/SUCCESS/UNKNOWN, ref Microstake). Con una traccia resta candidato: mai `VERIFIED` per assunzione.
 3. **Fotografia dell'exchange prima** (`get_current_orders`, tutti i mercati) sulla sede in cui il runtime operava
    (LIVE: client Betfair; SIM: broker simulato).
 4. **Cosa si cancella:** solo gli ordini **aperti del bot**, cioè quelli con `betId` o `customerOrderRef` noti nel

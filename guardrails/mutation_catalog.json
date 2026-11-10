@@ -9020,8 +9020,8 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "                if status in self._EMERGENCY_CLOSED_ORDER_STATUSES:\n",
-      "mutated": "                if True:\n",
+      "original": "                elif status in self._EMERGENCY_CLOSED_ORDER_STATUSES:\n",
+      "mutated": "                elif True:\n",
       "tests": [
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
@@ -9364,6 +9364,18 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "Sol su 44164b44: oltre 60 betId su un mercato Betfair respinge l'intera cancelOrders; senza lotti nessun ordine verrebbe cancellato."
+    },
+    {
+      "id": "p0_estop_denied_evidence_ignored",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                if status in self._EMERGENCY_PRE_SEND_STATUSES and self._emergency_transmission_evidence(response):\n",
+      "mutated": "                if False:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Direttiva owner D-629-05: senza la distinzione fra rifiuto pre-invio e invio incerto, un DENIED con esito ignoto darebbe un falso VERIFIED."
     }
   ]
 }

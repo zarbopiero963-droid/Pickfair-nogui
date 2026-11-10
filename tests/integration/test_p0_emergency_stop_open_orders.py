@@ -684,3 +684,67 @@ def test_a_rejected_batch_does_not_stop_the_other_batches(tmp_path, monkeypatch)
     assert [len(c) for c in calls] == [60, 1], [len(c) for c in calls]
     assert res["verification"] in ("OPEN_ORDERS_REMAIN", "CANCEL_INCOMPLETE") and res["manual_action_required"], res
     assert len(res["open_after_cancel"]) == 60 and res["cancelled_count"] == 1, res["cancelled_count"]
+
+
+# ------------------------------------------------- direttiva owner D-629-05: DENIED solo se pre-invio dimostrato
+
+def test_denied_is_reachable_only_from_inflight_never_after_a_send():
+    """Invariante su cui poggia la chiusura di DENIED: la macchina a stati del motore ammette DENIED solo da INFLIGHT
+    (risk gate prima di `_atomic_submit`), mai da SUBMITTED o AMBIGUOUS (invio avvenuto o incerto)."""
+    from core.trading_constants import ALLOWED_TRANSITIONS
+    sources = sorted(src for src, targets in ALLOWED_TRANSITIONS.items() if "DENIED" in targets)
+    assert sources == ["INFLIGHT"], sources
+    assert ALLOWED_TRANSITIONS["DENIED"] == set()
+
+
+def test_ambiguous_after_a_send_attempt_is_unresolved(tmp_path, monkeypatch):
+    """Direttiva owner, test 3: AMBIGUOUS senza betId dopo un tentativo d'invio, nulla sull'exchange => irrisolto."""
+    app = _app(tmp_path, monkeypatch)
+    _engine_order(app.runtime.db, market_id="1.17", bet_id=None, status="AMBIGUOUS")
+    ex = FakeExchange([])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert res["verification"] == "SUBMISSIONS_UNRESOLVED" and res["manual_action_required"] is True, res
+
+
+def test_denied_row_with_transmission_evidence_stays_a_candidate(tmp_path, monkeypatch):
+    """Una riga DENIED che porta un betId e' contraddittoria: non e' dimostrato che non sia partita. Resta del bot:
+    il suo ordine aperto si attribuisce e si cancella, mai «non attribuibile» ne' ignorato."""
+    app = _app(tmp_path, monkeypatch)
+    _engine_order(app.runtime.db, market_id="1.18", bet_id="DX1", status="DENIED")
+    ex = FakeExchange([_o("DX1", market="1.18")])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert ex.cancel_bet_ids == [["DX1"]], res
+    assert res["unattributed_open_orders"] == [] and res["verification"] == "VERIFIED", res
+
+
+def test_denied_row_with_unknown_outcome_is_unresolved(tmp_path, monkeypatch):
+    """DENIED con esito ignoto registrato (order_unknown) e nessun ordine visibile: mai VERIFIED."""
+    app = _app(tmp_path, monkeypatch)
+    app.runtime.db.insert_order({
+        "customer_ref": "pf-x", "correlation_id": uuid.uuid4().hex, "status": "DENIED",
+        "payload": {"market_id": "1.19", "selection_id": 3, "bet_type": "BACK", "price": 2.0, "stake": 2.0},
+        "response": {"status": "AMBIGUOUS", "order_unknown": True, "bet_id": None},
+    })
+    ex = FakeExchange([])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert res["verification"] == "SUBMISSIONS_UNRESOLVED" and res["manual_action_required"] is True, res
+
+
+def test_mixed_history_denied_ambiguous_and_open_orders_never_falsely_verified(tmp_path, monkeypatch):
+    """Direttiva owner, test 5: storico con DENIED pre-invio, un AMBIGUOUS senza betId e ordini aperti del bot.
+    I DENIED non contano come irrisolti, l'AMBIGUOUS si', gli aperti si cancellano: l'esito non e' VERIFIED."""
+    app = _app(tmp_path, monkeypatch)
+    for _ in range(2):
+        _engine_order(app.runtime.db, market_id="1.20", bet_id=None, status="DENIED")
+    amb = _engine_order(app.runtime.db, market_id="1.20", bet_id=None, status="AMBIGUOUS")
+    _engine_order(app.runtime.db, market_id="1.20", bet_id="OP1")
+    _engine_order(app.runtime.db, market_id="1.21", bet_id="OP2")
+    ex = FakeExchange([_o("OP1", market="1.20"), _o("OP2", market="1.21")])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert sorted(b for batch in ex.cancel_bet_ids for b in batch) == ["OP1", "OP2"], res
+    assert [o["order_id"] for o in res["unresolved_submissions"]] == [str(amb)], res["unresolved_submissions"]
+    assert res["verification"] == "SUBMISSIONS_UNRESOLVED" and res["manual_action_required"] is True, res

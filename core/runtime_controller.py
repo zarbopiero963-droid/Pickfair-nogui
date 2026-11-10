@@ -2342,7 +2342,11 @@ class RuntimeController:
                 payload = self.db._safe_json_loads(item.get("payload_json"), {}) or {}
                 response = self.db._safe_json_loads(item.get("response_json"), {}) or {}
                 payload = payload if isinstance(payload, dict) else {}
-                if status in self._EMERGENCY_CLOSED_ORDER_STATUSES:
+                if status in self._EMERGENCY_PRE_SEND_STATUSES and self._emergency_transmission_evidence(response):
+                    # DENIED con traccia di trasmissione (betId, esito ignoto, ref Microstake) e' contraddittorio: non
+                    # e' dimostrato che l'ordine non sia partito, quindi resta candidato (direttiva owner D-629-05).
+                    pass
+                elif status in self._EMERGENCY_CLOSED_ORDER_STATUSES:
                     # Nessun ordine aperto da cancellare, ma il betId resta un'identita' del bot per le POSIZIONI:
                     # un CANCELLED parzialmente abbinato conserva esposizione sull'exchange (Sol su c1db40c3).
                     if exposure_bets is not None and response:
@@ -2381,6 +2385,23 @@ class RuntimeController:
             logger.exception("emergency_stop: get_pending_sagas failed")
             cancel_errors.append({"stage": "get_pending_sagas", "error": str(exc)})
         return out
+
+    # Rifiuto PRE-invio (TradingEngine: risk gate su una riga INFLIGHT mai trasmessa; la macchina a stati ammette DENIED
+    # solo da INFLIGHT, mai da SUBMITTED o AMBIGUOUS). Chiuso solo senza alcuna traccia di trasmissione.
+    _EMERGENCY_PRE_SEND_STATUSES = frozenset({"DENIED"})
+
+    def _emergency_transmission_evidence(self, response) -> bool:
+        """Traccia persistente che l'ordine possa essere arrivato all'exchange: betId, esito ignoto o ref Microstake."""
+        if not isinstance(response, dict) or not response:
+            return False
+        if self.db._order_bet_id(response):
+            return True
+        if response.get("order_unknown") is True or response.get("placed") is True:
+            return True
+        if str(response.get("status") or "").upper() in ("AMBIGUOUS", "SUCCESS", "UNKNOWN"):
+            return True
+        raw = response.get("raw")
+        return isinstance(raw, dict) and bool(raw.get("microstake_ref") or raw.get("betId") or raw.get("bet_id"))
 
     _EMERGENCY_SAGA_NO_ORDER_PHASES = frozenset({"FAILED", "ROLLED_BACK"})
 
