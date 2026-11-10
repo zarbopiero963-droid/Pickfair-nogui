@@ -32,7 +32,8 @@ sull'exchange.
    cancellazione e la lettura di verifica dell'emergenza attraversano il circuit breaker (`emergency=True`): un breaker
    aperto da timeout di lettura (AUD-BF-010) non blocca più l'uscita protettiva. Fuori dall'emergenza il breaker è
    rispettato come prima.
-6. **Fotografia dopo** sui mercati tentati e **esito per ordine** (`order_outcomes`), deciso sullo **stato finale**
+6. **Fotografia dopo**, sempre e su tutti i mercati (un ordine accettato dopo la prima lettura compare; gli ordini non
+   attribuibili si ricalcolano sullo stato finale), e **esito per ordine** (`order_outcomes`), deciso sullo **stato finale**
    dell'exchange (un abbinamento avvenuto durante il cancel resta un'esposizione): `CANCELLED`, `PARTIALLY_MATCHED`
    (residuo cancellato, parte abbinata resta), `ALREADY_MATCHED`, `NOT_FOUND`, `STILL_OPEN`, `UNKNOWN`. Per gli ordini
    senza `betId` (risposta persa): `SEE_BET_ID` se ritrovati per `customerOrderRef` (con `bet_id_by_ref`),

@@ -9184,6 +9184,30 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "Codex su d85a62ff: la parte abbinata sparirebbe dal risultato quando il cancel fallisce o la verifica non si legge."
+    },
+    {
+      "id": "p0_estop_final_read_skipped",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                after = list(self._emergency_call(client.get_current_orders, market_ids=None) or [])\n",
+      "mutated": "                after = []\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su d85a62ff: senza lettura finale un ordine accettato dopo la prima fotografia resterebbe aperto con VERIFIED."
+    },
+    {
+      "id": "p0_estop_unattributed_from_first_read_only",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if after is not None and not blind:\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su d85a62ff: un ordine non attribuibile comparso dopo la prima lettura non arriverebbe all'operatore."
     }
   ]
 }

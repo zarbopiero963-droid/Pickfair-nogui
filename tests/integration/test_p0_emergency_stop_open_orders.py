@@ -91,8 +91,9 @@ class FakeExchange:
     """Exchange LIVE con comportamento controllato (forma `listCurrentOrders` di Betfair). Ogni ordine:
     betId, marketId, status EXECUTABLE/EXECUTION_COMPLETE, sizeMatched, sizeRemaining, customerOrderRef."""
 
-    def __init__(self, orders, *, cancel_mode="ok", read_fail=(), emergency_seen=None):
+    def __init__(self, orders, *, cancel_mode="ok", read_fail=(), emergency_seen=None, appear_after=()):
         self.orders = [dict(o) for o in orders]
+        self.appear_after = [dict(o) for o in appear_after]   # accettati dall'exchange dopo la prima lettura
         self.cancel_mode = cancel_mode            # ok | fail | raise | noop
         self.read_fail = set(read_fail)           # "before" | "after"
         self.reads = 0
@@ -106,6 +107,9 @@ class FakeExchange:
         phase = "before" if self.reads == 1 else "after"
         if phase in self.read_fail:
             raise RuntimeError("TIMEOUT")
+        if phase == "after" and self.appear_after:
+            self.orders.extend(self.appear_after)
+            self.appear_after = []
         return [dict(o) for o in self.orders if not market_ids or o["marketId"] in market_ids]
 
     def cancel_orders(self, *, market_id, bet_ids=None, emergency=False):
@@ -420,3 +424,27 @@ def test_unreadable_local_ledger_is_never_verified(tmp_path, monkeypatch):
     res = app.runtime.emergency_stop(reason="t")
     assert res["verification"] == "SOURCES_INCOMPLETE" and res["manual_action_required"] is True, res
     assert headless_main._emergency_stop_outcome(res)[0] != "VERIFIED"
+
+
+def test_bot_order_accepted_after_the_first_read_is_never_verified_away(tmp_path, monkeypatch):
+    """Sol su d85a62ff: INFLIGHT senza mercato, accettato dall'exchange dopo la prima fotografia. Nessun mercato
+    candidato, ma la lettura finale lo vede: mai VERIFIED, intervento manuale."""
+    app = _app(tmp_path, monkeypatch)
+    oid = _engine_order(app.runtime.db, market_id="", bet_id=None, status="INFLIGHT")
+    ref = app.runtime.db.get_order(oid)["customer_ref"]
+    ex = FakeExchange([], appear_after=[_o("LATE", market="3.3", ref=ref)])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert res["verification"] == "OPEN_ORDERS_REMAIN" and res["manual_action_required"] is True, res
+    assert res["open_after_cancel"][0]["bet_id"] == "LATE"
+
+
+def test_unattributed_order_seen_only_in_the_final_read_is_reported(tmp_path, monkeypatch):
+    """Sol su d85a62ff: un ordine non attribuibile comparso solo nella seconda lettura va all'operatore."""
+    app = _app(tmp_path, monkeypatch)
+    _engine_order(app.runtime.db, market_id="1.7", bet_id=None, status="AMBIGUOUS")
+    ex = FakeExchange([], appear_after=[_o("X9", market="1.7")])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert res["unattributed_open_orders"][0]["bet_id"] == "X9" and res["manual_action_required"] is True, res
+    assert [o["outcome"] for o in res["order_outcomes"] if o.get("status") == "AMBIGUOUS"] == ["UNKNOWN"]

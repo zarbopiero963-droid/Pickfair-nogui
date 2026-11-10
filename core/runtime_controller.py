@@ -2492,15 +2492,15 @@ class RuntimeController:
                                            "error": str(exc)})
                     error_count += max(1, len(orders))
 
+        # Lettura finale SEMPRE, su tutti i mercati: un ordine accettato dopo la prima fotografia (INFLIGHT senza
+        # mercato, AMBIGUOUS senza riferimento) deve comparire nella verifica (Sol su d85a62ff).
         after = None
-        if client is not None and markets and hasattr(client, "get_current_orders"):
+        if client is not None and hasattr(client, "get_current_orders"):
             try:
-                after = list(self._emergency_call(client.get_current_orders, market_ids=sorted(markets)) or [])
+                after = list(self._emergency_call(client.get_current_orders, market_ids=None) or [])
             except Exception as exc:
                 logger.warning("emergency_stop: verifica degli ordini correnti (dopo) fallita: %s", exc)
                 verification_errors.append({"stage": "read_exchange_after", "error": str(exc)})
-        elif not markets and before is not None:
-            after = []
         def _is_bot(o):
             ref = str(o.get("customerOrderRef") or o.get("customer_ref") or "")
             return str(o.get("betId") or "") in known_bets or str(o.get("betId") or "") in bot_remote or \
@@ -2509,6 +2509,12 @@ class RuntimeController:
         open_after = [{"bet_id": str(o.get("betId") or ""), "market_id": str(o.get("marketId") or ""),
                        "size_remaining": o.get("sizeRemaining")}
                       for o in (after or []) if self._exchange_open(o) and (blind or _is_bot(o))]
+        # Ordini non attribuibili sullo stato FINALE quando c'e' (Sol su d85a62ff): uno comparso dopo la prima
+        # fotografia non sfugge all'operatore.
+        if after is not None and not blind:
+            unattributed = [{"bet_id": str(o.get("betId") or ""), "market_id": str(o.get("marketId") or ""),
+                             "size_remaining": o.get("sizeRemaining")}
+                            for o in after if self._exchange_open(o) and not _is_bot(o)]
         open_after_ids = {o["bet_id"] for o in open_after}
 
         post_by_bet = {str(o.get("betId") or ""): o for o in (after or [])}
