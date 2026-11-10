@@ -3496,6 +3496,29 @@
         "tests/f026/test_g7_r06_settled_ambiguous.py"
       ],
       "max_files": 8
+    },
+    "bb1_blackbox_core": {
+      "description": "PF-BLACKBOX-01 BB-1 (#586, direttiva owner 08/11/2026): scatola nera unica blackbox.sqlite (append-only, seq globale, catena di hash, redazione, fail-closed critico, buffer per uscite protettive), installata in headless_main.main prima dei componenti (PROCESS_START/COMPONENT_INIT/EMERGENCY_STOP/eccezioni/faulthandler/SHUTDOWN/UNCLEAN_TERMINATION), lettura core/blackbox_query (contratto Claude C 1.15.0 + D1-D3 owner PF-BB1-IDENTITY-TIMESTAMP-SESSION-20261109: alias ord_, UTC canonico + exchange_ts, un solo runtime per registro), vocabolario esteso in core/event_journal, mutanti bb_*. Nessun aggancio al percorso del denaro (BB-3). Estensione dichiarata (09/11/2026): vocabolario e redazione dei segreti estratti senza dipendenze in core/event_vocabulary.py e core/text_redaction.py, riesportati da core/event_journal.py e core/event_log.py con la stessa API, perche' la scatola nera nel percorso vivo non trascini core.config_store (Bridge XTrader): tests/percorsi/test_via_dal_bridge.py.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/blackbox.py",
+        "core/blackbox_query.py",
+        "core/blackbox_runtime.py",
+        "core/event_journal.py",
+        "core/event_log.py",
+        "core/event_vocabulary.py",
+        "docs/blackbox.md",
+        "guardrails/mutation_catalog.json",
+        "core/text_redaction.py",
+        "headless_main.py",
+        "scripts/ci_changed_modules.py",
+        "tests/blackbox/test_blackbox_core.py",
+        "tests/blackbox/test_blackbox_runtime.py",
+        "tests/catalog/pf-test-catalog.json"
+      ],
+      "max_files": 16
     }
   }
 }
