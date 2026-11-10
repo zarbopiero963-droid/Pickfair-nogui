@@ -514,7 +514,9 @@ def _save_live_saga(db, ref, **record):
 
 
 def test_microstake_saga_stub_known_only_to_the_saga_store_is_cancelled(tmp_path, monkeypatch):
-    """Stub della saga (minimo exchange, prezzo non abbinabile) noto solo allo store `microstake.sagas.live`."""
+    """Stub della saga (minimo exchange, prezzo non abbinabile) noto solo allo store `microstake.sagas.live`: si
+    cancella. La saga NON e' conclusa (STUB_ACCEPTED): il sostituto puo' ancora arrivare dopo l'ultima lettura, quindi
+    l'invio resta irrisolto e l'esito non e' VERIFIED (Sol su d892396d)."""
     app = _app(tmp_path, monkeypatch)
     _save_live_saga(app.runtime.db, "abc-ms-1", phase="STUB_ACCEPTED", bet_id="ST1", stub_bet_id="ST1",
                     request={"market_id": "1.9", "selection_id": 3, "side": "BACK"})
@@ -522,8 +524,48 @@ def test_microstake_saga_stub_known_only_to_the_saga_store_is_cancelled(tmp_path
     _live(app, ex, monkeypatch)
     res = app.runtime.emergency_stop(reason="t")
     assert ex.cancel_bet_ids == [["ST1"]], res
-    assert res["unattributed_open_orders"] == [] and res["verification"] == "VERIFIED", res
     assert {o.get("bet_id"): o["outcome"] for o in res["order_outcomes"] if o.get("bet_id")}["ST1"] == "CANCELLED"
+    assert res["unattributed_open_orders"] == [], res
+    assert [u["customer_ref"] for u in res["unresolved_submissions"]] == ["abc-ms-1"], res["unresolved_submissions"]
+    assert res["verification"] == "SUBMISSIONS_UNRESOLVED" and res["manual_action_required"] is True
+
+
+def test_saga_replacement_in_flight_after_stub_cancelled_is_unresolved(tmp_path, monkeypatch):
+    """Sol su d892396d: saga REDUCED con sostituto in volo (replace_sent, nessun replacement_bet_id); lo stub e' gia'
+    cancellato e non compare piu'. Il sostituto puo' arrivare dopo l'ultima lettura: mai VERIFIED."""
+    app = _app(tmp_path, monkeypatch)
+    _save_live_saga(app.runtime.db, "abc-ms-3", phase="REDUCED", bet_id="ST3", stub_bet_id="ST3", replace_sent=True,
+                    request={"market_id": "1.33", "selection_id": 3, "side": "BACK"})
+    ex = FakeExchange([])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert [u["customer_ref"] for u in res["unresolved_submissions"]] == ["abc-ms-3"], res
+    assert res["verification"] != "VERIFIED" and res["manual_action_required"] is True
+
+
+def test_saga_replacement_found_on_the_exchange_is_cancelled_and_resolves_the_saga(tmp_path, monkeypatch):
+    """Sostituto ritrovato sull'exchange per ref della saga con un betId NUOVO: e' del bot, si cancella, e chiude
+    l'invio irrisolto della saga."""
+    app = _app(tmp_path, monkeypatch)
+    _save_live_saga(app.runtime.db, "abc-ms-4", phase="REDUCED", bet_id="ST4", stub_bet_id="ST4", replace_sent=True,
+                    request={"market_id": "1.34", "selection_id": 3, "side": "BACK"})
+    ex = FakeExchange([_o("RP4", market="1.34", ref="abc-ms-4")])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert ex.cancel_bet_ids == [["RP4"]], ex.cancel_bet_ids
+    assert res["unresolved_submissions"] == [] and res["verification"] == "VERIFIED", res
+
+
+def test_concluded_active_saga_with_known_replacement_is_verified(tmp_path, monkeypatch):
+    """Saga ACTIVE (sostituto piazzato, betId noto): nessun invio in volo; cancellato il sostituto, VERIFIED."""
+    app = _app(tmp_path, monkeypatch)
+    _save_live_saga(app.runtime.db, "abc-ms-5", phase="ACTIVE", bet_id="RP5", stub_bet_id="ST5",
+                    replacement_bet_id="RP5", request={"market_id": "1.35", "selection_id": 3, "side": "BACK"})
+    ex = FakeExchange([_o("RP5", market="1.35", ref="abc-ms-5")])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert ex.cancel_bet_ids == [["RP5"]], ex.cancel_bet_ids
+    assert res["unresolved_submissions"] == [] and res["verification"] == "VERIFIED", res
 
 
 def test_concluded_microstake_sagas_are_not_candidates(tmp_path, monkeypatch):
@@ -881,3 +923,55 @@ def test_cancel_timeout_is_unknown_not_failed(tmp_path, monkeypatch):
     (market_result,) = res["cancel_results"]
     assert [b["status"] for b in market_result["batches"]] == ["UNKNOWN"], market_result
     assert res["verification"] != "VERIFIED" and res["manual_action_required"] is True
+
+
+@pytest.mark.parametrize("durable_on_retry, expected", [(False, "CANCEL_INCOMPLETE"), (True, "VERIFIED")])
+def test_second_sim_stop_checks_durability_even_without_new_cancels(tmp_path, monkeypatch, durable_on_retry,
+                                                                     expected):
+    """Sol su d892396d: un arresto precedente ha lasciato lo snapshot SIM non durevole; la memoria e' gia' pulita,
+    quindi il secondo arresto non cancella nulla. La durabilita' si verifica comunque: al riavvio gli ordini
+    tornerebbero aperti."""
+    app = _app(tmp_path, monkeypatch)
+    broker = SimulationBroker(starting_balance=1000.0)
+    monkeypatch.setattr(app.runtime.betfair_service, "get_simulation_broker", lambda: broker)
+    retries = []
+    monkeypatch.setattr(broker, "is_durable", lambda: False)
+    monkeypatch.setattr(broker, "ensure_durable", lambda: retries.append(1) or durable_on_retry)
+    app.runtime.simulation_mode = True
+    res = app.runtime.emergency_stop(reason="t")
+    assert retries == [1], res
+    assert res["verification"] == expected, res
+    assert res["manual_action_required"] is (expected != "VERIFIED"), res
+
+
+@pytest.mark.parametrize("bet_ids", [None, []])
+def test_emergency_cancel_never_sends_a_market_wide_cancel(tmp_path, monkeypatch, bet_ids):
+    """GUARDRAIL D (P3 su d892396d): `_emergency_cancel` senza betId non chiama mai l'exchange (per Betfair una lista
+    vuota o assente vuol dire «tutti gli ordini del mercato»); esito fail-closed."""
+    app = _app(tmp_path, monkeypatch)
+    ex = FakeExchange([_o("FOREIGN", market="1.40")])
+    res = app.runtime._emergency_cancel(ex, "1.40", bet_ids)
+    assert ex.cancel_calls == [] and res["ok"] is False and res["error"] == "MARKET_WIDE_CANCEL_FORBIDDEN"
+
+
+def test_pending_saga_unresolved_until_protective_recovery_rolls_it_back(tmp_path, monkeypatch):
+    """Via d'uscita (D-629-06, revisione concordata con Claude D): (a) saga STUB_ACCEPTED => lo stop resta
+    SUBMISSIONS_UNRESOLVED; (b) il recovery protettivo (avvio/resume con STOP attivo: cancellazione dello stub, mai
+    replace; provato da tests/core/test_microstake_live_adapter.py::
+    test_recovery_with_live_blocked_only_cancels_the_stub_never_reprices_it) porta la saga a ROLLED_BACK => lo stop
+    successivo e' VERIFIED. UNRESOLVED non resta permanente."""
+    import json
+    from core.microstake_live_port import LIVE_SAGA_SETTINGS_KEY
+    from core.microstake_sim_port import DbSagaStore
+    app = _app(tmp_path, monkeypatch)
+    _save_live_saga(app.runtime.db, "abc-ms-6", phase="STUB_ACCEPTED", bet_id="ST6", stub_bet_id="ST6",
+                    request={"market_id": "1.36", "selection_id": 3, "side": "BACK"})
+    ex = FakeExchange([_o("ST6", market="1.36", ref="abc-ms-6")])
+    _live(app, ex, monkeypatch)
+    first = app.runtime.emergency_stop(reason="t1")
+    assert first["verification"] == "SUBMISSIONS_UNRESOLVED", first["verification"]
+    # Esito del recovery protettivo: stub cancellato (gia' fatto dal primo stop), saga ROLLED_BACK nello store.
+    DbSagaStore(app.runtime.db, LIVE_SAGA_SETTINGS_KEY).save("abc-ms-6", phase="ROLLED_BACK")
+    assert json.loads(app.runtime.db.get_settings()[LIVE_SAGA_SETTINGS_KEY])["abc-ms-6"]["phase"] == "ROLLED_BACK"
+    second = app.runtime.emergency_stop(reason="t2")
+    assert second["unresolved_submissions"] == [] and second["verification"] == "VERIFIED", second

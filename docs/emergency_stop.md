@@ -23,7 +23,14 @@ sull'exchange.
    **Microstake nativo** della sede (`microstake.sagas.live` / `microstake.sagas`; ogni fase tranne FAILED e
    ROLLED_BACK: stub, riduzione e sostituto con il ref della saga). Una saga `foreign_ref` (ordine preesistente con lo
    stesso ref, origine non dimostrabile) non è mai un'identità del bot: come nel recovery, non si adotta né si
-   cancella; se è aperto resta tra gli ordini non attribuibili. Per l'hedge nativo del cashout il riferimento
+   cancella; se è aperto resta tra gli ordini non attribuibili. Una saga **non conclusa** (ogni fase tranne ACTIVE e
+   BLOCKED: stub noto, riduzione o sostituto ancora in volo) lascia anche un invio irrisolto, chiuso solo da un
+   ordine col ref della saga e un betId **nuovo** (il sostituto): lo stub, che condivide il ref, non basta
+   (Sol su `d892396d`). **Via d'uscita:** all'avvio e al `resume` il recovery delle saghe Microstake gira in modo
+   solo protettivo finché lo STOP o l'emergenza sono attivi (cancellazione verificata dello stub, mai riduzione né
+   replace): la saga diventa `ROLLED_BACK`, smette di essere candidata e l'arresto successivo può risultare
+   `VERIFIED`. Resta irrisolta solo se il recovery la lascia `AMBIGUOUS` (parte abbinata = esposizione reale, o
+   stato non dimostrabile): lì serve l'operatore. Per l'hedge nativo del cashout il riferimento
    sull'exchange è `response.raw.microstake_ref`, non la `customer_ref` della riga. Una fonte illeggibile è un
    errore dichiarato, mai «nessun ordine».
    `DENIED` (direttiva owner D-629-05) è chiuso solo se è un rifiuto **pre-invio dimostrato**: la macchina a
@@ -52,7 +59,9 @@ sull'exchange.
    aperto da timeout di lettura (AUD-BF-010) non blocca più l'uscita protettiva. Fuori dall'emergenza il breaker è
    rispettato come prima. Sul broker SIM un cancel riuscito in memoria ma con lo snapshot di reload non scritto
    (`snapshot_persisted: false`) si ripara con `ensure_durable()`; se resta non persistito è un cancel incompleto
-   (`snapshot_not_persisted`, esito `CANCEL_INCOMPLETE`), perché al riavvio l'ordine tornerebbe aperto.
+   (`snapshot_not_persisted`, esito `CANCEL_INCOMPLETE`), perché al riavvio l'ordine tornerebbe aperto. La
+   durabilità del broker SIM si verifica **a ogni arresto**, anche senza nuove cancellazioni: un arresto precedente
+   può aver lasciato lo snapshot non durevole con la memoria già pulita (Sol su `d892396d`).
 6. **Fotografia dopo**, sempre e su tutti i mercati (un ordine accettato dopo la prima lettura compare; gli ordini non
    attribuibili si ricalcolano sullo stato finale), e **esito per ordine** (`order_outcomes`), deciso sullo **stato finale**
    dell'exchange (un abbinamento avvenuto durante il cancel resta un'esposizione): `CANCELLED`, `PARTIALLY_MATCHED`

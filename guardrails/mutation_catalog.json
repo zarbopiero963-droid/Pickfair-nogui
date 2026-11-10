@@ -9424,6 +9424,54 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "Direttiva owner PF-OWNER-ESTOP-B5-BATCH-AUDIT: la perdita dell'autorita' deve restare un incidente distinto anche se l'exchange conferma le cancellazioni."
+    },
+    {
+      "id": "p0_estop_pending_saga_trusted",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                if bets and phase not in self._EMERGENCY_SAGA_SETTLED_PHASES:\n",
+      "mutated": "                if False:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su d892396d: una saga non conclusa (sostituto in volo) darebbe VERIFIED con un ordine che puo' arrivare dopo l'ultima lettura."
+    },
+    {
+      "id": "p0_estop_saga_stub_resolves_replacement",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            elif c[\"customer_ref\"] and (bets_by_ref.get(c[\"customer_ref\"], set()) - set(c.get(\"known_bets\") or ())):\n",
+      "mutated": "            elif c[\"customer_ref\"] and bets_by_ref.get(c[\"customer_ref\"], set()):\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su d892396d: lo stub condivide il ref della saga; vederlo non prova nulla sul sostituto."
+    },
+    {
+      "id": "p0_estop_sim_durability_only_after_cancel",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                not_durable = is_durable() is False\n",
+      "mutated": "                not_durable = False\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su d892396d: al secondo arresto, senza nuovi cancel, uno snapshot non durevole ripristinerebbe ordini aperti al riavvio."
+    },
+    {
+      "id": "p0_estop_market_cancel_guard_removed",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if not bet_ids:\n            # Mai il cancel dell'intero mercato",
+      "mutated": "        if False:\n            # Mai il cancel dell'intero mercato",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "GUARDRAIL D su d892396d: senza betId non deve mai partire un cancel di mercato (lista vuota = tutti gli ordini per Betfair)."
     }
   ]
 }

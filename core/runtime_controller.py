@@ -2405,6 +2405,9 @@ class RuntimeController:
         return isinstance(raw, dict) and bool(raw.get("microstake_ref") or raw.get("betId") or raw.get("bet_id"))
 
     _EMERGENCY_SAGA_NO_ORDER_PHASES = frozenset({"FAILED", "ROLLED_BACK"})
+    # Saghe concluse: ACTIVE (sostituto piazzato, betId noto) e BLOCKED (nessun ordine in volo). Le altre fasi possono
+    # ancora produrre un ordine (stessi insiemi di DbSagaStore.pending_refs).
+    _EMERGENCY_SAGA_SETTLED_PHASES = frozenset({"ACTIVE", "BLOCKED"})
 
     def _emergency_microstake_candidates(self, cancel_errors: list, *, venue: str, foreign_refs: set = None) -> list:
         """Saghe del Microstake nativo della sede (store `microstake.sagas[.live]`): stub, riduzione e sostituto
@@ -2440,6 +2443,14 @@ class RuntimeController:
                 for bid in sorted(bets) or [""]:
                     out.append({"source": "microstake_saga", "order_id": "", "market_id": market_id, "bet_id": bid,
                                 "customer_ref": str(ref), "status": phase})
+                if bets and phase not in self._EMERGENCY_SAGA_SETTLED_PHASES:
+                    # Saga non conclusa (stub noto, riduzione o sostituto ancora in volo): un ordine della saga puo'
+                    # essere accettato DOPO l'ultima lettura. Oltre ai betId noti resta un invio irrisolto, chiuso
+                    # solo se un ordine col ref della saga e' ritrovato sull'exchange (Sol su d892396d).
+                    # Lo stub e il sostituto condividono il ref della saga: chiude l'invio solo un ordine con quel ref e
+                    # un betId DIVERSO da quelli gia' noti, cioe' il sostituto stesso.
+                    out.append({"source": "microstake_saga", "order_id": "", "market_id": market_id, "bet_id": "",
+                                "customer_ref": str(ref), "status": phase, "known_bets": sorted(bets)})
         except Exception as exc:
             logger.exception("emergency_stop: lettura delle saghe Microstake fallita")
             cancel_errors.append({"stage": "read_microstake_sagas", "error": str(exc)})
@@ -2469,8 +2480,10 @@ class RuntimeController:
         stato di risposta (successo confermato, errore confermato o UNKNOWN: direttiva owner, requisito 3) ed e'
         marcato `authority_lost_during`; i lotti successivi non partono (NOT_SENT, uno per lotto). Esito combinato:
         ok solo se tutti i lotti sono OK e l'autorita' non e' stata persa."""
-        if bet_ids is None:
-            return self._emergency_cancel_once(client, market_id, None)
+        if not bet_ids:
+            # Mai il cancel dell'intero mercato: per Betfair una lista vuota (o assente) vuol dire «tutti gli ordini»,
+            # compresi quelli manuali o di altri programmi (Sol su 7094b1a6). Fail-closed, nessuna chiamata.
+            return {"ok": False, "market_id": market_id, "error": "MARKET_WIDE_CANCEL_FORBIDDEN", "batches": []}
         bet_ids = list(bet_ids)
         size = self._EMERGENCY_CANCEL_BATCH
         chunks = [bet_ids[i:i + size] for i in range(0, len(bet_ids), size)]
@@ -2515,7 +2528,7 @@ class RuntimeController:
         return combined
 
     def _emergency_cancel_once(self, client, market_id: str, bet_ids):
-        """Una chiamata di cancel: per `betId` del bot quando l'exchange e' stato letto, di mercato solo se illeggibile.
+        """Una chiamata di cancel per un lotto di `betId` del bot (mai di mercato: lo garantisce `_emergency_cancel`).
         Firma LIVE (`bet_ids`) o SIM (`instructions`); mai una lista vuota, che per Betfair vuol dire «tutto»."""
         import inspect
         kwargs = {"market_id": market_id}
@@ -2647,7 +2660,17 @@ class RuntimeController:
 
         # Broker SIM: un cancel eseguito in memoria ma con lo snapshot di reload NON scritto tornerebbe aperto al
         # riavvio (Codex su 82bbd010). Si ritenta la persistenza; se non riesce il cancel non e' completo.
-        if any(r.get("ok") and (r.get("response") or {}).get("snapshot_persisted") is False for r in cancel_results):
+        # Anche senza nuove cancellazioni (Sol su d892396d): un arresto precedente puo' aver lasciato lo snapshot non
+        # durevole, con la memoria gia' pulita; al riavvio gli ordini tornerebbero aperti.
+        not_durable = False
+        is_durable = getattr(client, "is_durable", None) if venue == "SIM" else None
+        if callable(is_durable):
+            try:
+                not_durable = is_durable() is False
+            except Exception:
+                not_durable = True
+        if not_durable or any(r.get("ok") and (r.get("response") or {}).get("snapshot_persisted") is False
+                              for r in cancel_results):
             durable = False
             try:
                 ensure = getattr(client, "ensure_durable", None)
@@ -2716,6 +2739,10 @@ class RuntimeController:
             outcomes.append({"bet_id": bid, "outcome": outcome})
         by_ref = {str(o.get("customerOrderRef") or ""): str(o.get("betId") or "")
                   for o in list(bot_remote.values()) + list(final_bot.values()) if o.get("customerOrderRef")}
+        bets_by_ref: dict = {}
+        for o in list(bot_remote.values()) + list(final_bot.values()):
+            if o.get("customerOrderRef"):
+                bets_by_ref.setdefault(str(o["customerOrderRef"]), set()).add(str(o.get("betId") or ""))
         # Tutte le righe senza betId, anche senza mercato (INFLIGHT pre-invio): nessuna resta fuori dall'esito.
         no_bet = [c for c in candidates if not c["bet_id"]]
         for c in no_bet:
@@ -2724,8 +2751,8 @@ class RuntimeController:
             foreign_here = any(u["market_id"] == c["market_id"] for u in unattributed)
             if after is None or before is None:
                 outcome = "UNKNOWN"
-            elif c["customer_ref"] and c["customer_ref"] in by_ref:
-                outcome = "SEE_BET_ID"
+            elif c["customer_ref"] and (bets_by_ref.get(c["customer_ref"], set()) - set(c.get("known_bets") or ())):
+                outcome = "SEE_BET_ID"      # ritrovato per ref (per una saga: un betId nuovo, il sostituto)
             elif c["market_id"] and any(o["market_id"] == c["market_id"] for o in open_after):
                 outcome = "STILL_OPEN"
             elif not c["market_id"]:
