@@ -36,9 +36,11 @@ sull'exchange.
    ledger, cancellati **per `betId`**, in lotti di al massimo 60 per chiamata (limite Betfair di `cancelOrders`;
    un lotto respinto non ferma gli altri e rende l'esito `CANCEL_INCOMPLETE`). Un ordine aperto **non attribuibile**, anche sullo stesso mercato (ordine
    manuale, altro programma, ordine senza riferimento), non viene mai cancellato: è elencato in
-   `unattributed_open_orders` e richiede l'operatore (rilievo Sol su `c8338ef3`). Solo se l'exchange non si può
-   leggere si ricade sul cancel dell'intero mercato dei candidati locali (`scope: MARKET`), con esito `UNVERIFIED`.
-5. **Cancel**, riverificando l'autorità del runtime (#536) prima di ogni mercato. Nel client LIVE la
+   `unattributed_open_orders` e richiede l'operatore (rilievo Sol su `c8338ef3`). **Mai il cancel dell'intero
+   mercato**, nemmeno se l'exchange non si può leggere (Sol su `7094b1a6`): in quel caso si cancellano per `betId`
+   solo gli ordini del bot noti nel ledger, gli invii senza `betId` restano irrisolti e l'esito è `UNVERIFIED`.
+5. **Cancel**, riverificando l'autorità del runtime (#536) prima di ogni mercato **e prima di ogni lotto**: se il
+   runtime viene superato durante un lotto, i lotti e i mercati successivi non partono (`runtime_authority`). Nel client LIVE la
    cancellazione e la lettura di verifica dell'emergenza attraversano il circuit breaker (`emergency=True`): un breaker
    aperto da timeout di lettura (AUD-BF-010) non blocca più l'uscita protettiva. Fuori dall'emergenza il breaker è
    rispettato come prima. Sul broker SIM un cancel riuscito in memoria ma con lo snapshot di reload non scritto

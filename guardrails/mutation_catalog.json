@@ -9118,12 +9118,12 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "                bet_ids = None if blind else targets.get(market_id, [])\n",
-      "mutated": "                bet_ids = None\n",
+      "original": "                bet_ids = (sorted({o[\"bet_id\"] for o in orders if o[\"bet_id\"]}) if blind\n",
+      "mutated": "                bet_ids = (None if blind\n",
       "tests": [
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
-      "rationale": "Sol su c8338ef3: il cancel di mercato annullerebbe ordini manuali o di altri programmi sullo stesso mercato."
+      "rationale": "Sol su c8338ef3 e 7094b1a6: a exchange illeggibile il cancel dell'intero mercato toccherebbe ordini manuali o estranei; solo i betId del bot noti."
     },
     {
       "id": "p0_estop_final_fill_ignored",
@@ -9202,7 +9202,7 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "        if after is not None and not blind:\n",
+      "original": "        if after is not None:\n",
       "mutated": "        if False:\n",
       "tests": [
         "tests/integration/test_p0_emergency_stop_open_orders.py"
@@ -9376,6 +9376,18 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "Direttiva owner D-629-05: senza la distinzione fra rifiuto pre-invio e invio incerto, un DENIED con esito ignoto darebbe un falso VERIFIED."
+    },
+    {
+      "id": "p0_estop_authority_not_rechecked_per_batch",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                block = self._authority_definitively_lost()\n",
+      "mutated": "                block = None\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su 7094b1a6: un runtime superato durante un lotto continuerebbe a cancellare con i lotti successivi."
     }
   ]
 }

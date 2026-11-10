@@ -2468,6 +2468,16 @@ class RuntimeController:
         combined = {"ok": True, "market_id": market_id, "cancelled_count": 0, "instructionReports": [], "batches": []}
         for start in range(0, len(bet_ids), self._EMERGENCY_CANCEL_BATCH):
             chunk = bet_ids[start:start + self._EMERGENCY_CANCEL_BATCH]
+            if start:
+                # Autorita' riverificata prima di OGNI lotto (Sol su 7094b1a6): se il runtime e' stato superato durante
+                # il lotto precedente, nessuna cancellazione ulteriore interferisce con il nuovo proprietario.
+                block = self._authority_definitively_lost()
+                if block:
+                    combined["ok"] = False
+                    combined["authority_lost"] = block
+                    combined.setdefault("error", "runtime_authority")
+                    combined["batches"].append({"bet_ids": bet_ids[start:], "ok": False, "error": "runtime_authority"})
+                    break
             try:
                 response = self._emergency_cancel_once(client, market_id, chunk) or {}
             except Exception as exc:                   # un lotto fallito non ferma gli altri
@@ -2568,15 +2578,19 @@ class RuntimeController:
                          "size_remaining": o.get("sizeRemaining")} for o in foreign]
 
         cancel_results, cancelled_count, error_count = [], 0, 0
-        blind = before is None           # exchange illeggibile: unica via e' il cancel di mercato (comportamento storico)
+        blind = before is None           # exchange illeggibile: si cancellano solo i betId noti del bot (Sol su 7094b1a6)
         if markets and client is None:
             cancel_errors.append({"stage": "cancel", "venue": venue, "error": "client non disponibile"})
             error_count = sum(max(1, len(v)) for v in markets.values())
         elif client is not None:
             for market_id, orders in markets.items():
-                bet_ids = None if blind else targets.get(market_id, [])
+                # Exchange illeggibile: mai il cancel dell'intero mercato, che toccherebbe ordini manuali o di altri
+                # programmi; si cancellano i betId del bot noti nel ledger, il resto (invii senza betId) resta
+                # all'operatore come invio irrisolto, con esito UNVERIFIED (Sol su 7094b1a6).
+                bet_ids = (sorted({o["bet_id"] for o in orders if o["bet_id"]}) if blind
+                           else targets.get(market_id, []))
                 if bet_ids == []:
-                    continue             # nessun ordine del bot aperto su questo mercato: solo verifica
+                    continue             # nessun betId del bot da cancellare su questo mercato: solo verifica
                 market_block = self._authority_definitively_lost()   # Sol su 9a80162: prima di ogni mercato
                 if market_block:
                     logger.critical("emergency_stop: cancel-all interrotto su %s, %s", market_id, market_block)
@@ -2597,9 +2611,16 @@ class RuntimeController:
                         err = response.get("error") or response.get("errorCode") or "cancel_orders non riuscito"
                         logger.warning("emergency_stop: cancel_orders ok=False su %s: %s", market_id, err)
                         cancelled_count += int(response.get("cancelled_count") or 0)   # lotti riusciti, se a lotti
+                        if response.get("authority_lost"):
+                            logger.critical("emergency_stop: autorita' persa fra i lotti su %s, %s", market_id,
+                                            response["authority_lost"])
+                            cancel_errors.append({"stage": "runtime_authority", "market_id": market_id,
+                                                  "error": response["authority_lost"]})
                         cancel_results.append({"market_id": market_id, "order_count": len(orders), "ok": False,
                                                "error": err, "batches": response.get("batches")})
                         error_count += max(1, len(orders))
+                        if response.get("authority_lost"):
+                            break        # runtime superato: nessun altro mercato
                 except Exception as exc:
                     logger.warning("emergency_stop: cancel_orders fallito su %s: %s", market_id, exc)
                     cancel_results.append({"market_id": market_id, "order_count": len(orders), "ok": False,
@@ -2637,10 +2658,11 @@ class RuntimeController:
         # Dopo il cancel contano gli ordini del BOT ancora aperti; quelli estranei restano in `unattributed`.
         open_after = [{"bet_id": str(o.get("betId") or ""), "market_id": str(o.get("marketId") or ""),
                        "size_remaining": o.get("sizeRemaining")}
-                      for o in (after or []) if self._exchange_open(o) and (blind or _is_bot(o))]
+                      for o in (after or []) if self._exchange_open(o) and _is_bot(o)]
         # Ordini non attribuibili sullo stato FINALE quando c'e' (Sol su d85a62ff): uno comparso dopo la prima
-        # fotografia non sfugge all'operatore.
-        if after is not None and not blind:
+        # fotografia non sfugge all'operatore. Anche a lettura iniziale fallita: non sono stati cancellati
+        # (nessun cancel di mercato, Sol su 7094b1a6) e restano all'operatore.
+        if after is not None:
             unattributed = [{"bet_id": str(o.get("betId") or ""), "market_id": str(o.get("marketId") or ""),
                              "size_remaining": o.get("sizeRemaining")}
                             for o in after if self._exchange_open(o) and not _is_bot(o)]

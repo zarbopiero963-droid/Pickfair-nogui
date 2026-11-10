@@ -361,14 +361,31 @@ def test_fill_during_the_cancel_is_reported_as_exposure(tmp_path, monkeypatch):
     assert res["matched_positions"][0]["size_matched"] == 2.0
 
 
-def test_market_cancel_only_when_the_exchange_cannot_be_read(tmp_path, monkeypatch):
+def test_unreadable_exchange_cancels_only_known_bot_bet_ids_never_the_whole_market(tmp_path, monkeypatch):
+    """Sol su 7094b1a6: lettura iniziale fallita. Mai il cancel dell'intero mercato (toccherebbe ordini manuali o di
+    altri programmi): si cancellano i betId del bot noti nel ledger, l'ordine estraneo resta e va all'operatore."""
     app = _app(tmp_path, monkeypatch)
-    ex = FakeExchange([_o("B1")], read_fail={"before"})
+    ex = FakeExchange([_o("B1"), _o("FOREIGN")], read_fail={"before"})
     _engine_order(app.runtime.db, market_id="1.5", bet_id="B1")
     _live(app, ex, monkeypatch)
     res = app.runtime.emergency_stop(reason="t")
-    assert ex.cancel_bet_ids == [None] and res["verification"] == "UNVERIFIED"
-    assert res["cancel_results"][0]["scope"] == "MARKET"
+    assert ex.cancel_bet_ids == [["B1"]], ex.cancel_bet_ids
+    assert res["cancel_results"][0]["scope"] == "BET_IDS"
+    assert [o["bet_id"] for o in res["unattributed_open_orders"]] == ["FOREIGN"]
+    assert res["verification"] == "UNVERIFIED" and res["manual_action_required"] is True
+
+
+def test_unreadable_exchange_without_known_bet_ids_sends_no_cancel(tmp_path, monkeypatch):
+    """Lettura iniziale fallita e solo un invio senza betId sul mercato: nessun cancel alla cieca; l'invio resta
+    irrisolto e l'esito non e' mai VERIFIED."""
+    app = _app(tmp_path, monkeypatch)
+    ex = FakeExchange([_o("FOREIGN", market="1.6")], read_fail={"before"})
+    _engine_order(app.runtime.db, market_id="1.6", bet_id=None, status="INFLIGHT")
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert ex.cancel_calls == [], ex.cancel_calls
+    assert len(res["unresolved_submissions"]) == 1 and res["verification"] == "UNVERIFIED", res
+    assert res["manual_action_required"] is True
 
 
 def test_sim_ledger_rows_are_not_live_candidates(tmp_path, monkeypatch):
@@ -807,3 +824,23 @@ def test_batch_matched_during_cancel_is_exposure_not_cancelled(tmp_path, monkeyp
     assert all(by_bet[b] in ("PARTIALLY_MATCHED", "ALREADY_MATCHED") for b in middle), {b: by_bet[b] for b in middle[:3]}
     assert sorted(p["bet_id"] for p in res["matched_positions"]) == middle
     assert all(by_bet[b] == "CANCELLED" for b in bets[:60] + bets[120:])
+
+
+def test_authority_lost_between_batches_stops_further_cancels(tmp_path, monkeypatch):
+    """Sol su 7094b1a6: autorita' riverificata prima di ogni lotto. Se il runtime viene superato durante il primo
+    lotto, i lotti successivi non partono (nessuna interferenza col nuovo proprietario) e l'esito non e' VERIFIED."""
+    app = _app(tmp_path, monkeypatch)
+    bets = [f"A{i:03d}" for i in range(121)]
+    for b in bets:
+        _engine_order(app.runtime.db, market_id="1.31", bet_id=b)
+    ex = FakeExchange([_o(b, market="1.31") for b in bets])
+    _live(app, ex, monkeypatch)
+    monkeypatch.setattr(app.runtime, "_authority_definitively_lost",
+                        lambda: "AUTHORITY_SUPERSEDED" if ex.cancel_calls else None)
+    res = app.runtime.emergency_stop(reason="t")
+    assert [len(c) for c in ex.cancel_bet_ids] == [60], [len(c) for c in ex.cancel_bet_ids]
+    assert any(e.get("stage") == "runtime_authority" for e in res["cancel_errors"]), res["cancel_errors"]
+    assert res["verification"] != "VERIFIED" and res["manual_action_required"] is True
+    (market_result,) = res["cancel_results"]
+    assert [b["ok"] for b in market_result["batches"]] == [True, False]
+    assert market_result["batches"][1]["error"] == "runtime_authority"
