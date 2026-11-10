@@ -616,3 +616,15 @@ def test_emergency_state_not_persisted_requires_manual_action(tmp_path, monkeypa
     assert res["verification"] == "VERIFIED" and res["manual_action_required"] is True, res
     assert events and events[-1]["persist_error"] == "disk I/O error"
     assert "NON salvato" in mini_gui._emergency_manual_action_text(res)
+
+
+def test_inflight_without_market_is_unresolved_even_when_the_first_read_fails(tmp_path, monkeypatch):
+    """Sol su ff0f9ea1: INFLIGHT senza mercato ne' betId, prima lettura fallita e lettura finale vuota. L'esito e'
+    UNKNOWN, ma l'invio puo' ancora essere accettato: mai VERIFIED, all'operatore."""
+    app = _app(tmp_path, monkeypatch)
+    _engine_order(app.runtime.db, market_id="", bet_id=None, status="INFLIGHT")
+    ex = FakeExchange([], read_fail=("before",))
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert res["verification"] != "VERIFIED" and res["manual_action_required"] is True, res
+    assert len(res["unresolved_submissions"]) == 1, res

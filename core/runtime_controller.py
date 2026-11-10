@@ -2646,7 +2646,8 @@ class RuntimeController:
 
         # Invii senza betId non ritrovati sull'exchange (INFLIGHT/AMBIGUOUS/saga pre-invio): un placeOrders ancora in
         # volo puo' essere accettato DOPO l'ultima lettura, quindi «nessun ordine» non e' dimostrato (Sol su c1db40c3).
-        unresolved = [o for o in outcomes if o.get("outcome") in ("NO_OPEN_ORDER_ON_MARKET", "NO_OPEN_ORDER_FOUND")]
+        # Ogni riga senza betId non ritrovata per riferimento (anche UNKNOWN a exchange cieco, Sol su ff0f9ea1).
+        unresolved = [o for o in outcomes if "bet_id" not in o and o.get("outcome") != "SEE_BET_ID"]
         source_errors = [e for e in cancel_errors
                          if e.get("stage") in ("read_orders", "get_pending_sagas", "read_microstake_sagas")]
         if after is None or (before is None and markets):

@@ -51,8 +51,9 @@ sull'exchange.
    è fallito, l'autorità non è stata persa e le fonti locali sono state lette. Altrimenti `OPEN_ORDERS_REMAIN`,
    `CANCEL_INCOMPLETE`, `UNVERIFIED` o `SOURCES_INCOMPLETE` (tabella `orders`, `order_saga` o store delle saghe
    Microstake illeggibile: gli ordini del bot non sono attribuibili, quindi un exchange vuoto non basta) o
-   `SUBMISSIONS_UNRESOLVED`: un invio senza `betId` (INFLIGHT, AMBIGUOUS, saga pre-invio) non ritrovato
-   sull'exchange (`NO_OPEN_ORDER_ON_MARKET` / `NO_OPEN_ORDER_FOUND`, elencato in `unresolved_submissions`) può
+   `SUBMISSIONS_UNRESOLVED`: un invio senza `betId` (INFLIGHT, AMBIGUOUS, saga pre-invio) non ritrovato per
+   riferimento sull'exchange (ogni esito tranne `SEE_BET_ID`, anche `UNKNOWN` a exchange illeggibile; elencato in
+   `unresolved_submissions`) può
    ancora essere accettato dopo l'ultima lettura, quindi «nessun ordine» non è dimostrato.
 8. **Posizioni reali** abbinate prima dell'arresto: elencate in `matched_positions` (mercato, selezione, lato, importo,
    prezzo medio) qualunque sia l'esito del cancel o della verifica. Anche le righe chiuse (es. `CANCELLED` con il

@@ -9328,6 +9328,18 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "Sol su c1db40c3: LOCKDOWN non salvato senza avviso all'operatore; il blocco potrebbe perdersi al riavvio."
+    },
+    {
+      "id": "p0_estop_unresolved_ignores_unknown",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        unresolved = [o for o in outcomes if \"bet_id\" not in o and o.get(\"outcome\") != \"SEE_BET_ID\"]\n",
+      "mutated": "        unresolved = [o for o in outcomes if o.get(\"outcome\") in (\"NO_OPEN_ORDER_ON_MARKET\", \"NO_OPEN_ORDER_FOUND\")]\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su ff0f9ea1: un INFLIGHT senza mercato con prima lettura fallita (esito UNKNOWN) darebbe VERIFIED e rc 0."
     }
   ]
 }
