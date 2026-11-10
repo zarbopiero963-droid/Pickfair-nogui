@@ -889,7 +889,8 @@ Preserva sempre:
 - START/STOP e chiusura non lasciano thread, poller o sessioni incoerenti.
 - La config si salva e ricarica senza perdere dati; default sempre sicuri.
 - Token e segreti non finiscono mai nel repository né nei log.
-- Linux resta il target primario del runtime; la GUI resta opzionale.
+- Windows e Linux hanno parità funzionale e di sicurezza (#625); finché una piattaforma non ha garanzie
+  equivalenti resta fail-closed su quella piattaforma. La GUI resta opzionale.
 - Il merge segue SOLO la policy gated della sezione AUTO-MERGE.
 
 ## REGOLA D'ORO
