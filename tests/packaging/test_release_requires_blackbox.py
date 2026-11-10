@@ -213,9 +213,13 @@ def _junit(*cases):
     return f'<testsuites><testsuite name="pytest">{body}</testsuite></testsuites>'
 
 
-def _all_passed(**override):
+_INTEGRITY = "tests.packaging.test_release_requires_blackbox"
+
+
+def _all_passed(integrity=None, **override):
     gate = _release_gate()
-    cases = []
+    count = gate.MIN_INTEGRITY_TESTS if integrity is None else integrity
+    cases = [(_INTEGRITY, f"test_integrita_{i}", "") for i in range(count)]
     for name in sorted(gate.REQUIRED_TESTS):
         extra = override.get(name, "")
         if extra is not None:
@@ -249,9 +253,12 @@ def test_gate_report_missing_a_required_test_is_red():
 
 def test_gate_report_from_another_module_or_innocuous_tests_is_red():
     gate = _release_gate()
+    integrity = [("tests.packaging.test_release_requires_blackbox", f"test_integrita_{i}", "")
+                 for i in range(gate.MIN_INTEGRITY_TESTS)]
     impostors = [("tests.packaging.altro", name, "") for name in sorted(gate.REQUIRED_TESTS)]
-    assert gate.evaluate(_junit(*impostors))[0] is False
-    assert gate.evaluate(_junit((_CLS, "test_innocuo", "")))[0] is False
+    ok, reasons = gate.evaluate(_junit(*integrity, *impostors))
+    assert ok is False and all("non raccolto" in r for r in reasons)
+    assert gate.evaluate(_junit(*integrity, (_CLS, "test_innocuo", "")))[0] is False
 
 
 @pytest.mark.parametrize("report", ["", "<non-xml", "<testsuites/>"])
@@ -515,5 +522,69 @@ def test_gate_check_rejects_a_thread_still_running_after_the_launcher(monkeypatc
     try:
         with pytest.raises(AssertionError, match="ancora attivi"):
             checks.assert_launcher_is_safe(monkeypatch, launcher_leaving_a_thread, ["pickfair"])
+    finally:
+        release.set()
+
+
+# --- rilievi GPT-6.1 Sol su b5c7c117: inventario nel gate e thread discendenti ---
+
+def test_gate_runs_the_inventory_and_integrity_checks_too(monkeypatch):
+    """Una build da tag non dipende dalla CI ordinaria: il gate esegue anche questo modulo."""
+    gate = _release_gate()
+    seen = {}
+
+    def fake_run(cmd, cwd, env, check):
+        seen["cmd"] = cmd
+        return type("P", (), {"returncode": 1})()
+
+    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+    gate.run()
+    assert gate.GATE_MODULE in seen["cmd"] and gate.INTEGRITY_MODULE in seen["cmd"]
+    assert gate.INTEGRITY_MODULE == "tests/packaging/test_release_requires_blackbox.py"
+
+
+@pytest.mark.parametrize("outcome", ['<failure message="launcher non censito"/>', '<skipped message="skip"/>',
+                                     '<error message="x"/>'])
+def test_gate_is_red_when_an_integrity_check_does_not_pass(outcome):
+    gate, xml = _all_passed()
+    xml = xml.replace('name="test_integrita_0"></testcase>', f'name="test_integrita_0">{outcome}</testcase>')
+    ok, reasons = gate.evaluate(xml)
+    assert not ok and any("integrita'" in r for r in reasons)
+
+
+def test_gate_is_red_when_too_few_integrity_checks_ran():
+    gate, xml = _all_passed(integrity=3)
+    ok, reasons = gate.evaluate(xml)
+    assert not ok and any("minimo" in r for r in reasons)
+
+
+def test_integrity_module_has_at_least_the_minimum_number_of_checks():
+    import subprocess
+    import sys
+
+    out = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
+                          "-o", "addopts=", str(Path(__file__))], cwd=str(ROOT), capture_output=True, text=True)
+    collected = [line for line in out.stdout.splitlines() if "::" in line]
+    assert len(collected) >= _release_gate().MIN_INTEGRITY_TESTS
+
+
+def test_gate_check_rejects_a_grandchild_thread(monkeypatch):
+    """Un thread crea un discendente e termina: il discendente non deve sfuggire al controllo."""
+    import threading
+
+    checks = _gate_checks()
+    monkeypatch.setattr(checks, "THREAD_JOIN_TIMEOUT_S", 1.0)
+    release = threading.Event()
+
+    def launcher_with_a_grandchild():
+        def parent():
+            release.wait(0.2)   # il discendente nasce DOPO la prima fotografia dei thread
+            threading.Thread(target=release.wait, args=(5,), name="nipote").start()
+        threading.Thread(target=parent, name="figlio").start()
+        return 1
+
+    try:
+        with pytest.raises(AssertionError, match="nipote"):
+            checks.assert_launcher_is_safe(monkeypatch, launcher_with_a_grandchild, ["pickfair"])
     finally:
         release.set()

@@ -20,6 +20,7 @@ import importlib
 import os
 import sys
 import threading
+import time
 from contextlib import contextmanager
 
 # (modulo, classe, metodo): raggiungere uno di questi punti senza scatola nera = percorso operativo non protetto.
@@ -100,9 +101,15 @@ def assert_launcher_is_safe(monkeypatch, launcher, argv):
             rc = None
         except SystemExit as exc:
             rc = exc.code
-        late = [t for t in threading.enumerate() if t not in threads_before]
-        for thread in late:
-            thread.join(THREAD_JOIN_TIMEOUT_S)
+        # Attende anche i discendenti: un thread puo' crearne un altro e terminare (rilievo Sol su b5c7c117).
+        deadline = time.monotonic() + THREAD_JOIN_TIMEOUT_S
+        while True:
+            late = [t for t in threading.enumerate() if t not in threads_before and t.is_alive()]
+            remaining = deadline - time.monotonic()
+            if not late or remaining <= 0:
+                break
+            for thread in late:
+                thread.join(max(0.0, deadline - time.monotonic()))
         still_running = [t.name for t in late if t.is_alive()]
     assert reached == [], f"percorso operativo raggiunto senza scatola nera: {reached}"
     assert not still_running, f"thread avviati dal launcher ancora attivi: {still_running}"

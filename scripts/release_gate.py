@@ -26,6 +26,11 @@ from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE_MODULE = "tests/packaging/release_gate_launchers.py"
+# Inventario dei launcher, cablaggio e integrita' del gate: eseguiti anche qui, perche' una build da tag non dipende
+# dalla CI ordinaria (rilievo Sol su b5c7c117). Ogni loro test deve passare: failure/error/skip => rosso.
+INTEGRITY_MODULE = "tests/packaging/test_release_requires_blackbox.py"
+_INTEGRITY_CLASSNAME = "tests.packaging.test_release_requires_blackbox"
+MIN_INTEGRITY_TESTS = 40
 REQUIRED_TESTS = frozenset({
     "test_headless_entrypoint_never_builds_the_runtime_without_the_blackbox",
     "test_gui_entrypoint_never_builds_the_runtime_without_the_blackbox",
@@ -53,6 +58,13 @@ def evaluate(junit_xml: str, required: Iterable[str] = REQUIRED_TESTS) -> tuple[
         outcomes = [child.tag for child in case if child.tag in _NOT_PASSED]
         seen.setdefault(name, []).append(outcomes[0] if outcomes else "passed")
     reasons = []
+    integrity = [case for case in root.iter("testcase") if case.get("classname") == _INTEGRITY_CLASSNAME]
+    if len(integrity) < MIN_INTEGRITY_TESTS:
+        reasons.append(f"controlli d'integrita' eseguiti: {len(integrity)} (minimo {MIN_INTEGRITY_TESTS})")
+    for case in integrity:
+        bad = [child.tag for child in case if child.tag in _NOT_PASSED]
+        if bad:
+            reasons.append(f"integrita' {case.get('name')}: {bad[0]}")
     for name in sorted(required):
         results = seen.get(name)
         if not results:
@@ -82,7 +94,7 @@ def run() -> tuple[bool, list[str]]:
     with tempfile.TemporaryDirectory() as tmp:
         report = Path(tmp) / "release_gate.xml"
         cmd = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", "-o", "addopts=", "--strict-markers",
-               f"--junitxml={report}", GATE_MODULE]
+               f"--junitxml={report}", GATE_MODULE, INTEGRITY_MODULE]
         proc = subprocess.run(cmd, cwd=str(ROOT), env=env, check=False)
         if not report.is_file():
             return False, [f"rapporto JUnit assente (pytest rc={proc.returncode})"]

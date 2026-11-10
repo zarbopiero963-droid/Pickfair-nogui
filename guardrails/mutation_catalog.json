@@ -8978,6 +8978,30 @@
         "tests/packaging/test_release_requires_blackbox.py"
       ],
       "rationale": "Audit Claude D (#626): un plugin pytest caricato automaticamente o da PYTEST_PLUGINS potrebbe riscrivere gli esiti (makereport) e rendere verde il gate."
+    },
+    {
+      "id": "rg_integrity_not_run",
+      "module": "scripts.release_gate",
+      "area": "release_gate",
+      "file": "scripts/release_gate.py",
+      "original": "               f\"--junitxml={report}\", GATE_MODULE, INTEGRITY_MODULE]",
+      "mutated": "               f\"--junitxml={report}\", GATE_MODULE]",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Rilievo GPT-6.1 Sol su b5c7c117 (#626): senza inventario e cablaggio nel gate, una build da tag con un launcher non censito passerebbe."
+    },
+    {
+      "id": "rg_descendant_threads_not_rechecked",
+      "module": "tests.packaging.release_gate_launchers",
+      "area": "release_gate",
+      "file": "tests/packaging/release_gate_launchers.py",
+      "original": "            if not late or remaining <= 0:\n                break\n",
+      "mutated": "            break\n",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Rilievo GPT-6.1 Sol su b5c7c117 (#626): un thread che crea un discendente e termina lascerebbe il discendente fuori dal controllo."
     }
   ]
 }
