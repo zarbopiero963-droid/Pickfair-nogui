@@ -161,3 +161,23 @@ def test_build_and_release_jobs_depend_on_the_release_gate(workflow):
         needs = [needs] if isinstance(needs, str) else list(needs)
         assert "release-gate" in needs or "build" in needs, f"{workflow}: il job {name} non dipende dal gate"
     assert jobs["build"]["needs"] in ("release-gate", ["release-gate"])
+
+
+# Script alla radice eseguibili direttamente che costruiscono o avviano il runtime. Non sono impacchettati: li copre
+# il gate comune di BB-1G in RuntimeController.start (audit Claude D, #625). Un nuovo script deve essere aggiunto
+# qui consapevolmente.
+ROOT_SCRIPTS_STARTING_THE_RUNTIME = {
+    "main.py", "headless_main.py", "mini_gui.py", "hard_verify_issue_320.py", "test_zero_touch_sync.py",
+    "test_gui_hard.py", "test_gui_parser_management.py",
+}
+
+
+def test_root_scripts_that_can_start_the_runtime_are_inventoried():
+    found = set()
+    for script in sorted(ROOT.glob("*.py")):
+        text = script.read_text(encoding="utf-8", errors="replace")
+        if re.search(r"if __name__\s*==\s*['\"]__main__['\"]", text) and re.search(
+                r"RuntimeController|HeadlessApp|MiniPickfairGUI|from (?:headless_main|mini_gui) import|import (?:headless_main|mini_gui)\b",
+                text):
+            found.add(script.name)
+    assert found <= ROOT_SCRIPTS_STARTING_THE_RUNTIME, f"script non inventariati: {found - ROOT_SCRIPTS_STARTING_THE_RUNTIME}"
