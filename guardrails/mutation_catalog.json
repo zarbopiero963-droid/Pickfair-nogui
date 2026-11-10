@@ -8888,12 +8888,12 @@
       "module": "scripts.release_gate",
       "area": "release_gate",
       "file": "scripts/release_gate.py",
-      "original": "    env = {k: v for k, v in os.environ.items() if k != \"PYTEST_ADDOPTS\"}",
+      "original": "    env = {k: v for k, v in os.environ.items() if k not in (\"PYTEST_ADDOPTS\", \"PYTEST_PLUGINS\")}",
       "mutated": "    env = dict(os.environ)",
       "tests": [
         "tests/packaging/test_release_requires_blackbox.py"
       ],
-      "rationale": "#626: filtri -k/-m iniettati con PYTEST_ADDOPTS potrebbero deselezionare i test di sicurezza."
+      "rationale": "#626: filtri -k/-m iniettati con PYTEST_ADDOPTS potrebbero deselezionare i test di sicurezza. Vale anche per PYTEST_PLUGINS (plugin iniettati)."
     },
     {
       "id": "rg_module_identity_not_checked",
@@ -8966,6 +8966,18 @@
         "tests/packaging/test_release_requires_blackbox.py"
       ],
       "rationale": "Audit Claude D (#626): un launcher che avvia il runtime in un sottoprocesso sfuggirebbe alle sentinelle del processo del gate."
+    },
+    {
+      "id": "rg_plugin_autoload_kept",
+      "module": "scripts.release_gate",
+      "area": "release_gate",
+      "file": "scripts/release_gate.py",
+      "original": "    env[\"PYTEST_DISABLE_PLUGIN_AUTOLOAD\"] = \"1\"\n",
+      "mutated": "",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Audit Claude D (#626): un plugin pytest caricato automaticamente o da PYTEST_PLUGINS potrebbe riscrivere gli esiti (makereport) e rendere verde il gate."
     }
   ]
 }

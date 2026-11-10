@@ -103,7 +103,8 @@ def test_build_and_release_cannot_run_without_a_green_release_gate(workflow):
     assert GATE_COMMAND in gate_runs, f"il gate deve eseguire esattamente {GATE_COMMAND!r}"
     assert not any("pytest" in run for run in gate_runs), "il gate non chiama pytest direttamente (niente -k/-m/filtri)"
     for block in [gate, *gate["steps"]]:
-        overridden = {"GITHUB_ACTIONS", "GITHUB_REF", "PYTEST_ADDOPTS"} & set(block.get("env") or {})
+        overridden = {"GITHUB_ACTIONS", "GITHUB_REF", "PYTEST_ADDOPTS", "PYTEST_PLUGINS",
+                      "PYTEST_DISABLE_PLUGIN_AUTOLOAD"} & set(block.get("env") or {})
         assert not overridden, f"{workflow}: il gate non deve sovrascrivere {sorted(overridden)}"
     for name, job in jobs.items():
         for where, block in [(name, job), *((f"{name}/step", st) for st in job.get("steps", []))]:
@@ -271,6 +272,7 @@ def test_gate_rejects_a_pytest_failure_even_with_a_green_report(monkeypatch, tmp
 
     def fake_run(cmd, cwd, env, check):
         assert "PYTEST_ADDOPTS" not in env, "il gate deve ignorare PYTEST_ADDOPTS (filtri iniettati)"
+        assert "PYTEST_PLUGINS" not in env and env.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD") == "1"
         assert any(a.startswith("--junitxml=") for a in cmd) and gate.GATE_MODULE in cmd
         pytest_args = cmd[cmd.index("pytest") + 1:]
         assert not {"-k", "-m", "--deselect", "--lf", "--last-failed"} & set(pytest_args), pytest_args
@@ -279,6 +281,7 @@ def test_gate_rejects_a_pytest_failure_even_with_a_green_report(monkeypatch, tmp
         return type("P", (), {"returncode": 1})()
 
     monkeypatch.setenv("PYTEST_ADDOPTS", "-k headless")
+    monkeypatch.setenv("PYTEST_PLUGINS", "plugin_malevolo")
     monkeypatch.setattr(gate.subprocess, "run", fake_run)
     ok, reasons = gate.run()
     assert not ok

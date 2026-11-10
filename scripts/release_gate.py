@@ -76,7 +76,9 @@ def ref_allowed(env: dict) -> tuple[bool, str]:
 
 
 def run() -> tuple[bool, list[str]]:
-    env = {k: v for k, v in os.environ.items() if k != "PYTEST_ADDOPTS"}
+    # Nessun filtro o plugin iniettato dall'ambiente: un plugin (hook makereport) potrebbe riscrivere gli esiti.
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTEST_ADDOPTS", "PYTEST_PLUGINS")}
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     with tempfile.TemporaryDirectory() as tmp:
         report = Path(tmp) / "release_gate.xml"
         cmd = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", "-o", "addopts=", "--strict-markers",
