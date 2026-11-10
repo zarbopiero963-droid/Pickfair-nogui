@@ -116,6 +116,8 @@ class FakeExchange:
         self.emergency_seen.append(("cancel", emergency))
         self.cancel_calls.append(market_id)
         self.cancel_bet_ids.append(None if bet_ids is None else list(bet_ids))
+        if bet_ids is not None and len(bet_ids) > 60:      # limite Betfair: max 60 istruzioni per cancelOrders
+            return {"ok": False, "market_id": market_id, "error": "TOO_MANY_INSTRUCTIONS"}
         if self.cancel_mode == "raise":
             raise RuntimeError("REQUEST_FAILED: TIMEOUT")
         if self.cancel_mode == "fail":
@@ -125,15 +127,17 @@ class FakeExchange:
                 if o["marketId"] == market_id and (bet_ids is None or o["betId"] in bet_ids):
                     o.update(status="EXECUTION_COMPLETE", sizeMatched=2.0, sizeRemaining=0.0, averagePriceMatched=2.0)
             return {"ok": True, "market_id": market_id, "cancelled_count": 1}
+        done = 0
         if self.cancel_mode == "ok":
             for o in self.orders:
                 if o["marketId"] == market_id and o["status"] == "EXECUTABLE" and \
                         (bet_ids is None or o["betId"] in bet_ids):
                     o["status"], o["sizeRemaining"] = "EXECUTION_COMPLETE", 0.0
+                    done += 1
                     if not o["sizeMatched"]:
                         o["gone"] = True
             self.orders = [o for o in self.orders if not o.get("gone")]
-        return {"ok": True, "market_id": market_id, "cancelled_count": 1}
+        return {"ok": True, "market_id": market_id, "cancelled_count": done or 1}
 
 
 def _o(bet_id, market="1.5", status="EXECUTABLE", matched=0.0, remaining=5.0, ref=""):
@@ -641,3 +645,42 @@ def test_denied_rows_are_not_unresolved_submissions(tmp_path, monkeypatch):
     res = app.runtime.emergency_stop(reason="t")
     assert res["unresolved_submissions"] == [] and res["verification"] == "VERIFIED", res
     assert res["manual_action_required"] is False, res
+
+
+def test_more_than_60_bot_orders_on_a_market_are_cancelled_in_batches(tmp_path, monkeypatch):
+    """Sol su 44164b44: Betfair accetta al massimo 60 istruzioni per cancelOrders. Con 61 ordini aperti del bot sullo
+    stesso mercato il cancel va diviso in lotti, mai un'unica richiesta respinta."""
+    app = _app(tmp_path, monkeypatch)
+    bets = [f"B{i:03d}" for i in range(61)]
+    for b in bets:
+        _engine_order(app.runtime.db, market_id="1.15", bet_id=b)
+    ex = FakeExchange([_o(b, market="1.15") for b in bets])
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert all(len(batch) <= 60 for batch in ex.cancel_bet_ids), [len(b) for b in ex.cancel_bet_ids]
+    assert sorted(b for batch in ex.cancel_bet_ids for b in batch) == bets
+    assert res["verification"] == "VERIFIED" and res["open_after_cancel"] == [], res["verification"]
+    assert res["cancelled_count"] == 61, res["cancelled_count"]
+
+
+def test_a_rejected_batch_does_not_stop_the_other_batches(tmp_path, monkeypatch):
+    """Primo lotto respinto: il secondo si invia comunque; l'esito e' CANCEL_INCOMPLETE, mai VERIFIED."""
+    app = _app(tmp_path, monkeypatch)
+    bets = [f"C{i:03d}" for i in range(61)]
+    for b in bets:
+        _engine_order(app.runtime.db, market_id="1.16", bet_id=b)
+    ex = FakeExchange([_o(b, market="1.16") for b in bets])
+    real_cancel, calls = ex.cancel_orders, []
+
+    def first_batch_rejected(*, market_id, bet_ids=None, emergency=False):
+        calls.append(list(bet_ids or []))
+        if len(calls) == 1:
+            return {"ok": False, "market_id": market_id, "error": "SERVICE_UNAVAILABLE"}
+        return real_cancel(market_id=market_id, bet_ids=bet_ids, emergency=emergency)
+
+    ex.cancel_orders = first_batch_rejected
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    assert [len(c) for c in calls] == [60, 1], [len(c) for c in calls]
+    assert res["verification"] in ("OPEN_ORDERS_REMAIN", "CANCEL_INCOMPLETE") and res["manual_action_required"], res
+    assert len(res["open_after_cancel"]) == 60 and res["cancelled_count"] == 1, res["cancelled_count"]

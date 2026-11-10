@@ -29,7 +29,8 @@ sull'exchange.
 3. **Fotografia dell'exchange prima** (`get_current_orders`, tutti i mercati) sulla sede in cui il runtime operava
    (LIVE: client Betfair; SIM: broker simulato).
 4. **Cosa si cancella:** solo gli ordini **aperti del bot**, cioè quelli con `betId` o `customerOrderRef` noti nel
-   ledger, cancellati **per `betId`**. Un ordine aperto **non attribuibile**, anche sullo stesso mercato (ordine
+   ledger, cancellati **per `betId`**, in lotti di al massimo 60 per chiamata (limite Betfair di `cancelOrders`;
+   un lotto respinto non ferma gli altri e rende l'esito `CANCEL_INCOMPLETE`). Un ordine aperto **non attribuibile**, anche sullo stesso mercato (ordine
    manuale, altro programma, ordine senza riferimento), non viene mai cancellato: è elencato in
    `unattributed_open_orders` e richiede l'operatore (rilievo Sol su `c8338ef3`). Solo se l'exchange non si può
    leggere si ricade sul cancel dell'intero mercato dei candidati locali (`scope: MARKET`), con esito `UNVERIFIED`.

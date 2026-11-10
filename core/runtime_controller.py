@@ -2436,8 +2436,37 @@ class RuntimeController:
             pass
         return fn(**kwargs)
 
+    _EMERGENCY_CANCEL_BATCH = 60        # Betfair: massimo 60 istruzioni per cancelOrders (Sol su 44164b44)
+
     def _emergency_cancel(self, client, market_id: str, bet_ids):
-        """Cancel d'emergenza: per `betId` del bot quando l'exchange e' stato letto, di mercato solo se illeggibile.
+        """Cancel d'emergenza, in lotti di al massimo 60 `betId` (limite Betfair di cancelOrders): un lotto respinto
+        non impedisce gli altri. Esito combinato: ok solo se tutti i lotti riescono."""
+        if bet_ids is None or len(bet_ids) <= self._EMERGENCY_CANCEL_BATCH:
+            return self._emergency_cancel_once(client, market_id, bet_ids)
+        bet_ids = list(bet_ids)
+        combined = {"ok": True, "market_id": market_id, "cancelled_count": 0, "instructionReports": [], "batches": []}
+        for start in range(0, len(bet_ids), self._EMERGENCY_CANCEL_BATCH):
+            chunk = bet_ids[start:start + self._EMERGENCY_CANCEL_BATCH]
+            try:
+                response = self._emergency_cancel_once(client, market_id, chunk) or {}
+            except Exception as exc:                   # un lotto fallito non ferma gli altri
+                response = {"ok": False, "error": str(exc)}
+            ok = bool(response.get("ok")) if "ok" in response else \
+                str(response.get("status") or "").upper() == "SUCCESS"
+            reports = response.get("instructionReports") or []
+            combined["batches"].append({"bet_ids": chunk, "ok": ok, "error": response.get("error")})
+            combined["instructionReports"].extend(reports)
+            if ok:
+                combined["cancelled_count"] += int(response.get("cancelled_count") or len(reports) or 0)
+            else:
+                combined["ok"] = False
+                combined.setdefault("error", response.get("error") or response.get("errorCode") or "cancel_orders")
+            if response.get("snapshot_persisted") is False:
+                combined["snapshot_persisted"] = False
+        return combined
+
+    def _emergency_cancel_once(self, client, market_id: str, bet_ids):
+        """Una chiamata di cancel: per `betId` del bot quando l'exchange e' stato letto, di mercato solo se illeggibile.
         Firma LIVE (`bet_ids`) o SIM (`instructions`); mai una lista vuota, che per Betfair vuol dire «tutto»."""
         import inspect
         kwargs = {"market_id": market_id}
@@ -2546,8 +2575,9 @@ class RuntimeController:
                     else:
                         err = response.get("error") or response.get("errorCode") or "cancel_orders non riuscito"
                         logger.warning("emergency_stop: cancel_orders ok=False su %s: %s", market_id, err)
+                        cancelled_count += int(response.get("cancelled_count") or 0)   # lotti riusciti, se a lotti
                         cancel_results.append({"market_id": market_id, "order_count": len(orders), "ok": False,
-                                               "error": err})
+                                               "error": err, "batches": response.get("batches")})
                         error_count += max(1, len(orders))
                 except Exception as exc:
                     logger.warning("emergency_stop: cancel_orders fallito su %s: %s", market_id, exc)

@@ -9352,6 +9352,18 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "D-629-05: una riga DENIED (rifiuto pre-invio) renderebbe ogni arresto SUBMISSIONS_UNRESOLVED con rc 3."
+    },
+    {
+      "id": "p0_estop_cancel_not_batched",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if bet_ids is None or len(bet_ids) <= self._EMERGENCY_CANCEL_BATCH:\n",
+      "mutated": "        if True:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su 44164b44: oltre 60 betId su un mercato Betfair respinge l'intera cancelOrders; senza lotti nessun ordine verrebbe cancellato."
     }
   ]
 }
