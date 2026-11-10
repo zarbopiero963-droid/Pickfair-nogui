@@ -748,3 +748,62 @@ def test_mixed_history_denied_ambiguous_and_open_orders_never_falsely_verified(t
     assert sorted(b for batch in ex.cancel_bet_ids for b in batch) == ["OP1", "OP2"], res
     assert [o["order_id"] for o in res["unresolved_submissions"]] == [str(amb)], res["unresolved_submissions"]
     assert res["verification"] == "SUBMISSIONS_UNRESOLVED" and res["manual_action_required"] is True, res
+
+
+# ------------------------------------- direttiva owner: lotti da 60 con errore parziale (121 ordini = 60 + 60 + 1)
+
+def _batched_stop(tmp_path, monkeypatch, second_batch):
+    """121 ordini del bot aperti sullo stesso mercato; il secondo lotto si comporta secondo `second_batch`."""
+    app = _app(tmp_path, monkeypatch)
+    bets = [f"L{i:03d}" for i in range(121)]
+    for b in bets:
+        _engine_order(app.runtime.db, market_id="1.30", bet_id=b)
+    ex = FakeExchange([_o(b, market="1.30") for b in bets])
+    real_cancel, calls = ex.cancel_orders, []
+
+    def cancel(*, market_id, bet_ids=None, emergency=False):
+        calls.append(list(bet_ids or []))
+        if len(calls) == 2:
+            if second_batch == "fail":
+                return {"ok": False, "market_id": market_id, "error": "SERVICE_UNAVAILABLE"}
+            if second_batch == "timeout":
+                raise RuntimeError("REQUEST_FAILED: TIMEOUT")
+            if second_batch == "match":       # il lotto si abbina per intero un istante prima del cancel
+                for o in ex.orders:
+                    if o["betId"] in bet_ids:
+                        o.update(status="EXECUTION_COMPLETE", sizeMatched=5.0, sizeRemaining=0.0,
+                                 averagePriceMatched=2.0)
+                return {"ok": True, "market_id": market_id, "cancelled_count": 0}
+        return real_cancel(market_id=market_id, bet_ids=bet_ids, emergency=emergency)
+
+    ex.cancel_orders = cancel
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    by_bet = {o["bet_id"]: o["outcome"] for o in res["order_outcomes"] if o.get("bet_id")}
+    return res, calls, bets, by_bet
+
+
+@pytest.mark.parametrize("second_batch", ["fail", "timeout"])
+def test_failed_middle_batch_keeps_per_order_traceability(tmp_path, monkeypatch, second_batch):
+    res, calls, bets, by_bet = _batched_stop(tmp_path, monkeypatch, second_batch)
+    assert [len(c) for c in calls] == [60, 60, 1]
+    first, middle, last = bets[:60], bets[60:120], bets[120:]
+    assert all(by_bet[b] == "CANCELLED" for b in first + last), "primo e ultimo lotto tracciati come cancellati"
+    assert all(by_bet[b] == "STILL_OPEN" for b in middle), "il lotto fallito non risulta mai cancellato"
+    assert sorted(o["bet_id"] for o in res["open_after_cancel"]) == middle
+    assert res["cancelled_count"] == 61 and res["verification"] == "OPEN_ORDERS_REMAIN", res["verification"]
+    assert res["manual_action_required"] is True
+    (market_result,) = res["cancel_results"]
+    assert [b["ok"] for b in market_result["batches"]] == [True, False, True]
+    assert market_result["batches"][1]["bet_ids"] == middle
+
+
+def test_batch_matched_during_cancel_is_exposure_not_cancelled(tmp_path, monkeypatch):
+    res, calls, bets, by_bet = _batched_stop(tmp_path, monkeypatch, "match")
+    assert [len(c) for c in calls] == [60, 60, 1]
+    middle = bets[60:120]
+    # Aperti alla prima lettura e abbinati durante il cancel: mai CANCELLED, esposizione riportata (contratto:
+    # PARTIALLY_MATCHED = parte abbinata che resta).
+    assert all(by_bet[b] in ("PARTIALLY_MATCHED", "ALREADY_MATCHED") for b in middle), {b: by_bet[b] for b in middle[:3]}
+    assert sorted(p["bet_id"] for p in res["matched_positions"]) == middle
+    assert all(by_bet[b] == "CANCELLED" for b in bets[:60] + bets[120:])
