@@ -26,6 +26,13 @@ from core.type_helpers import safe_float, safe_int, safe_side
 logger = logging.getLogger(__name__)
 
 
+def _gate_b(operation: str, *, cancel: bool = False, **fields: Any) -> None:
+    """BB-1G Gate B nel punto d'invio LIVE (`core.blackbox_runtime.financial_gate`). Import tardivo: il client resta
+    importabile senza il grafo della scatola nera."""
+    from core import blackbox_runtime
+    blackbox_runtime.financial_gate(operation, component="betfair_client", cancel=cancel, **fields)
+
+
 class BetfairDiagnosticError(RuntimeError):
     """Trusted local credential code separate from the redacted provider detail."""
     def __init__(self, code: str, detail: str = ""):
@@ -1703,6 +1710,10 @@ class BetfairClient:
         if ref:
             params["customerRef"] = ref
 
+        # BB-1G Gate B: argomenti validi, nulla ancora inviato. Senza registrazione durevole (ingresso) o senza scatola
+        # nera, rifiuto pre-invio `BLACKBOX_UNAVAILABLE`.
+        _gate_b("ORDER_PLACE_REQUEST", market_id=market_id_s, selection_id=selection_id_i,
+                order_ref=order_ref or ref or None, side=side_s, price=price_f, size=size_f)
         result: Any = None
         try:
             result = self._post_jsonrpc(
@@ -1838,6 +1849,7 @@ class BetfairClient:
         )
 
         requested = [i["betId"] for i in instructions]
+        _gate_b("ORDER_CANCEL_REQUEST", cancel=True, market_id=market_id_s, bet_ids=requested or "ALL")
         try:
             # F-14 (#586): un solo invio. Un timeout o una risposta persa non provano che il cancel non sia avvenuto:
             # esito AMBIGUOUS, riconciliazione per bet_id, mai un secondo POST.
@@ -1968,6 +1980,8 @@ class BetfairClient:
             raise RuntimeError("INVALID_SIZE_REDUCTION") from exc
         if not math.isfinite(reduction_f) or reduction_f <= 0.0:
             raise RuntimeError("INVALID_SIZE_REDUCTION")
+        _gate_b("ORDER_CANCEL_REQUEST", cancel=True, market_id=market_id_s, bet_id=bet_id_s,
+                size_reduction=reduction_f)
         return self._post_jsonrpc(
             self.BETTING_URL,
             "SportsAPING/v1.0/cancelOrders",
@@ -2031,6 +2045,7 @@ class BetfairClient:
         market_id_s, bet_id_s, new_price_f = self._validate_replace_params(
             market_id, bet_id, new_price
         )
+        _gate_b("ORDER_REPLACE_REQUEST", market_id=market_id_s, bet_id=bet_id_s, new_price=new_price_f)
         result = self._post_jsonrpc(
             self.BETTING_URL,
             "SportsAPING/v1.0/replaceOrders",

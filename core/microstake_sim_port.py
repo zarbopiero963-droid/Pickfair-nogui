@@ -40,7 +40,8 @@ SAGA_SETTINGS_KEY = "microstake.sagas"
 #: prova che nulla e' partito. Qualunque altra eccezione dopo la chiamata e' un
 #: esito ignoto (vedi `simulation_broker._PRE_SEND_REJECTIONS`, F10).
 PRE_SEND_REJECTIONS = frozenset({"INVALID_MARKET_ID", "INVALID_SELECTION_ID", "INVALID_PRICE", "INVALID_SIZE",
-                                 "INVALID_SIDE", "DUPLICATE_CUSTOMER_REF"})
+                                 "INVALID_SIDE", "DUPLICATE_CUSTOMER_REF",
+                                 "BLACKBOX_UNAVAILABLE"})    # BB-1G Gate B: rifiuto prima dell'invio
 _TERMINAL = frozenset({"CANCELLED", "LAPSED", "VOIDED", "EXPIRED", "SETTLED"})
 
 

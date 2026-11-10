@@ -2452,7 +2452,28 @@ class RuntimeController:
     def _runtime_lifecycle_lock(self):
         return getattr(self, "_lifecycle_lock", None) or RuntimeController._fallback_lifecycle_lock
 
+    def _blackbox_gate_a(self, component: str) -> Optional[dict]:
+        """BB-1G Gate A (PF-OWNER-BB1G-FULL-GO-20261110): nessun runtime operativo senza scatola nera installata,
+        runtime (lock D3) e scrivibile in modo durevole. Qualunque entrypoint passa da qui. Rifiuto => dict, mai un
+        avvio parziale: nessun lock preso, nessun servizio avviato."""
+        from core import blackbox_runtime
+        try:
+            blackbox_runtime.require_runtime(component)
+        except blackbox_runtime.GateRefused as exc:
+            logger.critical("Avvio rifiutato: scatola nera non disponibile (%s)", exc.detail)
+            try:
+                self.bus.publish("RUNTIME_START_REFUSED", {"reason_code": blackbox_runtime.GATE_REFUSED_CODE,
+                                                           "reason": "scatola nera non disponibile"})
+            except Exception:
+                logger.exception("Pubblicazione del rifiuto di avvio non riuscita")
+            return {"ok": False, "started": False, "refused": True, "reason": "scatola nera non disponibile",
+                    "reason_code": blackbox_runtime.GATE_REFUSED_CODE, "status": self._safe_status_snapshot()}
+        return None
+
     def _start_serialized(self, *, password, simulation_mode, execution_mode, live_enabled, live_readiness_ok) -> dict:
+        gate_block = self._blackbox_gate_a("runtime_controller.start")
+        if gate_block:
+            return gate_block
         instance_block = self._acquire_runtime_instance_lock()
         if instance_block:
             logger.critical("Avvio rifiutato: %s", instance_block)
@@ -3038,6 +3059,10 @@ class RuntimeController:
                 "reason": "lockdown_attivo",
                 "status": self.get_status(),
             }
+        # BB-1G Gate A: la ripresa riattiva il trading, quindi richiede la stessa scatola nera dell'avvio.
+        gate_block = self._blackbox_gate_a("runtime_controller.resume")
+        if gate_block:
+            return {"resumed": False, "reason": gate_block["reason_code"], "status": gate_block["status"]}
 
         # Non riattivare il trading se la perdita giornaliera e' gia' sfondata
         # (stesso giorno): un breach rilevato mentre si era in pausa NON deve

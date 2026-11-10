@@ -3083,16 +3083,33 @@ def main() -> int:
     (X11): su un host headless senza $DISPLAY, Tk non puo' aprire la finestra ed
     emette l'errore Tcl standard "no display name and no $DISPLAY environment
     variable" — in quel caso va usata la modalita' `--headless`.
+
+    BB-1G (PF-OWNER-BB1G-FULL-GO-20261110): la scatola nera si installa PRIMA di costruire la GUI, come in
+    `headless_main.main`. Non disponibile (guasto, piattaforma non ancora supportata, un altro runtime che la tiene)
+    => la GUI non parte, rc 1. Il Gate A in `RuntimeController.start` resta comunque la difesa per ogni avvio.
     """
+    from core import blackbox_runtime
+    try:
+        blackbox_runtime.install(entrypoint="mini_gui")
+    except Exception as exc:      # noqa: BLE001 - qualunque guasto della scatola nera blocca l'avvio
+        _LOGGER.critical("Scatola nera non disponibile: avvio della GUI rifiutato (%s)", type(exc).__name__)
+        return 1
     app = None
+    rc = 1
     try:
         app = MiniPickfairGUI(force_simulation=True)
         app.mainloop()
+        rc = 0
         return 0
     except KeyboardInterrupt:
         _LOGGER.info("Arresto Mini GUI richiesto dall'utente")
+        rc = 130
         return 130
     except Exception as exc:  # pragma: no cover - errori runtime GUI reali
+        blackbox_runtime.record("UNCAUGHT_EXCEPTION", source="SYSTEM", component="mini_gui",
+                                severity="CRITICAL", phase="OBSERVATION", outcome="VERIFIED",
+                                reason_code=type(exc).__name__, reason=blackbox_runtime.exception_reason(exc),
+                                data=blackbox_runtime.exception_diagnostics(type(exc), exc, exc.__traceback__))
         _LOGGER.exception("Errore fatale nella Mini GUI: %s", exc)
         return 1
     finally:
@@ -3101,6 +3118,9 @@ def main() -> int:
                 app.destroy()
             except Exception:
                 pass
+        # Dopo lo smontaggio: da qui ogni invio tardivo (thread sopravvissuti, `atexit`) trova la scatola nera
+        # chiusa e il Gate B lo rifiuta.
+        blackbox_runtime.shutdown("STOP" if rc == 0 else f"EXIT_{rc}")
 
 
 if __name__ == "__main__":

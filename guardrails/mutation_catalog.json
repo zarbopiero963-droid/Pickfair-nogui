@@ -9014,6 +9014,126 @@
         "tests/packaging/test_release_requires_blackbox.py"
       ],
       "rationale": "Audit Claude D (#626): cancellare un controllo d'integrita' (per esempio quello sulle funzioni di stato negli if) lascerebbe il gate verde."
+    },
+    {
+      "id": "bb1g_gate_a_start_removed",
+      "module": "core.runtime_controller",
+      "area": "blackbox",
+      "file": "core/runtime_controller.py",
+      "original": "        gate_block = self._blackbox_gate_a(\"runtime_controller.start\")\n",
+      "mutated": "        gate_block = None\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G Gate A: il runtime partirebbe senza scatola nera da qualunque entrypoint."
+    },
+    {
+      "id": "bb1g_gate_a_resume_removed",
+      "module": "core.runtime_controller",
+      "area": "blackbox",
+      "file": "core/runtime_controller.py",
+      "original": "        gate_block = self._blackbox_gate_a(\"runtime_controller.resume\")\n",
+      "mutated": "        gate_block = None\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G Gate A: la ripresa riattiverebbe il trading senza scatola nera."
+    },
+    {
+      "id": "bb1g_live_client_ungated",
+      "module": "betfair_client",
+      "area": "blackbox",
+      "file": "betfair_client.py",
+      "original": "    blackbox_runtime.financial_gate(operation, component=\"betfair_client\", cancel=cancel, **fields)\n",
+      "mutated": "    return None\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G Gate B: il client LIVE invierebbe ordini senza scatola nera."
+    },
+    {
+      "id": "bb1g_sim_broker_ungated",
+      "module": "simulation_broker",
+      "area": "blackbox",
+      "file": "simulation_broker.py",
+      "original": "    blackbox_runtime.financial_gate(operation, component=\"simulation_broker\", cancel=cancel, **fields)\n",
+      "mutated": "    return None\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G Gate B: il broker SIM eseguirebbe ordini senza scatola nera (parita' SIM/LIVE persa)."
+    },
+    {
+      "id": "bb1g_missing_box_allowed",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "        raise GateRefused(f\"{component}: {operation} senza scatola nera\")\n",
+      "mutated": "        return None\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G Gate B: senza scatola nera (mai installata, chiusa, atexit) l'invio passerebbe."
+    },
+    {
+      "id": "bb1g_entry_buffered",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "        return box.record(operation, critical=True, buffer_on_failure=protective, source=\"SYSTEM\",\n",
+      "mutated": "        return box.record(operation, critical=True, buffer_on_failure=True, source=\"SYSTEM\",\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G Gate B: un ingresso verrebbe bufferizzato durante un guasto del registro (contratto BB-1: mai)."
+    },
+    {
+      "id": "bb1g_emergency_allows_any_operation",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "        if cancel and getattr(_gate_ctx, \"emergency\", False):\n",
+      "mutated": "        if getattr(_gate_ctx, \"emergency\", False):\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G / D3: l'emergency stop CLI lascerebbe passare anche nuovi ingressi senza scatola nera."
+    },
+    {
+      "id": "bb1g_non_runtime_box_accepted",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "        return box if box.is_runtime() else None\n",
+      "mutated": "        return box\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G: una scatola nera aperta in sola lettura (non runtime, senza lock D3) basterebbe al gate."
+    },
+    {
+      "id": "bb1g_gui_blackbox_not_installed",
+      "module": "mini_gui",
+      "area": "blackbox",
+      "file": "mini_gui.py",
+      "original": "        blackbox_runtime.install(entrypoint=\"mini_gui\")\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G: la GUI costruirebbe i componenti senza aver installato la scatola nera."
+    },
+    {
+      "id": "bb1g_cashout_hedge_not_protective",
+      "module": "core.order_router",
+      "area": "blackbox",
+      "file": "core/order_router.py",
+      "original": "        with blackbox_runtime.protective_exit(\"CASHOUT_HEDGE\"):\n",
+      "mutated": "        with blackbox_runtime.batch_gated() if False else blackbox_runtime.emergency_exit():\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G: l'hedge del cashout non sarebbe un'uscita protettiva e un guasto del registro lo bloccherebbe (PF-EXEC-03)."
     }
   ]
 }

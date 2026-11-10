@@ -377,3 +377,134 @@ def shutdown(reason: str = "STOP", **data: Any) -> None:
             threading.excepthook = _prev_threading_hook or threading.__excepthook__
         box.close()
         _box = None
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# BB-1G (decisione owner PF-OWNER-BB1G-FULL-GO-20261110): doppio gate fail-closed.
+#
+# Gate A (avvio): nessun runtime operativo parte senza una scatola nera installata, che tiene il lock del runtime (D3)
+# e accetta una scrittura durevole. Lo chiama `RuntimeController.start`/`resume`: qualunque entrypoint (GUI, `main.py`,
+# headless, CLI, Control API) passa da li', quindi un launcher nuovo non puo' aggirarlo.
+#
+# Gate B (operazioni finanziarie): lo chiamano i punti d'invio REALI (`BetfairClient` e `SimulationBroker`), non i
+# chiamanti, quindi copre ogni percorso (ingressi, Dutching, Roserpina, Microstake, cashout, recovery, thread tardivi).
+# Contratto gia' ratificato in BB-1 (`docs/blackbox.md`, «Evento critico» / «Uscita protettiva»):
+# - ingresso (nuovo ordine, replace): evento critico scritto in modo DUREVOLE prima dell'invio, altrimenti rifiuto
+#   pre-invio (`GateRefused`, codice `BLACKBOX_UNAVAILABLE`). Un ingresso non si bufferizza mai;
+# - uscita protettiva (cancel, riduzione, hedge del cashout dentro `protective_exit()`): evento critico con
+#   `buffer_on_failure=True`, cosi' un guasto temporaneo del registro non blocca ne' ritarda la riduzione del rischio
+#   (PF-EXEC-03); serve comunque una scatola nera installata;
+# - scatola nera assente (mai installata, gia' chiusa allo shutdown, `atexit`, thread sopravvissuti): tutto rifiutato,
+#   tranne le cancellazioni dentro `emergency_exit()`, cioe' il solo `--emergency-stop` CLI (D3 #617, gia' ratificato:
+#   cancel-all prima di aprire il registro, esito nel log CRITICAL).
+# Il contesto e' per thread: un lavoro protettivo spostato in un altro thread vale come ingresso (fail-closed).
+# ---------------------------------------------------------------------------------------------------------------------
+import contextlib
+import logging
+
+_gate_log = logging.getLogger("pickfair.blackbox.gate")
+GATE_REFUSED_CODE = bb.BlackBoxUnavailable.reason_code       # "BLACKBOX_UNAVAILABLE"
+_gate_ctx = threading.local()
+
+
+class GateRefused(bb.BlackBoxUnavailable):
+    """Operazione rifiutata dal gate PRIMA di qualunque effetto (nessun avvio, nessun invio). `str(exc)` e' il codice
+    `BLACKBOX_UNAVAILABLE`: i classificatori dei punti d'invio lo trattano come rifiuto pre-invio certo, mai come
+    esito ignoto (AMBIGUOUS)."""
+
+    def __init__(self, detail: str = "") -> None:
+        super().__init__(GATE_REFUSED_CODE)
+        self.detail = str(detail)
+
+
+def _active_runtime_box() -> Optional[bb.BlackBox]:
+    box = _box
+    if box is None:
+        return None
+    try:
+        return box if box.is_runtime() else None
+    except Exception:            # noqa: BLE001 - stato illeggibile => nessuna protezione
+        return None
+
+
+def require_runtime(component: str) -> bb.BlackBox:
+    """Gate A. Scatola nera installata, runtime (lock D3) e scrittura durevole dell'avvio, altrimenti `GateRefused`."""
+    box = _active_runtime_box()
+    if box is None:
+        raise GateRefused(f"{component}: scatola nera non installata o non runtime")
+    try:
+        box.record("START", critical=True, source="SYSTEM", component=str(component), phase="ATTEMPT",
+                   outcome="PENDING", reason_code="BLACKBOX_GATE_A")
+    except bb.BlackBoxUnavailable as exc:
+        raise GateRefused(f"{component}: avvio non registrabile") from exc
+    return box
+
+
+@contextlib.contextmanager
+def protective_exit(reason: str):
+    """Marca come uscita protettiva gli invii fatti in questo thread dentro il blocco (hedge del cashout, chiusure)."""
+    prev = getattr(_gate_ctx, "protective", None)
+    _gate_ctx.protective = str(reason or "PROTECTIVE_EXIT")
+    try:
+        yield
+    finally:
+        _gate_ctx.protective = prev
+
+
+@contextlib.contextmanager
+def emergency_exit():
+    """D3 (#617): il solo `--emergency-stop` CLI cancella prima di aprire il registro. Dentro il blocco, e senza
+    scatola nera, passano SOLO le cancellazioni; ogni altro invio resta rifiutato."""
+    prev = getattr(_gate_ctx, "emergency", False)
+    _gate_ctx.emergency = True
+    try:
+        yield
+    finally:
+        _gate_ctx.emergency = prev
+
+
+@contextlib.contextmanager
+def batch_gated():
+    prev = getattr(_gate_ctx, "batch", False)
+    _gate_ctx.batch = True
+    try:
+        yield
+    finally:
+        _gate_ctx.batch = prev
+
+
+GATE_OPERATIONS = frozenset({"ORDER_PLACE_REQUEST", "ORDER_CANCEL_REQUEST", "ORDER_REPLACE_REQUEST"})
+_GATE_ID_FIELDS = ("market_id", "selection_id", "bet_id", "order_ref", "table_id")
+
+
+def financial_gate(operation: str, *, component: str, cancel: bool = False, **fields: Any) -> Optional[str]:
+    """Gate B. Da chiamare nel punto d'invio, dopo la validazione degli argomenti e prima di qualunque effetto.
+
+    Ritorna l'`event_id` dell'ATTEMPT registrato (None solo per la cancellazione d'emergenza CLI senza registro o per
+    una gamba di un batch gia' passato dal gate); altrimenti solleva `GateRefused` e il chiamante NON invia."""
+    if operation not in GATE_OPERATIONS:
+        raise GateRefused(f"operazione non ammessa dal gate: {operation!r}")
+    if getattr(_gate_ctx, "batch", False):
+        return None                          # gamba di un batch: il batch e' gia' passato (e registrato) dal gate
+    protective = bool(cancel) or bool(getattr(_gate_ctx, "protective", None))
+    box = _active_runtime_box()
+    if box is None:
+        if cancel and getattr(_gate_ctx, "emergency", False):
+            _gate_log.critical("EMERGENCY STOP: %s su %s senza scatola nera (D3, registrazione dopo la cancellazione)",
+                               operation, fields.get("market_id"))
+            return None
+        _gate_log.critical("Gate B: %s rifiutato, scatola nera non disponibile (%s)", operation, component)
+        raise GateRefused(f"{component}: {operation} senza scatola nera")
+    ids = {k: fields.pop(k) for k in _GATE_ID_FIELDS if fields.get(k) not in (None, "")}
+    data = {"protective": protective, "intent": str(getattr(_gate_ctx, "protective", None) or
+                                                    ("CANCEL" if cancel else "ENTRY"))}
+    data.update({k: v for k, v in fields.items() if v is not None})
+    try:
+        return box.record(operation, critical=True, buffer_on_failure=protective, source="SYSTEM",
+                          component=str(component), phase="ATTEMPT", outcome="PENDING",
+                          reason_code="BLACKBOX_GATE_B", data=data, **ids)
+    except bb.BlackBoxUnavailable as exc:
+        _gate_log.critical("Gate B: %s rifiutato, registrazione durevole fallita (%s)", operation, component)
+        raise GateRefused(f"{component}: {operation} non registrabile") from exc
+    except (ValueError, TypeError) as exc:   # forma del record non valida: mai un invio non registrato
+        raise GateRefused(f"{component}: {operation} con record non valido") from exc
