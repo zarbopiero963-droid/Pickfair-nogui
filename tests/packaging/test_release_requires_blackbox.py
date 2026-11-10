@@ -218,8 +218,8 @@ _INTEGRITY = "tests.packaging.test_release_requires_blackbox"
 
 def _all_passed(integrity=None, **override):
     gate = _release_gate()
-    count = gate.MIN_INTEGRITY_TESTS if integrity is None else integrity
-    cases = [(_INTEGRITY, f"test_integrita_{i}", "") for i in range(count)]
+    names = sorted(gate.REQUIRED_INTEGRITY_TESTS) if integrity is None else integrity
+    cases = [(_INTEGRITY, name, "") for name in names]
     for name in sorted(gate.REQUIRED_TESTS):
         extra = override.get(name, "")
         if extra is not None:
@@ -253,8 +253,8 @@ def test_gate_report_missing_a_required_test_is_red():
 
 def test_gate_report_from_another_module_or_innocuous_tests_is_red():
     gate = _release_gate()
-    integrity = [("tests.packaging.test_release_requires_blackbox", f"test_integrita_{i}", "")
-                 for i in range(gate.MIN_INTEGRITY_TESTS)]
+    integrity = [("tests.packaging.test_release_requires_blackbox", name, "")
+                 for name in sorted(gate.REQUIRED_INTEGRITY_TESTS)]
     impostors = [("tests.packaging.altro", name, "") for name in sorted(gate.REQUIRED_TESTS)]
     ok, reasons = gate.evaluate(_junit(*integrity, *impostors))
     assert ok is False and all("non raccolto" in r for r in reasons)
@@ -547,25 +547,27 @@ def test_gate_runs_the_inventory_and_integrity_checks_too(monkeypatch):
                                      '<error message="x"/>'])
 def test_gate_is_red_when_an_integrity_check_does_not_pass(outcome):
     gate, xml = _all_passed()
-    xml = xml.replace('name="test_integrita_0"></testcase>', f'name="test_integrita_0">{outcome}</testcase>')
+    target = "test_build_and_release_cannot_run_without_a_green_release_gate"
+    xml = xml.replace(f'name="{target}"></testcase>', f'name="{target}">{outcome}</testcase>')
     ok, reasons = gate.evaluate(xml)
     assert not ok and any("integrita'" in r for r in reasons)
 
 
-def test_gate_is_red_when_too_few_integrity_checks_ran():
-    gate, xml = _all_passed(integrity=3)
+def test_gate_is_red_when_a_required_integrity_check_is_missing():
+    """Cancellare o rinominare un controllo d'integrita' (per esempio quello sulle funzioni di stato negli if) rende
+    rosso il gate anche se tutti gli altri passano (audit Claude D)."""
+    gate = _release_gate()
+    removed = "test_build_and_release_cannot_run_without_a_green_release_gate"
+    _, xml = _all_passed(integrity=sorted(gate.REQUIRED_INTEGRITY_TESTS - {removed}))
     ok, reasons = gate.evaluate(xml)
-    assert not ok and any("minimo" in r for r in reasons)
+    assert not ok and any(removed in r for r in reasons)
 
 
-def test_integrity_module_has_at_least_the_minimum_number_of_checks():
-    import subprocess
-    import sys
-
-    out = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
-                          "-o", "addopts=", str(Path(__file__))], cwd=str(ROOT), capture_output=True, text=True)
-    collected = [line for line in out.stdout.splitlines() if "::" in line]
-    assert len(collected) >= _release_gate().MIN_INTEGRITY_TESTS
+def test_required_integrity_tests_are_exactly_the_tests_of_this_module():
+    names = {node.name for node in ast.parse(Path(__file__).read_text(encoding="utf-8")).body
+             if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")}
+    assert names == set(_release_gate().REQUIRED_INTEGRITY_TESTS), (
+        "controlli d'integrita' e REQUIRED_INTEGRITY_TESTS non coincidono: aggiornare l'elenco consapevolmente")
 
 
 def test_gate_check_rejects_a_grandchild_thread(monkeypatch):

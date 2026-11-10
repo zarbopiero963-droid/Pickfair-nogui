@@ -12,6 +12,7 @@ avvio dei componenti operativi (`OPERATIVE_ENTRY_POINTS`) con sentinelle che reg
 
 Oggi la GUI costruisce il motore senza scatola nera, quindi il gate e' rosso (nessun eseguibile); dopo BB-1G i test
 passano solo se il rifiuto sicuro e' vero. Nessun test apre finestre, avvia il runtime o contatta Betfair.
+Limite dichiarato (audit Claude D): codice registrato con `atexit` gira dopo la rimozione delle sentinelle.
 """
 
 from __future__ import annotations

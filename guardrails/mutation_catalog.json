@@ -9002,6 +9002,18 @@
         "tests/packaging/test_release_requires_blackbox.py"
       ],
       "rationale": "Rilievo GPT-6.1 Sol su b5c7c117 (#626): un thread che crea un discendente e termina lascerebbe il discendente fuori dal controllo."
+    },
+    {
+      "id": "rg_missing_integrity_check_ignored",
+      "module": "scripts.release_gate",
+      "area": "release_gate",
+      "file": "scripts/release_gate.py",
+      "original": "        reasons.append(f\"integrita' {name}: non raccolto o non eseguito\")\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/packaging/test_release_requires_blackbox.py"
+      ],
+      "rationale": "Audit Claude D (#626): cancellare un controllo d'integrita' (per esempio quello sulle funzioni di stato negli if) lascerebbe il gate verde."
     }
   ]
 }

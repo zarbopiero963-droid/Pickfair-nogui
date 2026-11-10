@@ -30,7 +30,42 @@ GATE_MODULE = "tests/packaging/release_gate_launchers.py"
 # dalla CI ordinaria (rilievo Sol su b5c7c117). Ogni loro test deve passare: failure/error/skip => rosso.
 INTEGRITY_MODULE = "tests/packaging/test_release_requires_blackbox.py"
 _INTEGRITY_CLASSNAME = "tests.packaging.test_release_requires_blackbox"
-MIN_INTEGRITY_TESTS = 40
+# Controlli d'integrita' obbligatori, per NOME (audit Claude D): cancellarne o rinominarne uno rende rosso il gate. Un
+# test della CI ordinaria verifica che l'elenco coincida con le funzioni di test del modulo (aggiornamento consapevole).
+REQUIRED_INTEGRITY_TESTS = frozenset({
+    "test_appimage_runs_the_packaged_launcher_only",
+    "test_bat_launchers_start_only_covered_or_non_trading_scripts",
+    "test_build_and_release_cannot_run_without_a_green_release_gate",
+    "test_every_packaged_launcher_has_a_required_gate_test",
+    "test_gate_check_accepts_a_real_safe_refusal",
+    "test_gate_check_accepts_a_safe_refusal_by_sys_exit",
+    "test_gate_check_rejects_a_grandchild_thread",
+    "test_gate_check_rejects_a_thread_still_running_after_the_launcher",
+    "test_gate_check_rejects_fake_bb1g",
+    "test_gate_guards_every_operative_entry_point",
+    "test_gate_is_red_when_a_required_integrity_check_is_missing",
+    "test_gate_is_red_when_an_integrity_check_does_not_pass",
+    "test_gate_main_refuses_an_unauthorized_ref_before_running_tests",
+    "test_gate_module_has_no_skip_xfail_or_selection_escape",
+    "test_gate_module_is_not_collected_by_the_ordinary_ci",
+    "test_gate_only_allows_main_or_release_tags_in_actions",
+    "test_gate_rejects_a_pytest_failure_even_with_a_green_report",
+    "test_gate_report_from_another_module_or_innocuous_tests_is_red",
+    "test_gate_report_missing_a_required_test_is_red",
+    "test_gate_report_unreadable_or_empty_is_red",
+    "test_gate_report_with_a_required_test_not_passed_is_red",
+    "test_gate_report_with_every_required_test_passed_is_green",
+    "test_gate_requires_a_non_empty_required_set",
+    "test_gate_runs_the_inventory_and_integrity_checks_too",
+    "test_gate_without_a_report_is_red",
+    "test_legacy_market_api_is_retired",
+    "test_pyinstaller_spec_packages_only_the_known_entry_scripts",
+    "test_required_integrity_tests_are_exactly_the_tests_of_this_module",
+    "test_required_tests_are_exactly_the_tests_of_the_gate_module",
+    "test_root_scripts_that_can_start_the_runtime_are_inventoried",
+    "test_wiring_check_detects_dependency_and_command_bypasses",
+    "test_wiring_check_detects_status_bypasses",
+})
 REQUIRED_TESTS = frozenset({
     "test_headless_entrypoint_never_builds_the_runtime_without_the_blackbox",
     "test_gui_entrypoint_never_builds_the_runtime_without_the_blackbox",
@@ -59,8 +94,9 @@ def evaluate(junit_xml: str, required: Iterable[str] = REQUIRED_TESTS) -> tuple[
         seen.setdefault(name, []).append(outcomes[0] if outcomes else "passed")
     reasons = []
     integrity = [case for case in root.iter("testcase") if case.get("classname") == _INTEGRITY_CLASSNAME]
-    if len(integrity) < MIN_INTEGRITY_TESTS:
-        reasons.append(f"controlli d'integrita' eseguiti: {len(integrity)} (minimo {MIN_INTEGRITY_TESTS})")
+    integrity_seen = {str(case.get("name", "")).split("[", 1)[0] for case in integrity}
+    for name in sorted(REQUIRED_INTEGRITY_TESTS - integrity_seen):
+        reasons.append(f"integrita' {name}: non raccolto o non eseguito")
     for case in integrity:
         bad = [child.tag for child in case if child.tag in _NOT_PASSED]
         if bad:
