@@ -287,11 +287,16 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
 
 - **Cartella privata e ancoraggio (ciclo 13, C12-A, decisione owner «soluzione 2»).** SQLite apre database, `-wal`
   e `-shm` per nome: proteggere i singoli file non basta. La regola è sulla cartella.
-  1. **Cartella verificata sul descrittore** (`open_private_dir`). La cartella del registro deve essere una cartella
-     vera (mai un symlink), dell'utente del processo, senza scrittura per gruppo e altri. Le cartelle superiori
-     devono essere di root o dello stesso utente e non scrivibili da altri (ammesso lo sticky bit, come `/tmp`).
-     La discesa avviene un componente alla volta con `openat(O_DIRECTORY|O_NOFOLLOW)`, quindi una sostituzione
-     concorrente fa fallire l'apertura invece di deviarla. Le cartelle mancanti sono create a `0700` con `mkdirat`.
+  1. **Cartella verificata sul descrittore** (`open_private_dir`). **Nessun symlink in nessun componente del
+     percorso** (ciclo 16, decisione owner A1): né la cartella del registro né una qualsiasi cartella superiore. Il
+     percorso viene percorso così com'è, un componente alla volta, con `openat(O_DIRECTORY|O_NOFOLLOW)` sul
+     descrittore della cartella precedente. È il kernel a rifiutare un componente che è un symlink, anche se viene
+     sostituito durante la discesa: non è un controllo preliminare sui nomi. Ogni cartella superiore deve essere
+     di root o dell'utente del processo e non scrivibile da altri (ammesso lo sticky bit, come `/tmp`). La cartella
+     del registro deve essere dell'utente del processo, senza scrittura per gruppo e altri. Le cartelle mancanti
+     sono create a `0700` con `mkdirat`. **Conseguenza operativa:** un'installazione in cui un componente del
+     percorso è un symlink (per esempio `/home` collegata a un altro disco) viene rifiutata; va configurato il
+     percorso reale (`namei -l <percorso>` mostra i componenti).
   2. **Nessuna correzione automatica.** Una cartella preesistente condivisa, di un altro utente o con permessi
      larghi viene **rifiutata** (`BLACKBOX_DIR_INSECURE`): proprietario e permessi non si toccano. Vale anche per
      `PICKFAIR_BLACKBOX_PATH`, senza eccezioni. Rimedio operativo: `chmod go-w` sulla cartella indicata, o una

@@ -1643,3 +1643,86 @@ def test_c15_runtime_registry_is_on_disk_in_the_private_directory_and_durable(bb
     assert stat.S_IMODE(bbpath.parent.stat().st_mode) & 0o022 == 0
     rt.shutdown("STOP")
     assert [e["type"] for e in _events(bbpath)][0] == "PROCESS_START"
+
+
+# --- Ciclo 16 (OWNER AUTHORIZATION PR #617 — CYCLE 16, A1): nessun symlink nel percorso della scatola nera --------
+def _c16_open_ok(path):
+    b = bb.BlackBox(str(path)).open(); b.record("API_REQUEST", source="SYSTEM"); b.close()
+
+
+@_ANCHOR_ONLY
+@pytest.mark.parametrize("where", ["shared_parent", "private_parent", "registry_dir", "two_levels_up"])
+def test_c16_any_symlink_in_the_registry_path_is_refused(tmp_path, where):
+    """A1: nessun symlink in nessun componente del percorso, anche se il link sta in una cartella sicura e punta a
+    una cartella privata del bot. Nulla viene creato nella destinazione del link."""
+    real = tmp_path / "reale"; (real / "sub").mkdir(parents=True); os.chmod(real, 0o700)
+    holder = tmp_path / "contenitore"; holder.mkdir()
+    if where == "shared_parent":
+        os.chmod(holder, 0o777); os.symlink(real, holder / "link"); path = holder / "link" / "bb" / "blackbox.sqlite"
+    elif where == "private_parent":
+        os.chmod(holder, 0o700); os.symlink(real, holder / "link"); path = holder / "link" / "bb" / "blackbox.sqlite"
+    elif where == "registry_dir":
+        os.chmod(holder, 0o700); os.symlink(real, holder / "bb"); path = holder / "bb" / "blackbox.sqlite"
+    else:
+        os.chmod(holder, 0o700); os.symlink(real, holder / "link"); path = holder / "link" / "sub" / "bb" / "blackbox.sqlite"
+    box = bb.BlackBox(str(path))
+    with pytest.raises(bb.BlackBoxUnavailable):
+        box.open()
+    box.close()
+    os.chmod(holder, 0o700)
+    assert sorted(p.name for p in real.rglob("*")) == ["sub"], "creato qualcosa nella destinazione del link"
+
+
+@_ANCHOR_ONLY
+def test_c16_retargeting_a_link_can_never_move_the_registry(tmp_path):
+    """Rilievo Sol su 3b11e82a: ripuntando un link in una cartella scrivibile da altri il bot ripartiva su un
+    registro vuoto in un'altra cartella. Con A1 il percorso col link non parte mai, quindi non c'e' nulla da
+    deviare."""
+    shared = tmp_path / "condivisa"; shared.mkdir(); os.chmod(shared, 0o777)
+    p1 = tmp_path / "p1"; p1.mkdir(mode=0o700); p2 = tmp_path / "p2"; p2.mkdir(mode=0o700)
+    os.symlink(p1, shared / "link")
+    path = shared / "link" / "bb" / "blackbox.sqlite"
+    for target in (p1, p2):
+        os.remove(shared / "link"); os.symlink(target, shared / "link")
+        with pytest.raises(bb.BlackBoxUnavailable):
+            bb.BlackBox(str(path)).open()
+    os.chmod(shared, 0o700)
+    assert list(p1.iterdir()) == [] and list(p2.iterdir()) == []
+
+
+@_ANCHOR_ONLY
+def test_c16_component_swapped_for_a_symlink_during_the_walk_is_refused(tmp_path, monkeypatch):
+    """Sostituzione concorrente: un componente reale diventa un symlink DOPO i controlli sui nomi e PRIMA della sua
+    apertura. La discesa usa i descrittori con O_NOFOLLOW, quindi l'apertura fallisce: nessuna deviazione."""
+    real = tmp_path / "reale"; real.mkdir(mode=0o700)
+    mid = tmp_path / "a"; (mid / "b").mkdir(parents=True)
+    path = mid / "b" / "bb" / "blackbox.sqlite"
+    real_open = os.open
+    done = []
+
+    def racing(p, flags, *a, **kw):
+        if p == "b" and kw.get("dir_fd") is not None and not done:
+            done.append(1)
+            os.rmdir(mid / "b"); os.symlink(real, mid / "b")
+        return real_open(p, flags, *a, **kw)
+
+    monkeypatch.setattr(os, "open", racing)
+    box = bb.BlackBox(str(path))
+    with pytest.raises(bb.BlackBoxUnavailable):
+        box.open()
+    monkeypatch.undo()
+    assert done and list(real.iterdir()) == []
+
+
+@_ANCHOR_ONLY
+def test_c16_real_directories_and_dotdot_still_work(tmp_path):
+    """Compatibilita': cartelle reali, percorso con `..` e percorso relativo continuano a funzionare."""
+    (tmp_path / "x" / "y").mkdir(parents=True)
+    _c16_open_ok(tmp_path / "x" / "y" / ".." / "bb" / "blackbox.sqlite")
+    assert (tmp_path / "x" / "bb" / "blackbox.sqlite").exists()
+    old = os.getcwd(); os.chdir(tmp_path)
+    try:
+        _c16_open_ok(os.path.join("rel", "bb", "blackbox.sqlite"))
+    finally:
+        os.chdir(old)
+    assert (tmp_path / "rel" / "bb" / "blackbox.sqlite").exists()

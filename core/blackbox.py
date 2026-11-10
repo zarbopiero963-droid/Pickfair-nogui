@@ -196,9 +196,12 @@ def open_private_dir(path: str) -> int:
     """Apre e verifica la cartella del registro; ritorna il descrittore, da tenere aperto finche' serve.
 
     - Piattaforma: solo POSIX con `/proc/self/fd` funzionante (verificato sul descrittore ottenuto).
-    - Percorso: la parte superiore viene risolta (`realpath`) e poi percorsa un componente alla volta con
-      `openat(O_DIRECTORY|O_NOFOLLOW)`: nessun symlink seguito durante la discesa, quindi una sostituzione
-      concorrente fa fallire l'apertura invece di deviarla. L'ultima cartella non puo' essere un symlink.
+    - Percorso (ciclo 16, decisione owner A1): NESSUN symlink in nessun componente. Il percorso viene percorso cosi'
+      com'e' (reso assoluto, `..` normalizzato in modo lessicale, senza `realpath`), un componente alla volta con
+      `openat(O_DIRECTORY|O_NOFOLLOW)` sul descrittore della cartella precedente: un componente che e' un symlink,
+      anche in una cartella sicura e anche se sostituito durante la discesa, fa fallire l'apertura. Prima il
+      percorso veniva risolto e si verificava solo la catena di destinazione: un link in una cartella scrivibile
+      da altri aggirava il controllo sulle cartelle superiori (rilievo Sol su 3b11e82a).
     - Cartelle superiori: di root o dell'utente del processo, e non scrivibili da gruppo/altri (ammesso lo sticky
       bit, come /tmp: gli altri non possono sostituire le voci altrui).
     - Cartella del registro: dell'utente del processo, nessuna scrittura per gruppo/altri. Una cartella
@@ -209,8 +212,7 @@ def open_private_dir(path: str) -> int:
             or not all(hasattr(os, f) for f in ("O_NOFOLLOW", "O_DIRECTORY", "O_PATH"))):
         raise OSError(errno.ENOTSUP, "piattaforma senza ancoraggio verificato per la scatola nera", path)
     full = os.path.abspath(path)
-    parent, name = os.path.split(full)
-    parts = [c for c in os.path.realpath(parent).split(os.sep) if c] + ([name] if name else [])
+    parts = [c for c in full.split(os.sep) if c]       # A1: il percorso COSI' COM'E', nessun symlink risolto
     uid = os.geteuid()
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     fd = os.open(os.sep, flags)

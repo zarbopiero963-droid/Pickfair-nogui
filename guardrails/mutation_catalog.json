@@ -8833,6 +8833,18 @@
         "tests/blackbox/test_blackbox_runtime.py"
       ],
       "rationale": "Ciclo 15 #617 (Sol su 10c5728b): con PICKFAIR_BLACKBOX_PATH=:memory: il runtime partirebbe con il registro solo in RAM (eventi critici persi al riavvio) e creerebbe lock e owner fuori dalla cartella privata."
+    },
+    {
+      "id": "bb_c16_symlinks_resolved_before_the_checks",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "    parts = [c for c in full.split(os.sep) if c]       # A1: il percorso COSI' COM'E', nessun symlink risolto",
+      "mutated": "    parts = [c for c in os.path.realpath(full).split(os.sep) if c]",
+      "tests": [
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "Ciclo 16 #617 (Sol su 3b11e82a, decisione owner A1): risolvendo i symlink prima dei controlli, un link in una cartella scrivibile da altri aggira la verifica delle cartelle superiori e permette di deviare il registro."
     }
   ]
 }
