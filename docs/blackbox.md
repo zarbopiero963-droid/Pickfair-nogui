@@ -45,7 +45,7 @@ Codice: `core/blackbox_runtime.py` (`require_runtime`, `financial_gate`, `protec
     su COMMIT o fsync ritardano cancel e hedge. Con il registro guasto l'evento passa nel buffer critico e viene scritto
     al ripristino, coperto da una `BLACKBOX_GAP`; coda e buffer pieni (`MAX_CRITICAL_BUFFER`) => rifiuto. L'evento
     protettivo può quindi essere scritto **dopo** l'invio: l'ordine resta quello d'arrivo e `flush_protective()` (usato
-    anche dalla chiusura) scarica la coda in modo sincrono. `close()` alza prima una **barriera**: un'uscita protettiva
+    anche dalla chiusura) scarica la coda in modo sincrono. `close()` scarica la coda e riprova anche il backlog di un guasto già rientrato, prima di rilasciare connessione e lock; alza prima una **barriera**: un'uscita protettiva
     o è accodata prima dello scarico finale (e scritta), o è rifiutata (`BlackBoxUnavailable`), mai accettata in una
     coda che nessuno scriverà; lo scarico prende una quantità fissata all'ingresso, così mittenti concorrenti non
     tengono il lock all'infinito;

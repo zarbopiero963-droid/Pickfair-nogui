@@ -674,3 +674,31 @@ def test_ttl_cancel_refused_by_the_gate_is_not_attempted_and_keeps_the_order_tra
     adapter = CashoutCancelAdapter(is_simulation=lambda: sim, live_cancel=refused, sim_cancel=refused)
     confirmed, not_attempted = adapter.cancel_with_outcome("1.5", ["B1"])
     assert confirmed is False and not_attempted == rt.GATE_REFUSED_CODE
+
+
+def test_close_flushes_a_protective_event_buffered_by_a_transient_failure_after_the_session_end(bbpath, monkeypatch):
+    """Sol su #630 (b9530e72): un cancel accettato dopo `end_session()` finisce nel buffer per un guasto transitorio;
+    il registro torna scrivibile prima di `close()`. Lo scarico finale deve riprovare anche il backlog (evento + GAP),
+    non solo la coda, prima di rilasciare connessione e lock: mai un evento finanziario accettato e perso."""
+    box = _install_runtime_box()
+    monkeypatch.setattr(box, "_ensure_protective_writer", lambda: None)   # interleaving deterministico
+    real_insert = box._insert
+    broken = {"on": False}
+
+    def flaky(rec):
+        if broken["on"]:
+            raise sqlite3.OperationalError("disk I/O error")
+        return real_insert(rec)
+
+    monkeypatch.setattr(box, "_insert", flaky)
+    box.end_session("STOP")
+    broken["on"] = True
+    late = box.record("ORDER_CANCEL_REQUEST", critical=True, buffer_on_failure=True, source="SYSTEM",
+                      component="betfair_client", phase="ATTEMPT", outcome="PENDING", market_id="1.5", bet_id="B7")
+    box.flush_protective()                           # tentata durante il guasto: buffer critico
+    assert box._buffer
+    broken["on"] = False                             # il registro guarisce prima della chiusura
+    box.close()
+    assert [r for r in _events(bbpath, "ORDER_CANCEL_REQUEST") if r["event_id"] == late], \
+        "cancel accettato e bufferizzato, perso alla chiusura a registro guarito"
+    assert _events(bbpath, "BLACKBOX_GAP")

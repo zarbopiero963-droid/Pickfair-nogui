@@ -9748,6 +9748,18 @@
         "tests/blackbox/test_bb1g_gates.py"
       ],
       "rationale": "Codex su #630 (b9530e72): un cancel TTL rifiutato dal Gate B consumerebbe l'unico tentativo e l'ordine eseguibile uscirebbe dal tracciamento TTL."
+    },
+    {
+      "id": "bb1g_close_without_outage_flush",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                self._retry_outage_flush()         # e il backlog di un guasto gia' rientrato (Sol su #630)\n",
+      "mutated": "                pass\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Sol su #630 (b9530e72): un cancel accettato dopo end_session e bufferizzato da un guasto transitorio andrebbe perso alla chiusura anche a registro guarito."
     }
   ]
 }

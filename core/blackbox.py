@@ -494,6 +494,7 @@ class BlackBox:
         with self._lock:
             try:
                 self._drain_protective_queue()     # uscite protettive accodate: scritte prima di chiudere, se possibile
+                self._retry_outage_flush()         # e il backlog di un guasto gia' rientrato (Sol su #630)
             except Exception:                      # noqa: BLE001 - la chiusura non si blocca su un registro guasto
                 pass
             if self._writer_lock is not None:
