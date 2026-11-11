@@ -3602,6 +3602,30 @@
         "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
       "max_files": 35
+    },
+    "d_pr_t2a_gate_a_tests": {
+      "description": "PR-T2a (mandato owner PF-OWNER-CLAUDE-D-PARALLEL-TESTS-20261111, Claude D): prove indipendenti delle 58 foglie Gate A PR-T2 senza verdetto C-1 (GATEA-1062 v5.1). Solo test e mappa ID->test; nessun codice di produzione. Le 114 righe con C-1 restano escluse finche' C-1 non e' ratificato.",
+      "files": [
+        "tests/gate_a/GATE_A_T2A_MAP.json",
+        "tests/gate_a/test_gate_a_batch_a_betfair.py",
+        "tests/gate_a/test_gate_a_batch_a_database.py",
+        "tests/gate_a/test_gate_a_batch_a_risk.py",
+        "tests/gate_a/test_gate_a_batch_a_trading.py",
+        "tests/gate_a/test_gate_a_batch_b_fencing.py",
+        "tests/gate_a/test_gate_a_batch_b_market_stream.py",
+        "tests/gate_a/test_gate_a_batch_b_reconciliation.py",
+        "tests/gate_a/test_gate_a_batch_b_recovery.py",
+        "tests/gate_a/test_gate_a_batch_b_runtime.py",
+        "tests/gate_a/test_gate_a_batch_b_signals.py",
+        "tests/gate_a/test_gate_a_batch_c_batch_lock.py",
+        "tests/gate_a/test_gate_a_batch_c_execution_guard.py",
+        "tests/gate_a/test_gate_a_batch_c_github_queue.py",
+        "tests/gate_a/test_gate_a_batch_c_runtime_reset.py",
+        "tests/gate_a/test_gate_a_batch_c_simulation_slippage.py",
+        "tests/gate_a/test_gate_a_batch_c_ttl_timestamp.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 18
     }
   }
 }

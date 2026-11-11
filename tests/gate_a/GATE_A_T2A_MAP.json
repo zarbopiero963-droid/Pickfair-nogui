@@ -1,0 +1,588 @@
+{
+ "schema": "pf-gate-a-t2a-map/1",
+ "base": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+ "source": "GATEA-1062-CLASSIFICAZIONE-v5.1.csv (sha256 d6a4774d6ee7008e…), gruppo PR-T2 senza verdetto C-1",
+ "c1_pending_rows": 114,
+ "leaves": [
+  {
+   "tid": "TRG-628-B-0743",
+   "req": "PF-B1-RUNTIME-RESUME",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_runtime.py::test_trg_628_b_0743",
+   "mutation": "core/runtime_controller.py resume(): (a) self.bus.publish('RUNTIME_RESUMED', status) -> pass; (b) daily-loss gate 'return {resumed False}' disabled",
+   "red": "both mutations: 1 failed",
+   "green": "1 passed",
+   "note": "Source line drifted: resume() is at core/runtime_controller.py:3484-3536 on c535c1d5. Existing tests/test_pr512_recovery_fixes.py checks resumed/ACTIVE but not the RUNTIME_RESUMED publish nor its absence on gate block."
+  },
+  {
+   "tid": "TRG-628-B-0748",
+   "req": "PF-B1-ORDER-SAFE-DENY",
+   "status": "ALREADY_COVERED",
+   "test": "tests/unit/test_trading_engine_safe_risk.py::test_safe_mode_blocks_order; tests/core/test_trading_engine.py::test_safe_mode_denies_request_and_finalizes",
+   "mutation": "n/a (already covered; existing test run GREEN on unmodified main, no mutation run by this audit)",
+   "red": null,
+   "green": true,
+   "note": "Behaviour at core/trading_engine.py:1049-1056 on c535c1d5 (batch line 777 is stale). DENIED/SAFE_MODE_ACTIVE pinned. Lockdown hard-block (line 844, reason system_lockdown) has no test hit in tests/ - outside this leaf's literal text, flagged for info."
+  },
+  {
+   "tid": "TRG-628-B-0749",
+   "req": "PF-B1-ORDER-RISK-CONTRACT",
+   "status": "ALREADY_COVERED",
+   "test": "tests/core/test_trading_engine_risk_gate_fail_closed.py::test_block_gate_rotto_nega_sempre; ::test_block_verdetto_non_booleano_viene_negato; ::test_block_verdetto_falsy_ma_non_bool_viene_comunque_negato",
+   "mutation": "n/a (already covered; existing test run GREEN on unmodified main, no mutation run by this audit)",
+   "red": null,
+   "green": true,
+   "note": "_risk_gate_verdict at core/trading_engine.py:1819: missing/non-callable check, raise, non-dict, no 'allowed', non-bool verdict all parametrized."
+  },
+  {
+   "tid": "TRG-628-B-0750",
+   "req": "PF-B1-ORDER-DEDUPE-DURABLE",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_a_trading.py::test_trg_628_b_0750; tests/gate_a/test_gate_a_batch_a_trading.py::test_trg_628_b_0750_write_failure",
+   "mutation": "(1) LIVE branch: consume moved after place_fn (send before durable mark) -> both tests RED; (2) _consuma_intento_prima_dell_invio: DURABLE_DEDUPE_WRITE_FAILED raise replaced by return None -> write_failure test RED",
+   "red": true,
+   "green": true,
+   "note": "New: asserts intent already consumed in SQLite at POST time and durable across a new Database instance; consume write failure => no POST, FAILED DURABLE_DEDUPE_WRITE_FAILED (no prior test hit for that reason). Related existing: tests/acceptance/test_issue437_pr26.py."
+  },
+  {
+   "tid": "TRG-628-B-0751",
+   "req": "PF-B1-ORDER-DEDUPE-RELEASE",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr26.py::test_pass_rifiuto_pre_invio_del_client_reale_libera_l_intento; ::test_block_risposta_persa_dopo_invio_resta_ambiguo_e_consumato; ::test_block_corsa_persa_non_invia_e_non_cancella_la_marcatura_altrui",
+   "mutation": "n/a (already covered; existing test run GREEN on unmodified main, no mutation run by this audit)",
+   "red": null,
+   "green": true,
+   "note": "_rilascia_se_nulla_e_partito core/trading_engine.py:1995: release with proof of non-send (own attempt_id), no release without proof, loser never deletes winner's row."
+  },
+  {
+   "tid": "TRG-628-B-0752",
+   "req": "PF-B1-ORDER-DUPLICATE-KEY",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_a_trading.py::test_trg_628_b_0752",
+   "mutation": "(a) removed `and reason != \"INVALID_REQUEST\"` from release condition in _complete_order_lifecycle -> RED; (b) removed `and status != STATUS_DUPLICATE_BLOCKED` -> RED",
+   "red": true,
+   "green": true,
+   "note": "Existing tests/acceptance/test_issue437_pr26.py::test_block_duplicato_non_rilascia_la_chiave_dell_originale only covers the case with a local owner ctx, where the per-ctx owner check masks the mutation; INVALID_REQUEST had no test. New test uses restart-repopulated key (no local owner) so the condition itself is pinned."
+  },
+  {
+   "tid": "TRG-628-B-0755",
+   "req": "PF-B1-ORDER-DEGRADED",
+   "status": "ALREADY_COVERED",
+   "test": "tests/core/test_trading_engine.py::test_terminal_metadata_write_failure_returns_degraded_result",
+   "mutation": "n/a (already covered; existing test run GREEN on unmodified main, no mutation run by this audit)",
+   "red": null,
+   "green": true,
+   "note": "core/trading_engine.py:1210-1252: finalization_persisted False, is_terminal False, lifecycle_stage degraded."
+  },
+  {
+   "tid": "TRG-628-B-0756",
+   "req": "PF-B1-ORDER-EMERGENCY",
+   "status": "ALREADY_COVERED",
+   "test": "tests/unit/test_circuit_breaker_wiring.py::test_emergency_gate_fail_closed_on_truthy_non_bool_daily_loss; tests/acceptance/test_issue437_pr26.py::test_pass_stop_rispettato_nessun_invio_nessuna_marcatura",
+   "mutation": "n/a (already covered; existing test run GREEN on unmodified main, no mutation run by this audit)",
+   "red": null,
+   "green": true,
+   "note": "_submit_to_order_path core/trading_engine.py:2315-2323: _daily_loss_entry_blocked truthy and is_emergency_stopped both pinned (no send, EMERGENCY_STOP_ACTIVE)."
+  },
+  {
+   "tid": "TRG-628-B-0760",
+   "req": "PF-B1-ORDER-FALLBACK",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr02.py::test_block_il_client_betfair_reale_non_passa_mai_dal_fallback",
+   "mutation": "n/a (already covered; existing test run GREEN on unmodified main, no mutation run by this audit)",
+   "red": null,
+   "green": true,
+   "note": "core/trading_engine.py:2492-2493 FALLBACK_NON_PROTETTO_CLIENT_BETFAIR_REALE, without runtime_controller."
+  },
+  {
+   "tid": "TRG-628-B-0762",
+   "req": "PF-B1-RISK-CONFIG",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_a_risk.py::test_trg_628_b_0762",
+   "mutation": "_validate_config made a no-op (early return) -> 8 params RED (BOOK_BLOCK, LIQUIDITY_MULTIPLIER, MIN_LIQUIDITY_ABSOLUTE, LIQUIDITY_WARNING_ONLY x absent/invalid)",
+   "red": true,
+   "green": true,
+   "note": "Parametrized over all 6 limits + 2 flags x absent/invalid with a branch-free payload (no book_pct, no liquidity, guard off, MAX_WIN None). Existing test_block_config_rotta_emerge_al_primo_ordine_non_al_peggiore covers only 4 keys and only absence."
+  },
+  {
+   "tid": "TRG-628-B-0802",
+   "req": "PF-B1-DB-INTENT-CONSUME",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr26.py::test_pass_marcatura_atomica_fra_thread_e_connessioni",
+   "mutation": "n/a (already covered; existing test run GREEN on unmodified main, no mutation run by this audit)",
+   "red": null,
+   "green": true,
+   "note": "database.py:1815 consume_order_intent INSERT OR IGNORE: 8 connections race, exactly one True."
+  },
+  {
+   "tid": "TRG-628-B-0803",
+   "req": "PF-B1-DB-INTENT-RELEASE",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_a_database.py::test_trg_628_b_0803",
+   "mutation": "DELETE WHERE reduced to customer_ref only -> RED; reduced to attempt_id only -> RED",
+   "red": true,
+   "green": true,
+   "note": "Existing coverage only checked wrong attempt_id; new test also pins wrong customer_ref with right attempt_id, empty inputs, exact pair deletes only its row."
+  },
+  {
+   "tid": "TRG-628-B-0804",
+   "req": "PF-B1-BF-AUTH-GATE",
+   "status": "ALREADY_COVERED",
+   "test": "tests/unit/test_betfair_client_cleared_orders.py::test_senza_autenticazione_solleva; tests/unit/test_circuit_breaker_wiring.py::test_betfair_client_breaker_open_raises_immediately",
+   "mutation": "n/a (already covered; existing test run GREEN on unmodified main, no mutation run by this audit)",
+   "red": null,
+   "green": true,
+   "note": "betfair_client.py:1197-1205 NOT_AUTHENTICATED and CIRCUIT_BREAKER_OPEN."
+  },
+  {
+   "tid": "TRG-628-B-0805",
+   "req": "PF-B1-BF-SINGLESHOT",
+   "status": "ALREADY_COVERED",
+   "test": "tests/integration/test_betfair_client_retry_logic.py::test_place_bet_network_error_is_single_shot_never_recovers_by_resend",
+   "mutation": "n/a (already covered; existing test run GREEN on unmodified main, no mutation run by this audit)",
+   "red": null,
+   "green": true,
+   "note": "betfair_client.py:1218; also tests/net/test_betfair_client_net.py::test_network_error_place_bet_is_single_shot_order_unknown."
+  },
+  {
+   "tid": "TRG-628-B-0806",
+   "req": "PF-B1-BF-TOKEN-EXPIRED",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_a_betfair.py::test_trg_628_b_0806",
+   "mutation": "(a) dropped `or \"NO_SESSION\" in raw_error` -> NO_SESSION param RED; (b) removed _clear_session_state() before SESSION_EXPIRED -> both params RED",
+   "red": true,
+   "green": true,
+   "note": "INVALID_SESSION already covered (tests/failure/test_betfair_client_json_and_session.py::test_session_expired_disconnects_and_clears_token); NO_SESSION branch had no test. New test also pins no retry (1 POST with max_retries=2)."
+  },
+  {
+   "tid": "TRG-628-B-0807",
+   "req": "PF-B1-BF-LOGIN",
+   "status": "ALREADY_COVERED",
+   "test": "tests/integration/test_betfair_client_integration.py::test_login_success",
+   "mutation": "n/a (already covered; existing test run GREEN on unmodified main, no mutation run by this audit)",
+   "red": null,
+   "green": true,
+   "note": "betfair_client.py:1295: returns session_token as bool (asserted `is True`), real self-signed cert via openssl (available, test ran, not skipped)."
+  },
+  {
+   "tid": "TRG-628-B-0823",
+   "req": "PF-B1-STREAM-BOUNDED",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_market_stream.py::test_trg_628_b_0823",
+   "mutation": "services/streaming_feed.py _validate_subscription_bounds: early 'return' inserted at top",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "Umbrella leaf: start() and _build_subscribe_kwargs() reject unbounded / too-many / full-ladder; no stream thread spawned."
+  },
+  {
+   "tid": "TRG-628-B-0824",
+   "req": "PF-B1-STREAM-RESUME-CLOCK",
+   "status": "ALREADY_COVERED",
+   "test": "tests/unit/test_streaming_feed_operational_proofs.py::test_subscribe_kwargs_omit_clk_when_empty_and_include_when_set; tests/unit/test_streaming_feed.py::test_streaming_feed_reconnect_reuses_clk_and_initialclk",
+   "mutation": "n/a",
+   "red": "n/a",
+   "green": "existing tests pass (observed)",
+   "note": "Not duplicated."
+  },
+  {
+   "tid": "TRG-628-B-0847",
+   "req": "PF-B1-PR505-FENCE-SCOPE",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_fencing.py::test_trg_628_b_0847",
+   "mutation": "core/runtime_controller.py _begin_cashout_barrier: 'epochs[key] = epochs.get(key, 0) + 1' -> without '+ 1'",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "Source line drifted: behaviour is _begin_cashout_barrier (~4214-4246). Note: the leaf's MULTIPROCESS-03 note (no exclusive reliance on in-memory locks) is NOT proven by this test: epochs/barriers are in-memory per process."
+  },
+  {
+   "tid": "TRG-628-B-0848",
+   "req": "PF-B1-PR505-FENCE-CHECK",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_fencing.py::test_trg_628_b_0848",
+   "mutation": "core/runtime_controller.py _admission_fence_valid: (a) intersection check -> 'if False'; (b) epoch comparison -> 'return True'",
+   "red": "both mutations: 1 failed",
+   "green": "1 passed",
+   "note": "Source line drifted: _admission_fence_valid at ~4836. In-memory only (see 0847 note)."
+  },
+  {
+   "tid": "TRG-628-B-0854",
+   "req": "PF-B1-RECOVERY-REMOTE-ERROR",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_recovery.py::test_trg_628_b_0854",
+   "mutation": "core/state_recovery.py fetch except: return required/incomplete -> 'remote_orders = []' (continue)",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": ""
+  },
+  {
+   "tid": "TRG-628-B-0855",
+   "req": "PF-B1-RECOVERY-NO-REMOTE",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_recovery.py::test_trg_628_b_0855",
+   "mutation": "core/state_recovery.py no-fetch branch: required False -> True",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "Pins current behaviour: no fetch callable => LIVE_FLAT ok=True (startup reconciliation declared not required)."
+  },
+  {
+   "tid": "TRG-628-B-0869",
+   "req": "PF-B1-QUEUE-CAP",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_signals.py::test_trg_628_b_0869",
+   "mutation": "core/signal_queue.py add(): cap condition prefixed with 'False and'",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "No prior test imports core/signal_queue at all."
+  },
+  {
+   "tid": "TRG-628-B-0872",
+   "req": "PF-B1-QUEUE-RESTORE",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_signals.py::test_trg_628_b_0872",
+   "mutation": "core/signal_queue.py restore_state: except (KeyError, TypeError, ValueError) -> except (KeyError,)",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": ""
+  },
+  {
+   "tid": "TRG-628-B-0873",
+   "req": "PF-B1-RECON-AUDIT-DENY",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_reconciliation.py::test_trg_628_b_0873",
+   "mutation": "core/reconciliation_engine.py _transactional_leg_update (line 259): 'if not decision.persist_ok:' -> 'if False:'",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "Covers persist_ok False and None; control with True updates the leg."
+  },
+  {
+   "tid": "TRG-628-B-0874",
+   "req": "PF-B1-RECON-OUTBOX-ERROR",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_reconciliation.py::test_trg_628_b_0874",
+   "mutation": "core/reconciliation_engine.py _enqueue_outbox: 'return' after logger.exception on write_outbox failure",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "Also verifies the in-memory entry is delivered by _drain_outbox."
+  },
+  {
+   "tid": "TRG-628-B-0875",
+   "req": "PF-B1-RECON-FENCE",
+   "status": "ALREADY_COVERED",
+   "test": "tests/reconciliation/test_fencing_tokens.py::test_assert_fencing_ownership_raises_for_stale_token",
+   "mutation": "n/a",
+   "red": "n/a",
+   "green": "existing test passes (observed)",
+   "note": "Also test_assert_fencing_ownership_raises_when_no_active_token and the three *_denied_before_* tests in same file."
+  },
+  {
+   "tid": "TRG-628-B-0894",
+   "req": "PF-B1-RECOVERY-MERGE-ERROR",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_recovery.py::test_trg_628_b_0894",
+   "mutation": "core/state_recovery.py merge except: 'return {required, incomplete}' removed (fall through)",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": ""
+  },
+  {
+   "tid": "TRG-628-B-0899",
+   "req": "PF-B1-RISK-CONFIG-MIN_PRICE",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_a_risk.py::test_trg_628_b_0899",
+   "mutation": "(a) _finite accepts bool -> True/False params RED; (b) MIN_PRICE removed from _REQUIRED_LIMITS and _check_price given a silent 1.01 default -> all 9 params RED",
+   "red": true,
+   "green": true,
+   "note": "Absent/NaN/inf/-inf/text/None/True/False/list -> RISK_CONFIG_MISSING."
+  },
+  {
+   "tid": "TRG-628-B-0900",
+   "req": "PF-B1-RISK-CONFIG-MAX_WIN",
+   "status": "NEEDS_OWNER_DECISION",
+   "test": "",
+   "mutation": "none",
+   "red": null,
+   "green": null,
+   "note": "Leaf text ('requires MAX_WIN present and numeric') is superseded by owner rectification 18-19/10/2026: MAX_WIN is in _OPTIONAL_LIMITS (core/risk_gate.py:58), must be declared but None = not active; non-finite/<=0 => deny. The batch note itself says 'Va riformulata, non certificata'. No assertion written; leaf must be reformulated against the rectification (owner/auditor) before certification. Note: absent and inf cases are exercised incidentally by test_trg_628_b_0762[assente-MAX_WIN]/[invalido-MAX_WIN]."
+  },
+  {
+   "tid": "TRG-628-B-0901",
+   "req": "PF-B1-RISK-CONFIG-BOOK_BLOCK",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_a_risk.py::test_trg_628_b_0901",
+   "mutation": "(a) _finite accepts bool -> True/False RED; (b) BOOK_BLOCK removed from _REQUIRED_LIMITS -> 'assente' params RED (11 failed overall)",
+   "red": true,
+   "green": true,
+   "note": "Branch-free payload: validation must come from eager _validate_config."
+  },
+  {
+   "tid": "TRG-628-B-0902",
+   "req": "PF-B1-RISK-CONFIG-LIQUIDITY_MULTIPLIER",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_a_risk.py::test_trg_628_b_0902",
+   "mutation": "(a) _finite accepts bool -> True/False RED; (b) LIQUIDITY_MULTIPLIER removed from _REQUIRED_LIMITS -> RED",
+   "red": true,
+   "green": true,
+   "note": "Guard disabled in config so the key is only reached by _validate_config."
+  },
+  {
+   "tid": "TRG-628-B-0903",
+   "req": "PF-B1-RISK-CONFIG-MIN_LIQUIDITY_ABSOLUTE",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_a_risk.py::test_trg_628_b_0903",
+   "mutation": "(a) _finite accepts bool -> True/False RED; (b) MIN_LIQUIDITY_ABSOLUTE removed from _REQUIRED_LIMITS -> RED",
+   "red": true,
+   "green": true,
+   "note": "Same structure as 0902."
+  },
+  {
+   "tid": "TRG-628-B-0904",
+   "req": "PF-B1-RISK-CONFIG-LIQUIDITY_GUARD_ENABLED",
+   "status": "ALREADY_COVERED",
+   "test": "tests/core/test_risk_gate.py::test_block_guardia_liquidita_assente_nega; tests/core/test_risk_gate.py::test_block_interruttore_non_booleano_nega",
+   "mutation": "n/a (already covered; existing test run GREEN on unmodified main, no mutation run by this audit)",
+   "red": null,
+   "green": true,
+   "note": "Absent and 9 non-bool values (1, 0, 'True', 'false', '', None, 1.0, [], object())."
+  },
+  {
+   "tid": "TRG-628-B-0905",
+   "req": "PF-B1-RISK-CONFIG-LIQUIDITY_WARNING_ONLY",
+   "status": "ALREADY_COVERED",
+   "test": "tests/core/test_risk_gate.py::test_block_modalita_avviso_assente_nega; tests/core/test_risk_gate.py::test_block_interruttore_non_booleano_nega",
+   "mutation": "n/a (already covered; existing test run GREEN on unmodified main, no mutation run by this audit)",
+   "red": null,
+   "green": true,
+   "note": "Bool-typed requirement pinned; also eager validation in test_block_config_rotta_emerge_al_primo_ordine_non_al_peggiore[LIQUIDITY_WARNING_ONLY] and new test_trg_628_b_0762."
+  },
+  {
+   "tid": "TRG-628-B-0911",
+   "req": "PF-B1-STREAM-BOUNDED-MODE",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_market_stream.py::test_trg_628_b_0911",
+   "mutation": "services/streaming_feed.py: raise INVALID_MARKET_DATA_MODE -> pass",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "Unknown mode rejected even with enabled=False."
+  },
+  {
+   "tid": "TRG-628-B-0912",
+   "req": "PF-B1-STREAM-BOUNDED-BYPASS",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_market_stream.py::test_trg_628_b_0912",
+   "mutation": "services/streaming_feed.py: 'if mode == \"poll\" or not cfg.enabled:' -> 'if False:'",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": ""
+  },
+  {
+   "tid": "TRG-628-B-0913",
+   "req": "PF-B1-STREAM-BOUNDED-SCOPE",
+   "status": "ALREADY_COVERED",
+   "test": "tests/unit/test_streaming_feed.py::test_streaming_feed_rejects_unbounded_subscription",
+   "mutation": "n/a",
+   "red": "n/a",
+   "green": "existing test passes (observed)",
+   "note": "Also exercised as part of the new umbrella test_trg_628_b_0823."
+  },
+  {
+   "tid": "TRG-628-B-0914",
+   "req": "PF-B1-STREAM-BOUNDED-COUNT",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_market_stream.py::test_trg_628_b_0914",
+   "mutation": "services/streaming_feed.py: raise STREAM_TOO_MANY_MARKETS -> pass",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "Boundary: == max_markets accepted."
+  },
+  {
+   "tid": "TRG-628-B-0915",
+   "req": "PF-B1-STREAM-BOUNDED-LADDER",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_b_market_stream.py::test_trg_628_b_0915",
+   "mutation": "services/streaming_feed.py: raise EX_ALL_OFFERS_REQUIRES_OPT_IN -> pass",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": ""
+  },
+  {
+   "tid": "TRG-628-B-0972",
+   "req": "PF-B1-R2-GUARD-ACQUIRE",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_c_execution_guard.py::test_trg_628_b_0972",
+   "mutation": "core/execution_guard.py: removed `if key in self._active: return False`",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "Sequential + 16-thread barrier contention: exactly one acquire wins."
+  },
+  {
+   "tid": "TRG-628-B-0973",
+   "req": "PF-B1-R2-GUARD-RELEASE",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_c_execution_guard.py::test_trg_628_b_0973",
+   "mutation": "core/execution_guard.py: release discard -> pass",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "Also pins discard (no KeyError) on unknown key."
+  },
+  {
+   "tid": "TRG-628-B-0974",
+   "req": "PF-B1-R2-BATCH-LOCK",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_c_batch_lock.py::test_trg_628_b_0974",
+   "mutation": "core/batch_lock_manager.py: finally releases unconditionally (if True ... release if locked)",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "Losing nested contender must not release winner's lock; exception path releases."
+  },
+  {
+   "tid": "TRG-628-B-0975",
+   "req": "PF-B1-R2-BATCH-CLEANUP",
+   "status": "NEEDS_OWNER_DECISION",
+   "test": "tests/gate_a/test_gate_a_batch_c_batch_lock.py::test_trg_628_b_0975_idle_batch_cleanup",
+   "mutation": "core/batch_lock_manager.py: cleanup_batch body -> pass",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "Only idle-batch registry removal pinned. The 'without held check' part is NOT pinned: core/reconciliation_engine.py:1982 calls cleanup_batch while still inside the batch acquire(); after removal a concurrent acquire() creates a fresh Lock and gets True while the first reconcile is still running (mutual exclusion lost; only the DB fencing token remains). Whether this is accepted (MULTIPROCESS-03: no exclusive reliance on in-memory lock) or must be fixed is an owner/design decision; pinning it would freeze a likely defect."
+  },
+  {
+   "tid": "TRG-628-B-0978",
+   "req": "PF-B1-R2-STOP-COPIES",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr28c.py::test_block_ripristino_versionato_e_conservativo",
+   "mutation": "",
+   "red": "",
+   "green": "passed (re-run on main)",
+   "note": "Parametrized: newer seq wins both directions, tie/unknown seq keeps active stop."
+  },
+  {
+   "tid": "TRG-628-B-0979",
+   "req": "PF-B1-R2-STOP-UNREADABLE",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr28c.py::test_block_stato_risk_stop_illeggibile_resta_attivo",
+   "mutation": "",
+   "red": "",
+   "green": "passed (re-run on main)",
+   "note": "Also unreadable/inconsistent cases in test_block_ripristino_versionato_e_conservativo."
+  },
+  {
+   "tid": "TRG-628-B-0980",
+   "req": "PF-B1-R2-STOP-SAVE",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr28c.py::test_block_stop_non_salvato_su_db_sopravvive_al_riavvio",
+   "mutation": "",
+   "red": "",
+   "green": "passed (re-run on main)",
+   "note": "DB save fails -> persisted via marker and survives restart; also test_block_stop_con_versione_db_ignota_prevale_su_reset_vecchio."
+  },
+  {
+   "tid": "TRG-628-B-0981",
+   "req": "PF-B1-R2-STOP-RESET-GUARD",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr28c.py::test_block_reset_marker_non_armabile_non_scrive_stato_inattivo",
+   "mutation": "",
+   "red": "",
+   "green": "passed (re-run on main)",
+   "note": "Guard not armable -> DB state stays active (ordering guard-before-inactive); also test_block_reset_readback_e_scritture_successive_fallite_guard_indipendente."
+  },
+  {
+   "tid": "TRG-628-B-0982",
+   "req": "PF-B1-R2-STOP-RESET-READBACK",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr28c.py::test_block_reset_readback_fallito_ripristina_barriera_durevole",
+   "mutation": "",
+   "red": "",
+   "green": "passed (re-run on main)",
+   "note": "Also test_block_reset_non_riapre_se_marker_ignoto_non_si_aggiorna."
+  },
+  {
+   "tid": "TRG-628-B-0989",
+   "req": "PF-B1-R2-RUNTIME-RESET",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_c_runtime_reset.py::test_trg_628_b_0989",
+   "mutation": "core/runtime_controller.py reset_risk_stop: (a) clear _risk_stop_reason before persist; (b) publish RISK_STOP_RESET on persist failure",
+   "red": "(a) 1 failed; (b) 1 failed",
+   "green": "1 passed after each restore",
+   "note": "Calls real RuntimeController.reset_risk_stop on a minimal stand-in; reset_blocker/persist_risk_stop monkeypatched to observe ordering. Existing pr28c tests covered retention + publish on success but not 'no publish on failure' nor ordering."
+  },
+  {
+   "tid": "TRG-628-B-1014",
+   "req": "PF-B1-R2-MATCH-SLIPPAGE",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_c_simulation_slippage.py::test_trg_628_b_1014",
+   "mutation": "core/simulation_matching_engine.py: (a) BACK/LAY tick direction swapped; (b) 1.01 floor removed",
+   "red": "(a) 1 failed; (b) 1 failed",
+   "green": "1 passed after each restore",
+   "note": "Existing test_simulation_realism covered BACK only, without floor/LAY."
+  },
+  {
+   "tid": "TRG-628-B-1022",
+   "req": "PF-B1-R2-TTL-TIMESTAMP",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_c_ttl_timestamp.py::test_trg_628_b_1022",
+   "mutation": "direct_unmatched_ttl.py: (a) naive dt.replace(tzinfo=utc) removed; (b) 'Z'->'+00:00' rewrite removed",
+   "red": "(a) 1 failed under TZ=Asia/Tokyo; (b) NOT red: 1 passed",
+   "green": "1 passed",
+   "note": "Z and placed_epoch fallback were already covered in tests/unit/test_direct_unmatched_ttl.py; new test adds naive=UTC with forced non-UTC local TZ. The Z rewrite is redundant on Python 3.13 (fromisoformat accepts Z since 3.11), so mutation (b) cannot go red here; behaviour still asserted."
+  },
+  {
+   "tid": "TRG-628-B-1049",
+   "req": "PF-B1-R2-QUEUE-PATH",
+   "status": "ALREADY_COVERED",
+   "test": "tests/testsuite/test_complete_current_task.py::test_escaping_task_path_fails",
+   "mutation": "",
+   "red": "",
+   "green": "passed (re-run on main)",
+   "note": "Missing source: test_missing_file_fails; valid move: test_existing_file_moves."
+  },
+  {
+   "tid": "TRG-628-B-1052",
+   "req": "PF-B1-R2-QUEUE-ISSUE",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_c_github_queue.py::test_trg_628_b_1052",
+   "mutation": ".github/scripts/create_next_task_issue.py: check=True -> check=False",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "subprocess.run monkeypatched on the loaded module; gh never executed. Body content/order, title, check=True, failure propagation, missing task file => 1."
+  },
+  {
+   "tid": "TRG-628-B-1053",
+   "req": "PF-B1-R2-QUEUE-RECOVERY",
+   "status": "CODE_DEFECT_OR_MISSING",
+   "test": "tests/gate_a/test_gate_a_batch_c_github_queue.py::test_trg_628_b_1053 (xfail strict) + test_trg_628_b_1053_rejects_invalid[6 cases, PASS]",
+   "mutation": ".github/workflows/queue-on-pr-closed.yml: `*..* | */*/* )` -> `*..* | ops/tasks/*/* )`",
+   "red": "strict XPASS -> 1 failed",
+   "green": "1 xfailed after restore",
+   "note": "queue-on-pr-closed.yml:41-48: in bash case `*` matches '/', so `*/*/*` matches ops/tasks/example.md and the step exits 1 before reaching the ops/tasks/*.md allowlist; every valid manual recovery input is rejected (contradicts the input description and the error text). Guard script extracted from YAML and run locally with bash (no gh). Workflow is owner-merge file."
+  },
+  {
+   "tid": "TRG-628-B-1054",
+   "req": "PF-B1-R2-QUEUE-WORKFLOW",
+   "status": "PASS",
+   "test": "tests/gate_a/test_gate_a_batch_c_github_queue.py::test_trg_628_b_1054",
+   "mutation": ".github/workflows/complete-task-on-merge.yml: removed `&& needs.complete-task.outputs.task_moved == 'true'`",
+   "red": "1 failed",
+   "green": "1 passed",
+   "note": "Workflow part is purely declarative: static yaml parse (job outputs, step order move->commit/push, prepare-next needs+if). Producer side executed for real: complete_current_task.py writes task_moved=false/true."
+  },
+  {
+   "tid": "TRG-628-B-1055",
+   "req": "PF-B1-R2-RELEASE-WINDOWS",
+   "status": "NEEDS_OWNER_DECISION",
+   "test": "",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "build-windows-exe.yml:105-114 `gh release create ... || gh release upload ... --clobber`: any create failure (not only 'release exists': auth, network, rate limit) falls through to an upload that overwrites assets of an existing published release (also on rerun/retag). Same pattern in build-linux.yml:197. Whether overwriting published release assets is accepted release policy is an owner/supply-chain decision; no assertion written to avoid freezing a possible defect."
+  },
+  {
+   "tid": "TRG-628-B-1058",
+   "req": "PF-B1-R2-TTL-CLIENT-ABSENT",
+   "status": "ALREADY_COVERED",
+   "test": "tests/unit/test_runtime_controller_direct_ttl_poller.py::test_no_cancel_client_skips_without_discard",
+   "mutation": "",
+   "red": "",
+   "green": "passed (re-run on main)",
+   "note": "Source is core/runtime_controller.py:~7540 on this main (input line 3529 is stale)."
+  }
+ ]
+}
