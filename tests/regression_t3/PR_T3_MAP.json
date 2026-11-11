@@ -2,7 +2,7 @@
  "schema": "pf-pr-t3-map/1",
  "base": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
  "source": "GATEA-1062-CLASSIFICAZIONE-v5.1.csv, gruppo PR-T3",
- "note_env": "tests/acceptance/test_issue437_pr02.py::test_block_firma_non_ispezionabile_conserva_il_customer_ref fallisce su main con Python 3.13.18 locale (CI usa 3.11): da triagiare, probabile ENVIRONMENT_ONLY",
+ "note_env": "RISOLTO: tests/acceptance/test_issue437_pr02.py::test_block_firma_non_ispezionabile_conserva_il_customer_ref PASSA con Python 3.11 (venv uv, requirements.txt) e FALLISCE con 3.13: ENVIRONMENT_ONLY del test (time.time e' ispezionabile da 3.13, la fixture 'firma non ispezionabile' non lo e' piu'); nessun difetto di produzione",
  "rows": [
   {
    "req": "PF-B1-R2-MATCH-CONSUME-PRICE",
@@ -267,12 +267,13 @@
   },
   {
    "req": "PF-I04B-02",
-   "status": "NEEDS_OWNER_DECISION",
-   "test": "",
-   "mutation": "",
-   "red": "",
-   "green": "",
-   "note": "L'oracolo della riga (BACK aggressivo consuma 'lato LAY 2.00/50', LAY aggressivo 'lato BACK 1.90/100') contraddice la semantica Betfair adottata dall'owner (F6/DEC-426 P25, #383) e implementata: BACK si abbina su availableToBack (1.90/100), LAY su availableToLay (2.00/50). Se 'best BACK' = availableToBack l'oracolo e' invertito; se indica gli ordini a riposo il book sarebbe incrociato. Esito atteso non determinabile senza decisione owner; nessun test scritto."
+   "status": "PASS",
+   "test": "tests/regression_t3/test_t3_d4_back_lay.py",
+   "mutation": "simulation_broker.py: livelli lays/backs invertiti (2 RED); betfair_client.py:1696 side invertito sul filo (3 RED)",
+   "red": true,
+   "green": true,
+   "note": "Riga rettificata da D4: lato cliente BACK resta BACK; matching su availableToBack per BACK e availableToLay per LAY; riduzione una sola volta (riletture/poll); doppio consumo su book riletto gia' coperto da tests/unit/test_pfc005_sim_fill_transitions.py",
+   "decision": "D4 PF-OWNER-GATEA-FIVE-DECISIONS-20261111"
   },
   {
    "req": "PF-I04B-03",
@@ -330,12 +331,22 @@
   },
   {
    "req": "PF-I04T-03",
-   "status": "NEEDS_OWNER_DECISION",
-   "test": "",
-   "mutation": "",
-   "red": "",
-   "green": "",
-   "note": "T-04T-01 coperto (test PF-I04T-01/02 qui + tests/acceptance/test_issue437_pr27.py); T-04T-04 config corrotta coperto da test_issue437_pr27.py::test_block_config_illeggibile_dal_loader_disattivava_il_cap. T-04T-02 'limiti tick/range': nessun dominio tick/limite superiore definito nel codice (client e validators accettano 1000.0 e non validano il tick; tests/unit/test_betfair_client_quota_non_finita.py::test_pass_quota_valida_arriva_sul_wire pinna 1000.0 ammessa); l'esito atteso per quote fuori tick o >1000 non e' determinato dalla riga troncata. Serve decisione owner."
+   "status": "CODE_DEFECT_OR_MISSING",
+   "test": "tests/regression_t3/test_t3_d5_price_ladder.py",
+   "mutation": "n/a: xfail(strict) osservato come 'DID NOT RAISE' su 11 quote fuori ladder CLASSIC (2.03 ... 1010.0); 12 quote valide inviate invariate",
+   "red": true,
+   "green": null,
+   "note": "Validazione price ladder centralizzata ASSENTE su main: il client invia 2.03 e 1000.5. Requisito ratificato da D5; correzione da assegnare (B)",
+   "decision": "D5 PF-OWNER-GATEA-FIVE-DECISIONS-20261111"
+  },
+  {
+   "req": "T3-LOCKDOWN-QUICKBET",
+   "status": "PASS",
+   "test": "tests/regression_t3/test_t3_quick_bet_lockdown.py",
+   "mutation": "core/trading_engine.py submit_quick_bet: hard block LOCKDOWN disattivato -> ACCEPTED_FOR_PROCESSING (RED)",
+   "red": true,
+   "green": true,
+   "note": "Disposizione owner: con LOCKDOWN nessuna puntata rapida BACK/LAY raggiunge client_getter o broker; nessun ordine scritto"
   }
  ]
 }

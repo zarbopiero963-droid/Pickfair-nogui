@@ -3608,12 +3608,15 @@
       "files": [
         "tests/regression_t3/PR_T3_MAP.json",
         "tests/regression_t3/test_t3_credentials.py",
+        "tests/regression_t3/test_t3_d4_back_lay.py",
+        "tests/regression_t3/test_t3_d5_price_ladder.py",
         "tests/regression_t3/test_t3_daily_loss.py",
         "tests/regression_t3/test_t3_odds_validation.py",
+        "tests/regression_t3/test_t3_quick_bet_lockdown.py",
         "tests/regression_t3/test_t3_sim_matching.py",
         ".guardrails/allowed_scope.json"
       ],
-      "max_files": 6
+      "max_files": 9
     }
   }
 }
