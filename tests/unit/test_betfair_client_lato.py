@@ -203,13 +203,10 @@ def _codici_pre_invio_del_client():
     # anche questo eseguendo il client, non ricopiato.
     from core import blackbox_runtime
     client, sessione = _client()
-    salvata = blackbox_runtime._box
-    blackbox_runtime._box = None
-    try:
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(blackbox_runtime, "_box", None)
         with pytest.raises(RuntimeError) as errore:
             client.place_bet(**{**_ORDINE, "side": "BACK"})
-    finally:
-        blackbox_runtime._box = salvata
     assert sessione.corpi == [], "nessun invio senza scatola nera"
     codici.add(str(errore.value))
     return codici
