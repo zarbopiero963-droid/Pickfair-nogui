@@ -14,6 +14,10 @@ sys.path.insert(0, TREE)
 R = {"tree": TREE}
 EV = []
 try:
+    # BB-1G: come `headless_main.main`, la scatola nera del processo prima del runtime (registro nella HOME del figlio,
+    # condiviso fra crash e riavvio dello stesso scenario: UNCLEAN_TERMINATION + GAP come in produzione)
+    from core import blackbox_runtime
+    blackbox_runtime.install(entrypoint="test_child")
     import headless_main
     app = headless_main.HeadlessApp(); app.build(start_services=True)
     orig = app.bus.publish

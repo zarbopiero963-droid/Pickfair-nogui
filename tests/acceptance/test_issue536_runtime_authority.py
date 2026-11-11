@@ -176,6 +176,10 @@ import headless_main
 from database import Database
 percorso = sys.argv[1]
 headless_main.Database = lambda: Database(percorso)
+# BB-1G: come `headless_main.main`, la scatola nera del processo (registro proprio del figlio) prima del runtime
+from core import blackbox_runtime
+blackbox_runtime.install(os.path.join(os.path.dirname(percorso), "bb_%d" % os.getpid(), "blackbox.sqlite"),
+                         entrypoint="test_child")
 app = headless_main.HeadlessApp()
 app.build(start_services=False)
 app.telegram_service.start = lambda *a, **k: {"started": False, "stub": True}

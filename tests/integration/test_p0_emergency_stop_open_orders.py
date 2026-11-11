@@ -975,3 +975,25 @@ def test_pending_saga_unresolved_until_protective_recovery_rolls_it_back(tmp_pat
     assert json.loads(app.runtime.db.get_settings()[LIVE_SAGA_SETTINGS_KEY])["abc-ms-6"]["phase"] == "ROLLED_BACK"
     second = app.runtime.emergency_stop(reason="t2")
     assert second["unresolved_submissions"] == [] and second["verification"] == "VERIFIED", second
+
+
+def test_cancel_refused_by_the_blackbox_gate_is_not_sent_never_unknown(tmp_path, monkeypatch):
+    """BB-1G x #629: il Gate B rifiuta PRIMA di qualunque invio (`GateRefused`, BLACKBOX_UNAVAILABLE). Il lotto e'
+    NOT_SENT con quel motivo, mai UNKNOWN (che vorrebbe dire «forse cancellato»), e l'arresto non e' mai VERIFIED."""
+    from core import blackbox_runtime
+    app = _app(tmp_path, monkeypatch)
+    ex = FakeExchange([_o("B1")])
+
+    def refused(**_kw):
+        ex.cancel_calls.append("refused")
+        raise blackbox_runtime.GateRefused("betfair_client: ORDER_CANCEL_REQUEST senza scatola nera")
+
+    ex.cancel_orders = lambda *, market_id, bet_ids=None, emergency=False: refused()
+    _engine_order(app.runtime.db, market_id="1.5", bet_id="B1")
+    _live(app, ex, monkeypatch)
+    res = app.runtime.emergency_stop(reason="t")
+    (market_result,) = res["cancel_results"]
+    (batch,) = market_result["batches"]
+    assert batch["status"] == "NOT_SENT" and batch["error"] == blackbox_runtime.GATE_REFUSED_CODE, batch
+    assert res["verification"] != "VERIFIED" and res["manual_action_required"] is True, res["verification"]
+    assert {o["bet_id"]: o["outcome"] for o in res["order_outcomes"]}["B1"] == "STILL_OPEN"
