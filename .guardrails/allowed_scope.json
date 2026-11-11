@@ -3561,6 +3561,40 @@
         "tests/unit/test_545_sim_snapshot_not_persisted.py"
       ],
       "max_files": 14
+    },
+    "bb1g_blackbox_gates": {
+      "description": "BB-1G (decisione owner PF-OWNER-BB1G-FULL-GO-20261110; mandato PF-OWNER-AUTONOMOUS-NIGHT-GO-20261111): doppio gate fail-closed della scatola nera. Gate A all'avvio/ripresa (RuntimeController), GUI che installa la scatola nera prima della finestra, Gate B nei punti d'invio reali (BetfairClient, SimulationBroker) con uscite protettive bufferizzate, cancel d'emergenza CLI (D3) ammesso senza registro; rifiuto = pre-invio provato (BLACKBOX_UNAVAILABLE), nell'arresto d'emergenza lotto NOT_SENT mai UNKNOWN. Riuso del lavoro conservato su keep/bb1g-local-20261110 @1616b0e8 (EWR ADAPT, #628 c.6780628263). Il gate di rilascio passa (RED su 693a63cb). Test RED-first, mutanti bb1g_*. PR safety-critical. Lacuna preesistente chiusa nello stesso PR: il mutante live_safety_sim_nan_liquidity_unlimited sopravviveva (anche su 693a63cb) perche' nessun test copriva una quota infinita al piazzamento; test aggiunto in tests/unit/test_pfc005_sim_fill_transitions.py.",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "betfair_client.py",
+        "core/blackbox_runtime.py",
+        "core/microstake_live_port.py",
+        "core/microstake_sim_port.py",
+        "core/order_router.py",
+        "core/runtime_controller.py",
+        "docs/blackbox.md",
+        "docs/cross_platform_parity.md",
+        "docs/emergency_stop.md",
+        "guardrails/mutation_catalog.json",
+        "headless_main.py",
+        "mini_gui.py",
+        "order_manager.py",
+        "pytest.ini",
+        "scripts/ci_changed_modules.py",
+        "simulation_broker.py",
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py",
+        "tests/acceptance/test_issue536_runtime_authority.py",
+        "tests/blackbox/test_bb1g_gates.py",
+        "tests/conftest.py",
+        "tests/f001/child_autoreset.py",
+        "tests/f001/child_runtime.py",
+        "tests/f026/child_f026.py",
+        "tests/fullscope/harness/child_runner.py",
+        "tests/integration/test_p0_emergency_stop_open_orders.py",
+        "tests/packaging/release_gate_launchers.py",
+        "tests/unit/test_pfc005_sim_fill_transitions.py"
+      ],
+      "max_files": 28
     }
   }
 }

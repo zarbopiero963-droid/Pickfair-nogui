@@ -49,8 +49,8 @@ Inventario dei launcher al 10/11/2026:
 | Launcher | Percorso | Scatola nera |
 |---|---|---|
 | `main.py --headless`, `pickfair-headless` | `headless_main.main()` | installata (Linux); Windows: avvio rifiutato |
-| `main.py` senza `--headless`, `pickfair` / `pickfair.exe`, AppImage (`AppRun` → `pickfair`) | `mini_gui.main()` | **assente** |
-| `python mini_gui.py` | `mini_gui.main()` | **assente** |
+| `main.py` senza `--headless`, `pickfair` / `pickfair.exe`, AppImage (`AppRun` → `pickfair`) | `mini_gui.main()` | installata (BB-1G); assente => avvio rifiutato |
+| `python mini_gui.py` | `mini_gui.main()` | installata (BB-1G); assente => avvio rifiutato |
 | ~~`AVVIA_API.bat` / `INSTALLA.bat` → `betfair_market_api.py`~~ | **ritirati** (PF-BETFAIR-API-RETIREMENT-20261110): login Betfair reale senza scatola nera, API su `0.0.0.0:8765` senza autenticazione | il gate fallisce se tornano |
 | script di sviluppo alla radice (`hard_verify_issue_320.py`, `test_zero_touch_sync.py`, `test_gui_hard.py`, `test_gui_parser_management.py`) | non impacchettati | coperti dal gate comune di BB-1G |
 
@@ -62,9 +62,9 @@ Inventario dei launcher al 10/11/2026:
      e superato; mancante, rinominato, deselezionato, saltato, xfail o in errore => rosso. Il rapporto JUnit e' generato
      nella stessa esecuzione, in una cartella temporanea nuova; `PYTEST_ADDOPTS` e' ignorato; pytest con rc != 0 => rosso;
    - **sicurezza effettiva**: i test di `tests/packaging/release_gate_launchers.py` (non raccolti dalla CI ordinaria)
-     rendono la scatola nera non disponibile e verificano che nessun launcher costruisca il motore. Oggi la GUI lo
-     costruisce, quindi il gate e' rosso; dopo BB-1G diventa verde **solo** perche' il rifiuto sicuro e' vero, senza
-     marker da togliere ne' criteri da cambiare. Il criterio non e' l'exit code: sentinelle a livello di classe
+     rendono la scatola nera non disponibile e verificano che nessun launcher costruisca il motore. Prima di BB-1G la GUI lo
+     costruiva e il gate era rosso; con BB-1G e' verde **solo** perche' il rifiuto sicuro e' vero, senza marker tolti
+     ne' criteri cambiati. Il criterio non e' l'exit code: sentinelle a livello di classe
      bloccano e registrano l'accesso a runtime, motore, app headless, GUI e client Betfair; una finta BB-1G che
      costruisce il motore per un'altra strada e poi esce con 1 rende il gate rosso;
    - **ref ammessi**: in GitHub Actions il gate e' verde solo su `refs/heads/main` o su un tag `v*` (un
@@ -74,8 +74,9 @@ Inventario dei launcher al 10/11/2026:
    alla radice che avviano il runtime; un launcher nuovo non inventariato fa fallire il gate. I test d'integrita' della CI
    ordinaria verificano anche il cablaggio: comando esatto del gate, dipendenza transitiva di ogni job dal gate,
    nessuna funzione di stato (`always()`/`failure()`/`cancelled()`) e nessun `continue-on-error`.
-3. **BB-1G nel codice** (enforcement principale, PR successiva): gate all'avvio (`RuntimeController.start`) e
-   all'invio (ordini, cashout, ripresa).
+3. **BB-1G nel codice** (enforcement principale): Gate A all'avvio e alla ripresa (`RuntimeController.start`/`resume`),
+   GUI che installa la scatola nera prima della finestra, Gate B all'invio (`BetfairClient`, `SimulationBroker`).
+   Dettaglio in `docs/blackbox.md`, «Doppio gate». Con BB-1G il gate di rilascio passa perché il rifiuto è vero.
 4. **Percorso manuale (azione owner):** un'app o un token con `contents: write` può creare tag o release fuori dai
    workflow. Serve un **ruleset su `refs/tags/v*`** che limiti creazione/aggiornamento/cancellazione all'admin senza
    bypass per le app (ed eventualmente le release immutabili). Finché manca: nessun tag `v*`.

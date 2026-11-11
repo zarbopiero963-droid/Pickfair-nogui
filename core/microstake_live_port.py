@@ -39,6 +39,7 @@ PRE_SEND_REJECTIONS = frozenset({
     "INVALID_MARKET_ID", "INVALID_SELECTION_ID", "INVALID_PRICE", "INVALID_SIZE", "INVALID_SIDE",
     "INVALID_CUSTOMER_ORDER_REF", "INVALID_BET_ID", "INVALID_SIZE_REDUCTION", "NOT_AUTHENTICATED",
     "CIRCUIT_BREAKER_OPEN", "DUPLICATE_CUSTOMER_REF",
+    "BLACKBOX_UNAVAILABLE",          # BB-1G Gate B: rifiuto prima dell'invio
 })
 _DEAD_STATUSES = frozenset({"EXECUTION_COMPLETE"})
 #: Esiti di listClearedOrders senza esposizione residua (ordine sparito dagli ordini correnti senza abbinato), e

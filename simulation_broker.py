@@ -40,9 +40,16 @@ def _to_int(value: Any, default: int = 0) -> int:
 
 # Argument errors that place_bet raises before matching, storage or writes:
 # the same codes BetfairClient.place_bet raises before building the request.
+
+def _gate_b(operation: str, *, cancel: bool = False, **fields: Any) -> None:
+    """BB-1G Gate B nel punto d'invio SIM: stessa regola del client LIVE (parita' decisionale SIM/LIVE)."""
+    from core import blackbox_runtime
+    blackbox_runtime.financial_gate(operation, component="simulation_broker", cancel=cancel, **fields)
+
 _PRE_SEND_REJECTIONS = frozenset({
     "INVALID_MARKET_ID", "INVALID_SELECTION_ID", "INVALID_PRICE", "INVALID_SIZE",
     "INVALID_SIDE",
+    "BLACKBOX_UNAVAILABLE",          # BB-1G Gate B: rifiuto prima di qualunque effetto
 })
 
 
@@ -1426,6 +1433,10 @@ class SimulationBroker:
         if normalized_side not in {"BACK", "LAY"}:
             raise RuntimeError("INVALID_SIDE")
 
+        # BB-1G Gate B (stesso contratto del client LIVE): argomenti validi, nulla ancora toccato.
+        _gate_b("ORDER_PLACE_REQUEST", market_id=market_id_s, selection_id=selection_id_i,
+                order_ref=str(customer_order_ref or customer_ref or "") or None, side=normalized_side,
+                price=price_f, size=size_f)
         order = SimOrder(
             bet_id="SIMBET-" + uuid.uuid4().hex[:14],
             market_id=market_id_s,
@@ -1497,7 +1508,11 @@ class SimulationBroker:
         event_name: str = "",
         market_name: str = "",
     ) -> Dict[str, Any]:
-        with self._lock:  # RLock: place_bet lo riprende per ogni gamba
+        # BB-1G Gate B: il batch passa dal gate una volta, prima di qualunque gamba (nessun batch a meta').
+        _gate_b("ORDER_PLACE_REQUEST", market_id=str(market_id or "") or None,
+                order_ref=str(customer_ref or "") or None, legs=len(instructions or []))
+        from core import blackbox_runtime
+        with blackbox_runtime.batch_gated(), self._lock:  # RLock: place_bet lo riprende per ogni gamba
             return self._place_orders_locked(
                 market_id=market_id, instructions=instructions, customer_ref=customer_ref,
                 event_key=event_key, table_id=table_id, batch_id=batch_id,
@@ -1835,6 +1850,9 @@ class SimulationBroker:
         _ = customer_ref
         reports = []
         da_persistere_cancel: List[SimOrder] = []
+        _gate_b("ORDER_CANCEL_REQUEST", cancel=True, market_id=str(market_id or "") or None,
+                bet_ids=[str((i or {}).get("betId") or (i or {}).get("bet_id") or "") for i in instructions
+                         if isinstance(i, dict)] if instructions else "ALL")
         with self._lock:
             if not instructions:
                 for order in self.state.orders.values():
@@ -1939,6 +1957,7 @@ class SimulationBroker:
         except (TypeError, ValueError):
             price_f = 0.0
 
+        _gate_b("ORDER_REPLACE_REQUEST", market_id=market_id_s or None, bet_id=bid or None, new_price=price_f)
         with self._lock:
             old = self.state.orders.get(bid)
             # Fail-closed parity with the live BetfairClient (which raises

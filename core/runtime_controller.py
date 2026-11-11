@@ -2475,7 +2475,8 @@ class RuntimeController:
         """Cancel d'emergenza in lotti di al massimo 60 `betId` (limite Betfair di cancelOrders), con un record per lotto.
 
         Stato del lotto: OK, FAILED (rifiuto esplicito), UNKNOWN (eccezione, timeout o esito AMBIGUOUS: il cancel puo'
-        essere avvenuto) o NOT_SENT. Un lotto respinto non impedisce gli altri. L'autorita' del runtime si riverifica
+        essere avvenuto) o NOT_SENT (autorita' persa, oppure rifiuto pre-invio del Gate B della scatola nera, BB-1G:
+        errore `BLACKBOX_UNAVAILABLE`). Un lotto respinto non impedisce gli altri. L'autorita' del runtime si riverifica
         dopo OGNI lotto (Sol su 7094b1a6, sonda owner B5): se e' persa, il lotto appena inviato CONSERVA il proprio
         stato di risposta (successo confermato, errore confermato o UNKNOWN: direttiva owner, requisito 3) ed e'
         marcato `authority_lost_during`; i lotti successivi non partono (NOT_SENT, uno per lotto). Esito combinato:
@@ -2484,6 +2485,7 @@ class RuntimeController:
             # Mai il cancel dell'intero mercato: per Betfair una lista vuota (o assente) vuol dire «tutti gli ordini»,
             # compresi quelli manuali o di altri programmi (Sol su 7094b1a6). Fail-closed, nessuna chiamata.
             return {"ok": False, "market_id": market_id, "error": "MARKET_WIDE_CANCEL_FORBIDDEN", "batches": []}
+        from core import blackbox_runtime
         bet_ids = list(bet_ids)
         size = self._EMERGENCY_CANCEL_BATCH
         chunks = [bet_ids[i:i + size] for i in range(0, len(bet_ids), size)]
@@ -2500,6 +2502,8 @@ class RuntimeController:
                 else:
                     status = "FAILED"
                 error = response.get("error") or response.get("errorCode")
+            except blackbox_runtime.GateRefused:    # BB-1G Gate B: rifiuto PRIMA dell'invio, provato, mai «forse»
+                response, status, error = {}, "NOT_SENT", blackbox_runtime.GATE_REFUSED_CODE
             except Exception as exc:                # eccezione durante l'invio: esito ignoto, mai «fallito»
                 response, status, error = {}, "UNKNOWN", str(exc)
             record = {"index": index, "bet_ids": chunk, "status": status, "ok": status == "OK", "error": error}
@@ -2877,7 +2881,28 @@ class RuntimeController:
     def _runtime_lifecycle_lock(self):
         return getattr(self, "_lifecycle_lock", None) or RuntimeController._fallback_lifecycle_lock
 
+    def _blackbox_gate_a(self, component: str) -> Optional[dict]:
+        """BB-1G Gate A (PF-OWNER-BB1G-FULL-GO-20261110): nessun runtime operativo senza scatola nera installata,
+        runtime (lock D3) e scrivibile in modo durevole. Qualunque entrypoint passa da qui. Rifiuto => dict, mai un
+        avvio parziale: nessun lock preso, nessun servizio avviato."""
+        from core import blackbox_runtime
+        try:
+            blackbox_runtime.require_runtime(component)
+        except blackbox_runtime.GateRefused as exc:
+            logger.critical("Avvio rifiutato: scatola nera non disponibile (%s)", exc.detail)
+            try:
+                self.bus.publish("RUNTIME_START_REFUSED", {"reason_code": blackbox_runtime.GATE_REFUSED_CODE,
+                                                           "reason": "scatola nera non disponibile"})
+            except Exception:
+                logger.exception("Pubblicazione del rifiuto di avvio non riuscita")
+            return {"ok": False, "started": False, "refused": True, "reason": "scatola nera non disponibile",
+                    "reason_code": blackbox_runtime.GATE_REFUSED_CODE, "status": self._safe_status_snapshot()}
+        return None
+
     def _start_serialized(self, *, password, simulation_mode, execution_mode, live_enabled, live_readiness_ok) -> dict:
+        gate_block = self._blackbox_gate_a("runtime_controller.start")
+        if gate_block:
+            return gate_block
         instance_block = self._acquire_runtime_instance_lock()
         if instance_block:
             logger.critical("Avvio rifiutato: %s", instance_block)
@@ -3463,6 +3488,10 @@ class RuntimeController:
                 "reason": "lockdown_attivo",
                 "status": self.get_status(),
             }
+        # BB-1G Gate A: la ripresa riattiva il trading, quindi richiede la stessa scatola nera dell'avvio.
+        gate_block = self._blackbox_gate_a("runtime_controller.resume")
+        if gate_block:
+            return {"resumed": False, "reason": gate_block["reason_code"], "status": gate_block["status"]}
 
         # Non riattivare il trading se la perdita giornaliera e' gia' sfondata
         # (stesso giorno): un breach rilevato mentre si era in pausa NON deve
