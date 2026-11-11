@@ -56,6 +56,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   piattaforma dichiarata supportata senza le proprie evidenze. Solo documentazione, nessun cambiamento funzionale.
 
 ### Fixed
+- **D-1/D-2/D-3, RO-DD-01..07 (#586, P0): hard-stop di drawdown non aggirabile.** Decisioni owner del 09/11/2026
+  (PF-ROSERPINA-D1-D2-B2-B3-FINANCIAL-SAFETY, DRAWDOWN-AND-RECOVERY, FINANCIAL-CONTRACT-FINAL, D2-LOCKDOWN-UNLOCK-FINAL).
+  Nuovo `core/drawdown_hard_stop.py`: picco della **cassa verificata** (disponibile + impegnato), persistito in
+  `roserpina.drawdown_hard_stop_state`, mai ribasato da auto-reset, riavvio o settlement. `max_drawdown_abs` (euro) e
+  `max_drawdown_hard_stop_pct` (% del picco, ora anche in SIM) si valutano a ogni lettura verificata del conto e prima
+  di ogni ingresso; il superamento si **memorizza** e si sblocca solo con `owner_unlock_drawdown_hard_stop`
+  (autorizzazione, motivo, operation_id monouso, conferma, verifiche di cassa/esposizione/AMBIGUOUS, registrazione
+  durevole; non ribasa il picco). DEFENSE/LOCKDOWN usano la perdita cumulativa di cassa dal picco persistente:
+  l'esposizione aperta non e' piu' una perdita e resta governata dai suoi cap. Stato illeggibile o picco non salvato =>
+  nessun nuovo ingresso, anche senza hard-stop configurati (RO-DD-08); con il DB non scrivibile il picco va in un marker su file
+  separato, cosi' un riavvio non riparte da un picco vecchio (RO-DD-09); dopo un riavvio non pulito la baseline e'
+  non verificata e gli ingressi restano negati fino alla conferma owner `owner_confirm_drawdown_baseline` (doppia
+  conferma, registrata come conferma e non come prova del massimo storico; RO-DD-09 C). Cap in Decimal esatto, senza tolleranza (`validators.exceeds_cap`, `pct_of`, liability LAY).
+  `get_status` espone `loss_drawdown_pct`, `capital_at_risk_pct` e `drawdown_hard_stop`. Prima: l'auto-reset cancellava
+  la perdita, il picco seguiva il disponibile, il riavvio lo azzerava, il % valeva solo in LIVE, 60.0000000001 passava
+  il cap 60 (campagna Grok 5 tavoli, #586 c.6747305390). Test `tests/d1` (51).
 - **G7-R06 (#586): AMBIGUOUS gia' regolato non rinasce come riserva al riavvio.** La ricostruzione F018 chiude gli
   intenti con un effetto di settlement applicato (`Database.settled_customer_refs`, prova = chiave del settlement)
   invece di ricrearne il tavolo come posizione incerta su un mercato gia' chiuso. Senza prova o con registro

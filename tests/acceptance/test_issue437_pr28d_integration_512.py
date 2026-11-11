@@ -1016,6 +1016,7 @@ def test_direct_order_without_event_identity_is_refused_when_the_event_cap_is_ac
 def test_direct_orders_respect_the_configured_absolute_drawdown(tmp_path):
     order = {"market_id": "1.234", "selection_id": 11, "bet_type": "BACK", "price": 2.0, "stake": 1.0}
     c = _catena(tmp_path, max_drawdown_abs=200.0)
+    c.rc._hard_stop().observe(1000.0)   # D-1: picco della cassa VERIFICATA (non piu' RiskDesk.equity_peak)
     c.rc.risk_desk.bankroll_current = 900.0                         # drawdown 100 < 200
     c.rc.risk_desk.cash_equity_current = c.rc.risk_desk.bankroll_current  # PFC-008: cassa verificata della lettura
     assert c.rc.absolute_cap_reason_for_orders([order]) == ""

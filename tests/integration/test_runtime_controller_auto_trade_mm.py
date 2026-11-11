@@ -241,9 +241,11 @@ def test_auto_trade_rejects_unverifiable_absolute_drawdown_cap():
 
 
 def test_auto_trade_drawdown_threshold_latches_runtime_lockdown():
-    rc, bus = _make_controller(responses=[{"available": 90.0, "exposure": 0.0}])
+    # D-1: ogni lettura del conto e' la stessa (90): il superamento si rileva gia' alla lettura del settlement
+    rc, bus = _make_controller(responses=[{"available": 90.0, "exposure": 0.0}] * 4)
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
+    rc._hard_stop().observe(100.0)   # D-1: picco della cassa VERIFICATA (non piu' RiskDesk.equity_peak)
     rc.config.max_drawdown_abs = 10.0
 
     rc._on_close_position(
@@ -261,7 +263,10 @@ def test_auto_trade_drawdown_threshold_latches_runtime_lockdown():
     )
 
     assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
-    assert rc._last_auto_trade_result["reason"] == "max_drawdown_abs_active"
+    # RO-DD-07: il superamento e' rilevato gia' alla lettura del conto del settlement (LOCKDOWN prima dell'auto-next),
+    # quindi l'auto-next trova il runtime non attivo; il blocco e' memorizzato nell'hard-stop.
+    assert rc._last_auto_trade_result["reason"] in ("max_drawdown_abs_active", "runtime_not_active")
+    assert rc._hard_stop().breached is True
     assert rc.mode == RuntimeMode.LOCKDOWN
 
 

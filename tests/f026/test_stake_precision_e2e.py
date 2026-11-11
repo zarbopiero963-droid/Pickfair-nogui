@@ -31,7 +31,10 @@ def _row(s, m):
 def test_sub_minimum_stake_after_a_settlement_is_executed_floored():
     steps = [{"op": "signal", "m": f"1.52{i}", "price": 2.0, "event": f"E{i} v X"} for i in range(8)]
     steps += [{"op": "settle", "m": "1.520", "win": True}, {"op": "signal", "m": "1.529", "price": 2.0, "event": "Z v W"}]
-    s = run(steps, settings=TABLES)["snaps"][-1]
+    # D-2 (contratto owner PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL-20261109): l'esposizione degli 8 tavoli aperti non e'
+    # piu' una perdita, quindi il desk resta NORMAL (prima DEFENSE x0.8 portava lo stake sotto 2). Il target del ciclo
+    # e' ridotto per restare nel caso sub-minimo che questo test certifica.
+    s = run(steps, settings=dict(TABLES, **{"roserpina.target_profit_cycle_pct": 0.7}))["snaps"][-1]
     row = _row(s, "1.529")
     assert row["status"] == "SUBMITTED", f"prima: FAILED/SUBMIT_FAILED per precisione — {row}"
     assert D(str(row["stake"])) == D(str(row["stake"])).quantize(D("0.01")) and row["stake"] < 2.0

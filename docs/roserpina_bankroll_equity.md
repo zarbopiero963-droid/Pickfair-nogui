@@ -403,3 +403,61 @@ posizioni sullo stesso tavolo, tavolo non più rilasciabile al settlement della 
 - `resume()` ritenta la riconciliazione e rifiuta finché non è completa.
 - Le righe senza `market_id` o `event_key` sono riportate in `unattributed`, mai indovinate.
 - Il risultato è pubblicato come `STARTUP_POSITIONS_REBUILT`.
+
+
+## Hard-stop di drawdown, picco persistente e DEFENSE/LOCKDOWN (D-1/D-2/D-3, RO-DD-01..07)
+
+Contratti owner del 09/11/2026: PF-ROSERPINA-D1-D2-B2-B3-FINANCIAL-SAFETY, PF-ROSERPINA-DRAWDOWN-AND-RECOVERY,
+PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#586).
+
+- **Formula.** `drawdown_abs = max(0, picco_cassa_verificata - cassa_verificata_corrente)`, in Decimal, confronto esatto.
+  La cassa e' disponibile + impegnato della stessa lettura (PFC-008): riserve e puntate aperte non sono perdite.
+- **Picco** (`core/drawdown_hard_stop.py`): massimo della cassa verificata, persistito in settings
+  (`roserpina.drawdown_hard_stop_state`, con `seq`) prima di valere. Lo alza ogni lettura verificata
+  (`_sync_cash_equity_from_funds`); auto-reset, reset di ciclo, settlement e riavvio non lo abbassano. Una lettura non
+  verificata non lo alza mai. Prima esecuzione dopo l'aggiornamento: il picco parte dalla prima cassa verificata
+  (non e' una ricostruzione dello storico, che resta il metodo owner del 13/10).
+- **Hard-stop.** `max_drawdown_abs` (euro) e `max_drawdown_hard_stop_pct` (% del picco), opzionali: senza valore non
+  bloccano nulla. Valutati a ogni lettura verificata del conto (superamento => LOCKDOWN subito) e prima di ogni
+  ingresso (segnale, auto-next, manuale/Dutching). Stessa regola in SIM e LIVE (prima il % valeva solo in LIVE).
+- **Blocco persistente.** Il superamento si memorizza (kind, perdita, limite, picco, cassa) e resta dopo riavvio,
+  settlement in utile, reset strategico, rimozione del limite dalla configurazione e nuovo segnale. Blocca solo i nuovi
+  ingressi: riconciliazione, settlement e riduzione dell'esposizione continuano.
+- **Sblocco owner** (`RuntimeController.owner_unlock_drawdown_hard_stop(authorization, reason, operation_id,
+  confirm)`): tutti i campi obbligatori, `operation_id` monouso, verifica di cassa verificata, esposizione leggibile e
+  assenza di ordini AMBIGUOUS, registrazione durevole prima che valga (salvataggio fallito => resta bloccato). Non
+  ribasa il picco: se la perdita e' ancora oltre il limite, la lettura successiva blocca di nuovo. La nuova baseline e'
+  un'operazione distinta (`DrawdownHardStop.owner_rebase_peak`). Nessun endpoint Control API/MCP; il comando owner che
+  le invoca non e' ancora previsto (limite dichiarato).
+- **DEFENSE/LOCKDOWN.** La componente di drawdown e' la perdita cumulativa di cassa dal picco persistente
+  (`RuntimeController._persistent_drawdown_pct`). Caso della transizione: cassa 100 con 30 impegnati e nessuna perdita,
+  prima LOCKDOWN (30 % sul disponibile), ora NORMAL; il capitale impegnato resta limitato dai cap di esposizione gia'
+  configurati (`max_total_exposure_pct`, evento, singolo, `max_open_exposure`, liability LAY, riserve). Senza alcuna
+  cassa verificata resta la misura storica (gli ingressi sono comunque negati dai controlli della cassa).
+- **Fail-closed.** Stato persistito illeggibile => desk in LOCKDOWN e hard-stop `*_stato_illeggibile`, mai
+  sovrascritto; picco non salvato => nessun nuovo ingresso su ogni percorso, con o senza hard-stop configurati
+  (`drawdown_picco_non_persistito`, in coda ai motivi dei gate a monte; RO-DD-08: altrimenti un riavvio ripartirebbe
+  dal picco salvato e renderebbe aggirabile il LOCKDOWN cumulativo), con nuovo tentativo di salvataggio a ogni
+  ammissione; con hard-stop configurato anche `max_drawdown_abs_picco_non_persistito`; cassa non verificata =>
+  `max_drawdown_abs_cassa_non_verificata`.
+- **Doppio guasto (RO-DD-09).** Se il DB non salva il picco, lo stesso record va in un marker su file separato
+  (`<db>.drawdown_peak_pending.json`, scrittura atomica, stesso schema del marker della perdita giornaliera). Al
+  riavvio vale il picco piu' alto fra DB e marker; il marker si riporta nel DB e si rimuove solo dopo il salvataggio.
+  Marker illeggibile => stato illeggibile (fail-closed).
+- **Baseline dopo un riavvio non pulito (RO-DD-09 C, decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109).**
+  Lo START del trading registra su disco una sessione aperta; solo uno STOP pulito con il picco durevole la chiude.
+  Se al riavvio la sessione risulta aperta (crash, kill, STOP con picco non salvato, DB e marker entrambi non
+  scrivibili) il picco salvato potrebbe non essere il massimo: la baseline e' **non verificata** e nessun nuovo
+  ingresso passa (`drawdown_baseline_non_verificata`), anche dopo piu' riavvii e dopo un reset strategico.
+  Riconciliazione, settlement e riduzione del rischio restano disponibili. Sblocco solo con
+  `RuntimeController.owner_confirm_drawdown_baseline(authorization, reason, operation_id, confirm, confirm_again,
+  declared_peak=None)`: doppia conferma, `operation_id` monouso, verifica di cassa verificata, esposizione leggibile e
+  assenza di ordini AMBIGUOUS, registrazione durevole. La baseline diventa il massimo fra picco salvato, picco
+  dichiarato dall'owner e cassa corrente, ed e' registrata come conferma owner, **non** come prova del massimo storico.
+  Nessun endpoint Control API/MCP. Un primo avvio senza alcuno stato e' un nuovo perimetro contabile (per le
+  installazioni esistenti vale la decisione owner del 13/10, opzione A). Soluzione definitiva prevista in BB-3:
+  ricostruzione del picco da un registro finanziario indipendente.
+- **Limiti dichiarati.** Un `seq` regressivo al riavvio non e' rilevabile. Il marker sta sullo stesso filesystem del DB
+  (stesso dominio di guasto): la sua perdita insieme al DB e' coperta dal blocco della baseline non verificata, non
+  da una ricostruzione. Grandezze
+  esposte in `get_status`: `loss_drawdown_pct`, `capital_at_risk_pct` (solo informativo), `drawdown_hard_stop`.

@@ -112,6 +112,7 @@ def test_absent_drawdown_cap_does_not_lockdown_but_percent_limits_still_apply(tm
 def test_configured_drawdown_cap_keeps_lockdown_semantics(tmp_path):
     c = _catena_reale(tmp_path, bankroll=100.0, **{"roserpina.max_drawdown_abs": 10.0})
     c.rc.risk_desk.equity_peak = 100.0
+    c.rc._hard_stop().observe(100.0)   # D-1: picco della cassa VERIFICATA (non piu' RiskDesk.equity_peak)
     c.rc.risk_desk.bankroll_current = 88.0
     c.rc.risk_desk.cash_equity_current = c.rc.risk_desk.bankroll_current  # PFC-008: cassa verificata della lettura
     c.rc._on_signal_received(_signal())

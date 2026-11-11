@@ -168,6 +168,7 @@ def test_absolute_drawdown_reaches_threshold_and_blocks(tmp_path):
     c = _catena(tmp_path)
     c.rc.config.max_drawdown_abs = 10.0
     c.rc.risk_desk.equity_peak = 100.0
+    c.rc._hard_stop().observe(100.0)   # D-1: picco della cassa VERIFICATA (non piu' RiskDesk.equity_peak)
     c.rc.risk_desk.bankroll_current = 90.0
     c.rc.risk_desk.cash_equity_current = c.rc.risk_desk.bankroll_current  # PFC-008: cassa verificata della lettura
     c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
