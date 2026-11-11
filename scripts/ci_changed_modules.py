@@ -219,6 +219,7 @@ MODULE_RULES = [
             "live_gate.py",
             "headless_main.py",  # PF-BLACKBOX-01: mutazione del catalogo sull'avvio della scatola nera
             "mini_gui.py",  # BB-1G: mutazione del catalogo sull'installazione della scatola nera nella GUI
+            "cashout_cancel_adapter.py",  # BB-1G: mutazione sul cancel TTL rifiutato dal Gate B
         ],
     },
 ]

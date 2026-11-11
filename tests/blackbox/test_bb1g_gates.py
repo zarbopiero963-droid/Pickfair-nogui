@@ -659,3 +659,18 @@ def test_a_protective_only_session_recovers_after_a_transient_journal_failure(bb
         _time.sleep(0.05)
     assert {first, second} <= written, "backlog protettivo mai scaricato a registro guarito"
     assert _events(bbpath, "BLACKBOX_GAP") and not box._buffer
+
+
+@pytest.mark.parametrize("sim", [True, False])
+def test_ttl_cancel_refused_by_the_gate_is_not_attempted_and_keeps_the_order_tracked(sim):
+    """Codex su #630 (b9530e72): il cancel del TTL rifiutato dal Gate B prima dell'invio e' «non tentato» con un
+    motivo, cosi' `_cancel_direct_unmatched` rimette l'ordine nel registro TTL; mai `(False, "")`, che consumerebbe
+    l'unico tentativo di cancellazione e lascerebbe l'ordine eseguibile senza tracciamento."""
+    from cashout_cancel_adapter import CashoutCancelAdapter
+
+    def refused(**kw):
+        raise rt.GateRefused("ORDER_CANCEL_REQUEST: buffer critico pieno")
+
+    adapter = CashoutCancelAdapter(is_simulation=lambda: sim, live_cancel=refused, sim_cancel=refused)
+    confirmed, not_attempted = adapter.cancel_with_outcome("1.5", ["B1"])
+    assert confirmed is False and not_attempted == rt.GATE_REFUSED_CODE

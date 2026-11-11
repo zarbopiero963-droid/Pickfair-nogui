@@ -9736,6 +9736,18 @@
         "tests/blackbox/test_bb1g_gates.py"
       ],
       "rationale": "Codex su #630 (b78c4b6e): dopo un guasto temporaneo una sessione con sole uscite protettive non scaricherebbe mai il backlog e, a buffer pieno, rifiuterebbe i cancel a registro guarito."
+    },
+    {
+      "id": "bb1g_ttl_cancel_gate_refusal_consumed",
+      "module": "cashout_cancel_adapter",
+      "area": "blackbox",
+      "file": "cashout_cancel_adapter.py",
+      "original": "            if isinstance(exc, blackbox_runtime.GateRefused):\n                # BB-1G (Codex su #630): il Gate B ha rifiutato PRIMA dell'invio.",
+      "mutated": "            if False:\n                # BB-1G (Codex su #630): il Gate B ha rifiutato PRIMA dell'invio.",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630 (b9530e72): un cancel TTL rifiutato dal Gate B consumerebbe l'unico tentativo e l'ordine eseguibile uscirebbe dal tracciamento TTL."
     }
   ]
 }
