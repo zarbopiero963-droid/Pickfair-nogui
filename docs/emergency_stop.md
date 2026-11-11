@@ -48,7 +48,8 @@ sull'exchange.
    solo gli ordini del bot noti nel ledger, gli invii senza `betId` restano irrisolti e l'esito è `UNVERIFIED`.
 5. **Cancel**, riverificando l'autorità del runtime (#536) prima di ogni mercato **e dopo ogni lotto**. Ogni lotto
    ha il suo record in `cancel_results[].batches` (`index`, `bet_ids`, `status`): `OK`, `FAILED` (rifiuto esplicito),
-   `UNKNOWN` (eccezione, timeout o esito `AMBIGUOUS`: il cancel può essere avvenuto) o `NOT_SENT`. Se l'autorità si
+   `UNKNOWN` (eccezione, timeout o esito `AMBIGUOUS`: il cancel può essere avvenuto) o `NOT_SENT` (anche quando il Gate B della scatola
+   nera, BB-1G, rifiuta il lotto prima dell'invio: errore `BLACKBOX_UNAVAILABLE`, mai `UNKNOWN`). Se l'autorità si
    perde con un lotto in volo, quel lotto **conserva il proprio stato di risposta** (successo confermato, errore
    confermato o `UNKNOWN`) ed è marcato `authority_lost_during`; i lotti e i mercati successivi non partono
    (`NOT_SENT`, `runtime_authority`) e l'esito non è mai `VERIFIED` (sonde owner B4/B5). La perdita dell'autorità è un **incidente distinto** (`authority_lost`, anche

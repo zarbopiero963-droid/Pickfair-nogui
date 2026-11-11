@@ -9592,6 +9592,18 @@
         "tests/blackbox/test_bb1g_gates.py"
       ],
       "rationale": "BB-1G: l'hedge del cashout non sarebbe un'uscita protettiva e un guasto del registro lo bloccherebbe (PF-EXEC-03)."
+    },
+    {
+      "id": "bb1g_estop_gate_refusal_as_unknown",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            except blackbox_runtime.GateRefused:    # BB-1G Gate B: rifiuto PRIMA dell'invio, provato, mai «forse»\n                response, status, error = {}, \"NOT_SENT\", blackbox_runtime.GATE_REFUSED_CODE\n",
+      "mutated": "            except blackbox_runtime.GateRefused:    # BB-1G Gate B: rifiuto PRIMA dell'invio, provato, mai «forse»\n                response, status, error = {}, \"UNKNOWN\", blackbox_runtime.GATE_REFUSED_CODE\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "BB-1G x #629: un cancel d'emergenza rifiutato dal Gate B non e' mai partito (rifiuto pre-invio provato); trattarlo come UNKNOWN lo farebbe passare per «forse cancellato»."
     }
   ]
 }

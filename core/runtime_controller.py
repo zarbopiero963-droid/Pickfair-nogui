@@ -2475,7 +2475,8 @@ class RuntimeController:
         """Cancel d'emergenza in lotti di al massimo 60 `betId` (limite Betfair di cancelOrders), con un record per lotto.
 
         Stato del lotto: OK, FAILED (rifiuto esplicito), UNKNOWN (eccezione, timeout o esito AMBIGUOUS: il cancel puo'
-        essere avvenuto) o NOT_SENT. Un lotto respinto non impedisce gli altri. L'autorita' del runtime si riverifica
+        essere avvenuto) o NOT_SENT (autorita' persa, oppure rifiuto pre-invio del Gate B della scatola nera, BB-1G:
+        errore `BLACKBOX_UNAVAILABLE`). Un lotto respinto non impedisce gli altri. L'autorita' del runtime si riverifica
         dopo OGNI lotto (Sol su 7094b1a6, sonda owner B5): se e' persa, il lotto appena inviato CONSERVA il proprio
         stato di risposta (successo confermato, errore confermato o UNKNOWN: direttiva owner, requisito 3) ed e'
         marcato `authority_lost_during`; i lotti successivi non partono (NOT_SENT, uno per lotto). Esito combinato:
@@ -2484,6 +2485,7 @@ class RuntimeController:
             # Mai il cancel dell'intero mercato: per Betfair una lista vuota (o assente) vuol dire «tutti gli ordini»,
             # compresi quelli manuali o di altri programmi (Sol su 7094b1a6). Fail-closed, nessuna chiamata.
             return {"ok": False, "market_id": market_id, "error": "MARKET_WIDE_CANCEL_FORBIDDEN", "batches": []}
+        from core import blackbox_runtime
         bet_ids = list(bet_ids)
         size = self._EMERGENCY_CANCEL_BATCH
         chunks = [bet_ids[i:i + size] for i in range(0, len(bet_ids), size)]
@@ -2500,6 +2502,8 @@ class RuntimeController:
                 else:
                     status = "FAILED"
                 error = response.get("error") or response.get("errorCode")
+            except blackbox_runtime.GateRefused:    # BB-1G Gate B: rifiuto PRIMA dell'invio, provato, mai «forse»
+                response, status, error = {}, "NOT_SENT", blackbox_runtime.GATE_REFUSED_CODE
             except Exception as exc:                # eccezione durante l'invio: esito ignoto, mai «fallito»
                 response, status, error = {}, "UNKNOWN", str(exc)
             record = {"index": index, "bet_ids": chunk, "status": status, "ok": status == "OK", "error": error}
