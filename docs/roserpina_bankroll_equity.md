@@ -420,6 +420,13 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
 - **Hard-stop.** `max_drawdown_abs` (euro) e `max_drawdown_hard_stop_pct` (% del picco), opzionali: senza valore non
   bloccano nulla. Valutati a ogni lettura verificata del conto (superamento => LOCKDOWN subito) e prima di ogni
   ingresso (segnale, auto-next, manuale/Dutching). Stessa regola in SIM e LIVE (prima il % valeva solo in LIVE).
+- **Disponibile 0: l'hard-stop valuta comunque la cassa (Sol e Codex su dc2f5f25).** Con una lettura valida a
+  disponibile 0 l'hard-stop riceve la cassa verificata della stessa lettura: con impegnato
+  (`BALANCE_ZERO_COMMITTED`) e' l'impegnato (85 impegnati dopo un picco 100 = perdita 15), senza
+  (`ACCOUNT_EMPTY_VERIFIED`) e' 0, cioe' perdita totale e non dato mancante. Il superamento si memorizza, anche con
+  soglia percentuale 100 %, e resta dopo una ricarica (regola piu' severa). Bankroll e cassa del desk non cambiano
+  (PF-POST-556) e gli ingressi restano negati; una cassa 0 non diventa mai picco. Cassa negativa, non finita o
+  assente resta `max_drawdown_abs_cassa_non_verificata`.
 - **Blocco persistente.** Il superamento si memorizza (kind, perdita, limite, picco, cassa) e resta dopo riavvio,
   settlement in utile, reset strategico, rimozione del limite dalla configurazione e nuovo segnale. Blocca solo i nuovi
   ingressi: riconciliazione, settlement e riduzione dell'esposizione continuano.
@@ -439,13 +446,20 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   (`drawdown_picco_non_persistito`, in coda ai motivi dei gate a monte; RO-DD-08: altrimenti un riavvio ripartirebbe
   dal picco salvato e renderebbe aggirabile il LOCKDOWN cumulativo), con nuovo tentativo di salvataggio a ogni
   ammissione; con hard-stop configurato anche `max_drawdown_abs_picco_non_persistito`; cassa non verificata =>
-  `max_drawdown_abs_cassa_non_verificata`.
+  `max_drawdown_abs_cassa_non_verificata`. Picco non persistito e baseline non confermata negano anche bet manuale e
+  Dutching (`absolute_cap_reason_for_orders`), con o senza cap configurati (Codex/Grok/Claude D su dc2f5f25: prima
+  quel percorso usciva subito senza cap e ignorava la baseline). Sessione non salvata all'avvio => log critico e
+  ingressi negati come picco non persistito, finche' un salvataggio la rende durevole.
 - **Doppio guasto (RO-DD-09).** Se il DB non salva il picco, lo stesso record va in un marker su file separato
   (`<db>.drawdown_peak_pending.json`, scrittura atomica, stesso schema del marker della perdita giornaliera). Al
   riavvio vale il picco piu' alto fra DB e marker; il marker si riporta nel DB e si rimuove solo dopo il salvataggio.
-  Marker illeggibile => stato illeggibile (fail-closed).
+  Sessione, baseline e superamento li decide il record piu' recente (`seq`): un marker rimasto da un guasto rientrato
+  (rimozione fallita, file bloccato su Windows) non annulla uno sblocco o una conferma owner salvati dopo nel DB; a pari
+  `seq` vale l'unione. Marker illeggibile => stato illeggibile (fail-closed).
 - **Baseline dopo un riavvio non pulito (RO-DD-09 C, decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109).**
-  Lo START del trading registra su disco una sessione aperta; solo uno STOP pulito con il picco durevole la chiude.
+  Lo START del trading registra su disco una sessione aperta; solo uno STOP pulito con il picco durevole la chiude,
+  e la chiude PRIMA di rilasciare il lock di istanza (Sol su dc2f5f25): dopo il rilascio un nuovo processo puo' aver
+  gia' aperto la propria sessione, che la chiusura del vecchio sovrascriverebbe. Smontaggio fallito => sessione aperta.
   Se al riavvio la sessione risulta aperta (crash, kill, STOP con picco non salvato, DB e marker entrambi non
   scrivibili) il picco salvato potrebbe non essere il massimo: la baseline e' **non verificata** e nessun nuovo
   ingresso passa (`drawdown_baseline_non_verificata`), anche dopo piu' riavvii e dopo un reset strategico.

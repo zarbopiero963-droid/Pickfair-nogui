@@ -71,7 +71,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   conferma, registrata come conferma e non come prova del massimo storico; RO-DD-09 C). Cap in Decimal esatto, senza tolleranza (`validators.exceeds_cap`, `pct_of`, liability LAY).
   `get_status` espone `loss_drawdown_pct`, `capital_at_risk_pct` e `drawdown_hard_stop`. Prima: l'auto-reset cancellava
   la perdita, il picco seguiva il disponibile, il riavvio lo azzerava, il % valeva solo in LIVE, 60.0000000001 passava
-  il cap 60 (campagna Grok 5 tavoli, #586 c.6747305390). Test `tests/d1` (51).
+  il cap 60 (campagna Grok 5 tavoli, #586 c.6747305390). Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
+  disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
+  resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale
+  e Dutching applicano picco non persistito e baseline non confermata; un marker superato dal DB non annulla
+  sblocchi o conferme owner; sessione non salvata all'avvio = log critico e ingressi negati. Test `tests/d1`.
 - **G7-R06 (#586): AMBIGUOUS gia' regolato non rinasce come riserva al riavvio.** La ricostruzione F018 chiude gli
   intenti con un effetto di settlement applicato (`Database.settled_customer_refs`, prova = chiave del settlement)
   invece di ricrearne il tavolo come posizione incerta su un mercato gia' chiuso. Senza prova o con registro

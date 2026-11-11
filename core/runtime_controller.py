@@ -3116,7 +3116,7 @@ class RuntimeController:
             raise
         self._applica_fondi_avvio(funds, read_at=start_funds)
         # RO-DD-09 C: sessione di trading aperta su disco fino a uno STOP pulito con picco durevole.
-        RuntimeController._hard_stop(self).open_session()
+        self._open_drawdown_session()
 
         start_telegram = time.monotonic()
         try:
@@ -3465,6 +3465,26 @@ class RuntimeController:
         with self._runtime_lifecycle_lock():          # #461 PR29-c: mai in parallelo con start()
             return self._stop_serialized()
 
+    def _open_drawdown_session(self) -> None:
+        """RO-DD-09 C: apre su disco la sessione del drawdown all'avvio del trading. Non salvata (Grok/Claude D su
+        dc2f5f25) => log critico; gli ingressi restano negati da `_drawdown_persist_block_reason` (picco non
+        persistito, RO-DD-08) finche' un nuovo salvataggio, ritentato a ogni ammissione, la rende durevole."""
+        if not RuntimeController._hard_stop(self).open_session():
+            logger.critical("D-1: sessione del drawdown non salvata all'avvio: nuovi ingressi negati finche' non "
+                            "risulta aperta su disco")
+
+    def _close_drawdown_session(self) -> None:
+        """RO-DD-09 C: chiude su disco la sessione del drawdown; non riuscita => resta aperta (conferma owner al
+        prossimo avvio). Mai un'eccezione: lo STOP deve comunque arrivare al rilascio del lock."""
+        try:
+            chiusa = RuntimeController._hard_stop(self).close_session()
+        except Exception:
+            logger.exception("D-1: chiusura della sessione del drawdown fallita")
+            chiusa = False
+        if not chiusa:
+            logger.critical("D-1: sessione non chiusa su disco (picco non durevole): il prossimo avvio chiedera' la "
+                            "conferma owner della baseline")
+
     def _stop_serialized(self) -> dict:
         # Il runtime smette di essere attivo PRIMA di smontare i servizi
         # (#461 PR04): la disconnessione di Telegram puo' durare secondi, e un
@@ -3490,11 +3510,12 @@ class RuntimeController:
                 # #461 PR29-c: lock rilasciato solo dopo uno smontaggio riuscito di tutti i servizi (Sol su ad315ca);
                 # uno STOP successivo riuscito lo rilascia.
                 self._instance_teardown_pending = not smontato
+                if smontato:
+                    # RO-DD-09 C: STOP pulito => sessione chiusa su disco solo se il picco e' durevole, PRIMA di
+                    # rilasciare il lock di istanza (Sol su dc2f5f25): dopo, un nuovo processo potrebbe aver gia'
+                    # aperto la propria sessione, che questa chiusura sovrascriverebbe con un picco vecchio.
+                    self._close_drawdown_session()
                 self._release_runtime_instance_lock_if_stopped()
-        # RO-DD-09 C: STOP pulito => sessione chiusa su disco solo se il picco e' durevole.
-        if not RuntimeController._hard_stop(self).close_session():
-            logger.critical("D-1: sessione non chiusa su disco (picco non durevole): il prossimo avvio chiedera' la "
-                            "conferma owner della baseline")
         status = self.get_status()
         self.bus.publish("RUNTIME_STOPPED", status)
         return {
@@ -4411,6 +4432,11 @@ class RuntimeController:
         aperta sul mercato/evento dai tavoli, drawdown assoluto. Nessun cap configurato => "" (nessun limite
         arbitrario). Ordine non valutabile (lato, quota, mercato, evento) con un cap attivo => rifiuto.
         """
+        # RO-DD-08 / RO-DD-09 C (Codex/Grok/Claude D su dc2f5f25): picco non persistito o baseline non confermata dopo
+        # un riavvio non pulito negano anche bet manuale e Dutching, con o senza cap configurati, come i segnali.
+        persist_block = RuntimeController._drawdown_persist_block_reason(self)
+        if persist_block:
+            return persist_block
         cfg = self.config
         order_cap = self._configured_optional(cfg, "max_order_exposure")
         market_cap = self._configured_optional(cfg, "max_market_exposure")
@@ -6644,23 +6670,25 @@ class RuntimeController:
             return False
         cassa = getattr(self.risk_desk, "cash_equity_current", None)
         if cassa is not None:
-            # D-1: ogni cassa verificata alza (mai abbassa) il picco persistente dell'hard-stop e, con il limite
-            # configurato, ne verifica subito il superamento: blocco persistente e LOCKDOWN senza attendere il
-            # segnale successivo (contratto owner PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109).
-            stop = RuntimeController._hard_stop(self)
-            if stop.evaluate(self._configured_optional(self.config, "max_drawdown_abs"), cassa,
-                             pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct")):
-                # Il LOCKDOWN (che legge lo stato) si applica dal chiamante DOPO il lock della lettura del conto:
-                # qui siamo dentro `_account_state_lock` (non rientrante).
-                self._pending_drawdown_lockdown = (f"drawdown_hard_stop_triggered:"
-                                                   f"{stop.snapshot()['breach'].get('kind')}:"
-                                                   f"{float(stop.loss(cassa)):.2f}€")
+            self._evaluate_drawdown_hard_stop(cassa)
         motivo = str(getattr(self.risk_desk, "cash_equity_reason", "") or "")
         if motivo and motivo != getattr(self, "_cash_warning_reason", ""):
             # Una volta per motivo, non a ogni lettura di stato (la GUI legge i fondi periodicamente).
             logger.warning("Cassa non verificata (%s): nuove entrate bloccate", motivo)
         self._cash_warning_reason = motivo
         return True
+
+    def _evaluate_drawdown_hard_stop(self, cassa: Any) -> None:
+        """D-1: ogni cassa verificata alza (mai abbassa) il picco persistente dell'hard-stop e, con il limite
+        configurato, ne verifica subito il superamento: blocco persistente e LOCKDOWN senza attendere il segnale
+        successivo (contratto owner PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109). Chiamata dentro
+        `_account_state_lock` (non rientrante): il LOCKDOWN, che legge lo stato, lo applica il chiamante dopo."""
+        stop = RuntimeController._hard_stop(self)
+        if stop.evaluate(self._configured_optional(self.config, "max_drawdown_abs"), cassa,
+                         pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct")):
+            self._pending_drawdown_lockdown = (f"drawdown_hard_stop_triggered:"
+                                               f"{stop.snapshot()['breach'].get('kind')}:"
+                                               f"{float(stop.loss(cassa)):.2f}€")
 
     def _read_funds_for_entry(self) -> dict:
         """#461 PR28-e: lettura fresca del conto per il gate fondi di una nuova entrata, da eseguire FUORI dal
@@ -6823,6 +6851,16 @@ class RuntimeController:
                 # Nessun allineamento del bankroll: la lettura e' valida ma non dice che il capitale e' perso. La
                 # cassa registrata pero' non vale piu' (PFC-008): motivo esplicito, il MM non usa la cassa vecchia.
                 applied = self.risk_desk.sync_funds_reading(None, None, None, reason=state, read_at=read_at)
+                if applied:
+                    # Sol e Codex su dc2f5f25: disponibile 0 con lettura valida. La cassa verificata (disponibile +
+                    # impegnato, PFC-008) entra comunque nell'hard-stop: con impegnato e' la cassa di questa lettura,
+                    # senza e' 0 (perdita totale, non dato mancante). Bankroll e cassa del desk restano come sopra
+                    # (ingressi negati), ma il superamento resta memorizzato anche dopo una ricarica.
+                    verifica = self._cash_equity_verification(funds)
+                    if verifica["ok"]:
+                        self._evaluate_drawdown_hard_stop(verifica["cash"])
+                    elif verifica["reason"] == "CASH_NOT_POSITIVE":
+                        self._evaluate_drawdown_hard_stop(0.0)
             if applied:
                 self._account_state = state
                 self._account_state_source = str(source)

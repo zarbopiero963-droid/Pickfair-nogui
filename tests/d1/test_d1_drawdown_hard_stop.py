@@ -167,7 +167,7 @@ def test_d1_peak_not_saved_fails_closed_then_recovers():
     assert json.loads(db.settings[STATE_KEY])["peak"] == "100.0"
 
 
-@pytest.mark.parametrize("cash", [None, 0, -1, float("nan"), float("inf"), True, "x"])
+@pytest.mark.parametrize("cash", [None, -1, float("nan"), float("inf"), True, "x"])
 def test_d1_unverified_cash_fails_closed(cash):
     stop = DrawdownHardStop(_Db())
     stop.observe(100.0)
@@ -652,5 +652,197 @@ def test_dd09c_start_opens_and_stop_closes_the_session_in_the_runtime():
     from core.runtime_controller import RuntimeController
     start_src = inspect.getsource(RuntimeController._start_with_instance_lock)
     stop_src = inspect.getsource(RuntimeController._stop_serialized)
-    assert "open_session()" in start_src and start_src.index("_applica_fondi_avvio") < start_src.index("open_session()")
-    assert "close_session()" in stop_src
+    assert "_open_drawdown_session()" in start_src
+    assert start_src.index("_applica_fondi_avvio") < start_src.index("_open_drawdown_session()")
+    assert "_close_drawdown_session()" in stop_src
+
+
+# ----------------------------------------------------------------------------------- Sol su dc2f5f25 (PR-03a)
+def test_d1_zero_cash_memorizes_the_total_loss_and_survives_a_recharge():
+    """Sol su dc2f5f25: una cassa verificata pari a 0 e' una perdita totale, non un dato mancante. Va memorizzata
+    (anche con soglia 100 %), e dopo una ricarica l'ingresso resta negato finche' l'owner non sblocca."""
+    stop = DrawdownHardStop(_Db())
+    stop.observe(100.0)
+    assert stop.reason(50.0, 0) == REASON_ACTIVE and stop.breached
+    assert stop.snapshot()["breach"]["loss"] == "100.0" and stop.snapshot()["peak"] == 100.0
+    assert stop.reason(50.0, 200.0) == REASON_ACTIVE           # ricarica: resta bloccato
+    pct = DrawdownHardStop(_Db())
+    pct.observe(100.0)
+    assert pct.evaluate(None, 0.0, pct_cap_raw=100.0) is True  # soglia 100 % ammessa: perdita totale memorizzata
+    assert pct.reason(None, 200.0, pct_cap_raw=100.0) == REASON_PCT_ACTIVE
+
+
+def test_d1_zero_cash_below_the_cap_still_denies_entries():
+    """Cassa 0 senza superamento (nessun picco ancora): nessun ingresso, nessun picco inventato."""
+    stop = DrawdownHardStop(_Db())
+    assert stop.reason(50.0, 0) == REASON_CASH_UNVERIFIED
+    assert stop.snapshot()["peak"] is None and not stop.breached
+
+
+def test_d1_zero_cash_reading_in_the_runtime_memorizes_the_breach(tmp_path):
+    """Catena reale: il conto letto a 0 (disponibile 0, nessuna esposizione) e' coerente ma non e' una cassa
+    utilizzabile; il superamento si memorizza comunque e la ricarica successiva non riapre gli ingressi."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    fondi = {"available": 0.0, "exposure": 0.0, "ok": True}
+    c.rc.betfair_service.get_account_funds = lambda: dict(fondi)
+    c.rc._apply_funds_reading(dict(fondi), source="test")
+    assert c.rc._hard_stop().breached
+    _lettura(c, 200.0)
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _bloccato_da_hard_stop(c)
+
+
+def _ordine_stop(c, monkeypatch, *, disconnect_fails=False):
+    calls = []
+    stop = c.rc._hard_stop()
+    monkeypatch.setattr(stop, "close_session", lambda: calls.append("close_session") or True)
+    monkeypatch.setattr(c.rc, "_release_runtime_instance_lock_if_stopped",
+                        lambda: calls.append("release_lock"))
+    def _disconnect():
+        if disconnect_fails:
+            raise RuntimeError("disconnect fallita")
+    monkeypatch.setattr(c.rc.betfair_service, "disconnect", _disconnect, raising=False)
+    return calls
+
+
+def test_dd09c_stop_closes_the_session_before_releasing_the_instance_lock(tmp_path, monkeypatch):
+    """Sol su dc2f5f25: chiusa dopo il rilascio del lock, la sessione del vecchio processo sovrascriverebbe quella
+    (e il picco) del nuovo processo appena avviato: deve chiudersi mentre il lock e' ancora tenuto."""
+    c = _catena(tmp_path)
+    calls = _ordine_stop(c, monkeypatch)
+    c.rc._stop_serialized()
+    assert calls == ["close_session", "release_lock"]
+
+
+def test_dd09c_failed_teardown_leaves_the_session_open(tmp_path, monkeypatch):
+    """Smontaggio fallito: STOP non pulito, sessione lasciata aperta (il prossimo avvio chiede la conferma owner)."""
+    c = _catena(tmp_path)
+    calls = _ordine_stop(c, monkeypatch, disconnect_fails=True)
+    with pytest.raises(RuntimeError):
+        c.rc._stop_serialized()
+    assert "close_session" not in calls and calls == ["release_lock"]
+
+
+_ORDINE_MANUALE = {"side": "BACK", "price": 2.0, "stake": 0.5, "market_id": "1.234", "selection_id": 11,
+                   "event_name": "A v B"}
+
+
+@pytest.mark.parametrize("cap", [None, 10.0])
+def test_dd09c_manual_and_dutching_path_applies_the_baseline_gate(tmp_path, cap):
+    """Codex/Grok/Claude D su dc2f5f25 (D-631-03): dopo un riavvio non pulito il segnale e' negato, ma il percorso
+    manuale/Dutching (`absolute_cap_reason_for_orders`) usciva prima (senza cap) o ignorava la baseline (con cap)."""
+    c = _catena(tmp_path, **({} if cap is None else {"max_drawdown_abs": cap}))
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    assert c.rc.absolute_cap_reason_for_orders([dict(_ORDINE_MANUALE)]) == "drawdown_baseline_non_verificata"
+
+
+@pytest.mark.parametrize("cap", [None, 10.0])
+def test_ro_dd_08_manual_and_dutching_path_applies_the_unsaved_peak_gate(tmp_path, cap):
+    c = _catena(tmp_path, **({} if cap is None else {"max_drawdown_abs": cap}))
+    _lettura(c, 100.0)
+    real_save = c.rc.db.save_settings
+
+    def failing_save(values):
+        if STATE_KEY in values:
+            raise OSError("disco pieno")
+        return real_save(values)
+
+    c.rc.db.save_settings = failing_save
+    _lettura(c, 120.0)
+    assert c.rc.absolute_cap_reason_for_orders([dict(_ORDINE_MANUALE)]) == "drawdown_picco_non_persistito"
+    c.rc.db.save_settings = real_save
+    assert c.rc.absolute_cap_reason_for_orders([dict(_ORDINE_MANUALE)]) == ""
+
+
+def test_d1_zero_available_with_committed_cash_is_evaluated(tmp_path):
+    """Codex su dc2f5f25: disponibile 0 e impegnato 85 (cassa verificata 85) dopo un picco 100: la perdita 15 supera il
+    limite 10 e si memorizza; il ritorno del disponibile a 95 non riapre gli ingressi."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    fondi = {"available": 0.0, "exposure": -85.0, "ok": True}
+    c.rc.betfair_service.get_account_funds = lambda: dict(fondi)
+    c.rc._apply_funds_reading(dict(fondi), source="test")
+    stop = c.rc._hard_stop()
+    assert stop.breached and stop.snapshot()["breach"]["loss"] == "15.0"
+    _lettura(c, 95.0)
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _bloccato_da_hard_stop(c)
+
+
+def test_d1_zero_available_with_committed_cash_below_the_cap_does_not_breach(tmp_path):
+    """Impegnato non e' perdita: disponibile 0 con 95 impegnati dopo picco 100 => perdita 5, nessun superamento."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    fondi = {"available": 0.0, "exposure": -95.0, "ok": True}
+    c.rc.betfair_service.get_account_funds = lambda: dict(fondi)
+    c.rc._apply_funds_reading(dict(fondi), source="test")
+    assert not c.rc._hard_stop().breached and c.rc._hard_stop().snapshot()["peak"] == 100.0
+
+
+def test_ro_dd_09_stale_marker_never_overrides_a_newer_owner_clearance(tmp_path):
+    """Codex/Grok/Claude D su dc2f5f25 (D-631-05): superamento scritto nel marker (DB giu'), poi sblocco owner salvato
+    nel DB con seq piu' alto ma marker non rimosso (file bloccato su Windows). Al riavvio lo sblocco vale; il marker
+    vecchio non resuscita il superamento ne' riapre la sessione."""
+    db_path = str(tmp_path / "pf.db")
+    db = _Db()
+    db.db_path = db_path
+    stop = DrawdownHardStop(db)
+    stop.observe(100.0)
+    db.fail_save = True
+    stop.evaluate(10.0, 80.0)                                # superamento -> solo nel marker
+    marker = db_path + ".drawdown_peak_pending.json"
+    assert os.path.exists(marker) and json.loads(open(marker).read())["breached"] is True
+    db.fail_save = False
+    def _bloccato(path):
+        raise OSError("file bloccato")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(os, "remove", _bloccato)
+        assert stop.owner_clear_breach(authorization="PF-OWNER-X", reason="verificato", operation_id="op-1",
+                                       confirm=True, checks={"cash": "ok"})
+    assert os.path.exists(marker)                            # marker vecchio rimasto
+    riavviato = DrawdownHardStop(db)
+    riavviato.restore()
+    assert not riavviato.breached and riavviato.reason(10.0, 95.0) == ""
+    assert riavviato.baseline_verified
+
+
+def test_ro_dd_09_newer_marker_still_wins_over_an_older_db_record(tmp_path):
+    """Il marker piu' recente del DB (DB giu' al momento del superamento) resta autorevole al riavvio."""
+    db = _Db()
+    db.db_path = str(tmp_path / "pf.db")
+    stop = DrawdownHardStop(db)
+    stop.observe(100.0)
+    db.fail_save = True
+    stop.evaluate(10.0, 80.0)
+    db.fail_save = False
+    riavviato = DrawdownHardStop(db)
+    riavviato.restore()
+    assert riavviato.breached and riavviato.reason(10.0, 100.0) == REASON_ACTIVE
+
+
+def test_dd09c_start_with_unsaved_session_blocks_entries(tmp_path, caplog):
+    """Grok/Claude D su dc2f5f25 (D-631-04): `open_session()` non salvata all'avvio non e' ignorata: log critico e
+    nessun ingresso finche' la sessione aperta non e' durevole (RO-DD-08)."""
+    c = _catena(tmp_path)
+    _lettura(c, 100.0)
+    real_save = c.rc.db.save_settings
+
+    def failing_save(values):
+        if STATE_KEY in values:
+            raise OSError("disco pieno")
+        return real_save(values)
+
+    c.rc.db.save_settings = failing_save
+    with caplog.at_level("CRITICAL"):
+        c.rc._open_drawdown_session()
+    assert any("sessione" in r.getMessage() and r.levelname == "CRITICAL" for r in caplog.records)
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0 and _rifiuti(c)[-1] == "drawdown_picco_non_persistito"
+    c.rc.db.save_settings = real_save
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK", market_id="1.999"))
+    assert json.loads(c.rc.db.get_settings()[STATE_KEY])["session_open"] is True
+    assert _ordini(c) == 1, _rifiuti(c)

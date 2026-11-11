@@ -2156,8 +2156,8 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "                self._instance_teardown_pending = not smontato\n                self._release_runtime_instance_lock_if_stopped()",
-      "mutated": "                self._instance_teardown_pending = not smontato",
+      "original": "                self._release_runtime_instance_lock_if_stopped()\n        status = self.get_status()",
+      "mutated": "        status = self.get_status()",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
@@ -9760,6 +9760,78 @@
         "tests/blackbox/test_bb1g_gates.py"
       ],
       "rationale": "Sol su #630 (b9530e72): un cancel accettato dopo end_session e bufferizzato da un guasto transitorio andrebbe perso alla chiusura anche a registro guarito."
+    },
+    {
+      "id": "d1_zero_cash_not_a_loss",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "    return amount if amount >= 0 else None\n",
+      "mutated": "    return amount if amount > 0 else None\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su dc2f5f25: una cassa verificata a 0 verrebbe scartata e la perdita totale non si memorizzerebbe: dopo una ricarica gli ingressi riprenderebbero senza sblocco owner."
+    },
+    {
+      "id": "d1_empty_account_skips_hard_stop",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    elif verifica[\"reason\"] == \"CASH_NOT_POSITIVE\":\n                        self._evaluate_drawdown_hard_stop(0.0)\n",
+      "mutated": "                    elif False:\n                        self._evaluate_drawdown_hard_stop(0.0)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su dc2f5f25: il conto letto vuoto (disponibile 0, impegnato 0) non arriverebbe all'hard-stop: perdita totale mai memorizzata."
+    },
+    {
+      "id": "d1_session_closed_after_lock_release",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    self._close_drawdown_session()\n                self._release_runtime_instance_lock_if_stopped()\n",
+      "mutated": "                    pass\n                self._release_runtime_instance_lock_if_stopped()\n                self._close_drawdown_session()\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su dc2f5f25: chiusa dopo il rilascio del lock di istanza, la sessione del vecchio processo sovrascriverebbe quella del nuovo."
+    },
+    {
+      "id": "d1_zero_available_committed_skips_hard_stop",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    if verifica[\"ok\"]:\n                        self._evaluate_drawdown_hard_stop(verifica[\"cash\"])\n",
+      "mutated": "                    if False:\n                        self._evaluate_drawdown_hard_stop(verifica[\"cash\"])\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su dc2f5f25: disponibile 0 con impegnato (cassa verificata 85 dopo picco 100) non arriverebbe all'hard-stop: perdita 15 mai memorizzata."
+    },
+    {
+      "id": "d1_controller_entries_skip_persist_gate",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        persist_block = RuntimeController._drawdown_persist_block_reason(self)\n        if persist_block:\n            return persist_block\n",
+      "mutated": "        persist_block = \"\"\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex/Grok/Claude D su dc2f5f25: bet manuale e Dutching passerebbero con picco non persistito o baseline non confermata dopo un crash."
+    },
+    {
+      "id": "d1_stale_marker_overrides_db",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            records = [r for r in records if r[\"seq\"] == latest]\n",
+      "mutated": "            records = records\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex/Grok/Claude D su dc2f5f25: un marker vecchio non rimosso resusciterebbe un superamento gia' sbloccato dall'owner."
     }
   ]
 }

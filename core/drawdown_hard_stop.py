@@ -103,6 +103,16 @@ def _cash(value: Any) -> Optional[Decimal]:
     return amount if amount > 0 else None
 
 
+def _observed_cash(value: Any) -> Optional[Decimal]:
+    """Cassa verificata ai fini della PERDITA: anche 0 (perdita totale, Sol su dc2f5f25). None se assente, non
+    finita o negativa. Il picco usa invece ``_cash`` (> 0): una cassa nulla non e' mai un picco."""
+    try:
+        amount = validators.money_decimal(value)
+    except ValueError:
+        return None
+    return amount if amount >= 0 else None
+
+
 class DrawdownHardStop:
     """Picco di cassa persistente e decisione dell'hard-stop ``max_drawdown_abs``."""
 
@@ -150,7 +160,14 @@ class DrawdownHardStop:
             # Mai sotto un picco gia' osservato in questo processo (START ripetuto nello stesso processo).
             if peaks and (self.peak is None or max(peaks) > self.peak):
                 self.peak = max(peaks)
-            self.baseline = dict(max(records, key=lambda r: r["seq"])["baseline"])
+            # Codex/Grok/Claude D su dc2f5f25: sessione, baseline e superamento li decide il record piu' recente
+            # (`seq`). Un marker rimasto da un guasto ormai rientrato (rimozione fallita, file bloccato su Windows) ha
+            # un `seq` inferiore al DB e non annulla uno sblocco o una conferma owner salvati dopo; a pari `seq` vale
+            # l'unione (regola piu' severa). Il picco resta il massimo di tutti i record.
+            latest = max(r["seq"] for r in records)
+            stale = [r for r in records if r["seq"] < latest]
+            records = [r for r in records if r["seq"] == latest]
+            self.baseline = dict(records[0]["baseline"])
             # RO-DD-09 C: sessione rimasta aperta (crash, stop non pulito, picco mai salvato) o baseline gia' non
             # verificata => il picco salvato potrebbe non essere il massimo: nessuna presunzione, conferma owner.
             if any(r["session_open"] for r in records) or not all(r["baseline_verified"] for r in records):
@@ -165,6 +182,8 @@ class DrawdownHardStop:
                 self.breach = dict(breached[0]["breach"])
             if any(r.get("from_marker") for r in records):
                 self._persist_locked()                   # RO-DD-09: il picco del marker torna nel DB
+            elif any(r.get("from_marker") for r in stale):
+                self._remove_stale_marker()
 
     def _persist_locked(self) -> bool:
         saver = getattr(self._db, "save_settings", None)
@@ -192,12 +211,18 @@ class DrawdownHardStop:
             return False
         self.seq = seq
         self.persist_failed = False
+        self._remove_stale_marker()
+        return True
+
+    def _remove_stale_marker(self) -> None:
+        marker = _marker_path(self._db)
         try:
             if marker and os.path.exists(marker):
                 os.remove(marker)
         except OSError:
-            logger.warning("D-1: marker del picco non rimosso (innocuo: il DB ha lo stesso picco o maggiore)")
-        return True
+            # Non annulla nulla: al riavvio il marker ha un `seq` inferiore al DB e non decide sessione, baseline ne'
+            # superamento (vale solo il suo picco, mai superiore a quello gia' salvato). Si ritenta al prossimo restore.
+            logger.warning("D-1: marker del picco non rimosso: superato dal DB (seq piu' alto), si ritenta al riavvio")
 
     # ------------------------------------------------------------ sessione e baseline (RO-DD-09 C)
     def open_session(self) -> bool:
@@ -369,8 +394,8 @@ class DrawdownHardStop:
 
     # ------------------------------------------------------------ decisione
     def loss(self, cash_equity: Any) -> Optional[Decimal]:
-        """Perdita dal picco (Decimal, >= 0); None se cassa o picco non valutabili."""
-        cash = _cash(cash_equity)
+        """Perdita dal picco (Decimal, >= 0); None se cassa o picco non valutabili. Cassa 0 = perdita totale."""
+        cash = _observed_cash(cash_equity)
         with self._lock:
             if cash is None or self.peak is None:
                 return None
@@ -416,7 +441,7 @@ class DrawdownHardStop:
             pct = validators.finite_number(pct_cap_raw)
             if pct is None or pct <= 0 or pct > 100:
                 return REASON_PCT_INVALID
-        if _cash(cash_equity) is None:
+        if _observed_cash(cash_equity) is None:
             return REASON_CASH_UNVERIFIED
         self.evaluate(cap_raw, cash_equity, pct_cap_raw=pct_cap_raw)
         with self._lock:
@@ -426,6 +451,8 @@ class DrawdownHardStop:
                 return REASON_PCT_ACTIVE if self.breach.get("kind") == KIND_PCT else REASON_ACTIVE
             if self.persist_failed:
                 return REASON_NOT_PERSISTED
+        if _cash(cash_equity) is None:
+            return REASON_CASH_UNVERIFIED                # cassa 0 sotto il limite: valutata, ma nessun ingresso
         return ""
 
     def snapshot(self) -> dict:
