@@ -74,7 +74,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   il cap 60 (campagna Grok 5 tavoli, #586 c.6747305390). Review su c715c59e (Sol, Claude D; cicli 11-12 autorizzati da PF-OWNER-PR631-EXTRA-2-CYCLES-20261111): una lettura
   del conto arrivata in ritardo alza comunque il picco e il superamento si rivaluta con l'ultima cassa (prima 130
   arrivato dopo 115 non bloccava); le verifiche delle procedure owner e la registrazione di un ordine AMBIGUOUS sono
-  nella stessa sezione critica della transizione. Review su e98e84c7 (Sol): un marker superato con picco piu'
+  nella stessa sezione critica della transizione; la lettura tardiva scartata dal desk arriva comunque all'hard-stop e
+  una lettura precedente a un ribasamento owner non rialza mai il picco (Sol su 9209f0d8). Review su e98e84c7 (Sol): un marker superato con picco piu'
   alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
   resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale

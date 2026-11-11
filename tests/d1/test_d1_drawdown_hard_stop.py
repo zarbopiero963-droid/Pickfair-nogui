@@ -2153,3 +2153,104 @@ def test_an_order_cannot_turn_ambiguous_in_the_middle_of_an_owner_transition(tmp
     assert c.rc._hard_stop().breached
     assert c.rc.owner_unlock_drawdown_hard_stop(**dict(_OWNER, operation_id="PF-UNLOCK-0002"))["reason"] == \
         "ordini_incerti_presenti"
+
+
+# ------------------------------------------------- Sol su 9209f0d8 (D-631-08, stessa classe): ciclo 12
+def _fondi(available, committed=0.0):
+    return {"available": available, "exposure": -committed, "ok": True}
+
+
+def test_late_desk_reading_still_raises_the_peak_through_the_real_funds_contract(tmp_path):
+    """Sol su 9209f0d8: il percorso reale (`_apply_funds_reading` -> RiskDesk) scartava la lettura tardiva prima di
+    arrivare all'hard-stop. 100, poi 115 (t3), poi 130 iniziata a t2 e arrivata dopo: il desk NON cambia (bankroll e
+    cassa restano 115), ma il picco e' 130 e la perdita di 15 con limite 10 blocca."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    base = time.monotonic() + 100.0
+    assert c.rc._apply_funds_reading(_fondi(115.0), source="test", read_at=base + 3)["applied"]
+    esito = c.rc._apply_funds_reading(_fondi(130.0), source="test", read_at=base + 2)
+    assert esito["applied"] is False                          # il desk non torna indietro
+    assert c.rc.risk_desk.cash_equity_current == 115.0
+    stop = c.rc._hard_stop()
+    assert stop.snapshot()["peak"] == 130.0 and stop.breached
+    assert c.rc._drawdown_last_cash == 115.0
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0 and _bloccato_da_hard_stop(c), _rifiuti(c)
+
+
+def test_late_desk_reading_with_a_lower_cash_changes_nothing(tmp_path):
+    """Nessun falso blocco sul percorso reale: 130 (t3) poi 100 tardiva (t2)."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    base = time.monotonic() + 100.0
+    assert c.rc._apply_funds_reading(_fondi(130.0), source="test", read_at=base + 3)["applied"]
+    assert c.rc._apply_funds_reading(_fondi(100.0), source="test", read_at=base + 2)["applied"] is False
+    stop = c.rc._hard_stop()
+    assert stop.snapshot()["peak"] == 130.0 and not stop.breached and c.rc.risk_desk.cash_equity_current == 130.0
+
+
+def test_late_desk_reading_with_zero_available_and_committed_cash_raises_the_peak(tmp_path):
+    """Stesso percorso con disponibile 0: la cassa verificata e' l'impegnato (PFC-008) e resta un massimo osservato."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    base = time.monotonic() + 100.0
+    assert c.rc._apply_funds_reading(_fondi(115.0), source="test", read_at=base + 3)["applied"]
+    assert c.rc._apply_funds_reading(_fondi(0.0, committed=130.0), source="test", read_at=base + 2)["applied"] is False
+    stop = c.rc._hard_stop()
+    assert stop.snapshot()["peak"] == 130.0 and stop.breached
+
+
+def test_late_desk_reading_with_zero_cash_is_not_a_loss(tmp_path):
+    """Disponibile 0 senza impegnato, arrivata tardi: non e' un massimo e non e' la cassa corrente => nessun blocco."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    base = time.monotonic() + 100.0
+    assert c.rc._apply_funds_reading(_fondi(101.0), source="test", read_at=base + 3)["applied"]
+    assert c.rc._apply_funds_reading(_fondi(0.0), source="test", read_at=base + 2)["applied"] is False
+    stop = c.rc._hard_stop()
+    assert stop.snapshot()["peak"] == 101.0 and not stop.breached
+
+
+def test_reading_started_before_an_owner_rebase_is_ignored_even_when_it_is_the_newest(tmp_path):
+    """Sol su 9209f0d8: lettura iniziata PRIMA del ribasamento owner ma DOPO l'ultima valutata (non tardiva). Appartiene
+    all'epoca precedente del picco: non lo rialza (130 contro il picco ribasato 85 = falso hard-stop persistente) e
+    non diventa la cassa corrente. La lettura successiva al ribasamento vale normalmente."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._evaluate_drawdown_hard_stop(100.0, read_at=time.monotonic())
+    iniziata = time.monotonic()                               # lettura in volo, non ancora arrivata
+    assert c.rc._hard_stop().owner_rebase_peak(85.0, authorization="PF-OWNER-X", reason="nuova baseline",
+                                               operation_id="op-reb-2", confirm=True)
+    c.rc._evaluate_drawdown_hard_stop(130.0, read_at=iniziata)
+    stop = c.rc._hard_stop()
+    assert stop.snapshot()["peak"] == 85.0 and not stop.breached
+    assert c.rc._drawdown_last_cash == 100.0 and c.rc._drawdown_read_at < iniziata
+    assert getattr(c.rc, "_pending_drawdown_lockdown", None) is None
+    c.rc._evaluate_drawdown_hard_stop(84.0, read_at=time.monotonic())
+    assert stop.snapshot()["peak"] == 85.0 and not stop.breached and c.rc._drawdown_last_cash == 84.0
+    c.rc._evaluate_drawdown_hard_stop(74.0, read_at=time.monotonic())
+    assert stop.breached                                      # 85 - 74 = 11 >= 10: il limite vale dal picco ribasato
+
+
+@pytest.mark.parametrize("cassa, picco, superato, ultima", [(130.0, 130.0, False, 130.0), (80.0, 100.0, True, 80.0)])
+def test_reading_rejected_by_the_desk_but_newest_for_the_hard_stop_uses_its_own_clock(tmp_path, cassa, picco, superato,
+                                                                                      ultima):
+    """L'hard-stop decide col PROPRIO istante, non con quello del desk. Il desk ha applicato a t5 una lettura non
+    verificabile (nessuna cassa: l'hard-stop non l'ha valutata, il suo ultimo istante resta t1). Una lettura verificata
+    di t3 arriva dopo: per il desk e' tardiva (scartata), per l'hard-stop e' la piu' recente. Quindi e' la sua cassa
+    corrente: 130 dopo 100 NON e' una perdita (nessun falso blocco contro la cassa piu' vecchia), 80 dopo 100 lo e'."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    base = time.monotonic() + 100.0
+    assert c.rc._apply_funds_reading(_fondi(100.0), source="test", read_at=base + 1)["applied"]
+    assert c.rc._apply_funds_reading({"error": "timeout"}, source="test", read_at=base + 5)["applied"]
+    assert c.rc._apply_funds_reading(_fondi(cassa), source="test", read_at=base + 3)["applied"] is False
+    stop = c.rc._hard_stop()
+    assert stop.snapshot()["peak"] == picco and stop.breached is superato
+    assert c.rc._drawdown_last_cash == ultima and c.rc._drawdown_read_at == base + 3

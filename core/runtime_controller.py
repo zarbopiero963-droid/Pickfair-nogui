@@ -6727,6 +6727,10 @@ class RuntimeController:
                                                       reason=verifica["reason"], committed_exposure=committed,
                                                       read_at=read_at)
         if not applicata:
+            # D-631-08 (Sol su 9209f0d8): il desk scarta la lettura arrivata tardi (bankroll e cassa invariati), ma la
+            # sua cassa verificata resta un massimo osservato: l'hard-stop la riceve e decide col proprio istante.
+            if verifica["ok"]:
+                self._evaluate_drawdown_hard_stop(verifica["cash"], read_at)
             return False
         cassa = getattr(self.risk_desk, "cash_equity_current", None)
         if cassa is not None:
@@ -6794,6 +6798,12 @@ class RuntimeController:
             # non e' la cassa corrente e non misura una perdita (100 arrivato dopo 130 sarebbe una perdita falsa di 30).
             started = validators.finite_number(read_at)
             if started is not None:
+                # D-631-08 (Sol su 9209f0d8): una lettura iniziata prima dell'ultimo ribasamento owner appartiene
+                # all'epoca precedente del picco, tardiva o no: non lo rialza e non diventa la cassa corrente
+                # (130 contro il picco ribasato 85 sarebbe un falso hard-stop persistente).
+                rebased_at = RuntimeController._hard_stop(self).rebased_at
+                if rebased_at is not None and started < rebased_at:
+                    return
                 last = getattr(self, "_drawdown_read_at", None)
                 if last is not None and started < last:
                     self._observe_late_drawdown_reading(cassa, started)
@@ -6813,12 +6823,8 @@ class RuntimeController:
         """D-631-08 (Sol/Claude D su c715c59e): lettura verificata arrivata dopo una piu' recente. Resta un massimo
         osservato davvero: alza il picco persistente (mai la cassa corrente ne' l'istante dell'ultima lettura) e, se
         lo alza, il superamento si rivaluta contro l'ULTIMA cassa valutata (130 tardivo dopo 115 = perdita 15).
-        Una lettura iniziata prima dell'ultimo ribasamento owner appartiene all'epoca precedente: ignorata.
-        Chiamata dentro `_drawdown_eval_lock`, a proprieta' gia' verificata."""
+        Chiamata dentro `_drawdown_eval_lock`, a proprieta' gia' verificata e dopo il controllo del ribasamento."""
         stop = RuntimeController._hard_stop(self)
-        rebased_at = stop.rebased_at
-        if rebased_at is not None and started < rebased_at:
-            return
         before = stop.snapshot()["peak"]
         stop.observe(cassa)
         if stop.snapshot()["peak"] == before:
@@ -7021,16 +7027,17 @@ class RuntimeController:
                 # Nessun allineamento del bankroll: la lettura e' valida ma non dice che il capitale e' perso. La
                 # cassa registrata pero' non vale piu' (PFC-008): motivo esplicito, il MM non usa la cassa vecchia.
                 applied = self.risk_desk.sync_funds_reading(None, None, None, reason=state, read_at=read_at)
-                if applied:
-                    # Sol e Codex su dc2f5f25: disponibile 0 con lettura valida. La cassa verificata (disponibile +
-                    # impegnato, PFC-008) entra comunque nell'hard-stop: con impegnato e' la cassa di questa lettura,
-                    # senza e' 0 (perdita totale, non dato mancante). Bankroll e cassa del desk restano come sopra
-                    # (ingressi negati), ma il superamento resta memorizzato anche dopo una ricarica.
-                    verifica = self._cash_equity_verification(funds)
-                    if verifica["ok"]:
-                        self._evaluate_drawdown_hard_stop(verifica["cash"], read_at)
-                    elif verifica["reason"] == "CASH_NOT_POSITIVE":
-                        self._evaluate_drawdown_hard_stop(0.0, read_at)
+                # Sol e Codex su dc2f5f25: disponibile 0 con lettura valida. La cassa verificata (disponibile +
+                # impegnato, PFC-008) entra comunque nell'hard-stop: con impegnato e' la cassa di questa lettura,
+                # senza e' 0 (perdita totale, non dato mancante). Bankroll e cassa del desk restano come sopra
+                # (ingressi negati), ma il superamento resta memorizzato anche dopo una ricarica.
+                # D-631-08 (Sol su 9209f0d8): vale anche per la lettura che il desk scarta perche' arrivata tardi;
+                # l'hard-stop decide col proprio istante (tardiva = solo massimo osservato, mai cassa corrente).
+                verifica = self._cash_equity_verification(funds)
+                if verifica["ok"]:
+                    self._evaluate_drawdown_hard_stop(verifica["cash"], read_at)
+                elif verifica["reason"] == "CASH_NOT_POSITIVE":
+                    self._evaluate_drawdown_hard_stop(0.0, read_at)
             if applied:
                 self._account_state = state
                 self._account_state_source = str(source)

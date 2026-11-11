@@ -9778,8 +9778,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                    elif verifica[\"reason\"] == \"CASH_NOT_POSITIVE\":\n                        self._evaluate_drawdown_hard_stop(0.0, read_at)\n",
-      "mutated": "                    elif False:\n                        self._evaluate_drawdown_hard_stop(0.0, read_at)\n",
+      "original": "                elif verifica[\"reason\"] == \"CASH_NOT_POSITIVE\":\n                    self._evaluate_drawdown_hard_stop(0.0, read_at)\n",
+      "mutated": "                elif False:\n                    self._evaluate_drawdown_hard_stop(0.0, read_at)\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -9802,8 +9802,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                    if verifica[\"ok\"]:\n                        self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at)\n",
-      "mutated": "                    if False:\n                        self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at)\n",
+      "original": "                if verifica[\"ok\"]:\n                    self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at)\n",
+      "mutated": "                if False:\n                    self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at)\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10258,12 +10258,12 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        if rebased_at is not None and started < rebased_at:",
-      "mutated": "        if False:",
+      "original": "                if rebased_at is not None and started < rebased_at:",
+      "mutated": "                if False:",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "Lettura tardiva precedente a un ribasamento owner rialza il picco ribasato (falso blocco)."
+      "rationale": "Lettura iniziata prima di un ribasamento owner (tardiva o no) rialza il picco ribasato: falso hard-stop."
     },
     {
       "id": "d1_late_peak_not_reevaluated",
@@ -10336,6 +10336,18 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "La conferma della baseline non vede gli ordini incerti presenti al momento della transizione."
+    },
+    {
+      "id": "d1_late_desk_reading_dropped_before_hard_stop",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if verifica[\"ok\"]:\n                self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at)\n            return False",
+      "mutated": "            return False",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "La lettura tardiva scartata dal desk non arriva all'hard-stop: il massimo osservato si perde (Sol su 9209f0d8)."
     }
   ]
 }

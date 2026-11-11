@@ -433,8 +433,11 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   (ingresso o contratto) e arrivata tardi non diventa la cassa corrente e non misura una perdita (Sol su 4a171465:
   100 arrivato dopo 130 non e' una perdita di 30), ma resta un massimo osservato davvero: alza il picco persistente e,
   se lo alza, il superamento si rivaluta contro l'ultima cassa valutata (130 arrivato dopo 115 con limite 10 blocca;
-  D-631-08, Sol/Claude D su c715c59e). Non rialza il picco una lettura iniziata prima dell'ultimo ribasamento owner
-  (`DrawdownHardStop.rebased_at`): appartiene all'epoca precedente; controllo
+  D-631-08, Sol/Claude D su c715c59e). Vale anche sul percorso reale del conto: la lettura che il RiskDesk scarta
+  perche' arrivata tardi (bankroll e cassa del desk invariati) arriva comunque all'hard-stop, che decide col proprio
+  istante (Sol su 9209f0d8). Una lettura iniziata prima dell'ultimo ribasamento owner
+  (`DrawdownHardStop.rebased_at`) appartiene all'epoca precedente del picco: tardiva o no, non lo rialza e non
+  diventa la cassa corrente; controllo
   dell'istante e valutazione sono un'unica sezione critica fra letture d'ingresso e del desk (Sol su 6d4ac43f), e
   nella stessa sezione il gate sceglie la cassa e valuta (Sol su b9cbe0d7), come la misura di DEFENSE/LOCKDOWN
   (Codex su 2a847087). Anche il controllo di proprieta' avviene dentro la sezione critica, e lo STOP toglie la
