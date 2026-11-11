@@ -9868,6 +9868,78 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "Codex su 92155c24: lo START scriverebbe lo stato vecchio costruito prima di diventare proprietario, sovrascrivendo picco e superamento del processo precedente."
+    },
+    {
+      "id": "d1_restore_writes_before_ownership",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if not reconcile:\n                return\n",
+      "mutated": "            pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 58e635e6: la lettura alla costruzione, prima del lock di istanza, migrerebbe il marker nel DB sovrascrivendo un record piu' recente del proprietario attuale."
+    },
+    {
+      "id": "d1_entry_reading_skips_hard_stop",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        self._evaluate_entry_reading_drawdown(funds)\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 58e635e6: con la cassa del desk gia' verificata la lettura fresca d'ingresso non arriverebbe all'hard-stop: ordine al broker oltre il limite."
+    },
+    {
+      "id": "d1_entry_funds_gate_ignores_breach",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if stop is not None and stop.breached:              # memorizzato anche dalla lettura d'ingresso (Codex)\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 58e635e6: il gate fondi del percorso manuale/Dutching ignorerebbe un superamento memorizzato dalla sua stessa lettura."
+    },
+    {
+      "id": "d1_stop_closes_unowned_session",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if not getattr(self, \"_drawdown_session_owned\", False):\n            return\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 58e635e6: un controller mai avviato o un secondo STOP chiuderebbero la sessione del proprietario attuale, cancellandone picco e superamento."
+    },
+    {
+      "id": "d1_baseline_never_refreshed",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            else:\n                self.baseline_verified = True\n",
+      "mutated": "            else:\n                pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 58e635e6: una baseline letta durante la sessione di un altro processo resterebbe non verificata dopo il suo STOP pulito (blocco permanente senza crash)."
+    },
+    {
+      "id": "d1_entry_reading_raises_peak",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if observe:\n            self.observe(cash_equity)\n",
+      "mutated": "        self.observe(cash_equity)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "La lettura d'ingresso alzerebbe e scriverebbe il picco: un processo senza autorita' o un DB non scrivibile verrebbero toccati a ogni ingresso."
     }
   ]
 }

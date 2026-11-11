@@ -133,10 +133,12 @@ class DrawdownHardStop:
         self.baseline: dict = {}
 
     # ------------------------------------------------------------ persistenza
-    def restore(self) -> None:
+    def restore(self, *, reconcile: bool = True) -> None:
         """Rilegge lo stato salvato dal DB e dal marker RO-DD-09 (scritto quando il DB non salvava): vale il picco
-        piu' alto, un superamento in uno dei due vale. Illeggibile => ``unreadable`` (fail-closed). Un marker
-        ricostruito viene riportato nel DB appena possibile."""
+        piu' alto, un superamento in uno dei due vale. Illeggibile => ``unreadable`` (fail-closed). Con ``reconcile``
+        il marker piu' recente viene riportato nel DB e quello superato rimosso; ``reconcile=False`` (Sol su 58e635e6)
+        e' la sola lettura usata prima di avere la proprieta' del runtime: nessuna scrittura, che sovrascriverebbe un
+        record piu' recente del proprietario attuale. La riconciliazione si fa allo START, sotto il lock di istanza."""
         with self._lock:
             self.unreadable = False
             records = []
@@ -170,16 +172,22 @@ class DrawdownHardStop:
             self.baseline = dict(records[0]["baseline"])
             # RO-DD-09 C: sessione rimasta aperta (crash, stop non pulito, picco mai salvato) o baseline gia' non
             # verificata => il picco salvato potrebbe non essere il massimo: nessuna presunzione, conferma owner.
+            # Codex su 58e635e6: la verifica della baseline segue il record durevole piu' recente, anche verso True:
+            # letta mentre un altro processo aveva la sessione aperta, dopo il suo STOP pulito non resta falsa.
             if any(r["session_open"] for r in records) or not all(r["baseline_verified"] for r in records):
                 if self.baseline_verified:
                     logger.critical("D-1: chiusura precedente non pulita: baseline del drawdown NON verificata, "
                                     "nuovi ingressi negati fino alla conferma owner")
                 self.baseline_verified = False
+            else:
+                self.baseline_verified = True
             self.seq = max([self.seq] + [r["seq"] for r in records])
             breached = [r for r in records if r["breached"]]
             if breached:                                 # un superamento salvato non si annulla mai rileggendo
                 self.breached = True
                 self.breach = dict(breached[0]["breach"])
+            if not reconcile:
+                return
             if any(r.get("from_marker") for r in records):
                 self._persist_locked()                   # RO-DD-09: il picco del marker torna nel DB
             elif any(r.get("from_marker") for r in stale):
@@ -309,13 +317,16 @@ class DrawdownHardStop:
             elif self.persist_failed:
                 self._persist_locked()
 
-    def evaluate(self, cap_raw: Any, cash_equity: Any, *, pct_cap_raw: Any = None) -> bool:
+    def evaluate(self, cap_raw: Any, cash_equity: Any, *, pct_cap_raw: Any = None, observe: bool = True) -> bool:
         """Controllo a ogni variazione finanziaria (lettura verificata del conto), non solo al segnale.
 
         Osserva la cassa e, con un limite configurato e valido (assoluto ``cap_raw`` in euro o percentuale
         ``pct_cap_raw`` dal picco, RO-DD-04/05), MEMORIZZA il primo superamento (persistito). True se questa chiamata
-        ha appena registrato un superamento (il runtime va in LOCKDOWN subito)."""
-        self.observe(cash_equity)
+        ha appena registrato un superamento (il runtime va in LOCKDOWN subito). ``observe=False`` (lettura d'ingresso,
+        Codex su 58e635e6): solo il controllo del superamento sul picco persistente, senza alzarlo ne' scrivere se non
+        c'e' superamento; il picco lo alzano le letture del contratto unico (`_apply_funds_reading`)."""
+        if observe:
+            self.observe(cash_equity)
         loss = self.loss(cash_equity)
         if loss is None:
             return False

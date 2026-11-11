@@ -578,7 +578,7 @@ def test_dd09c_clean_stop_and_restart_keeps_the_baseline_verified(tmp_path):
     """Punto 6: STOP pulito con picco durevole => riavvio normale, ingressi ammessi."""
     c = _catena(tmp_path)
     _lettura(c, 100.0)
-    c.rc._hard_stop().open_session()
+    c.rc._open_drawdown_session()                         # START: apertura del controller proprietario
     _stop_pulito(c)
     assert json.loads(c.rc.db.get_settings()[STATE_KEY])["session_open"] is False
     _riavvio(c)
@@ -590,7 +590,7 @@ def test_dd09c_clean_stop_and_restart_keeps_the_baseline_verified(tmp_path):
 def test_dd09c_clean_stop_with_unsaved_peak_leaves_the_session_open(tmp_path, monkeypatch):
     c = _catena(tmp_path)
     _lettura(c, 100.0)
-    c.rc._hard_stop().open_session()
+    c.rc._open_drawdown_session()
     real_save = _failing_db_and_marker(c, monkeypatch)
     _lettura(c, 120.0)
     _stop_pulito(c)                                        # lo STOP non puo' chiudere: picco non durevole
@@ -695,6 +695,7 @@ def test_d1_zero_cash_reading_in_the_runtime_memorizes_the_breach(tmp_path):
 
 def _ordine_stop(c, monkeypatch, *, disconnect_fails=False):
     calls = []
+    c.rc._drawdown_session_owned = True                   # sessione aperta da questo controller (START)
     stop = c.rc._hard_stop()
     monkeypatch.setattr(stop, "close_session", lambda: calls.append("close_session") or True)
     monkeypatch.setattr(c.rc, "_release_runtime_instance_lock_if_stopped",
@@ -959,3 +960,136 @@ def test_start_reloads_before_the_first_funds_reading_and_the_session_write():
     src = inspect.getsource(RuntimeController._start_with_instance_lock)
     assert src.index("_reload_drawdown_state()") < src.index("_applica_fondi_avvio(funds")
     assert src.index("_reload_drawdown_state()") < src.index("_open_drawdown_session()")
+
+
+# ----------------------------------------------------------------------------------- Sol su 58e635e6 (PR-03a)
+def test_restore_before_ownership_never_writes_and_start_reconciles_under_the_lock(tmp_path):
+    """Sol su 58e635e6: costruito prima di avere la proprieta' del runtime, il controller rileggeva il marker e lo
+    migrava nel DB (seq N+1) senza lock, sovrascrivendo un record piu' recente del proprietario. Ora la lettura
+    iniziale non scrive niente; la migrazione avviene allo START, sotto il lock di istanza."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    real_save = c.rc.db.save_settings
+
+    def failing_save(values):
+        if STATE_KEY in values:
+            raise OSError("disco pieno")
+        return real_save(values)
+
+    c.rc.db.save_settings = failing_save
+    _lettura(c, 120.0)                                     # picco 120 solo nel marker
+    marker = c.rc.db.db_path + ".drawdown_peak_pending.json"
+    assert os.path.exists(marker)
+    c.rc.db.save_settings = real_save
+    prima = c.rc.db.get_settings()[STATE_KEY]
+    scritture = []
+    c.rc.db.save_settings = lambda values: scritture.append(values) or real_save(values)
+    del c.rc._drawdown_hard_stop                            # nuovo processo, non ancora proprietario
+    nuovo = c.rc._hard_stop()
+    assert nuovo.snapshot()["peak"] == 120.0                # il picco del marker vale gia' in memoria
+    assert scritture == [] and c.rc.db.get_settings()[STATE_KEY] == prima and os.path.exists(marker)
+    c.rc._reload_drawdown_state()                           # START, lock di istanza tenuto
+    assert json.loads(c.rc.db.get_settings()[STATE_KEY])["peak"] == "120.0" and not os.path.exists(marker)
+
+
+def test_constructor_restore_is_read_only():
+    import inspect
+    from core.runtime_controller import RuntimeController
+    assert "restore(reconcile=False)" in inspect.getsource(RuntimeController.__init__)
+    assert "restore(reconcile=False)" in inspect.getsource(RuntimeController._hard_stop)
+    assert "restore(reconcile=True)" in inspect.getsource(RuntimeController._reload_drawdown_state)
+
+
+# ----------------------------------------------------------------------------------- Codex su 58e635e6 (PR-03a)
+def test_stop_without_owning_the_session_never_writes_its_closure(tmp_path):
+    """Codex su 58e635e6: un controller mai avviato (o un secondo STOP dopo il rilascio) non chiude la sessione del
+    proprietario attuale: picco 120, superamento e sessione aperta di A restano su disco."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    altro = DrawdownHardStop(c.rc.db)                      # proprietario attuale
+    altro.restore()
+    altro.open_session()
+    altro.observe(120.0)
+    assert altro.evaluate(10.0, 105.0) is True
+    _stop_pulito(c)                                        # STOP di un controller che non ha aperto la sessione
+    record = json.loads(c.rc.db.get_settings()[STATE_KEY])
+    assert record["peak"] == "120.0" and record["breached"] is True and record["session_open"] is True
+
+
+def test_second_stop_does_not_close_again(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    _lettura(c, 100.0)
+    c.rc._open_drawdown_session()
+    chiusure = []
+    stop = c.rc._hard_stop()
+    real_close = stop.close_session
+    monkeypatch.setattr(stop, "close_session", lambda: chiusure.append(1) or real_close())
+    _stop_pulito(c)
+    _stop_pulito(c)
+    assert chiusure == [1]
+
+
+def test_entry_reading_feeds_the_hard_stop_even_with_verified_desk_cash(tmp_path):
+    """Codex su 58e635e6: cassa del desk gia' verificata a 100; la lettura fresca d'ingresso dice 85 (perdita 15 %,
+    limite 10 %). Prima la lettura non veniva applicata e il controllo restava su 100: ordine al broker."""
+    c = _catena(tmp_path, max_drawdown_hard_stop_pct=10.0)
+    _lettura(c, 100.0)
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 85.0, "exposure": 0.0, "ok": True}
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0 and c.rc._hard_stop().breached
+    assert c.rc._hard_stop().snapshot()["breach"]["kind"] == "max_drawdown_hard_stop_pct"
+
+
+def test_controller_entry_funds_gate_rejects_a_breach_found_by_its_own_reading(tmp_path):
+    """Stesso caso sul percorso manuale/Dutching: la lettura d'ingresso del controller memorizza il superamento e il
+    suo gate fondi lo rifiuta."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 85.0, "exposure": 0.0, "ok": True}
+    lettura = c.rc.read_funds_for_controller_entry()
+    assert c.rc._hard_stop().breached
+    assert c.rc.controller_entry_funds_reason(lettura) == REASON_ACTIVE
+
+
+def test_entry_reading_below_the_cap_admits(tmp_path):
+    """Controllo PASS: lettura fresca 95 (perdita 5 %, limite 10 %) => nessun superamento, ordine ammesso."""
+    c = _catena(tmp_path, max_drawdown_hard_stop_pct=10.0)
+    _lettura(c, 100.0)
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 95.0, "exposure": 0.0, "ok": True}
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert not c.rc._hard_stop().breached and _ordini(c) == 1, _rifiuti(c)
+
+
+def test_baseline_read_during_another_session_is_refreshed_after_its_clean_stop(tmp_path):
+    """Codex su 58e635e6: B costruito mentre A aveva la sessione aperta (baseline provvisoriamente non verificata); A
+    chiude pulito; allo START B rilegge e la baseline torna verificata. Un crash vero resta non verificato."""
+    db = _Db()
+    db.db_path = str(tmp_path / "pf.db")
+    a = DrawdownHardStop(db)
+    a.observe(100.0)
+    a.open_session()
+    b = DrawdownHardStop(db)
+    b.restore(reconcile=False)
+    assert not b.baseline_verified
+    assert a.close_session()
+    b.restore()
+    assert b.baseline_verified and b.baseline_block_reason() == ""
+    c = DrawdownHardStop(db)
+    a.open_session()                                       # crash di A: sessione aperta su disco
+    c.restore()
+    assert not c.baseline_verified
+
+
+def test_entry_reading_never_raises_or_writes_the_peak():
+    """La lettura d'ingresso controlla soltanto il superamento: senza superamento non alza il picco e non scrive (un
+    processo senza autorita' o un DB non scrivibile non vengono toccati)."""
+    db = _Db()
+    stop = DrawdownHardStop(db)
+    stop.observe(100.0)
+    prima = db.settings[STATE_KEY]
+    db.fail_save = True
+    assert stop.evaluate(10.0, 130.0, observe=False) is False
+    assert stop.snapshot()["peak"] == 100.0 and not stop.persist_failed and db.settings[STATE_KEY] == prima
+    db.fail_save = False
+    assert stop.evaluate(10.0, 85.0, observe=False) is True       # superamento: memorizzato e salvato
+    assert json.loads(db.settings[STATE_KEY])["breached"] is True

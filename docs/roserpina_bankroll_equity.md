@@ -420,6 +420,10 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
 - **Hard-stop.** `max_drawdown_abs` (euro) e `max_drawdown_hard_stop_pct` (% del picco), opzionali: senza valore non
   bloccano nulla. Valutati a ogni lettura verificata del conto (superamento => LOCKDOWN subito) e prima di ogni
   ingresso (segnale, auto-next, manuale/Dutching). Stessa regola in SIM e LIVE (prima il % valeva solo in LIVE).
+  Anche la lettura fresca del conto fatta per un ingresso entra nell'hard-stop, pure con la cassa del desk gia'
+  verificata (Codex su 58e635e6): il superamento si memorizza (LOCKDOWN) e il gate fondi d'ingresso lo rifiuta. Quella
+  lettura controlla soltanto il superamento sul picco persistente: non alza il picco e, senza superamento, non scrive
+  (il picco lo alzano le letture del contratto unico).
 - **Disponibile 0: l'hard-stop valuta comunque la cassa (Sol e Codex su dc2f5f25).** Con una lettura valida a
   disponibile 0 l'hard-stop riceve la cassa verificata della stessa lettura: con impegnato
   (`BALANCE_ZERO_COMMITTED`) e' l'impegnato (85 impegnati dopo un picco 100 = perdita 15), senza
@@ -466,7 +470,12 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   gia' aperto la propria sessione, che la chiusura del vecchio sovrascriverebbe. Smontaggio fallito => sessione aperta.
   Simmetricamente lo START rilegge lo stato dell'hard-stop con il lock di istanza tenuto, prima della prima lettura del
   conto e della sessione (Codex su 92155c24): un controller costruito mentre un altro processo era proprietario non
-  sovrascrive il picco o il superamento salvati da quello nel frattempo.
+  sovrascrive il picco o il superamento salvati da quello nel frattempo. La lettura alla costruzione e' di sola
+  lettura (`restore(reconcile=False)`): migrazione del marker nel DB e rimozione di un marker superato avvengono solo
+  allo START, sotto il lock (Sol su 58e635e6). La verifica della baseline segue il record durevole piu' recente anche
+  verso «verificata»: letta mentre un altro processo aveva la sessione aperta, dopo il suo STOP pulito non resta
+  bloccata; lo STOP chiude la sessione solo se e' stato questo controller ad aprirla allo START, e una volta sola
+  (un controller mai avviato o un secondo STOP non scrivono; Codex su 58e635e6).
   Se al riavvio la sessione risulta aperta (crash, kill, STOP con picco non salvato, DB e marker entrambi non
   scrivibili) il picco salvato potrebbe non essere il massimo: la baseline e' **non verificata** e nessun nuovo
   ingresso passa (`drawdown_baseline_non_verificata`), anche dopo piu' riavvii e dopo un reset strategico.
