@@ -39,12 +39,18 @@ Codice: `core/blackbox_runtime.py` (`require_runtime`, `financial_gate`, `protec
     rifiuto pre-invio (`GateRefused`, `BLACKBOX_UNAVAILABLE`); mai bufferizzato;
   - **uscita protettiva** (cancel, riduzione, hedge del cashout dentro `protective_exit`): evento critico con
     `buffer_on_failure`, così un guasto temporaneo del registro non ritarda la riduzione del rischio (PF-EXEC-03);
-    serve comunque una scatola nera installata;
+    serve comunque una scatola nera installata. L'uscita protettiva **non attende mai il registro** (Codex su #630):
+    lock del processo al massimo `PROTECTIVE_LOCK_WAIT_S` (50 ms), busy timeout di SQLite `PROTECTIVE_BUSY_TIMEOUT_MS`
+    (50 ms) invece di 30 s, nessuno scarico del backlog prima dell'invio. Oltre questi limiti l'evento entra nel buffer
+    critico (o in una coda thread-safe se il lock è occupato) e viene scritto al ripristino, coperto da una
+    `BLACKBOX_GAP`; buffer pieno (`MAX_CRITICAL_BUFFER`) => rifiuto;
   - **scatola nera assente** (mai installata, già chiusa, `atexit`, thread sopravvissuti): tutto rifiutato, tranne
     le cancellazioni dentro `emergency_exit`, cioè il solo `--emergency-stop` CLI (D3 #617).
   Il contesto protettivo è per thread: un lavoro spostato in un altro thread vale come ingresso (fail-closed).
 - **Rifiuto = pre-invio provato.** `BLACKBOX_UNAVAILABLE` è nei codici di rifiuto pre-invio di `OrderManager`, dei
-  port Microstake e del broker SIM: mai AMBIGUOUS, mai retry. Nell'arresto d'emergenza (#629) un lotto di cancel
+  port Microstake e del broker SIM: mai AMBIGUOUS, mai retry. L'hedge del cashout rifiutato dal gate torna dal router come hedge non
+  piazzato (`placed=False`, `order_unknown=False`, errore `BLACKBOX_UNAVAILABLE`): `HEDGE_FAILED`, mai
+  `HEDGE_AMBIGUOUS`, quindi non blocca i cashout successivi (Codex su #630). Nell'arresto d'emergenza (#629) un lotto di cancel
   rifiutato dal Gate B è `NOT_SENT` con errore `BLACKBOX_UNAVAILABLE`, mai `UNKNOWN`, e l'arresto non è VERIFIED.
 - **Batch.** `SimulationBroker.place_orders` passa dal gate una volta per il batch (`batch_gated`), poi le gambe.
 - **Test.** La fixture autouse di `tests/conftest.py` installa una scatola nera di test sana per i test che non

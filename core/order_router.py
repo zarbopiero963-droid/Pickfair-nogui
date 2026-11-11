@@ -80,7 +80,14 @@ class OrderRouter:
         scatola nera non li blocca; senza scatola nera installata restano rifiutati."""
         from core import blackbox_runtime
         with blackbox_runtime.protective_exit("CASHOUT_HEDGE"):
-            return self._place_protective(payload)
+            try:
+                return self._place_protective(payload)
+            except blackbox_runtime.GateRefused:
+                # Rifiuto del Gate B PRIMA dell'invio (Codex su #630): nulla e' partito, quindi hedge non piazzato e
+                # certo (HEDGE_FAILED), mai un'eccezione che il cashout registrerebbe come HEDGE_AMBIGUOUS bloccando i
+                # cashout successivi. Ogni altra eccezione del broker resta un esito ignoto e si propaga.
+                return self._result(ok=False, placed=False, order_unknown=False, status="REJECTED", matched=0.0,
+                                    bet_id=None, error=blackbox_runtime.GATE_REFUSED_CODE, raw=None)
 
     def _place_protective(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         # Fail-closed sull'input: ogni campo richiesto deve esserci.

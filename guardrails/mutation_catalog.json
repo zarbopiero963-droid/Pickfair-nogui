@@ -9604,6 +9604,54 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "BB-1G x #629: un cancel d'emergenza rifiutato dal Gate B non e' mai partito (rifiuto pre-invio provato); trattarlo come UNKNOWN lo farebbe passare per «forse cancellato»."
+    },
+    {
+      "id": "bb1g_protective_waits_for_journal_lock",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        if not self._lock.acquire(timeout=PROTECTIVE_LOCK_WAIT_S):\n",
+      "mutated": "        if not self._lock.acquire():\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630: un'uscita protettiva attenderebbe il lock del registro tenuto da un altro thread (PF-EXEC-03)."
+    },
+    {
+      "id": "bb1g_protective_full_busy_timeout",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                    self._set_busy_timeout(PROTECTIVE_BUSY_TIMEOUT_MS)\n",
+      "mutated": "                    self._set_busy_timeout(DEFAULT_BUSY_TIMEOUT_MS)\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630: un cancel protettivo attenderebbe fino a 30 s un altro scrittore SQLite prima di partire."
+    },
+    {
+      "id": "bb1g_protective_path_bypassed",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        if critical and buffer_on_failure:\n            return self._record_protective(rec, attempted_at)\n",
+      "mutated": "        if False:\n            return self._record_protective(rec, attempted_at)\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630: le uscite protettive tornerebbero sul percorso bloccante (lock, scarico del backlog, busy timeout)."
+    },
+    {
+      "id": "bb1g_cashout_gate_refusal_ambiguous",
+      "module": "core.order_router",
+      "area": "blackbox",
+      "file": "core/order_router.py",
+      "original": "            except blackbox_runtime.GateRefused:\n",
+      "mutated": "            except ZeroDivisionError:\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630: un hedge rifiutato dal Gate B (nulla inviato) diventerebbe HEDGE_AMBIGUOUS e bloccherebbe i cashout successivi."
     }
   ]
 }

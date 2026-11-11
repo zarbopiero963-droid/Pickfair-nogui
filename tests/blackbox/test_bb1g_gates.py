@@ -321,3 +321,94 @@ def test_gui_entrypoint_installs_the_blackbox_first_and_closes_it(bbpath, monkey
     assert rt.get() is None, "chiusa all'uscita: ogni invio tardivo trova il gate chiuso"
     types = [e["type"] for e in _events(bbpath)]
     assert types[0] == "PROCESS_START" and types[-1] == "SHUTDOWN"
+
+
+# ------------------------------------------------------------------------------- uscite protettive mai in attesa
+# Codex su #630 (6be44640): un'uscita protettiva non deve attendere il registro (lock del processo, BEGIN IMMEDIATE con
+# busy timeout di 30 s, scarico del backlog). PF-EXEC-03: la riduzione del rischio non si ritarda mai.
+
+def _install_runtime_box():
+    rt.install(entrypoint="test_bb1g")
+    box = rt._active_runtime_box()
+    assert box is not None
+    return box
+
+
+def test_protective_cancel_does_not_wait_for_a_journal_locked_by_another_writer(bbpath):
+    import time as _time
+    box = _install_runtime_box()
+    other = sqlite3.connect(str(bbpath), timeout=0, isolation_level=None)
+    other.execute("BEGIN IMMEDIATE")                 # un altro processo (lettore Control API/MCP) sta scrivendo
+    try:
+        t0 = _time.monotonic()
+        event_id = rt.financial_gate("ORDER_CANCEL_REQUEST", component="betfair_client", cancel=True,
+                                     market_id="1.5", bet_ids=["B1"])
+        elapsed = _time.monotonic() - t0
+    finally:
+        other.execute("ROLLBACK")
+        other.close()
+    assert event_id and elapsed < 1.0, f"il cancel protettivo ha atteso il registro per {elapsed:.2f} s"
+    rt.record("SESSION_CHECKPOINT", source="SYSTEM", component="test", phase="OBSERVATION", outcome="VERIFIED")
+    rows = [r for r in _events(bbpath, "ORDER_CANCEL_REQUEST") if r["event_id"] == event_id]
+    assert rows and json.loads(rows[0]["data"]).get("buffered") is True, "bufferizzato e scritto al ripristino"
+    assert _events(bbpath, "BLACKBOX_GAP"), "il ritardo resta visibile come lacuna"
+
+
+def test_protective_hedge_does_not_wait_for_the_journal_lock_held_by_another_thread(bbpath):
+    import time as _time
+    box = _install_runtime_box()
+    held, release = threading.Event(), threading.Event()
+
+    def hold():
+        with box._lock:
+            held.set()
+            release.wait(10)
+
+    t = threading.Thread(target=hold, daemon=True)
+    t.start()
+    held.wait(5)
+    try:
+        t0 = _time.monotonic()
+        with rt.protective_exit("CASHOUT_HEDGE"):
+            event_id = rt.financial_gate("ORDER_PLACE_REQUEST", component="simulation_broker", market_id="1.5",
+                                         selection_id=7, side="LAY", price=2.0, size=5.0)
+        elapsed = _time.monotonic() - t0
+    finally:
+        release.set()
+        t.join(5)
+    assert event_id and elapsed < 1.0, f"l'hedge protettivo ha atteso il lock per {elapsed:.2f} s"
+    rt.record("SESSION_CHECKPOINT", source="SYSTEM", component="test", phase="OBSERVATION", outcome="VERIFIED")
+    assert [r for r in _events(bbpath, "ORDER_PLACE_REQUEST") if r["event_id"] == event_id]
+
+
+def test_an_entry_still_requires_a_durable_write_while_the_journal_is_busy(bbpath, monkeypatch):
+    box = _install_runtime_box()
+    _break_writes(monkeypatch, box)
+    with pytest.raises(rt.GateRefused):
+        rt.financial_gate("ORDER_PLACE_REQUEST", component="betfair_client", market_id="1.5", selection_id=7,
+                          side="BACK", price=2.0, size=5.0)
+
+
+# --------------------------------------------------------------------- rifiuto del gate sull'hedge del cashout
+
+def test_cashout_hedge_refused_by_the_gate_is_a_failed_hedge_never_ambiguous():
+    """Codex su #630: un `GateRefused` prova che nulla e' partito. Il router lo restituisce come hedge non piazzato
+    (placed=False, order_unknown=False, BLACKBOX_UNAVAILABLE), mai come eccezione che il cashout registrerebbe
+    HEDGE_AMBIGUOUS bloccando i cashout successivi."""
+    from cashout_executor import CashoutExecutor
+    from core import hedge_ref as _hedge
+    from core.order_router import OrderRouter
+
+    class Client:
+        def place_bet(self, **kw):
+            raise rt.GateRefused("simulation_broker: ORDER_PLACE_REQUEST senza scatola nera")
+
+    class Service:
+        def get_client(self):
+            return Client()
+
+    res = OrderRouter(Service()).place({"market_id": "1.1", "selection_id": 2, "bet_type": "LAY", "price": 2.0,
+                                        "stake": 5.0})
+    assert res["placed"] is False and res["order_unknown"] is False, res
+    assert res["error"] == rt.GATE_REFUSED_CODE
+    assert CashoutExecutor._ledger_status(None, res) == _hedge.HEDGE_FAILED

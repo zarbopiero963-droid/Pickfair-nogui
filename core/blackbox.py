@@ -33,6 +33,7 @@ import stat
 import hashlib
 import hmac
 import json
+import collections
 import os
 import re
 import secrets
@@ -90,6 +91,11 @@ _LOCK_BUSY_ERRNOS = frozenset(e for e in (getattr(errno, n, None) for n in ("EWO
                                                                               "EDEADLK", "EDEADLOCK")) if e is not None)
 ENV_PATH = "PICKFAIR_BLACKBOX_PATH"
 MAX_CRITICAL_BUFFER = 1000
+#: Uscite protettive (Codex su #630): attesa massima del lock del registro e busy timeout di SQLite. Oltre, l'evento
+#: va nel buffer critico e l'invio parte subito (PF-EXEC-03: la riduzione del rischio non si ritarda mai).
+PROTECTIVE_LOCK_WAIT_S = 0.05
+PROTECTIVE_BUSY_TIMEOUT_MS = 50
+DEFAULT_BUSY_TIMEOUT_MS = 30000
 REDACTED = "[REDACTED]"
 
 
@@ -326,6 +332,9 @@ class BlackBox:
         self._conn: Optional[sqlite3.Connection] = None
         self._session_seq = 0
         self._buffer: List[Dict[str, Any]] = []        # buffer critico (uscite protettive durante un guasto)
+        # uscite protettive arrivate mentre il lock del registro era occupato: deque (append/popleft thread-safe),
+        # travasata nel buffer critico sotto il lock al primo accesso (Codex su #630)
+        self._protective_queue: "collections.deque[tuple]" = collections.deque()
         self._degraded_since: Optional[float] = None
         self.dropped = 0                               # eventi non critici persi (mai silenziosi: GAP al ripristino)
         self._outage_flushed: Optional[List[Dict[str, Any]]] = None   # uscite gia' scaricate nel guasto corrente
@@ -589,8 +598,11 @@ class BlackBox:
         suo id: verra' scritto al ripristino, coperto da una `BLACKBOX_GAP`."""
         attempted_at = float(self._clock())               # istante dell'evento, PRIMA di qualunque attesa del lock
         rec = self._build(event_type, dict(fields))      # errori di forma: sempre sollevati (bug del chiamante)
+        if critical and buffer_on_failure:
+            return self._record_protective(rec, attempted_at)
         with self._lock:
             try:
+                self._drain_protective_queue()
                 if self._buffer or self._degraded_since is not None:
                     self._flush_after_outage()
                 self._insert(rec)
@@ -604,6 +616,51 @@ class BlackBox:
                     raise BlackBoxUnavailable(f"{type(exc).__name__}: {exc}") from exc
                 self.dropped += 1
                 return None
+
+    def _record_protective(self, rec: Dict[str, Any], attempted_at: float) -> str:
+        """Uscita protettiva gia' decisa (cancel, riduzione, hedge del cashout): mai in attesa del registro (Codex su
+        #630, PF-EXEC-03). Lock occupato oltre `PROTECTIVE_LOCK_WAIT_S`, backlog da scaricare o SQLite occupato oltre
+        `PROTECTIVE_BUSY_TIMEOUT_MS` => l'evento entra nel buffer critico e l'invio parte subito; viene scritto al
+        ripristino, coperto da una `BLACKBOX_GAP`. Buffer pieno => `BlackBoxUnavailable` (nessun invio non registrato
+        oltre il limite)."""
+        if not self._lock.acquire(timeout=PROTECTIVE_LOCK_WAIT_S):
+            if len(self._protective_queue) + len(self._buffer) >= MAX_CRITICAL_BUFFER:
+                raise BlackBoxUnavailable("buffer critico pieno")
+            self._protective_queue.append((rec, attempted_at))
+            return rec["event_id"]
+        try:
+            self._drain_protective_queue()
+            if not (self._buffer or self._degraded_since is not None):
+                try:
+                    self._set_busy_timeout(PROTECTIVE_BUSY_TIMEOUT_MS)
+                    try:
+                        self._insert(rec)
+                    finally:
+                        self._set_busy_timeout(DEFAULT_BUSY_TIMEOUT_MS)
+                    return rec["event_id"]
+                except (sqlite3.Error, OSError) as exc:
+                    self._enter_degraded(exc, since=_event_epoch(rec, attempted_at))
+            # backlog presente (guasto in corso): lo scarico non precede MAI un'uscita protettiva
+            if len(self._buffer) >= MAX_CRITICAL_BUFFER:
+                raise BlackBoxUnavailable("buffer critico pieno")
+            self._buffer.append(rec)
+            return rec["event_id"]
+        finally:
+            self._lock.release()
+
+    def _drain_protective_queue(self) -> None:
+        """Sotto il lock: le uscite protettive accodate senza lock passano nel buffer critico, nell'ordine d'arrivo, e
+        aprono (o allargano all'indietro) la finestra della lacuna."""
+        while self._protective_queue:
+            rec, attempted_at = self._protective_queue.popleft()
+            self._enter_degraded(sqlite3.OperationalError("registro occupato: uscita protettiva differita"),
+                                 since=_event_epoch(rec, attempted_at))
+            self._buffer.append(rec)
+
+    def _set_busy_timeout(self, ms: int) -> None:
+        conn = self._conn
+        if conn is not None:
+            conn.execute(f"PRAGMA busy_timeout={int(ms)}")
 
     def _enter_degraded(self, exc: BaseException, *, since: Optional[float] = None) -> None:
         """Sol #617 (761a52f2): la finestra della GAP parte dall'istante dell'evento non scritto, non dalla rilevazione
@@ -695,7 +752,8 @@ class BlackBox:
     # ------------------------------------------------------------------ stato e verifica
     def health(self) -> Dict[str, Any]:
         return {"path": self.path, "session_id": self.session_id, "open": self._conn is not None,
-                "degraded": self._degraded_since is not None, "buffered": len(self._buffer),
+                "degraded": self._degraded_since is not None or bool(self._protective_queue),
+                "buffered": len(self._buffer) + len(self._protective_queue),
                 "dropped_non_critical": self.dropped, "last_error": self.last_error}
 
     def verify(self) -> Dict[str, Any]:
