@@ -45,14 +45,22 @@ Codice: `core/blackbox_runtime.py` (`require_runtime`, `financial_gate`, `protec
     su COMMIT o fsync ritardano cancel e hedge. Con il registro guasto l'evento passa nel buffer critico e viene scritto
     al ripristino, coperto da una `BLACKBOX_GAP`; coda e buffer pieni (`MAX_CRITICAL_BUFFER`) => rifiuto. L'evento
     protettivo può quindi essere scritto **dopo** l'invio: l'ordine resta quello d'arrivo e `flush_protective()` (usato
-    anche dalla chiusura) scarica la coda in modo sincrono;
+    anche dalla chiusura) scarica la coda in modo sincrono. `close()` alza prima una **barriera**: un'uscita protettiva
+    o è accodata prima dello scarico finale (e scritta), o è rifiutata (`BlackBoxUnavailable`), mai accettata in una
+    coda che nessuno scriverà; lo scarico prende una quantità fissata all'ingresso, così mittenti concorrenti non
+    tengono il lock all'infinito;
   - **scatola nera assente** (mai installata, già chiusa, `atexit`, thread sopravvissuti): tutto rifiutato, tranne
     le cancellazioni dentro `emergency_exit`, cioè il solo `--emergency-stop` CLI (D3 #617).
   Il contesto protettivo è per thread: un lavoro spostato in un altro thread vale come ingresso (fail-closed).
 - **Rifiuto = pre-invio provato.** `BLACKBOX_UNAVAILABLE` è nei codici di rifiuto pre-invio di `OrderManager`, dei
   port Microstake e del broker SIM: mai AMBIGUOUS, mai retry. L'hedge del cashout rifiutato dal gate torna dal router come hedge non
   piazzato (`placed=False`, `order_unknown=False`, errore `BLACKBOX_UNAVAILABLE`): `HEDGE_FAILED`, mai
-  `HEDGE_AMBIGUOUS`, quindi non blocca i cashout successivi (Codex su #630). Nell'arresto d'emergenza (#629) un lotto di cancel
+  `HEDGE_AMBIGUOUS`, quindi non blocca i cashout successivi (Codex su #630).
+  Lo stesso vale per **tutti** i chiamanti dei punti d'invio (passata unica, Codex e Claude D su #630): il motore
+  (`TradingEngine._ERRORI_PRIMA_DELL_INVIO`) rilascia l'intento e non scrive mai `LIVE_SUBMIT_ESITO_IGNOTO`; il
+  `replace` dei port Microstake (LIVE e SIM) solleva un rifiuto certo, quindi il coordinatore fa il rollback dello
+  stub invece di lasciarlo in `AMBIGUOUS`; l'arresto d'emergenza segna il lotto `NOT_SENT`. La riduzione dello stub
+  Microstake resta `AMBIGUOUS` (scelta prudente: lo stub è noto e la riconciliazione lo risolve). Nell'arresto d'emergenza (#629) un lotto di cancel
   rifiutato dal Gate B è `NOT_SENT` con errore `BLACKBOX_UNAVAILABLE`, mai `UNKNOWN`, e l'arresto non è VERIFIED.
 - **Batch.** `SimulationBroker.place_orders` passa dal gate una volta per il batch (`batch_gated`), poi le gambe.
 - **Test.** La fixture autouse di `tests/conftest.py` installa una scatola nera di test sana per i test che non

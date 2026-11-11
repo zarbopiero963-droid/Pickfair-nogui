@@ -9652,6 +9652,54 @@
         "tests/blackbox/test_bb1g_gates.py"
       ],
       "rationale": "Sol su #630: senza writer dedicato le uscite protettive resterebbero in coda, mai scritte finche' un altro evento non le trascina."
+    },
+    {
+      "id": "bb1g_protective_close_fence_removed",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "            if self._protective_closed:\n                raise BlackBoxUnavailable(\"scatola nera chiusa\")\n",
+      "mutated": "            if False:\n                raise BlackBoxUnavailable(\"scatola nera chiusa\")\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630 (D-630-06): dopo close() un'uscita protettiva verrebbe accettata in una coda mai scritta: operazione finanziaria scomparsa dietro uno shutdown pulito."
+    },
+    {
+      "id": "bb1g_engine_gate_refusal_ambiguous",
+      "module": "core.trading_engine",
+      "area": "blackbox",
+      "file": "core/trading_engine.py",
+      "original": "        \"BLACKBOX_UNAVAILABLE\",\n    })",
+      "mutated": "    })",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630 (D-630-04): un ingresso rifiutato dal Gate B consumerebbe l'intento e diventerebbe LIVE_SUBMIT_ESITO_IGNOTO."
+    },
+    {
+      "id": "bb1g_ms_live_replace_gate_as_lost",
+      "module": "core.microstake_live_port",
+      "area": "blackbox",
+      "file": "core/microstake_live_port.py",
+      "original": "            if _gate_refused(exc):\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630 (D-630-05): il replace rifiutato dal Gate B diventerebbe LostResponse e lo stub resterebbe abbandonato in AMBIGUOUS (LIVE)."
+    },
+    {
+      "id": "bb1g_ms_sim_replace_gate_as_lost",
+      "module": "core.microstake_sim_port",
+      "area": "blackbox",
+      "file": "core/microstake_sim_port.py",
+      "original": "            if _gate_refused(exc):\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630 (D-630-05): il replace rifiutato dal Gate B diventerebbe LostResponse e lo stub resterebbe abbandonato in AMBIGUOUS (SIM)."
     }
   ]
 }

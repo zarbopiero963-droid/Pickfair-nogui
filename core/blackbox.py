@@ -336,6 +336,7 @@ class BlackBox:
         self._protective_wakeup = threading.Event()
         self._protective_thread: Optional[threading.Thread] = None
         self._protective_state = threading.Lock()      # decisione di uscita del writer e suo avvio: mai un evento orfano
+        self._protective_closed = False               # barriera di chiusura: dopo close() nessuna uscita accettata
         self._degraded_since: Optional[float] = None
         self.dropped = 0                               # eventi non critici persi (mai silenziosi: GAP al ripristino)
         self._outage_flushed: Optional[List[Dict[str, Any]]] = None   # uscite gia' scaricate nel guasto corrente
@@ -350,6 +351,8 @@ class BlackBox:
         with self._lock:
             if self._conn is not None:
                 return self
+            with self._protective_state:
+                self._protective_closed = False       # riapertura dopo close(): le uscite protettive tornano ammesse
             identity = None
             if self.path != ":memory:":
                 full = os.path.abspath(self.path)
@@ -486,6 +489,8 @@ class BlackBox:
         return self._writer_lock is not None
 
     def close(self) -> None:
+        with self._protective_state:
+            self._protective_closed = True            # barriera: da qui ogni nuova uscita protettiva e' rifiutata
         with self._lock:
             try:
                 self._drain_protective_queue()     # uscite protettive accodate: scritte prima di chiudere, se possibile
@@ -628,9 +633,14 @@ class BlackBox:
         thread `_protective_writer`; un guasto del registro lo porta nel buffer critico, scritto al ripristino con una
         `BLACKBOX_GAP`. Coda e buffer pieni (`MAX_CRITICAL_BUFFER`) => `BlackBoxUnavailable`: nessun invio oltre il
         limite di cio' che il registro puo' ancora contenere."""
-        if len(self._protective_queue) + len(self._buffer) >= MAX_CRITICAL_BUFFER:
-            raise BlackBoxUnavailable("buffer critico pieno")
-        self._protective_queue.append((rec, attempted_at))
+        with self._protective_state:
+            # stesso lock della barriera di close(): un'uscita o e' accodata prima dello scarico finale (e scritta),
+            # o e' rifiutata; mai accettata in una coda che nessuno scrivera' (Codex su #630, D-630-06)
+            if self._protective_closed:
+                raise BlackBoxUnavailable("scatola nera chiusa")
+            if len(self._protective_queue) + len(self._buffer) >= MAX_CRITICAL_BUFFER:
+                raise BlackBoxUnavailable("buffer critico pieno")
+            self._protective_queue.append((rec, attempted_at))
         self._ensure_protective_writer()
         self._protective_wakeup.set()
         return rec["event_id"]
@@ -668,7 +678,9 @@ class BlackBox:
     def _drain_protective_queue(self) -> None:
         """Sotto il lock, nell'ordine d'arrivo: scrittura normale se il registro e' sano; con un guasto in corso o
         un backlog, buffer critico (scaricato poi da `_flush_after_outage`, con la GAP sull'istante dell'evento)."""
-        while self._protective_queue:
+        # quantita' fissata all'ingresso: mittenti concorrenti non possono tenere il lock all'infinito (livelock
+        # della chiusura trovato dal test con thread); i nuovi li scrive il writer o il prossimo scarico
+        for _ in range(len(self._protective_queue)):
             rec, attempted_at = self._protective_queue.popleft()
             if self._buffer or self._degraded_since is not None:
                 self._buffer.append(rec)

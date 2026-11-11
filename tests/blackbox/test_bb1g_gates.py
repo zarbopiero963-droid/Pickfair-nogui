@@ -467,3 +467,103 @@ def test_protective_events_are_never_lost_with_concurrent_senders(bbpath):
         _time.sleep(0.05)
     assert not errors and len(ids) == 40 and set(ids) <= written, "eventi protettivi rimasti in coda"
     assert not box._protective_queue
+
+
+# ------------------------------------------- passata unica sui chiamanti dei punti d'invio (Codex/D su #630)
+# Un `GateRefused` prova che nulla e' partito: nessun chiamante lo deve trattare come esito ignoto.
+
+def _stub_order(port, monkeypatch):
+    from decimal import Decimal
+    from core.microstake_safe import Side, SimOrder
+    stub = SimOrder(bet_id="S1", market_id="1.5", selection_id=7, side=Side.BACK, price=Decimal("1000"),
+                    size=Decimal("1"), matched=Decimal("0"), remaining=Decimal("0.10"), customer_ref="ms-1")
+    monkeypatch.setattr(port, "order", lambda bet_id: stub)
+
+
+@pytest.mark.parametrize("venue", ["sim", "live"])
+def test_microstake_replace_refused_by_the_gate_is_a_definite_refusal_not_lost(venue, monkeypatch):
+    """Codex su #630 (D-630-05): il replace rifiutato dal Gate B non e' mai `LostResponse` (che porta la saga in
+    AMBIGUOUS con lo stub abbandonato): e' un rifiuto certo, e il coordinatore fa il rollback dello stub."""
+    from decimal import Decimal
+    from core.microstake_safe import LostResponse
+
+    class Venue:
+        def replace_orders(self, **kw):
+            raise rt.GateRefused("ORDER_REPLACE_REQUEST senza scatola nera")
+
+    for name in ("place_bet", "reduce_order", "cancel_orders", "list_current_orders", "get_current_orders",
+                 "list_cleared_orders", "get_account_funds"):
+        setattr(Venue, name, lambda self, *a, **k: None)
+
+    if venue == "sim":
+        from core.microstake_sim_port import SimulationExchangePort as Port
+    else:
+        from core.microstake_live_port import LiveExchangePort as Port
+    port = Port(Venue())
+    _stub_order(port, monkeypatch)
+    with pytest.raises(RuntimeError) as info:
+        port.replace("S1", Decimal("2.0"))
+    assert not isinstance(info.value, LostResponse)
+    assert str(info.value) == rt.GATE_REFUSED_CODE
+
+
+def test_trading_engine_treats_a_gate_refusal_as_nothing_sent():
+    """Codex su #630 (D-630-04): sul percorso LIVE diretto del motore il rifiuto del gate deve rilasciare l'intento
+    e non diventare LIVE_SUBMIT_ESITO_IGNOTO."""
+    from core.trading_engine import TradingEngine
+    assert rt.GATE_REFUSED_CODE in TradingEngine._ERRORI_PRIMA_DELL_INVIO
+    from betfair_client import BetfairClient
+    fake = dict(zip(("username", "app_key", "cert_pem", "key_pem"), ("u", "a", "c.pem", "k.pem")))
+    client = BetfairClient(**fake, session=object())
+    engine = TradingEngine.__new__(TradingEngine)
+    engine.simulation_broker = None
+    assert engine._nulla_e_partito(rt.GateRefused("betfair_client: ORDER_PLACE_REQUEST"), client) is True
+
+
+def test_a_protective_event_after_close_is_refused_never_silently_dropped(bbpath):
+    """Codex su #630 (D-630-06): chiusa la scatola nera, un'uscita protettiva non viene accettata in una coda che
+    nessuno scrivera' piu': rifiuto esplicito. Quelle accettate prima della chiusura sono scritte."""
+    box = _install_runtime_box()
+    before = rt.financial_gate("ORDER_CANCEL_REQUEST", component="betfair_client", cancel=True, market_id="1.5",
+                               bet_ids=["B1"])
+    box.end_session("STOP")
+    box.close()
+    with pytest.raises(bb.BlackBoxUnavailable):
+        box.record("ORDER_CANCEL_REQUEST", critical=True, buffer_on_failure=True, source="SYSTEM",
+                   component="betfair_client", phase="ATTEMPT", outcome="PENDING", market_id="1.5")
+    assert [r for r in _events(bbpath, "ORDER_CANCEL_REQUEST") if r["event_id"] == before]
+
+
+def test_concurrent_protective_events_during_shutdown_are_written_or_refused(bbpath):
+    """D-630-06 con thread: durante lo shutdown ogni uscita protettiva e' scritta oppure rifiutata, mai accettata e
+    poi persa."""
+    box = _install_runtime_box()
+    accepted, refused, stop = [], [], threading.Event()
+
+    def sender():
+        import time as _t
+        i = 0
+        while not stop.is_set():                 # ritmo fisso: attraversa la chiusura senza saturare il buffer
+            _t.sleep(0.005)
+            try:
+                accepted.append(box.record("ORDER_CANCEL_REQUEST", critical=True, buffer_on_failure=True,
+                                           source="SYSTEM", component="betfair_client", phase="ATTEMPT",
+                                           outcome="PENDING", market_id="1.5", bet_id=f"B{i}"))
+            except bb.BlackBoxUnavailable:
+                refused.append(i)
+            i += 1
+
+    threads = [threading.Thread(target=sender) for _ in range(4)]
+    for t in threads:
+        t.start()
+    import time as _time
+    _time.sleep(0.2)
+    box.end_session("STOP")
+    box.close()
+    _time.sleep(0.1)
+    stop.set()
+    for t in threads:
+        t.join(5)
+    written = {r["event_id"] for r in _events(bbpath, "ORDER_CANCEL_REQUEST")}
+    lost = [e for e in accepted if e not in written]
+    assert accepted and refused and not lost, f"{len(lost)} uscite protettive accettate e mai scritte"

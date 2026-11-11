@@ -45,6 +45,13 @@ PRE_SEND_REJECTIONS = frozenset({"INVALID_MARKET_ID", "INVALID_SELECTION_ID", "I
 _TERMINAL = frozenset({"CANCELLED", "LAPSED", "VOIDED", "EXPIRED", "SETTLED"})
 
 
+
+def _gate_refused(exc: BaseException) -> bool:
+    """Rifiuto del Gate B della scatola nera (BB-1G): prova che nulla e' partito. Import tardivo: il port resta
+    importabile senza il grafo della scatola nera."""
+    from core import blackbox_runtime
+    return isinstance(exc, blackbox_runtime.GateRefused)
+
 class SagaStoreError(RuntimeError):
     """Stato della saga illeggibile: nessuna decisione puo' basarsi su di esso."""
 
@@ -287,6 +294,10 @@ class SimulationExchangePort:
         try:
             res = self.broker.replace_orders(market_id=current.market_id, bet_id=bet_id, new_price=float(new_price))
         except Exception as exc:
+            if _gate_refused(exc):
+                # BB-1G Gate B (Codex su #630): rifiuto PRIMA dell'invio, nessun nuovo ordine. Rifiuto certo: il
+                # coordinatore fa il rollback dello stub, mai la saga AMBIGUOUS con lo stub abbandonato.
+                raise RuntimeError("BLACKBOX_UNAVAILABLE") from exc
             self.operation_log.append(("REPLACE", bet_id, str(new_price), ""))
             raise LostResponse(f"replace outcome unknown: {type(exc).__name__}") from exc
         report = ((res or {}).get("instructionReports") or [{}])[0]
