@@ -10266,30 +10266,6 @@
       "rationale": "Lettura iniziata prima di un ribasamento owner (tardiva o no) rialza il picco ribasato: falso hard-stop."
     },
     {
-      "id": "d1_late_peak_not_reevaluated",
-      "module": "core.runtime_controller",
-      "area": "money_management",
-      "file": "core/runtime_controller.py",
-      "original": "            last_cash = getattr(self, \"_drawdown_last_cash\", None)\n            if stop.evaluate(",
-      "mutated": "            last_cash = None\n            if stop.evaluate(",
-      "tests": [
-        "tests/d1/test_d1_drawdown_hard_stop.py"
-      ],
-      "rationale": "Picco alzato dalla lettura tardiva ma superamento non rivalutato contro l'ultima cassa."
-    },
-    {
-      "id": "d1_late_reading_used_as_current_cash",
-      "module": "core.runtime_controller",
-      "area": "money_management",
-      "file": "core/runtime_controller.py",
-      "original": "            last_cash = getattr(self, \"_drawdown_last_cash\", None)\n            if stop.evaluate(",
-      "mutated": "            last_cash = cassa\n            if stop.evaluate(",
-      "tests": [
-        "tests/d1/test_d1_drawdown_hard_stop.py"
-      ],
-      "rationale": "La lettura tardiva viene valutata come cassa corrente: nessuna perdita misurata."
-    },
-    {
       "id": "d1_rebase_instant_not_recorded",
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
@@ -10354,24 +10330,24 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        if stop.evaluate_timeline(cap, pct_cap_raw=pct_cap):",
-      "mutated": "        if False:",
+      "original": "        esito = stop.evaluate_late(cap, started, cassa, pct_cap_raw=pct_cap)\n",
+      "mutated": "        esito = \"\"\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "Calo transitorio visto solo da una lettura tardiva non memorizzato (D-631-10)."
+      "rationale": "La lettura tardiva non si valuta con la cronologia: calo transitorio perso (D-631-10)."
     },
     {
       "id": "d1_late_reading_not_in_timeline",
-      "module": "core.runtime_controller",
+      "module": "core.drawdown_hard_stop",
       "area": "money_management",
-      "file": "core/runtime_controller.py",
-      "original": "        stop.record_reading(started, cassa)\n",
-      "mutated": "",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self._store_locked(at, cash)\n            epoch = self.peak_epoch\n",
+      "mutated": "            epoch = self.peak_epoch\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "La lettura tardiva non entra nella cronologia: il suo calo non si valuta (D-631-10)."
+      "rationale": "La lettura tardiva non entra nella cronologia: i suoi effetti sulle letture successive si perdono."
     },
     {
       "id": "d1_current_reading_not_in_timeline",
@@ -10390,24 +10366,24 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "                if self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, running):",
-      "mutated": "                if self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, self.peak):",
+      "original": "            if ref_exact:\n                if self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, reference):",
+      "mutated": "            if ref_exact:\n                if self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, self.peak):",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "Lettura tardiva confrontata con un massimo successivo: falso drawdown."
+      "rationale": "Lettura tardiva confrontata con il massimo globale (anche successivo): falso drawdown."
     },
     {
       "id": "d1_timeline_running_max_not_raised",
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "                if cash > 0 and (running is None or cash > running):\n                    running = cash",
-      "mutated": "                if False:\n                    running = cash",
+      "original": "            if low is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, low, cash):",
+      "mutated": "            if False:",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "La cronologia non accumula i massimi letti: calo dopo un massimo tardivo perso."
+      "rationale": "Un massimo tardivo non rende reale un calo successivo gia' conservato."
     },
     {
       "id": "d1_rebase_keeps_previous_timeline",
@@ -10438,24 +10414,24 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "            while len(self._history) > READING_HISTORY_LIMIT:",
-      "mutated": "            while False:",
+      "original": "        while len(self._history) > RECENT_READINGS_LIMIT:",
+      "mutated": "        while False:",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "Cronologia delle letture senza limite di memoria."
+      "rationale": "Letture recenti senza limite di memoria."
     },
     {
       "id": "d1_late_reading_before_window_compared",
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "            if at < self._window_open:\n                return\n            bisect.insort(",
-      "mutated": "            bisect.insort(",
+      "original": "        if at < self._window_open:\n            return self._window_base, False",
+      "mutated": "        if at < self._window_open:\n            return self._window_base, True",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "Lettura iniziata prima della finestra confrontata con una base successiva: falso drawdown."
+      "rationale": "Lettura precedente alla storia conservata confrontata come se il limite noto fosse il picco esatto: falso drawdown."
     },
     {
       "id": "d1_start_reload_after_funds_reading",
@@ -10468,6 +10444,186 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "P3 START: rilettura dopo l'inizio della lettura dei fondi, che un ribasamento adottato rende vecchia."
+    },
+    {
+      "id": "d1_insufficient_history_ignored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            elif self._limit_exceeded(cap_raw, pct_cap_raw, cash, reference):",
+      "mutated": "            elif False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-11: lettura non valutabile scartata in silenzio (PASS)."
+    },
+    {
+      "id": "d1_insufficient_history_ignored_for_a_late_maximum",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if not low_exact and self._limit_exceeded(cap_raw, pct_cap_raw, Decimal(0), cash):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-11: massimo precedente alla storia conservata scartato in silenzio."
+    },
+    {
+      "id": "d1_insufficient_history_does_not_block",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        return stop.baseline_block_reason() or stop.history_block_reason()",
+      "mutated": "        return stop.baseline_block_reason()",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Storia insufficiente registrata ma ingressi ancora ammessi."
+    },
+    {
+      "id": "d1_insufficient_history_lost_on_restart",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if gaps:                                     # come il superamento: rileggere non lo cancella mai\n                self.history_insufficient = dict(gaps[0][\"history_insufficient\"])",
+      "mutated": "            if gaps:                                     # come il superamento: rileggere non lo cancella mai\n                self.history_insufficient = {}",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Crash/riavvio/subentro cancellano lo stato di storia insufficiente."
+    },
+    {
+      "id": "d1_insufficient_history_cleared_by_start",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        self._ladder = []\n        self._valleys = []\n\n    def open_window",
+      "mutated": "        self._ladder = []\n        self._valleys = []\n        self.history_insufficient = {}\n\n    def open_window",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Un nuovo START (finestra riaperta) cancella lo stato di storia insufficiente."
+    },
+    {
+      "id": "d1_evicted_maxima_lost",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self._ladder_insert_locked(t0, c0)\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "I massimi usciti dalle letture recenti si perdono: tardiva fra due massimi valutata male."
+    },
+    {
+      "id": "d1_evicted_minima_lost",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self._valley_insert_locked(t0, c0)\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "I minimi usciti si perdono: un massimo tardivo non rende reale un calo successivo uscito."
+    },
+    {
+      "id": "d1_same_instant_counted_as_before",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if t >= at:\n                break",
+      "mutated": "            if t > at:\n                break",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Letture dello stesso istante trattate come precedenti: falso drawdown fra letture concorrenti."
+    },
+    {
+      "id": "d1_same_instant_counted_as_after",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if t > at and (low is None or cash < low):",
+      "mutated": "            if t >= at and (low is None or cash < low):",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Letture dello stesso istante trattate come successive: falso drawdown fra letture concorrenti."
+    },
+    {
+      "id": "d1_window_not_advanced_on_compaction",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self._window_open = max(self._window_open, math.nextafter(t0, math.inf))\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Compattazione senza avanzare il confine: letture precedenti confrontate con massimi successivi."
+    },
+    {
+      "id": "d1_summary_unbounded",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        while len(self._ladder) + len(self._valleys) > SUMMARY_LIMIT:",
+      "mutated": "        while False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Riepilogo dei massimi/minimi senza limite di memoria."
+    },
+    {
+      "id": "d1_window_without_peak_inexact",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        self._window_open = float(at) if self.peak is not None else -math.inf",
+      "mutated": "        self._window_open = float(at)",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Finestra senza picco precedente trattata come storia mancante: letture note valutate solo col limite."
+    },
+    {
+      "id": "d1_insufficient_history_owner_clear_without_checks",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            checks = self._owner_drawdown_checks()\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_clear_history_insufficient(",
+      "mutated": "            checks = dict(self._owner_drawdown_checks(), uncertain_orders=[])\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_clear_history_insufficient(",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sblocco owner della storia insufficiente senza la verifica degli ordini AMBIGUOUS."
+    },
+    {
+      "id": "d1_owner_clear_keeps_old_history",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self._close_history_locked()\n            logger.warning(\"D-1: hard-stop sbloccato",
+      "mutated": "            logger.warning(\"D-1: hard-stop sbloccato",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Dopo lo sblocco owner una lettura iniziata prima fa rinascere il superamento sbloccato (Sol/Codex su b76466a3)."
+    },
+    {
+      "id": "d1_close_history_without_cutoff",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        self.rebased_at = time.monotonic()\n        self._open_window_locked(self.rebased_at)\n\n    def _open_window_locked",
+      "mutated": "        self._open_window_locked(time.monotonic())\n\n    def _open_window_locked",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sblocco owner senza istante di taglio: letture iniziate prima ancora valutate."
     }
   ]
 }

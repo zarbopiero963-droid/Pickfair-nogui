@@ -1345,8 +1345,10 @@ class RuntimeController:
             elif not stop.retry_persist():
                 return "drawdown_picco_non_persistito"
         # RO-DD-09 C: dopo un riavvio non pulito il picco salvato potrebbe non essere il massimo => nessun ingresso
-        # fino alla conferma owner della baseline (`owner_confirm_drawdown_baseline`).
-        return stop.baseline_block_reason()
+        # fino alla conferma owner della baseline (`owner_confirm_drawdown_baseline`). D-631-11: una lettura non
+        # valutabile per storia insufficiente nega allo stesso modo, con il suo motivo distinto, fino allo sblocco owner
+        # (`owner_clear_drawdown_history_insufficient`).
+        return stop.baseline_block_reason() or stop.history_block_reason()
 
     def _recovery_persist_block_reason(self) -> str:
         """Stato di recovery non durevole (scrittura fallita dopo un reset o un settlement): nessun nuovo
@@ -6834,26 +6836,24 @@ class RuntimeController:
         lo alza, il superamento si rivaluta contro l'ULTIMA cassa valutata (130 tardivo dopo 115 = perdita 15).
         D-631-10 (Codex su 3e6a3e0a): resta anche un punto della cronologia. Un calo vero visto solo da questa lettura
         (130 a t1, 130 a t3, 115 arrivata da t2) si memorizza contro il massimo letto PRIMA del suo istante, e un
-        massimo tardivo rende reale un calo gia' ricordato dopo di lui (`DrawdownHardStop.evaluate_timeline`): l'esito
-        non dipende dall'ordine di arrivo. Mai contro un massimo successivo (nessun falso drawdown).
+        massimo tardivo rende reale un calo gia' ricordato dopo di lui (`DrawdownHardStop.evaluate_late`): l'esito
+        non dipende dall'ordine di arrivo. Mai contro un massimo successivo (nessun falso drawdown). D-631-11: se la
+        cronologia necessaria non e' piu' in memoria e un superamento e' possibile, storia insufficiente (stato distinto,
+        persistito, ingressi negati), mai un PASS.
         Chiamata dentro `_drawdown_eval_lock`, a proprieta' gia' verificata e dopo il controllo del ribasamento."""
         stop = RuntimeController._hard_stop(self)
         cap = self._configured_optional(self.config, "max_drawdown_abs")
         pct_cap = self._configured_optional(self.config, "max_drawdown_hard_stop_pct")
-        stop.record_reading(started, cassa)
-        before = stop.snapshot()["peak"]
-        stop.observe(cassa)
-        if stop.snapshot()["peak"] != before:
-            last_cash = getattr(self, "_drawdown_last_cash", None)
-            if stop.evaluate(cap, last_cash, pct_cap_raw=pct_cap):
-                self._pending_drawdown_lockdown = (f"drawdown_hard_stop_triggered:"
-                                                   f"{stop.snapshot()['breach'].get('kind')}:"
-                                                   f"{float(stop.loss(last_cash)):.2f}€")
-                return
-        if stop.evaluate_timeline(cap, pct_cap_raw=pct_cap):
+        # D-631-11: prima la valutazione con la cronologia (picco e minimi con istante coerente; storia insufficiente
+        # = stato distinto, mai un PASS), poi il massimo globale.
+        esito = stop.evaluate_late(cap, started, cassa, pct_cap_raw=pct_cap)
+        if esito == "breached":
             breach = stop.snapshot()["breach"]
             self._pending_drawdown_lockdown = (f"drawdown_hard_stop_triggered:{breach.get('kind')}:"
                                                f"{float(breach.get('loss') or 0):.2f}€")
+        # Il massimo globale sale comunque. La rivalutazione dell'ultima cassa contro il picco alzato (D-631-08) e' la
+        # verifica (B) di `evaluate_late`: l'ultima cassa e' una lettura conservata, successiva a questa.
+        stop.observe(cassa)
 
     def _read_funds_for_entry(self) -> dict:
         """#461 PR28-e: lettura fresca del conto per il gate fondi di una nuova entrata, da eseguire FUORI dal
@@ -7631,6 +7631,37 @@ class RuntimeController:
                 out["reason"] = "sblocco_non_autorizzato_o_non_registrato"
             else:
                 out["unlocked"] = True
+        return out
+
+    def owner_clear_drawdown_history_insufficient(self, *, authorization: str, reason: str, operation_id: str,
+                                                  confirm: bool) -> dict:
+        """D-631-11: procedura owner-only di sblocco dello stato di storia insufficiente (DRAWDOWN_HISTORY_INSUFFICIENT).
+        Nessuno sblocco automatico: la lettura non valutabile resta non valutabile, e solo l'owner, dopo le stesse
+        verifiche degli sblocchi finanziari (cassa verificata, esposizione leggibile, nessun ordine AMBIGUOUS, calcolate
+        nella sezione critica subito prima della transizione), puo' riaprire gli ingressi. Rilegge prima lo stato durevole;
+        solo il controller proprietario del runtime. Non sblocca un superamento ne' ribasa il picco: l'hard-stop resta
+        valutato normalmente a ogni lettura. NON esposta da Control API/MCP."""
+        out = {"cleared": False, "reason": "", "checks": {}}
+        with RuntimeController._drawdown_eval_lock:
+            block = RuntimeController._drawdown_write_block(self)
+            if block:
+                out["reason"] = block
+                return out
+            stop = RuntimeController._hard_stop(self)
+            stop.restore(reconcile=True)
+            if not stop.history_block_reason():
+                out["reason"] = "nessuna_storia_insufficiente"
+                return out
+            checks = self._owner_drawdown_checks()
+            out["checks"] = checks
+            out["reason"] = self._owner_drawdown_checks_block(checks)
+            if out["reason"]:
+                return out
+            if not stop.owner_clear_history_insufficient(authorization=authorization, reason=reason,
+                                                         operation_id=operation_id, confirm=confirm, checks=checks):
+                out["reason"] = "sblocco_non_autorizzato_o_non_registrato"
+            else:
+                out["cleared"] = True
         return out
 
     def _maybe_auto_reset(self, available_drawdown: float) -> bool:

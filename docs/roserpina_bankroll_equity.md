@@ -437,16 +437,30 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   perche' arrivata tardi (bankroll e cassa del desk invariati) arriva comunque all'hard-stop, che decide col proprio
   istante (Sol su 9209f0d8). Una lettura iniziata prima dell'ultimo ribasamento owner
   (`DrawdownHardStop.rebased_at`) appartiene all'epoca precedente del picco: tardiva o no, non lo rialza e non
-  diventa la cassa corrente. Cronologia delle letture (D-631-10, Codex/Claude D su 3e6a3e0a): ogni lettura verificata
-  con il suo istante resta in memoria (`DrawdownHardStop.record_reading`, al massimo `READING_HISTORY_LIMIT` = 512,
-  poi la finestra avanza e il massimo uscito resta nella base). Una lettura tardiva si valuta contro il massimo letto
-  STRETTAMENTE PRIMA del suo istante (`evaluate_timeline`): 130 a t1, 130 a t3 e poi 115 arrivata da t2 memorizzano la
-  perdita di 15 come se fossero arrivate in ordine, e un massimo tardivo rende reale un calo gia' ricordato dopo di
-  lui. Mai contro un massimo successivo (nessun falso drawdown); letture dello stesso istante non si confrontano fra
-  loro; una lettura iniziata prima della finestra non si confronta. La finestra si apre allo START (dopo la rilettura
-  dello stato, con il picco riletto come base) e a ogni ribasamento owner (i massimi dell'epoca precedente non contano
-  piu'); senza START si apre alla prima lettura in ordine. Sola memoria: dopo un riavvio vale lo stato persistito
-  (picco e superamento). Allo START lo stato si rilegge PRIMA che inizi la lettura dei fondi (P3, Sol su 3e6a3e0a): un
+  diventa la cassa corrente. Cronologia delle letture (D-631-10/11, Codex/Claude D su 3e6a3e0a e b76466a3): ogni
+  lettura verificata resta in memoria con il suo istante (`DrawdownHardStop.record_reading`). Una lettura tardiva
+  (`evaluate_late`) si valuta (A) contro il massimo letto STRETTAMENTE PRIMA del suo istante e (B), se lo supera,
+  contro il minimo letto STRETTAMENTE DOPO: 130 a t1, 130 a t3 e poi 115 arrivata da t2 memorizzano la perdita di 15
+  come in ordine, e un massimo tardivo rende reale un calo successivo. Mai contro un massimo successivo; letture dello
+  stesso istante non si confrontano fra loro. Memoria limitata per l'intera struttura (`READING_HISTORY_LIMIT` = 512):
+  al massimo 256 letture recenti (`RECENT_READINGS_LIMIT`); le piu' vecchie passano in un riepilogo esatto di al
+  massimo 256 punti (`SUMMARY_LIMIT`): la scala dei massimi crescenti (massimo letto prima di t, ricerca binaria) e la
+  scala dei minimi successivi (minimo letto dopo t). Oltre il riepilogo la finestra avanza: cio' che precede non e'
+  piu' esatto e il picco noto all'apertura vale solo come limite superiore. Una lettura che cade prima della finestra
+  si confronta con quel limite: se nemmeno cosi' un superamento e' possibile non succede nulla; se e' possibile, o se
+  e' un massimo nuovo che potrebbe rendere reale un calo non piu' in memoria, lo stato e'
+  **DRAWDOWN_HISTORY_INSUFFICIENT** (motivo `drawdown_storia_insufficiente`): persistito con motivo, istante, cassa ed
+  epoca; NON e' un superamento (nessuna perdita dichiarata, nessun LOCKDOWN) e non e' un PASS: nega i nuovi ingressi
+  su ogni percorso (segnali, auto-next, ripresa via `_loss_block_reason`; manuale e Dutching via
+  `absolute_cap_reason_for_orders`), mai le uscite, le cancellazioni e la riconciliazione. Una nuova lettura non lo
+  scioglie (non ricostruisce la storia mancante), ne' STOP/START, crash, subentro o ribasamento: solo la procedura
+  owner `owner_clear_drawdown_history_insufficient` (stesse regole e verifiche dello sblocco dell'hard-stop, nella
+  sezione critica). Nessuno sblocco automatico: la storia mancante non si puo' ricostruire da letture successive. La
+  finestra si apre allo START (picco riletto come base), a ogni ribasamento owner e a ogni sblocco owner (superamento o
+  storia insufficiente): le letture iniziate prima di una decisione owner sono ignorate, cosi' una lettura fuori ordine
+  non fa rinascere un superamento gia' sbloccato (Sol/Codex su b76466a3); il picco resta. Senza alcun picco noto la
+  finestra e' esatta da subito. Sola memoria: dopo un riavvio valgono picco, superamento e storia insufficiente
+  persistiti. Allo START lo stato si rilegge PRIMA che inizi la lettura dei fondi (P3, Sol su 3e6a3e0a): un
   ribasamento di un altro processo adottato in quel momento non rende «precedente al ribasamento» la prima lettura;
   controllo
   dell'istante e valutazione sono un'unica sezione critica fra letture d'ingresso e del desk (Sol su 6d4ac43f), e

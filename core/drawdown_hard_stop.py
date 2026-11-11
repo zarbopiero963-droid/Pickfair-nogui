@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import bisect
 import json
+import math
 import logging
 import os
 import threading
@@ -60,12 +61,22 @@ REASON_NOT_PERSISTED = "max_drawdown_abs_picco_non_persistito"
 REASON_CASH_UNVERIFIED = "max_drawdown_abs_cassa_non_verificata"
 REASON_PCT_ACTIVE = "drawdown_hard_stop_active"
 REASON_BASELINE_UNVERIFIED = "drawdown_baseline_non_verificata"
+# D-631-11: una lettura che non si puo' valutare perche' la cronologia necessaria non e' piu' in memoria. NON e' un
+# superamento (nessuna perdita dimostrata) ma non e' nemmeno un PASS: nuovi ingressi negati con questo motivo distinto,
+# stato persistito, sblocco solo con la procedura owner `owner_clear_history_insufficient`.
+REASON_HISTORY_INSUFFICIENT = "drawdown_storia_insufficiente"
+STATE_HISTORY_INSUFFICIENT = "DRAWDOWN_HISTORY_INSUFFICIENT"
 REASON_PCT_INVALID = "max_drawdown_hard_stop_pct_non_valido"
 KIND_ABS = "max_drawdown_abs"
 KIND_PCT = "max_drawdown_hard_stop_pct"
-# D-631-10: letture verificate ricordate in memoria (istante monotonic, cassa) per valutare un calo visto da una lettura
-# arrivata in ritardo contro il massimo letto PRIMA del suo istante. Limite di memoria: oltre, la finestra avanza.
-READING_HISTORY_LIMIT = 512
+# D-631-10/11: letture verificate ricordate in memoria (istante monotonic, cassa) per valutare un calo visto da una
+# lettura arrivata in ritardo contro il massimo letto PRIMA del suo istante. Memoria limitata per l'intera struttura:
+# al massimo RECENT_READINGS_LIMIT letture recenti piu' SUMMARY_LIMIT punti di riepilogo delle letture uscite (scala dei
+# massimi crescenti e scala dei minimi successivi). Oltre, la finestra avanza: cio' che precede non e' piu' valutabile
+# con esattezza e, se puo' nascondere un superamento, diventa storia insufficiente (mai un PASS).
+RECENT_READINGS_LIMIT = 256
+SUMMARY_LIMIT = 256
+READING_HISTORY_LIMIT = RECENT_READINGS_LIMIT + SUMMARY_LIMIT
 
 
 def _marker_path(db: Any) -> str:
@@ -90,6 +101,9 @@ def _parse_record(raw: Any) -> dict:
     verified = record.get("baseline_verified", True)
     epoch = record.get("peak_epoch", 0)
     rebase_ops = record.get("rebase_ops", [])
+    gap = record.get("history_insufficient") or {}
+    if not isinstance(gap, dict) or type(gap.get("active", False)) is not bool:
+        raise ValueError("record non valido")
     if (peak is not None and (not peak.is_finite() or peak <= 0)) or type(seq) is not int or seq < 0 \
             or type(breached) is not bool or type(session_open) is not bool or type(verified) is not bool \
             or type(epoch) is not int or epoch < 0 \
@@ -97,7 +111,7 @@ def _parse_record(raw: Any) -> dict:
         raise ValueError("record non valido")
     return {"peak": peak, "seq": seq, "peak_epoch": epoch, "rebase_ops": list(rebase_ops), "breached": breached, "breach": dict(record.get("breach") or {}),
             "session_open": session_open, "baseline_verified": verified,
-            "baseline": dict(record.get("baseline") or {})}
+            "baseline": dict(record.get("baseline") or {}), "history_insufficient": dict(gap)}
 
 
 def _now() -> str:
@@ -131,15 +145,24 @@ class DrawdownHardStop:
         self._db = db
         self.peak: Optional[Decimal] = None
         self.peak_epoch = 0                              # +1 a ogni ribasamento owner del picco (Sol su 6d4ac43f)
-        # Istante (monotonic) in cui questo processo ha visto nascere l'epoca corrente del picco: una lettura del
-        # conto iniziata prima appartiene all'epoca precedente e non rialza il picco ribasato (D-631-08).
+        # Istante (monotonic) dell'ultima decisione owner che chiude la cronologia: ribasamento del picco (epoca nuova)
+        # o sblocco (superamento o storia insufficiente). Una lettura del conto iniziata prima e' ignorata: non rialza
+        # il picco ribasato (D-631-08) e non fa rinascere cio' che l'owner ha sbloccato (Sol/Codex su b76466a3).
         self.rebased_at: Optional[float] = None
         # D-631-10: finestra temporale delle letture di questo processo (sola memoria, mai persistita). `_window_base` e'
         # il picco noto all'apertura (`_window_open`, monotonic): precede ogni lettura in `_history`, ordinata per
         # istante. Si riapre allo START (stato appena riletto) e a ogni ribasamento (epoca nuova).
         self._window_open: Optional[float] = None
         self._window_base: Optional[Decimal] = None
-        self._history: list = []
+        self._history: list = []                         # letture recenti (istante, cassa), ordinate per istante
+        # D-631-11: riepilogo delle letture uscite dalle recenti (tutte con istante <= della recente piu' vecchia).
+        # `_ladder`: punti in cui il massimo cumulato sale (istante e valore crescenti) => massimo letto prima di t.
+        # `_valleys`: scala dei minimi successivi (istante e valore crescenti) => minimo letto dopo t.
+        self._ladder: list = []
+        self._valleys: list = []
+        # Stato persistito: lettura non valutabile per storia insufficiente ({"active": True, ...}); "cleared" tiene
+        # gli sblocchi owner (operation_id monouso).
+        self.history_insufficient: dict = {}
         self.rebase_ops: list = []                       # operation_id dei ribasamenti gia' usati (Grok su b9cbe0d7)
         self.seq = 0
         self.unreadable = False
@@ -238,11 +261,22 @@ class DrawdownHardStop:
                 # solo in memoria e piu' recente (salvataggio fallito: `seq` non piu' basso del disco) resta.
                 self.breached = False
                 self.breach = dict(records[0]["breach"])
+                self._close_history_locked()             # sblocco owner di un altro processo: come uno sblocco locale
             elif not self.breached or newer:
                 # Sol/Codex su 4a171465: nessun superamento attivo, ma la storia degli sblocchi (operation_id gia'
                 # usati) e dei ribasamenti si riprende dal disco: un riavvio non rende di nuovo valido un operation_id
                 # consumato.
                 self.breach = dict(records[0]["breach"])
+            gaps = [r for r in records if r["history_insufficient"].get("active")]
+            if gaps:                                     # come il superamento: rileggere non lo cancella mai
+                self.history_insufficient = dict(gaps[0]["history_insufficient"])
+            elif newer and self.history_insufficient.get("active"):
+                self.history_insufficient = dict(records[0]["history_insufficient"])
+                self._close_history_locked()
+            elif newer or not self.history_insufficient.get("active"):
+                # sblocco owner durevole (anche di un altro processo) o nessuno stato attivo: storia degli sblocchi
+                # ripresa dal disco; uno stato attivo solo in memoria e piu' recente del disco resta.
+                self.history_insufficient = dict(records[0]["history_insufficient"])
             if not reconcile:
                 return
             if any(r.get("from_marker") for r in records):
@@ -269,7 +303,8 @@ class DrawdownHardStop:
                   "rebase_ops": list(self.rebase_ops),
                   "breached": self.breached,
                   "breach": dict(self.breach), "session_open": self.session_open,
-                  "baseline_verified": self.baseline_verified, "baseline": dict(self.baseline), "updated_at": _now()}
+                  "baseline_verified": self.baseline_verified, "baseline": dict(self.baseline),
+                  "history_insufficient": dict(self.history_insufficient), "updated_at": _now()}
         payload = json.dumps(record)
         marker = _marker_path(self._db)
         try:
@@ -333,6 +368,11 @@ class DrawdownHardStop:
     def baseline_block_reason(self) -> str:
         with self._lock:
             return "" if self.baseline_verified else REASON_BASELINE_UNVERIFIED
+
+    def history_block_reason(self) -> str:
+        """D-631-11: '' oppure il motivo distinto della storia insufficiente (nessun nuovo ingresso)."""
+        with self._lock:
+            return REASON_HISTORY_INSUFFICIENT if self.history_insufficient.get("active") else ""
 
     def owner_confirm_baseline(self, *, authorization: str, reason: str, operation_id: str, confirm: bool,
                                confirm_again: bool, cash_equity: Any, declared_peak: Any = None,
@@ -430,22 +470,124 @@ class DrawdownHardStop:
             self._persist_locked()
             return True
 
-    # ------------------------------------------------------------ letture fuori ordine (D-631-10)
+    # ------------------------------------------------------------ letture fuori ordine (D-631-10/11)
+    def _close_history_locked(self) -> None:
+        """Decisione owner (sblocco) adottata: le letture iniziate prima non si valutano piu', il picco resta."""
+        self.rebased_at = time.monotonic()
+        self._open_window_locked(self.rebased_at)
+
     def _open_window_locked(self, at: float) -> None:
-        self._window_open = float(at)
+        # Senza alcun picco noto non c'e' nulla prima dell'apertura che possa mancare: tutta la cronologia e' esatta.
+        self._window_open = float(at) if self.peak is not None else -math.inf
         self._window_base = self.peak
         self._history = []
+        self._ladder = []
+        self._valleys = []
 
     def open_window(self, at: float) -> None:
         """Apre la finestra delle letture all'istante ``at`` con il picco noto adesso come base (START, stato appena
-        riletto). Le letture iniziate prima di ``at`` non si confrontano con la storia."""
+        riletto; ribasamento owner). Tutto cio' che e' noto prima precede ``at``; la cronologia precedente si azzera.
+        Lo stato di storia insufficiente NON si azzera qui."""
         with self._lock:
             self._open_window_locked(at)
 
+    @staticmethod
+    def _limit_exceeded(cap_raw: Any, pct_cap_raw: Any, cash: Decimal, reference: Optional[Decimal]) -> bool:
+        """Come `_memorize_if_exceeded` ma senza memorizzare: la perdita di ``cash`` da ``reference`` supera un limite
+        configurato e valido?"""
+        if reference is None or cash is None:
+            return False
+        loss = max(Decimal(0), reference - cash)
+        abs_cap = validators.finite_number(cap_raw) if cap_raw is not None else None
+        if abs_cap is not None and abs_cap > 0 and loss >= validators.money_decimal(abs_cap):
+            return True
+        pct_cap = validators.finite_number(pct_cap_raw) if pct_cap_raw is not None else None
+        if pct_cap is not None and 0 < pct_cap <= 100 and reference > 0:
+            return loss >= reference * validators.money_decimal(pct_cap) / Decimal(100)
+        return False
+
+    def _peak_before_locked(self, at: float):
+        """``(massimo letto STRETTAMENTE prima di at, esatto?)``. Prima della finestra non e' esatto: la base e' solo un
+        limite superiore (il vero massimo a ``at`` non puo' superare cio' che era noto all'apertura)."""
+        if self._window_open is None:
+            return self.peak, False
+        if at < self._window_open:
+            return self._window_base, False
+        best = self._window_base
+        i = bisect.bisect_left(self._ladder, (at,))
+        if i > 0:
+            step = self._ladder[i - 1][1]
+            best = step if best is None or step > best else best
+        for t, cash in self._history:
+            if t >= at:
+                break
+            if cash > 0 and (best is None or cash > best):
+                best = cash
+        return best, True
+
+    def _min_after_locked(self, at: float):
+        """``(minimo letto STRETTAMENTE dopo at fra le letture conservate, esatto?)``. Non esatto prima della finestra:
+        fra ``at`` e l'apertura ci sono letture che questo processo non ha conservato."""
+        low = None
+        for t, cash in self._history:
+            if t > at and (low is None or cash < low):
+                low = cash
+        i = bisect.bisect_right(self._valleys, (at, Decimal("Infinity")))
+        if i < len(self._valleys):
+            valley = self._valleys[i][1]
+            low = valley if low is None or valley < low else low
+        exact = self._window_open is not None and at >= self._window_open
+        return low, exact
+
+    def _ladder_insert_locked(self, at: float, cash: Decimal) -> None:
+        if cash <= 0:
+            return
+        i = bisect.bisect_left(self._ladder, (at,))
+        prev = self._ladder[i - 1][1] if i > 0 else self._window_base
+        if prev is not None and cash <= prev:
+            return                                       # non alza il massimo cumulato: non serve
+        self._ladder.insert(i, (at, cash))
+        j = i + 1
+        while j < len(self._ladder) and self._ladder[j][1] <= cash:
+            del self._ladder[j]                          # gradini successivi non piu' crescenti
+
+    def _valley_insert_locked(self, at: float, cash: Decimal) -> None:
+        i = bisect.bisect_right(self._valleys, (at, Decimal("Infinity")))
+        if i < len(self._valleys) and self._valleys[i][1] <= cash:
+            return                                       # un minimo successivo piu' basso lo rende superfluo
+        self._valleys.insert(i, (at, cash))
+        while i > 0 and self._valleys[i - 1][1] >= cash:
+            del self._valleys[i - 1]
+            i -= 1
+
+    def _store_locked(self, at: float, cash: Decimal) -> None:
+        """Conserva una lettura: prima della finestra entra nella base (precede ogni lettura conservata); altrimenti
+        fra le recenti, e le piu' vecchie oltre il limite passano nel riepilogo. Oltre il limite del riepilogo la
+        finestra avanza oltre il suo punto piu' vecchio (memoria limitata per l'intera struttura)."""
+        if at < self._window_open:
+            if cash > 0 and (self._window_base is None or cash > self._window_base):
+                self._window_base = cash
+            return
+        bisect.insort(self._history, (float(at), cash))
+        while len(self._history) > RECENT_READINGS_LIMIT:
+            t0, c0 = self._history.pop(0)
+            self._ladder_insert_locked(t0, c0)
+            self._valley_insert_locked(t0, c0)
+        while len(self._ladder) + len(self._valleys) > SUMMARY_LIMIT:
+            oldest_ladder = self._ladder[0][0] if self._ladder else math.inf
+            oldest_valley = self._valleys[0][0] if self._valleys else math.inf
+            if oldest_ladder <= oldest_valley:
+                t0, m0 = self._ladder.pop(0)
+                if self._window_base is None or m0 > self._window_base:
+                    self._window_base = m0
+            else:
+                t0, _ = self._valleys.pop(0)
+            # da qui la storia prima di t0 non e' piu' esatta: le letture a t0 o prima sono «prima della finestra»
+            self._window_open = max(self._window_open, math.nextafter(t0, math.inf))
+
     def record_reading(self, at: float, cash_equity: Any, *, may_open: bool = False) -> None:
-        """Ricorda la cassa verificata letta all'istante ``at``. ``may_open``: senza finestra la apre qui (prima lettura
-        in ordine del processo), con il picco noto PRIMA di questa lettura come base. Una lettura iniziata prima della
-        finestra non entra: non si sa cosa la precedeva."""
+        """Ricorda la cassa verificata letta all'istante ``at`` (lettura corrente, in ordine). ``may_open``: senza
+        finestra la apre qui, con il picco noto PRIMA di questa lettura come base."""
         cash = _observed_cash(cash_equity)
         if cash is None:
             return
@@ -454,39 +596,97 @@ class DrawdownHardStop:
                 if not may_open:
                     return
                 self._open_window_locked(at)
-            if at < self._window_open:
-                return
-            bisect.insort(self._history, (float(at), cash))
-            while len(self._history) > READING_HISTORY_LIMIT:
-                t0, c0 = self._history.pop(0)            # la finestra avanza: il piu' vecchio diventa parte della base
-                self._window_open = t0
-                if c0 > 0 and (self._window_base is None or c0 > self._window_base):
-                    self._window_base = c0
+            self._store_locked(float(at), cash)
 
-    def evaluate_timeline(self, cap_raw: Any, *, pct_cap_raw: Any = None) -> bool:
-        """D-631-10: valuta ogni lettura ricordata contro il massimo letto STRETTAMENTE PRIMA del suo istante (base
-        della finestra compresa), mai contro un massimo successivo. Memorizza il primo superamento (persistito): un
-        calo vero visto solo da una lettura arrivata in ritardo non si perde (130 a t1, 130 a t3, 115 a t2 = perdita 15
-        come in ordine). Letture dello stesso istante non si confrontano fra loro. True se ha appena memorizzato."""
+    def evaluate_late(self, cap_raw: Any, at: float, cash_equity: Any, *, pct_cap_raw: Any = None) -> str:
+        """Lettura verificata arrivata dopo una piu' recente (D-631-10/11). Esito: "" (niente), "breached" (superamento
+        dimostrato e memorizzato), "insufficient" (storia insufficiente, memorizzata). Due verifiche, sempre contro
+        letture con istante coerente, mai contro un massimo successivo:
+
+        (A) il suo calo dal massimo letto STRETTAMENTE prima di ``at``;
+        (B) se lo supera, il calo delle letture successive (minimo letto strettamente dopo ``at``) da questa lettura.
+
+        Quando l'informazione necessaria non e' piu' in memoria (lettura precedente alla finestra) e un superamento
+        e' possibile con i limiti noti, l'esito e' storia insufficiente: mai un PASS, mai un superamento inventato."""
+        cash = _observed_cash(cash_equity)
+        if cash is None:
+            return ""
+        at = float(at)
         with self._lock:
-            if self.breached or self.unreadable or self._window_open is None:
+            if self.unreadable:
+                return ""
+            if self._window_open is None:
+                self._open_window_locked(at)             # nessuna storia: la base e' il picco noto
+            reference, ref_exact = self._peak_before_locked(at)
+            low, low_exact = self._min_after_locked(at)
+            already = self.breached or bool(self.history_insufficient.get("active"))
+            self._store_locked(at, cash)
+            epoch = self.peak_epoch
+        if already and self.breached:
+            return ""
+        # (A) calo di questa lettura
+        if reference is not None:
+            if ref_exact:
+                if self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, reference):
+                    return "breached"
+            elif self._limit_exceeded(cap_raw, pct_cap_raw, cash, reference):
+                return self._mark_history_insufficient("lettura_precedente_alla_storia_conservata", at, cash, epoch,
+                                                       reference=reference)
+        # (B) un massimo nuovo rende reale un calo successivo
+        if cash > 0 and (reference is None or cash > reference):
+            if low is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, low, cash):
+                return "breached"
+            if not low_exact and self._limit_exceeded(cap_raw, pct_cap_raw, Decimal(0), cash):
+                return self._mark_history_insufficient("massimo_precedente_alla_storia_conservata", at, cash, epoch,
+                                                       reference=reference)
+        return ""
+
+    def _mark_history_insufficient(self, why: str, at: float, cash: Decimal, epoch: int,
+                                   reference: Optional[Decimal] = None) -> str:
+        """D-631-11: memorizza (persistito) lo stato di storia insufficiente: distinto dall'hard-stop, nessuna perdita
+        dichiarata, nuovi ingressi negati fino allo sblocco owner."""
+        with self._lock:
+            if self.unreadable:
+                return ""
+            if self.history_insufficient.get("active"):
+                return "insufficient"
+            self.history_insufficient = {
+                "active": True, "state": STATE_HISTORY_INSUFFICIENT, "reason": why, "at": _now(),
+                "reading_monotonic": at, "cash": str(cash),
+                "known_peak_bound": None if reference is None else str(reference), "peak_epoch": epoch,
+                "cleared": list(self.history_insufficient.get("cleared", [])),
+            }
+            logger.critical("D-1: %s (%s): lettura del conto non valutabile con la cronologia in memoria (cassa %s, "
+                            "epoca %s). Nessun superamento dichiarato; nuovi ingressi negati fino allo sblocco owner",
+                            STATE_HISTORY_INSUFFICIENT, why, cash, epoch)
+            self._persist_locked()
+            return "insufficient"
+
+    def owner_clear_history_insufficient(self, *, authorization: str, reason: str = "", operation_id: str = "",
+                                         confirm: bool = False, checks: Optional[dict] = None) -> bool:
+        """D-631-11: sblocco owner dello stato di storia insufficiente, con le stesse regole dello sblocco dell'hard-stop
+        (autorizzazione, motivo, operation_id monouso, conferma, verifiche del chiamante registrate, salvataggio prima
+        che valga). Nessun percorso automatico (riavvio, START, subentro, ribasamento) lo chiama. Non sblocca un
+        superamento ne' ribasa il picco."""
+        ref, why, op = (str(v or "").strip() for v in (authorization, reason, operation_id))
+        if not (ref and why and op and confirm is True):
+            return False
+        with self._lock:
+            if self.unreadable or not self.history_insufficient.get("active"):
                 return False
-            running = self._window_base
-            readings = list(self._history)
-        i = 0
-        while i < len(readings):
-            j = i
-            while j < len(readings) and readings[j][0] == readings[i][0]:
-                j += 1
-            group = readings[i:j]
-            for _, cash in group:
-                if self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, running):
-                    return True
-            for _, cash in group:
-                if cash > 0 and (running is None or cash > running):
-                    running = cash
-            i = j
-        return False
+            before = dict(self.history_insufficient)
+            history = list(before.pop("cleared", []))
+            if any(isinstance(h, dict) and h.get("operation_id") == op for h in history):
+                return False
+            entry = {"at": _now(), "authorization": ref, "reason": why, "operation_id": op,
+                     "checks": dict(checks or {}), "state": before}
+            self.history_insufficient = {"active": False, "cleared": history + [entry]}
+            if not self._persist_locked(marker_fallback=False):
+                self.history_insufficient = dict(before, cleared=history)
+                return False
+            self._close_history_locked()
+            logger.warning("D-1: storia insufficiente sbloccata dall'owner (op %s, autorizzazione %s): %s", op, ref, why)
+            return True
 
     # ------------------------------------------------------------ procedura owner (mai automatica)
     def owner_clear_breach(self, *, authorization: str, reason: str = "", operation_id: str = "",
@@ -516,6 +716,7 @@ class DrawdownHardStop:
             if not self._persist_locked(marker_fallback=False):
                 self.breached, self.breach = True, dict(before, cleared=history)   # nessuno sblocco non registrato
                 return False
+            self._close_history_locked()
             logger.warning("D-1: hard-stop sbloccato dall'owner (op %s, autorizzazione %s): %s", op, ref, why)
             return True
 
@@ -533,7 +734,8 @@ class DrawdownHardStop:
             if op in self.rebase_ops:
                 return False                             # operation_id gia' usato: nessun replay (Grok su b9cbe0d7)
             old_peak, old_breach, old_epoch, old_at = self.peak, dict(self.breach), self.peak_epoch, self.rebased_at
-            old_window = (self._window_open, self._window_base, list(self._history))
+            old_window = (self._window_open, self._window_base, list(self._history), list(self._ladder),
+                          list(self._valleys))
             self.peak = peak
             self.peak_epoch = old_epoch + 1
             self.rebased_at = time.monotonic()
@@ -546,7 +748,7 @@ class DrawdownHardStop:
             if not self._persist_locked(marker_fallback=False):
                 self.peak, self.breach, self.peak_epoch = old_peak, old_breach, old_epoch
                 self.rebased_at = old_at
-                self._window_open, self._window_base, self._history = old_window
+                self._window_open, self._window_base, self._history, self._ladder, self._valleys = old_window
                 self.rebase_ops.remove(op)
                 return False
             logger.warning("D-1: picco dell'hard-stop ribasato dall'owner %s -> %s (op %s)", old_peak, peak, op)
@@ -620,4 +822,5 @@ class DrawdownHardStop:
             return {"peak": None if self.peak is None else float(self.peak), "seq": self.seq,
                     "unreadable": self.unreadable, "persist_failed": self.persist_failed,
                     "breached": self.breached, "breach": dict(self.breach), "session_open": self.session_open,
-                    "baseline_verified": self.baseline_verified, "baseline": dict(self.baseline)}
+                    "baseline_verified": self.baseline_verified, "baseline": dict(self.baseline),
+                    "history_insufficient": dict(self.history_insufficient)}

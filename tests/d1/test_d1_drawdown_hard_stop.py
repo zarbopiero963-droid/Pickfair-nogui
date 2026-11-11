@@ -2435,17 +2435,15 @@ def test_late_dip_after_an_owner_rebase_is_measured_from_the_rebased_peak(tmp_pa
 
 
 def test_reading_history_is_bounded(tmp_path, monkeypatch):
-    """Memoria limitata: oltre `READING_HISTORY_LIMIT` la finestra avanza; il massimo uscito resta nella base, una
-    lettura iniziata prima della nuova finestra non si confronta piu' (nessun falso drawdown)."""
+    """Memoria limitata: oltre `RECENT_READINGS_LIMIT` le letture piu' vecchie passano nel riepilogo (scala dei massimi
+    e dei minimi); il massimo uscito resta valutabile per le letture tardive successive al suo istante."""
     import core.drawdown_hard_stop as modulo
-    monkeypatch.setattr(modulo, "READING_HISTORY_LIMIT", 2)
+    monkeypatch.setattr(modulo, "RECENT_READINGS_LIMIT", 2)
     c, base = _letture_dal_conto(tmp_path, [(130.0, 1), (128.0, 2), (129.0, 3)])
     stop = c.rc._hard_stop()
-    assert len(stop._history) == 2 and stop._window_open == base + 1
-    c.rc._apply_funds_reading(_fondi(100.0), source="test", read_at=base + 0.5)   # prima della finestra: ignorata
-    assert not stop.breached
-    c.rc._apply_funds_reading(_fondi(118.0), source="test", read_at=base + 2.5)   # 130 (in base) -> 118 = 12
-    assert stop.breached
+    assert len(stop._history) == 2 and stop._ladder and stop._ladder[0][1] == 130
+    c.rc._apply_funds_reading(_fondi(118.0), source="test", read_at=base + 2.5)   # 130 (uscito, t1) -> 118 = 12
+    assert stop.breached and not stop.history_insufficient.get("active")
 
 
 def test_start_reloads_the_drawdown_state_before_the_funds_reading_begins():
@@ -2478,3 +2476,307 @@ def test_restart_in_the_same_process_measures_late_dips_from_the_reloaded_peak(t
     assert not c.rc._hard_stop().breached
     c.rc._evaluate_drawdown_hard_stop(139.0, read_at=secondo + 3)
     assert c.rc._hard_stop().breached and Decimal(c.rc._hard_stop().snapshot()["breach"]["loss"]) == 11
+
+
+# ------------------------------------------------- D-631-11 (Claude D su b76466a3): ciclo 14
+# Mandato owner PF-OWNER-PR631-CYCLE14-GO-20261111. Una lettura tardiva che la cronologia in memoria non permette di
+# valutare non e' mai un PASS: o si valuta con il riepilogo esatto (scala dei massimi/minimi), o diventa
+# DRAWDOWN_HISTORY_INSUFFICIENT (stato distinto, persistito, ingressi negati, sblocco owner).
+from core.drawdown_hard_stop import REASON_HISTORY_INSUFFICIENT, STATE_HISTORY_INSUFFICIENT  # noqa: E402
+
+
+def _molte_letture(c, base, da, quante, cassa=160.0):
+    for i in range(quante):
+        c.rc._apply_funds_reading(_fondi(cassa), source="test", read_at=base + da + i * 0.01)
+
+
+def test_two_maxima_out_of_memory_and_a_late_reading_between_them(tmp_path):
+    """Claude D (D-631-11): 120 a t2, 160 a t10, poi 700 letture, poi 105 arrivata da t5. Entrambi i massimi sono
+    usciti dalle letture recenti: la scala dei massimi da' il picco valido a t5 (120) => perdita 15, superamento. Prima
+    la lettura era scartata in silenzio (nessun superamento, gate '')."""
+    c, base = _letture_dal_conto(tmp_path, [(120.0, 2), (160.0, 10)])
+    _molte_letture(c, base, 11, 700)
+    stop = c.rc._hard_stop()
+    assert not stop.breached
+    c.rc._apply_funds_reading(_fondi(105.0), source="test", read_at=base + 5)
+    assert stop.breached and Decimal(stop.snapshot()["breach"]["peak"]) == 120
+    assert Decimal(stop.snapshot()["breach"]["loss"]) == 15 and not stop.history_insufficient.get("active")
+
+
+@pytest.mark.parametrize("cassa", [115.0, 111.0])
+def test_late_reading_between_two_evicted_maxima_is_never_compared_with_the_later_one(tmp_path, cassa):
+    """Nessun confronto con un picco successivo: a t5 il massimo valido e' 120 (non 160) => 115 o 111 non superano 10."""
+    c, base = _letture_dal_conto(tmp_path, [(120.0, 2), (160.0, 10)])
+    _molte_letture(c, base, 11, 700)
+    c.rc._apply_funds_reading(_fondi(cassa), source="test", read_at=base + 5)
+    stop = c.rc._hard_stop()
+    assert not stop.breached and not stop.history_insufficient.get("active")
+
+
+def test_breach_stays_after_700_readings_and_after_a_crash(tmp_path):
+    """Un superamento accertato resta dopo che le sue letture escono dalla memoria e dopo un crash."""
+    c, base = _letture_dal_conto(tmp_path, [(130.0, 1), (115.0, 2)])
+    assert c.rc._hard_stop().breached
+    _molte_letture(c, base, 3, 700, cassa=200.0)
+    assert c.rc._hard_stop().breached
+    riletto = DrawdownHardStop(c.rc.db)
+    riletto.restore(reconcile=False)
+    assert riletto.breached
+
+
+def test_memory_stays_bounded_after_5000_readings(tmp_path):
+    """Limite complessivo: letture recenti + scala dei massimi + scala dei minimi <= READING_HISTORY_LIMIT, anche con
+    5.000 letture di valori diversi (rialzi e cali)."""
+    import random
+    import core.drawdown_hard_stop as modulo
+    c, base = _letture_dal_conto(tmp_path, [(1000.0, 0)])
+    rnd = random.Random(631)
+    for i in range(5000):
+        cassa = 1000.0 + i * 0.5 + rnd.uniform(-3.0, 3.0)
+        c.rc._apply_funds_reading(_fondi(round(cassa, 2)), source="test", read_at=base + 1 + i * 0.001)
+    stop = c.rc._hard_stop()
+    assert len(stop._history) <= modulo.RECENT_READINGS_LIMIT
+    assert len(stop._history) + len(stop._ladder) + len(stop._valleys) <= modulo.READING_HISTORY_LIMIT
+
+
+def _storia_insufficiente(tmp_path, monkeypatch, **cfg):
+    """Riepilogo minimo (2 punti) => la finestra avanza oltre t5 (base 108); poi arriva una lettura da t1.5 con 95. Il
+    vero massimo a t1.5 era 100 (perdita 5), ma non e' piu' in memoria e contro il limite noto (108) un superamento
+    sarebbe possibile (13 >= 10): non valutabile. Nessuna sequenza in ordine supera il limite."""
+    import core.drawdown_hard_stop as modulo
+    monkeypatch.setattr(modulo, "RECENT_READINGS_LIMIT", 2)
+    monkeypatch.setattr(modulo, "SUMMARY_LIMIT", 2)
+    c, base = _letture_dal_conto(tmp_path, [(100.0, 1), (104.0, 2), (98.0, 3), (108.0, 4), (102.0, 5), (112.0, 6),
+                                            (106.0, 7), (116.0, 8)], **cfg)
+    stop = c.rc._hard_stop()
+    assert not stop.breached and stop._window_open > base + 1.5
+    c.rc._apply_funds_reading(_fondi(95.0), source="test", read_at=base + 1.5)
+    return c, base
+
+
+def test_insufficient_history_is_a_distinct_persistent_block_not_a_breach(tmp_path, monkeypatch):
+    """D-631-11: la lettura di t1.5 cade prima della cronologia conservata e un superamento e' possibile. Esito: stato
+    DRAWDOWN_HISTORY_INSUFFICIENT persistito, motivo distinto, nessun superamento dichiarato, nessun LOCKDOWN."""
+    c, _ = _storia_insufficiente(tmp_path, monkeypatch, max_drawdown_abs=10.0)
+    stop = c.rc._hard_stop()
+    gap = stop.snapshot()["history_insufficient"]
+    assert gap["active"] is True and gap["state"] == STATE_HISTORY_INSUFFICIENT
+    assert gap["reason"] == "lettura_precedente_alla_storia_conservata" and gap["peak_epoch"] == stop.peak_epoch
+    assert gap["at"] and Decimal(gap["cash"]) == 95
+    assert not stop.breached and c.rc.mode.name != "LOCKDOWN"
+    assert json.loads(c.rc.db.get_settings()[STATE_KEY])["history_insufficient"]["active"] is True
+
+
+def test_insufficient_history_blocks_every_entry_path(tmp_path, monkeypatch):
+    """Il blocco vale per segnali Roserpina, puntate manuali / Dutching (`absolute_cap_reason_for_orders`) e auto-next
+    (`_risk_allows_auto_trade`), e resta dopo cinque nuove letture del conto (una lettura nuova non ricostruisce la
+    storia mancante)."""
+    c, base = _storia_insufficiente(tmp_path, monkeypatch, max_drawdown_abs=10.0)
+    for i in range(5):
+        c.rc._apply_funds_reading(_fondi(116.0), source="test", read_at=base + 20 + i)
+    assert c.rc._hard_stop().history_block_reason() == REASON_HISTORY_INSUFFICIENT
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0 and _rifiuti(c)[-1] == REASON_HISTORY_INSUFFICIENT
+    assert c.rc.absolute_cap_reason_for_orders([dict(_ORDINE_MANUALE)]) == REASON_HISTORY_INSUFFICIENT
+    consentito, motivo = c.rc._risk_allows_auto_trade()
+    assert consentito is False and REASON_HISTORY_INSUFFICIENT in motivo
+
+
+def test_insufficient_history_survives_stop_start_crash_and_takeover(tmp_path, monkeypatch):
+    """Nessun riavvio, nuovo START, crash o nuovo controller cancella lo stato: si rilegge dal disco."""
+    c, _ = _storia_insufficiente(tmp_path, monkeypatch, max_drawdown_abs=10.0)
+    c.rc._reload_drawdown_state()                                 # nuovo START nello stesso processo
+    assert c.rc._hard_stop().history_block_reason() == REASON_HISTORY_INSUFFICIENT
+    for _ in range(2):
+        riletto = DrawdownHardStop(c.rc.db)                       # crash + riavvio / subentro di un altro controller
+        riletto.restore(reconcile=False)
+        assert riletto.history_block_reason() == REASON_HISTORY_INSUFFICIENT
+
+
+def test_insufficient_history_is_cleared_only_by_the_owner_procedure_with_checks(tmp_path, monkeypatch):
+    """Sblocco solo owner: campi obbligatori, verifiche (ordini AMBIGUOUS => negato), operation_id monouso, salvato
+    prima che valga; non tocca il picco ne' un superamento."""
+    c, _ = _storia_insufficiente(tmp_path, monkeypatch, max_drawdown_abs=10.0)
+    owner = dict(authorization="#631 decisione owner", reason="riconciliazione verificata", operation_id="PF-HIST-1",
+                 confirm=True)
+    assert c.rc.owner_clear_drawdown_history_insufficient(**dict(owner, confirm=False))["cleared"] is False
+    c.rc._mark_uncertain("K-AMB", 1, customer_ref="r-amb")
+    assert c.rc.owner_clear_drawdown_history_insufficient(**owner)["reason"] == "ordini_incerti_presenti"
+    c.rc._clear_uncertain("K-AMB", 1, customer_ref="r-amb")
+    picco = c.rc._hard_stop().snapshot()["peak"]
+    esito = c.rc.owner_clear_drawdown_history_insufficient(**owner)
+    assert esito["cleared"] is True and esito["checks"]["uncertain_orders"] == []
+    assert c.rc._hard_stop().history_block_reason() == "" and c.rc._hard_stop().snapshot()["peak"] == picco
+    riletto = DrawdownHardStop(c.rc.db)
+    riletto.restore(reconcile=False)
+    assert riletto.history_block_reason() == ""
+    assert c.rc.owner_clear_drawdown_history_insufficient(**owner)["reason"] == "nessuna_storia_insufficiente"
+
+
+def test_owner_clear_of_insufficient_history_is_refused_to_a_non_owner(tmp_path, monkeypatch):
+    c, _ = _storia_insufficiente(tmp_path, monkeypatch, max_drawdown_abs=10.0)
+    c.rc._authority_lost_reason = "lease_superseded"
+    esito = c.rc.owner_clear_drawdown_history_insufficient(authorization="X", reason="r", operation_id="op",
+                                                           confirm=True)
+    assert esito["cleared"] is False and esito["reason"].startswith("runtime_authority_lost")
+
+
+def test_late_reading_before_the_retained_history_without_a_possible_breach_is_not_blocked(tmp_path, monkeypatch):
+    """Storia mancante ma nessun superamento possibile (anche contro il limite noto 108 - 100 = 8 < 10): nessun
+    blocco, nessun superamento."""
+    import core.drawdown_hard_stop as modulo
+    monkeypatch.setattr(modulo, "RECENT_READINGS_LIMIT", 2)
+    monkeypatch.setattr(modulo, "SUMMARY_LIMIT", 2)
+    c, base = _letture_dal_conto(tmp_path, [(100.0, 1), (104.0, 2), (98.0, 3), (108.0, 4), (102.0, 5), (112.0, 6),
+                                            (106.0, 7), (116.0, 8)])
+    c.rc._apply_funds_reading(_fondi(100.0), source="test", read_at=base + 1.5)
+    stop = c.rc._hard_stop()
+    assert not stop.breached and not stop.history_insufficient.get("active")
+
+
+def test_late_high_reading_from_before_the_start_is_insufficient(tmp_path):
+    """(B) Picco persistito 100, START (finestra aperta adesso), poi 105 e 106. Arriva una lettura iniziata PRIMA dello
+    START con 112: e' un massimo nuovo, e fra il suo istante e lo START ci possono essere cali che questo processo non
+    ha mai visto. Le letture conservate non dimostrano un superamento (112 - 105 = 7): storia insufficiente, non un
+    superamento inventato e non un PASS."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    c.rc._hard_stop().observe(100.0)
+    prima = time.monotonic()
+    c.rc._reload_drawdown_state()
+    adesso = time.monotonic()
+    c.rc._evaluate_drawdown_hard_stop(105.0, read_at=adesso + 1)
+    c.rc._evaluate_drawdown_hard_stop(106.0, read_at=adesso + 2)
+    c.rc._evaluate_drawdown_hard_stop(112.0, read_at=prima)
+    stop = c.rc._hard_stop()
+    assert not stop.breached
+    assert stop.history_insufficient.get("reason") == "massimo_precedente_alla_storia_conservata"
+    assert stop.history_block_reason() == REASON_HISTORY_INSUFFICIENT
+
+
+def test_late_high_reading_that_proves_a_breach_is_memorized_as_a_breach(tmp_path):
+    """Stesso caso, ma la lettura conservata successiva dimostra il calo (125 prima dello START, poi 105): superamento
+    vero (20), non storia insufficiente."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    c.rc._hard_stop().observe(100.0)
+    prima = time.monotonic()
+    c.rc._reload_drawdown_state()
+    adesso = time.monotonic()
+    c.rc._evaluate_drawdown_hard_stop(105.0, read_at=adesso + 1)
+    c.rc._evaluate_drawdown_hard_stop(106.0, read_at=adesso + 2)
+    c.rc._evaluate_drawdown_hard_stop(125.0, read_at=prima)
+    stop = c.rc._hard_stop()
+    assert stop.breached and Decimal(stop.snapshot()["breach"]["loss"]) == 20
+    assert not stop.history_insufficient.get("active")
+
+
+def test_owner_rebase_resets_a_populated_summary(tmp_path):
+    """Ribasamento owner con scala gia' popolata: i massimi della vecchia epoca (160) non valgono per le letture della
+    nuova; una lettura iniziata prima del ribasamento resta ignorata."""
+    import time
+    c, base = _letture_dal_conto(tmp_path, [(120.0, 2), (160.0, 10)])
+    _molte_letture(c, base, 11, 300)
+    stop = c.rc._hard_stop()
+    assert stop._ladder
+    in_volo = time.monotonic()
+    assert stop.owner_rebase_peak(100.0, authorization="PF-OWNER-X", reason="nuova baseline",
+                                  operation_id="op-reb-14", confirm=True)
+    assert stop._ladder == [] and stop._valleys == [] and stop._history == []
+    dopo = time.monotonic()
+    c.rc._evaluate_drawdown_hard_stop(100.0, read_at=dopo + 2)
+    c.rc._evaluate_drawdown_hard_stop(95.0, read_at=dopo + 1)      # tardiva della nuova epoca: 100 -> 95
+    c.rc._evaluate_drawdown_hard_stop(50.0, read_at=in_volo)       # iniziata prima del ribasamento: ignorata
+    assert not stop.breached and not stop.history_insufficient.get("active")
+
+
+def test_same_instant_readings_are_never_compared_with_each_other(tmp_path):
+    """Letture con lo stesso istante sono concorrenti: 125 e 110 entrambe a t2 non danno una perdita di 15."""
+    c, base = _letture_dal_conto(tmp_path, [(100.0, 1), (130.0, 3), (125.0, 2), (110.0, 2)])
+    assert not c.rc._hard_stop().breached
+    c2, _ = _letture_dal_conto(tmp_path / "b", [(100.0, 1), (130.0, 3), (110.0, 2), (125.0, 2)])
+    assert not c2.rc._hard_stop().breached
+
+
+@pytest.mark.parametrize("ordine", list(__import__("itertools").permutations(range(4))))
+def test_all_24_arrival_orders_give_the_same_drawdown(tmp_path, ordine):
+    """100@1, 130@2, 115@3, 125@4 in tutti i 24 ordini d'arrivo, dal percorso reale: sempre picco 130 e superamento
+    di 15 (130 -> 115), mai un altro valore."""
+    letture = [(100.0, 1), (130.0, 2), (115.0, 3), (125.0, 4)]
+    c, _ = _letture_dal_conto(tmp_path, [letture[i] for i in ordine])
+    stop = c.rc._hard_stop()
+    assert stop.snapshot()["peak"] == 130.0 and stop.breached, (ordine, stop.snapshot())
+    assert Decimal(stop.snapshot()["breach"]["loss"]) == 15 and Decimal(stop.snapshot()["breach"]["peak"]) == 130
+
+
+@pytest.mark.parametrize("limiti", [(256, 256), (1, 1), (2, 3), (3, 1)])
+def test_random_arrival_orders_match_the_in_order_result_or_declare_insufficient_history(tmp_path, monkeypatch,
+                                                                                       limiti):
+    """Proprieta' (oracolo: le stesse letture in ordine). Mai un superamento falso; mai un superamento perso senza
+    storia insufficiente. Con memoria ampia l'esito coincide sempre con l'oracolo (nessuna incertezza)."""
+    import random
+    import core.drawdown_hard_stop as modulo
+    monkeypatch.setattr(modulo, "RECENT_READINGS_LIMIT", limiti[0])
+    monkeypatch.setattr(modulo, "SUMMARY_LIMIT", limiti[1])
+    rnd = random.Random(sum(limiti))
+    for _ in range(300):
+        stop = DrawdownHardStop(_Db())
+        tempi = rnd.sample(range(1, 40), rnd.randint(2, 9))
+        letture = [(float(t), rnd.choice([80, 90, 95, 100, 105, 110, 115, 120, 130, 140])) for t in tempi]
+        arrivo = letture[:]
+        rnd.shuffle(arrivo)
+        ultima = None
+        ultima_cassa = None
+        for t, cassa in arrivo:
+            if ultima is None or t >= ultima:
+                stop.record_reading(t, cassa, may_open=True)
+                stop.evaluate(10.0, cassa)
+                ultima, ultima_cassa = t, cassa
+            else:
+                stop.evaluate_late(10.0, t, cassa)
+                prima = stop.peak
+                stop.observe(cassa)
+                if stop.peak != prima:
+                    stop.evaluate(10.0, ultima_cassa)
+        migliore, oracolo = None, False
+        for _, cassa in sorted(letture):
+            if migliore is not None and migliore - cassa >= 10:
+                oracolo = True
+            migliore = cassa if migliore is None or cassa > migliore else migliore
+        incerta = bool(stop.history_insufficient.get("active"))
+        assert not (stop.breached and not oracolo), (arrivo, limiti)
+        assert not (oracolo and not stop.breached and not incerta), (arrivo, limiti)
+        if limiti == (256, 256):
+            assert stop.breached == oracolo and not incerta, arrivo
+
+
+@pytest.mark.parametrize("tardiva", [(130.0, 3), (131.0, 1.5), (100.0, 3)])
+def test_owner_clearance_is_not_undone_by_late_readings_from_before_it(tmp_path, tardiva):
+    """Sol e Codex su b76466a3: 130 @t1, 115 @t2 (superamento), 130 @t4; sblocco owner; poi arriva una lettura iniziata
+    PRIMA dello sblocco. Lo sblocco owner copre tutto cio' che precede il suo istante (come il ribasamento): quella
+    lettura non fa rinascere il vecchio superamento e non apre una storia insufficiente."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    base = time.monotonic() - 100.0                           # istanti nel passato: tutte iniziate prima dello sblocco
+    for cassa, istante in [(130.0, 1), (115.0, 2), (130.0, 4)]:
+        c.rc._apply_funds_reading(_fondi(cassa), source="test", read_at=base + istante)
+    assert c.rc._hard_stop().breached
+    assert c.rc.owner_unlock_drawdown_hard_stop(**_OWNER)["unlocked"] is True
+    cassa, istante = tardiva
+    c.rc._apply_funds_reading(_fondi(cassa), source="test", read_at=base + istante)
+    stop = c.rc._hard_stop()
+    assert not stop.breached and not stop.history_insufficient.get("active"), stop.snapshot()
+    assert c.rc.mode.name != "LOCKDOWN" or getattr(c.rc, "_pending_drawdown_lockdown", None) is None
+
+
+def test_after_an_owner_clearance_new_losses_are_still_measured(tmp_path):
+    """Lo sblocco non ribasa il picco: dopo, una perdita nuova oltre il limite blocca di nuovo."""
+    import time
+    c, _ = _letture_dal_conto(tmp_path, [(130.0, 1), (115.0, 2), (130.0, 4)])
+    assert c.rc.owner_unlock_drawdown_hard_stop(**_OWNER)["unlocked"] is True
+    adesso = time.monotonic()
+    c.rc._apply_funds_reading(_fondi(129.0), source="test", read_at=adesso + 1)
+    c.rc._apply_funds_reading(_fondi(118.0), source="test", read_at=adesso + 3)
+    c.rc._apply_funds_reading(_fondi(120.0), source="test", read_at=adesso + 2)
+    stop = c.rc._hard_stop()
+    assert stop.breached and stop.snapshot()["peak"] == 130.0
