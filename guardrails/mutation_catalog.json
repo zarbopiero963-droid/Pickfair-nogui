@@ -19,7 +19,8 @@
     "trusted_dispatcher",
     "fullscope_tooling",
     "blackbox",
-    "release_gate"
+    "release_gate",
+    "catalog_resolver"
   ],
   "mutations": [
     {
@@ -9760,6 +9761,318 @@
         "tests/blackbox/test_bb1g_gates.py"
       ],
       "rationale": "Sol su #630 (b9530e72): un cancel accettato dopo end_session e bufferizzato da un guasto transitorio andrebbe perso alla chiusura anche a registro guarito."
+    },
+    {
+      "id": "pr20_event_ambiguity_first_wins",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "            if len(found) > 1:\n                return _refuse(AMBIGUOUS, tuple(found))\n            if found:",
+      "mutated": "            if found:",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Due eventi candidati: torna il primo invece di rifiutare."
+    },
+    {
+      "id": "pr20_event_alias_collision_ignored",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "        if len(targets) > 1:",
+      "mutated": "        if len(targets) > 99:",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Alias che collidono dopo la normalizzazione non sono piu' ambigui."
+    },
+    {
+      "id": "pr20_market_ambiguity_first_wins",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "        if len(markets) > 1:\n            return _refuse(AMBIGUOUS, tuple(sorted(str(m[\"market_id\"]) for m in markets)))",
+      "mutated": "        if False:\n            return _refuse(AMBIGUOUS, tuple(sorted(str(m[\"market_id\"]) for m in markets)))",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Due mercati dello stesso tipo: torna il primo."
+    },
+    {
+      "id": "pr20_market_alias_conflict_ignored",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "        if len(aliases) > 1:",
+      "mutated": "        if len(aliases) > 99:",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Alias di mercato in conflitto non rifiutati."
+    },
+    {
+      "id": "pr20_runner_ambiguity_first_wins",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "        if len(found) > 1:\n            return _refuse(AMBIGUOUS, tuple(found))\n        if not found:",
+      "mutated": "        if not found:",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Due runner con lo stesso nome: torna il primo."
+    },
+    {
+      "id": "pr20_stale_catalog_accepted",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "        if age > self.max_catalog_age_sec or age < -_FUTURE_TOLERANCE_SEC:",
+      "mutated": "        if age < -_FUTURE_TOLERANCE_SEC:",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Catalogo oltre l'eta' massima usato come fresco."
+    },
+    {
+      "id": "pr20_stale_boundary_shifted",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "        if age > self.max_catalog_age_sec or age < -_FUTURE_TOLERANCE_SEC:",
+      "mutated": "        if age >= self.max_catalog_age_sec or age < -_FUTURE_TOLERANCE_SEC:",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Soglia di eta' spostata di un secondo."
+    },
+    {
+      "id": "pr20_future_sync_accepted",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "        if age > self.max_catalog_age_sec or age < -_FUTURE_TOLERANCE_SEC:",
+      "mutated": "        if age > self.max_catalog_age_sec:",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Sync nel futuro accettato."
+    },
+    {
+      "id": "pr20_missing_meta_is_fresh",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "        except Exception:\n            return CATALOG_STALE",
+      "mutated": "        except Exception:\n            return \"\"",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Metadati assenti o illeggibili letti come catalogo fresco."
+    },
+    {
+      "id": "pr20_event_freshness_skipped",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "        blocked = self.catalog_block_reason()\n        if blocked:\n            return _refuse(blocked)\n\n        targets = {",
+      "mutated": "        targets = {",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Il resolver evento non controlla la freschezza."
+    },
+    {
+      "id": "pr20_runner_freshness_skipped",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "        blocked = self.catalog_block_reason()\n        if blocked:\n            return _refuse(blocked)\n\n        found = sorted({",
+      "mutated": "        found = sorted({",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Il resolver runner non controlla la freschezza."
+    },
+    {
+      "id": "pr20_market_freshness_skipped",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "        blocked = self.catalog_block_reason()\n        if blocked:\n            return _refuse(blocked)\n\n        aliases = {",
+      "mutated": "        aliases = {",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Il resolver mercato non controlla la freschezza."
+    },
+    {
+      "id": "pr20_age_validation_removed",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "        if isinstance(age, bool) or not isinstance(age, (int, float)) or not math.isfinite(age) or age <= 0:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Soglia di eta' non valida accettata."
+    },
+    {
+      "id": "pr20_substring_event_match",
+      "module": "services.deterministic_resolver",
+      "area": "catalog_resolver",
+      "file": "services/deterministic_resolver.py",
+      "original": "                if name == target or name.startswith(target + \" v \") or name.endswith(\" v \" + target)",
+      "mutated": "                if target in name",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Confronto per sottostringa: 'city' risolve un evento."
+    },
+    {
+      "id": "pr20_cleanup_keeps_stale_markets",
+      "module": "database",
+      "area": "catalog_resolver",
+      "file": "database.py",
+      "original": "            self._execute(\"DELETE FROM bf_markets WHERE last_seen <> ?\", (sync_id,))\n",
+      "mutated": "",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "La pulizia lascia mercati non rivisti."
+    },
+    {
+      "id": "pr20_cleanup_keeps_stale_runners",
+      "module": "database",
+      "area": "catalog_resolver",
+      "file": "database.py",
+      "original": "            self._execute(\"DELETE FROM bf_runners WHERE last_seen <> ?\", (sync_id,))\n",
+      "mutated": "",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "La pulizia lascia runner non rivisti."
+    },
+    {
+      "id": "pr20_cleanup_empty_sync_id_accepted",
+      "module": "database",
+      "area": "catalog_resolver",
+      "file": "database.py",
+      "original": "        if not isinstance(sync_id, str) or not sync_id.strip():\n            raise ValueError(\"sync_id obbligatorio per la pulizia del catalogo\")\n",
+      "mutated": "",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Pulizia con sync_id vuoto: cancella tutto il catalogo."
+    },
+    {
+      "id": "pr20_market_upsert_keeps_old_type",
+      "module": "database",
+      "area": "catalog_resolver",
+      "file": "database.py",
+      "original": "                market_type = excluded.market_type,\n",
+      "mutated": "",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "L'upsert non aggiorna il tipo di mercato."
+    },
+    {
+      "id": "pr20_runner_upsert_keeps_old_priority",
+      "module": "database",
+      "area": "catalog_resolver",
+      "file": "database.py",
+      "original": "                sort_priority = excluded.sort_priority,\n",
+      "mutated": "",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "L'upsert non aggiorna i campi del runner."
+    },
+    {
+      "id": "pr20_sync_lock_not_taken",
+      "module": "services.catalog_sync_service",
+      "area": "catalog_resolver",
+      "file": "services/catalog_sync_service.py",
+      "original": "        if not CatalogSyncService._sync_lock.acquire(blocking=False):",
+      "mutated": "        if not CatalogSyncService._sync_lock.acquire(blocking=False) and False:",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Due sync contemporanei non si escludono."
+    },
+    {
+      "id": "pr20_truncated_single_event_completes",
+      "module": "services.catalog_sync_service",
+      "area": "catalog_resolver",
+      "file": "services/catalog_sync_service.py",
+      "original": "            return list(markets), True",
+      "mutated": "            return list(markets), False",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Evento singolo al limite trattato come completo: cleanup su catalogo troncato."
+    },
+    {
+      "id": "pr20_no_bisection",
+      "module": "services.catalog_sync_service",
+      "area": "catalog_resolver",
+      "file": "services/catalog_sync_service.py",
+      "original": "        if len(event_ids) <= 1:",
+      "mutated": "        if len(event_ids) <= 99:",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Nessuna bisezione: batch al limite resta troncato."
+    },
+    {
+      "id": "pr20_future_meta_counts_as_fresh",
+      "module": "services.catalog_sync_service",
+      "area": "catalog_resolver",
+      "file": "services/catalog_sync_service.py",
+      "original": "        return timedelta(0) <= age < timedelta(hours=12)",
+      "mutated": "        return age < timedelta(hours=12)",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Un sync nel futuro vale come recente e blocca il sync."
+    },
+    {
+      "id": "pr20_fresh_boundary_shifted",
+      "module": "services.catalog_sync_service",
+      "area": "catalog_resolver",
+      "file": "services/catalog_sync_service.py",
+      "original": "        return timedelta(0) <= age < timedelta(hours=12)",
+      "mutated": "        return timedelta(0) <= age <= timedelta(hours=12)",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Soglia delle 12 ore spostata."
+    },
+    {
+      "id": "pr20_zero_markets_cleans",
+      "module": "services.catalog_sync_service",
+      "area": "catalog_resolver",
+      "file": "services/catalog_sync_service.py",
+      "original": "        if event_count > 0 and market_count == 0:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Zero mercati: cleanup eseguito comunque."
+    },
+    {
+      "id": "pr20_failed_reported_completed",
+      "module": "services.catalog_sync_service",
+      "area": "catalog_resolver",
+      "file": "services/catalog_sync_service.py",
+      "original": "            return self._result(FAILED, type(e).__name__)",
+      "mutated": "            return self._result(COMPLETED, type(e).__name__)",
+      "tests": [
+        "tests/acceptance/test_issue437_pr08.py"
+      ],
+      "rationale": "Sync fallito riportato come completato."
     }
   ]
 }

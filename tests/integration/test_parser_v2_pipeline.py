@@ -18,6 +18,7 @@ runner sconosciuto NON producono un risultato inventato.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -52,6 +53,9 @@ def catalog_db():
     db.upsert_bf_runner("M1", "11", "1 - 1", 0, 1, sync_id)
     db.upsert_bf_runner("M1", "21", "2 - 1", 0, 2, sync_id)
     db.upsert_bf_runner("M1", "12", "1 - 2", 0, 3, sync_id)
+    # PR-20: il resolver usa il catalogo solo se l'eta' del sync e' nota e recente.
+    synced_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="microseconds")
+    db.update_sync_meta(last_sync_at=synced_at, last_sync_id=sync_id, events=1, markets=1, runners=3)
 
     parser_def = {
         "type": "DUTCHING",
@@ -81,7 +85,7 @@ def test_delimiter_parser_extracts_event_market_selections(catalog_db):
 @pytest.mark.integration
 def test_deterministic_resolver_maps_event_market_runners(catalog_db):
     db, pid = catalog_db
-    resolver = DeterministicResolver(db)
+    resolver = DeterministicResolver(db, max_catalog_age_sec=3600)
 
     event_id = resolver.resolve_event(pid, "Man City")
     assert event_id == "E1"
@@ -99,7 +103,7 @@ def test_pipeline_message_to_selection_ids(catalog_db):
     """Percorso completo: messaggio Telegram -> selection_id Betfair."""
     db, pid = catalog_db
     parsed = DelimiterParser(db).parse_message("CHAT123", _MSG)
-    resolver = DeterministicResolver(db)
+    resolver = DeterministicResolver(db, max_catalog_age_sec=3600)
 
     event_id = resolver.resolve_event(pid, parsed["event"].split(" v ")[0])
     assert event_id == "E1"
@@ -127,12 +131,12 @@ def test_parser_returns_none_for_unconfigured_chat(catalog_db):
 @pytest.mark.integration
 def test_resolver_returns_none_for_unknown_event(catalog_db):
     db, pid = catalog_db
-    assert DeterministicResolver(db).resolve_event(pid, "Squadra Inesistente") is None
+    assert DeterministicResolver(db, max_catalog_age_sec=3600).resolve_event(pid, "Squadra Inesistente") is None
 
 
 @pytest.mark.integration
 def test_resolver_returns_none_for_unknown_runner(catalog_db):
     db, pid = catalog_db
-    resolver = DeterministicResolver(db)
+    resolver = DeterministicResolver(db, max_catalog_age_sec=3600)
     # mercato valido ma score non a catalogo -> nessun selection_id inventato
     assert resolver.resolve_runner("M1", "9 - 9") is None

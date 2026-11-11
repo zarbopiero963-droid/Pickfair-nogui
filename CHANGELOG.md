@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **PR-20 — catalogo Betfair e resolver deterministico fail-closed.** Il resolver sceglieva «il primo che capita»
+  fra più eventi, mercati o runner candidati (`LIMIT 1` senza ordine), usava il testo del provider in un `LIKE`
+  (`%` risolveva un evento) e leggeva un catalogo di qualunque età. Ora rifiuta con motivo esplicito (`AMBIGUOUS`,
+  `CATALOG_STALE`, `INVALID_INPUT`, `NOT_FOUND`) e richiede `max_catalog_age_sec`. Il sync restituisce un esito,
+  esclude due sync contemporanei, non si ferma su metadati illeggibili, biseca i batch al limite; la pulizia
+  rimuove in una transazione anche mercati e runner non rivisti; gli upsert aggiornano tutti i campi mutabili.
+  Documentazione: `ops/catalog_sync.md`.
 - **P0 AUD-BF-016 — l'arresto d'emergenza cancellava zero ordini e si dichiarava riuscito**
   (`PF-OWNER-P0-EMERGENCY-STOP-20261110`). Leggeva solo `order_saga`, mai scritta in produzione; ora usa la tabella
   `orders` (e `order_saga`), fotografa l'exchange prima e dopo, cancella per `betId` i soli ordini aperti del bot (anche

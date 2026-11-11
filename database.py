@@ -1256,6 +1256,8 @@ class Database:
                 name = excluded.name,
                 competition_id = excluded.competition_id,
                 competition_name = excluded.competition_name,
+                event_type_id = excluded.event_type_id,
+                open_date = excluded.open_date,
                 last_seen = excluded.last_seen
             """,
             (event_id, name, competition_id, competition_name, event_type_id, open_date, sync_id)
@@ -1267,6 +1269,10 @@ class Database:
             INSERT INTO bf_markets(market_id, event_id, market_name, market_type, total_matched, open_date, last_seen)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(market_id) DO UPDATE SET
+                event_id = excluded.event_id,
+                market_name = excluded.market_name,
+                market_type = excluded.market_type,
+                open_date = excluded.open_date,
                 total_matched = excluded.total_matched,
                 last_seen = excluded.last_seen
             """,
@@ -1280,13 +1286,26 @@ class Database:
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(market_id, selection_id) DO UPDATE SET
                 runner_name = excluded.runner_name,
+                handicap = excluded.handicap,
+                sort_priority = excluded.sort_priority,
                 last_seen = excluded.last_seen
             """,
             (market_id, selection_id, runner_name, handicap, sort_priority, sync_id)
         )
 
     def cleanup_stale_bf_data(self, sync_id: str):
-        self._execute("DELETE FROM bf_events WHERE last_seen <> ?", (sync_id,))
+        """Rimuove dal catalogo tutto cio' che l'ultimo sync completo non ha rivisto.
+
+        Runner, mercati ed eventi, in un'unica transazione: un mercato chiuso o un
+        runner ritirato di un evento ancora presente non restano risolvibili, e un
+        errore a meta' non lascia il catalogo ripulito solo in parte.
+        """
+        if not isinstance(sync_id, str) or not sync_id.strip():
+            raise ValueError("sync_id obbligatorio per la pulizia del catalogo")
+        with self.transaction():
+            self._execute("DELETE FROM bf_runners WHERE last_seen <> ?", (sync_id,))
+            self._execute("DELETE FROM bf_markets WHERE last_seen <> ?", (sync_id,))
+            self._execute("DELETE FROM bf_events WHERE last_seen <> ?", (sync_id,))
 
     def get_sync_meta(self) -> Optional[Dict[str, Any]]:
         row = self._execute("SELECT * FROM sync_meta WHERE id = 1", fetchone=True, commit=False)

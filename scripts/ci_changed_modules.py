@@ -210,6 +210,8 @@ MODULE_RULES = [
             "scripts/release_gate.py",  # #626: mutazioni rg_* del gate di rilascio (nessun falso PASS)
             "tests/",
             "core/",
+            "services/deterministic_resolver.py",  # PR-20: mutazioni pr20_* del resolver del catalogo
+            "services/catalog_sync_service.py",  # PR-20: mutazioni pr20_* del sync del catalogo
             "order_manager.py",
             "telegram_listener.py",
             "copy_engine.py",

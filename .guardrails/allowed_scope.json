@@ -3602,6 +3602,22 @@
         "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
       "max_files": 35
+    },
+    "pr20_catalog_resolver": {
+      "description": "PR-20 (registro #628; mandato PF-OWNER-CORE-PARALLEL-EXECUTION-20261111): catalogo Betfair locale e resolver deterministico fail-closed. Resolver: ambiguita' = rifiuto (mai LIMIT 1), nessun LIKE sul testo del provider, eta' del catalogo obbligatoria e verificata. Sync: esito restituito, lock di classe, metadati illeggibili non fermano l'avvio, bisezione dei batch al limite, sync_id con microsecondi. Database: upsert dei campi mutabili e pulizia transazionale di runner/mercati/eventi (nessuna modifica allo schema). EWR ADAPT del codice esistente. Test RED-first, mutanti pr20_* (area opzionale catalog_resolver). Fuori scope dichiarato: betfair_client, database_schema, runtime_controller, simulation_broker, mini_gui, telegram_bet_resolver. La lane mutation-guardrails del dynamic si attiva anche sui due servizi (scripts/ci_changed_modules.py).",
+      "files": [
+        "services/deterministic_resolver.py",
+        "services/catalog_sync_service.py",
+        "database.py",
+        "tests/acceptance/test_issue437_pr08.py",
+        "tests/integration/test_parser_v2_pipeline.py",
+        "guardrails/mutation_catalog.json",
+        "ops/catalog_sync.md",
+        "CHANGELOG.md",
+        ".guardrails/allowed_scope.json",
+        "scripts/ci_changed_modules.py"
+      ],
+      "max_files": 10
     }
   }
 }
