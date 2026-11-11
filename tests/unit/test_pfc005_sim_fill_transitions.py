@@ -381,6 +381,17 @@ def test_dimensione_nan_al_piazzamento_non_vale_liquidita_illimitata():
     assert _place(b, "BACK", 2.0, 60.0)[1]["sizeMatched"] == 0.0
 
 
+@pytest.mark.parametrize("prezzo", [float("inf"), float("nan")])
+def test_quota_non_finita_al_piazzamento_non_abbina(prezzo):
+    """Lacuna del mutante live_safety_sim_nan_liquidity_unlimited (BB-1G): al piazzamento una quota infinita nel book
+    farebbe abbinare un BACK (2.0 <= inf) a quota media infinita. Il livello resta a riposo, nessun fill."""
+    b = _broker(balance=1000.0)
+    b.update_market_book("1.1", {"status": "OPEN", "runners": [{"selectionId": 1, "status": "ACTIVE", "ex": {
+        "availableToBack": [{"price": prezzo, "size": 100.0}]}}]})
+    _, rep = _place(b, "BACK", 2.0, 60.0)
+    assert rep["sizeMatched"] == 0.0 and b.state.fills == []
+
+
 # --- quarto giro Codex su #542 ----------------------------------------------------------------------
 
 def test_registro_incoerente_blocca_anche_l_abbinamento_differito():
