@@ -2254,3 +2254,227 @@ def test_reading_rejected_by_the_desk_but_newest_for_the_hard_stop_uses_its_own_
     stop = c.rc._hard_stop()
     assert stop.snapshot()["peak"] == picco and stop.breached is superato
     assert c.rc._drawdown_last_cash == ultima and c.rc._drawdown_read_at == base + 3
+
+
+# ------------------------------------------------- D-631-10 e START (Codex/Sol/Claude D su 3e6a3e0a): ciclo 13
+# Mandato owner PF-OWNER-PR631-CYCLE13-GO-20261111 (ratificato da PF-OWNER-PR631-CYCLES-11-12-RATIFY-13-CONFIRM-20261111).
+from decimal import Decimal
+
+
+def _letture_dal_conto(tmp_path, letture, **cfg):
+    """Catena con hard-stop; le letture `(cassa, istante relativo)` passano dal contratto REALE del conto
+    (`_apply_funds_reading` -> RiskDesk -> hard-stop) nell'ordine d'ARRIVO dato. Restituisce catena e istante base."""
+    import time
+    c = _catena(tmp_path, **(cfg or {"max_drawdown_abs": 10.0}))
+    c.rc.risk_desk.equity_peak = 0.0
+    c.rc.risk_desk.bankroll_start = 0.0
+    base = time.monotonic() + 100.0
+    for cassa, istante in letture:
+        c.rc.betfair_service.get_account_funds = lambda cassa=cassa: _fondi(cassa)
+        c.rc._apply_funds_reading(_fondi(cassa), source="test", read_at=base + istante)
+    return c, base
+
+
+def test_transient_dip_seen_only_by_a_late_reading_is_memorized(tmp_path):
+    """D-631-10 (P1): 130 a t1, recupero a 130 a t3, poi arriva la lettura di t2 con 115. Il calo 130 -> 115 = 15
+    e' avvenuto davvero (prima di t2 la cassa era 130): con limite 10 il superamento si memorizza, come se le letture
+    fossero arrivate in ordine. Prima: picco 130, nessun blocco, ingressi riaperti dal recupero."""
+    c, _ = _letture_dal_conto(tmp_path, [(130.0, 1), (130.0, 3), (115.0, 2)])
+    stop = c.rc._hard_stop()
+    assert stop.breached and stop.snapshot()["breach"]["kind"] == "max_drawdown_abs"
+    assert Decimal(stop.snapshot()["breach"]["loss"]) == 15 and Decimal(stop.snapshot()["breach"]["peak"]) == 130
+    assert c.rc.risk_desk.cash_equity_current == 130.0 and c.rc._drawdown_last_cash == 130.0   # cassa corrente intatta
+    assert c.rc.mode.name == "LOCKDOWN"
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0 and _bloccato_da_hard_stop(c), _rifiuti(c)
+    riletto = DrawdownHardStop(c.rc.db)                      # durevole: crash e riavvio lo ritrovano
+    riletto.restore(reconcile=False)
+    assert riletto.breached
+
+
+def test_transient_dip_in_order_gives_the_same_result(tmp_path):
+    """Riferimento: le stesse letture in ordine memorizzano lo stesso superamento (l'esito non dipende dall'arrivo)."""
+    c, _ = _letture_dal_conto(tmp_path, [(130.0, 1), (115.0, 2), (130.0, 3)])
+    assert c.rc._hard_stop().breached and Decimal(c.rc._hard_stop().snapshot()["breach"]["loss"]) == 15
+
+
+def test_late_higher_reading_turns_an_earlier_recorded_dip_into_a_breach(tmp_path):
+    """Stessa classe, l'altro verso: 100 @t1, 115 @t3, 125 @t4, poi 130 @t2 tardiva. Il massimo 130 a t2 rende
+    reale il calo a 115 di t3 (15 >= 10) anche se l'ultima cassa (125) e' a soli 5 dal picco."""
+    c, _ = _letture_dal_conto(tmp_path, [(100.0, 1), (115.0, 3), (125.0, 4), (130.0, 2)])
+    stop = c.rc._hard_stop()
+    assert stop.breached and Decimal(stop.snapshot()["breach"]["loss"]) == 15
+    assert Decimal(stop.snapshot()["breach"]["cash"]) == 115 and c.rc._drawdown_last_cash == 125.0
+
+
+@pytest.mark.parametrize("letture", [
+    [(100.0, 1), (130.0, 3), (100.0, 2)],                   # Sol su 4a171465: 100 prima di 130 non e' una perdita
+    [(100.0, 1), (130.0, 4), (95.0, 2), (128.0, 3)],        # il calo a 95 e' PRIMA del 130: dal massimo 100 sono 5
+    [(120.0, 1), (130.0, 3), (111.0, 2)],                   # 120 -> 111 = 9 < 10
+    [(130.0, 2), (115.0, 1)],                               # nessuna lettura precedente a t1: niente da confrontare
+])
+def test_late_readings_never_create_a_false_drawdown(tmp_path, letture):
+    """Nessun falso superamento: una lettura tardiva si confronta SOLO con le casse lette prima del suo istante,
+    mai con un massimo successivo."""
+    c, _ = _letture_dal_conto(tmp_path, letture)
+    stop = c.rc._hard_stop()
+    assert not stop.breached, stop.snapshot()
+    assert getattr(c.rc, "_pending_drawdown_lockdown", None) is None and c.rc.mode.name != "LOCKDOWN"
+
+
+def test_transient_dip_with_the_percentage_cap(tmp_path):
+    """Stesso caso con il limite percentuale: 200 @t1, 200 @t3, 170 @t2 tardiva => 15 % >= 10 %."""
+    c, _ = _letture_dal_conto(tmp_path, [(200.0, 1), (200.0, 3), (170.0, 2)], max_drawdown_hard_stop_pct=10.0)
+    stop = c.rc._hard_stop()
+    assert stop.breached and stop.snapshot()["breach"]["kind"] == "max_drawdown_hard_stop_pct"
+
+
+def test_transient_dip_through_the_entry_reading(tmp_path):
+    """Percorso d'ingresso reale (`_read_funds_for_entry`): la lettura del segnale iniziata a t2 arriva dopo la
+    lettura di stato di t3. Il calo 130 -> 115 si memorizza e il segnale non arriva al broker."""
+    import time
+    c, base = _letture_dal_conto(tmp_path, [(130.0, 1), (130.0, 3)])
+    c.rc.betfair_service.get_account_funds = lambda: _fondi(115.0)
+    orologio = iter([base + 2])
+    reale = time.monotonic
+    import core.runtime_controller as modulo
+    try:
+        modulo.time.monotonic = lambda: next(orologio, None) or reale()
+        c.rc._read_funds_for_entry()
+    finally:
+        modulo.time.monotonic = reale
+    assert c.rc._hard_stop().breached and Decimal(c.rc._hard_stop().snapshot()["breach"]["loss"]) == 15
+
+
+def test_late_dip_from_before_an_owner_rebase_is_ignored(tmp_path):
+    """Nessun falso blocco: una lettura iniziata prima del ribasamento owner non si confronta con il picco ribasato
+    ne' con i massimi dell'epoca precedente (resta ignorata, D-631-08)."""
+    import time
+    c, base = _letture_dal_conto(tmp_path, [(130.0, 1)])
+    in_volo = time.monotonic()
+    assert c.rc._hard_stop().owner_rebase_peak(100.0, authorization="PF-OWNER-X", reason="nuova baseline",
+                                               operation_id="op-reb-13", confirm=True)
+    c.rc._evaluate_drawdown_hard_stop(100.0, read_at=time.monotonic())
+    c.rc._evaluate_drawdown_hard_stop(85.0, read_at=in_volo)   # tardiva, pre-ribasamento: ignorata
+    assert not c.rc._hard_stop().breached and c.rc._hard_stop().snapshot()["peak"] == 100.0
+
+
+def test_late_dip_of_a_non_owner_controller_writes_nothing(tmp_path):
+    """Autorita' runtime: un controller che ha perso l'autorita' non memorizza nulla, nemmeno con una lettura tardiva."""
+    c, base = _letture_dal_conto(tmp_path, [(130.0, 1), (130.0, 3)])
+    prima = c.rc.db.get_settings()[STATE_KEY]
+    c.rc._authority_lost_reason = "lease_superseded"
+    c.rc._apply_funds_reading(_fondi(115.0), source="test", read_at=base + 2)
+    assert c.rc.db.get_settings()[STATE_KEY] == prima and not c.rc._hard_stop().breached
+
+
+@pytest.mark.real_blackbox
+def test_start_first_reading_is_evaluated_after_a_rebase_by_another_process(tmp_path, monkeypatch):
+    """P3 START (Sol su 3e6a3e0a, Claude D [628-M27]): controller costruito, poi un altro processo ribasa il picco a
+    90 in modo durevole, poi START reale con il conto a 75. La PRIMA lettura dello START (quella dei fondi d'avvio)
+    deve essere valutata: lo stato si ricarica PRIMA di leggere i fondi, quindi il ribasamento non la rende «vecchia».
+    Prima la prima lettura era scartata (il superamento arrivava solo da una valutazione successiva)."""
+    from core import blackbox_runtime
+    from core.runtime_controller import RuntimeController
+    from tests.acceptance.test_issue461_pr29c_settlement_processes_and_schema import _app_su
+    monkeypatch.chdir(tmp_path)
+    blackbox_runtime.install(str(tmp_path / "bb" / "blackbox.sqlite"), entrypoint="test_d1_start")
+    app = _app_su(str(tmp_path / "start.db"), monkeypatch)
+    rc = app.runtime
+    carica = rc.settings_service.load_roserpina_config
+
+    def con_limite():                                         # limite nelle impostazioni (START ricarica la config)
+        config = carica()
+        config.max_drawdown_abs = 10.0
+        return config
+
+    monkeypatch.setattr(rc.settings_service, "load_roserpina_config", con_limite)
+    altro = DrawdownHardStop(rc.db)                           # altro processo, dopo la costruzione di rc
+    altro.restore()
+    altro.observe(100.0)
+    assert altro.owner_rebase_peak(90.0, authorization="PF-OWNER-X", reason="nuova baseline",
+                                   operation_id="op-start-13", confirm=True)
+    rc.betfair_service.get_account_funds = lambda: _fondi(75.0)
+    valutate = []
+    reale = RuntimeController._evaluate_drawdown_hard_stop
+
+    def spia(self, cassa, read_at=None):
+        stop = self._hard_stop()
+        prima = (stop.breached, stop.snapshot()["peak"])
+        reale(self, cassa, read_at)
+        valutate.append((cassa, prima, (stop.breached, stop.snapshot()["peak"])))
+
+    monkeypatch.setattr(RuntimeController, "_evaluate_drawdown_hard_stop", spia)
+    try:
+        rc.start(execution_mode="SIMULATION")
+        assert valutate, "nessuna valutazione allo START"
+        cassa, prima, dopo = valutate[0]
+        assert cassa == 75.0 and prima == (False, 90.0) and dopo == (True, 90.0), valutate
+        assert rc._hard_stop().peak_epoch == 1
+    finally:
+        try:
+            app.stop()
+        except Exception:
+            pass
+        blackbox_runtime.shutdown()
+
+
+def test_late_dip_after_an_owner_rebase_is_measured_from_the_rebased_peak(tmp_path):
+    """Il ribasamento owner chiude la cronologia dell'epoca precedente: una lettura tardiva iniziata DOPO il
+    ribasamento si confronta con il picco ribasato (100), mai con i massimi di prima (130 => falso calo di 35)."""
+    import time
+    c, _ = _letture_dal_conto(tmp_path, [(130.0, 1)])
+    assert c.rc._hard_stop().owner_rebase_peak(100.0, authorization="PF-OWNER-X", reason="nuova baseline",
+                                               operation_id="op-reb-13b", confirm=True)
+    dopo = time.monotonic()
+    c.rc._evaluate_drawdown_hard_stop(100.0, read_at=dopo + 2)
+    c.rc._evaluate_drawdown_hard_stop(95.0, read_at=dopo + 1)     # tardiva ma successiva al ribasamento
+    assert not c.rc._hard_stop().breached
+    c.rc._evaluate_drawdown_hard_stop(88.0, read_at=dopo + 1.5)   # 100 -> 88 = 12: calo vero dell'epoca nuova
+    assert c.rc._hard_stop().breached
+
+
+def test_reading_history_is_bounded(tmp_path, monkeypatch):
+    """Memoria limitata: oltre `READING_HISTORY_LIMIT` la finestra avanza; il massimo uscito resta nella base, una
+    lettura iniziata prima della nuova finestra non si confronta piu' (nessun falso drawdown)."""
+    import core.drawdown_hard_stop as modulo
+    monkeypatch.setattr(modulo, "READING_HISTORY_LIMIT", 2)
+    c, base = _letture_dal_conto(tmp_path, [(130.0, 1), (128.0, 2), (129.0, 3)])
+    stop = c.rc._hard_stop()
+    assert len(stop._history) == 2 and stop._window_open == base + 1
+    c.rc._apply_funds_reading(_fondi(100.0), source="test", read_at=base + 0.5)   # prima della finestra: ignorata
+    assert not stop.breached
+    c.rc._apply_funds_reading(_fondi(118.0), source="test", read_at=base + 2.5)   # 130 (in base) -> 118 = 12
+    assert stop.breached
+
+
+def test_start_reloads_the_drawdown_state_before_the_funds_reading_begins():
+    """P3: la rilettura dello stato precede l'istante d'inizio della lettura dei fondi dello START."""
+    import inspect
+    from core.runtime_controller import RuntimeController
+    src = inspect.getsource(RuntimeController._start_with_instance_lock)
+    assert src.index("self._reload_drawdown_state()") < src.index("start_funds = time.monotonic()")
+    assert src.count("self._reload_drawdown_state()") == 1
+
+
+def test_restart_in_the_same_process_measures_late_dips_from_the_reloaded_peak(tmp_path):
+    """La finestra delle letture si riapre a ogni START, con il picco appena riletto come base. Sessione 1: 100, 120.
+    Fra le due sessioni un altro processo salva il picco 150. Sessione 2 nello stesso processo: 141 a t4 (perdita 9,
+    sotto il limite), poi arriva 139 da t3: rispetto a cio' che era noto prima di t3 (150) e' un calo di 11 => blocco.
+    Senza riaprire la finestra la lettura tardiva si confronterebbe con la cronologia vecchia (120) e passerebbe."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    c.rc._reload_drawdown_state()                                # START 1
+    base = time.monotonic() + 100.0
+    c.rc._evaluate_drawdown_hard_stop(100.0, read_at=base + 1)
+    c.rc._evaluate_drawdown_hard_stop(120.0, read_at=base + 2)
+    altro = DrawdownHardStop(c.rc.db)
+    altro.restore()
+    altro.observe(150.0)                                         # picco durevole di un altro processo
+    c.rc._reload_drawdown_state()                                # START 2, stesso processo
+    assert c.rc._hard_stop().snapshot()["peak"] == 150.0
+    secondo = time.monotonic() + 200.0
+    c.rc._evaluate_drawdown_hard_stop(141.0, read_at=secondo + 4)
+    assert not c.rc._hard_stop().breached
+    c.rc._evaluate_drawdown_hard_stop(139.0, read_at=secondo + 3)
+    assert c.rc._hard_stop().breached and Decimal(c.rc._hard_stop().snapshot()["breach"]["loss"]) == 11

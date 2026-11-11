@@ -9862,8 +9862,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        self._reload_drawdown_state()\n        self._applica_fondi_avvio(funds, read_at=start_funds)\n",
-      "mutated": "        self._applica_fondi_avvio(funds, read_at=start_funds)\n",
+      "original": "        self._reload_drawdown_state()\n        start_funds = time.monotonic()\n",
+      "mutated": "        start_funds = time.monotonic()\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10150,8 +10150,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "            RuntimeController._hard_stop(self).restore(reconcile=True)\n            self._drawdown_start_owned = True\n",
-      "mutated": "            self._drawdown_start_owned = True\n            RuntimeController._hard_stop(self).restore(reconcile=True)\n",
+      "original": "            stop.restore(reconcile=True)\n            # D-631-10: finestra delle letture aperta adesso, con il picco appena riletto come base: ogni lettura di\n            # questa sessione (a cominciare da quella dei fondi dello START) inizia dopo.\n            stop.open_window(time.monotonic())\n            self._drawdown_start_owned = True\n",
+      "mutated": "            self._drawdown_start_owned = True\n            stop.restore(reconcile=True)\n            # D-631-10: finestra delle letture aperta adesso, con il picco appena riletto come base: ogni lettura di\n            # questa sessione (a cominciare da quella dei fondi dello START) inizia dopo.\n            stop.open_window(time.monotonic())\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10270,8 +10270,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        last_cash = getattr(self, \"_drawdown_last_cash\", None)\n        if stop.evaluate(",
-      "mutated": "        last_cash = None\n        if stop.evaluate(",
+      "original": "            last_cash = getattr(self, \"_drawdown_last_cash\", None)\n            if stop.evaluate(",
+      "mutated": "            last_cash = None\n            if stop.evaluate(",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10282,8 +10282,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        last_cash = getattr(self, \"_drawdown_last_cash\", None)\n        if stop.evaluate(",
-      "mutated": "        last_cash = cassa\n        if stop.evaluate(",
+      "original": "            last_cash = getattr(self, \"_drawdown_last_cash\", None)\n            if stop.evaluate(",
+      "mutated": "            last_cash = cassa\n            if stop.evaluate(",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10348,6 +10348,126 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "La lettura tardiva scartata dal desk non arriva all'hard-stop: il massimo osservato si perde (Sol su 9209f0d8)."
+    },
+    {
+      "id": "d1_timeline_not_evaluated",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if stop.evaluate_timeline(cap, pct_cap_raw=pct_cap):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Calo transitorio visto solo da una lettura tardiva non memorizzato (D-631-10)."
+    },
+    {
+      "id": "d1_late_reading_not_in_timeline",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        stop.record_reading(started, cassa)\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "La lettura tardiva non entra nella cronologia: il suo calo non si valuta (D-631-10)."
+    },
+    {
+      "id": "d1_current_reading_not_in_timeline",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                RuntimeController._hard_stop(self).record_reading(started, cassa, may_open=True)\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Le letture correnti non fanno da massimo per le tardive: calo transitorio perso (D-631-10)."
+    },
+    {
+      "id": "d1_timeline_against_later_peak",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                if self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, running):",
+      "mutated": "                if self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, self.peak):",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Lettura tardiva confrontata con un massimo successivo: falso drawdown."
+    },
+    {
+      "id": "d1_timeline_running_max_not_raised",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                if cash > 0 and (running is None or cash > running):\n                    running = cash",
+      "mutated": "                if False:\n                    running = cash",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "La cronologia non accumula i massimi letti: calo dopo un massimo tardivo perso."
+    },
+    {
+      "id": "d1_rebase_keeps_previous_timeline",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self._open_window_locked(self.rebased_at)    # le letture dell'epoca precedente non fanno piu' da massimo\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Dopo un ribasamento owner i massimi dell'epoca precedente restano nella cronologia: falso drawdown."
+    },
+    {
+      "id": "d1_timeline_window_not_opened_at_start",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            stop.open_window(time.monotonic())\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Finestra delle letture non riaperta allo START dopo la rilettura dello stato."
+    },
+    {
+      "id": "d1_timeline_history_unbounded",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            while len(self._history) > READING_HISTORY_LIMIT:",
+      "mutated": "            while False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Cronologia delle letture senza limite di memoria."
+    },
+    {
+      "id": "d1_late_reading_before_window_compared",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if at < self._window_open:\n                return\n            bisect.insort(",
+      "mutated": "            bisect.insort(",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Lettura iniziata prima della finestra confrontata con una base successiva: falso drawdown."
+    },
+    {
+      "id": "d1_start_reload_after_funds_reading",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        self._reload_drawdown_state()\n        start_funds = time.monotonic()",
+      "mutated": "        start_funds = time.monotonic()\n        self._reload_drawdown_state()",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "P3 START: rilettura dopo l'inizio della lettura dei fondi, che un ribasamento adottato rende vecchia."
     }
   ]
 }

@@ -3114,6 +3114,12 @@ class RuntimeController:
         except Exception as exc:
             self._record_runtime_io(operation="betfair_connect", started_at=start_connect, ok=False, error=str(exc))
             raise
+        # Codex su 92155c24: lo stato del drawdown si rilegge ADESSO, con il lock di istanza tenuto, prima della prima
+        # lettura del conto e della scrittura della sessione: costruito mentre un altro processo era ancora
+        # proprietario, questo controller avrebbe in memoria un picco o un superamento vecchi e li sovrascriverebbe.
+        # P3 START (Sol su 3e6a3e0a): la rilettura precede anche l'INIZIO della lettura dei fondi, cosi' un ribasamento
+        # di un altro processo adottato qui non rende «precedente al ribasamento» la prima lettura dello START.
+        self._reload_drawdown_state()
         start_funds = time.monotonic()
         try:
             funds = self.betfair_service.get_account_funds()
@@ -3126,10 +3132,6 @@ class RuntimeController:
                 error=str(exc),
             )
             raise
-        # Codex su 92155c24: lo stato del drawdown si rilegge ADESSO, con il lock di istanza tenuto, prima della prima
-        # lettura del conto e della scrittura della sessione: costruito mentre un altro processo era ancora
-        # proprietario, questo controller avrebbe in memoria un picco o un superamento vecchi e li sovrascriverebbe.
-        self._reload_drawdown_state()
         self._applica_fondi_avvio(funds, read_at=start_funds)
         # RO-DD-09 C: sessione di trading aperta su disco fino a uno STOP pulito con picco durevole.
         self._open_drawdown_session()
@@ -3488,7 +3490,11 @@ class RuntimeController:
         # Prima la rilettura, poi la proprieta', nella stessa sezione critica delle valutazioni: una lettura del conto
         # concorrente (stato) non puo' scrivere lo stato vecchio fra i due passi.
         with RuntimeController._drawdown_eval_lock:
-            RuntimeController._hard_stop(self).restore(reconcile=True)
+            stop = RuntimeController._hard_stop(self)
+            stop.restore(reconcile=True)
+            # D-631-10: finestra delle letture aperta adesso, con il picco appena riletto come base: ogni lettura di
+            # questa sessione (a cominciare da quella dei fondi dello START) inizia dopo.
+            stop.open_window(time.monotonic())
             self._drawdown_start_owned = True
 
     def _open_drawdown_session(self) -> None:
@@ -6809,6 +6815,9 @@ class RuntimeController:
                     self._observe_late_drawdown_reading(cassa, started)
                     return
                 self._drawdown_read_at = started
+                # D-631-10: ricordata con il suo istante, PRIMA di alzare il picco (la base di una finestra aperta qui e'
+                # il picco precedente a questa lettura): fa da «massimo letto prima» per una lettura tardiva.
+                RuntimeController._hard_stop(self).record_reading(started, cassa, may_open=True)
             # Ultima cassa valutata, aggiornata nella stessa sezione critica in cui puo' alzare il picco (Sol su
             # 96b03d7e): e' la cassa che il gate confronta col picco, mai una coppia cassa/istante letta a pezzi.
             self._drawdown_last_cash = cassa
@@ -6823,18 +6832,28 @@ class RuntimeController:
         """D-631-08 (Sol/Claude D su c715c59e): lettura verificata arrivata dopo una piu' recente. Resta un massimo
         osservato davvero: alza il picco persistente (mai la cassa corrente ne' l'istante dell'ultima lettura) e, se
         lo alza, il superamento si rivaluta contro l'ULTIMA cassa valutata (130 tardivo dopo 115 = perdita 15).
+        D-631-10 (Codex su 3e6a3e0a): resta anche un punto della cronologia. Un calo vero visto solo da questa lettura
+        (130 a t1, 130 a t3, 115 arrivata da t2) si memorizza contro il massimo letto PRIMA del suo istante, e un
+        massimo tardivo rende reale un calo gia' ricordato dopo di lui (`DrawdownHardStop.evaluate_timeline`): l'esito
+        non dipende dall'ordine di arrivo. Mai contro un massimo successivo (nessun falso drawdown).
         Chiamata dentro `_drawdown_eval_lock`, a proprieta' gia' verificata e dopo il controllo del ribasamento."""
         stop = RuntimeController._hard_stop(self)
+        cap = self._configured_optional(self.config, "max_drawdown_abs")
+        pct_cap = self._configured_optional(self.config, "max_drawdown_hard_stop_pct")
+        stop.record_reading(started, cassa)
         before = stop.snapshot()["peak"]
         stop.observe(cassa)
-        if stop.snapshot()["peak"] == before:
-            return
-        last_cash = getattr(self, "_drawdown_last_cash", None)
-        if stop.evaluate(self._configured_optional(self.config, "max_drawdown_abs"), last_cash,
-                         pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct")):
-            self._pending_drawdown_lockdown = (f"drawdown_hard_stop_triggered:"
-                                               f"{stop.snapshot()['breach'].get('kind')}:"
-                                               f"{float(stop.loss(last_cash)):.2f}€")
+        if stop.snapshot()["peak"] != before:
+            last_cash = getattr(self, "_drawdown_last_cash", None)
+            if stop.evaluate(cap, last_cash, pct_cap_raw=pct_cap):
+                self._pending_drawdown_lockdown = (f"drawdown_hard_stop_triggered:"
+                                                   f"{stop.snapshot()['breach'].get('kind')}:"
+                                                   f"{float(stop.loss(last_cash)):.2f}€")
+                return
+        if stop.evaluate_timeline(cap, pct_cap_raw=pct_cap):
+            breach = stop.snapshot()["breach"]
+            self._pending_drawdown_lockdown = (f"drawdown_hard_stop_triggered:{breach.get('kind')}:"
+                                               f"{float(breach.get('loss') or 0):.2f}€")
 
     def _read_funds_for_entry(self) -> dict:
         """#461 PR28-e: lettura fresca del conto per il gate fondi di una nuova entrata, da eseguire FUORI dal

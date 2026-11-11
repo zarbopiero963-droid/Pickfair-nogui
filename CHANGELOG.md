@@ -75,7 +75,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   del conto arrivata in ritardo alza comunque il picco e il superamento si rivaluta con l'ultima cassa (prima 130
   arrivato dopo 115 non bloccava); le verifiche delle procedure owner e la registrazione di un ordine AMBIGUOUS sono
   nella stessa sezione critica della transizione; la lettura tardiva scartata dal desk arriva comunque all'hard-stop e
-  una lettura precedente a un ribasamento owner non rialza mai il picco (Sol su 9209f0d8). Review su e98e84c7 (Sol): un marker superato con picco piu'
+  una lettura precedente a un ribasamento owner non rialza mai il picco (Sol su 9209f0d8). Ciclo 13
+  (PF-OWNER-PR631-CYCLE13-GO-20261111): un calo vero visto solo da una lettura arrivata in ritardo si memorizza contro
+  il massimo letto prima del suo istante (prima 130, 130, poi 115 arrivata tardi non bloccava; D-631-10), mai contro un
+  massimo successivo; allo START lo stato si rilegge prima di leggere i fondi (P3). Review su e98e84c7 (Sol): un marker superato con picco piu'
   alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
   resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale

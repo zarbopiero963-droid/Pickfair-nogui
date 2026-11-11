@@ -437,7 +437,18 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   perche' arrivata tardi (bankroll e cassa del desk invariati) arriva comunque all'hard-stop, che decide col proprio
   istante (Sol su 9209f0d8). Una lettura iniziata prima dell'ultimo ribasamento owner
   (`DrawdownHardStop.rebased_at`) appartiene all'epoca precedente del picco: tardiva o no, non lo rialza e non
-  diventa la cassa corrente; controllo
+  diventa la cassa corrente. Cronologia delle letture (D-631-10, Codex/Claude D su 3e6a3e0a): ogni lettura verificata
+  con il suo istante resta in memoria (`DrawdownHardStop.record_reading`, al massimo `READING_HISTORY_LIMIT` = 512,
+  poi la finestra avanza e il massimo uscito resta nella base). Una lettura tardiva si valuta contro il massimo letto
+  STRETTAMENTE PRIMA del suo istante (`evaluate_timeline`): 130 a t1, 130 a t3 e poi 115 arrivata da t2 memorizzano la
+  perdita di 15 come se fossero arrivate in ordine, e un massimo tardivo rende reale un calo gia' ricordato dopo di
+  lui. Mai contro un massimo successivo (nessun falso drawdown); letture dello stesso istante non si confrontano fra
+  loro; una lettura iniziata prima della finestra non si confronta. La finestra si apre allo START (dopo la rilettura
+  dello stato, con il picco riletto come base) e a ogni ribasamento owner (i massimi dell'epoca precedente non contano
+  piu'); senza START si apre alla prima lettura in ordine. Sola memoria: dopo un riavvio vale lo stato persistito
+  (picco e superamento). Allo START lo stato si rilegge PRIMA che inizi la lettura dei fondi (P3, Sol su 3e6a3e0a): un
+  ribasamento di un altro processo adottato in quel momento non rende «precedente al ribasamento» la prima lettura;
+  controllo
   dell'istante e valutazione sono un'unica sezione critica fra letture d'ingresso e del desk (Sol su 6d4ac43f), e
   nella stessa sezione il gate sceglie la cassa e valuta (Sol su b9cbe0d7), come la misura di DEFENSE/LOCKDOWN
   (Codex su 2a847087). Anche il controllo di proprieta' avviene dentro la sezione critica, e lo STOP toglie la

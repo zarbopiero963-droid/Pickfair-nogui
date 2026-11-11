@@ -35,6 +35,7 @@ verificata osservata. Non e' una ricostruzione dello storico (quella resta il me
 """
 from __future__ import annotations
 
+import bisect
 import json
 import logging
 import os
@@ -62,6 +63,9 @@ REASON_BASELINE_UNVERIFIED = "drawdown_baseline_non_verificata"
 REASON_PCT_INVALID = "max_drawdown_hard_stop_pct_non_valido"
 KIND_ABS = "max_drawdown_abs"
 KIND_PCT = "max_drawdown_hard_stop_pct"
+# D-631-10: letture verificate ricordate in memoria (istante monotonic, cassa) per valutare un calo visto da una lettura
+# arrivata in ritardo contro il massimo letto PRIMA del suo istante. Limite di memoria: oltre, la finestra avanza.
+READING_HISTORY_LIMIT = 512
 
 
 def _marker_path(db: Any) -> str:
@@ -130,6 +134,12 @@ class DrawdownHardStop:
         # Istante (monotonic) in cui questo processo ha visto nascere l'epoca corrente del picco: una lettura del
         # conto iniziata prima appartiene all'epoca precedente e non rialza il picco ribasato (D-631-08).
         self.rebased_at: Optional[float] = None
+        # D-631-10: finestra temporale delle letture di questo processo (sola memoria, mai persistita). `_window_base` e'
+        # il picco noto all'apertura (`_window_open`, monotonic): precede ogni lettura in `_history`, ordinata per
+        # istante. Si riapre allo START (stato appena riletto) e a ogni ribasamento (epoca nuova).
+        self._window_open: Optional[float] = None
+        self._window_base: Optional[Decimal] = None
+        self._history: list = []
         self.rebase_ops: list = []                       # operation_id dei ribasamenti gia' usati (Grok su b9cbe0d7)
         self.seq = 0
         self.unreadable = False
@@ -194,6 +204,7 @@ class DrawdownHardStop:
                 self.peak = max(candidates)
             if epoch != self.peak_epoch:
                 self.rebased_at = time.monotonic()       # ribasamento letto dal disco (altro processo)
+                self._open_window_locked(self.rebased_at)
             self.peak_epoch = epoch
             # Grok su b9cbe0d7: gli operation_id dei ribasamenti restano consumati (unione di memoria e record).
             for r in records + stale:
@@ -384,17 +395,25 @@ class DrawdownHardStop:
         ``pct_cap_raw`` dal picco, RO-DD-04/05), MEMORIZZA il primo superamento (persistito). True se questa chiamata
         ha appena registrato un superamento (il runtime va in LOCKDOWN subito)."""
         self.observe(cash_equity)
-        loss = self.loss(cash_equity)
-        if loss is None:
+        with self._lock:
+            reference = self.peak
+        return self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash_equity, reference)
+
+    def _memorize_if_exceeded(self, cap_raw: Any, pct_cap_raw: Any, cash_equity: Any,
+                              reference: Optional[Decimal]) -> bool:
+        """Perdita di ``cash_equity`` dal picco di riferimento ``reference``: oltre un limite valido memorizza il primo
+        superamento (persistito). True se questa chiamata l'ha appena registrato."""
+        cash = _observed_cash(cash_equity)
+        if cash is None or reference is None:
             return False
+        loss = max(Decimal(0), reference - cash)
         kind, cap = None, None
         abs_cap = validators.finite_number(cap_raw) if cap_raw is not None else None
         if abs_cap is not None and abs_cap > 0 and loss >= validators.money_decimal(abs_cap):
             kind, cap = KIND_ABS, validators.money_decimal(abs_cap)
         pct_cap = validators.finite_number(pct_cap_raw) if pct_cap_raw is not None else None
         if kind is None and pct_cap is not None and 0 < pct_cap <= 100:
-            with self._lock:
-                threshold = self.peak * validators.money_decimal(pct_cap) / Decimal(100) if self.peak else None
+            threshold = reference * validators.money_decimal(pct_cap) / Decimal(100) if reference else None
             if threshold is not None and loss >= threshold:
                 kind, cap = KIND_PCT, validators.money_decimal(pct_cap)
         if kind is None:
@@ -403,13 +422,71 @@ class DrawdownHardStop:
             if self.breached or self.unreadable:
                 return False
             self.breached = True
-            self.breach = {"kind": kind, "at": _now(), "loss": str(loss), "cap": str(cap), "peak": str(self.peak),
+            self.breach = {"kind": kind, "at": _now(), "loss": str(loss), "cap": str(cap), "peak": str(reference),
                            "cash": str(validators.money_decimal(cash_equity)),
                            "cleared": list(self.breach.get("cleared", [])) if isinstance(self.breach, dict) else []}
             logger.critical("D-1: hard-stop %s superato (perdita %s, limite %s, picco %s): blocco persistente",
-                            kind, loss, cap, self.peak)
+                            kind, loss, cap, reference)
             self._persist_locked()
             return True
+
+    # ------------------------------------------------------------ letture fuori ordine (D-631-10)
+    def _open_window_locked(self, at: float) -> None:
+        self._window_open = float(at)
+        self._window_base = self.peak
+        self._history = []
+
+    def open_window(self, at: float) -> None:
+        """Apre la finestra delle letture all'istante ``at`` con il picco noto adesso come base (START, stato appena
+        riletto). Le letture iniziate prima di ``at`` non si confrontano con la storia."""
+        with self._lock:
+            self._open_window_locked(at)
+
+    def record_reading(self, at: float, cash_equity: Any, *, may_open: bool = False) -> None:
+        """Ricorda la cassa verificata letta all'istante ``at``. ``may_open``: senza finestra la apre qui (prima lettura
+        in ordine del processo), con il picco noto PRIMA di questa lettura come base. Una lettura iniziata prima della
+        finestra non entra: non si sa cosa la precedeva."""
+        cash = _observed_cash(cash_equity)
+        if cash is None:
+            return
+        with self._lock:
+            if self._window_open is None:
+                if not may_open:
+                    return
+                self._open_window_locked(at)
+            if at < self._window_open:
+                return
+            bisect.insort(self._history, (float(at), cash))
+            while len(self._history) > READING_HISTORY_LIMIT:
+                t0, c0 = self._history.pop(0)            # la finestra avanza: il piu' vecchio diventa parte della base
+                self._window_open = t0
+                if c0 > 0 and (self._window_base is None or c0 > self._window_base):
+                    self._window_base = c0
+
+    def evaluate_timeline(self, cap_raw: Any, *, pct_cap_raw: Any = None) -> bool:
+        """D-631-10: valuta ogni lettura ricordata contro il massimo letto STRETTAMENTE PRIMA del suo istante (base
+        della finestra compresa), mai contro un massimo successivo. Memorizza il primo superamento (persistito): un
+        calo vero visto solo da una lettura arrivata in ritardo non si perde (130 a t1, 130 a t3, 115 a t2 = perdita 15
+        come in ordine). Letture dello stesso istante non si confrontano fra loro. True se ha appena memorizzato."""
+        with self._lock:
+            if self.breached or self.unreadable or self._window_open is None:
+                return False
+            running = self._window_base
+            readings = list(self._history)
+        i = 0
+        while i < len(readings):
+            j = i
+            while j < len(readings) and readings[j][0] == readings[i][0]:
+                j += 1
+            group = readings[i:j]
+            for _, cash in group:
+                if self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, running):
+                    return True
+            for _, cash in group:
+                if cash > 0 and (running is None or cash > running):
+                    running = cash
+            i = j
+        return False
 
     # ------------------------------------------------------------ procedura owner (mai automatica)
     def owner_clear_breach(self, *, authorization: str, reason: str = "", operation_id: str = "",
@@ -456,9 +533,11 @@ class DrawdownHardStop:
             if op in self.rebase_ops:
                 return False                             # operation_id gia' usato: nessun replay (Grok su b9cbe0d7)
             old_peak, old_breach, old_epoch, old_at = self.peak, dict(self.breach), self.peak_epoch, self.rebased_at
+            old_window = (self._window_open, self._window_base, list(self._history))
             self.peak = peak
             self.peak_epoch = old_epoch + 1
             self.rebased_at = time.monotonic()
+            self._open_window_locked(self.rebased_at)    # le letture dell'epoca precedente non fanno piu' da massimo
             self.rebase_ops.append(op)
             self.breach = dict(self.breach, rebased={"at": _now(), "authorization": ref, "reason": why,
                                                      "operation_id": op,
@@ -467,6 +546,7 @@ class DrawdownHardStop:
             if not self._persist_locked(marker_fallback=False):
                 self.peak, self.breach, self.peak_epoch = old_peak, old_breach, old_epoch
                 self.rebased_at = old_at
+                self._window_open, self._window_base, self._history = old_window
                 self.rebase_ops.remove(op)
                 return False
             logger.warning("D-1: picco dell'hard-stop ribasato dall'owner %s -> %s (op %s)", old_peak, peak, op)
