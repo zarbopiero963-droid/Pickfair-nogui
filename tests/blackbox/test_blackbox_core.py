@@ -219,6 +219,7 @@ def test_protective_exit_is_buffered_then_flushed_before_gap_and_recovered(tmp_p
     fc = _break(box)
     eid = box.record("CASHOUT_REQUEST", critical=True, buffer_on_failure=True, source="STRATEGY",
                      phase="ATTEMPT", order_ref="hedge:ref-1")
+    box.flush_protective()
     assert eid and box.health()["buffered"] == 1
     with pytest.raises(bb.BlackBoxUnavailable):                  # un ingresso non si bufferizza mai
         box.record("ORDER_PLACE_REQUEST", critical=True, source="STRATEGY", phase="ATTEMPT", order_ref="ref-2")
@@ -583,6 +584,7 @@ def test_external_view_never_exposes_customer_refs_listed_in_a_gap(tmp_path):
     fc = _break(box)
     box.record("CASHOUT_REQUEST", critical=True, buffer_on_failure=True, source="STRATEGY", phase="ATTEMPT",
                order_ref="cust-ref-riservato-77")
+    box.flush_protective()                                    # scrittura protettiva tentata durante il guasto
     fc.fail = False
     box.record("API_REQUEST")
     r = bq.BlackBoxReader(box)
@@ -637,6 +639,7 @@ def test_partial_flush_keeps_every_reference_and_count_in_the_final_gap(tmp_path
     for ref in ("r1", "r2"):
         box.record("CASHOUT_REQUEST", critical=True, buffer_on_failure=True, source="STRATEGY", phase="ATTEMPT",
                    order_ref=ref)
+    box.flush_protective()                                    # entrambe tentate durante il guasto: buffer critico
     box._conn = _FailNthInsert(fc.real, 2)                    # scarico: r1 scritto, r2 fallisce
     assert box.record("API_REQUEST") is None and box.health()["buffered"] == 1
     box._conn = fc.real

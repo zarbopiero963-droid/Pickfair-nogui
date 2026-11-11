@@ -39,11 +39,13 @@ Codice: `core/blackbox_runtime.py` (`require_runtime`, `financial_gate`, `protec
     rifiuto pre-invio (`GateRefused`, `BLACKBOX_UNAVAILABLE`); mai bufferizzato;
   - **uscita protettiva** (cancel, riduzione, hedge del cashout dentro `protective_exit`): evento critico con
     `buffer_on_failure`, così un guasto temporaneo del registro non ritarda la riduzione del rischio (PF-EXEC-03);
-    serve comunque una scatola nera installata. L'uscita protettiva **non attende mai il registro** (Codex su #630):
-    lock del processo al massimo `PROTECTIVE_LOCK_WAIT_S` (50 ms), busy timeout di SQLite `PROTECTIVE_BUSY_TIMEOUT_MS`
-    (50 ms) invece di 30 s, nessuno scarico del backlog prima dell'invio. Oltre questi limiti l'evento entra nel buffer
-    critico (o in una coda thread-safe se il lock è occupato) e viene scritto al ripristino, coperto da una
-    `BLACKBOX_GAP`; buffer pieno (`MAX_CRITICAL_BUFFER`) => rifiuto;
+    serve comunque una scatola nera installata. L'uscita protettiva **non fa alcun I/O sul registro nel thread
+    d'invio** (Codex e Sol su #630): l'evento va in una coda in memoria e lo scrive il thread dedicato
+    `blackbox-protective-writer`, quindi né il lock del registro, né un altro scrittore SQLite, né un disco in stallo
+    su COMMIT o fsync ritardano cancel e hedge. Con il registro guasto l'evento passa nel buffer critico e viene scritto
+    al ripristino, coperto da una `BLACKBOX_GAP`; coda e buffer pieni (`MAX_CRITICAL_BUFFER`) => rifiuto. L'evento
+    protettivo può quindi essere scritto **dopo** l'invio: l'ordine resta quello d'arrivo e `flush_protective()` (usato
+    anche dalla chiusura) scarica la coda in modo sincrono;
   - **scatola nera assente** (mai installata, già chiusa, `atexit`, thread sopravvissuti): tutto rifiutato, tranne
     le cancellazioni dentro `emergency_exit`, cioè il solo `--emergency-stop` CLI (D3 #617).
   Il contesto protettivo è per thread: un lavoro spostato in un altro thread vale come ingresso (fail-closed).

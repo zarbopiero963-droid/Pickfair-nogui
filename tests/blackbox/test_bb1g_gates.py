@@ -95,6 +95,7 @@ def test_gate_b_never_blocks_a_cancel_during_a_blackbox_outage(bbpath, monkeypat
     _place(b, price=50.0)                       # ordine a riposo
     _break_writes(monkeypatch, box)
     out = b.cancel_orders(market_id="1.100")
+    box.flush_protective()                      # il writer dedicato tenta la scrittura durante il guasto
     assert out is not None and box._buffer, "cancel eseguito, evento nel buffer critico"
     assert box._buffer[-1]["type"] == "ORDER_CANCEL_REQUEST"
 
@@ -105,6 +106,7 @@ def test_protective_exit_place_passes_during_an_outage_but_an_entry_does_not(bbp
     b = _broker()
     with rt.protective_exit("CASHOUT_HEDGE"):
         assert _place(b)
+    box.flush_protective()
     assert box._buffer[-1]["data"]["intent"] == "CASHOUT_HEDGE"
     with pytest.raises(rt.GateRefused):
         _place(b)
@@ -352,9 +354,8 @@ def test_protective_cancel_does_not_wait_for_a_journal_locked_by_another_writer(
         other.close()
     assert event_id and elapsed < 1.0, f"il cancel protettivo ha atteso il registro per {elapsed:.2f} s"
     rt.record("SESSION_CHECKPOINT", source="SYSTEM", component="test", phase="OBSERVATION", outcome="VERIFIED")
-    rows = [r for r in _events(bbpath, "ORDER_CANCEL_REQUEST") if r["event_id"] == event_id]
-    assert rows and json.loads(rows[0]["data"]).get("buffered") is True, "bufferizzato e scritto al ripristino"
-    assert _events(bbpath, "BLACKBOX_GAP"), "il ritardo resta visibile come lacuna"
+    assert [r for r in _events(bbpath, "ORDER_CANCEL_REQUEST") if r["event_id"] == event_id], \
+        "l'evento protettivo e' scritto dal writer dedicato, dopo l'invio"
 
 
 def test_protective_hedge_does_not_wait_for_the_journal_lock_held_by_another_thread(bbpath):
@@ -415,3 +416,54 @@ def test_cashout_hedge_refused_by_the_gate_is_a_failed_hedge_never_ambiguous():
     assert res["placed"] is False and res["order_unknown"] is False, res
     assert res["error"] == rt.GATE_REFUSED_CODE
     assert CashoutExecutor._ledger_status(None, res) == _hedge.HEDGE_FAILED
+
+
+def test_protective_exit_does_not_wait_for_a_stalled_disk(bbpath, monkeypatch):
+    """Sol su #630 (7cda1f63): un busy timeout breve limita la contesa SQLite, non un disco in stallo su COMMIT o
+    fsync. Il thread d'invio non deve fare I/O sul registro: l'evento lo scrive il writer dedicato."""
+    import time as _time
+    box = _install_runtime_box()
+    real_insert = box._insert
+
+    def stalled(rec):
+        _time.sleep(2.0)                             # disco in stallo: ogni scrittura impiega 2 s
+        return real_insert(rec)
+
+    monkeypatch.setattr(box, "_insert", stalled)
+    t0 = _time.monotonic()
+    event_id = rt.financial_gate("ORDER_CANCEL_REQUEST", component="betfair_client", cancel=True,
+                                 market_id="1.5", bet_ids=["B1"])
+    elapsed = _time.monotonic() - t0
+    assert event_id and elapsed < 0.5, f"il cancel protettivo ha atteso il disco per {elapsed:.2f} s"
+    monkeypatch.setattr(box, "_insert", real_insert)
+    rt.record("SESSION_CHECKPOINT", source="SYSTEM", component="test", phase="OBSERVATION", outcome="VERIFIED")
+    assert [r for r in _events(bbpath, "ORDER_CANCEL_REQUEST") if r["event_id"] == event_id]
+
+
+def test_protective_events_are_never_lost_with_concurrent_senders(bbpath):
+    """Il writer dedicato si ferma quando la coda e' vuota e riparte al primo evento: nessun evento resta in coda."""
+    box = _install_runtime_box()
+    ids, errors = [], []
+
+    def send(i):
+        try:
+            ids.append(rt.financial_gate("ORDER_CANCEL_REQUEST", component="betfair_client", cancel=True,
+                                         market_id="1.5", bet_ids=[f"B{i}"]))
+        except Exception as exc:                     # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=send, args=(i,)) for i in range(40)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(5)
+    import time as _time
+    deadline = _time.monotonic() + 5                 # nessun altro accesso al registro: scrive solo il writer
+    written = set()
+    while _time.monotonic() < deadline:
+        written = {r["event_id"] for r in _events(bbpath, "ORDER_CANCEL_REQUEST")}
+        if set(ids) <= written:
+            break
+        _time.sleep(0.05)
+    assert not errors and len(ids) == 40 and set(ids) <= written, "eventi protettivi rimasti in coda"
+    assert not box._protective_queue
