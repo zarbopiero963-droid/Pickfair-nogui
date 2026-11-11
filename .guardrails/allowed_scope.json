@@ -3624,6 +3624,7 @@
         "tests/gate_a/test_gate_a_batch_c_simulation_slippage.py",
         "tests/gate_a/test_gate_a_batch_c_ttl_timestamp.py",
         "tests/gate_a/test_gate_a_d2_batch_lock.py",
+        "tests/gate_a/test_gate_a_d6_d7_d8.py",
         "tests/gate_a/test_gate_a_t2b_b1_cashout_cancel_adapter.py",
         "tests/gate_a/test_gate_a_t2b_b1_cashout_executor.py",
         "tests/gate_a/test_gate_a_t2b_b1_cashout_residual_handler.py",
@@ -3653,7 +3654,7 @@
         "tests/gate_a/test_gate_a_t2b_b4_shutdown.py",
         ".guardrails/allowed_scope.json"
       ],
-      "max_files": 46
+      "max_files": 47
     }
   }
 }

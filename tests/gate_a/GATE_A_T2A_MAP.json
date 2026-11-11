@@ -636,13 +636,15 @@
   {
    "tid": "TRG-628-B-0740",
    "req": "PF-B1-RUNTIME-STOP-EARLY",
-   "verdict": "CONFLICT_WITH_RATIFIED",
+   "verdict": "CODE_DEFECT_OR_MISSING",
    "ratified_basis": "P38 (docs/mcp_operational_contract.md §Contratti prodotto vigenti, chiusa in auto_pr_flow_spec §0.13): 'STOP/RISK_STOP: blocca nuovi ordini; cancella unmatched pertinenti; tenta cashout delle posizioni pertinenti via authority Pickfair'.",
    "test": "tests/gate_a/test_gate_a_t2b_b4_runtime.py::test_trg_628_b_0740; tests/gate_a/test_gate_a_t2b_b4_runtime.py::test_trg_628_b_0740_p38_stop_risk_reduction (xfail strict, XFAIL osservato)",
    "mutation": "core/runtime_controller.py: 'self.mode = RuntimeMode.STOPPED\n        smontato = False' -> 'smontato = False'",
    "red": "rc=1 1 failed in 0.34s",
    "green": "rc=0 1 passed in 0.32s",
-   "note": "La parte descritta (STOPPED prima del teardown, disconnect Betfair in finally, teardown pendente su errore) e' corretta e fissata da test_trg_628_b_0740 (RED/GREEN). Ma il pulsante 'STOP BOT' della GUI (mini_gui._runtime_stop) chiama runtime.stop() -> _stop_serialized (core/runtime_controller.py:3438-3473), che non cancella unmatched ne' tenta cashout prima di disconnettere: solo risk_stop() (riga 1339) implementa P38. xfail strict test_trg_628_b_0740_p38_stop_risk_reduction. Nessuna patch."
+   "note": "STOP BOT = STOP controllato P38. Test esistente xfail strict test_trg_628_b_0740_p38_stop_risk_reduction.",
+   "decision": "D6 PF-OWNER-OD12-P38-CASHOUT-FINAL-20261111",
+   "target_pr": "PR-09 (comandi GUI applicati al motore) riusando l'Emergency Stop #629; parte post-stop in PR-05"
   },
   {
    "tid": "TRG-628-B-0741",
@@ -757,13 +759,15 @@
   {
    "tid": "TRG-628-B-0770",
    "req": "PF-B1-CASH-SCOPE-EVENT",
-   "verdict": "NEEDS_OWNER_DECISION",
+   "verdict": "CODE_DEFECT_OR_MISSING",
    "ratified_basis": "P38 (fonte unica della riga) definisce gli ordini «pertinenti» per STOP/fencing per ID primario; nessuna fonte ratificata fissa la chiave di ambito di un CASHOUT singolo. docs/cashout_overview.md §4 descrive il comportamento attuale (event_name) ma e' documentazione derivata dal codice, non decisione owner.",
    "test": null,
    "mutation": null,
    "red": null,
    "green": null,
-   "note": "cashout_router.py:262-273 (_restrict_to_event) + :276-286 (_in_scope_markets): un CASHOUT singolo chiude le posizioni bot i cui market_id hanno nel DB bot un event_name uguale, dopo strip()+lower(), all'event_name del segnale Telegram; event_name mancante => nessuna chiusura (fail-closed, tecnicamente sicuro). Domanda owner: «Per un CASHOUT singolo, l'ambito delle posizioni da chiudere va determinato per uguaglianza esatta del nome evento normalizzato (strip+minuscole, oggi), oppure per ID primario dell'evento/mercato Betfair (eventId/marketId risolto dal segnale), come per il fencing P38? E in caso di nomi diversi per la stessa partita (es. 'Inter - Milan' vs 'Inter v Milan') o di due eventi con nome identico, il comportamento atteso e' non chiudere nulla (fail-closed) o chiudere tutti i mercati con quel nome?» Nessuna asserzione scritta."
+   "note": "Identita' per ID Betfair; il nome evento non identifica; ambiguita' = nessun cashout. Test tests/gate_a/test_gate_a_d6_d7_d8.py (2 xfail strict + 1 PASS).",
+   "decision": "D7 PF-OWNER-OD12-P38-CASHOUT-FINAL-20261111",
+   "target_pr": "PR-07 (cashout) dopo PR-06 (identita' ordini)"
   },
   {
    "tid": "TRG-628-B-0771",
@@ -1494,13 +1498,15 @@
   {
    "tid": "TRG-628-B-1002",
    "req": "PF-B1-R2-LEDGER-CLOSE",
-   "verdict": "NEEDS_OWNER_DECISION",
+   "verdict": "CODE_DEFECT_OR_MISSING",
    "ratified_basis": "nessuna fonte ratificata determina il P&L 'realizzato' SIM prima del settlement",
    "test": null,
    "mutation": null,
    "red": null,
    "green": null,
-   "note": "Codice: realized_delta = (avg-close)*size (BACK) / (close-avg)*size (LAY) sulla size chiusa. E' il P&L dello scenario 'vince il runner', non un valore garantito: BACK 10@3.0 chiuso LAY 10@2.0 => ledger +10 realizzato, Betfair reale: vince +10 / perde 0 (worst case 0). simulation_broker._apply_fill_to_position_ledger lo accredita su state.balance prima del settlement; lo stesso broker (commento riserva fondi PFC-004/005) dichiara che il ledger 'tratta una perdita condizionata come gia' realizzata' e la evita solo per i fondi disponibili. Nessuna fonte ratificata (OWNER-EXPOSURE-01 riguarda l'esposizione, OD12 settlement autorevole) fissa la semantica del 'realizzato' SIM pre-settlement. DOMANDA: il PositionLedger SIM deve continuare a contabilizzare come realizzato (e accreditare a balance) la differenza di quota sulla size chiusa (= P&L dello scenario vincente), oppure il realizzato pre-settlement deve essere il caso peggiore netto (OWNER-EXPOSURE-01) / zero fino al settlement autorevole (OD12)?"
+   "note": "Contabilita' prudenziale: potenziale / minimo garantito / regolato. Saldo SIM 1010 invece di 1000 prima del settlement. Test tests/gate_a/test_gate_a_d6_d7_d8.py (1 xfail strict + 1 PASS sui fondi disponibili).",
+   "decision": "D8 PF-OWNER-OD12-P38-CASHOUT-FINAL-20261111",
+   "target_pr": "PR-14 (SIM realistica)"
   },
   {
    "tid": "TRG-628-B-1003",
