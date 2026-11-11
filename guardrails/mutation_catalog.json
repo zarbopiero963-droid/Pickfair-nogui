@@ -9832,6 +9832,42 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "Codex/Grok/Claude D su dc2f5f25: un marker vecchio non rimosso resusciterebbe un superamento gia' sbloccato dall'owner."
+    },
+    {
+      "id": "d1_unreadable_state_admits_controller_entries",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            return \"drawdown_stato_illeggibile\"\n",
+      "mutated": "            pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 92155c24: con stato del picco illeggibile e nessun hard-stop, bet manuale e Dutching passerebbero con picco sconosciuto."
+    },
+    {
+      "id": "d1_relaxing_transition_written_to_marker",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                if marker and marker_fallback:\n",
+      "mutated": "                if marker:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 92155c24: uno sblocco owner fallito col DB giu' finirebbe nel marker come record piu' recente e al riavvio il superamento sparirebbe."
+    },
+    {
+      "id": "d1_start_without_state_reload",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        self._reload_drawdown_state()\n        self._applica_fondi_avvio(funds, read_at=start_funds)\n",
+      "mutated": "        self._applica_fondi_avvio(funds, read_at=start_funds)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 92155c24: lo START scriverebbe lo stato vecchio costruito prima di diventare proprietario, sovrascrivendo picco e superamento del processo precedente."
     }
   ]
 }

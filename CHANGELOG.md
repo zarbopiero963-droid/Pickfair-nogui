@@ -75,7 +75,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
   resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale
   e Dutching applicano picco non persistito e baseline non confermata; un marker superato dal DB non annulla
-  sblocchi o conferme owner; sessione non salvata all'avvio = log critico e ingressi negati. Test `tests/d1`.
+  sblocchi o conferme owner; sessione non salvata all'avvio = log critico e ingressi negati. Su 92155c24 (Sol):
+  stato illeggibile nega anche manuale/Dutching senza hard-stop; sblocco, conferma, ribasamento e chiusura della
+  sessione falliti col DB giu' non scrivono il marker; lo START rilegge lo stato dell'hard-stop sotto il lock di
+  istanza prima di scriverlo (Codex). Test `tests/d1`.
 - **G7-R06 (#586): AMBIGUOUS gia' regolato non rinasce come riserva al riavvio.** La ricostruzione F018 chiude gli
   intenti con un effetto di settlement applicato (`Database.settled_customer_refs`, prova = chiave del settlement)
   invece di ricrearne il tavolo come posizione incerta su un mercato gia' chiuso. Senza prova o con registro

@@ -448,18 +448,25 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   ammissione; con hard-stop configurato anche `max_drawdown_abs_picco_non_persistito`; cassa non verificata =>
   `max_drawdown_abs_cassa_non_verificata`. Picco non persistito e baseline non confermata negano anche bet manuale e
   Dutching (`absolute_cap_reason_for_orders`), con o senza cap configurati (Codex/Grok/Claude D su dc2f5f25: prima
-  quel percorso usciva subito senza cap e ignorava la baseline). Sessione non salvata all'avvio => log critico e
+  quel percorso usciva subito senza cap e ignorava la baseline); stato illeggibile => `drawdown_stato_illeggibile`
+  anche li' senza hard-stop configurati (Sol su 92155c24). Sessione non salvata all'avvio => log critico e
   ingressi negati come picco non persistito, finche' un salvataggio la rende durevole.
 - **Doppio guasto (RO-DD-09).** Se il DB non salva il picco, lo stesso record va in un marker su file separato
   (`<db>.drawdown_peak_pending.json`, scrittura atomica, stesso schema del marker della perdita giornaliera). Al
   riavvio vale il picco piu' alto fra DB e marker; il marker si riporta nel DB e si rimuove solo dopo il salvataggio.
   Sessione, baseline e superamento li decide il record piu' recente (`seq`): un marker rimasto da un guasto rientrato
   (rimozione fallita, file bloccato su Windows) non annulla uno sblocco o una conferma owner salvati dopo nel DB; a pari
-  `seq` vale l'unione. Marker illeggibile => stato illeggibile (fail-closed).
+  `seq` vale l'unione. Il marker e' il ripiego dei soli stati che stringono (picco che sale, superamento, sessione
+  aperta): sblocco owner, conferma della baseline, ribasamento del picco e chiusura della sessione richiedono il DB, e
+  se il DB non salva non scrivono neanche il marker (Sol su 92155c24: altrimenti l'operazione fallita varrebbe al
+  riavvio come record piu' recente). Marker illeggibile => stato illeggibile (fail-closed).
 - **Baseline dopo un riavvio non pulito (RO-DD-09 C, decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109).**
   Lo START del trading registra su disco una sessione aperta; solo uno STOP pulito con il picco durevole la chiude,
   e la chiude PRIMA di rilasciare il lock di istanza (Sol su dc2f5f25): dopo il rilascio un nuovo processo puo' aver
   gia' aperto la propria sessione, che la chiusura del vecchio sovrascriverebbe. Smontaggio fallito => sessione aperta.
+  Simmetricamente lo START rilegge lo stato dell'hard-stop con il lock di istanza tenuto, prima della prima lettura del
+  conto e della sessione (Codex su 92155c24): un controller costruito mentre un altro processo era proprietario non
+  sovrascrive il picco o il superamento salvati da quello nel frattempo.
   Se al riavvio la sessione risulta aperta (crash, kill, STOP con picco non salvato, DB e marker entrambi non
   scrivibili) il picco salvato potrebbe non essere il massimo: la baseline e' **non verificata** e nessun nuovo
   ingresso passa (`drawdown_baseline_non_verificata`), anche dopo piu' riavvii e dopo un reset strategico.

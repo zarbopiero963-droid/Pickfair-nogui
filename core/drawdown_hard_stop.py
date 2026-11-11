@@ -185,7 +185,12 @@ class DrawdownHardStop:
             elif any(r.get("from_marker") for r in stale):
                 self._remove_stale_marker()
 
-    def _persist_locked(self) -> bool:
+    def _persist_locked(self, *, marker_fallback: bool = True) -> bool:
+        """Salva lo stato nel DB. ``marker_fallback`` False (Sol su 92155c24) per le transizioni che ALLENTANO un
+        blocco (sblocco owner, conferma della baseline, ribasamento del picco, chiusura della sessione): se il DB non
+        salva non va scritto nemmeno il marker, altrimenti un'operazione fallita (stato in RAM ripristinato) resterebbe
+        su disco come record piu' recente e al riavvio varrebbe lo stesso. Il marker resta il ripiego dei soli stati
+        che stringono (picco che sale, superamento, sessione aperta)."""
         saver = getattr(self._db, "save_settings", None)
         seq = self.seq + 1
         record = {"peak": None if self.peak is None else str(self.peak), "seq": seq, "breached": self.breached,
@@ -203,7 +208,7 @@ class DrawdownHardStop:
             # RO-DD-09 (Claude D): marker su file separato, cosi' un riavvio non riparte da un picco vecchio anche se
             # il DB non torna. Marker non scrivibile => KNOWN_LIMITATION (doppio guasto), come per la perdita del giorno.
             try:
-                if marker:
+                if marker and marker_fallback:
                     atomic_write_text(marker, payload)
                     self.seq = seq
             except Exception:
@@ -241,7 +246,7 @@ class DrawdownHardStop:
             if self.unreadable or self.persist_failed:
                 return False
             self.session_open = False
-            if not self._persist_locked():
+            if not self._persist_locked(marker_fallback=False):
                 self.session_open = True
                 return False
             return True
@@ -281,7 +286,7 @@ class DrawdownHardStop:
                      "nota": "conferma owner della baseline: non e' una prova del massimo storico"}
             self.baseline = {"confirmations": history + [entry]}
             self.baseline_verified = True
-            if not self._persist_locked():
+            if not self._persist_locked(marker_fallback=False):
                 self.peak, self.baseline = old
                 self.baseline_verified = False
                 return False
@@ -363,7 +368,7 @@ class DrawdownHardStop:
                      "checks": dict(checks or {}), "breach": before}
             self.breached = False
             self.breach = {"cleared": history + [entry]}
-            if not self._persist_locked():
+            if not self._persist_locked(marker_fallback=False):
                 self.breached, self.breach = True, dict(before, cleared=history)   # nessuno sblocco non registrato
                 return False
             logger.warning("D-1: hard-stop sbloccato dall'owner (op %s, autorizzazione %s): %s", op, ref, why)
@@ -386,7 +391,7 @@ class DrawdownHardStop:
                                                      "operation_id": op,
                                                      "from": None if old_peak is None else str(old_peak),
                                                      "to": str(peak)})
-            if not self._persist_locked():
+            if not self._persist_locked(marker_fallback=False):
                 self.peak, self.breach = old_peak, old_breach
                 return False
             logger.warning("D-1: picco dell'hard-stop ribasato dall'owner %s -> %s (op %s)", old_peak, peak, op)

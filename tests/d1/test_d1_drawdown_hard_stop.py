@@ -846,3 +846,116 @@ def test_dd09c_start_with_unsaved_session_blocks_entries(tmp_path, caplog):
     c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK", market_id="1.999"))
     assert json.loads(c.rc.db.get_settings()[STATE_KEY])["session_open"] is True
     assert _ordini(c) == 1, _rifiuti(c)
+
+
+# ----------------------------------------------------------------------------------- Sol su 92155c24 (PR-03a)
+def test_unreadable_state_blocks_manual_and_dutching_without_hard_stops(tmp_path):
+    """Sol su 92155c24: stato del picco illeggibile e nessun hard-stop configurato: anche il percorso manuale/Dutching
+    nega (picco sconosciuto), come il desk in LOCKDOWN per i segnali; lo stato illeggibile non viene sovrascritto."""
+    c = _catena(tmp_path)
+    _lettura(c, 100.0)
+    c.rc.db.save_settings({STATE_KEY: "{"})
+    _riavvio(c)
+    assert c.rc.absolute_cap_reason_for_orders([dict(_ORDINE_MANUALE)]) == "drawdown_stato_illeggibile"
+    assert c.rc.db.get_settings()[STATE_KEY] == "{"
+
+
+def _stop_con_marker(tmp_path):
+    db = _Db()
+    db.db_path = str(tmp_path / "pf.db")
+    return db, DrawdownHardStop(db)
+
+
+def test_failed_owner_clearance_never_reaches_the_marker(tmp_path):
+    """Sol su 92155c24: DB guasto e marker scrivibile durante lo sblocco owner. Lo sblocco fallisce e NON deve finire
+    nel marker come record piu' recente: al riavvio il superamento resta."""
+    db, stop = _stop_con_marker(tmp_path)
+    stop.observe(100.0)
+    assert stop.evaluate(10.0, 80.0) is True                 # superamento salvato nel DB
+    db.fail_save = True
+    assert stop.owner_clear_breach(authorization="PF-OWNER-X", reason="verificato", operation_id="op-1",
+                                   confirm=True) is False
+    assert stop.breached
+    db.fail_save = False
+    riavviato = DrawdownHardStop(db)
+    riavviato.restore()
+    assert riavviato.breached and riavviato.reason(10.0, 100.0) == REASON_ACTIVE
+
+
+def test_failed_owner_rebase_never_reaches_the_marker(tmp_path):
+    db, stop = _stop_con_marker(tmp_path)
+    stop.observe(100.0)
+    db.fail_save = True
+    assert stop.owner_rebase_peak(50.0, authorization="PF-OWNER-X", reason="nuova baseline", operation_id="op-2",
+                                  confirm=True) is False
+    db.fail_save = False
+    riavviato = DrawdownHardStop(db)
+    riavviato.restore()
+    assert riavviato.snapshot()["peak"] == 100.0
+
+
+def test_failed_baseline_confirmation_never_reaches_the_marker(tmp_path):
+    db, stop = _stop_con_marker(tmp_path)
+    stop.observe(100.0)
+    stop.open_session()
+    riavviato = DrawdownHardStop(db)                         # crash: sessione aperta => baseline non verificata
+    riavviato.restore()
+    assert not riavviato.baseline_verified
+    db.fail_save = True
+    assert riavviato.owner_confirm_baseline(authorization="PF-OWNER-X", reason="verificato", operation_id="op-3",
+                                            confirm=True, confirm_again=True, cash_equity=100.0) is False
+    db.fail_save = False
+    di_nuovo = DrawdownHardStop(db)
+    di_nuovo.restore()
+    assert not di_nuovo.baseline_verified
+
+
+def test_failed_session_close_never_reaches_the_marker(tmp_path):
+    """Chiusura della sessione con il DB giu': resta aperta su disco (nessun marker 'chiusa'), il riavvio chiede la
+    conferma owner della baseline."""
+    db, stop = _stop_con_marker(tmp_path)
+    stop.observe(100.0)
+    stop.open_session()
+    db.fail_save = True
+    assert stop.close_session() is False
+    db.fail_save = False
+    riavviato = DrawdownHardStop(db)
+    riavviato.restore()
+    assert not riavviato.baseline_verified
+
+
+def test_rising_peak_still_falls_back_to_the_marker(tmp_path):
+    """Gli stati che stringono restano protetti dal marker (RO-DD-09): picco salito con il DB giu' sopravvive."""
+    db, stop = _stop_con_marker(tmp_path)
+    stop.observe(100.0)
+    db.fail_save = True
+    stop.observe(120.0)
+    db.fail_save = False
+    riavviato = DrawdownHardStop(db)
+    riavviato.restore()
+    assert riavviato.snapshot()["peak"] == 120.0
+
+
+def test_start_reloads_the_drawdown_state_written_by_the_previous_owner(tmp_path):
+    """Codex su 92155c24: controller B costruito (picco 100) mentre A era ancora proprietario; A salva poi picco 120 e
+    un superamento. All'avvio B rilegge sotto la proprieta' del runtime: il blocco di A resta, nessuna sovrascrittura."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    vecchio = c.rc._hard_stop()
+    altro = DrawdownHardStop(c.rc.db)                        # processo A, ancora proprietario
+    altro.restore()
+    altro.observe(120.0)
+    assert altro.evaluate(10.0, 105.0) is True
+    assert not vecchio.breached and vecchio.snapshot()["peak"] == 100.0
+    c.rc._reload_drawdown_state()
+    assert vecchio.breached and vecchio.snapshot()["peak"] == 120.0
+    record = json.loads(c.rc.db.get_settings()[STATE_KEY])
+    assert record["breached"] is True and record["peak"] == "120.0"
+
+
+def test_start_reloads_before_the_first_funds_reading_and_the_session_write():
+    import inspect
+    from core.runtime_controller import RuntimeController
+    src = inspect.getsource(RuntimeController._start_with_instance_lock)
+    assert src.index("_reload_drawdown_state()") < src.index("_applica_fondi_avvio(funds")
+    assert src.index("_reload_drawdown_state()") < src.index("_open_drawdown_session()")

@@ -1332,6 +1332,10 @@ class RuntimeController:
         stop = getattr(self, "_drawdown_hard_stop", None)
         if stop is None:
             return ""
+        if not stop.state_reliable():
+            # Sol su 92155c24: stato persistito illeggibile => picco sconosciuto, nessun ingresso su ogni percorso
+            # (anche manuale/Dutching senza hard-stop configurati), mai sovrascritto.
+            return "drawdown_stato_illeggibile"
         if not stop.retry_persist():
             return "drawdown_picco_non_persistito"
         # RO-DD-09 C: dopo un riavvio non pulito il picco salvato potrebbe non essere il massimo => nessun ingresso
@@ -3114,6 +3118,10 @@ class RuntimeController:
                 error=str(exc),
             )
             raise
+        # Codex su 92155c24: lo stato del drawdown si rilegge ADESSO, con il lock di istanza tenuto, prima della prima
+        # lettura del conto e della scrittura della sessione: costruito mentre un altro processo era ancora
+        # proprietario, questo controller avrebbe in memoria un picco o un superamento vecchi e li sovrascriverebbe.
+        self._reload_drawdown_state()
         self._applica_fondi_avvio(funds, read_at=start_funds)
         # RO-DD-09 C: sessione di trading aperta su disco fino a uno STOP pulito con picco durevole.
         self._open_drawdown_session()
@@ -3464,6 +3472,11 @@ class RuntimeController:
     def stop(self) -> dict:
         with self._runtime_lifecycle_lock():          # #461 PR29-c: mai in parallelo con start()
             return self._stop_serialized()
+
+    def _reload_drawdown_state(self) -> None:
+        """Rilegge dal DB (e dal marker) lo stato dell'hard-stop sotto la proprieta' del runtime. ``restore`` non
+        abbassa mai il picco ne' annulla un superamento gia' in memoria: rileggere e' sempre sicuro."""
+        RuntimeController._hard_stop(self).restore()
 
     def _open_drawdown_session(self) -> None:
         """RO-DD-09 C: apre su disco la sessione del drawdown all'avvio del trading. Non salvata (Grok/Claude D su
