@@ -61,7 +61,7 @@ Codice: `core/blackbox_runtime.py` (`require_runtime`, `financial_gate`, `protec
   Lo stesso vale per **tutti** i chiamanti dei punti d'invio (passata unica, Codex e Claude D su #630): il motore
   (`TradingEngine._ERRORI_PRIMA_DELL_INVIO`) rilascia l'intento e non scrive mai `LIVE_SUBMIT_ESITO_IGNOTO`; il
   `replace` dei port Microstake (LIVE e SIM) solleva un rifiuto certo, quindi il coordinatore fa il rollback dello
-  stub invece di lasciarlo in `AMBIGUOUS`; l'arresto d'emergenza segna il lotto `NOT_SENT`. La riduzione dello stub
+  stub invece di lasciarlo in `AMBIGUOUS`, sia in `execute` sia nel `recover` (D-630-09); l'arresto d'emergenza segna il lotto `NOT_SENT`. La riduzione dello stub
   Microstake resta `AMBIGUOUS` (scelta prudente: lo stub è noto e la riconciliazione lo risolve). Nell'arresto d'emergenza (#629) un lotto di cancel
   rifiutato dal Gate B è `NOT_SENT` con errore `BLACKBOX_UNAVAILABLE`, mai `UNKNOWN`, e l'arresto non è VERIFIED.
 - **Batch.** `SimulationBroker.place_orders` passa dal gate una volta per il batch (`batch_gated`), poi le gambe.

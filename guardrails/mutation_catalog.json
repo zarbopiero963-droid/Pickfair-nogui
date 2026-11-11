@@ -9712,6 +9712,18 @@
         "tests/blackbox/test_bb1g_gates.py"
       ],
       "rationale": "Claude D (MA3) su #630: close() senza scarico finale perderebbe le uscite protettive accettate tra end_session e close."
+    },
+    {
+      "id": "bb1g_ms_recovery_gate_refusal_ambiguous",
+      "module": "core.microstake_safe",
+      "area": "blackbox",
+      "file": "core/microstake_safe.py",
+      "original": "            if not isinstance(exc, LostResponse) and str(exc) == \"BLACKBOX_UNAVAILABLE\":\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/test_microstake_safe_recovery.py"
+      ],
+      "rationale": "D-630-09 (#630): nel recover un replace rifiutato dal Gate B lascerebbe la saga AMBIGUOUS con lo stub aperto invece del rollback."
     }
   ]
 }
