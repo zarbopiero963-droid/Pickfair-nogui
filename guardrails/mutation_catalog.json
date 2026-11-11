@@ -9724,6 +9724,18 @@
         "tests/test_microstake_safe_recovery.py"
       ],
       "rationale": "D-630-09 (#630): nel recover un replace rifiutato dal Gate B lascerebbe la saga AMBIGUOUS con lo stub aperto invece del rollback."
+    },
+    {
+      "id": "bb1g_protective_writer_never_retries_outage",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                self._drain_protective_queue()\n                self._retry_outage_flush()\n",
+      "mutated": "                self._drain_protective_queue()\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630 (b78c4b6e): dopo un guasto temporaneo una sessione con sole uscite protettive non scaricherebbe mai il backlog e, a buffer pieno, rifiuterebbe i cancel a registro guarito."
     }
   ]
 }

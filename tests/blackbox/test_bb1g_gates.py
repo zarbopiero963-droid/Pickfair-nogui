@@ -624,3 +624,38 @@ def test_close_drains_a_protective_event_accepted_after_the_session_end(bbpath, 
     assert late.get("id")
     assert [r for r in _events(bbpath, "ORDER_CANCEL_REQUEST") if r["event_id"] == late["id"]], \
         "accettato prima della chiusura e mai scritto"
+
+
+def test_a_protective_only_session_recovers_after_a_transient_journal_failure(bbpath, monkeypatch):
+    """Codex su #630 (b78c4b6e): dopo un guasto temporaneo del registro, una sessione con sole uscite protettive deve
+    riprendere a scrivere da sola: il writer dedicato riprova e scarica il backlog (eventi + GAP), senza bisogno di un
+    `record()` sincrono estraneo. Altrimenti il buffer si riempie e i cancel vengono rifiutati a registro guarito."""
+    import time as _time
+    box = _install_runtime_box()
+    real_insert = box._insert
+    broken = {"on": True}
+
+    def flaky(rec):
+        if broken["on"]:
+            raise sqlite3.OperationalError("disk I/O error")
+        return real_insert(rec)
+
+    monkeypatch.setattr(box, "_insert", flaky)
+    first = rt.financial_gate("ORDER_CANCEL_REQUEST", component="betfair_client", cancel=True, market_id="1.5",
+                              bet_ids=["B1"])
+    deadline = _time.monotonic() + 5
+    while not box._buffer and _time.monotonic() < deadline:   # il writer ha tentato durante il guasto
+        _time.sleep(0.02)
+    assert box._buffer
+    broken["on"] = False                                       # il registro torna scrivibile
+    second = rt.financial_gate("ORDER_CANCEL_REQUEST", component="betfair_client", cancel=True, market_id="1.5",
+                               bet_ids=["B2"])
+    deadline = _time.monotonic() + 5
+    written = set()
+    while _time.monotonic() < deadline:                        # nessun record() sincrono: scrive solo il writer
+        written = {r["event_id"] for r in _events(bbpath, "ORDER_CANCEL_REQUEST")}
+        if {first, second} <= written:
+            break
+        _time.sleep(0.05)
+    assert {first, second} <= written, "backlog protettivo mai scaricato a registro guarito"
+    assert _events(bbpath, "BLACKBOX_GAP") and not box._buffer

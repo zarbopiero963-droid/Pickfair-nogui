@@ -662,12 +662,27 @@ class BlackBox:
             self._protective_wakeup.clear()
             with self._protective_state:
                 # deciso sotto lo stesso lock dell'avvio: un evento accodato dopo questo controllo trova
-                # `_protective_thread` a None e avvia un nuovo writer
-                if not self._protective_queue:
+                # `_protective_thread` a None e avvia un nuovo writer. Con un backlog di guasto ancora da scaricare
+                # (e la scatola nera aperta) il writer resta vivo e riprova (Codex su #630, b78c4b6e).
+                backlog = (self._buffer or self._degraded_since is not None) and not self._protective_closed
+                if not self._protective_queue and not backlog:
                     self._protective_thread = None
                     return
             with self._lock:
                 self._drain_protective_queue()
+                self._retry_outage_flush()
+
+    def _retry_outage_flush(self) -> None:
+        """Sotto il lock: se c'e' un backlog di guasto, prova a scaricarlo (eventi bufferizzati, GAP, RECOVERED). Lo
+        chiama il writer protettivo, cosi' una sessione con sole uscite protettive si riprende da sola a registro
+        guarito, senza aspettare un `record()` sincrono estraneo (Codex su #630). Fallimento: il buffer resta intatto
+        e si riprova al giro successivo."""
+        if not (self._buffer or self._degraded_since is not None) or self._conn is None:
+            return
+        try:
+            self._flush_after_outage()
+        except (sqlite3.Error, OSError) as exc:
+            self.last_error = f"{type(exc).__name__}: {exc}"
 
     def flush_protective(self) -> None:
         """Scrive (o porta nel buffer critico) le uscite protettive ancora in coda, nell'ordine d'arrivo. Sincrono: lo

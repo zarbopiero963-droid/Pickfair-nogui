@@ -49,6 +49,8 @@ Codice: `core/blackbox_runtime.py` (`require_runtime`, `financial_gate`, `protec
     o è accodata prima dello scarico finale (e scritta), o è rifiutata (`BlackBoxUnavailable`), mai accettata in una
     coda che nessuno scriverà; lo scarico prende una quantità fissata all'ingresso, così mittenti concorrenti non
     tengono il lock all'infinito;
+    il writer, finché resta un backlog di guasto, riprova a scaricarlo da solo (eventi bufferizzati, GAP, RECOVERED):
+    una sessione con sole uscite protettive si riprende a registro guarito senza bisogno di altri eventi (Codex su #630);
     **chi legge il registro subito dopo un'uscita protettiva** (oracoli, verifiche, test) chiama prima
     `flush_protective()`: senza, l'evento può essere ancora in coda e non comparire nella lettura;
   - **scatola nera assente** (mai installata, già chiusa, `atexit`, thread sopravvissuti): tutto rifiutato, tranne
