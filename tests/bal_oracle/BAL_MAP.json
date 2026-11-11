@@ -1,0 +1,455 @@
+{
+ "schema": "pf-bal-oracle/1",
+ "production_base": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+ "mandate": "PF-OWNER-BETFAIR-BALANCE-SETTLEMENT-FULL-COVERAGE-20261112",
+ "api_evidence": "NOT_RUN (nessuna chiamata Betfair)",
+ "verified_means": "verificato in SIM da questi test su questo SHA; NON certificazione",
+ "rows": [
+  {
+   "status": "VERIFIED",
+   "evidence": {
+    "SIM": "VERIFIED",
+    "API": "NOT_RUN"
+   },
+   "test": [
+    "tests/bal_oracle/test_bal_sim.py::test_BAL01_back_settle_no_cashout[*] (6 params: 2@1.5,10@2.0,7.33@3.45 x WINNER/LOSER)"
+   ],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": {
+    "mutations_killing_tests(name: n_tests_red)": {
+     "M1_drop_commission": 3,
+     "M4_credit_twice": 6,
+     "M5_available_from_raw_balance": 6
+    }
+   },
+   "red": true,
+   "green": true,
+   "note": "BACK commit at placement keeps total==1000 (I1), committed==stake, realized 0 until settlement, settlement gross/commission/net and available match oracle. Sub-scenario early stake release before settlement: NOT_MODELLED in SIM (no event/API); defined only in oracle.Account.early_release.",
+   "sub_status": {
+    "early_stake_release": "NOT_MODELLED"
+   }
+  },
+  {
+   "status": "VERIFIED",
+   "evidence": {
+    "SIM": "VERIFIED",
+    "API": "NOT_RUN"
+   },
+   "test": [
+    "tests/bal_oracle/test_bal_sim.py::test_BAL02_lay_settle[*] (6 params)"
+   ],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": {
+    "mutations_killing_tests(name: n_tests_red)": {
+     "M1_drop_commission": 3,
+     "M4_credit_twice": 6,
+     "M5_available_from_raw_balance": 6
+    }
+   },
+   "red": true,
+   "green": true,
+   "note": "LAY liability stake*(price-1) committed and released at settlement; net and available match oracle."
+  },
+  {
+   "status": "FAIL",
+   "evidence": {
+    "SIM": "FAIL",
+    "API": "NOT_RUN"
+   },
+   "test": [
+    "tests/bal_oracle/test_bal_sim.py::test_BAL03_full_cashout_available_and_settlement[*] (6 params, PASS)",
+    "tests/bal_oracle/test_bal_sim.py::test_BAL03_D8_unsettled_hedge_profit_not_in_balance (xfail strict, fails on main)"
+   ],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": "D8",
+   "mutation": {
+    "mutations_killing_tests(name: n_tests_red)": {
+     "M1_drop_commission": 6,
+     "M2_commission_per_bet": 6,
+     "M4_credit_twice": 6,
+     "M5_available_from_raw_balance": 6,
+     "M11_credit_unsettled_ledger_profit_to_available": 6
+    }
+   },
+   "red": true,
+   "green": true,
+   "note": "get_account_funds available/exposure/total and settlement match oracle (PASS, killed by M1,M2,M4,M5,M11). D8 confirmed: BACK 10@3 + LAY 10@2 unsettled => state.balance and snapshot()['balance'] = 1010.0 while settled cash = 1000 (realized_pnl stays 0, available 1000). Source simulation_broker.py:432-433 (_apply_fill_to_position_ledger adds ledger realized_delta to state.balance at fill); exposed by snapshot() simulation_broker.py:2294 -> services/betfair_service.py:1015 -> core/runtime_controller.py:9048 simulation_snapshot."
+  },
+  {
+   "status": "NOT_RUN",
+   "evidence": {
+    "SIM": "NOT_RUN",
+    "API": "NOT_RUN"
+   },
+   "test": [],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": null,
+   "red": null,
+   "green": null,
+   "note": "No registry definition for this ID was provided to this agent; no test written."
+  },
+  {
+   "status": "NOT_RUN",
+   "evidence": {
+    "SIM": "NOT_RUN",
+    "API": "NOT_RUN"
+   },
+   "test": [],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": null,
+   "red": null,
+   "green": null,
+   "note": "No registry definition for this ID was provided to this agent; no test written."
+  },
+  {
+   "status": "VERIFIED",
+   "evidence": {
+    "SIM": "VERIFIED",
+    "API": "NOT_RUN"
+   },
+   "test": [
+    "tests/bal_oracle/test_bal_sim.py::test_BAL06_greenup_multi_order[WINNER]",
+    "tests/bal_oracle/test_bal_sim.py::test_BAL06_greenup_multi_order[LOSER]"
+   ],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": {
+    "mutations_killing_tests(name: n_tests_red)": {
+     "M1_drop_commission": 2,
+     "M2_commission_per_bet": 2,
+     "M4_credit_twice": 2,
+     "M5_available_from_raw_balance": 2,
+     "M11_credit_unsettled_ledger_profit_to_available": 2
+    }
+   },
+   "red": true,
+   "green": true,
+   "note": "2 BACK + 2 LAY orders at different prices, same runner; funds after each leg and settlement match oracle. state.balance carries D8 here too (not asserted in this test)."
+  },
+  {
+   "status": "NOT_MODELLED",
+   "evidence": {
+    "SIM": "NOT_MODELLED",
+    "API": "NOT_RUN"
+   },
+   "test": [
+    "tests/bal_oracle/test_bal_sim.py::test_BAL07_guaranteed_min_profit_not_available_before_settlement (PASS)"
+   ],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": {
+    "mutations_killing_tests(name: n_tests_red)": {
+     "M1_drop_commission": 1,
+     "M2_commission_per_bet": 1,
+     "M4_credit_twice": 1,
+     "M5_available_from_raw_balance": 1,
+     "M11_credit_unsettled_ledger_profit_to_available": 1
+    }
+   },
+   "red": true,
+   "green": true,
+   "note": "SIM has no exchange-confirmed early-availability event; oracle models it (early_available + counterpart early_available_unsettled, wealth unchanged, netted at settlement; test_oracle_invariants_I1_I2_with_early_availability). Verified conservative SIM behaviour: guaranteed min +5 not available nor realized before settlement, credited once (1004.775)."
+  },
+  {
+   "status": "NOT_RUN",
+   "evidence": {
+    "SIM": "NOT_RUN",
+    "API": "NOT_RUN"
+   },
+   "test": [],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": null,
+   "red": null,
+   "green": null,
+   "note": "No registry definition for this ID was provided to this agent; no test written."
+  },
+  {
+   "status": "NOT_RUN",
+   "evidence": {
+    "SIM": "NOT_RUN",
+    "API": "NOT_RUN"
+   },
+   "test": [],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": null,
+   "red": null,
+   "green": null,
+   "note": "No registry definition for this ID was provided to this agent; no test written."
+  },
+  {
+   "status": "VERIFIED",
+   "evidence": {
+    "SIM": "VERIFIED",
+    "API": "NOT_RUN"
+   },
+   "test": [
+    "tests/bal_oracle/test_bal_sim.py::test_BAL10_void_removed_runner_only_bets[BACK]",
+    "tests/bal_oracle/test_bal_sim.py::test_BAL10_void_removed_runner_only_bets[LAY]",
+    "tests/bal_oracle/test_bal_sim.py::test_BAL10_whole_market_void",
+    "tests/bal_oracle/test_bal_sim.py::test_BAL10_removed_runner_with_bets_on_others_fail_closed"
+   ],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": {
+    "mutations_killing_tests(name: n_tests_red)": {
+     "M5_available_from_raw_balance": 3,
+     "M8_void_as_loser": 3
+    }
+   },
+   "red": true,
+   "green": true,
+   "note": "Void of removed runner (bets only on it) and whole-market void: gross 0, commission 0, available 1000. Removed runner with bets on other runners: SIM returns REDUCTION_FACTOR_UNSUPPORTED, no state change, positions stay committed (fail-closed; reduction factors not modelled).",
+   "sub_status": {
+    "void": "VERIFIED",
+    "reduction_factor": "NOT_MODELLED (fail-closed)"
+   }
+  },
+  {
+   "status": "VERIFIED",
+   "evidence": {
+    "SIM": "VERIFIED",
+    "API": "NOT_RUN"
+   },
+   "test": [
+    "tests/bal_oracle/test_bal_sim.py::test_BAL11_duplicate_and_resettlement_no_double_credit[second0]",
+    "tests/bal_oracle/test_bal_sim.py::test_BAL11_duplicate_and_resettlement_no_double_credit[second1]"
+   ],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": {
+    "mutations_killing_tests(name: n_tests_red)": {
+     "M1_drop_commission": 2,
+     "M2_commission_per_bet": 2,
+     "M3_no_settlement_dedupe": 2,
+     "M4_credit_twice": 2
+    }
+   },
+   "red": true,
+   "green": true,
+   "note": "Second/third CLOSED book (identical or with a different result) => DUPLICATE, funds identical, one settlement record (I2). A genuine Betfair re-settlement correction is NOT modelled (first result kept).",
+   "sub_status": {
+    "duplicate_no_double_credit": "VERIFIED",
+    "resettlement_correction": "NOT_MODELLED"
+   }
+  },
+  {
+   "status": "VERIFIED",
+   "evidence": {
+    "SIM": "VERIFIED",
+    "API": "NOT_RUN"
+   },
+   "test": [
+    "tests/bal_oracle/test_bal_sim.py::test_BAL12_commission_on_market_net_not_per_bet[11|22|33]"
+   ],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": {
+    "mutations_killing_tests(name: n_tests_red)": {
+     "M1_drop_commission": 2,
+     "M2_commission_per_bet": 2,
+     "M4_credit_twice": 3,
+     "M5_available_from_raw_balance": 3
+    }
+   },
+   "red": true,
+   "green": true,
+   "note": "Commission 4.5% once on positive market net; 0 when market net <= 0; differs from per-bet rule (killed by M2 per-bet commission). Observation: SIM does not round commission to cents (compared at 1e-6)."
+  },
+  {
+   "status": "VERIFIED",
+   "evidence": {
+    "SIM": "VERIFIED",
+    "API": "NOT_RUN"
+   },
+   "test": [
+    "tests/bal_oracle/test_bal_sim.py::test_BAL13_partial_match_cancel_residual_then_settle[BACK|LAY]",
+    "tests/bal_oracle/test_bal_sim.py::test_BAL13_unmatched_reserve_and_cancel[BACK|LAY]",
+    "tests/bal_oracle/test_bal_sim.py::test_BAL13_unmatched_lapses_at_settlement_without_credit"
+   ],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": {
+    "mutations_killing_tests(name: n_tests_red)": {
+     "M1_drop_commission": 2,
+     "M4_credit_twice": 3,
+     "M5_available_from_raw_balance": 3,
+     "M7_unmatched_not_reserved": 5,
+     "M10_cancel_keeps_reserve": 4
+    }
+   },
+   "red": true,
+   "green": true,
+   "note": "Partial fill 4/10, unmatched reserve, cancel release (I1 total unchanged), lapse at settlement."
+  },
+  {
+   "status": "NOT_RUN",
+   "evidence": {
+    "SIM": "NOT_RUN",
+    "API": "NOT_RUN"
+   },
+   "test": [],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": null,
+   "red": null,
+   "green": null,
+   "note": "No registry definition for this ID was provided to this agent; no test written."
+  },
+  {
+   "status": "VERIFIED",
+   "evidence": {
+    "SIM": "VERIFIED",
+    "API": "NOT_RUN"
+   },
+   "test": [
+    "tests/bal_oracle/test_bal_sim.py::test_BAL15_restart_before_settlement_settles_once[WINNER|LOSER]",
+    "tests/bal_oracle/test_bal_sim.py::test_BAL15_restart_after_settlement_no_double_credit"
+   ],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": {
+    "mutations_killing_tests(name: n_tests_red)": {
+     "M1_drop_commission": 2,
+     "M2_commission_per_bet": 2,
+     "M3_no_settlement_dedupe": 3,
+     "M4_credit_twice": 2,
+     "M5_available_from_raw_balance": 2,
+     "M9_settlements_not_persisted": 3,
+     "M11_credit_unsettled_ledger_profit_to_available": 2
+    }
+   },
+   "red": true,
+   "green": true,
+   "note": "Restart = JSON roundtrip of state.to_dict()/load_from_dict (no DB-backed process crash). Funds identical after restart; settle once; re-delivered CLOSED after 3 restarts => DUPLICATE."
+  },
+  {
+   "status": "VERIFIED",
+   "evidence": {
+    "SIM": "VERIFIED",
+    "API": "NOT_RUN"
+   },
+   "test": [
+    "tests/bal_oracle/test_bal_sim.py::test_BAL16_new_order_limited_by_available_not_by_balance"
+   ],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": {
+    "mutations_killing_tests(name: n_tests_red)": {
+     "M5_available_from_raw_balance": 1,
+     "M6_mm_uses_raw_balance": 1,
+     "M7_unmatched_not_reserved": 1,
+     "M11_credit_unsettled_ledger_profit_to_available": 1
+    }
+   },
+   "red": true,
+   "green": true,
+   "note": "Broker funds gate: with state.balance inflated by D8, a new order is accepted exactly up to oracle available and rejected (INSUFFICIENT_FUNDS) at +0.01. Scope: SimulationBroker gate only, not the project MM module."
+  },
+  {
+   "status": "NOT_RUN",
+   "evidence": {
+    "SIM": "NOT_RUN",
+    "API": "NOT_RUN"
+   },
+   "test": [],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": null,
+   "red": null,
+   "green": null,
+   "note": "No registry definition for this ID was provided to this agent; no test written."
+  },
+  {
+   "status": "NOT_RUN",
+   "evidence": {
+    "SIM": "NOT_RUN",
+    "API": "NOT_RUN"
+   },
+   "test": [],
+   "sha": {
+    "worktree_head": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+    "production_code_base": "c535c1d5",
+    "note": "tests uncommitted in worktree branch claude/d-bal-oracle"
+   },
+   "defect": null,
+   "mutation": null,
+   "red": null,
+   "green": null,
+   "note": "No registry definition for this ID was provided to this agent; no test written."
+  }
+ ]
+}

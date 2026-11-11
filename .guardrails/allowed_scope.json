@@ -3602,6 +3602,16 @@
         "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
       "max_files": 35
+    },
+    "d_bal_oracle_tests": {
+      "description": "Oracolo contabile indipendente BAL-01..18 (mandato owner PF-OWNER-BETFAIR-BALANCE-SETTLEMENT-FULL-COVERAGE-20261112, Claude D): modello Decimal e prove contro SimulationBroker. Solo test; D8 come xfail strict.",
+      "files": [
+        "tests/bal_oracle/BAL_MAP.json",
+        "tests/bal_oracle/oracle.py",
+        "tests/bal_oracle/test_bal_sim.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4
     }
   }
 }
