@@ -425,7 +425,9 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   ogni lettura verificata alza il picco (Sol su 53c99ceb: 130 poi 115 con picco 100 e limite 10 blocca), ma non
   cambia la cassa del desk (PFC-008: una lettura concorrente del desk resta da ricontrollare): il gate dell'hard-stop
   usa la piu' recente fra cassa del desk e lettura d'ingresso, cosi' un picco nuovo non si confronta mai con una cassa
-  piu' vecchia (falso superamento); cassa del desk non verificata resta un rifiuto. Lo stato dell'hard-stop lo aggiorna solo il controller
+  piu' vecchia (falso superamento); cassa del desk non verificata resta un rifiuto. La stessa cassa piu' recente vale
+  per la misura di DEFENSE/LOCKDOWN (`_persistent_drawdown_pct`). Una lettura iniziata prima dell'ultima gia' valutata
+  (ingresso o contratto) e arrivata tardi non alza il picco e non valuta un superamento (Sol su 4a171465). Lo stato dell'hard-stop lo aggiorna solo il controller
   proprietario del runtime (avviato, o nello START dopo la rilettura sotto lock, con l'autorita' dimostrata): un
   controller mai avviato, fermo o che ha perso l'autorita' non scrive nulla, nemmeno leggendo il conto per lo stato
   (Codex su 53c99ceb).
@@ -482,7 +484,11 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   bloccata; lo STOP chiude la sessione solo se e' stato questo controller ad aprirla allo START, e una volta sola
   (un controller mai avviato o un secondo STOP non scrivono; Codex su 58e635e6). Allo stesso modo uno sblocco owner
   salvato da un altro processo dopo la costruzione vale alla rilettura dello START, con la sua storia; un superamento
-  piu' recente rimasto solo in memoria (salvataggio fallito) resta (Codex su 53c99ceb).
+  piu' recente rimasto solo in memoria (salvataggio fallito) resta (Codex su 53c99ceb). La storia degli sblocchi
+  (operation_id gia' usati) si riprende dal disco anche senza superamento attivo: un riavvio non rende di nuovo
+  valido un operation_id consumato (Sol su 4a171465). Il picco riletto non scende mai sotto quello gia' in memoria,
+  salvo un ribasamento owner esplicito (`owner_rebase_peak`) registrato nel record piu' recente proprio a quel picco:
+  allora vale anche per un controller costruito prima (Codex su 4a171465).
   Se al riavvio la sessione risulta aperta (crash, kill, STOP con picco non salvato, DB e marker entrambi non
   scrivibili) il picco salvato potrebbe non essere il massimo: la baseline e' **non verificata** e nessun nuovo
   ingresso passa (`drawdown_baseline_non_verificata`), anche dopo piu' riavvii e dopo un reset strategico.

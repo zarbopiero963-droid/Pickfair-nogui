@@ -9778,8 +9778,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                    elif verifica[\"reason\"] == \"CASH_NOT_POSITIVE\":\n                        self._evaluate_drawdown_hard_stop(0.0)\n",
-      "mutated": "                    elif False:\n                        self._evaluate_drawdown_hard_stop(0.0)\n",
+      "original": "                    elif verifica[\"reason\"] == \"CASH_NOT_POSITIVE\":\n                        self._evaluate_drawdown_hard_stop(0.0, read_at)\n",
+      "mutated": "                    elif False:\n                        self._evaluate_drawdown_hard_stop(0.0, read_at)\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -9802,8 +9802,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                    if verifica[\"ok\"]:\n                        self._evaluate_drawdown_hard_stop(verifica[\"cash\"])\n",
-      "mutated": "                    if False:\n                        self._evaluate_drawdown_hard_stop(verifica[\"cash\"])\n",
+      "original": "                    if verifica[\"ok\"]:\n                        self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at)\n",
+      "mutated": "                    if False:\n                        self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at)\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -9964,6 +9964,54 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "Il gate dell'hard-stop confronterebbe il picco alzato dalla lettura d'ingresso con la cassa piu' vecchia del desk: falso superamento (30 invece di 15)."
+    },
+    {
+      "id": "d1_lockdown_ignores_entry_cash",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        pct = stop.loss_pct(self._drawdown_gate_cash())   # Sol su 4a171465: anche la lettura d'ingresso piu' recente\n",
+      "mutated": "        pct = stop.loss_pct(getattr(getattr(self, \"risk_desk\", None), \"cash_equity_current\", None))\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 4a171465: la misura di DEFENSE/LOCKDOWN ignorerebbe la lettura d'ingresso piu' recente (0 % invece di 21 %)."
+    },
+    {
+      "id": "d1_stale_reading_evaluated",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if last is not None and started < last:\n                return\n            self._drawdown_read_at = started\n",
+      "mutated": "            self._drawdown_read_at = started\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 4a171465: una lettura vecchia arrivata tardi memorizzerebbe una perdita falsa contro un picco piu' recente."
+    },
+    {
+      "id": "d1_restart_drops_clearance_history",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            elif not self.breached or newer:\n",
+      "mutated": "            elif False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 4a171465: dopo un riavvio un operation_id di sblocco gia' consumato tornerebbe valido."
+    },
+    {
+      "id": "d1_restore_ignores_newer_rebase",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if peaks and (rebased or self.peak is None or max(peaks) > self.peak):\n",
+      "mutated": "            if peaks and (self.peak is None or max(peaks) > self.peak):\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 4a171465: un controller costruito prima ignorerebbe il ribasamento owner del picco e valuterebbe un superamento falso sulla vecchia baseline."
     }
   ]
 }

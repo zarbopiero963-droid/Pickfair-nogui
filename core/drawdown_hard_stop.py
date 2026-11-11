@@ -90,6 +90,18 @@ def _parse_record(raw: Any) -> dict:
             "baseline": dict(record.get("baseline") or {})}
 
 
+def _rebased_to(record: dict) -> Optional[Decimal]:
+    """Picco di arrivo dell'ultimo ribasamento owner registrato nel record; None se assente o illeggibile."""
+    rebased = record.get("breach", {}).get("rebased") if isinstance(record.get("breach"), dict) else None
+    if not isinstance(rebased, dict):
+        return None
+    try:
+        value = Decimal(str(rebased.get("to")))
+    except (ArithmeticError, ValueError):
+        return None
+    return value if value.is_finite() else None
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
@@ -158,17 +170,22 @@ class DrawdownHardStop:
                 return
             if not records:
                 return                                   # nessuno stato: nuovo perimetro, picco dalla prima cassa verificata
-            peaks = [r["peak"] for r in records if r["peak"] is not None]
-            # Mai sotto un picco gia' osservato in questo processo (START ripetuto nello stesso processo).
-            if peaks and (self.peak is None or max(peaks) > self.peak):
-                self.peak = max(peaks)
             # Codex/Grok/Claude D su dc2f5f25: sessione, baseline e superamento li decide il record piu' recente
             # (`seq`). Un marker rimasto da un guasto ormai rientrato (rimozione fallita, file bloccato su Windows) ha
             # un `seq` inferiore al DB e non annulla uno sblocco o una conferma owner salvati dopo; a pari `seq` vale
-            # l'unione (regola piu' severa). Il picco resta il massimo di tutti i record.
+            # l'unione (regola piu' severa).
             latest = max(r["seq"] for r in records)
+            newer = latest > self.seq                    # su disco c'e' uno stato successivo a quello in memoria
             stale = [r for r in records if r["seq"] < latest]
             records = [r for r in records if r["seq"] == latest]
+            # Picco: mai sotto un picco gia' osservato in questo processo (START ripetuto nello stesso processo; un
+            # record piu' basso senza prova e' trattato come non autorevole). Unica eccezione (Codex su 4a171465): il
+            # record piu' recente della memoria porta un ribasamento owner esplicito proprio a quel picco
+            # (`owner_rebase_peak`, tracciato): vale, anche verso il basso.
+            peaks = [r["peak"] for r in records if r["peak"] is not None]
+            rebased = newer and any(_rebased_to(r) is not None and _rebased_to(r) == r["peak"] for r in records)
+            if peaks and (rebased or self.peak is None or max(peaks) > self.peak):
+                self.peak = max(peaks)
             self.baseline = dict(records[0]["baseline"])
             # RO-DD-09 C: sessione rimasta aperta (crash, stop non pulito, picco mai salvato) o baseline gia' non
             # verificata => il picco salvato potrebbe non essere il massimo: nessuna presunzione, conferma owner.
@@ -181,7 +198,6 @@ class DrawdownHardStop:
                 self.baseline_verified = False
             else:
                 self.baseline_verified = True
-            newer = latest > self.seq                    # su disco c'e' uno stato successivo a quello in memoria
             self.seq = max([self.seq] + [r["seq"] for r in records])
             breached = [r for r in records if r["breached"]]
             if breached:                                 # un superamento salvato non si annulla mai rileggendo
@@ -192,6 +208,11 @@ class DrawdownHardStop:
                 # altro processo (record piu' recente non superato): vale lo sblocco, con la sua storia. Un superamento
                 # solo in memoria e piu' recente (salvataggio fallito: `seq` non piu' basso del disco) resta.
                 self.breached = False
+                self.breach = dict(records[0]["breach"])
+            elif not self.breached or newer:
+                # Sol/Codex su 4a171465: nessun superamento attivo, ma la storia degli sblocchi (operation_id gia'
+                # usati) e dei ribasamenti si riprende dal disco: un riavvio non rende di nuovo valido un operation_id
+                # consumato.
                 self.breach = dict(records[0]["breach"])
             if not reconcile:
                 return

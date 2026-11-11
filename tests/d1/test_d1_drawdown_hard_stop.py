@@ -1174,3 +1174,92 @@ def test_entry_reading_above_the_peak_never_compares_the_new_peak_with_older_des
     c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
     assert c.rc.risk_desk.cash_equity_current == 100.0 and c.rc._hard_stop().snapshot()["peak"] == 130.0
     assert not c.rc._hard_stop().breached and _ordini(c) == 1, _rifiuti(c)
+
+
+# ----------------------------------------------------------------------------------- Sol su 4a171465 (PR-03a)
+def test_lockdown_measure_uses_the_fresher_entry_reading(tmp_path):
+    """Sol su 4a171465: desk e picco a 100, lettura d'ingresso 79 (perdita 21 %), nessun hard-stop opzionale: la misura
+    di DEFENSE/LOCKDOWN deve vedere il 21 %, non lo 0 % della cassa piu' vecchia del desk."""
+    c = _catena(tmp_path, lockdown_drawdown_pct=20.0)
+    _lettura(c, 100.0)
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 79.0, "exposure": 0.0, "ok": True}
+    c.rc._read_funds_for_entry()
+    assert round(c.rc._persistent_drawdown_pct(), 6) == 21.0
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0, _rifiuti(c)
+
+
+def test_stale_reading_arriving_late_never_records_a_false_breach(tmp_path):
+    """Sol su 4a171465: una lettura iniziata prima (100) e arrivata dopo una piu' recente (130, che ha alzato il picco)
+    non va valutata: altrimenti memorizzerebbe una perdita falsa di 30 con limite 10 (blocco persistente)."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    vecchia = {"available": 100.0, "exposure": 0.0, "ok": True}
+    nuova = {"available": 130.0, "exposure": 0.0, "ok": True}
+    t0 = 1_000_000.0
+    c.rc._evaluate_entry_reading_drawdown(dict(nuova), t0 + 2.0)
+    assert c.rc._hard_stop().snapshot()["peak"] == 130.0
+    c.rc._evaluate_entry_reading_drawdown(dict(vecchia), t0 + 1.0)        # iniziata prima, arrivata dopo
+    assert not c.rc._hard_stop().breached
+    c.rc._apply_funds_reading(dict(vecchia), source="status", read_at=t0 + 1.5)  # contratto, anch'essa piu' vecchia
+    assert not c.rc._hard_stop().breached
+
+
+def test_restart_keeps_the_clearance_history_so_operation_ids_stay_single_use():
+    """Sol su 4a171465: dopo un riavvio con superamento gia' sbloccato, la storia degli sblocchi resta: un nuovo
+    superamento non puo' essere sbloccato riusando lo stesso operation_id."""
+    db = _Db()
+    stop = DrawdownHardStop(db)
+    stop.observe(100.0)
+    assert stop.evaluate(10.0, 80.0)
+    assert stop.owner_clear_breach(authorization="PF-OWNER-X", reason="ok", operation_id="op-1", confirm=True)
+    riavviato = DrawdownHardStop(db)
+    riavviato.restore()
+    assert riavviato.snapshot()["breach"]["cleared"][0]["operation_id"] == "op-1"
+    assert riavviato.evaluate(10.0, 70.0)
+    assert riavviato.owner_clear_breach(authorization="PF-OWNER-X", reason="ok", operation_id="op-1",
+                                        confirm=True) is False
+    assert riavviato.breached
+
+
+# ----------------------------------------------------------------------------------- Codex su 4a171465 (PR-03a)
+def test_profitable_entry_reading_never_puts_the_desk_in_lockdown(tmp_path):
+    """Codex su 4a171465: desk 100, lettura d'ingresso 130 (picco 130, cassa del desk ancora 100). La misura del desk usa
+    la cassa piu' recente: nessun drawdown fittizio del 23 %, nessun LOCKDOWN, il segnale successivo passa."""
+    c = _catena(tmp_path, lockdown_drawdown_pct=20.0)
+    _lettura(c, 100.0)
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 130.0, "exposure": 0.0, "ok": True}
+    c.rc._read_funds_for_entry()
+    assert c.rc._hard_stop().snapshot()["peak"] == 130.0
+    assert c.rc._persistent_drawdown_pct() == 0.0
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 1, _rifiuti(c)
+
+
+def test_restore_honors_a_newer_durable_owner_rebase():
+    """Codex su 4a171465: B carica il picco 100; A ribasa durevolmente a 85 (procedura owner); allo START B rilegge e
+    vale 85 con la sua registrazione, invece del picco vecchio: a 85 con limite 10 nessun superamento falso."""
+    db = _Db()
+    a = DrawdownHardStop(db)
+    a.observe(100.0)
+    b = DrawdownHardStop(db)
+    b.restore(reconcile=False)
+    assert b.snapshot()["peak"] == 100.0
+    assert a.owner_rebase_peak(85.0, authorization="PF-OWNER-X", reason="nuova baseline", operation_id="op-r",
+                               confirm=True)
+    b.restore()
+    assert b.snapshot()["peak"] == 85.0 and b.snapshot()["breach"]["rebased"]["operation_id"] == "op-r"
+    assert b.reason(10.0, 85.0) == "" and not b.breached
+
+
+def test_restore_still_keeps_a_newer_in_memory_peak():
+    """Un picco piu' alto osservato in questo processo e non ancora superato da un record piu' recente resta (START
+    ripetuto nello stesso processo)."""
+    db = _Db()
+    stop = DrawdownHardStop(db)
+    stop.observe(100.0)
+    db.fail_save = True
+    stop.observe(120.0)                                       # solo in memoria (DB giu', nessun marker)
+    db.fail_save = False
+    stop.restore()
+    assert stop.snapshot()["peak"] == 120.0

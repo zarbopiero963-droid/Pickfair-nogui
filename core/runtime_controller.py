@@ -6693,7 +6693,7 @@ class RuntimeController:
             return False
         cassa = getattr(self.risk_desk, "cash_equity_current", None)
         if cassa is not None:
-            self._evaluate_drawdown_hard_stop(cassa)
+            self._evaluate_drawdown_hard_stop(cassa, read_at)
         motivo = str(getattr(self.risk_desk, "cash_equity_reason", "") or "")
         if motivo and motivo != getattr(self, "_cash_warning_reason", ""):
             # Una volta per motivo, non a ogni lettura di stato (la GUI legge i fondi periodicamente).
@@ -6712,13 +6712,21 @@ class RuntimeController:
             return False
         return not RuntimeController._runtime_authority_block(self, "drawdown_state")
 
-    def _evaluate_drawdown_hard_stop(self, cassa: Any) -> None:
+    def _evaluate_drawdown_hard_stop(self, cassa: Any, read_at: Any = None) -> None:
         """D-1: ogni cassa verificata alza (mai abbassa) il picco persistente dell'hard-stop e, con il limite
         configurato, ne verifica subito il superamento: blocco persistente e LOCKDOWN senza attendere il segnale
         successivo (contratto owner PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109). Chiamata dentro
         `_account_state_lock` (non rientrante): il LOCKDOWN, che legge lo stato, lo applica il chiamante dopo."""
         if not self._drawdown_writes_allowed():
             return
+        # Sol su 4a171465: una lettura iniziata prima dell'ultima gia' valutata (ingresso o contratto) e' vecchia: non
+        # alza il picco e non valuta un superamento (altrimenti 100 arrivato dopo 130 sarebbe una perdita falsa di 30).
+        started = validators.finite_number(read_at)
+        if started is not None:
+            last = getattr(self, "_drawdown_read_at", None)
+            if last is not None and started < last:
+                return
+            self._drawdown_read_at = started
         stop = RuntimeController._hard_stop(self)
         if stop.evaluate(self._configured_optional(self.config, "max_drawdown_abs"), cassa,
                          pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct")):
@@ -6763,8 +6771,12 @@ class RuntimeController:
             return
         if not self._drawdown_writes_allowed():
             return
-        self._drawdown_entry_cash = (cassa, validators.finite_number(read_at))
-        self._evaluate_drawdown_hard_stop(cassa)
+        started = validators.finite_number(read_at)
+        last = getattr(self, "_drawdown_read_at", None)
+        if started is not None and last is not None and started < last:
+            return                                          # lettura vecchia arrivata tardi (Sol su 4a171465)
+        self._drawdown_entry_cash = (cassa, started)
+        self._evaluate_drawdown_hard_stop(cassa, read_at)
         pending_lockdown = getattr(self, "_pending_drawdown_lockdown", None)
         if pending_lockdown:
             self._pending_drawdown_lockdown = None
@@ -6924,9 +6936,9 @@ class RuntimeController:
                     # (ingressi negati), ma il superamento resta memorizzato anche dopo una ricarica.
                     verifica = self._cash_equity_verification(funds)
                     if verifica["ok"]:
-                        self._evaluate_drawdown_hard_stop(verifica["cash"])
+                        self._evaluate_drawdown_hard_stop(verifica["cash"], read_at)
                     elif verifica["reason"] == "CASH_NOT_POSITIVE":
-                        self._evaluate_drawdown_hard_stop(0.0)
+                        self._evaluate_drawdown_hard_stop(0.0, read_at)
             if applied:
                 self._account_state = state
                 self._account_state_source = str(source)
@@ -7341,7 +7353,7 @@ class RuntimeController:
         stop = RuntimeController._hard_stop(self)
         if not stop.state_reliable():
             return None
-        pct = stop.loss_pct(getattr(getattr(self, "risk_desk", None), "cash_equity_current", None))
+        pct = stop.loss_pct(self._drawdown_gate_cash())   # Sol su 4a171465: anche la lettura d'ingresso piu' recente
         return RuntimeController._NO_PERSISTENT_DRAWDOWN if pct is None else pct
 
     def _protective_drawdown_pct(self) -> Optional[float]:
@@ -7367,12 +7379,13 @@ class RuntimeController:
         """Cassa per il gate dell'hard-stop: quella del desk, salvo una lettura d'ingresso verificata piu' recente
         (Sol su 53c99ceb), che puo' aver gia' alzato il picco. Cassa del desk non verificata => resta non verificata
         (fail-closed): la lettura d'ingresso non la sostituisce."""
-        cash = getattr(self.risk_desk, "cash_equity_current", None)
+        desk = getattr(self, "risk_desk", None)
+        cash = getattr(desk, "cash_equity_current", None)
         entry = getattr(self, "_drawdown_entry_cash", None)
         if cash is None or not entry:
             return cash
         entry_cash, entry_at = entry
-        desk_at = validators.finite_number(getattr(self.risk_desk, "_cash_read_at", None))
+        desk_at = validators.finite_number(getattr(desk, "_cash_read_at", None))
         if entry_at is not None and (desk_at is None or entry_at > desk_at):
             return entry_cash
         return cash
