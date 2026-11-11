@@ -199,6 +199,19 @@ def _codici_pre_invio_del_client():
             client.place_bet(**argomenti)
         assert sessione.corpi == [], variazione
         codici.add(str(errore.value))
+    # BB-1G: senza scatola nera il Gate B rifiuta un ordine VALIDO prima di spedirlo (BLACKBOX_UNAVAILABLE). Ricavato
+    # anche questo eseguendo il client, non ricopiato.
+    from core import blackbox_runtime
+    client, sessione = _client()
+    salvata = blackbox_runtime._box
+    blackbox_runtime._box = None
+    try:
+        with pytest.raises(RuntimeError) as errore:
+            client.place_bet(**{**_ORDINE, "side": "BACK"})
+    finally:
+        blackbox_runtime._box = salvata
+    assert sessione.corpi == [], "nessun invio senza scatola nera"
+    codici.add(str(errore.value))
     return codici
 
 
