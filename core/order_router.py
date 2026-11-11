@@ -73,7 +73,23 @@ class OrderRouter:
         self._microstake_executor_provider = microstake_executor_provider
 
     def place(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Piazza un ordine sul broker attivo e ritorna l'esito normalizzato."""
+        """Piazza un ordine sul broker attivo e ritorna l'esito normalizzato.
+
+        BB-1G: l'unico chiamante e' l'hedge del cashout (`cashout_wiring`), un'uscita protettiva gia' decisa. Gli invii
+        partono dentro `protective_exit`: il Gate B li registra con `buffer_on_failure` e un guasto temporaneo della
+        scatola nera non li blocca; senza scatola nera installata restano rifiutati."""
+        from core import blackbox_runtime
+        with blackbox_runtime.protective_exit("CASHOUT_HEDGE"):
+            try:
+                return self._place_protective(payload)
+            except blackbox_runtime.GateRefused:
+                # Rifiuto del Gate B PRIMA dell'invio (Codex su #630): nulla e' partito, quindi hedge non piazzato e
+                # certo (HEDGE_FAILED), mai un'eccezione che il cashout registrerebbe come HEDGE_AMBIGUOUS bloccando i
+                # cashout successivi. Ogni altra eccezione del broker resta un esito ignoto e si propaga.
+                return self._result(ok=False, placed=False, order_unknown=False, status="REJECTED", matched=0.0,
+                                    bet_id=None, error=blackbox_runtime.GATE_REFUSED_CODE, raw=None)
+
+    def _place_protective(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         # Fail-closed sull'input: ogni campo richiesto deve esserci.
         for field in self.REQUIRED_FIELDS:
             if field not in payload:

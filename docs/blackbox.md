@@ -14,13 +14,61 @@ ciò che è **già nel codice**.
 | Avvio prima dei componenti, arresto, crash, riavvio non pulito | **presente** (`core/blackbox_runtime.py`, `headless_main.main`) |
 | Lettura per GUI, CLI, Control API e MCP | **presente** (`core/blackbox_query.py`) |
 | Impostazioni (vecchio/nuovo valore) e comandi | BB-2, non ancora |
-| Ordini, decisioni, fondi, P&L, gate fail-closed prima dell'invio | BB-3, non ancora |
+| Doppio gate fail-closed: avvio (Gate A) e invio di ordini/cancel/replace (Gate B), GUI compresa | **presente** (BB-1G, sezione «Doppio gate») |
+| Ordini, decisioni, fondi, P&L registrati come eventi di dominio | BB-3, non ancora |
 | SL/TP/trailing, mercati sospesi | BB-4, non ancora |
 | Visualizzatore nell'app (Windows/Linux) | BB-5, non ancora |
 | Strumenti MCP read-only | BB-6 (Claude C), non ancora |
 
-Finché BB-3 non è integrato, le operazioni finanziarie **non** sono ancora registrate qui: il registro copre il ciclo
-di vita del processo.
+Finché BB-3 non è integrato, le operazioni finanziarie non sono registrate come eventi di dominio: il registro copre il
+ciclo di vita del processo e, da BB-1G, il tentativo (`ATTEMPT`) di ogni invio che passa dal Gate B.
+
+## Doppio gate (BB-1G, decisione owner PF-OWNER-BB1G-FULL-GO-20261110)
+
+Codice: `core/blackbox_runtime.py` (`require_runtime`, `financial_gate`, `protective_exit`, `emergency_exit`,
+`batch_gated`). Test: `tests/blackbox/test_bb1g_gates.py`, `tests/packaging/release_gate_launchers.py`.
+
+- **Gate A (avvio).** `RuntimeController.start` e `resume` chiamano `require_runtime`: scatola nera installata,
+  runtime (lock D3) e scrittura durevole dell'evento di avvio, altrimenti rifiuto `BLACKBOX_UNAVAILABLE` prima di
+  qualunque lock o servizio. Ogni entrypoint (GUI, `main.py`, headless, CLI, Control API) passa da lì.
+- **GUI.** `mini_gui.main()` installa la scatola nera prima di costruire la finestra, come `headless_main.main()`;
+  se non è disponibile la GUI non parte (rc 1). Allo smontaggio la chiude: un invio tardivo viene rifiutato.
+- **Gate B (invio).** Lo chiamano i punti d'invio reali, `BetfairClient` (place, cancel, riduzione, replace) e
+  `SimulationBroker` (stessa regola, parità SIM/LIVE), dopo la validazione degli argomenti e prima di ogni effetto:
+  - **ingresso** (nuovo ordine, replace): evento critico scritto in modo durevole prima dell'invio, altrimenti
+    rifiuto pre-invio (`GateRefused`, `BLACKBOX_UNAVAILABLE`); mai bufferizzato;
+  - **uscita protettiva** (cancel, riduzione, hedge del cashout dentro `protective_exit`): evento critico con
+    `buffer_on_failure`, così un guasto temporaneo del registro non ritarda la riduzione del rischio (PF-EXEC-03);
+    serve comunque una scatola nera installata. L'uscita protettiva **non fa alcun I/O sul registro nel thread
+    d'invio** (Codex e Sol su #630): l'evento va in una coda in memoria e lo scrive il thread dedicato
+    `blackbox-protective-writer`, quindi né il lock del registro, né un altro scrittore SQLite, né un disco in stallo
+    su COMMIT o fsync ritardano cancel e hedge. Con il registro guasto l'evento passa nel buffer critico e viene scritto
+    al ripristino, coperto da una `BLACKBOX_GAP`; coda e buffer pieni (`MAX_CRITICAL_BUFFER`) => rifiuto. L'evento
+    protettivo può quindi essere scritto **dopo** l'invio: l'ordine resta quello d'arrivo e `flush_protective()` (usato
+    anche dalla chiusura) scarica la coda in modo sincrono. `close()` scarica la coda e riprova anche il backlog di un guasto già rientrato, prima di rilasciare connessione e lock; alza prima una **barriera**: un'uscita protettiva
+    o è accodata prima dello scarico finale (e scritta), o è rifiutata (`BlackBoxUnavailable`), mai accettata in una
+    coda che nessuno scriverà; lo scarico prende una quantità fissata all'ingresso, così mittenti concorrenti non
+    tengono il lock all'infinito;
+    il writer, finché resta un backlog di guasto, riprova a scaricarlo da solo (eventi bufferizzati, GAP, RECOVERED):
+    una sessione con sole uscite protettive si riprende a registro guarito senza bisogno di altri eventi (Codex su #630);
+    **chi legge il registro subito dopo un'uscita protettiva** (oracoli, verifiche, test) chiama prima
+    `flush_protective()`: senza, l'evento può essere ancora in coda e non comparire nella lettura;
+  - **scatola nera assente** (mai installata, già chiusa, `atexit`, thread sopravvissuti): tutto rifiutato, tranne
+    le cancellazioni dentro `emergency_exit`, cioè il solo `--emergency-stop` CLI (D3 #617).
+  Il contesto protettivo è per thread: un lavoro spostato in un altro thread vale come ingresso (fail-closed).
+- **Rifiuto = pre-invio provato.** `BLACKBOX_UNAVAILABLE` è nei codici di rifiuto pre-invio di `OrderManager`, dei
+  port Microstake e del broker SIM: mai AMBIGUOUS, mai retry. L'hedge del cashout rifiutato dal gate torna dal router come hedge non
+  piazzato (`placed=False`, `order_unknown=False`, errore `BLACKBOX_UNAVAILABLE`): `HEDGE_FAILED`, mai
+  `HEDGE_AMBIGUOUS`, quindi non blocca i cashout successivi (Codex su #630).
+  Lo stesso vale per **tutti** i chiamanti dei punti d'invio (passata unica, Codex e Claude D su #630): il motore
+  (`TradingEngine._ERRORI_PRIMA_DELL_INVIO`) rilascia l'intento e non scrive mai `LIVE_SUBMIT_ESITO_IGNOTO`; il
+  `replace` dei port Microstake (LIVE e SIM) solleva un rifiuto certo, quindi il coordinatore fa il rollback dello
+  stub invece di lasciarlo in `AMBIGUOUS`, sia in `execute` sia nel `recover` (D-630-09); il cancel del TTL (`CashoutCancelAdapter.cancel_with_outcome`) torna «non tentato» con motivo `BLACKBOX_UNAVAILABLE`, quindi l'ordine resta nel registro TTL; l'arresto d'emergenza segna il lotto `NOT_SENT`. La riduzione dello stub
+  Microstake resta `AMBIGUOUS` (scelta prudente: lo stub è noto e la riconciliazione lo risolve). Nell'arresto d'emergenza (#629) un lotto di cancel
+  rifiutato dal Gate B è `NOT_SENT` con errore `BLACKBOX_UNAVAILABLE`, mai `UNKNOWN`, e l'arresto non è VERIFIED.
+- **Batch.** `SimulationBroker.place_orders` passa dal gate una volta per il batch (`batch_gated`), poi le gambe.
+- **Test.** La fixture autouse di `tests/conftest.py` installa una scatola nera di test sana per i test che non
+  riguardano la scatola nera; `tests/blackbox`, `tests/packaging` e i test `real_blackbox` usano quella vera.
 
 ## Dove si trova
 
@@ -340,7 +388,7 @@ e `core.event_log` li riesportano con gli stessi oggetti: il registro dei segret
   non parte. I test «Windows» sono simulazioni su Linux: Windows reale è **NOT_RUN**, mai un PASS. Non è
   un'esclusione permanente: la decisione owner `PICKFAIR-CROSS-PLATFORM-PARITY-20261110` (#625) richiede parità
   completa; il rifiuto resta finché BB-1W non fornisce garanzie equivalenti. Il fail-closed vale oggi solo per
-  l'entrypoint headless: la GUI non installa ancora la scatola nera (BB-1G, P0 per la distribuzione).
+  l'entrypoint headless e, da BB-1G, per la GUI (`mini_gui.main`) e per ogni avvio (Gate A).
 - **Modello di minaccia e limite esplicito.** La garanzia copre un **altro utente locale** (o un processo meno
   privilegiato) che può scrivere in una cartella del percorso. **Non** copre un processo con lo **stesso utente**
   del bot né root: possono già scrivere direttamente i database, la configurazione e il codice, e nessun controllo

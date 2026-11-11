@@ -25,6 +25,14 @@ def _box(tmp_path, name="bb.sqlite", **kw):
     return bb.BlackBox(str(tmp_path / name), clock=kw.pop("clock", _Clock()), **kw).open()
 
 
+def _no_protective_writer(box):
+    """Interleaving deterministico nei test che sostituiscono la connessione a meta' (`_FailNthInsert`, `_break`): il
+    writer protettivo dedicato (BB-1G) riprova il backlog da solo e, in parallelo, consumerebbe il guasto simulato
+    prima del `record()` del test. Qui la coda la scarica solo `flush_protective()`; asserzioni invariate."""
+    box._ensure_protective_writer = lambda: None
+    return box
+
+
 def _rows(box):
     return box._conn.execute("SELECT * FROM events ORDER BY seq").fetchall()
 
@@ -215,10 +223,11 @@ def test_non_string_text_fields_and_keys_are_redacted(tmp_path):
 def test_protective_exit_is_buffered_then_flushed_before_gap_and_recovered(tmp_path):
     """Caso 1 concordato con Claude D: buffer critico -> eventi bufferizzati (ora originale, buffered=true) ->
     BLACKBOX_GAP con from/to e ref -> BLACKBOX_RECOVERED."""
-    box = _box(tmp_path)
+    box = _no_protective_writer(_box(tmp_path))
     fc = _break(box)
     eid = box.record("CASHOUT_REQUEST", critical=True, buffer_on_failure=True, source="STRATEGY",
                      phase="ATTEMPT", order_ref="hedge:ref-1")
+    box.flush_protective()
     assert eid and box.health()["buffered"] == 1
     with pytest.raises(bb.BlackBoxUnavailable):                  # un ingresso non si bufferizza mai
         box.record("ORDER_PLACE_REQUEST", critical=True, source="STRATEGY", phase="ATTEMPT", order_ref="ref-2")
@@ -579,10 +588,11 @@ def test_blackbox_modules_never_import_the_bridge_side_modules():
 def test_external_view_never_exposes_customer_refs_listed_in_a_gap(tmp_path):
     """Sol #617 (3b6848d6): la GAP di un guasto elenca in `data.refs` i riferimenti cliente delle uscite bufferizzate.
     La vista esterna (record e `gaps_in_range`) non li espone mai; quella interna li conserva per l'oracolo."""
-    box = _box(tmp_path)
+    box = _no_protective_writer(_box(tmp_path))
     fc = _break(box)
     box.record("CASHOUT_REQUEST", critical=True, buffer_on_failure=True, source="STRATEGY", phase="ATTEMPT",
                order_ref="cust-ref-riservato-77")
+    box.flush_protective()                                    # scrittura protettiva tentata durante il guasto
     fc.fail = False
     box.record("API_REQUEST")
     r = bq.BlackBoxReader(box)
@@ -632,11 +642,12 @@ class _FailNthInsert:
 def test_partial_flush_keeps_every_reference_and_count_in_the_final_gap(tmp_path):
     """Codex #617 (3b6848d6): se lo scarico del buffer riesce per la prima uscita e fallisce sulla seconda, la GAP
     finale elenca comunque entrambi i ref e conta entrambe le uscite bufferizzate."""
-    box = _box(tmp_path)
+    box = _no_protective_writer(_box(tmp_path))
     fc = _break(box)
     for ref in ("r1", "r2"):
         box.record("CASHOUT_REQUEST", critical=True, buffer_on_failure=True, source="STRATEGY", phase="ATTEMPT",
                    order_ref=ref)
+    box.flush_protective()                                    # entrambe tentate durante il guasto: buffer critico
     box._conn = _FailNthInsert(fc.real, 2)                    # scarico: r1 scritto, r2 fallisce
     assert box.record("API_REQUEST") is None and box.health()["buffered"] == 1
     box._conn = fc.real

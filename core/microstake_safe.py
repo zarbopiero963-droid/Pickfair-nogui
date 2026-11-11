@@ -883,6 +883,11 @@ class MicrostakeCoordinator:
         try:
             order = self.exchange.replace(order.bet_id, req.target_price)
         except Exception as exc:
+            if not isinstance(exc, LostResponse) and str(exc) == "BLACKBOX_UNAVAILABLE":
+                # BB-1G (D-630-09): il Gate B ha rifiutato PRIMA dell'invio, nessun nuovo ordine. Come in execute:
+                # rollback dello stub, mai AMBIGUOUS con replace_sent e lo stub lasciato aperto.
+                return self._rollback_now(customer_ref, req, order, transient, reason=str(exc),
+                                          terminal_reason="replace_failed")
             self.store.save(customer_ref, phase=Phase.AMBIGUOUS, **self._replacement_identity(exc))
             return self._result(Phase.AMBIGUOUS, req=req, reason="recovery_replace_unknown",
                                 order=order, max_exposure=transient, held=True)

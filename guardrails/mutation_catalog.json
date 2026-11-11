@@ -9472,6 +9472,294 @@
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
       "rationale": "GUARDRAIL D su d892396d: senza betId non deve mai partire un cancel di mercato (lista vuota = tutti gli ordini per Betfair)."
+    },
+    {
+      "id": "bb1g_gate_a_start_removed",
+      "module": "core.runtime_controller",
+      "area": "blackbox",
+      "file": "core/runtime_controller.py",
+      "original": "        gate_block = self._blackbox_gate_a(\"runtime_controller.start\")\n",
+      "mutated": "        gate_block = None\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G Gate A: il runtime partirebbe senza scatola nera da qualunque entrypoint."
+    },
+    {
+      "id": "bb1g_gate_a_resume_removed",
+      "module": "core.runtime_controller",
+      "area": "blackbox",
+      "file": "core/runtime_controller.py",
+      "original": "        gate_block = self._blackbox_gate_a(\"runtime_controller.resume\")\n",
+      "mutated": "        gate_block = None\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G Gate A: la ripresa riattiverebbe il trading senza scatola nera."
+    },
+    {
+      "id": "bb1g_live_client_ungated",
+      "module": "betfair_client",
+      "area": "blackbox",
+      "file": "betfair_client.py",
+      "original": "    blackbox_runtime.financial_gate(operation, component=\"betfair_client\", cancel=cancel, **fields)\n",
+      "mutated": "    return None\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G Gate B: il client LIVE invierebbe ordini senza scatola nera."
+    },
+    {
+      "id": "bb1g_sim_broker_ungated",
+      "module": "simulation_broker",
+      "area": "blackbox",
+      "file": "simulation_broker.py",
+      "original": "    blackbox_runtime.financial_gate(operation, component=\"simulation_broker\", cancel=cancel, **fields)\n",
+      "mutated": "    return None\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G Gate B: il broker SIM eseguirebbe ordini senza scatola nera (parita' SIM/LIVE persa)."
+    },
+    {
+      "id": "bb1g_missing_box_allowed",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "        raise GateRefused(f\"{component}: {operation} senza scatola nera\")\n",
+      "mutated": "        return None\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G Gate B: senza scatola nera (mai installata, chiusa, atexit) l'invio passerebbe."
+    },
+    {
+      "id": "bb1g_entry_buffered",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "        return box.record(operation, critical=True, buffer_on_failure=protective, source=\"SYSTEM\",\n",
+      "mutated": "        return box.record(operation, critical=True, buffer_on_failure=True, source=\"SYSTEM\",\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G Gate B: un ingresso verrebbe bufferizzato durante un guasto del registro (contratto BB-1: mai)."
+    },
+    {
+      "id": "bb1g_emergency_allows_any_operation",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "        if cancel and getattr(_gate_ctx, \"emergency\", False):\n",
+      "mutated": "        if getattr(_gate_ctx, \"emergency\", False):\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G / D3: l'emergency stop CLI lascerebbe passare anche nuovi ingressi senza scatola nera."
+    },
+    {
+      "id": "bb1g_non_runtime_box_accepted",
+      "module": "core.blackbox_runtime",
+      "area": "blackbox",
+      "file": "core/blackbox_runtime.py",
+      "original": "        return box if box.is_runtime() else None\n",
+      "mutated": "        return box\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G: una scatola nera aperta in sola lettura (non runtime, senza lock D3) basterebbe al gate."
+    },
+    {
+      "id": "bb1g_gui_blackbox_not_installed",
+      "module": "mini_gui",
+      "area": "blackbox",
+      "file": "mini_gui.py",
+      "original": "        blackbox_runtime.install(entrypoint=\"mini_gui\")\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G: la GUI costruirebbe i componenti senza aver installato la scatola nera."
+    },
+    {
+      "id": "bb1g_cashout_hedge_not_protective",
+      "module": "core.order_router",
+      "area": "blackbox",
+      "file": "core/order_router.py",
+      "original": "        with blackbox_runtime.protective_exit(\"CASHOUT_HEDGE\"):\n",
+      "mutated": "        with blackbox_runtime.batch_gated() if False else blackbox_runtime.emergency_exit():\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "BB-1G: l'hedge del cashout non sarebbe un'uscita protettiva e un guasto del registro lo bloccherebbe (PF-EXEC-03)."
+    },
+    {
+      "id": "bb1g_estop_gate_refusal_as_unknown",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            except blackbox_runtime.GateRefused:    # BB-1G Gate B: rifiuto PRIMA dell'invio, provato, mai «forse»\n                response, status, error = {}, \"NOT_SENT\", blackbox_runtime.GATE_REFUSED_CODE\n",
+      "mutated": "            except blackbox_runtime.GateRefused:    # BB-1G Gate B: rifiuto PRIMA dell'invio, provato, mai «forse»\n                response, status, error = {}, \"UNKNOWN\", blackbox_runtime.GATE_REFUSED_CODE\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "BB-1G x #629: un cancel d'emergenza rifiutato dal Gate B non e' mai partito (rifiuto pre-invio provato); trattarlo come UNKNOWN lo farebbe passare per «forse cancellato»."
+    },
+    {
+      "id": "bb1g_protective_path_bypassed",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        if critical and buffer_on_failure:\n            return self._record_protective(rec, attempted_at)\n",
+      "mutated": "        if False:\n            return self._record_protective(rec, attempted_at)\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630: le uscite protettive tornerebbero sul percorso bloccante (lock, scarico del backlog, busy timeout)."
+    },
+    {
+      "id": "bb1g_cashout_gate_refusal_ambiguous",
+      "module": "core.order_router",
+      "area": "blackbox",
+      "file": "core/order_router.py",
+      "original": "            except blackbox_runtime.GateRefused:\n",
+      "mutated": "            except ZeroDivisionError:\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630: un hedge rifiutato dal Gate B (nulla inviato) diventerebbe HEDGE_AMBIGUOUS e bloccherebbe i cashout successivi."
+    },
+    {
+      "id": "bb1g_protective_sync_write",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        self._protective_queue.append((rec, attempted_at))\n        self._ensure_protective_writer()\n",
+      "mutated": "        self._protective_queue.append((rec, attempted_at))\n        self.flush_protective()\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Sol su #630: la scrittura dell'uscita protettiva tornerebbe nel thread d'invio e un disco in stallo ritarderebbe cancel e hedge (PF-EXEC-03)."
+    },
+    {
+      "id": "bb1g_protective_writer_never_started",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "        self._protective_queue.append((rec, attempted_at))\n        self._ensure_protective_writer()\n        self._protective_wakeup.set()\n",
+      "mutated": "        self._protective_queue.append((rec, attempted_at))\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Sol su #630: senza writer dedicato le uscite protettive resterebbero in coda, mai scritte finche' un altro evento non le trascina."
+    },
+    {
+      "id": "bb1g_protective_close_fence_removed",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "            if self._protective_closed:\n                raise BlackBoxUnavailable(\"scatola nera chiusa\")\n",
+      "mutated": "            if False:\n                raise BlackBoxUnavailable(\"scatola nera chiusa\")\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630 (D-630-06): dopo close() un'uscita protettiva verrebbe accettata in una coda mai scritta: operazione finanziaria scomparsa dietro uno shutdown pulito."
+    },
+    {
+      "id": "bb1g_engine_gate_refusal_ambiguous",
+      "module": "core.trading_engine",
+      "area": "blackbox",
+      "file": "core/trading_engine.py",
+      "original": "        \"BLACKBOX_UNAVAILABLE\",\n    })",
+      "mutated": "    })",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630 (D-630-04): un ingresso rifiutato dal Gate B consumerebbe l'intento e diventerebbe LIVE_SUBMIT_ESITO_IGNOTO."
+    },
+    {
+      "id": "bb1g_ms_live_replace_gate_as_lost",
+      "module": "core.microstake_live_port",
+      "area": "blackbox",
+      "file": "core/microstake_live_port.py",
+      "original": "            if _gate_refused(exc):\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630 (D-630-05): il replace rifiutato dal Gate B diventerebbe LostResponse e lo stub resterebbe abbandonato in AMBIGUOUS (LIVE)."
+    },
+    {
+      "id": "bb1g_ms_sim_replace_gate_as_lost",
+      "module": "core.microstake_sim_port",
+      "area": "blackbox",
+      "file": "core/microstake_sim_port.py",
+      "original": "            if _gate_refused(exc):\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630 (D-630-05): il replace rifiutato dal Gate B diventerebbe LostResponse e lo stub resterebbe abbandonato in AMBIGUOUS (SIM)."
+    },
+    {
+      "id": "bb1g_close_without_protective_drain",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                self._drain_protective_queue()     # uscite protettive accodate: scritte prima di chiudere, se possibile\n",
+      "mutated": "                pass\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Claude D (MA3) su #630: close() senza scarico finale perderebbe le uscite protettive accettate tra end_session e close."
+    },
+    {
+      "id": "bb1g_ms_recovery_gate_refusal_ambiguous",
+      "module": "core.microstake_safe",
+      "area": "blackbox",
+      "file": "core/microstake_safe.py",
+      "original": "            if not isinstance(exc, LostResponse) and str(exc) == \"BLACKBOX_UNAVAILABLE\":\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/test_microstake_safe_recovery.py"
+      ],
+      "rationale": "D-630-09 (#630): nel recover un replace rifiutato dal Gate B lascerebbe la saga AMBIGUOUS con lo stub aperto invece del rollback."
+    },
+    {
+      "id": "bb1g_protective_writer_never_retries_outage",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                self._drain_protective_queue()\n                self._retry_outage_flush()\n",
+      "mutated": "                self._drain_protective_queue()\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630 (b78c4b6e): dopo un guasto temporaneo una sessione con sole uscite protettive non scaricherebbe mai il backlog e, a buffer pieno, rifiuterebbe i cancel a registro guarito."
+    },
+    {
+      "id": "bb1g_ttl_cancel_gate_refusal_consumed",
+      "module": "cashout_cancel_adapter",
+      "area": "blackbox",
+      "file": "cashout_cancel_adapter.py",
+      "original": "            if isinstance(exc, blackbox_runtime.GateRefused):\n                # BB-1G (Codex su #630): il Gate B ha rifiutato PRIMA dell'invio.",
+      "mutated": "            if False:\n                # BB-1G (Codex su #630): il Gate B ha rifiutato PRIMA dell'invio.",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Codex su #630 (b9530e72): un cancel TTL rifiutato dal Gate B consumerebbe l'unico tentativo e l'ordine eseguibile uscirebbe dal tracciamento TTL."
+    },
+    {
+      "id": "bb1g_close_without_outage_flush",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                self._retry_outage_flush()         # e il backlog di un guasto gia' rientrato (Sol su #630)\n",
+      "mutated": "                pass\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Sol su #630 (b9530e72): un cancel accettato dopo end_session e bufferizzato da un guasto transitorio andrebbe perso alla chiusura anche a registro guarito."
     }
   ]
 }

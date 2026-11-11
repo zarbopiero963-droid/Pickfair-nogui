@@ -159,6 +159,12 @@ class CashoutCancelAdapter:
             else:
                 result = self.live_cancel(market_id=market, bet_ids=ids)
         except Exception as exc:  # noqa: BLE001 - fail-closed: cancel non confermato
+            from core import blackbox_runtime
+            if isinstance(exc, blackbox_runtime.GateRefused):
+                # BB-1G (Codex su #630): il Gate B ha rifiutato PRIMA dell'invio. «Non tentato» con motivo: il
+                # chiamante (TTL) rimette l'ordine nel registro invece di consumare l'unico tentativo di cancel.
+                logger.warning("[cashout_cancel] cancel rifiutato dalla scatola nera su %s: nessun invio", market)
+                return False, blackbox_runtime.GATE_REFUSED_CODE
             logger.warning("[cashout_cancel] cancel fallito su %s: %s", market, exc)
             return False, ""
         confirmed = response_confirms_cancel(result)

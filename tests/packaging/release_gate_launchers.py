@@ -10,13 +10,17 @@ errore: una finta BB-1G che costruisce il motore per un'altra strada e poi esce 
 `assert_launcher_is_safe` sostituisce, A LIVELLO DI CLASSE (quindi qualunque sia il percorso d'import), costruttori e
 avvio dei componenti operativi (`OPERATIVE_ENTRY_POINTS`) con sentinelle che registrano l'accesso e lo bloccano.
 
-Oggi la GUI costruisce il motore senza scatola nera, quindi il gate e' rosso (nessun eseguibile); dopo BB-1G i test
-passano solo se il rifiuto sicuro e' vero. Nessun test apre finestre, avvia il runtime o contatta Betfair.
-Limite dichiarato (audit Claude D): codice registrato con `atexit` gira dopo la rimozione delle sentinelle.
+Con BB-1G (PF-OWNER-BB1G-FULL-GO-20261110) ogni launcher installa la scatola nera prima di costruire componenti e il
+Gate A di `RuntimeController.start` rifiuta comunque un runtime senza scatola nera: i test passano solo se il rifiuto
+sicuro e' vero. Nessun test apre finestre, avvia il runtime o contatta Betfair.
+`atexit` (rilievo Claude D): un callback registrato dal launcher NON resta per la fine del processo, quando le
+sentinelle non ci sono piu'. Viene intercettato ed eseguito qui, sotto le sentinelle: se raggiunge un punto operativo
+il gate e' rosso.
 """
 
 from __future__ import annotations
 
+import atexit
 import importlib
 import os
 import sys
@@ -95,6 +99,13 @@ def assert_launcher_is_safe(monkeypatch, launcher, argv):
     blackbox_unavailable(monkeypatch)
     monkeypatch.setattr(sys, "argv", list(argv))
     threads_before = set(threading.enumerate())
+    late_callbacks = []
+
+    def capture_atexit(func, *args, **kwargs):
+        late_callbacks.append((func, args, kwargs))
+        return func
+
+    monkeypatch.setattr(atexit, "register", capture_atexit)
     with operative_paths_guarded(monkeypatch) as reached:
         try:
             rc = launcher()
@@ -102,6 +113,14 @@ def assert_launcher_is_safe(monkeypatch, launcher, argv):
             rc = None
         except SystemExit as exc:
             rc = exc.code
+        # I callback `atexit` del launcher girano ORA, sotto le sentinelle (alla fine del processo non ci sarebbero piu').
+        for func, args, kwargs in late_callbacks:
+            try:
+                func(*args, **kwargs)
+            except OperativePathReached:
+                pass                                         # gia' registrato in `reached`
+            except Exception:                                # noqa: BLE001 - conta solo il percorso operativo
+                pass
         # Attende anche i discendenti: un thread puo' crearne un altro e terminare (rilievo Sol su b5c7c117).
         deadline = time.monotonic() + THREAD_JOIN_TIMEOUT_S
         while True:

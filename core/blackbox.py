@@ -33,6 +33,7 @@ import stat
 import hashlib
 import hmac
 import json
+import collections
 import os
 import re
 import secrets
@@ -90,6 +91,9 @@ _LOCK_BUSY_ERRNOS = frozenset(e for e in (getattr(errno, n, None) for n in ("EWO
                                                                               "EDEADLK", "EDEADLOCK")) if e is not None)
 ENV_PATH = "PICKFAIR_BLACKBOX_PATH"
 MAX_CRITICAL_BUFFER = 1000
+#: Uscite protettive (Codex e Sol su #630): il thread d'invio non fa MAI I/O sul registro. L'evento va in coda in
+#: memoria e lo scrive un thread dedicato (`_protective_writer`); PF-EXEC-03: la riduzione del rischio non si ritarda.
+PROTECTIVE_WRITER_IDLE_S = 1.0
 REDACTED = "[REDACTED]"
 
 
@@ -326,6 +330,13 @@ class BlackBox:
         self._conn: Optional[sqlite3.Connection] = None
         self._session_seq = 0
         self._buffer: List[Dict[str, Any]] = []        # buffer critico (uscite protettive durante un guasto)
+        # uscite protettive: deque (append/popleft thread-safe) scritta dal thread `_protective_writer`, o dal primo
+        # accesso al registro sotto il lock (ordine preservato), mai dal thread che invia l'ordine (Sol su #630)
+        self._protective_queue: "collections.deque[tuple]" = collections.deque()
+        self._protective_wakeup = threading.Event()
+        self._protective_thread: Optional[threading.Thread] = None
+        self._protective_state = threading.Lock()      # decisione di uscita del writer e suo avvio: mai un evento orfano
+        self._protective_closed = False               # barriera di chiusura: dopo close() nessuna uscita accettata
         self._degraded_since: Optional[float] = None
         self.dropped = 0                               # eventi non critici persi (mai silenziosi: GAP al ripristino)
         self._outage_flushed: Optional[List[Dict[str, Any]]] = None   # uscite gia' scaricate nel guasto corrente
@@ -340,6 +351,8 @@ class BlackBox:
         with self._lock:
             if self._conn is not None:
                 return self
+            with self._protective_state:
+                self._protective_closed = False       # riapertura dopo close(): le uscite protettive tornano ammesse
             identity = None
             if self.path != ":memory:":
                 full = os.path.abspath(self.path)
@@ -476,7 +489,14 @@ class BlackBox:
         return self._writer_lock is not None
 
     def close(self) -> None:
+        with self._protective_state:
+            self._protective_closed = True            # barriera: da qui ogni nuova uscita protettiva e' rifiutata
         with self._lock:
+            try:
+                self._drain_protective_queue()     # uscite protettive accodate: scritte prima di chiudere, se possibile
+                self._retry_outage_flush()         # e il backlog di un guasto gia' rientrato (Sol su #630)
+            except Exception:                      # noqa: BLE001 - la chiusura non si blocca su un registro guasto
+                pass
             if self._writer_lock is not None:
                 try:
                     self._writer_lock.close()          # chiudere il file rilascia il lock (POSIX e Windows)
@@ -589,8 +609,11 @@ class BlackBox:
         suo id: verra' scritto al ripristino, coperto da una `BLACKBOX_GAP`."""
         attempted_at = float(self._clock())               # istante dell'evento, PRIMA di qualunque attesa del lock
         rec = self._build(event_type, dict(fields))      # errori di forma: sempre sollevati (bug del chiamante)
+        if critical and buffer_on_failure:
+            return self._record_protective(rec, attempted_at)
         with self._lock:
             try:
+                self._drain_protective_queue()
                 if self._buffer or self._degraded_since is not None:
                     self._flush_after_outage()
                 self._insert(rec)
@@ -604,6 +627,85 @@ class BlackBox:
                     raise BlackBoxUnavailable(f"{type(exc).__name__}: {exc}") from exc
                 self.dropped += 1
                 return None
+
+    def _record_protective(self, rec: Dict[str, Any], attempted_at: float) -> str:
+        """Uscita protettiva gia' decisa (cancel, riduzione, hedge del cashout): nessun I/O e nessuna attesa del lock
+        nel thread d'invio (Codex e Sol su #630, PF-EXEC-03). L'evento entra in una coda in memoria e lo scrive il
+        thread `_protective_writer`; un guasto del registro lo porta nel buffer critico, scritto al ripristino con una
+        `BLACKBOX_GAP`. Coda e buffer pieni (`MAX_CRITICAL_BUFFER`) => `BlackBoxUnavailable`: nessun invio oltre il
+        limite di cio' che il registro puo' ancora contenere."""
+        with self._protective_state:
+            # stesso lock della barriera di close(): un'uscita o e' accodata prima dello scarico finale (e scritta),
+            # o e' rifiutata; mai accettata in una coda che nessuno scrivera' (Codex su #630, D-630-06)
+            if self._protective_closed:
+                raise BlackBoxUnavailable("scatola nera chiusa")
+            if len(self._protective_queue) + len(self._buffer) >= MAX_CRITICAL_BUFFER:
+                raise BlackBoxUnavailable("buffer critico pieno")
+            self._protective_queue.append((rec, attempted_at))
+        self._ensure_protective_writer()
+        self._protective_wakeup.set()
+        return rec["event_id"]
+
+    def _ensure_protective_writer(self) -> None:
+        with self._protective_state:
+            thread = self._protective_thread
+            if thread is not None and thread.is_alive():
+                return
+            thread = threading.Thread(target=self._protective_writer, name="blackbox-protective-writer", daemon=True)
+            self._protective_thread = thread
+            thread.start()
+
+    def _protective_writer(self) -> None:
+        """Scrive le uscite protettive accodate. Esce quando la coda e' vuota e il thread resta inattivo; ripartira'
+        al prossimo evento protettivo."""
+        while True:
+            self._protective_wakeup.wait(PROTECTIVE_WRITER_IDLE_S)
+            self._protective_wakeup.clear()
+            with self._protective_state:
+                # deciso sotto lo stesso lock dell'avvio: un evento accodato dopo questo controllo trova
+                # `_protective_thread` a None e avvia un nuovo writer. Con un backlog di guasto ancora da scaricare
+                # (e la scatola nera aperta) il writer resta vivo e riprova (Codex su #630, b78c4b6e).
+                backlog = (self._buffer or self._degraded_since is not None) and not self._protective_closed
+                if not self._protective_queue and not backlog:
+                    self._protective_thread = None
+                    return
+            with self._lock:
+                self._drain_protective_queue()
+                self._retry_outage_flush()
+
+    def _retry_outage_flush(self) -> None:
+        """Sotto il lock: se c'e' un backlog di guasto, prova a scaricarlo (eventi bufferizzati, GAP, RECOVERED). Lo
+        chiama il writer protettivo, cosi' una sessione con sole uscite protettive si riprende da sola a registro
+        guarito, senza aspettare un `record()` sincrono estraneo (Codex su #630). Fallimento: il buffer resta intatto
+        e si riprova al giro successivo."""
+        if not (self._buffer or self._degraded_since is not None) or self._conn is None:
+            return
+        try:
+            self._flush_after_outage()
+        except (sqlite3.Error, OSError) as exc:
+            self.last_error = f"{type(exc).__name__}: {exc}"
+
+    def flush_protective(self) -> None:
+        """Scrive (o porta nel buffer critico) le uscite protettive ancora in coda, nell'ordine d'arrivo. Sincrono: lo
+        usano la chiusura, i test e chi deve leggere lo stato subito dopo un invio protettivo."""
+        with self._lock:
+            self._drain_protective_queue()
+
+    def _drain_protective_queue(self) -> None:
+        """Sotto il lock, nell'ordine d'arrivo: scrittura normale se il registro e' sano; con un guasto in corso o
+        un backlog, buffer critico (scaricato poi da `_flush_after_outage`, con la GAP sull'istante dell'evento)."""
+        # quantita' fissata all'ingresso: mittenti concorrenti non possono tenere il lock all'infinito (livelock
+        # della chiusura trovato dal test con thread); i nuovi li scrive il writer o il prossimo scarico
+        for _ in range(len(self._protective_queue)):
+            rec, attempted_at = self._protective_queue.popleft()
+            if self._buffer or self._degraded_since is not None:
+                self._buffer.append(rec)
+                continue
+            try:
+                self._insert(rec)
+            except (sqlite3.Error, OSError) as exc:
+                self._enter_degraded(exc, since=_event_epoch(rec, attempted_at))
+                self._buffer.append(rec)
 
     def _enter_degraded(self, exc: BaseException, *, since: Optional[float] = None) -> None:
         """Sol #617 (761a52f2): la finestra della GAP parte dall'istante dell'evento non scritto, non dalla rilevazione
@@ -695,7 +797,9 @@ class BlackBox:
     # ------------------------------------------------------------------ stato e verifica
     def health(self) -> Dict[str, Any]:
         return {"path": self.path, "session_id": self.session_id, "open": self._conn is not None,
-                "degraded": self._degraded_since is not None, "buffered": len(self._buffer),
+                "degraded": self._degraded_since is not None,
+                "buffered": len(self._buffer) + len(self._protective_queue),
+                "protective_pending": len(self._protective_queue),
                 "dropped_non_critical": self.dropped, "last_error": self.last_error}
 
     def verify(self) -> Dict[str, Any]:

@@ -2213,6 +2213,9 @@ class TradingEngine:
     _ERRORI_PRIMA_DELL_INVIO = frozenset({
         "INVALID_MARKET_ID", "INVALID_SELECTION_ID", "INVALID_PRICE", "INVALID_SIZE",
         "INVALID_SIDE",
+        # BB-1G Gate B (Codex su #630): la scatola nera ha rifiutato PRIMA dell'invio, nulla e' partito. L'intento si
+        # rilascia e l'esito non e' mai LIVE_SUBMIT_ESITO_IGNOTO.
+        "BLACKBOX_UNAVAILABLE",
     })
 
     @staticmethod

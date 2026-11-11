@@ -39,6 +39,7 @@ PRE_SEND_REJECTIONS = frozenset({
     "INVALID_MARKET_ID", "INVALID_SELECTION_ID", "INVALID_PRICE", "INVALID_SIZE", "INVALID_SIDE",
     "INVALID_CUSTOMER_ORDER_REF", "INVALID_BET_ID", "INVALID_SIZE_REDUCTION", "NOT_AUTHENTICATED",
     "CIRCUIT_BREAKER_OPEN", "DUPLICATE_CUSTOMER_REF",
+    "BLACKBOX_UNAVAILABLE",          # BB-1G Gate B: rifiuto prima dell'invio
 })
 _DEAD_STATUSES = frozenset({"EXECUTION_COMPLETE"})
 #: Esiti di listClearedOrders senza esposizione residua (ordine sparito dagli ordini correnti senza abbinato), e
@@ -71,6 +72,13 @@ def _first_report(result: Any) -> Dict[str, Any]:
     reports = (result or {}).get("instructionReports") if isinstance(result, dict) else None
     return reports[0] if isinstance(reports, list) and reports and isinstance(reports[0], dict) else {}
 
+
+
+def _gate_refused(exc: BaseException) -> bool:
+    """Rifiuto del Gate B della scatola nera (BB-1G): prova che nulla e' partito. Import tardivo: il port resta
+    importabile senza il grafo della scatola nera."""
+    from core import blackbox_runtime
+    return isinstance(exc, blackbox_runtime.GateRefused)
 
 class LiveExchangePort:
     """Interfaccia exchange della saga sopra il `BetfairClient` reale (stessi metodi della porta SIM)."""
@@ -267,6 +275,10 @@ class LiveExchangePort:
         try:
             res = self.client.replace_orders(market_id=current.market_id, bet_id=bet_id, new_price=float(new_price))
         except Exception as exc:
+            if _gate_refused(exc):
+                # BB-1G Gate B (Codex su #630): rifiuto PRIMA dell'invio, nessun nuovo ordine. Rifiuto certo: il
+                # coordinatore fa il rollback dello stub, mai la saga AMBIGUOUS con lo stub abbandonato.
+                raise RuntimeError("BLACKBOX_UNAVAILABLE") from exc
             self.operation_log.append(("REPLACE", bet_id, str(new_price), ""))
             raise LostResponse(f"replace outcome unknown: {type(exc).__name__}") from exc
         report = _first_report(res)

@@ -282,3 +282,24 @@ def test_market_suspension_creates_no_order(tmp_path):
     assert result.reason == "MARKET_SUSPENDED"
     assert ex.find_by_ref("suspended") is None
 
+
+
+def test_recovery_replace_refused_by_the_blackbox_gate_rolls_back_never_ambiguous(tmp_path):
+    """D-630-09 (Claude D su #630): nel recover, un replace rifiutato dal Gate B della scatola nera (il port solleva
+    RuntimeError("BLACKBOX_UNAVAILABLE"), rifiuto PRIMA dell'invio) non e' un esito ignoto: rollback dello stub come
+    in execute, mai AMBIGUOUS «recovery_replace_unknown» con replace_sent e lo stub lasciato aperto."""
+    ex = StatefulExchangeSimulator(balance=D("100"))
+    ex.queue_fault(Fault.LOST_CANCEL_RESPONSE)
+    c, ex, store = coordinator(tmp_path, exchange=ex)
+    first = c.execute(request(stake="0.30", ref="gate-replace"), stub_price=D("3"))
+    assert first.phase is Phase.AMBIGUOUS
+    restarted = ex.restart()
+
+    def refused(bet_id, new_price):
+        raise RuntimeError("BLACKBOX_UNAVAILABLE")
+
+    restarted.replace = refused
+    recovered = MicrostakeCoordinator(restarted, JsonSagaStore(store.path), policy()).recover("gate-replace")
+    assert recovered.phase is not Phase.AMBIGUOUS and recovered.reason != "recovery_replace_unknown", recovered
+    stub = restarted.find_by_ref("gate-replace")
+    assert stub is None or stub.remaining == 0, "lo stub non resta aperto"
