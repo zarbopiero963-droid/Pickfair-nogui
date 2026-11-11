@@ -426,8 +426,9 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   verificata (Codex su 58e635e6): il superamento si memorizza (LOCKDOWN) e il gate fondi d'ingresso lo rifiuta. Come
   ogni lettura verificata alza il picco (Sol su 53c99ceb: 130 poi 115 con picco 100 e limite 10 blocca), ma non
   cambia la cassa del desk (PFC-008: una lettura concorrente del desk resta da ricontrollare): il gate dell'hard-stop
-  usa la piu' recente fra cassa del desk e lettura d'ingresso, cosi' un picco nuovo non si confronta mai con una cassa
-  piu' vecchia (falso superamento); cassa del desk non verificata resta un rifiuto. La stessa cassa piu' recente vale
+  usa l'ultima cassa valutata (del desk o d'ingresso), aggiornata insieme al picco nella stessa sezione critica, cosi'
+  un picco nuovo non si confronta mai con una cassa piu' vecchia e il desk non viene letto a pezzi (Sol su 96b03d7e);
+  cassa del desk non verificata resta un rifiuto. La stessa cassa piu' recente vale
   per la misura di DEFENSE/LOCKDOWN (`_persistent_drawdown_pct`). Una lettura iniziata prima dell'ultima gia' valutata
   (ingresso o contratto) e arrivata tardi non alza il picco e non valuta un superamento (Sol su 4a171465); controllo
   dell'istante e valutazione sono un'unica sezione critica fra letture d'ingresso e del desk (Sol su 6d4ac43f), e
@@ -435,7 +436,8 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   (Codex su 2a847087). Anche il controllo di proprieta' avviene dentro la sezione critica, e lo STOP toglie la
   proprieta' prendendo lo stesso lock: una scrittura gia' ammessa finisce prima che lo STOP rilasci il lock d'istanza.
   Sblocco owner e conferma della baseline sono ammessi solo al controller proprietario, dopo una rilettura dello stato
-  durevole sotto lock (Sol su 2a847087); la rilettura non scambia la propria sessione attiva per una chiusura non
+  durevole sotto lock (Sol su 2a847087); lo STOP di un'istanza che ha perso l'autorita' non scrive la chiusura della
+  sessione (controllo esplicito, oltre al fence del database: Sol su 96b03d7e); la rilettura non scambia la propria sessione attiva per una chiusura non
   pulita, e le verifiche su tavoli e ordini si leggono prima della sezione critica (nessuna inversione dei lock).
   Allo START la proprieta' dello stato comincia solo a rilettura finita; un avvio fallito con servizi smontati chiude
   la sessione prima di rilasciare il lock (nessuna conferma owner ingiustificata al riavvio); un controller mai

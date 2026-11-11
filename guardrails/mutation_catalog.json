@@ -9958,12 +9958,12 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        if entry_at is not None and (desk_at is None or entry_at > desk_at):\n            return entry_cash\n",
-      "mutated": "        if False:\n            return entry_cash\n",
+      "original": "        return getattr(self, \"_drawdown_last_cash\", cash)\n",
+      "mutated": "        return cash\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "Il gate dell'hard-stop confronterebbe il picco alzato dalla lettura d'ingresso con la cassa piu' vecchia del desk: falso superamento (30 invece di 15)."
+      "rationale": "Sol su 53c99ceb/96b03d7e: il gate confronterebbe il picco alzato da una lettura con la cassa piu' vecchia del desk: falso superamento (30 invece di 15) e blocco persistente."
     },
     {
       "id": "d1_lockdown_ignores_entry_cash",
@@ -10192,6 +10192,18 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "Audit ciclo 8: la rilettura durante la propria sessione attiva (sblocco owner) renderebbe la baseline non verificata: blocco ingiustificato."
+    },
+    {
+      "id": "d1_stale_instance_closes_session",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if perso:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 96b03d7e: lo STOP di un'istanza che ha perso l'autorita' scriverebbe la chiusura della sessione sul record del nuovo proprietario."
     }
   ]
 }

@@ -3521,6 +3521,12 @@ class RuntimeController:
             if not getattr(self, "_drawdown_session_owned", False):
                 return
             self._drawdown_session_owned = False
+            perso = RuntimeController._runtime_authority_block(self, "drawdown_state")
+            if perso:
+                # Sol su 96b03d7e: autorita' persa (subentro di un altro runtime) => nessuna scrittura: la sessione
+                # su disco e' ormai del nuovo proprietario. Il fence del database la respingerebbe comunque.
+                logger.critical("D-1: sessione del drawdown non chiusa: autorita' del runtime persa (%s)", perso)
+                return
             try:
                 chiusa = RuntimeController._hard_stop(self).close_session()
             except Exception:
@@ -6768,7 +6774,7 @@ class RuntimeController:
         expires = validators.finite_number(row.get("expires_at"))
         return expires is None or expires >= time.time()
 
-    def _evaluate_drawdown_hard_stop(self, cassa: Any, read_at: Any = None, *, entry: bool = False) -> None:
+    def _evaluate_drawdown_hard_stop(self, cassa: Any, read_at: Any = None) -> None:
         """D-1: ogni cassa verificata alza (mai abbassa) il picco persistente dell'hard-stop e, con il limite
         configurato, ne verifica subito il superamento: blocco persistente e LOCKDOWN senza attendere il segnale
         successivo (contratto owner PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109). Chiamata dentro
@@ -6789,8 +6795,9 @@ class RuntimeController:
                 if last is not None and started < last:
                     return
                 self._drawdown_read_at = started
-            if entry:                                       # lettura d'ingresso: cassa e istante per il gate
-                self._drawdown_entry_cash = (cassa, started)
+            # Ultima cassa valutata, aggiornata nella stessa sezione critica in cui puo' alzare il picco (Sol su
+            # 96b03d7e): e' la cassa che il gate confronta col picco, mai una coppia cassa/istante letta a pezzi.
+            self._drawdown_last_cash = cassa
             stop = RuntimeController._hard_stop(self)
             if stop.evaluate(self._configured_optional(self.config, "max_drawdown_abs"), cassa,
                              pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct")):
@@ -6835,7 +6842,7 @@ class RuntimeController:
             return
         if not self._drawdown_writes_allowed():
             return
-        self._evaluate_drawdown_hard_stop(cassa, read_at, entry=True)
+        self._evaluate_drawdown_hard_stop(cassa, read_at)
         pending_lockdown = getattr(self, "_pending_drawdown_lockdown", None)
         if pending_lockdown:
             self._pending_drawdown_lockdown = None
@@ -7437,19 +7444,16 @@ class RuntimeController:
         return stop
 
     def _drawdown_gate_cash(self) -> Any:
-        """Cassa per il gate dell'hard-stop: quella del desk, salvo una lettura d'ingresso verificata piu' recente
-        (Sol su 53c99ceb), che puo' aver gia' alzato il picco. Cassa del desk non verificata => resta non verificata
-        (fail-closed): la lettura d'ingresso non la sostituisce."""
-        desk = getattr(self, "risk_desk", None)
-        cash = getattr(desk, "cash_equity_current", None)
-        entry = getattr(self, "_drawdown_entry_cash", None)
-        if cash is None or not entry:
-            return cash
-        entry_cash, entry_at = entry
-        desk_at = validators.finite_number(getattr(desk, "_cash_read_at", None))
-        if entry_at is not None and (desk_at is None or entry_at > desk_at):
-            return entry_cash
-        return cash
+        """Cassa per il gate dell'hard-stop e per la misura di DEFENSE/LOCKDOWN: l'ultima cassa VALUTATA
+        (`_evaluate_drawdown_hard_stop`: lettura del desk o d'ingresso, la piu' recente per istante di lettura), cioe'
+        quella aggiornata insieme al picco nella stessa sezione critica. Cosi' un picco alzato da una lettura non si
+        confronta mai con una cassa piu' vecchia (Sol su 53c99ceb), e non si legge il desk a pezzi (cassa e istante
+        separati: Sol su 96b03d7e). Cassa del desk non verificata => resta non verificata (fail-closed): la cassa
+        valutata non la sostituisce. Nessuna cassa ancora valutata (controller non proprietario) => cassa del desk."""
+        cash = getattr(getattr(self, "risk_desk", None), "cash_equity_current", None)
+        if cash is None:
+            return None
+        return getattr(self, "_drawdown_last_cash", cash)
 
     def _drawdown_hard_stop_reason(self) -> str:
         """D-1 (P0) e RO-DD-04/05/06/07 (contratti owner PF-ROSERPINA-D1-D2-B2-B3-FINANCIAL-SAFETY-20261109,

@@ -1794,6 +1794,7 @@ def test_e2e_scenario_5_full_sequence_start_authority_trade_crash_restart_and_st
     assert a.rc.owner_unlock_drawdown_hard_stop(**_OWNER)["unlocked"] is False
     a.rc.mode = a.rc.mode.__class__.ACTIVE
     a.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK", market_id="1.444"))
+    a.rc._close_drawdown_session()                           # STOP dell'istanza obsoleta: nessuna chiusura scritta
     assert c.db.get_settings()[STATE_KEY] == prima and _ordini(a) == 1
 
     # --- C: procedure owner del proprietario (conferma baseline + sblocco), poi l'ingresso torna possibile
@@ -1803,3 +1804,51 @@ def test_e2e_scenario_5_full_sequence_start_authority_trade_crash_restart_and_st
     c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK", market_id="1.333"))
     assert _ordini(c) == 1, _rifiuti(c)                      # perdita 5 dal picco 100: sotto il limite
     c.rc.runtime_authority.stop_heartbeat()
+
+
+# ----------------------------------------------------------------------------------- Sol su 96b03d7e (PR-03a)
+def test_gate_cash_never_pairs_an_old_desk_cash_with_a_newer_desk_timestamp(tmp_path):
+    """Sol su 96b03d7e: il gate leggeva la cassa del desk e poi, separatamente, il suo istante. Un aggiornamento
+    concorrente del desk fra le due letture associava la cassa vecchia (100) a un istante nuovo: scelta al posto della
+    lettura d'ingresso (130, che ha gia' alzato il picco) => perdita falsa di 30 e blocco persistente.
+    Il gate usa l'ultima cassa valutata insieme al picco, nella stessa sezione critica."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._evaluate_entry_reading_drawdown({"available": 130.0, "exposure": 0.0, "ok": True}, 1_000_000.0)
+    vero = c.rc.risk_desk
+
+    class _DeskStrappato:
+        """Lettura strappata: restituisce la cassa vecchia e, subito dopo, il desk risulta aggiornato piu' tardi."""
+        def __getattr__(self, nome):
+            if nome == "cash_equity_current":
+                valore = vero.cash_equity_current
+                vero._cash_read_at = 2_000_000.0          # il sync concorrente finisce qui, fra le due letture
+                return valore
+            return getattr(vero, nome)
+
+    c.rc.risk_desk = _DeskStrappato()
+    assert c.rc._drawdown_hard_stop_reason() == ""
+    assert not c.rc._hard_stop().breached
+
+
+def test_gate_cash_stays_unverified_when_the_desk_cash_is_unverified(tmp_path):
+    """La cassa valutata non sostituisce mai una cassa del desk non verificata (fail-closed)."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._apply_funds_reading({"error": "x"}, source="test")
+    assert c.rc._drawdown_gate_cash() is None
+    assert c.rc._drawdown_hard_stop_reason() == REASON_CASH_UNVERIFIED
+
+
+def test_stale_instance_stop_never_writes_the_session_closure(tmp_path):
+    """Sol su 96b03d7e: lo STOP di un'istanza che ha perso l'autorita' (subentro di un altro runtime) non scrive la
+    chiusura della sessione. Con il database reale la scrittura e' gia' respinta dal fence (prova nella sequenza
+    e2e); qui il controllo e' esplicito anche senza fence."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._open_drawdown_session()
+    prima = c.rc.db.get_settings()[STATE_KEY]
+    c.rc._authority_lost_reason = "lease_superseded"         # autorita' persa (subentro)
+    c.rc._close_drawdown_session()
+    assert c.rc.db.get_settings()[STATE_KEY] == prima
+    assert json.loads(prima)["session_open"] is True
