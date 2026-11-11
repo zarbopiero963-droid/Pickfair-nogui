@@ -3541,6 +3541,26 @@
         "tests/packaging/test_release_requires_blackbox.py"
       ],
       "max_files": 15
+    },
+    "p0_emergency_stop": {
+      "description": "P0 AUD-BF-016 (decisione owner PF-OWNER-P0-EMERGENCY-STOP-20261110, #627 c.6775355046): emergency_stop cancella gli ordini aperti del bot da tutte le fonti (tabella orders, order_saga, exchange) e verifica sull'exchange; esito per ordine, nessun VERIFIED non verificato, rc 3 e notifica di intervento manuale (CLI, bus, GUI); bypass del circuit breaker solo per cancel e verifica d'emergenza. Test RED-first con HeadlessApp e SQLite reali, exchange simulato, fault injection; mutanti p0_estop_*. PR a merge owner. Estensione dichiarata dello scope (Codex su 82bbd010): tests/unit/test_545_sim_snapshot_not_persisted.py, inventario statico dei lettori di snapshot_persisted, a cui si aggiunge core/runtime_controller.py (cancel SIM non persistito = cancel incompleto). Seconda estensione dichiarata (Sol su 7094b1a6, direttiva owner PF-OWNER-ESTOP-B5-BATCH-AUDIT req. 7): tests/safety/test_emergency_stop.py, due test che codificavano il vecchio cancel dell'intero mercato, ora vietato.",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "betfair_client.py",
+        "core/runtime_controller.py",
+        "docs/blackbox.md",
+        "docs/design/design_handoff.md",
+        "docs/emergency_stop.md",
+        "guardrails/mutation_catalog.json",
+        "headless_main.py",
+        "mini_gui.py",
+        "tests/blackbox/test_blackbox_runtime.py",
+        "tests/integration/test_p0_emergency_stop_open_orders.py",
+        "tests/safety/test_emergency_stop.py",
+        "tests/unit/test_545_sim_snapshot_not_persisted.py"
+      ],
+      "max_files": 14
     }
   }
 }

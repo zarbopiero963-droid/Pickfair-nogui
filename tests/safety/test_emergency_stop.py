@@ -302,8 +302,9 @@ def test_emergency_stop_cancel_orders_called_without_bet_id_kwarg():
     assert len(live_client.cancel_calls) == 1
     call = live_client.cancel_calls[0]
     assert call["market_id"] == "1.999"
-    # bet_ids should be None (cancel-all, no explicit bet list)
-    assert call["bet_ids"] is None
+    # Contratto aggiornato (P0 AUD-BF-016, Sol su 7094b1a6, direttiva owner PF-OWNER-ESTOP-B5-BATCH-AUDIT req. 7):
+    # mai il cancel dell'intero mercato, nemmeno senza lettura dell'exchange; solo i betId noti del bot.
+    assert call["bet_ids"] == ["bet_xyz"]
 
 
 @pytest.mark.unit
@@ -424,10 +425,11 @@ def test_gui_emergency_stop_cancel_semantics_flat_cancel():
     # Two markets → two cancel calls
     assert result["markets_attempted"] == 2, \
         "emergency_stop must attempt cancel on each distinct market"
-    # No bet_id → flat cancel of ALL unmatched orders on each market
-    for call in live_client.cancel_calls:
-        assert "bet_ids" not in call or not call["bet_ids"], \
-            "cancel must be market-wide (no bet_ids) to flatten all unmatched orders"
+    # Contratto aggiornato (P0 AUD-BF-016, Sol su 7094b1a6, direttiva owner PF-OWNER-ESTOP-B5-BATCH-AUDIT req. 7):
+    # mai il cancel dell'intero mercato, che toccherebbe ordini manuali o di altri programmi; per ogni mercato si
+    # cancellano per betId solo gli ordini del bot noti.
+    sent = {call["market_id"]: sorted(call["bet_ids"] or []) for call in live_client.cancel_calls}
+    assert sent == {"1.111": ["bet_aaa", "bet_bbb"], "1.222": ["bet_ccc"]}, sent
     # Emergency flag remains set regardless
     assert rc.is_emergency_stopped is True
 

@@ -1185,13 +1185,15 @@ class BetfairClient:
     # CORE JSON-RPC
     # =========================================================
     def _post_jsonrpc(self, url: str, method: str, params: Dict[str, Any],
-                      *, single_shot: bool = False) -> Any:
+                      *, single_shot: bool = False, bypass_breaker: bool = False) -> Any:
         started_at = time.monotonic()
         if not self._session_token_value():
             self._record_io(operation=method, started_at=started_at, status="UNAVAILABLE", error="NOT_AUTHENTICATED")
             raise RuntimeError("NOT_AUTHENTICATED")
 
-        if self._api_breaker.is_open():
+        # P0 AUD-BF-016: il circuit breaker protegge dal martellare l'API, non deve impedire l'uscita protettiva. Solo
+        # l'arresto d'emergenza (una cancellazione per mercato + una lettura di verifica) lo attraversa.
+        if self._api_breaker.is_open() and not bypass_breaker:
             self._record_io(operation=method, started_at=started_at, status="UNAVAILABLE", error="CIRCUIT_BREAKER_OPEN")
             raise RuntimeError("CIRCUIT_BREAKER_OPEN")
 
@@ -1818,6 +1820,7 @@ class BetfairClient:
         *,
         market_id: Any,
         bet_ids: Optional[List[str]] = None,
+        emergency: bool = False,
     ) -> Dict[str, Any]:
         """Cancel orders on a Betfair market via the cancelOrders API.
 
@@ -1849,6 +1852,7 @@ class BetfairClient:
                     "instructions": instructions,
                 },
                 single_shot=True,
+                **({"bypass_breaker": True} if emergency else {}),
             )
         except RuntimeError as exc:
             error_text = str(exc)
@@ -2060,6 +2064,7 @@ class BetfairClient:
     def get_current_orders(
         self,
         market_ids: Optional[List[str]] = None,
+        emergency: bool = False,
     ) -> List[Dict[str, Any]]:
         """Fetch ALL current (unmatched/active) orders via listCurrentOrders.
 
@@ -2088,6 +2093,7 @@ class BetfairClient:
                 self.BETTING_URL,
                 "SportsAPING/v1.0/listCurrentOrders",
                 params,
+                **({"bypass_breaker": True} if emergency else {}),
             )
 
             page_orders = result.get("currentOrders") if isinstance(result, dict) else None

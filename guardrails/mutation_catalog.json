@@ -9014,6 +9014,464 @@
         "tests/packaging/test_release_requires_blackbox.py"
       ],
       "rationale": "Audit Claude D (#626): cancellare un controllo d'integrita' (per esempio quello sulle funzioni di stato negli if) lascerebbe il gate verde."
+    },
+    {
+      "id": "p0_estop_orders_table_ignored",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                elif status in self._EMERGENCY_CLOSED_ORDER_STATUSES:\n",
+      "mutated": "                elif True:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "P0 AUD-BF-016: l'arresto d'emergenza ignorerebbe la tabella `orders` (store reale del motore): zero cancellazioni."
+    },
+    {
+      "id": "p0_estop_unreadable_exchange_verified",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            verification = \"UNVERIFIED\"\n",
+      "mutated": "            verification = \"VERIFIED\"\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "P0 AUD-BF-016: exchange illeggibile dichiarato verificato."
+    },
+    {
+      "id": "p0_estop_open_after_cancel_ignored",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        elif open_after or error_count or any(e.get(\"stage\") == \"runtime_authority\" for e in cancel_errors):\n",
+      "mutated": "        elif error_count or any(e.get(\"stage\") == \"runtime_authority\" for e in cancel_errors):\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "P0 AUD-BF-016: un ordine ancora aperto dopo il cancel non impedirebbe il VERIFIED."
+    },
+    {
+      "id": "p0_estop_exchange_bot_orders_not_added",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                    targets.setdefault(mid, []).append(bid)\n",
+      "mutated": "                    pass\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "P0 AUD-BF-016: un ordine del bot noto solo sull'exchange (customerOrderRef, betId) non verrebbe cancellato."
+    },
+    {
+      "id": "p0_estop_unattributed_cancelled_blindly",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            if bid in known_bets or (ref and ref in known_refs):\n",
+      "mutated": "            if True:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "P0 AUD-BF-016: ordini aperti non attribuibili al bot cancellati alla cieca invece di essere segnalati."
+    },
+    {
+      "id": "p0_estop_cli_rc0_unverified",
+      "module": "headless_main",
+      "area": "live_safety",
+      "file": "headless_main.py",
+      "original": "        if outcome != \"VERIFIED\":\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py",
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "P0 AUD-BF-016: `--emergency-stop` uscirebbe con rc 0 senza cancellazione verificata."
+    },
+    {
+      "id": "p0_estop_outcome_unverified_success",
+      "module": "headless_main",
+      "area": "live_safety",
+      "file": "headless_main.py",
+      "original": "    if verification != \"VERIFIED\":\n        return \"UNKNOWN\", \"CANCEL_NOT_VERIFIED\"\n",
+      "mutated": "    if False:\n        return \"UNKNOWN\", \"CANCEL_NOT_VERIFIED\"\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py",
+        "tests/blackbox/test_blackbox_runtime.py"
+      ],
+      "rationale": "P0 AUD-BF-016: un arresto senza verifica sull'exchange registrato come VERIFIED."
+    },
+    {
+      "id": "p0_estop_breaker_not_bypassed",
+      "module": "betfair_client",
+      "area": "live_safety",
+      "file": "betfair_client.py",
+      "original": "        if self._api_breaker.is_open() and not bypass_breaker:\n",
+      "mutated": "        if self._api_breaker.is_open():\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "P0 AUD-BF-016 / AUD-BF-010: il circuit breaker aperto da timeout di lettura impedirebbe il cancel d'emergenza."
+    },
+    {
+      "id": "p0_estop_market_wide_cancel",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                bet_ids = (sorted({o[\"bet_id\"] for o in orders if o[\"bet_id\"]}) if blind\n",
+      "mutated": "                bet_ids = (None if blind\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su c8338ef3 e 7094b1a6: a exchange illeggibile il cancel dell'intero mercato toccherebbe ordini manuali o estranei; solo i betId del bot noti."
+    },
+    {
+      "id": "p0_estop_final_fill_ignored",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            pre = post_by_bet.get(bid) or bot_remote.get(bid)\n",
+      "mutated": "            pre = bot_remote.get(bid)\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su c8338ef3: un abbinamento avvenuto durante il cancel non risulterebbe come esposizione."
+    },
+    {
+      "id": "p0_estop_unknown_provenance_as_sim",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                    (\"SIM\" if self.simulation_mode else \"LIVE\")) != \"SIM\"\n",
+      "mutated": "                    (\"SIM\" if self.simulation_mode else \"LIVE\")) == \"LIVE\"\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su c8338ef3: un'emergenza con provenienza UNKNOWN non cancellerebbe nulla in LIVE."
+    },
+    {
+      "id": "p0_estop_sim_rows_as_live_candidates",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                if isinstance(sim_flag, bool) and sim_flag != (venue == \"SIM\"):\n                    continue\n",
+      "mutated": "                if isinstance(sim_flag, bool) and sim_flag != (venue == \"SIM\"):\n                    pass\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su c8338ef3: righe di sessioni SIM deciderebbero cancellazioni LIVE."
+    },
+    {
+      "id": "p0_estop_source_errors_verified",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            verification = \"SOURCES_INCOMPLETE\"\n",
+      "mutated": "            verification = \"VERIFIED\"\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su d85a62ff: con le fonti locali illeggibili l'arresto risulterebbe verificato."
+    },
+    {
+      "id": "p0_estop_exposure_dropped_on_failure",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            if matched > 0.0 and pre is not None:\n",
+      "mutated": "            if matched > 0.0 and outcome in (\"PARTIALLY_MATCHED\", \"ALREADY_MATCHED\"):\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su d85a62ff: la parte abbinata sparirebbe dal risultato quando il cancel fallisce o la verifica non si legge."
+    },
+    {
+      "id": "p0_estop_final_read_skipped",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                after = list(self._emergency_call(client.get_current_orders, market_ids=None) or [])\n",
+      "mutated": "                after = []\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su d85a62ff: senza lettura finale un ordine accettato dopo la prima fotografia resterebbe aperto con VERIFIED."
+    },
+    {
+      "id": "p0_estop_unattributed_from_first_read_only",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if after is not None:\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su d85a62ff: un ordine non attribuibile comparso dopo la prima lettura non arriverebbe all'operatore."
+    },
+    {
+      "id": "p0_estop_final_identities_ignored",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        final_bot = {bid: o for bid, o in post_by_bet.items() if bid and _is_bot(o)}\n",
+      "mutated": "        final_bot = {}\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su 82bbd010: un ordine del bot ritrovato solo nella lettura finale, gia' abbinato, sparirebbe dall'esposizione riportata."
+    },
+    {
+      "id": "p0_estop_microstake_sagas_ignored",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        out.extend(saga_candidates)\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su 82bbd010: gli stub/sostituti del Microstake noti solo allo store delle saghe non sarebbero attribuiti ne' cancellati."
+    },
+    {
+      "id": "p0_estop_microstake_ref_ignored",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                            \"customer_ref\": ms_ref or str(item.get(\"customer_ref\") or \"\"), \"status\": status})\n",
+      "mutated": "                            \"customer_ref\": str(item.get(\"customer_ref\") or \"\"), \"status\": status})\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su 82bbd010: l'hedge nativo del cashout porta sull'exchange il ref della saga; senza, resta aperto e non attribuito."
+    },
+    {
+      "id": "p0_estop_saga_store_error_not_a_source_error",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                         if e.get(\"stage\") in (\"read_orders\", \"get_pending_sagas\", \"read_microstake_sagas\")]\n",
+      "mutated": "                         if e.get(\"stage\") in (\"read_orders\", \"get_pending_sagas\")]\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Store delle saghe Microstake illeggibile: senza, un exchange vuoto darebbe VERIFIED con ordini del bot non attribuibili."
+    },
+    {
+      "id": "p0_estop_sim_cancel_not_persisted_accepted",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            if not durable:\n                logger.critical(\"emergency_stop: cancel SIM non persistito, al riavvio gli ordini tornerebbero aperti\")\n",
+      "mutated": "            if False:\n                logger.critical(\"emergency_stop: cancel SIM non persistito, al riavvio gli ordini tornerebbero aperti\")\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su 82bbd010: un cancel SIM non persistito nello snapshot di reload tornerebbe aperto al riavvio; non puo' valere VERIFIED."
+    },
+    {
+      "id": "p0_estop_foreign_ref_saga_adopted",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                if rec.get(\"foreign_ref\") is True:\n",
+      "mutated": "                if False:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su c1db40c3: una saga foreign_ref (ordine preesistente di origine non dimostrata) diventerebbe un'identita' del bot e l'arresto cancellerebbe un ordine altrui."
+    },
+    {
+      "id": "p0_estop_foreign_ms_ref_adopted",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                if ms_ref in foreign_refs:\n",
+      "mutated": "                if False:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Codex su c1db40c3: il raw.microstake_ref della riga dell'hedge con saga foreign_ref renderebbe del bot un ordine altrui."
+    },
+    {
+      "id": "p0_estop_unresolved_submissions_verified",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        elif unresolved:\n",
+      "mutated": "        elif False:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su c1db40c3: un invio INFLIGHT/AMBIGUOUS non ritrovato puo' essere accettato dopo l'ultima lettura; VERIFIED sarebbe un falso successo."
+    },
+    {
+      "id": "p0_estop_closed_rows_exposure_dropped",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                            exposure_bets.add(str(bid))\n",
+      "mutated": "                            pass\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su c1db40c3: la parte abbinata di una riga CANCELLED sparirebbe da matched_positions."
+    },
+    {
+      "id": "p0_estop_persist_error_no_manual_action",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if persist_error:\n            # Stato d'emergenza non persistito",
+      "mutated": "        if False:\n            # Stato d'emergenza non persistito",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su c1db40c3: LOCKDOWN non salvato senza avviso all'operatore; il blocco potrebbe perdersi al riavvio."
+    },
+    {
+      "id": "p0_estop_unresolved_ignores_unknown",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        unresolved = [o for o in outcomes if \"bet_id\" not in o and o.get(\"outcome\") != \"SEE_BET_ID\"]\n",
+      "mutated": "        unresolved = [o for o in outcomes if o.get(\"outcome\") in (\"NO_OPEN_ORDER_ON_MARKET\", \"NO_OPEN_ORDER_FOUND\")]\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su ff0f9ea1: un INFLIGHT senza mercato con prima lettura fallita (esito UNKNOWN) darebbe VERIFIED e rc 0."
+    },
+    {
+      "id": "p0_estop_denied_rows_as_submissions",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        \"DENIED\",                       # rifiuto PRE-invio (risk gate, safe mode, durabilita'): mai sull'exchange\n",
+      "mutated": "        # DENIED non chiuso (mutante)\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "D-629-05: una riga DENIED (rifiuto pre-invio) renderebbe ogni arresto SUBMISSIONS_UNRESOLVED con rc 3."
+    },
+    {
+      "id": "p0_estop_cancel_not_batched",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        size = self._EMERGENCY_CANCEL_BATCH\n",
+      "mutated": "        size = max(1, len(bet_ids))\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su 44164b44: oltre 60 betId su un mercato Betfair respinge l'intera cancelOrders; senza lotti nessun ordine verrebbe cancellato."
+    },
+    {
+      "id": "p0_estop_denied_evidence_ignored",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                if status in self._EMERGENCY_PRE_SEND_STATUSES and self._emergency_transmission_evidence(response):\n",
+      "mutated": "                if False:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Direttiva owner D-629-05: senza la distinzione fra rifiuto pre-invio e invio incerto, un DENIED con esito ignoto darebbe un falso VERIFIED."
+    },
+    {
+      "id": "p0_estop_authority_not_rechecked_per_batch",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            block = self._authority_definitively_lost()\n",
+      "mutated": "            block = None\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su 7094b1a6, sonde owner B4/B5: un runtime superato continuerebbe a cancellare con i lotti successivi."
+    },
+    {
+      "id": "p0_estop_in_flight_batch_unmarked",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                record[\"authority_lost_during\"] = block\n",
+      "mutated": "                pass\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sonda owner B5: il lotto in volo quando l'autorita' si perde deve restare marcato (incidente distinto), con il suo stato di risposta vero."
+    },
+    {
+      "id": "p0_estop_cancel_timeout_as_failed",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                response, status, error = {}, \"UNKNOWN\", str(exc)\n",
+      "mutated": "                response, status, error = {}, \"FAILED\", str(exc)\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sonda owner B5 [timeout]: un timeout sul cancel non prova che il cancel non sia avvenuto; FAILED sarebbe un fallimento dedotto."
+    },
+    {
+      "id": "p0_estop_authority_incident_dropped",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            \"authority_lost\": [e for e in cancel_errors if e.get(\"stage\") == \"runtime_authority\"],\n",
+      "mutated": "            \"authority_lost\": [],\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Direttiva owner PF-OWNER-ESTOP-B5-BATCH-AUDIT: la perdita dell'autorita' deve restare un incidente distinto anche se l'exchange conferma le cancellazioni."
+    },
+    {
+      "id": "p0_estop_pending_saga_trusted",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                if bets and phase not in self._EMERGENCY_SAGA_SETTLED_PHASES:\n",
+      "mutated": "                if False:\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su d892396d: una saga non conclusa (sostituto in volo) darebbe VERIFIED con un ordine che puo' arrivare dopo l'ultima lettura."
+    },
+    {
+      "id": "p0_estop_saga_stub_resolves_replacement",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            elif c[\"customer_ref\"] and (bets_by_ref.get(c[\"customer_ref\"], set()) - set(c.get(\"known_bets\") or ())):\n",
+      "mutated": "            elif c[\"customer_ref\"] and bets_by_ref.get(c[\"customer_ref\"], set()):\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su d892396d: lo stub condivide il ref della saga; vederlo non prova nulla sul sostituto."
+    },
+    {
+      "id": "p0_estop_sim_durability_only_after_cancel",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                not_durable = is_durable() is False\n",
+      "mutated": "                not_durable = False\n",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "Sol su d892396d: al secondo arresto, senza nuovi cancel, uno snapshot non durevole ripristinerebbe ordini aperti al riavvio."
+    },
+    {
+      "id": "p0_estop_market_cancel_guard_removed",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if not bet_ids:\n            # Mai il cancel dell'intero mercato",
+      "mutated": "        if False:\n            # Mai il cancel dell'intero mercato",
+      "tests": [
+        "tests/integration/test_p0_emergency_stop_open_orders.py"
+      ],
+      "rationale": "GUARDRAIL D su d892396d: senza betId non deve mai partire un cancel di mercato (lista vuota = tutti gli ordini per Betfair)."
     }
   ]
 }
