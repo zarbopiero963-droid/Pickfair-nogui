@@ -1589,9 +1589,11 @@ def test_never_started_controller_out_of_stopped_does_not_write_under_a_foreign_
     assert not c.rc._drawdown_writes_allowed()
 
 
-def test_owner_procedures_read_tables_and_orders_outside_the_drawdown_lock(tmp_path):
-    """Le verifiche owner (tavoli, ordini incerti) si leggono fuori dalla sezione critica dell'hard-stop: nessuna
-    inversione d'ordine dei lock con i gate d'ingresso (che prendono prima l'ammissione e poi l'hard-stop)."""
+def test_owner_procedures_verify_inside_the_drawdown_lock_without_the_entry_locks(tmp_path):
+    """D-631-09: le verifiche owner (tavoli, ordini incerti) si leggono DENTRO la sezione critica dell'hard-stop, cosi'
+    verifiche e transizione sono atomiche. Nessuna inversione d'ordine con i gate d'ingresso (ammissione / stato del
+    conto -> hard-stop): la procedura owner non prende mai quei due lock, quindi si completa anche mentre un altro
+    thread li tiene."""
     import threading
     from core.runtime_controller import RuntimeController
     c = _catena(tmp_path, max_drawdown_abs=10.0)
@@ -1602,7 +1604,7 @@ def test_owner_procedures_read_tables_and_orders_outside_the_drawdown_lock(tmp_p
 
     def total_exposure():
         def prova():
-            preso = RuntimeController._drawdown_eval_lock.acquire(timeout=2)
+            preso = RuntimeController._drawdown_eval_lock.acquire(timeout=0.3)
             libero.append(preso)
             if preso:
                 RuntimeController._drawdown_eval_lock.release()
@@ -1612,8 +1614,28 @@ def test_owner_procedures_read_tables_and_orders_outside_the_drawdown_lock(tmp_p
         return reale()
 
     c.rc.table_manager.total_exposure = total_exposure
-    assert c.rc.owner_unlock_drawdown_hard_stop(**_OWNER)["unlocked"] is True
-    assert libero == [True]
+    ammissione = getattr(c.rc, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+    tenuti, via = threading.Event(), threading.Event()
+
+    def tiene_i_lock_d_ingresso():
+        with ammissione, c.rc._account_state_lock:
+            tenuti.set()
+            via.wait(20)
+
+    t = threading.Thread(target=tiene_i_lock_d_ingresso)
+    t.start()
+    try:
+        assert tenuti.wait(5)
+        esito = {}
+        owner = threading.Thread(target=lambda: esito.update(c.rc.owner_unlock_drawdown_hard_stop(**_OWNER)))
+        owner.start()
+        owner.join(10)
+        assert not owner.is_alive(), "la procedura owner attende un lock d'ingresso: inversione d'ordine"
+    finally:
+        via.set()
+        t.join(5)
+    assert esito["unlocked"] is True
+    assert libero == [False]                                  # verifiche dentro la sezione critica
 
 
 def test_restore_never_mistakes_its_own_open_session_for_a_crash():
@@ -1947,3 +1969,187 @@ def test_a_fenced_writer_never_publishes_its_state_to_the_marker(tmp_path):
     nuovo = DrawdownHardStop(db)                              # il nuovo proprietario non eredita nulla dal superato
     nuovo.restore()
     assert nuovo.snapshot()["peak"] == 100.0 and not nuovo.breached
+
+
+# ------------------------------------------------- Sol/Claude D su c715c59e (D-631-08, D-631-09): cicli 11-12
+# Autorizzazione owner PF-OWNER-PR631-EXTRA-2-CYCLES-20261111.
+def _letture_fuori_ordine(tmp_path, *letture, **cfg):
+    """Catena con hard-stop e letture `(cassa, istante relativo)` valutate nell'ordine d'ARRIVO dato."""
+    import time
+    c = _catena(tmp_path, **(cfg or {"max_drawdown_abs": 10.0}))
+    _lettura(c, 100.0)
+    base = time.monotonic() + 100.0
+    for cassa, istante in letture:
+        c.rc._evaluate_drawdown_hard_stop(cassa, read_at=base + istante)
+    return c, base
+
+
+def test_late_reading_with_a_higher_cash_still_raises_the_peak_and_blocks(tmp_path):
+    """D-631-08 (P1 fail-open): 100, poi 115 (iniziata a t3), poi 130 iniziata PRIMA (t2) ma arrivata dopo. La cassa
+    130 e' stata osservata davvero: il picco e' 130 e la perdita 130 -> 115 = 15 >= 10 blocca. Prima il picco restava
+    115 e nessun blocco scattava."""
+    c, _ = _letture_fuori_ordine(tmp_path, (100.0, 1), (115.0, 3), (130.0, 2))
+    stop = c.rc._hard_stop()
+    assert stop.snapshot()["peak"] == 130.0 and stop.breached
+    assert stop.snapshot()["breach"]["kind"] == "max_drawdown_abs"
+    assert c.rc._drawdown_last_cash == 115.0                  # la cassa corrente resta l'ultima lettura, non la tardiva
+    assert str(c.rc._pending_drawdown_lockdown).startswith("drawdown_hard_stop_triggered:max_drawdown_abs:15.00")
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0 and _bloccato_da_hard_stop(c), _rifiuti(c)
+    # durevole: crash e riavvio ritrovano picco e superamento
+    riavviato = DrawdownHardStop(c.rc.db)
+    riavviato.restore(reconcile=False)
+    assert riavviato.snapshot()["peak"] == 130.0 and riavviato.breached
+
+
+def test_late_reading_with_a_higher_cash_below_the_cap_only_raises_the_peak(tmp_path):
+    """Nessun falso blocco: 128 (t3) poi 130 tardiva (t2), limite 10 => picco 130, perdita 2, nessun superamento."""
+    c, _ = _letture_fuori_ordine(tmp_path, (100.0, 1), (128.0, 3), (130.0, 2))
+    stop = c.rc._hard_stop()
+    assert stop.snapshot()["peak"] == 130.0 and not stop.breached
+    assert c.rc._drawdown_last_cash == 128.0 and getattr(c.rc, "_pending_drawdown_lockdown", None) is None
+    assert json.loads(c.rc.db.get_settings()[STATE_KEY])["peak"] == "130.0"
+    c.rc._evaluate_drawdown_hard_stop(119.0, read_at=__import__("time").monotonic() + 1000.0)
+    assert stop.breached                                      # 130 - 119 = 11 >= 10: il picco tardivo conta
+
+
+def test_late_reading_with_a_lower_cash_never_creates_a_false_loss(tmp_path):
+    """Sol su 4a171465, invariato: 130 (t3) poi 100 tardiva (t2) non e' una perdita di 30."""
+    c, base = _letture_fuori_ordine(tmp_path, (100.0, 1), (130.0, 3), (100.0, 2))
+    stop = c.rc._hard_stop()
+    assert stop.snapshot()["peak"] == 130.0 and not stop.breached
+    assert c.rc._drawdown_last_cash == 130.0 and c.rc._drawdown_read_at == base + 3
+    assert getattr(c.rc, "_pending_drawdown_lockdown", None) is None
+
+
+def test_late_reading_never_moves_the_reading_clock_backwards(tmp_path):
+    """La lettura tardiva alza solo il picco: istante e cassa dell'ultima lettura valutata restano quelli."""
+    c, base = _letture_fuori_ordine(tmp_path, (100.0, 1), (104.0, 5), (106.0, 2), (105.0, 4))
+    assert c.rc._drawdown_read_at == base + 5 and c.rc._drawdown_last_cash == 104.0
+    assert c.rc._hard_stop().snapshot()["peak"] == 106.0 and not c.rc._hard_stop().breached
+
+
+def test_late_reading_from_before_an_owner_rebase_never_raises_the_new_peak(tmp_path):
+    """Nessun falso blocco dopo un ribasamento owner: una lettura iniziata PRIMA del ribasamento appartiene all'epoca
+    precedente del picco e non lo rialza (130 contro il nuovo picco 85 sarebbe una perdita falsa)."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    prima = time.monotonic()
+    c.rc._evaluate_drawdown_hard_stop(100.0, read_at=prima)
+    assert c.rc._hard_stop().owner_rebase_peak(85.0, authorization="PF-OWNER-X", reason="nuova baseline",
+                                               operation_id="op-reb-1", confirm=True)
+    c.rc._evaluate_drawdown_hard_stop(84.0, read_at=time.monotonic())
+    c.rc._evaluate_drawdown_hard_stop(130.0, read_at=prima + 1e-6)     # tardiva, iniziata prima del ribasamento
+    stop = c.rc._hard_stop()
+    assert stop.snapshot()["peak"] == 85.0 and not stop.breached
+    c.rc._evaluate_drawdown_hard_stop(84.5, read_at=time.monotonic())
+    c.rc._evaluate_drawdown_hard_stop(90.0, read_at=time.monotonic() - 1e-4)   # tardiva ma DOPO il ribasamento
+    assert stop.snapshot()["peak"] == 90.0
+
+
+def test_late_reading_of_a_non_owner_controller_changes_nothing(tmp_path):
+    """Autorita' runtime: un controller che ha perso l'autorita' non alza il picco nemmeno con una lettura tardiva."""
+    c, base = _letture_fuori_ordine(tmp_path, (100.0, 1), (115.0, 3))
+    prima = c.rc.db.get_settings()[STATE_KEY]
+    c.rc._authority_lost_reason = "lease_superseded"
+    c.rc._evaluate_drawdown_hard_stop(130.0, read_at=base + 2)
+    assert c.rc.db.get_settings()[STATE_KEY] == prima and c.rc._hard_stop().snapshot()["peak"] == 115.0
+
+
+def test_late_reading_with_unsaved_peak_blocks_entries(tmp_path):
+    """Persistenza: il picco tardivo non salvato (DB giu') nega gli ingressi e finisce nel marker."""
+    c, base = _letture_fuori_ordine(tmp_path, (100.0, 1), (128.0, 3))
+    real_save = c.rc.db.save_settings
+
+    def failing_save(values):
+        if STATE_KEY in values:
+            raise OSError("disco pieno")
+        return real_save(values)
+
+    c.rc.db.save_settings = failing_save
+    c.rc._evaluate_drawdown_hard_stop(130.0, read_at=base + 2)
+    assert c.rc._hard_stop().persist_failed
+    marker = c.rc.db.db_path + ".drawdown_peak_pending.json"
+    assert json.loads(open(marker).read())["peak"] == "130.0"
+
+
+@pytest.mark.parametrize("procedura", ["unlock", "baseline"])
+def test_owner_procedure_sees_an_order_that_turns_ambiguous_during_the_operation(tmp_path, procedura):
+    """D-631-09 (P2): un ordine diventa AMBIGUOUS dopo l'inizio della procedura owner (qui: durante la rilettura dello
+    stato, gia' dentro la sezione critica). Le verifiche si fanno DENTRO la sezione critica, subito prima della
+    transizione: lo sblocco / la conferma sono negati e nulla viene salvato. Prima le verifiche erano calcolate fuori
+    e la transizione passava con `uncertain_orders == []`."""
+    cfg = {"max_drawdown_abs": 10.0} if procedura == "unlock" else {"lockdown_drawdown_pct": 15.0}
+    c = _catena(tmp_path, **cfg)
+    _lettura(c, 100.0)
+    if procedura == "unlock":
+        _lettura(c, 89.0)
+        assert c.rc._hard_stop().breached
+    else:
+        c.rc._hard_stop().open_session()
+        _riavvio(c)
+        _lettura(c, 105.0)
+        assert not c.rc._hard_stop().baseline_verified
+    stop = c.rc._hard_stop()
+    reale = stop.restore
+
+    def restore_con_ordine_ambiguo(**kw):
+        c.rc._mark_uncertain("K-AMB", 1, customer_ref="r-amb")
+        return reale(**kw)
+
+    stop.restore = restore_con_ordine_ambiguo
+    prima = c.rc.db.get_settings()[STATE_KEY]
+    if procedura == "unlock":
+        esito = c.rc.owner_unlock_drawdown_hard_stop(**_OWNER)
+        assert esito["unlocked"] is False
+    else:
+        esito = c.rc.owner_confirm_drawdown_baseline(**_CONFIRM)
+        assert esito["confirmed"] is False
+    assert esito["reason"] == "ordini_incerti_presenti" and esito["checks"]["uncertain_orders"] == ["K-AMB"]
+    del stop.restore
+    assert stop.breached if procedura == "unlock" else not stop.baseline_verified
+    dopo = json.loads(c.rc.db.get_settings()[STATE_KEY])
+    assert dopo["breached"] is (procedura == "unlock") and dopo["baseline_verified"] is json.loads(prima)["baseline_verified"]
+    # riavvio / altro controller: la transizione negata non e' su disco
+    riletto = DrawdownHardStop(c.rc.db)
+    riletto.restore(reconcile=False)
+    assert riletto.breached if procedura == "unlock" else not riletto.baseline_verified
+
+
+def test_an_order_cannot_turn_ambiguous_in_the_middle_of_an_owner_transition(tmp_path):
+    """D-631-09: la registrazione di un ordine AMBIGUOUS e la transizione owner sono serializzate sulla stessa sezione
+    critica: mentre la procedura e' fra le verifiche e il salvataggio, `_mark_uncertain` attende. L'ordine risulta
+    quindi o prima delle verifiche (procedura negata) o dopo la transizione conclusa, mai in mezzo."""
+    import threading
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    _lettura(c, 89.0)
+    stop = c.rc._hard_stop()
+    reale = stop.owner_clear_breach
+    dentro, via, marcato = threading.Event(), threading.Event(), threading.Event()
+
+    def clear_lento(**kw):
+        dentro.set()                                         # verifiche fatte, salvataggio non ancora
+        assert via.wait(10)
+        return reale(**kw)
+
+    stop.owner_clear_breach = clear_lento
+    esiti = {}
+    t_owner = threading.Thread(target=lambda: esiti.setdefault("esito", c.rc.owner_unlock_drawdown_hard_stop(**_OWNER)))
+    t_owner.start()
+    assert dentro.wait(10)
+    t_mark = threading.Thread(target=lambda: (c.rc._mark_uncertain("K-AMB", 1, customer_ref="r-amb"), marcato.set()))
+    t_mark.start()
+    assert not marcato.wait(0.3)                              # in attesa: non entra in mezzo alla transizione
+    assert "K-AMB" not in c.rc._uncertain_reservations_map()
+    via.set()
+    t_owner.join(10)
+    t_mark.join(10)
+    assert marcato.is_set() and "K-AMB" in c.rc._uncertain_reservations_map()
+    assert esiti["esito"]["unlocked"] is True and esiti["esito"]["checks"]["uncertain_orders"] == []
+    # con l'ordine ormai incerto, una nuova procedura owner e' negata
+    _lettura(c, 80.0)
+    assert c.rc._hard_stop().breached
+    assert c.rc.owner_unlock_drawdown_hard_stop(**dict(_OWNER, operation_id="PF-UNLOCK-0002"))["reason"] == \
+        "ordini_incerti_presenti"

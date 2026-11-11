@@ -71,7 +71,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   conferma, registrata come conferma e non come prova del massimo storico; RO-DD-09 C). Cap in Decimal esatto, senza tolleranza (`validators.exceeds_cap`, `pct_of`, liability LAY).
   `get_status` espone `loss_drawdown_pct`, `capital_at_risk_pct` e `drawdown_hard_stop`. Prima: l'auto-reset cancellava
   la perdita, il picco seguiva il disponibile, il riavvio lo azzerava, il % valeva solo in LIVE, 60.0000000001 passava
-  il cap 60 (campagna Grok 5 tavoli, #586 c.6747305390). Review su e98e84c7 (Sol): un marker superato con picco piu'
+  il cap 60 (campagna Grok 5 tavoli, #586 c.6747305390). Review su c715c59e (Sol, Claude D; cicli 11-12 autorizzati da PF-OWNER-PR631-EXTRA-2-CYCLES-20261111): una lettura
+  del conto arrivata in ritardo alza comunque il picco e il superamento si rivaluta con l'ultima cassa (prima 130
+  arrivato dopo 115 non bloccava); le verifiche delle procedure owner e la registrazione di un ordine AMBIGUOUS sono
+  nella stessa sezione critica della transizione. Review su e98e84c7 (Sol): un marker superato con picco piu'
   alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
   resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale

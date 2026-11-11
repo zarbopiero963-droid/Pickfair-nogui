@@ -9982,7 +9982,7 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                if last is not None and started < last:\n                    return\n                self._drawdown_read_at = started\n",
+      "original": "                if last is not None and started < last:\n                    self._observe_late_drawdown_reading(cassa, started)\n                    return\n                self._drawdown_read_at = started\n",
       "mutated": "                self._drawdown_read_at = started\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
@@ -10240,6 +10240,102 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "Istanza superata (scrittura rifiutata dal fencing) pubblica il proprio stato nel marker."
+    },
+    {
+      "id": "d1_late_reading_discarded",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    self._observe_late_drawdown_reading(cassa, started)\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Lettura tardiva scartata anche come massimo: 130 arrivato dopo 115 non blocca (D-631-08)."
+    },
+    {
+      "id": "d1_late_reading_ignores_rebase",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if rebased_at is not None and started < rebased_at:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Lettura tardiva precedente a un ribasamento owner rialza il picco ribasato (falso blocco)."
+    },
+    {
+      "id": "d1_late_peak_not_reevaluated",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        last_cash = getattr(self, \"_drawdown_last_cash\", None)\n        if stop.evaluate(",
+      "mutated": "        last_cash = None\n        if stop.evaluate(",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Picco alzato dalla lettura tardiva ma superamento non rivalutato contro l'ultima cassa."
+    },
+    {
+      "id": "d1_late_reading_used_as_current_cash",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        last_cash = getattr(self, \"_drawdown_last_cash\", None)\n        if stop.evaluate(",
+      "mutated": "        last_cash = cassa\n        if stop.evaluate(",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "La lettura tardiva viene valutata come cassa corrente: nessuna perdita misurata."
+    },
+    {
+      "id": "d1_rebase_instant_not_recorded",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self.rebased_at = time.monotonic()\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Il ribasamento owner non registra il proprio istante: le letture precedenti rialzano il picco."
+    },
+    {
+      "id": "d1_mark_uncertain_outside_owner_section",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            uncertain = self._uncertain_reservations_map()",
+      "mutated": "        if True:\n            uncertain = self._uncertain_reservations_map()",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Un ordine puo' diventare AMBIGUOUS in mezzo a una transizione owner (D-631-09)."
+    },
+    {
+      "id": "d1_owner_unlock_stale_order_checks",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            checks = self._owner_drawdown_checks()\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_clear_breach(",
+      "mutated": "            checks = dict(self._owner_drawdown_checks(), uncertain_orders=[])\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_clear_breach(",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Lo sblocco owner non vede gli ordini incerti presenti al momento della transizione."
+    },
+    {
+      "id": "d1_owner_baseline_stale_order_checks",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            checks = self._owner_drawdown_checks()\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_confirm_baseline(",
+      "mutated": "            checks = dict(self._owner_drawdown_checks(), uncertain_orders=[])\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_confirm_baseline(",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "La conferma della baseline non vede gli ordini incerti presenti al momento della transizione."
     }
   ]
 }

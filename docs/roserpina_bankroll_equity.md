@@ -430,7 +430,11 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   un picco nuovo non si confronta mai con una cassa piu' vecchia e il desk non viene letto a pezzi (Sol su 96b03d7e);
   cassa del desk non verificata resta un rifiuto. La stessa cassa piu' recente vale
   per la misura di DEFENSE/LOCKDOWN (`_persistent_drawdown_pct`). Una lettura iniziata prima dell'ultima gia' valutata
-  (ingresso o contratto) e arrivata tardi non alza il picco e non valuta un superamento (Sol su 4a171465); controllo
+  (ingresso o contratto) e arrivata tardi non diventa la cassa corrente e non misura una perdita (Sol su 4a171465:
+  100 arrivato dopo 130 non e' una perdita di 30), ma resta un massimo osservato davvero: alza il picco persistente e,
+  se lo alza, il superamento si rivaluta contro l'ultima cassa valutata (130 arrivato dopo 115 con limite 10 blocca;
+  D-631-08, Sol/Claude D su c715c59e). Non rialza il picco una lettura iniziata prima dell'ultimo ribasamento owner
+  (`DrawdownHardStop.rebased_at`): appartiene all'epoca precedente; controllo
   dell'istante e valutazione sono un'unica sezione critica fra letture d'ingresso e del desk (Sol su 6d4ac43f), e
   nella stessa sezione il gate sceglie la cassa e valuta (Sol su b9cbe0d7), come la misura di DEFENSE/LOCKDOWN
   (Codex su 2a847087). Anche il controllo di proprieta' avviene dentro la sezione critica, e lo STOP toglie la
@@ -460,7 +464,10 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   ingressi: riconciliazione, settlement e riduzione dell'esposizione continuano.
 - **Sblocco owner** (`RuntimeController.owner_unlock_drawdown_hard_stop(authorization, reason, operation_id,
   confirm)`): tutti i campi obbligatori, `operation_id` monouso, verifica di cassa verificata, esposizione leggibile e
-  assenza di ordini AMBIGUOUS, registrazione durevole prima che valga (salvataggio fallito => resta bloccato). Non
+  assenza di ordini AMBIGUOUS, registrazione durevole prima che valga (salvataggio fallito => resta bloccato). Le
+  verifiche si calcolano dentro la sezione critica dell'hard-stop, subito prima della transizione, e la registrazione
+  di un ordine AMBIGUOUS (`_mark_uncertain`) prende lo stesso lock: un ordine che diventa incerto durante la procedura
+  la nega, mai in mezzo fra verifiche e salvataggio; vale anche per la conferma della baseline (D-631-09). Non
   ribasa il picco: se la perdita e' ancora oltre il limite, la lettura successiva blocca di nuovo. La nuova baseline e'
   un'operazione distinta (`DrawdownHardStop.owner_rebase_peak`). Nessun endpoint Control API/MCP; il comando owner che
   le invoca non e' ancora previsto (limite dichiarato).

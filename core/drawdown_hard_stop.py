@@ -39,6 +39,7 @@ import json
 import logging
 import os
 import threading
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
@@ -126,6 +127,9 @@ class DrawdownHardStop:
         self._db = db
         self.peak: Optional[Decimal] = None
         self.peak_epoch = 0                              # +1 a ogni ribasamento owner del picco (Sol su 6d4ac43f)
+        # Istante (monotonic) in cui questo processo ha visto nascere l'epoca corrente del picco: una lettura del
+        # conto iniziata prima appartiene all'epoca precedente e non rialza il picco ribasato (D-631-08).
+        self.rebased_at: Optional[float] = None
         self.rebase_ops: list = []                       # operation_id dei ribasamenti gia' usati (Grok su b9cbe0d7)
         self.seq = 0
         self.unreadable = False
@@ -188,6 +192,8 @@ class DrawdownHardStop:
                 candidates.append(self.peak)
             if candidates:
                 self.peak = max(candidates)
+            if epoch != self.peak_epoch:
+                self.rebased_at = time.monotonic()       # ribasamento letto dal disco (altro processo)
             self.peak_epoch = epoch
             # Grok su b9cbe0d7: gli operation_id dei ribasamenti restano consumati (unione di memoria e record).
             for r in records + stale:
@@ -449,9 +455,10 @@ class DrawdownHardStop:
                 return False
             if op in self.rebase_ops:
                 return False                             # operation_id gia' usato: nessun replay (Grok su b9cbe0d7)
-            old_peak, old_breach, old_epoch = self.peak, dict(self.breach), self.peak_epoch
+            old_peak, old_breach, old_epoch, old_at = self.peak, dict(self.breach), self.peak_epoch, self.rebased_at
             self.peak = peak
             self.peak_epoch = old_epoch + 1
+            self.rebased_at = time.monotonic()
             self.rebase_ops.append(op)
             self.breach = dict(self.breach, rebased={"at": _now(), "authorization": ref, "reason": why,
                                                      "operation_id": op,
@@ -459,6 +466,7 @@ class DrawdownHardStop:
                                                      "to": str(peak)})
             if not self._persist_locked(marker_fallback=False):
                 self.peak, self.breach, self.peak_epoch = old_peak, old_breach, old_epoch
+                self.rebased_at = old_at
                 self.rebase_ops.remove(op)
                 return False
             logger.warning("D-1: picco dell'hard-stop ribasato dall'owner %s -> %s (op %s)", old_peak, peak, op)

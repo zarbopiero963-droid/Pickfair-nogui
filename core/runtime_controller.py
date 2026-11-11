@@ -5579,18 +5579,21 @@ class RuntimeController:
         ALTRO ordine sullo stesso evento cancelli l'incertezza (riesame indipendente ciclo 9 #512).
         #461 PR29-c: con il ``customer_ref`` l'incertezza e' registrata per RISERVA: solo un esito certo dello
         stesso intento la chiude (`_clear_uncertain`)."""
-        uncertain = self._uncertain_reservations_map()
-        tables = getattr(self, "_uncertain_tables", None)
-        if tables is None:
-            tables = self._uncertain_tables = {}
-        tables.setdefault(event_key, set()).add(table_id)
-        uncertain[event_key] = table_id
-        ref = str(customer_ref or "")
-        if ref:
-            refs = getattr(self, "_uncertain_refs", None)
-            if refs is None:
-                refs = self._uncertain_refs = {}
-            refs[(event_key, str(table_id))] = ref
+        # D-631-09: stessa sezione critica delle procedure owner del drawdown (verifiche + transizione): un ordine
+        # non diventa incerto in mezzo a uno sblocco. Ordine dei lock: ammissione -> hard-stop, come i gate d'ingresso.
+        with RuntimeController._drawdown_eval_lock:
+            uncertain = self._uncertain_reservations_map()
+            tables = getattr(self, "_uncertain_tables", None)
+            if tables is None:
+                tables = self._uncertain_tables = {}
+            tables.setdefault(event_key, set()).add(table_id)
+            uncertain[event_key] = table_id
+            ref = str(customer_ref or "")
+            if ref:
+                refs = getattr(self, "_uncertain_refs", None)
+                if refs is None:
+                    refs = self._uncertain_refs = {}
+                refs[(event_key, str(table_id))] = ref
 
     def _clear_uncertain(self, event_key: str, table_id: Any, *, customer_ref: str = "") -> bool:
         """Esito certo per (evento, tavolo). True se l'evento RESTA incerto su un altro tavolo.
@@ -6788,11 +6791,12 @@ class RuntimeController:
             if not self._drawdown_writes_allowed():
                 return
             # Sol su 4a171465: una lettura iniziata prima dell'ultima gia' valutata (ingresso o contratto) e' vecchia:
-            # non alza il picco e non valuta un superamento (100 arrivato dopo 130 sarebbe una perdita falsa di 30).
+            # non e' la cassa corrente e non misura una perdita (100 arrivato dopo 130 sarebbe una perdita falsa di 30).
             started = validators.finite_number(read_at)
             if started is not None:
                 last = getattr(self, "_drawdown_read_at", None)
                 if last is not None and started < last:
+                    self._observe_late_drawdown_reading(cassa, started)
                     return
                 self._drawdown_read_at = started
             # Ultima cassa valutata, aggiornata nella stessa sezione critica in cui puo' alzare il picco (Sol su
@@ -6804,6 +6808,27 @@ class RuntimeController:
                 self._pending_drawdown_lockdown = (f"drawdown_hard_stop_triggered:"
                                                    f"{stop.snapshot()['breach'].get('kind')}:"
                                                    f"{float(stop.loss(cassa)):.2f}€")
+
+    def _observe_late_drawdown_reading(self, cassa: Any, started: float) -> None:
+        """D-631-08 (Sol/Claude D su c715c59e): lettura verificata arrivata dopo una piu' recente. Resta un massimo
+        osservato davvero: alza il picco persistente (mai la cassa corrente ne' l'istante dell'ultima lettura) e, se
+        lo alza, il superamento si rivaluta contro l'ULTIMA cassa valutata (130 tardivo dopo 115 = perdita 15).
+        Una lettura iniziata prima dell'ultimo ribasamento owner appartiene all'epoca precedente: ignorata.
+        Chiamata dentro `_drawdown_eval_lock`, a proprieta' gia' verificata."""
+        stop = RuntimeController._hard_stop(self)
+        rebased_at = stop.rebased_at
+        if rebased_at is not None and started < rebased_at:
+            return
+        before = stop.snapshot()["peak"]
+        stop.observe(cassa)
+        if stop.snapshot()["peak"] == before:
+            return
+        last_cash = getattr(self, "_drawdown_last_cash", None)
+        if stop.evaluate(self._configured_optional(self.config, "max_drawdown_abs"), last_cash,
+                         pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct")):
+            self._pending_drawdown_lockdown = (f"drawdown_hard_stop_triggered:"
+                                               f"{stop.snapshot()['breach'].get('kind')}:"
+                                               f"{float(stop.loss(last_cash)):.2f}€")
 
     def _read_funds_for_entry(self) -> dict:
         """#461 PR28-e: lettura fresca del conto per il gate fondi di una nuova entrata, da eseguire FUORI dal
@@ -7484,8 +7509,10 @@ class RuntimeController:
 
     def _owner_drawdown_checks(self) -> dict:
         """Verifiche comuni alle procedure owner del drawdown: cassa verificata, esposizione leggibile, ordini incerti.
-        Calcolate PRIMA della sezione critica dell'hard-stop: nessun lock dei tavoli o dell'ammissione viene preso
-        con quel lock tenuto (nessuna inversione d'ordine con i gate d'ingresso)."""
+        D-631-09: calcolate DENTRO la sezione critica dell'hard-stop, subito prima della transizione, cosi' verifiche
+        e salvataggio sono un'unica operazione (`_mark_uncertain` prende lo stesso lock). Con quel lock tenuto si
+        prende solo il lock interno dei tavoli (foglia): mai quello dell'ammissione o dello stato del conto, che
+        nei gate d'ingresso stanno all'esterno (nessuna inversione d'ordine)."""
         cash = getattr(self.risk_desk, "cash_equity_current", None)
         try:
             exposure = float(self.table_manager.total_exposure())
@@ -7519,7 +7546,6 @@ class RuntimeController:
         sezione critica dell'hard-stop: un controller fermo con stato vecchio non sovrascrive picco e sessione del
         runtime attivo."""
         out = {"confirmed": False, "reason": "", "checks": {}}
-        checks = self._owner_drawdown_checks()
         with RuntimeController._drawdown_eval_lock:
             block = RuntimeController._drawdown_write_block(self)
             if block:
@@ -7530,6 +7556,7 @@ class RuntimeController:
             if stop.baseline_verified:
                 out["reason"] = "baseline_gia_verificata"
                 return out
+            checks = self._owner_drawdown_checks()
             out["checks"] = checks
             out["reason"] = self._owner_drawdown_checks_block(checks)
             if out["reason"]:
@@ -7558,7 +7585,6 @@ class RuntimeController:
         Sol su 2a847087: solo il controller proprietario del runtime, dopo aver riletto lo stato durevole nella
         sezione critica dell'hard-stop (vedi `owner_confirm_drawdown_baseline`)."""
         out = {"unlocked": False, "reason": "", "checks": {}}
-        checks = self._owner_drawdown_checks()
         with RuntimeController._drawdown_eval_lock:
             block = RuntimeController._drawdown_write_block(self)
             if block:
@@ -7569,6 +7595,7 @@ class RuntimeController:
             if not stop.snapshot()["breached"]:
                 out["reason"] = "nessun_hard_stop_attivo"
                 return out
+            checks = self._owner_drawdown_checks()
             out["checks"] = checks
             out["reason"] = self._owner_drawdown_checks_block(checks)
             if out["reason"]:
