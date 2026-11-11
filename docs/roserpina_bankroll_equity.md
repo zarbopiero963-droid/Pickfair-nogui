@@ -411,6 +411,8 @@ Contratti owner del 09/11/2026: PF-ROSERPINA-D1-D2-B2-B3-FINANCIAL-SAFETY, PF-RO
 PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#586).
 
 - **Formula.** `drawdown_abs = max(0, picco_cassa_verificata - cassa_verificata_corrente)`, in Decimal, confronto esatto.
+  Anche la cassa (disponibile + impegnato) e' sommata in Decimal: 80.01 + 0.01 = 80.02, cosi' una perdita esattamente
+  pari al limite scatta (in float sarebbe 9.99999999999999; Codex su b9cbe0d7).
   La cassa e' disponibile + impegnato della stessa lettura (PFC-008): riserve e puntate aperte non sono perdite.
 - **Picco** (`core/drawdown_hard_stop.py`): massimo della cassa verificata, persistito in settings
   (`roserpina.drawdown_hard_stop_state`, con `seq`) prima di valere. Lo alza ogni lettura verificata
@@ -428,7 +430,8 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   piu' vecchia (falso superamento); cassa del desk non verificata resta un rifiuto. La stessa cassa piu' recente vale
   per la misura di DEFENSE/LOCKDOWN (`_persistent_drawdown_pct`). Una lettura iniziata prima dell'ultima gia' valutata
   (ingresso o contratto) e arrivata tardi non alza il picco e non valuta un superamento (Sol su 4a171465); controllo
-  dell'istante e valutazione sono un'unica sezione critica fra letture d'ingresso e del desk (Sol su 6d4ac43f). Lo stato dell'hard-stop lo aggiorna solo il controller
+  dell'istante e valutazione sono un'unica sezione critica fra letture d'ingresso e del desk (Sol su 6d4ac43f), e
+  nella stessa sezione il gate sceglie la cassa e valuta (Sol su b9cbe0d7). Lo stato dell'hard-stop lo aggiorna solo il controller
   proprietario del runtime (avviato, o nello START dopo la rilettura sotto lock, con l'autorita' dimostrata): un
   controller mai avviato, fermo o che ha perso l'autorita' non scrive nulla, nemmeno leggendo il conto per lo stato
   (Codex su 53c99ceb). Lo stesso vale per i gate d'ingresso (segnale, manuale/Dutching): un controller non
@@ -493,7 +496,8 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   salvo un ribasamento owner esplicito (`owner_rebase_peak`), che apre un'epoca nuova del picco (`peak_epoch`, nel
   record): conta solo l'epoca piu' recente fra memoria, DB e marker, e dentro quella il massimo di tutti i record.
   Cosi' un ribasamento a 85 seguito da un picco a 90 vale anche per un controller costruito prima (Codex su
-  4a171465, Sol su 6d4ac43f); un ribasamento non salvato non avanza l'epoca.
+  4a171465, Sol su 6d4ac43f); un ribasamento non salvato non avanza l'epoca. Anche l'operation_id del ribasamento e'
+  monouso, persistito nel record (`rebase_ops`) e valido dopo il riavvio (Grok su b9cbe0d7).
   Se al riavvio la sessione risulta aperta (crash, kill, STOP con picco non salvato, DB e marker entrambi non
   scrivibili) il picco salvato potrebbe non essere il massimo: la baseline e' **non verificata** e nessun nuovo
   ingresso passa (`drawdown_baseline_non_verificata`), anche dopo piu' riavvii e dopo un reset strategico.

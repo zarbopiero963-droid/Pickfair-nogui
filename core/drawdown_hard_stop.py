@@ -83,11 +83,13 @@ def _parse_record(raw: Any) -> dict:
     session_open = record.get("session_open", False)
     verified = record.get("baseline_verified", True)
     epoch = record.get("peak_epoch", 0)
+    rebase_ops = record.get("rebase_ops", [])
     if (peak is not None and (not peak.is_finite() or peak <= 0)) or type(seq) is not int or seq < 0 \
             or type(breached) is not bool or type(session_open) is not bool or type(verified) is not bool \
-            or type(epoch) is not int or epoch < 0:
+            or type(epoch) is not int or epoch < 0 \
+            or not isinstance(rebase_ops, list) or not all(isinstance(op, str) for op in rebase_ops):
         raise ValueError("record non valido")
-    return {"peak": peak, "seq": seq, "peak_epoch": epoch, "breached": breached, "breach": dict(record.get("breach") or {}),
+    return {"peak": peak, "seq": seq, "peak_epoch": epoch, "rebase_ops": list(rebase_ops), "breached": breached, "breach": dict(record.get("breach") or {}),
             "session_open": session_open, "baseline_verified": verified,
             "baseline": dict(record.get("baseline") or {})}
 
@@ -123,6 +125,7 @@ class DrawdownHardStop:
         self._db = db
         self.peak: Optional[Decimal] = None
         self.peak_epoch = 0                              # +1 a ogni ribasamento owner del picco (Sol su 6d4ac43f)
+        self.rebase_ops: list = []                       # operation_id dei ribasamenti gia' usati (Grok su b9cbe0d7)
         self.seq = 0
         self.unreadable = False
         self.persist_failed = False
@@ -185,6 +188,11 @@ class DrawdownHardStop:
             if candidates:
                 self.peak = max(candidates)
             self.peak_epoch = epoch
+            # Grok su b9cbe0d7: gli operation_id dei ribasamenti restano consumati (unione di memoria e record).
+            for r in records + stale:
+                for op in r["rebase_ops"]:
+                    if op not in self.rebase_ops:
+                        self.rebase_ops.append(op)
             self.baseline = dict(records[0]["baseline"])
             # RO-DD-09 C: sessione rimasta aperta (crash, stop non pulito, picco mai salvato) o baseline gia' non
             # verificata => il picco salvato potrebbe non essere il massimo: nessuna presunzione, conferma owner.
@@ -229,6 +237,7 @@ class DrawdownHardStop:
         saver = getattr(self._db, "save_settings", None)
         seq = self.seq + 1
         record = {"peak": None if self.peak is None else str(self.peak), "seq": seq, "peak_epoch": self.peak_epoch,
+                  "rebase_ops": list(self.rebase_ops),
                   "breached": self.breached,
                   "breach": dict(self.breach), "session_open": self.session_open,
                   "baseline_verified": self.baseline_verified, "baseline": dict(self.baseline), "updated_at": _now()}
@@ -421,15 +430,19 @@ class DrawdownHardStop:
         with self._lock:
             if self.unreadable:
                 return False
+            if op in self.rebase_ops:
+                return False                             # operation_id gia' usato: nessun replay (Grok su b9cbe0d7)
             old_peak, old_breach, old_epoch = self.peak, dict(self.breach), self.peak_epoch
             self.peak = peak
             self.peak_epoch = old_epoch + 1
+            self.rebase_ops.append(op)
             self.breach = dict(self.breach, rebased={"at": _now(), "authorization": ref, "reason": why,
                                                      "operation_id": op,
                                                      "from": None if old_peak is None else str(old_peak),
                                                      "to": str(peak)})
             if not self._persist_locked(marker_fallback=False):
                 self.peak, self.breach, self.peak_epoch = old_peak, old_breach, old_epoch
+                self.rebase_ops.remove(op)
                 return False
             logger.warning("D-1: picco dell'hard-stop ribasato dall'owner %s -> %s (op %s)", old_peak, peak, op)
             return True

@@ -9814,8 +9814,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        persist_block = RuntimeController._drawdown_persist_block_reason(self)\n        if persist_block:\n            return persist_block\n",
-      "mutated": "        persist_block = \"\"\n",
+      "original": "                         or RuntimeController._drawdown_persist_block_reason(self))\n",
+      "mutated": "                         or \"\")\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10018,8 +10018,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        with RuntimeController._drawdown_eval_lock:\n",
-      "mutated": "        with contextlib.nullcontext():\n",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            # Sol su 4a171465",
+      "mutated": "        with contextlib.nullcontext():\n            # Sol su 4a171465",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10060,6 +10060,54 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "Grok su 6d4ac43f: un controller non proprietario ritenterebbe il salvataggio del picco sul record del proprietario."
+    },
+    {
+      "id": "d1_gate_evaluation_not_serialized",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            cash = self._drawdown_gate_cash()\n",
+      "mutated": "        with contextlib.nullcontext():\n            cash = self._drawdown_gate_cash()\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su b9cbe0d7: fra la scelta della cassa e la valutazione del gate una lettura concorrente alzerebbe il picco: perdita falsa e blocco persistente."
+    },
+    {
+      "id": "d1_manual_gate_skips_ownership",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        persist_block = (RuntimeController._drawdown_write_block(self)          # Grok su b9cbe0d7: anche senza cap\n",
+      "mutated": "        persist_block = (\"\"\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Grok su b9cbe0d7: senza cap il gate manuale/Dutching di un controller non proprietario ammetterebbe l'ingresso."
+    },
+    {
+      "id": "d1_rebase_replayable",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if op in self.rebase_ops:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Grok su b9cbe0d7: un replay del ribasamento owner riabbasserebbe il picco e scarterebbe un massimo successivo."
+    },
+    {
+      "id": "d1_cash_float_sum",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        cash = float(validators.money_decimal(available) + validators.money_decimal(committed))\n",
+      "mutated": "        cash = available + committed\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su b9cbe0d7: la somma in float ritarderebbe l'hard-stop sulla soglia esatta (9.99999999999999 invece di 10)."
     }
   ]
 }

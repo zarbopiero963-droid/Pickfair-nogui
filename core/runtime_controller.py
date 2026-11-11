@@ -4462,7 +4462,8 @@ class RuntimeController:
         """
         # RO-DD-08 / RO-DD-09 C (Codex/Grok/Claude D su dc2f5f25): picco non persistito o baseline non confermata dopo
         # un riavvio non pulito negano anche bet manuale e Dutching, con o senza cap configurati, come i segnali.
-        persist_block = RuntimeController._drawdown_persist_block_reason(self)
+        persist_block = (RuntimeController._drawdown_write_block(self)          # Grok su b9cbe0d7: anche senza cap
+                         or RuntimeController._drawdown_persist_block_reason(self))
         if persist_block:
             return persist_block
         cfg = self.config
@@ -6670,7 +6671,9 @@ class RuntimeController:
             reserved = validators.finite_number(funds.get("reserved_unmatched"))
             if reserved is None or reserved < 0 or validators.exceeds_cap(reserved, committed):
                 return {"ok": False, "cash": None, "reason": "CASH_RESERVE_INCOHERENT"}
-        cash = available + committed
+        # Codex su b9cbe0d7: somma esatta in Decimal (80.01 + 0.01 = 80.02, non 80.02000000000001): l'hard-stop deve
+        # scattare esattamente sulla soglia, senza che l'arrotondamento binario la ritardi.
+        cash = float(validators.money_decimal(available) + validators.money_decimal(committed))
         if funds.get("simulated") is True:
             total = validators.finite_number(funds.get("total"))
             if total is None or abs(cash - total) > cls._CASH_TOTAL_TOLERANCE:
@@ -7418,9 +7421,12 @@ class RuntimeController:
         if write_block:
             return write_block                              # Grok su 6d4ac43f: reason() salverebbe il picco
         stop = RuntimeController._hard_stop(self)
-        cash = self._drawdown_gate_cash()
-        reason = stop.reason(self._configured_optional(self.config, "max_drawdown_abs"), cash,
-                             pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct"))
+        # Sol su b9cbe0d7: scelta della cassa e valutazione nella stessa sezione critica delle letture: una lettura
+        # concorrente non puo' alzare il picco fra i due passi (perdita falsa contro la cassa gia' scelta).
+        with RuntimeController._drawdown_eval_lock:
+            cash = self._drawdown_gate_cash()
+            reason = stop.reason(self._configured_optional(self.config, "max_drawdown_abs"), cash,
+                                 pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct"))
         if reason in (DRAWDOWN_ABS_ACTIVE, DRAWDOWN_PCT_ACTIVE):
             loss = stop.loss(cash)
             shown = "n/d" if loss is None else f"{float(loss):.2f}€"

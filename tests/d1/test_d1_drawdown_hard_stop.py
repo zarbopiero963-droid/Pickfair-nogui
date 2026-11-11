@@ -1349,5 +1349,79 @@ def test_non_owner_controller_entry_gates_never_write_and_deny(tmp_path):
     assert c.rc.absolute_cap_reason_for_orders([dict(_ORDINE_MANUALE)]) == "drawdown_controller_non_proprietario"
     assert c.rc._drawdown_hard_stop_reason() == "drawdown_controller_non_proprietario"
     c.rc._hard_stop().persist_failed = True                # retry_persist scriverebbe: non ritenta, nega
-    assert c.rc.absolute_cap_reason_for_orders([dict(_ORDINE_MANUALE)]) == "drawdown_picco_non_persistito"
+    assert c.rc.absolute_cap_reason_for_orders([dict(_ORDINE_MANUALE)]) == "drawdown_controller_non_proprietario"
+    assert c.rc._drawdown_persist_block_reason() == "drawdown_picco_non_persistito"
     assert c.rc.db.get_settings()[STATE_KEY] == prima
+
+
+# ----------------------------------------------------------------------------------- Sol su b9cbe0d7 (PR-03a)
+def test_gate_cash_selection_and_evaluation_are_atomic(tmp_path):
+    """Sol su b9cbe0d7: il gate sceglie la cassa (100); prima che valuti, una lettura d'ingresso concorrente a 130 alza
+    il picco; il gate valuterebbe 100 contro 130 => perdita falsa di 30 con limite 10. Nella sezione critica la lettura
+    aspetta il gate: nessun superamento."""
+    import threading
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    reale = c.rc._drawdown_gate_cash
+    scelta, via = threading.Event(), threading.Event()
+
+    def gate_cash():
+        valore = reale()
+        scelta.set()
+        via.wait(5)
+        return valore
+
+    c.rc._drawdown_gate_cash = gate_cash
+    a = threading.Thread(target=c.rc._drawdown_hard_stop_reason)
+    b = threading.Thread(target=c.rc._evaluate_entry_reading_drawdown,
+                         args=({"available": 130.0, "exposure": 0.0, "ok": True}, 1_000_000.0))
+    a.start()
+    assert scelta.wait(5)
+    b.start()
+    b.join(0.3)
+    via.set()
+    a.join(5)
+    b.join(5)
+    stop = c.rc._hard_stop()
+    assert not stop.breached and stop.snapshot()["peak"] == 130.0
+
+
+# ----------------------------------------------------------------------------------- Grok/Codex su b9cbe0d7 (PR-03a)
+def test_non_owner_manual_entry_is_denied_even_without_drawdown_caps(tmp_path):
+    """Grok su b9cbe0d7: senza alcun limite configurato il gate manuale/Dutching usciva prima di controllare la
+    proprieta': un controller non proprietario deve comunque negare, senza scrivere."""
+    c = _catena(tmp_path)
+    _lettura(c, 100.0)
+    c.rc.mode = c.rc.mode.__class__.STOPPED
+    prima = _record_del_proprietario(c)
+    assert c.rc.absolute_cap_reason_for_orders([dict(_ORDINE_MANUALE)]) == "drawdown_controller_non_proprietario"
+    assert c.rc.db.get_settings()[STATE_KEY] == prima
+
+
+def test_owner_rebase_operation_id_is_single_use_across_restart():
+    """Grok su b9cbe0d7: l'operation_id del ribasamento owner e' monouso, anche dopo un riavvio: un replay non
+    riabbassa il picco ne' avanza l'epoca."""
+    db = _Db()
+    stop = DrawdownHardStop(db)
+    stop.observe(100.0)
+    assert stop.owner_rebase_peak(85.0, authorization="PF-OWNER-X", reason="baseline", operation_id="op-r",
+                                  confirm=True)
+    stop.observe(120.0)
+    assert stop.owner_rebase_peak(85.0, authorization="PF-OWNER-X", reason="baseline", operation_id="op-r",
+                                  confirm=True) is False
+    assert stop.snapshot()["peak"] == 120.0 and stop.peak_epoch == 1
+    riavviato = DrawdownHardStop(db)
+    riavviato.restore()
+    assert riavviato.owner_rebase_peak(85.0, authorization="PF-OWNER-X", reason="baseline", operation_id="op-r",
+                                       confirm=True) is False
+    assert riavviato.snapshot()["peak"] == 120.0
+
+
+def test_exact_threshold_with_committed_funds_triggers_in_exact_decimal(tmp_path):
+    """Codex su b9cbe0d7: picco 90.02, disponibile 80.01 + impegnato 0.01 = 80.02, limite 10: la perdita e' esattamente
+    10 e deve bloccare (in float sarebbe 9.99999999999999 e passerebbe)."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 90.02)
+    _lettura(c, 80.01, committed=0.01)
+    assert c.rc._hard_stop().breached
+    assert c.rc._hard_stop().snapshot()["breach"]["loss"] == "10.00"
