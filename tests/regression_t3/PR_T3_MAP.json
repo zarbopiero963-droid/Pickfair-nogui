@@ -347,6 +347,15 @@
    "red": true,
    "green": true,
    "note": "Disposizione owner: con LOCKDOWN nessuna puntata rapida BACK/LAY raggiunge client_getter o broker; nessun ordine scritto"
+  },
+  {
+   "req": "AUD-GA-028",
+   "status": "TEST_DEFECT_FIXED",
+   "test": "tests/blackbox/test_bb1g_gates.py::test_a_protective_only_session_recovers_after_a_transient_journal_failure",
+   "mutation": "core/blackbox.py: ritardo 0.3s prima della GAP -> vecchio test RED, nuovo test GREEN; GAP mai scritta -> nuovo test RED",
+   "red": true,
+   "green": true,
+   "note": "Race del test ereditata da #630: usciva dal polling appena vedeva i due ORDER_CANCEL_REQUEST e asseriva subito la GAP, scritta dopo. Rossa in CI su #631 e98e84c7 (dynamic / merge-simulation-hard). Codice di produzione corretto."
   }
  ]
 }

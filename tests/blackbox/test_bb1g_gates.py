@@ -654,7 +654,9 @@ def test_a_protective_only_session_recovers_after_a_transient_journal_failure(bb
     written = set()
     while _time.monotonic() < deadline:                        # nessun record() sincrono: scrive solo il writer
         written = {r["event_id"] for r in _events(bbpath, "ORDER_CANCEL_REQUEST")}
-        if {first, second} <= written:
+        # AUD-GA-028 (Claude D): il writer scrive prima gli eventi bufferizzati e POI la GAP (core/blackbox.py
+        # _flush_after_outage): si attende anche la GAP, altrimenti il test corre contro il writer.
+        if {first, second} <= written and _events(bbpath, "BLACKBOX_GAP") and not box._buffer:
             break
         _time.sleep(0.05)
     assert {first, second} <= written, "backlog protettivo mai scaricato a registro guarito"

@@ -3604,8 +3604,10 @@
       "max_files": 35
     },
     "d_pr_t3_regression_tests": {
-      "description": "PR-T3 (mandato owner PF-OWNER-CLAUDE-D-PARALLEL-TESTS-20261111, Claude D): test di regressione delle 37 righe PR-T3 del registro (GATEA-1062 v5.1) e mappa ID->test. Solo test; nessun codice di produzione.",
+      "description": "PR-T3 (mandato owner PF-OWNER-CLAUDE-D-PARALLEL-TESTS-20261111, Claude D): test di regressione delle 37 righe PR-T3 del registro (GATEA-1062 v5.1) e mappa ID->test. Solo test; nessun codice di produzione. Estesa (dichiarato): correzione della race del test tests/blackbox/test_bb1g_gates.py (AUD-GA-028), solo test.",
       "files": [
+        ".guardrails/allowed_scope.json",
+        "tests/blackbox/test_bb1g_gates.py",
         "tests/regression_t3/PR_T3_MAP.json",
         "tests/regression_t3/test_t3_credentials.py",
         "tests/regression_t3/test_t3_d4_back_lay.py",
@@ -3613,10 +3615,9 @@
         "tests/regression_t3/test_t3_daily_loss.py",
         "tests/regression_t3/test_t3_odds_validation.py",
         "tests/regression_t3/test_t3_quick_bet_lockdown.py",
-        "tests/regression_t3/test_t3_sim_matching.py",
-        ".guardrails/allowed_scope.json"
+        "tests/regression_t3/test_t3_sim_matching.py"
       ],
-      "max_files": 9
+      "max_files": 10
     }
   }
 }
