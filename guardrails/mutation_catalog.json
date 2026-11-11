@@ -9886,7 +9886,7 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        self._evaluate_entry_reading_drawdown(funds)\n",
+      "original": "        self._evaluate_entry_reading_drawdown(funds, started_at)\n",
       "mutated": "        pass\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
@@ -9930,16 +9930,40 @@
       "rationale": "Codex su 58e635e6: una baseline letta durante la sessione di un altro processo resterebbe non verificata dopo il suo STOP pulito (blocco permanente senza crash)."
     },
     {
-      "id": "d1_entry_reading_raises_peak",
+      "id": "d1_reload_ignores_newer_owner_clearance",
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "        if observe:\n            self.observe(cash_equity)\n",
-      "mutated": "        self.observe(cash_equity)\n",
+      "original": "            elif newer and self.breached:\n",
+      "mutated": "            elif False:\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "La lettura d'ingresso alzerebbe e scriverebbe il picco: un processo senza autorita' o un DB non scrivibile verrebbero toccati a ogni ingresso."
+      "rationale": "Codex su 53c99ceb: un superamento letto alla costruzione resterebbe dopo uno sblocco owner durevole di un altro processo e verrebbe riscritto sopra lo sblocco."
+    },
+    {
+      "id": "d1_non_owner_writes_drawdown_state",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if stopped and not getattr(self, \"_drawdown_start_owned\", False):\n            return False\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 53c99ceb: un controller mai avviato scriverebbe lo stato dell'hard-stop leggendo il conto per lo stato, sovrascrivendo picco e superamento del proprietario."
+    },
+    {
+      "id": "d1_gate_uses_stale_desk_cash",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if entry_at is not None and (desk_at is None or entry_at > desk_at):\n            return entry_cash\n",
+      "mutated": "        if False:\n            return entry_cash\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Il gate dell'hard-stop confronterebbe il picco alzato dalla lettura d'ingresso con la cassa piu' vecchia del desk: falso superamento (30 invece di 15)."
     }
   ]
 }

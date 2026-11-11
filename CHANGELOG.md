@@ -80,7 +80,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   sessione falliti col DB giu' non scrivono il marker; lo START rilegge lo stato dell'hard-stop sotto il lock di
   istanza prima di scriverlo (Codex); la lettura alla costruzione non scrive, la migrazione del marker avviene solo
   sotto il lock (Sol su 58e635e6); la lettura fresca d'ingresso entra nell'hard-stop, la baseline segue l'ultimo
-  record durevole e lo STOP chiude solo la sessione aperta da questo controller (Codex). Test `tests/d1`.
+  record durevole e lo STOP chiude solo la sessione aperta da questo controller (Codex); uno sblocco owner piu'
+  recente su disco vale alla rilettura dello START (Codex su 53c99ceb); la lettura d'ingresso alza il picco e il gate
+  usa la cassa piu' recente (Sol) e solo il controller proprietario scrive lo stato (Codex).
+  Test `tests/d1`.
 - **G7-R06 (#586): AMBIGUOUS gia' regolato non rinasce come riserva al riavvio.** La ricostruzione F018 chiude gli
   intenti con un effetto di settlement applicato (`Database.settled_customer_refs`, prova = chiave del settlement)
   invece di ricrearne il tavolo come posizione incerta su un mercato gia' chiuso. Senza prova o con registro

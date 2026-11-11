@@ -1080,16 +1080,97 @@ def test_baseline_read_during_another_session_is_refreshed_after_its_clean_stop(
     assert not c.baseline_verified
 
 
-def test_entry_reading_never_raises_or_writes_the_peak():
-    """La lettura d'ingresso controlla soltanto il superamento: senza superamento non alza il picco e non scrive (un
-    processo senza autorita' o un DB non scrivibile non vengono toccati)."""
+# ----------------------------------------------------------------------------------- Codex su 53c99ceb (PR-03a)
+def test_startup_reload_adopts_a_newer_durable_owner_clearance():
+    """Codex su 53c99ceb: B legge alla costruzione il superamento di A; A viene sbloccato dall'owner (salvato) e si
+    ferma; allo START B rilegge: vale lo sblocco con la sua storia, e l'apertura della sessione non lo sovrascrive."""
+    db = _Db()
+    a = DrawdownHardStop(db)
+    a.observe(100.0)
+    assert a.evaluate(10.0, 80.0) is True
+    b = DrawdownHardStop(db)
+    b.restore(reconcile=False)
+    assert b.breached
+    assert a.owner_clear_breach(authorization="PF-OWNER-X", reason="verificato", operation_id="op-1", confirm=True)
+    b.restore()
+    assert not b.breached and b.reason(10.0, 95.0) == ""
+    assert b.snapshot()["breach"]["cleared"][0]["operation_id"] == "op-1"
+    assert b.open_session()
+    assert json.loads(db.settings[STATE_KEY])["breached"] is False
+
+
+def test_reload_keeps_a_newer_unpersisted_in_memory_breach():
+    """Il superamento memorizzato in questo processo con il DB giu' (e senza marker) non sparisce rileggendo un
+    record vecchio non superato."""
     db = _Db()
     stop = DrawdownHardStop(db)
     stop.observe(100.0)
-    prima = db.settings[STATE_KEY]
     db.fail_save = True
-    assert stop.evaluate(10.0, 130.0, observe=False) is False
-    assert stop.snapshot()["peak"] == 100.0 and not stop.persist_failed and db.settings[STATE_KEY] == prima
+    assert stop.evaluate(10.0, 80.0) is True               # solo in memoria (nessun marker: DB senza percorso)
     db.fail_save = False
-    assert stop.evaluate(10.0, 85.0, observe=False) is True       # superamento: memorizzato e salvato
-    assert json.loads(db.settings[STATE_KEY])["breached"] is True
+    stop.restore()
+    assert stop.breached and stop.reason(10.0, 95.0) == REASON_ACTIVE
+
+
+# ----------------------------------------------------------------------------------- Sol/Codex su 53c99ceb (PR-03a)
+def test_entry_readings_raise_the_peak_then_block_the_drop(tmp_path):
+    """Sol su 53c99ceb: picco 100, letture d'ingresso 130 poi 115, limite 10: la lettura a 130 alza (e salva) il picco
+    come ogni lettura verificata, quindi 115 e' una perdita di 15 e blocca."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 130.0, "exposure": 0.0, "ok": True}
+    c.rc._read_funds_for_entry()
+    assert c.rc._hard_stop().snapshot()["peak"] == 130.0
+    assert json.loads(c.rc.db.get_settings()[STATE_KEY])["peak"] == "130.0"
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 115.0, "exposure": 0.0, "ok": True}
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0 and c.rc._hard_stop().breached
+    assert c.rc._hard_stop().snapshot()["breach"]["loss"] == "15.0"
+
+
+def _record_del_proprietario(c):
+    altro = DrawdownHardStop(c.rc.db)                      # proprietario attuale: picco 120, superamento, sessione
+    altro.restore()
+    altro.open_session()
+    altro.observe(120.0)
+    assert altro.evaluate(10.0, 105.0) is True
+    return c.rc.db.get_settings()[STATE_KEY]
+
+
+def test_stopped_controller_status_reading_never_writes_the_owner_record(tmp_path):
+    """Codex su 53c99ceb: un controller mai avviato (STOPPED) che legge il conto per lo stato non scrive lo stato
+    dell'hard-stop: il record del proprietario (picco 120, superamento, sessione aperta) resta intatto."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc.mode = c.rc.mode.__class__.STOPPED
+    prima = _record_del_proprietario(c)
+    fondi = {"available": 110.0, "exposure": 0.0, "ok": True}
+    c.rc._apply_funds_reading(dict(fondi), source="status")
+    c.rc.betfair_service.get_account_funds = lambda: dict(fondi)
+    c.rc._read_funds_for_entry()
+    assert c.rc.db.get_settings()[STATE_KEY] == prima
+
+
+def test_start_reload_enables_drawdown_writes_before_active(tmp_path):
+    """Lo START (rilettura sotto il lock) abilita le scritture gia' per la lettura dei fondi d'avvio, prima di ACTIVE;
+    lo STOP le richiude."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    c.rc.mode = c.rc.mode.__class__.STOPPED
+    assert not c.rc._drawdown_writes_allowed()
+    c.rc._reload_drawdown_state()
+    assert c.rc._drawdown_writes_allowed()
+    _lettura(c, 100.0)
+    assert json.loads(c.rc.db.get_settings()[STATE_KEY])["peak"] == "100.0"
+    _stop_pulito(c)
+    assert not c.rc._drawdown_writes_allowed()
+
+
+def test_entry_reading_above_the_peak_never_compares_the_new_peak_with_older_desk_cash(tmp_path):
+    """La lettura d'ingresso a 130 alza il picco ma non tocca la cassa del desk (100, PFC-008): il gate dell'hard-stop
+    usa la lettura piu' recente, quindi nessun falso superamento (30) e l'ordine passa."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 130.0, "exposure": 0.0, "ok": True}
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert c.rc.risk_desk.cash_equity_current == 100.0 and c.rc._hard_stop().snapshot()["peak"] == 130.0
+    assert not c.rc._hard_stop().breached and _ordini(c) == 1, _rifiuti(c)

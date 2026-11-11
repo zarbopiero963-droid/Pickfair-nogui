@@ -3475,7 +3475,9 @@ class RuntimeController:
 
     def _reload_drawdown_state(self) -> None:
         """Rilegge dal DB (e dal marker) lo stato dell'hard-stop sotto la proprieta' del runtime. ``restore`` non
-        abbassa mai il picco ne' annulla un superamento gia' in memoria: rileggere e' sempre sicuro."""
+        abbassa mai il picco ne' annulla un superamento gia' in memoria: rileggere e' sempre sicuro. Da qui il
+        controller puo' aggiornare lo stato anche prima di passare ACTIVE (lettura dei fondi dello START)."""
+        self._drawdown_start_owned = True
         RuntimeController._hard_stop(self).restore(reconcile=True)
 
     def _open_drawdown_session(self) -> None:
@@ -3514,6 +3516,7 @@ class RuntimeController:
         # runtime resta comunque fermo e Betfair si disconnette lo stesso;
         # l'errore risale poi al chiamante.
         self.mode = RuntimeMode.STOPPED
+        self._drawdown_start_owned = False             # da qui nessuna scrittura dello stato del drawdown
         smontato = False
         try:
             self._stop_settlement_poller()
@@ -6698,15 +6701,27 @@ class RuntimeController:
         self._cash_warning_reason = motivo
         return True
 
-    def _evaluate_drawdown_hard_stop(self, cassa: Any, *, observe: bool = True) -> None:
+    def _drawdown_writes_allowed(self) -> bool:
+        """Codex su 53c99ceb: lo stato dell'hard-stop (picco, superamento, marker) lo aggiorna solo il controller
+        proprietario del runtime: avviato (o nello START, dopo la rilettura sotto il lock di istanza) e con
+        l'autorita' esclusiva ancora dimostrata. Un controller mai avviato, fermo o che ha perso l'autorita' non
+        scrive niente, nemmeno leggendo il conto per lo stato (`get_status`): non sovrascrive il record del
+        proprietario attuale. Non fa trading, quindi non c'e' nulla da bloccare; il proprietario rivaluta da se'."""
+        stopped = getattr(self, "mode", RuntimeMode.STOPPED) is RuntimeMode.STOPPED
+        if stopped and not getattr(self, "_drawdown_start_owned", False):
+            return False
+        return not RuntimeController._runtime_authority_block(self, "drawdown_state")
+
+    def _evaluate_drawdown_hard_stop(self, cassa: Any) -> None:
         """D-1: ogni cassa verificata alza (mai abbassa) il picco persistente dell'hard-stop e, con il limite
         configurato, ne verifica subito il superamento: blocco persistente e LOCKDOWN senza attendere il segnale
         successivo (contratto owner PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109). Chiamata dentro
         `_account_state_lock` (non rientrante): il LOCKDOWN, che legge lo stato, lo applica il chiamante dopo."""
+        if not self._drawdown_writes_allowed():
+            return
         stop = RuntimeController._hard_stop(self)
         if stop.evaluate(self._configured_optional(self.config, "max_drawdown_abs"), cassa,
-                         pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct"),
-                         observe=observe):
+                         pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct")):
             self._pending_drawdown_lockdown = (f"drawdown_hard_stop_triggered:"
                                                f"{stop.snapshot()['breach'].get('kind')}:"
                                                f"{float(stop.loss(cassa)):.2f}€")
@@ -6727,14 +6742,18 @@ class RuntimeController:
         self._record_runtime_io(operation="betfair_get_account_funds", started_at=started_at, ok=not error,
                                 error=str(error or ""))
         self._recover_funds_at_entry(funds, started_at)        # Phase 2, caso D: fondi tornati
-        self._evaluate_entry_reading_drawdown(funds)
+        self._evaluate_entry_reading_drawdown(funds, started_at)
         return {"funds": funds, "read_at": started_at}
 
-    def _evaluate_entry_reading_drawdown(self, funds: Any) -> None:
+    def _evaluate_entry_reading_drawdown(self, funds: Any, read_at: Optional[float] = None) -> None:
         """Codex su 58e635e6: la lettura fresca d'ingresso entra nell'hard-stop anche quando la cassa del desk non va
         ripresa (cassa gia' verificata): altrimenti il controllo resterebbe sulla cassa memorizzata e una perdita
-        appena letta passerebbe. Stessa cassa del contratto unico (PFC-008; disponibile 0 = impegnato o 0). Il
-        superamento si memorizza e va in LOCKDOWN; il gate dei fondi d'ingresso lo rifiuta."""
+        appena letta passerebbe. Stessa cassa del contratto unico (PFC-008; disponibile 0 = impegnato o 0). Alza il
+        picco come ogni lettura verificata (Sol su 53c99ceb: 130 poi 115 con picco 100 e limite 10 deve bloccare). La
+        cassa del desk NON cambia (PFC-008: una lettura concorrente del desk resta da ricontrollare): la lettura
+        d'ingresso viene ricordata con il suo istante e il gate dell'hard-stop usa la piu' recente fra le due, cosi'
+        un picco nuovo non si confronta mai con una cassa piu' vecchia (falso superamento). Il superamento si
+        memorizza e va in LOCKDOWN; il gate dei fondi d'ingresso lo rifiuta."""
         verifica = self._cash_equity_verification(funds) if isinstance(funds, dict) else {"ok": False, "reason": ""}
         if verifica["ok"]:
             cassa = verifica["cash"]
@@ -6742,7 +6761,10 @@ class RuntimeController:
             cassa = 0.0
         else:
             return
-        self._evaluate_drawdown_hard_stop(cassa, observe=False)
+        if not self._drawdown_writes_allowed():
+            return
+        self._drawdown_entry_cash = (cassa, validators.finite_number(read_at))
+        self._evaluate_drawdown_hard_stop(cassa)
         pending_lockdown = getattr(self, "_pending_drawdown_lockdown", None)
         if pending_lockdown:
             self._pending_drawdown_lockdown = None
@@ -7341,6 +7363,20 @@ class RuntimeController:
             stop.restore(reconcile=False)                 # sola lettura (Sol su 58e635e6)
         return stop
 
+    def _drawdown_gate_cash(self) -> Any:
+        """Cassa per il gate dell'hard-stop: quella del desk, salvo una lettura d'ingresso verificata piu' recente
+        (Sol su 53c99ceb), che puo' aver gia' alzato il picco. Cassa del desk non verificata => resta non verificata
+        (fail-closed): la lettura d'ingresso non la sostituisce."""
+        cash = getattr(self.risk_desk, "cash_equity_current", None)
+        entry = getattr(self, "_drawdown_entry_cash", None)
+        if cash is None or not entry:
+            return cash
+        entry_cash, entry_at = entry
+        desk_at = validators.finite_number(getattr(self.risk_desk, "_cash_read_at", None))
+        if entry_at is not None and (desk_at is None or entry_at > desk_at):
+            return entry_cash
+        return cash
+
     def _drawdown_hard_stop_reason(self) -> str:
         """D-1 (P0) e RO-DD-04/05/06/07 (contratti owner PF-ROSERPINA-D1-D2-B2-B3-FINANCIAL-SAFETY-20261109,
         PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL-20261109): '' se l'ingresso
@@ -7353,7 +7389,7 @@ class RuntimeController:
         stato illeggibile o picco non salvato => rifiuto esplicito. Superamento => LOCKDOWN. Blocca solo i NUOVI
         ingressi: riconciliazione, settlement e riduzione dell'esposizione non passano di qui."""
         stop = RuntimeController._hard_stop(self)
-        cash = getattr(self.risk_desk, "cash_equity_current", None)
+        cash = self._drawdown_gate_cash()
         reason = stop.reason(self._configured_optional(self.config, "max_drawdown_abs"), cash,
                              pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct"))
         if reason in (DRAWDOWN_ABS_ACTIVE, DRAWDOWN_PCT_ACTIVE):

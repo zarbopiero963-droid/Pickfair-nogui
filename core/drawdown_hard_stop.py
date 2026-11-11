@@ -181,11 +181,18 @@ class DrawdownHardStop:
                 self.baseline_verified = False
             else:
                 self.baseline_verified = True
+            newer = latest > self.seq                    # su disco c'e' uno stato successivo a quello in memoria
             self.seq = max([self.seq] + [r["seq"] for r in records])
             breached = [r for r in records if r["breached"]]
             if breached:                                 # un superamento salvato non si annulla mai rileggendo
                 self.breached = True
                 self.breach = dict(breached[0]["breach"])
+            elif newer and self.breached:
+                # Codex su 53c99ceb: superamento letto alla costruzione e poi sbloccato dall'owner in modo durevole da un
+                # altro processo (record piu' recente non superato): vale lo sblocco, con la sua storia. Un superamento
+                # solo in memoria e piu' recente (salvataggio fallito: `seq` non piu' basso del disco) resta.
+                self.breached = False
+                self.breach = dict(records[0]["breach"])
             if not reconcile:
                 return
             if any(r.get("from_marker") for r in records):
@@ -317,16 +324,13 @@ class DrawdownHardStop:
             elif self.persist_failed:
                 self._persist_locked()
 
-    def evaluate(self, cap_raw: Any, cash_equity: Any, *, pct_cap_raw: Any = None, observe: bool = True) -> bool:
+    def evaluate(self, cap_raw: Any, cash_equity: Any, *, pct_cap_raw: Any = None) -> bool:
         """Controllo a ogni variazione finanziaria (lettura verificata del conto), non solo al segnale.
 
         Osserva la cassa e, con un limite configurato e valido (assoluto ``cap_raw`` in euro o percentuale
         ``pct_cap_raw`` dal picco, RO-DD-04/05), MEMORIZZA il primo superamento (persistito). True se questa chiamata
-        ha appena registrato un superamento (il runtime va in LOCKDOWN subito). ``observe=False`` (lettura d'ingresso,
-        Codex su 58e635e6): solo il controllo del superamento sul picco persistente, senza alzarlo ne' scrivere se non
-        c'e' superamento; il picco lo alzano le letture del contratto unico (`_apply_funds_reading`)."""
-        if observe:
-            self.observe(cash_equity)
+        ha appena registrato un superamento (il runtime va in LOCKDOWN subito)."""
+        self.observe(cash_equity)
         loss = self.loss(cash_equity)
         if loss is None:
             return False

@@ -421,9 +421,14 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   bloccano nulla. Valutati a ogni lettura verificata del conto (superamento => LOCKDOWN subito) e prima di ogni
   ingresso (segnale, auto-next, manuale/Dutching). Stessa regola in SIM e LIVE (prima il % valeva solo in LIVE).
   Anche la lettura fresca del conto fatta per un ingresso entra nell'hard-stop, pure con la cassa del desk gia'
-  verificata (Codex su 58e635e6): il superamento si memorizza (LOCKDOWN) e il gate fondi d'ingresso lo rifiuta. Quella
-  lettura controlla soltanto il superamento sul picco persistente: non alza il picco e, senza superamento, non scrive
-  (il picco lo alzano le letture del contratto unico).
+  verificata (Codex su 58e635e6): il superamento si memorizza (LOCKDOWN) e il gate fondi d'ingresso lo rifiuta. Come
+  ogni lettura verificata alza il picco (Sol su 53c99ceb: 130 poi 115 con picco 100 e limite 10 blocca), ma non
+  cambia la cassa del desk (PFC-008: una lettura concorrente del desk resta da ricontrollare): il gate dell'hard-stop
+  usa la piu' recente fra cassa del desk e lettura d'ingresso, cosi' un picco nuovo non si confronta mai con una cassa
+  piu' vecchia (falso superamento); cassa del desk non verificata resta un rifiuto. Lo stato dell'hard-stop lo aggiorna solo il controller
+  proprietario del runtime (avviato, o nello START dopo la rilettura sotto lock, con l'autorita' dimostrata): un
+  controller mai avviato, fermo o che ha perso l'autorita' non scrive nulla, nemmeno leggendo il conto per lo stato
+  (Codex su 53c99ceb).
 - **Disponibile 0: l'hard-stop valuta comunque la cassa (Sol e Codex su dc2f5f25).** Con una lettura valida a
   disponibile 0 l'hard-stop riceve la cassa verificata della stessa lettura: con impegnato
   (`BALANCE_ZERO_COMMITTED`) e' l'impegnato (85 impegnati dopo un picco 100 = perdita 15), senza
@@ -475,7 +480,9 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   allo START, sotto il lock (Sol su 58e635e6). La verifica della baseline segue il record durevole piu' recente anche
   verso «verificata»: letta mentre un altro processo aveva la sessione aperta, dopo il suo STOP pulito non resta
   bloccata; lo STOP chiude la sessione solo se e' stato questo controller ad aprirla allo START, e una volta sola
-  (un controller mai avviato o un secondo STOP non scrivono; Codex su 58e635e6).
+  (un controller mai avviato o un secondo STOP non scrivono; Codex su 58e635e6). Allo stesso modo uno sblocco owner
+  salvato da un altro processo dopo la costruzione vale alla rilettura dello START, con la sua storia; un superamento
+  piu' recente rimasto solo in memoria (salvataggio fallito) resta (Codex su 53c99ceb).
   Se al riavvio la sessione risulta aperta (crash, kill, STOP con picco non salvato, DB e marker entrambi non
   scrivibili) il picco salvato potrebbe non essere il massimo: la baseline e' **non verificata** e nessun nuovo
   ingresso passa (`drawdown_baseline_non_verificata`), anche dopo piu' riavvii e dopo un reset strategico.
