@@ -49,6 +49,8 @@ Codice: `core/blackbox_runtime.py` (`require_runtime`, `financial_gate`, `protec
     o è accodata prima dello scarico finale (e scritta), o è rifiutata (`BlackBoxUnavailable`), mai accettata in una
     coda che nessuno scriverà; lo scarico prende una quantità fissata all'ingresso, così mittenti concorrenti non
     tengono il lock all'infinito;
+    **chi legge il registro subito dopo un'uscita protettiva** (oracoli, verifiche, test) chiama prima
+    `flush_protective()`: senza, l'evento può essere ancora in coda e non comparire nella lettura;
   - **scatola nera assente** (mai installata, già chiusa, `atexit`, thread sopravvissuti): tutto rifiutato, tranne
     le cancellazioni dentro `emergency_exit`, cioè il solo `--emergency-stop` CLI (D3 #617).
   Il contesto protettivo è per thread: un lavoro spostato in un altro thread vale come ingresso (fail-closed).

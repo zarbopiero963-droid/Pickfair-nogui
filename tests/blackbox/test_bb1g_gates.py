@@ -567,3 +567,60 @@ def test_concurrent_protective_events_during_shutdown_are_written_or_refused(bbp
     written = {r["event_id"] for r in _events(bbpath, "ORDER_CANCEL_REQUEST")}
     lost = [e for e in accepted if e not in written]
     assert accepted and refused and not lost, f"{len(lost)} uscite protettive accettate e mai scritte"
+
+
+def test_a_producer_paused_after_build_is_refused_once_shutdown_completes(bbpath, monkeypatch):
+    """Sol su #630 (96f80476, D-630-07): il mittente si ferma DOPO `_build()` e prima dell'accodamento; nel frattempo
+    `shutdown()` completa lo scarico finale e chiude. Quando riprende, l'uscita protettiva e' RIFIUTATA
+    (BlackBoxUnavailable): il gate non autorizza mai un invio il cui evento nessuno scrivera'."""
+    box = _install_runtime_box()
+    real_build = box._build
+    built, resume = threading.Event(), threading.Event()
+
+    def paused_build(event_type, fields):
+        rec = real_build(event_type, fields)
+        if event_type == "ORDER_CANCEL_REQUEST":
+            built.set()
+            resume.wait(5)
+        return rec
+
+    monkeypatch.setattr(box, "_build", paused_build)
+    outcome = {}
+
+    def producer():
+        try:
+            outcome["id"] = rt.financial_gate("ORDER_CANCEL_REQUEST", component="betfair_client", cancel=True,
+                                              market_id="1.5", bet_ids=["B1"])
+        except rt.GateRefused as exc:
+            outcome["refused"] = exc
+
+    t = threading.Thread(target=producer)
+    t.start()
+    assert built.wait(5)
+    rt.shutdown("STOP")                              # end_session + close: scarico finale gia' avvenuto
+    resume.set()
+    t.join(5)
+    assert "refused" in outcome and "id" not in outcome, outcome
+    assert not _events(bbpath, "ORDER_CANCEL_REQUEST"), "nessun evento: l'invio non e' stato autorizzato"
+
+
+def test_close_drains_a_protective_event_accepted_after_the_session_end(bbpath, monkeypatch):
+    """Claude D (mutante MA3, D-630-06): un cancel protettivo accettato tra `end_session()` e `close()`, con il writer
+    dedicato disattivato, e' scritto dallo scarico finale di `close()`."""
+    box = _install_runtime_box()
+    monkeypatch.setattr(box, "_ensure_protective_writer", lambda: None)   # solo close() puo' scriverlo
+    real_end = box.end_session
+    late = {}
+
+    def end_then_late_cancel(reason="STOP", **data):
+        out = real_end(reason, **data)
+        late["id"] = box.record("ORDER_CANCEL_REQUEST", critical=True, buffer_on_failure=True, source="SYSTEM",
+                                component="betfair_client", phase="ATTEMPT", outcome="PENDING", market_id="1.5",
+                                bet_id="B9")
+        return out
+
+    monkeypatch.setattr(box, "end_session", end_then_late_cancel)
+    rt.shutdown("STOP")
+    assert late.get("id")
+    assert [r for r in _events(bbpath, "ORDER_CANCEL_REQUEST") if r["event_id"] == late["id"]], \
+        "accettato prima della chiusura e mai scritto"

@@ -9700,6 +9700,18 @@
         "tests/blackbox/test_bb1g_gates.py"
       ],
       "rationale": "Codex su #630 (D-630-05): il replace rifiutato dal Gate B diventerebbe LostResponse e lo stub resterebbe abbandonato in AMBIGUOUS (SIM)."
+    },
+    {
+      "id": "bb1g_close_without_protective_drain",
+      "module": "core.blackbox",
+      "area": "blackbox",
+      "file": "core/blackbox.py",
+      "original": "                self._drain_protective_queue()     # uscite protettive accodate: scritte prima di chiudere, se possibile\n",
+      "mutated": "                pass\n",
+      "tests": [
+        "tests/blackbox/test_bb1g_gates.py"
+      ],
+      "rationale": "Claude D (MA3) su #630: close() senza scarico finale perderebbe le uscite protettive accettate tra end_session e close."
     }
   ]
 }
