@@ -427,10 +427,13 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   usa la piu' recente fra cassa del desk e lettura d'ingresso, cosi' un picco nuovo non si confronta mai con una cassa
   piu' vecchia (falso superamento); cassa del desk non verificata resta un rifiuto. La stessa cassa piu' recente vale
   per la misura di DEFENSE/LOCKDOWN (`_persistent_drawdown_pct`). Una lettura iniziata prima dell'ultima gia' valutata
-  (ingresso o contratto) e arrivata tardi non alza il picco e non valuta un superamento (Sol su 4a171465). Lo stato dell'hard-stop lo aggiorna solo il controller
+  (ingresso o contratto) e arrivata tardi non alza il picco e non valuta un superamento (Sol su 4a171465); controllo
+  dell'istante e valutazione sono un'unica sezione critica fra letture d'ingresso e del desk (Sol su 6d4ac43f). Lo stato dell'hard-stop lo aggiorna solo il controller
   proprietario del runtime (avviato, o nello START dopo la rilettura sotto lock, con l'autorita' dimostrata): un
   controller mai avviato, fermo o che ha perso l'autorita' non scrive nulla, nemmeno leggendo il conto per lo stato
-  (Codex su 53c99ceb).
+  (Codex su 53c99ceb). Lo stesso vale per i gate d'ingresso (segnale, manuale/Dutching): un controller non
+  proprietario nega l'ingresso (`drawdown_controller_non_proprietario`, o il motivo dell'autorita' persa) senza
+  valutare, perche' la valutazione salverebbe il picco (Grok su 6d4ac43f).
 - **Disponibile 0: l'hard-stop valuta comunque la cassa (Sol e Codex su dc2f5f25).** Con una lettura valida a
   disponibile 0 l'hard-stop riceve la cassa verificata della stessa lettura: con impegnato
   (`BALANCE_ZERO_COMMITTED`) e' l'impegnato (85 impegnati dopo un picco 100 = perdita 15), senza
@@ -487,8 +490,10 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   piu' recente rimasto solo in memoria (salvataggio fallito) resta (Codex su 53c99ceb). La storia degli sblocchi
   (operation_id gia' usati) si riprende dal disco anche senza superamento attivo: un riavvio non rende di nuovo
   valido un operation_id consumato (Sol su 4a171465). Il picco riletto non scende mai sotto quello gia' in memoria,
-  salvo un ribasamento owner esplicito (`owner_rebase_peak`) registrato nel record piu' recente proprio a quel picco:
-  allora vale anche per un controller costruito prima (Codex su 4a171465).
+  salvo un ribasamento owner esplicito (`owner_rebase_peak`), che apre un'epoca nuova del picco (`peak_epoch`, nel
+  record): conta solo l'epoca piu' recente fra memoria, DB e marker, e dentro quella il massimo di tutti i record.
+  Cosi' un ribasamento a 85 seguito da un picco a 90 vale anche per un controller costruito prima (Codex su
+  4a171465, Sol su 6d4ac43f); un ribasamento non salvato non avanza l'epoca.
   Se al riavvio la sessione risulta aperta (crash, kill, STOP con picco non salvato, DB e marker entrambi non
   scrivibili) il picco salvato potrebbe non essere il massimo: la baseline e' **non verificata** e nessun nuovo
   ingresso passa (`drawdown_baseline_non_verificata`), anche dopo piu' riavvii e dopo un reset strategico.

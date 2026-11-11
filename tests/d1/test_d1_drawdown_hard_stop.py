@@ -1263,3 +1263,91 @@ def test_restore_still_keeps_a_newer_in_memory_peak():
     db.fail_save = False
     stop.restore()
     assert stop.snapshot()["peak"] == 120.0
+
+
+# ----------------------------------------------------------------------------------- Sol su 6d4ac43f (PR-03a)
+def test_concurrent_readings_never_interleave_check_and_evaluation(tmp_path):
+    """Sol su 6d4ac43f: A (100, piu' vecchia) supera il controllo dell'istante; prima che valuti, B (130, piu' nuova)
+    alza il picco; poi A valuta 100 contro 130 => perdita falsa di 30 con limite 10. Con la sezione critica B aspetta
+    A: A valuta contro 100 (nessuna perdita), poi B alza il picco. Nessun superamento."""
+    import threading
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    stop = c.rc._hard_stop()
+    reale = stop.evaluate
+    a_dentro, via = threading.Event(), threading.Event()
+
+    def evaluate(cap, cash, **kw):
+        if float(cash) == 100.0 and not via.is_set():
+            a_dentro.set()
+            via.wait(5)
+        return reale(cap, cash, **kw)
+
+    stop.evaluate = evaluate
+    t0 = 1_000_000.0
+    a = threading.Thread(target=c.rc._evaluate_entry_reading_drawdown,
+                         args=({"available": 100.0, "exposure": 0.0, "ok": True}, t0 + 1.0))
+    b = threading.Thread(target=c.rc._evaluate_entry_reading_drawdown,
+                         args=({"available": 130.0, "exposure": 0.0, "ok": True}, t0 + 2.0))
+    a.start()
+    assert a_dentro.wait(5)
+    b.start()
+    b.join(0.3)
+    via.set()
+    a.join(5)
+    b.join(5)
+    assert not stop.breached and stop.snapshot()["peak"] == 130.0
+
+
+def test_restore_follows_the_rebase_epoch_even_after_the_peak_rises_again():
+    """Sol su 6d4ac43f: B carica 100; A ribasa a 85 e poi osserva 90; allo START B rilegge 90 (epoca del ribasamento),
+    non il vecchio 100: a 90 con limite 10 nessun superamento falso."""
+    db = _Db()
+    a = DrawdownHardStop(db)
+    a.observe(100.0)
+    b = DrawdownHardStop(db)
+    b.restore(reconcile=False)
+    assert a.owner_rebase_peak(85.0, authorization="PF-OWNER-X", reason="nuova baseline", operation_id="op-r",
+                               confirm=True)
+    a.observe(90.0)
+    b.restore()
+    assert b.snapshot()["peak"] == 90.0 and b.peak_epoch == 1
+    assert b.reason(10.0, 90.0) == "" and not b.breached
+
+
+def test_same_epoch_keeps_the_highest_peak_across_db_and_marker(tmp_path):
+    """Claude D: dentro la stessa epoca vale il massimo di tutti i record (anche un marker superato con picco piu'
+    alto non abbassa il picco)."""
+    db = _Db()
+    db.db_path = str(tmp_path / "pf.db")
+    with open(db.db_path + ".drawdown_peak_pending.json", "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"peak": "130", "seq": 1}))
+    db.settings[STATE_KEY] = json.dumps({"peak": "100", "seq": 2})
+    stop = DrawdownHardStop(db)
+    stop.restore(reconcile=False)
+    assert stop.snapshot()["peak"] == 130.0
+
+
+def test_failed_rebase_does_not_advance_the_epoch():
+    db = _Db()
+    stop = DrawdownHardStop(db)
+    stop.observe(100.0)
+    db.fail_save = True
+    assert stop.owner_rebase_peak(85.0, authorization="PF-OWNER-X", reason="x", operation_id="op",
+                                  confirm=True) is False
+    assert stop.peak_epoch == 0 and stop.snapshot()["peak"] == 100.0
+
+
+# ----------------------------------------------------------------------------------- Grok su 6d4ac43f (PR-03a)
+def test_non_owner_controller_entry_gates_never_write_and_deny(tmp_path):
+    """Grok su 6d4ac43f: un controller non proprietario (mai avviato) che passa dal gate manuale/Dutching non scrive lo
+    stato dell'hard-stop (ne' via `reason`, ne' via `retry_persist`) e nega l'ingresso."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc.mode = c.rc.mode.__class__.STOPPED
+    prima = _record_del_proprietario(c)
+    assert c.rc.absolute_cap_reason_for_orders([dict(_ORDINE_MANUALE)]) == "drawdown_controller_non_proprietario"
+    assert c.rc._drawdown_hard_stop_reason() == "drawdown_controller_non_proprietario"
+    c.rc._hard_stop().persist_failed = True                # retry_persist scriverebbe: non ritenta, nega
+    assert c.rc.absolute_cap_reason_for_orders([dict(_ORDINE_MANUALE)]) == "drawdown_picco_non_persistito"
+    assert c.rc.db.get_settings()[STATE_KEY] == prima

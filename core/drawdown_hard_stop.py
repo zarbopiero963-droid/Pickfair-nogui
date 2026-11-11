@@ -82,24 +82,14 @@ def _parse_record(raw: Any) -> dict:
     breached = record.get("breached", False)
     session_open = record.get("session_open", False)
     verified = record.get("baseline_verified", True)
+    epoch = record.get("peak_epoch", 0)
     if (peak is not None and (not peak.is_finite() or peak <= 0)) or type(seq) is not int or seq < 0 \
-            or type(breached) is not bool or type(session_open) is not bool or type(verified) is not bool:
+            or type(breached) is not bool or type(session_open) is not bool or type(verified) is not bool \
+            or type(epoch) is not int or epoch < 0:
         raise ValueError("record non valido")
-    return {"peak": peak, "seq": seq, "breached": breached, "breach": dict(record.get("breach") or {}),
+    return {"peak": peak, "seq": seq, "peak_epoch": epoch, "breached": breached, "breach": dict(record.get("breach") or {}),
             "session_open": session_open, "baseline_verified": verified,
             "baseline": dict(record.get("baseline") or {})}
-
-
-def _rebased_to(record: dict) -> Optional[Decimal]:
-    """Picco di arrivo dell'ultimo ribasamento owner registrato nel record; None se assente o illeggibile."""
-    rebased = record.get("breach", {}).get("rebased") if isinstance(record.get("breach"), dict) else None
-    if not isinstance(rebased, dict):
-        return None
-    try:
-        value = Decimal(str(rebased.get("to")))
-    except (ArithmeticError, ValueError):
-        return None
-    return value if value.is_finite() else None
 
 
 def _now() -> str:
@@ -132,6 +122,7 @@ class DrawdownHardStop:
         self._lock = threading.RLock()
         self._db = db
         self.peak: Optional[Decimal] = None
+        self.peak_epoch = 0                              # +1 a ogni ribasamento owner del picco (Sol su 6d4ac43f)
         self.seq = 0
         self.unreadable = False
         self.persist_failed = False
@@ -179,13 +170,21 @@ class DrawdownHardStop:
             stale = [r for r in records if r["seq"] < latest]
             records = [r for r in records if r["seq"] == latest]
             # Picco: mai sotto un picco gia' osservato in questo processo (START ripetuto nello stesso processo; un
-            # record piu' basso senza prova e' trattato come non autorevole). Unica eccezione (Codex su 4a171465): il
-            # record piu' recente della memoria porta un ribasamento owner esplicito proprio a quel picco
-            # (`owner_rebase_peak`, tracciato): vale, anche verso il basso.
-            peaks = [r["peak"] for r in records if r["peak"] is not None]
-            rebased = newer and any(_rebased_to(r) is not None and _rebased_to(r) == r["peak"] for r in records)
-            if peaks and (rebased or self.peak is None or max(peaks) > self.peak):
-                self.peak = max(peaks)
+            # record piu' basso senza prova e' trattato come non autorevole). Unica eccezione (Codex su 4a171465): un
+            # ribasamento owner esplicito (`owner_rebase_peak`, tracciato) apre un'epoca nuova, che vale anche verso
+            # il basso.
+            # Sol su 6d4ac43f: il ribasamento si riconosce dall'epoca del picco (`peak_epoch`, +1 a ogni
+            # `owner_rebase_peak`), non dal valore: vale anche se dopo il ribasamento il picco e' risalito (85 -> 90).
+            # Conta solo l'epoca piu' recente fra memoria e record (DB e marker): dentro quella, il massimo di tutti
+            # (Claude D: un marker con picco piu' alto della stessa epoca non si perde); le epoche precedenti al
+            # ribasamento non contano piu'.
+            epoch = max([self.peak_epoch] + [r["peak_epoch"] for r in records + stale])
+            candidates = [r["peak"] for r in records + stale if r["peak_epoch"] == epoch and r["peak"] is not None]
+            if self.peak is not None and self.peak_epoch == epoch:
+                candidates.append(self.peak)
+            if candidates:
+                self.peak = max(candidates)
+            self.peak_epoch = epoch
             self.baseline = dict(records[0]["baseline"])
             # RO-DD-09 C: sessione rimasta aperta (crash, stop non pulito, picco mai salvato) o baseline gia' non
             # verificata => il picco salvato potrebbe non essere il massimo: nessuna presunzione, conferma owner.
@@ -229,7 +228,8 @@ class DrawdownHardStop:
         che stringono (picco che sale, superamento, sessione aperta)."""
         saver = getattr(self._db, "save_settings", None)
         seq = self.seq + 1
-        record = {"peak": None if self.peak is None else str(self.peak), "seq": seq, "breached": self.breached,
+        record = {"peak": None if self.peak is None else str(self.peak), "seq": seq, "peak_epoch": self.peak_epoch,
+                  "breached": self.breached,
                   "breach": dict(self.breach), "session_open": self.session_open,
                   "baseline_verified": self.baseline_verified, "baseline": dict(self.baseline), "updated_at": _now()}
         payload = json.dumps(record)
@@ -421,14 +421,15 @@ class DrawdownHardStop:
         with self._lock:
             if self.unreadable:
                 return False
-            old_peak, old_breach = self.peak, dict(self.breach)
+            old_peak, old_breach, old_epoch = self.peak, dict(self.breach), self.peak_epoch
             self.peak = peak
+            self.peak_epoch = old_epoch + 1
             self.breach = dict(self.breach, rebased={"at": _now(), "authorization": ref, "reason": why,
                                                      "operation_id": op,
                                                      "from": None if old_peak is None else str(old_peak),
                                                      "to": str(peak)})
             if not self._persist_locked(marker_fallback=False):
-                self.peak, self.breach = old_peak, old_breach
+                self.peak, self.breach, self.peak_epoch = old_peak, old_breach, old_epoch
                 return False
             logger.warning("D-1: picco dell'hard-stop ribasato dall'owner %s -> %s (op %s)", old_peak, peak, op)
             return True

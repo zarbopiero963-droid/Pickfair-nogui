@@ -9946,7 +9946,7 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        if stopped and not getattr(self, \"_drawdown_start_owned\", False):\n            return False\n",
+      "original": "        if stopped and not getattr(self, \"_drawdown_start_owned\", False):\n            return \"drawdown_controller_non_proprietario\"\n",
       "mutated": "        pass\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
@@ -9982,8 +9982,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "            if last is not None and started < last:\n                return\n            self._drawdown_read_at = started\n",
-      "mutated": "            self._drawdown_read_at = started\n",
+      "original": "                if last is not None and started < last:\n                    return\n                self._drawdown_read_at = started\n",
+      "mutated": "                self._drawdown_read_at = started\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10006,12 +10006,60 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "            if peaks and (rebased or self.peak is None or max(peaks) > self.peak):\n",
-      "mutated": "            if peaks and (self.peak is None or max(peaks) > self.peak):\n",
+      "original": "            epoch = max([self.peak_epoch] + [r[\"peak_epoch\"] for r in records + stale])\n",
+      "mutated": "            epoch = self.peak_epoch\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "Codex su 4a171465: un controller costruito prima ignorerebbe il ribasamento owner del picco e valuterebbe un superamento falso sulla vecchia baseline."
+      "rationale": "Codex su 4a171465 / Sol su 6d4ac43f: un controller costruito prima ignorerebbe il ribasamento owner del picco (anche se poi risalito) e valuterebbe un superamento falso sulla vecchia baseline."
+    },
+    {
+      "id": "d1_drawdown_eval_not_serialized",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n",
+      "mutated": "        with contextlib.nullcontext():\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 6d4ac43f: una lettura d'ingresso vecchia supererebbe il controllo dell'istante, verrebbe sorpassata da una piu' nuova e registrerebbe una perdita falsa."
+    },
+    {
+      "id": "d1_failed_rebase_advances_epoch",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                self.peak, self.breach, self.peak_epoch = old_peak, old_breach, old_epoch\n",
+      "mutated": "                self.peak, self.breach = old_peak, old_breach\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Un ribasamento non salvato avanzerebbe l'epoca in memoria: i record della baseline vera verrebbero scartati come vecchi."
+    },
+    {
+      "id": "d1_entry_gate_writes_from_non_owner",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            return write_block                              # Grok su 6d4ac43f: reason() salverebbe il picco\n",
+      "mutated": "            pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Grok su 6d4ac43f: il gate manuale/Dutching di un controller non proprietario salverebbe il picco e sovrascriverebbe il record del proprietario."
+    },
+    {
+      "id": "d1_non_owner_retries_persist",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if RuntimeController._drawdown_write_block(self):\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Grok su 6d4ac43f: un controller non proprietario ritenterebbe il salvataggio del picco sul record del proprietario."
     }
   ]
 }
