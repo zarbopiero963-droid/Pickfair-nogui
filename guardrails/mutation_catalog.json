@@ -10204,6 +10204,42 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "Sol su 96b03d7e: lo STOP di un'istanza che ha perso l'autorita' scriverebbe la chiusura della sessione sul record del nuovo proprietario."
+    },
+    {
+      "id": "d1_stale_marker_removed_without_persist",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                if self.peak is not None and (not durable or self.peak > max(durable)):",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Marker superato con picco piu' alto rimosso senza salvare il picco nel DB: un crash lo perde."
+    },
+    {
+      "id": "d1_stale_marker_always_rewrites_db",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                if self.peak is not None and (not durable or self.peak > max(durable)):",
+      "mutated": "                if True:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Marker superato senza nulla in piu': il record del DB viene riscritto comunque."
+    },
+    {
+      "id": "d1_fenced_writer_writes_marker",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if isinstance(exc, RuntimeFenceViolation):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Istanza superata (scrittura rifiutata dal fencing) pubblica il proprio stato nel marker."
     }
   ]
 }

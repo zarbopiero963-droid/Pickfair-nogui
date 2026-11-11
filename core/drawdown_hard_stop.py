@@ -45,6 +45,7 @@ from typing import Any, Optional
 
 from core import validators
 from core.atomic_io import atomic_write_text
+from database import RuntimeFenceViolation
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +231,14 @@ class DrawdownHardStop:
             if any(r.get("from_marker") for r in records):
                 self._persist_locked()                   # RO-DD-09: il picco del marker torna nel DB
             elif any(r.get("from_marker") for r in stale):
-                self._remove_stale_marker()
+                # Sol su e98e84c7: un marker superato puo' portare un picco piu' alto della stessa epoca. Quel picco
+                # va salvato nel DB PRIMA di rimuovere il marker (il salvataggio riuscito lo rimuove; quello fallito
+                # lo riscrive): un crash prima del salvataggio successivo non lo perde.
+                durable = [r["peak"] for r in records if r["peak_epoch"] == epoch and r["peak"] is not None]
+                if self.peak is not None and (not durable or self.peak > max(durable)):
+                    self._persist_locked()
+                else:
+                    self._remove_stale_marker()
 
     def _persist_locked(self, *, marker_fallback: bool = True) -> bool:
         """Salva lo stato nel DB. ``marker_fallback`` False (Sol su 92155c24) per le transizioni che ALLENTANO un
@@ -251,9 +259,14 @@ class DrawdownHardStop:
             if not callable(saver):
                 raise RuntimeError("DB senza save_settings")
             saver({STATE_KEY: payload})
-        except Exception:
+        except Exception as exc:
             logger.exception("D-1: picco dell'hard-stop non salvato nel DB: nuovi ingressi negati finche' non si salva")
             self.persist_failed = True
+            if isinstance(exc, RuntimeFenceViolation):
+                # Sol su e98e84c7: scrittura rifiutata dal fencing = questa istanza non e' piu' il proprietario
+                # (subentro fra la verifica dell'autorita' e il salvataggio). Un'istanza superata non pubblica
+                # nulla, nemmeno il marker, che il nuovo proprietario leggerebbe come stato dell'hard-stop.
+                return False
             # RO-DD-09 (Claude D): marker su file separato, cosi' un riavvio non riparte da un picco vecchio anche se
             # il DB non torna. Marker non scrivibile => KNOWN_LIMITATION (doppio guasto), come per la perdita del giorno.
             try:

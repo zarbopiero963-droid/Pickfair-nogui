@@ -1852,3 +1852,98 @@ def test_stale_instance_stop_never_writes_the_session_closure(tmp_path):
     c.rc._close_drawdown_session()
     assert c.rc.db.get_settings()[STATE_KEY] == prima
     assert json.loads(prima)["session_open"] is True
+
+
+# ----------------------------------------------------------------------------------- Sol su e98e84c7 (PR-03a)
+def test_stale_marker_with_a_higher_peak_reaches_the_db_before_being_removed(tmp_path):
+    """Sol su e98e84c7: marker con `seq` inferiore al DB ma picco piu' alto nella stessa epoca. Il picco recuperato
+    va salvato nel DB PRIMA di rimuovere il marker: altrimenti un crash prima del salvataggio successivo lo perde e il
+    riavvio misura il drawdown da un picco piu' basso."""
+    db, stop = _stop_con_marker(tmp_path)
+    stop.observe(100.0)
+    db.fail_save = True
+    stop.observe(120.0)                                      # picco 120 solo nel marker (seq 2)
+    db.fail_save = False
+    marker = db.db_path + ".drawdown_peak_pending.json"
+    assert json.loads(open(marker).read())["peak"] == "120.0"
+    # un record del DB piu' recente (seq piu' alto) con il picco vecchio, stessa epoca
+    record = json.loads(db.settings[STATE_KEY])
+    record.update(seq=json.loads(open(marker).read())["seq"] + 3)
+    assert record["peak"] == "100.0"
+    db.settings[STATE_KEY] = json.dumps(record)
+
+    avvio = DrawdownHardStop(db)
+    avvio.restore()                                          # riconciliazione dello START
+    assert avvio.snapshot()["peak"] == 120.0
+    # crash subito dopo: nessun altro salvataggio. Il riavvio deve ritrovare 120.
+    assert json.loads(db.settings[STATE_KEY])["peak"] == "120.0"
+    assert not os.path.exists(marker)
+    riavviato = DrawdownHardStop(db)
+    riavviato.restore()
+    assert riavviato.snapshot()["peak"] == 120.0
+    assert riavviato.reason(15.0, 104.0) == REASON_ACTIVE     # 120 - 104 = 16 >= 15; da 100 non scatterebbe
+
+
+def test_stale_marker_with_a_higher_peak_survives_when_the_db_cannot_save(tmp_path):
+    """Stesso stato, ma il DB non salva durante la riconciliazione: il marker non viene rimosso senza un salvataggio."""
+    db, stop = _stop_con_marker(tmp_path)
+    stop.observe(100.0)
+    db.fail_save = True
+    stop.observe(120.0)
+    marker = db.db_path + ".drawdown_peak_pending.json"
+    record = json.loads(db.settings[STATE_KEY])
+    record.update(seq=json.loads(open(marker).read())["seq"] + 3)
+    db.settings[STATE_KEY] = json.dumps(record)
+
+    avvio = DrawdownHardStop(db)
+    avvio.restore()                                          # DB ancora guasto
+    assert os.path.exists(marker) and json.loads(open(marker).read())["peak"] == "120.0"
+    db.fail_save = False
+    riavviato = DrawdownHardStop(db)
+    riavviato.restore()
+    assert riavviato.snapshot()["peak"] == 120.0
+
+
+def test_stale_marker_without_a_higher_peak_is_only_removed(tmp_path):
+    """Il marker superato che non porta nulla in piu' si rimuove soltanto: nessuna riscrittura del record del DB."""
+    db, stop = _stop_con_marker(tmp_path)
+    stop.observe(100.0)
+    db.fail_save = True
+    stop.observe(120.0)
+    db.fail_save = False
+    marker = db.db_path + ".drawdown_peak_pending.json"
+    record = json.loads(open(marker).read())
+    record.update(seq=record["seq"] + 3, peak="130.0")       # il DB ha gia' un picco piu' alto e un seq piu' alto
+    db.settings[STATE_KEY] = json.dumps(record)
+    prima = db.settings[STATE_KEY]
+
+    avvio = DrawdownHardStop(db)
+    avvio.restore()
+    assert avvio.snapshot()["peak"] == 130.0
+    assert db.settings[STATE_KEY] == prima and not os.path.exists(marker)
+
+
+def test_a_fenced_writer_never_publishes_its_state_to_the_marker(tmp_path):
+    """Sol su e98e84c7: una valutazione iniziata prima della perdita d'autorita' arriva al salvataggio dopo il
+    subentro. Il DB la rifiuta (fencing): l'istanza superata NON deve scrivere nemmeno il marker, che il nuovo
+    proprietario leggerebbe come stato dell'hard-stop. Un guasto ordinario del DB continua a usare il marker."""
+    from database import RuntimeFenceViolation
+
+    db, stop = _stop_con_marker(tmp_path)
+    stop.observe(100.0)
+    prima = db.settings[STATE_KEY]
+    marker = db.db_path + ".drawdown_peak_pending.json"
+
+    def fenced(values):
+        raise RuntimeFenceViolation("lease_superseded")
+
+    db.save_settings = fenced
+    stop.observe(120.0)                                      # picco dell'istanza superata
+    assert stop.evaluate(10.0, 80.0)                         # e un suo superamento
+    assert not os.path.exists(marker)
+    assert db.settings[STATE_KEY] == prima
+    assert stop.persist_failed and stop.reason(10.0, 120.0) == REASON_ACTIVE   # l'istanza superata resta negata
+    del db.save_settings
+    nuovo = DrawdownHardStop(db)                              # il nuovo proprietario non eredita nulla dal superato
+    nuovo.restore()
+    assert nuovo.snapshot()["peak"] == 100.0 and not nuovo.breached

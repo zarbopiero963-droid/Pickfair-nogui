@@ -487,7 +487,12 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   `seq` vale l'unione. Il marker e' il ripiego dei soli stati che stringono (picco che sale, superamento, sessione
   aperta): sblocco owner, conferma della baseline, ribasamento del picco e chiusura della sessione richiedono il DB, e
   se il DB non salva non scrivono neanche il marker (Sol su 92155c24: altrimenti l'operazione fallita varrebbe al
-  riavvio come record piu' recente). Marker illeggibile => stato illeggibile (fail-closed).
+  riavvio come record piu' recente). Marker illeggibile => stato illeggibile (fail-closed). Un marker superato (`seq`
+  inferiore al DB) che porta un picco piu' alto della stessa epoca viene prima salvato nel DB e solo dopo rimosso: un
+  crash fra le due cose non perde il picco; se non porta nulla in piu' si rimuove soltanto. Una scrittura rifiutata
+  dal fencing del runtime (`RuntimeFenceViolation`: l'istanza non e' piu' il proprietario) **non** usa il marker:
+  un'istanza superata non pubblica nulla che il nuovo proprietario leggerebbe come stato dell'hard-stop, e resta
+  negata (Sol su e98e84c7).
 - **Baseline dopo un riavvio non pulito (RO-DD-09 C, decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109).**
   Lo START del trading registra su disco una sessione aperta; solo uno STOP pulito con il picco durevole la chiude,
   e la chiude PRIMA di rilasciare il lock di istanza (Sol su dc2f5f25): dopo il rilascio un nuovo processo puo' aver
