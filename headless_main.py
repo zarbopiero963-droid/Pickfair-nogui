@@ -1483,7 +1483,10 @@ class HeadlessApp:
         logger.warning("EMERGENCY STOP richiesto via --emergency-stop")
         result, error = None, None
         try:
-            result = self.runtime.emergency_stop(reason="operator_cli_flag")
+            # BB-1G: D3 (#617) resta valida. Il cancel-all parte PRIMA del registro: dentro `emergency_exit` il Gate B
+            # lascia passare le sole cancellazioni anche senza scatola nera (ogni altro invio resta rifiutato).
+            with blackbox_runtime.emergency_exit():
+                result = self.runtime.emergency_stop(reason="operator_cli_flag")
             logger.warning("EMERGENCY_STOP result: %s", result)
         except Exception as exc:
             error = exc

@@ -199,6 +199,8 @@ _ERROR_MAP: Dict[str, ErrorClass] = {
     "INVALID_PRICE": ErrorClass.PERMANENT,
     "INVALID_SIZE": ErrorClass.PERMANENT,
     "INVALID_SIDE": ErrorClass.PERMANENT,
+    # BB-1G Gate B: scatola nera non disponibile, rifiuto PRIMA dell'invio (mai partito, mai AMBIGUOUS)
+    "BLACKBOX_UNAVAILABLE": ErrorClass.PERMANENT,
     # ambiguous
     "UNKNOWN": ErrorClass.AMBIGUOUS,
     "PROCESSED_WITH_ERRORS": ErrorClass.AMBIGUOUS,
