@@ -3602,6 +3602,18 @@
         "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
       "max_files": 35
+    },
+    "d_pr_t3_regression_tests": {
+      "description": "PR-T3 (mandato owner PF-OWNER-CLAUDE-D-PARALLEL-TESTS-20261111, Claude D): test di regressione delle 37 righe PR-T3 del registro (GATEA-1062 v5.1) e mappa ID->test. Solo test; nessun codice di produzione.",
+      "files": [
+        "tests/regression_t3/PR_T3_MAP.json",
+        "tests/regression_t3/test_t3_credentials.py",
+        "tests/regression_t3/test_t3_daily_loss.py",
+        "tests/regression_t3/test_t3_odds_validation.py",
+        "tests/regression_t3/test_t3_sim_matching.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }

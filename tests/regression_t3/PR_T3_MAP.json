@@ -1,0 +1,341 @@
+{
+ "schema": "pf-pr-t3-map/1",
+ "base": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
+ "source": "GATEA-1062-CLASSIFICAZIONE-v5.1.csv, gruppo PR-T3",
+ "note_env": "tests/acceptance/test_issue437_pr02.py::test_block_firma_non_ispezionabile_conserva_il_customer_ref fallisce su main con Python 3.13.18 locale (CI usa 3.11): da triagiare, probabile ENVIRONMENT_ONLY",
+ "rows": [
+  {
+   "req": "PF-B1-R2-MATCH-CONSUME-PRICE",
+   "status": "CODE_DEFECT_OR_MISSING",
+   "test": "tests/regression_t3/test_t3_sim_matching.py::test_pf_b1_r2_match_consume_price_level_consumed_with_slippage[BACK|LAY] (xfail strict)",
+   "mutation": "fix temporaneo in core/simulation_matching_engine.py: fill con 'book_price': level_price e consume_liquidity(matched_price=fill['book_price']) in submit_order e reprocess_open_orders",
+   "red": "con il fix: 2 failed (XPASS strict) => il test rileva il comportamento",
+   "green": "main ripristinato con git checkout: 2 xfailed",
+   "note": "Difetto: core/simulation_matching_engine.py:152 aggiunge al fill il prezzo aggiustato da _apply_pessimistic_slippage; submit_order (:272) e reprocess_open_orders (:342) passano fill['price'] a SimulationOrderBook.consume_liquidity, che richiede uguaglianza esatta (core/simulation_order_book.py:216 `if level_price != matched_price: continue`). Con slippage_ticks=1 (default) BACK 10 @ 2.0 su livello 2.0/100 lascia il livello a 100 (atteso 90). Il modulo non ha chiamanti di produzione (solo test); SimulationBroker usa un percorso proprio e non e' affetto."
+  },
+  {
+   "req": "PF-C01-01",
+   "status": "PROCESS_OR_DOC",
+   "test": "",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Riconciliazione scheda con #462 gia' mergiata / non aprire seconda PR Codacy: istruzione di processo, nessun comportamento di codice."
+  },
+  {
+   "req": "PF-C01-02",
+   "status": "ALREADY_COVERED",
+   "test": "tests/scripts/test_codacy_decommissioned.py::test_codacy_check_is_never_a_blocker_in_the_workflow_path; ::test_codacy_check_never_blocks_nor_hangs_readiness; ::test_only_the_exact_retired_codacy_check_is_exempt; ::test_merge_readiness_workflow_has_no_codacy_and_stays_fail_closed",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Path workflow->pr_merge_readiness->split_checks: check dismesso non blocca, check reale resta bloccante. Eseguiti: PASS."
+  },
+  {
+   "req": "PF-C01-03",
+   "status": "PROCESS_OR_DOC",
+   "test": "",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Rieseguire test e collegare run/SHA = evidenza di processo. Il comportamento e' gia' pinnato da tests/scripts/test_codacy_decommissioned.py::test_auto_merge_is_reachable_without_any_codacy_evidence (nessuna fixture Codacy SUCCESS)."
+  },
+  {
+   "req": "PF-C02-01",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr02.py::test_block_il_percorso_live_chiama_il_client_con_la_sua_firma; ::test_block_il_customer_ref_arriva_al_client_dal_percorso_engine; ::test_block_nessun_kwarg_fuori_contratto_raggiunge_il_client",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "TradingEngine->client con firma reale, invii=1. PASS."
+  },
+  {
+   "req": "PF-C02-02",
+   "status": "ALREADY_COVERED",
+   "test": "tests/f13/test_f13_customer_order_ref.py::test_customer_order_ref_reaches_the_betfair_wire; tests/unit/test_place_bet_customer_ref.py::test_valid_customer_ref_sent_as_customerRef; tests/failure/test_betfair_place_orders_single_shot.py::test_place_orders_timeout_is_never_resent",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "customerRef top-level e customerOrderRef nell'istruzione, placeOrders single_shot. PASS. Osservazione: tests/acceptance/test_issue437_pr02.py::test_block_firma_non_ispezionabile_conserva_il_customer_ref FALLISCE su main in questo ambiente (Python 3.13.18: 'chiave de-dup persa: []'); non nel perimetro di questa riga, da triagiare a parte."
+  },
+  {
+   "req": "PF-C02-03",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr02.py::test_block_typeerror_dopo_invio_client_reale_ciclo_ambiguo_completo; ::test_block_typeerror_dopo_invio_e_ambiguo_non_fallimento; ::test_ref_assente_o_non_valido_non_blocca_il_piazzamento; ::test_duplicate_transaction_resta_order_unknown_non_failed",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Contatore trasporto esattamente 1, AMBIGUOUS + riconciliazione, ref assente/non valido, DUPLICATE_TRANSACTION. PASS."
+  },
+  {
+   "req": "PF-C02-04",
+   "status": "PROCESS_OR_DOC",
+   "test": "",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Aggiornamento documentazione del registry; nessun comportamento di codice."
+  },
+  {
+   "req": "PF-C03-01",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr03.py::test_catena_sim_dal_book_chiuso_al_ciclo",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Settlement dal poller SIM reale fino a PositionLedger, netto, saldo, ciclo Roserpina con oracolo a mano. PASS."
+  },
+  {
+   "req": "PF-C03-02",
+   "status": "ALREADY_COVERED",
+   "test": "tests/integration/test_simulation_broker_commission_semantics.py::test_simulation_same_market_multi_leg_commission_is_market_net_positive_once; ::test_settlement_sim_book_chiuso_duplicato_non_riapplica; tests/acceptance/test_issue437_pr03.py::test_seconda_consegna_dello_stesso_settlement_senza_effetti",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Commissione sul netto di mercato aggregato, chiusura processata una volta. PASS."
+  },
+  {
+   "req": "PF-C03-03",
+   "status": "ALREADY_COVERED",
+   "test": "tests/integration/test_simulation_broker_commission_semantics.py::test_settlement_sim_piu_selezioni_vinte_e_perse_netto_di_mercato; tests/acceptance/test_issue437_pr03.py::test_replay_e_duplicati_non_cambiano_saldo_netto_ciclo; ::test_restart_fra_persistenza_e_aggiornamento_ciclo",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Piu' selezioni, duplicato, restart fra persistenza e ciclo. PASS."
+  },
+  {
+   "req": "PF-C04-01",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr04.py::test_gui_e_headless_costruiscono_la_stessa_catena",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "GUI reale in test_mode (nessun display richiesto in questo ambiente). PASS."
+  },
+  {
+   "req": "PF-C04-02",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr04.py::test_cashout_dalla_chat_nella_gui_chiude_come_headless; ::test_cashout_singolo_dalla_gui_chiude_solo_la_sua_partita",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "PASS."
+  },
+  {
+   "req": "PF-C04-03",
+   "status": "PROCESS_OR_DOC",
+   "test": "",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "DEC-426-P26: vincolo di design 'non aggiungere un pulsante manuale'; nessun comportamento da testare."
+  },
+  {
+   "req": "PF-C04-04",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr04.py::test_runtime_fermo_nessun_invio_e_rifiuto_visibile; ::test_emergency_stop_nessun_invio; ::test_doppio_comando_un_solo_hedge; ::test_doppia_richiesta_di_chiusura_un_solo_cmd; ::test_errore_del_bridge_visibile_nel_log_senza_success",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "PASS."
+  },
+  {
+   "req": "PF-C26-01",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr26.py::test_f8_ordine_sim_accettato_non_abbinato_e_success_executable; ::test_f10_argomenti_invalidi_rifiutati_prima_di_registrare; ::test_f14_rifiuto_certo_pre_invio_e_failed_non_ambiguous; ::test_f15_cashout_non_finito_rifiutato",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "F8/F10 (testo riga troncato oltre F10; F14/F15 coperti dallo stesso file). PASS."
+  },
+  {
+   "req": "PF-C26-02",
+   "status": "ALREADY_COVERED",
+   "test": "tests/unit/test_betfair_client_quota_non_finita.py::test_block_quota_non_finita_nessun_invio; tests/unit/test_betfair_client_lato.py::test_block_lato_invalido_o_mancante_nessun_invio; tests/unit/test_betfair_client_lato.py::test_l_elenco_pre_invio_dell_engine_coincide_con_quello_del_client",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "F11 (#488) e P13 conservati nel client, nessuna patch duplicata. PASS."
+  },
+  {
+   "req": "PF-C26-03",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr26.py::test_f10_argomenti_invalidi_rifiutati_prima_di_registrare; ::test_block_risposta_persa_dopo_invio_resta_ambiguo_e_consumato; ::test_om_busta_betfair_client_timeout_e_ambiguous_non_failed; ::test_om_busta_betfair_client_ok_letta_come_piazzato",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Zero POST per invalidi, post-invio ignoto AMBIGUOUS, parita' consumer reali. PASS."
+  },
+  {
+   "req": "PF-C26-04",
+   "status": "PROCESS_OR_DOC",
+   "test": "",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "'Fonti/sonde nel registro': documentazione di registro."
+  },
+  {
+   "req": "PF-C27-01",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr27.py::test_block_engine_invalido_zero_trasporto_zero_effetti; ::test_block_runtime_segnale_invalido_rifiutato_senza_effetti; ::test_block_cap_max_open_exposure_illeggibile_e_fail_closed; ::test_block_esposizione_non_finita_nel_money_management; tests/acceptance/test_issue437_pr28d.py::test_invalid_configured_absolute_cap_fails_closed",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "PASS."
+  },
+  {
+   "req": "PF-C27-02",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr28d.py::test_bool_and_non_finite_money_never_become_numbers; tests/acceptance/test_issue437_pr27.py::test_pass_engine_valori_validi_in_forma_testuale_restano_ammessi; ::test_pass_max_stake_abs_valido_limita_esattamente; ::test_block_stake_fisso_del_segnale_invalido_non_diventa_un_ordine",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Rifiuto NaN/Inf/bool senza fallback; clamp autorizzati (#449-451) restano: test pass dei cap. PASS."
+  },
+  {
+   "req": "PF-C27-03",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr27.py (parametrizzazioni engine/API, runtime segnale Telegram/GUI, config illeggibile, OrderManager): ::test_block_engine_invalido_zero_trasporto_zero_effetti; ::test_block_runtime_segnale_invalido_rifiutato_senza_effetti; ::test_block_config_illeggibile_dal_loader_disattivava_il_cap; ::test_block_order_manager_bool_e_id_non_interi_prima_del_client",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Motivo esplicito + zero trasporto/riserva. Widget GUI reali non esercitati direttamente (ingresso GUI = stesso segnale runtime). PASS."
+  },
+  {
+   "req": "PF-C28-01",
+   "status": "PASS",
+   "test": "tests/regression_t3/test_t3_daily_loss.py::test_pf_c28_01_new_session_does_not_reset_daily_loss",
+   "mutation": "core/runtime_controller.py reload_config(reset_session=True): aggiunto `self._daily_loss_monitor_state = {}` (reset della perdita del giorno a start()/nuova sessione)",
+   "red": "1 failed (assert 0.0 == 8.0)",
+   "green": "1 passed dopo git checkout -- core/runtime_controller.py",
+   "note": "Restart gia' coperto da tests/acceptance/test_issue437_pr28b.py::test_block_f4_perdita_del_giorno_sopravvive_al_riavvio; nuovo test copre 'nessun reset cambiando sessione' (start() nello stesso processo). Oracolo: 8.0 dopo start, 11.0 > 10.0 => breached + emergency stop."
+  },
+  {
+   "req": "PF-C28-02",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue437_pr28b.py::test_block_f4_crash_tra_salvataggio_e_rimozione_marker; ::test_block_f4_stato_persistito_illeggibile_fail_closed; ::test_block_f4_salvataggio_fallito_poi_riavvio_ricostruisce_la_perdita",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Crash drill/persistenza coperti; il coordinamento con PR34 e' processo. PASS."
+  },
+  {
+   "req": "PF-C28-03",
+   "status": "PROCESS_OR_DOC",
+   "test": "",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Residuo DB esplicito / nessun PASS anticipato: regola di tracciamento, non comportamento di codice."
+  },
+  {
+   "req": "PF-C29-01",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py::test_success_da_doppione_non_rilascia_tavolo_ne_chiave_dell_originale; ::test_success_di_completamento_marca_a_mercato_e_non_rilascia; ::test_failed_certo_rilascia_ancora_la_propria_riserva",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "PASS."
+  },
+  {
+   "req": "PF-C29-02",
+   "status": "PROCESS_OR_DOC",
+   "test": "",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Nota di ownership (PR23 possiede memoria perdite Roserpina)."
+  },
+  {
+   "req": "PF-C29-03",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py::test_gambe_a_mercato_non_abbinate_mantengono_l_intera_riserva; ::test_gambe_abbinate_mantengono_la_riserva_fino_al_settlement; ::test_riavvio_non_rilascia_due_volte_un_lotto_gia_chiuso; tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py::test_t08_replay_dopo_il_riavvio_non_raddoppia; tests/acceptance/test_issue437_pr28d.py::test_filled_position_stays_in_market_and_event_cap_until_settlement",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "PASS."
+  },
+  {
+   "req": "PF-I04B-01",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue453_f6_lati_book.py::test_sim_abbina_come_betfair; ::test_motore_di_matching_come_betfair; ::test_sim_consuma_la_liquidita_del_lato_abbinato; ::test_router_chiude_al_prezzo_eseguibile",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Mapping lato ordine -> lato book definito (F6/P25, #383) con oracolo Betfair indipendente. PASS."
+  },
+  {
+   "req": "PF-I04B-02",
+   "status": "NEEDS_OWNER_DECISION",
+   "test": "",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "L'oracolo della riga (BACK aggressivo consuma 'lato LAY 2.00/50', LAY aggressivo 'lato BACK 1.90/100') contraddice la semantica Betfair adottata dall'owner (F6/DEC-426 P25, #383) e implementata: BACK si abbina su availableToBack (1.90/100), LAY su availableToLay (2.00/50). Se 'best BACK' = availableToBack l'oracolo e' invertito; se indica gli ordini a riposo il book sarebbe incrociato. Esito atteso non determinabile senza decisione owner; nessun test scritto."
+  },
+  {
+   "req": "PF-I04B-03",
+   "status": "PASS",
+   "test": "tests/regression_t3/test_t3_sim_matching.py::test_pf_i04b_03_empty_own_side_never_matches_opposite_side[BACK-availableToLay|LAY-availableToBack]",
+   "mutation": "simulation_broker.py:2109 `livelli = backs if order.side == \"BACK\" else lays` -> `lays if ... else backs`",
+   "red": "2 failed",
+   "green": "2 passed dopo git checkout -- simulation_broker.py",
+   "note": "Coperto qui T-04B-03 (lato eseguibile vuoto, nessun abbinamento sul lato opposto). T-04B-04 parziale: tests/acceptance/test_issue453_f6_lati_book.py::test_sim_abbinamento_parziale_sul_lato_giusto; T-04B-05 sospensione: tests/unit/test_pfc005_sim_fill_transitions.py::test_nessun_abbinamento_differito_su_mercato_sospeso_o_runner_non_attivo. T-04B-01/02 dipendono da PF-I04B-02 (NEEDS_OWNER_DECISION); T-04B-06 parita' GUI/headless/MCP e 'stale' non coperti qui."
+  },
+  {
+   "req": "PF-I04Q-01",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue461_pr04_quater.py::test_live_rejects_legacy_delayed_before_client_then_recovers; ::test_registry_requires_live_key_without_requiring_delayed; ::test_live_key_redacted_from_client_exception_and_diagnostics; tests/unit/test_issue490_review_proofs.py::test_certificate_diagnostic_survives_credential_overlap",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "Delayed/Live distinte, certificato/chiave, redazione segreti. PASS."
+  },
+  {
+   "req": "PF-I04Q-02",
+   "status": "PASS",
+   "test": "tests/regression_t3/test_t3_credentials.py::test_pf_i04q_02_incomplete_credential_explicit_error_zero_authentications[username|password] (+ controllo ::test_pf_i04q_02_complete_credentials_control_authenticates_once)",
+   "mutation": "services/betfair_service.py _connect_live: rimosso `not cfg.username or` e reso `if not password:` -> `if False:`",
+   "red": "2 failed (client costruito e login POST eseguito)",
+   "green": "3 passed dopo git checkout -- services/betfair_service.py",
+   "note": "File inesistente/inaccessibile e cambio modalita' gia' coperti: tests/acceptance/test_issue461_pr04_quater.py::test_invalid_files_block_without_partial_save_then_recover, ::test_live_rejects_legacy_delayed_before_client_then_recovers. Nuovo: credenziale incompleta (username/password vuoti) -> errore esplicito, zero client, zero POST."
+  },
+  {
+   "req": "PF-I04Q-03",
+   "status": "ALREADY_COVERED",
+   "test": "tests/acceptance/test_issue461_pr04_quater.py::test_gui_save_reopen_file_pickers_and_live_boundary (T-04Q-01); ::test_invalid_files_block_without_partial_save_then_recover + tests/unit/test_issue490_review_proofs.py::test_certificate_diagnostic_survives_credential_overlap[permissions] (T-04Q-02); ::test_live_rejects_legacy_delayed_before_client_then_recovers (T-04Q-03)",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "T-04Q-01 (widget Tk reali) e' SKIPPED in questo container: BLOCKED_ENV, nessun display X11; il resto PASS."
+  },
+  {
+   "req": "PF-I04T-01",
+   "status": "PASS",
+   "test": "tests/regression_t3/test_t3_odds_validation.py::test_pf_i04t_01_lay_liability_never_computed_on_invalid_odds; ::test_pf_i04t_01_client_rejects_invalid_odds_with_zero_transport",
+   "mutation": "(a) core/validators.py finite_number: `return f if math.isfinite(f) else None` -> `return f`; (b) betfair_client.py place_bet: rimosso `not math.isfinite(price_f) or`",
+   "red": "(a) 4 failed nel test liability (nan, inf, 'NaN', 'Infinity'); (b) 4 failed nel test client (stessi valori; POST raggiunto)",
+   "green": "11+11 passed dopo git checkout",
+   "note": "Matrice: NaN, +/-Infinity, None, '', 'abc', True, False. None/bool/testo restano rifiutati anche da controlli successivi (float()/soglia >1.0), per cui la loro rimozione singola non e' osservabile come RED."
+  },
+  {
+   "req": "PF-I04T-02",
+   "status": "PASS",
+   "test": "tests/regression_t3/test_t3_odds_validation.py::test_pf_i04t_02_finite_odds_pass_type_and_finiteness; ::test_pf_i04t_02_non_finite_bool_none_text_odds_rejected",
+   "mutation": "core/validators.py finite_number: `return f if math.isfinite(f) else None` -> `return f`",
+   "red": "4 failed (nan, inf, 'NaN', 'Infinity')",
+   "green": "passed dopo git checkout -- core/validators.py",
+   "note": "1.01 e 2.0 passano tipo/finitezza; le regole di mercato/config per 1.01 non sono definite dalla riga e non sono testate."
+  },
+  {
+   "req": "PF-I04T-03",
+   "status": "NEEDS_OWNER_DECISION",
+   "test": "",
+   "mutation": "",
+   "red": "",
+   "green": "",
+   "note": "T-04T-01 coperto (test PF-I04T-01/02 qui + tests/acceptance/test_issue437_pr27.py); T-04T-04 config corrotta coperto da test_issue437_pr27.py::test_block_config_illeggibile_dal_loader_disattivava_il_cap. T-04T-02 'limiti tick/range': nessun dominio tick/limite superiore definito nel codice (client e validators accettano 1000.0 e non validano il tick; tests/unit/test_betfair_client_quota_non_finita.py::test_pass_quota_valida_arriva_sul_wire pinna 1000.0 ammessa); l'esito atteso per quote fuori tick o >1000 non e' determinato dalla riga troncata. Serve decisione owner."
+  }
+ ]
+}
