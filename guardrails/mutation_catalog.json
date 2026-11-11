@@ -2168,7 +2168,7 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "            if self._teardown_failed_start():\n                self._release_runtime_instance_lock_if_stopped()\n            raise",
+      "original": "            if self._teardown_failed_start():\n                self._end_failed_start_drawdown()\n                self._release_runtime_instance_lock_if_stopped()\n            raise",
       "mutated": "            raise",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
@@ -2228,8 +2228,8 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "            if self._teardown_failed_start():\n                self._release_runtime_instance_lock_if_stopped()",
-      "mutated": "            if True:\n                self._release_runtime_instance_lock_if_stopped()",
+      "original": "            if self._teardown_failed_start():\n                self._end_failed_start_drawdown()\n                self._release_runtime_instance_lock_if_stopped()\n            raise",
+      "mutated": "            if True:\n                self._end_failed_start_drawdown()\n                self._release_runtime_instance_lock_if_stopped()\n            raise",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
@@ -9910,8 +9910,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        if not getattr(self, \"_drawdown_session_owned\", False):\n            return\n",
-      "mutated": "        pass\n",
+      "original": "            if not getattr(self, \"_drawdown_session_owned\", False):\n                return\n",
+      "mutated": "            pass\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -9946,7 +9946,7 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        if stopped and not getattr(self, \"_drawdown_start_owned\", False):\n            return \"drawdown_controller_non_proprietario\"\n",
+      "original": "        if stopped and not owned:\n            return \"drawdown_controller_non_proprietario\"\n",
       "mutated": "        pass\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
@@ -9970,8 +9970,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        pct = stop.loss_pct(self._drawdown_gate_cash())   # Sol su 4a171465: anche la lettura d'ingresso piu' recente\n",
-      "mutated": "        pct = stop.loss_pct(getattr(getattr(self, \"risk_desk\", None), \"cash_equity_current\", None))\n",
+      "original": "            pct = stop.loss_pct(self._drawdown_gate_cash())   # Sol su 4a171465: anche la lettura d'ingresso piu' recente\n",
+      "mutated": "            pct = stop.loss_pct(getattr(getattr(self, \"risk_desk\", None), \"cash_equity_current\", None))\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10018,8 +10018,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        with RuntimeController._drawdown_eval_lock:\n            # Sol su 4a171465",
-      "mutated": "        with contextlib.nullcontext():\n            # Sol su 4a171465",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            # Sol su 2a847087: la proprieta'",
+      "mutated": "        with contextlib.nullcontext():\n            # Sol su 2a847087: la proprieta'",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10042,8 +10042,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "            return write_block                              # Grok su 6d4ac43f: reason() salverebbe il picco\n",
-      "mutated": "            pass\n",
+      "original": "                return write_block                          # Grok su 6d4ac43f: reason() salverebbe il picco\n",
+      "mutated": "                pass\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10054,8 +10054,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        if RuntimeController._drawdown_write_block(self):\n",
-      "mutated": "        if False:\n",
+      "original": "            if RuntimeController._drawdown_write_block(self):\n                # Grok su 6d4ac43f",
+      "mutated": "            if False:\n                # Grok su 6d4ac43f",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10066,8 +10066,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        with RuntimeController._drawdown_eval_lock:\n            cash = self._drawdown_gate_cash()\n",
-      "mutated": "        with contextlib.nullcontext():\n            cash = self._drawdown_gate_cash()\n",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            write_block = RuntimeController._drawdown_write_block(self)\n",
+      "mutated": "        with contextlib.nullcontext():\n            write_block = RuntimeController._drawdown_write_block(self)\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10108,6 +10108,90 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "Codex su b9cbe0d7: la somma in float ritarderebbe l'hard-stop sulla soglia esatta (9.99999999999999 invece di 10)."
+    },
+    {
+      "id": "d1_pct_not_serialized",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:          # Codex su 2a847087: cassa e picco coerenti\n",
+      "mutated": "        with contextlib.nullcontext():\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 2a847087: la misura di DEFENSE/LOCKDOWN confronterebbe una cassa vecchia con un picco alzato in parallelo: LOCKDOWN fittizio."
+    },
+    {
+      "id": "d1_stop_does_not_wait_drawdown_write",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            self._drawdown_start_owned = False             # da qui nessun'altra scrittura dello stato del drawdown\n",
+      "mutated": "        with contextlib.nullcontext():\n            self._drawdown_start_owned = False             # da qui nessun'altra scrittura dello stato del drawdown\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 2a847087: una scrittura del drawdown gia' ammessa finirebbe dopo lo STOP e il rilascio del lock d'istanza, sovrascrivendo il nuovo proprietario."
+    },
+    {
+      "id": "d1_owner_procedure_without_ownership",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            block = RuntimeController._drawdown_write_block(self)\n            if block:\n                out[\"reason\"] = block\n                return out\n            stop = RuntimeController._hard_stop(self)\n            stop.restore(reconcile=True)\n            if not stop.snapshot()[\"breached\"]:",
+      "mutated": "            stop = RuntimeController._hard_stop(self)\n            if not stop.snapshot()[\"breached\"]:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 2a847087: un controller fermo con stato vecchio sbloccherebbe sovrascrivendo picco e sessione del runtime attivo."
+    },
+    {
+      "id": "d1_reload_owns_before_restore",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            RuntimeController._hard_stop(self).restore(reconcile=True)\n            self._drawdown_start_owned = True\n",
+      "mutated": "            self._drawdown_start_owned = True\n            RuntimeController._hard_stop(self).restore(reconcile=True)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Audit ciclo 8: la proprieta' data prima della rilettura permetterebbe a una lettura concorrente di scrivere lo stato vecchio sul record del proprietario precedente."
+    },
+    {
+      "id": "d1_failed_start_leaves_session_open",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if getattr(self, \"mode\", RuntimeMode.STOPPED) is RuntimeMode.STOPPED:\n            self._close_drawdown_session()\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Audit ciclo 8: un avvio fallito lascerebbe la sessione aperta e il riavvio chiederebbe senza motivo la conferma owner della baseline."
+    },
+    {
+      "id": "d1_foreign_lease_ignored",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                and RuntimeController._foreign_runtime_lease_active(self):\n",
+      "mutated": "                and False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Audit ciclo 8: un controller mai avviato uscito da STOPPED scriverebbe lo stato del drawdown mentre un altro runtime tiene la lease."
+    },
+    {
+      "id": "d1_own_session_read_as_crash",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if self.session_open and not newer:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Audit ciclo 8: la rilettura durante la propria sessione attiva (sblocco owner) renderebbe la baseline non verificata: blocco ingiustificato."
     }
   ]
 }

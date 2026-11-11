@@ -88,7 +88,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   epoca del picco per i ribasamenti e sezione critica fra controllo dell'istante e valutazione; i gate d'ingresso
   di un controller non proprietario negano senza scrivere (Grok); il gate valuta nella stessa sezione critica (Sol);
   su b9cbe0d7: manuale/Dutching controlla la proprieta' anche senza cap, ribasamento con operation_id monouso
-  (Grok), cassa sommata in Decimal (Codex).
+  (Grok), cassa sommata in Decimal (Codex); su 2a847087 anche la misura di LOCKDOWN nella sezione critica (Codex),
+  proprieta' verificata sotto lock e attesa dallo STOP, procedure owner solo dal proprietario con rilettura (Sol);
+  audit finale: proprieta' allo START solo dopo la rilettura, avvio fallito chiude la sessione, lease di un altro
+  runtime nega le scritture di un controller mai avviato, verifiche owner fuori dalla sezione critica.
   Test `tests/d1`.
 - **G7-R06 (#586): AMBIGUOUS gia' regolato non rinasce come riserva al riavvio.** La ricostruzione F018 chiude gli
   intenti con un effetto di settlement applicato (`Database.settled_customer_refs`, prova = chiave del settlement)

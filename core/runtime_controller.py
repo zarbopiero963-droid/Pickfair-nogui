@@ -1336,13 +1336,14 @@ class RuntimeController:
             # Sol su 92155c24: stato persistito illeggibile => picco sconosciuto, nessun ingresso su ogni percorso
             # (anche manuale/Dutching senza hard-stop configurati), mai sovrascritto.
             return "drawdown_stato_illeggibile"
-        if RuntimeController._drawdown_write_block(self):
-            # Grok su 6d4ac43f: un controller non proprietario non ritenta il salvataggio (scriverebbe sul record del
-            # proprietario); un picco non salvato resta un rifiuto.
-            if stop.persist_failed:
+        with RuntimeController._drawdown_eval_lock:          # proprieta' e scrittura insieme (Sol su 2a847087)
+            if RuntimeController._drawdown_write_block(self):
+                # Grok su 6d4ac43f: un controller non proprietario non ritenta il salvataggio (scriverebbe sul record
+                # del proprietario); un picco non salvato resta un rifiuto.
+                if stop.persist_failed:
+                    return "drawdown_picco_non_persistito"
+            elif not stop.retry_persist():
                 return "drawdown_picco_non_persistito"
-        elif not stop.retry_persist():
-            return "drawdown_picco_non_persistito"
         # RO-DD-09 C: dopo un riavvio non pulito il picco salvato potrebbe non essere il massimo => nessun ingresso
         # fino alla conferma owner della baseline (`owner_confirm_drawdown_baseline`).
         return stop.baseline_block_reason()
@@ -2960,11 +2961,13 @@ class RuntimeController:
             # Codex su e3fe4d7: un avvio fallito dopo connect()/telegram.start() smonta prima i servizi gia' partiti;
             # smontaggio non riuscito => il lock resta preso (nessun secondo runtime con una sessione ancora viva).
             if self._teardown_failed_start():
+                self._end_failed_start_drawdown()
                 self._release_runtime_instance_lock_if_stopped()
             raise
         if not (result or {}).get("started"):
             # Sol su ad315ca: uno smontaggio precedente non riuscito si ritenta qui; finche' non riesce il lock resta.
             if not getattr(self, "_instance_teardown_pending", False) or self._teardown_failed_start():
+                self._end_failed_start_drawdown()
                 self._release_runtime_instance_lock_if_stopped()
         return result
 
@@ -3482,8 +3485,11 @@ class RuntimeController:
         """Rilegge dal DB (e dal marker) lo stato dell'hard-stop sotto la proprieta' del runtime. ``restore`` non
         abbassa mai il picco ne' annulla un superamento gia' in memoria: rileggere e' sempre sicuro. Da qui il
         controller puo' aggiornare lo stato anche prima di passare ACTIVE (lettura dei fondi dello START)."""
-        self._drawdown_start_owned = True
-        RuntimeController._hard_stop(self).restore(reconcile=True)
+        # Prima la rilettura, poi la proprieta', nella stessa sezione critica delle valutazioni: una lettura del conto
+        # concorrente (stato) non puo' scrivere lo stato vecchio fra i due passi.
+        with RuntimeController._drawdown_eval_lock:
+            RuntimeController._hard_stop(self).restore(reconcile=True)
+            self._drawdown_start_owned = True
 
     def _open_drawdown_session(self) -> None:
         """RO-DD-09 C: apre su disco la sessione del drawdown all'avvio del trading. Non salvata (Grok/Claude D su
@@ -3491,23 +3497,35 @@ class RuntimeController:
         persistito, RO-DD-08) finche' un nuovo salvataggio, ritentato a ogni ammissione, la rende durevole."""
         # Codex su 58e635e6: solo il controller che ha aperto la sessione (allo START, sotto il lock di istanza) puo'
         # chiuderla; un controller mai avviato o un secondo STOP dopo il rilascio non scrivono.
-        self._drawdown_session_owned = True
-        if not RuntimeController._hard_stop(self).open_session():
+        with RuntimeController._drawdown_eval_lock:
+            self._drawdown_session_owned = True
+            aperta = RuntimeController._hard_stop(self).open_session()
+        if not aperta:
             logger.critical("D-1: sessione del drawdown non salvata all'avvio: nuovi ingressi negati finche' non "
                             "risulta aperta su disco")
+
+    def _end_failed_start_drawdown(self) -> None:
+        """Avvio non riuscito con servizi smontati: il trading non e' mai partito, quindi la sessione eventualmente
+        aperta si chiude come a uno STOP pulito (solo se il picco e' durevole) e la proprieta' dello stato finisce,
+        prima del rilascio del lock di istanza. Altrimenti un avvio fallito (es. Telegram non raggiungibile)
+        lascerebbe la sessione aperta e il riavvio chiederebbe senza motivo la conferma owner della baseline."""
+        if getattr(self, "mode", RuntimeMode.STOPPED) is RuntimeMode.STOPPED:
+            self._close_drawdown_session()
 
     def _close_drawdown_session(self) -> None:
         """RO-DD-09 C: chiude su disco la sessione del drawdown; non riuscita => resta aperta (conferma owner al
         prossimo avvio). Mai un'eccezione: lo STOP deve comunque arrivare al rilascio del lock. Solo una volta, e solo se
         questo controller ha aperto la sessione (Codex su 58e635e6)."""
-        if not getattr(self, "_drawdown_session_owned", False):
-            return
-        self._drawdown_session_owned = False
-        try:
-            chiusa = RuntimeController._hard_stop(self).close_session()
-        except Exception:
-            logger.exception("D-1: chiusura della sessione del drawdown fallita")
-            chiusa = False
+        with RuntimeController._drawdown_eval_lock:
+            self._drawdown_start_owned = False             # da qui nessun'altra scrittura dello stato del drawdown
+            if not getattr(self, "_drawdown_session_owned", False):
+                return
+            self._drawdown_session_owned = False
+            try:
+                chiusa = RuntimeController._hard_stop(self).close_session()
+            except Exception:
+                logger.exception("D-1: chiusura della sessione del drawdown fallita")
+                chiusa = False
         if not chiusa:
             logger.critical("D-1: sessione non chiusa su disco (picco non durevole): il prossimo avvio chiedera' la "
                             "conferma owner della baseline")
@@ -3521,7 +3539,9 @@ class RuntimeController:
         # runtime resta comunque fermo e Betfair si disconnette lo stesso;
         # l'errore risale poi al chiamante.
         self.mode = RuntimeMode.STOPPED
-        self._drawdown_start_owned = False             # da qui nessuna scrittura dello stato del drawdown
+        # Da qui nessuna nuova scrittura dello stato del drawdown. Una valutazione gia' in corso la aspetta
+        # `_close_drawdown_session`, che prende la stessa sezione critica prima del rilascio del lock d'istanza.
+        self._drawdown_start_owned = False
         smontato = False
         try:
             self._stop_settlement_poller()
@@ -6721,22 +6741,46 @@ class RuntimeController:
         """'' se questo controller puo' scrivere lo stato dell'hard-stop, altrimenti il motivo (vedi
         `_drawdown_writes_allowed`). Usato anche dai gate d'ingresso (Grok su 6d4ac43f): un controller non
         proprietario non scrive e nega l'ingresso invece di valutare (la valutazione salverebbe il picco)."""
+        owned = getattr(self, "_drawdown_start_owned", False)
         stopped = getattr(self, "mode", RuntimeMode.STOPPED) is RuntimeMode.STOPPED
-        if stopped and not getattr(self, "_drawdown_start_owned", False):
+        if stopped and not owned:
+            return "drawdown_controller_non_proprietario"
+        if not owned and getattr(self, "runtime_authority", None) is None \
+                and RuntimeController._foreign_runtime_lease_active(self):
+            # Mai avviato (nessuna autorita' armata) ma uscito da STOPPED (es. pause()) mentre un altro runtime tiene
+            # la lease nel database: non e' il proprietario dello stato.
             return "drawdown_controller_non_proprietario"
         return RuntimeController._runtime_authority_block(self, "drawdown_state")
+
+    def _foreign_runtime_lease_active(self) -> bool:
+        """True se nel database c'e' una lease di runtime non scaduta (di un altro runtime: questo controller non ne
+        ha mai presa una). DB senza lease (in memoria, stub) => False; lease illeggibile => True (fail-closed)."""
+        reader = getattr(getattr(self, "db", None), "read_runtime_lease", None)
+        if not callable(reader):
+            return False
+        try:
+            row = reader()
+        except Exception:
+            logger.exception("D-1: lease del runtime non leggibile: stato del drawdown non scritto")
+            return True
+        if not isinstance(row, dict):
+            return False
+        expires = validators.finite_number(row.get("expires_at"))
+        return expires is None or expires >= time.time()
 
     def _evaluate_drawdown_hard_stop(self, cassa: Any, read_at: Any = None, *, entry: bool = False) -> None:
         """D-1: ogni cassa verificata alza (mai abbassa) il picco persistente dell'hard-stop e, con il limite
         configurato, ne verifica subito il superamento: blocco persistente e LOCKDOWN senza attendere il segnale
         successivo (contratto owner PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109). Chiamata dentro
         `_account_state_lock` (non rientrante): il LOCKDOWN, che legge lo stato, lo applica il chiamante dopo."""
-        if not self._drawdown_writes_allowed():
-            return
         # Sol su 6d4ac43f: controllo dell'istante e valutazione sono un'unica sezione critica, serializzata fra letture
         # d'ingresso e del desk: una lettura vecchia non puo' superare il controllo, farsi sorpassare da una piu' nuova
         # che alza il picco e poi registrare una perdita falsa.
         with RuntimeController._drawdown_eval_lock:
+            # Sol su 2a847087: la proprieta' si verifica DENTRO la sezione critica: lo STOP la toglie prendendo lo
+            # stesso lock, quindi una valutazione gia' ammessa finisce prima che lo STOP rilasci il lock d'istanza.
+            if not self._drawdown_writes_allowed():
+                return
             # Sol su 4a171465: una lettura iniziata prima dell'ultima gia' valutata (ingresso o contratto) e' vecchia:
             # non alza il picco e non valuta un superamento (100 arrivato dopo 130 sarebbe una perdita falsa di 30).
             started = validators.finite_number(read_at)
@@ -7369,7 +7413,8 @@ class RuntimeController:
         stop = RuntimeController._hard_stop(self)
         if not stop.state_reliable():
             return None
-        pct = stop.loss_pct(self._drawdown_gate_cash())   # Sol su 4a171465: anche la lettura d'ingresso piu' recente
+        with RuntimeController._drawdown_eval_lock:          # Codex su 2a847087: cassa e picco coerenti
+            pct = stop.loss_pct(self._drawdown_gate_cash())   # Sol su 4a171465: anche la lettura d'ingresso piu' recente
         return RuntimeController._NO_PERSISTENT_DRAWDOWN if pct is None else pct
 
     def _protective_drawdown_pct(self) -> Optional[float]:
@@ -7417,13 +7462,13 @@ class RuntimeController:
         `owner_unlock_drawdown_hard_stop`. Le riserve e le puntate aperte non sono perdite. Cassa non verificata,
         stato illeggibile o picco non salvato => rifiuto esplicito. Superamento => LOCKDOWN. Blocca solo i NUOVI
         ingressi: riconciliazione, settlement e riduzione dell'esposizione non passano di qui."""
-        write_block = RuntimeController._drawdown_write_block(self)
-        if write_block:
-            return write_block                              # Grok su 6d4ac43f: reason() salverebbe il picco
         stop = RuntimeController._hard_stop(self)
         # Sol su b9cbe0d7: scelta della cassa e valutazione nella stessa sezione critica delle letture: una lettura
         # concorrente non puo' alzare il picco fra i due passi (perdita falsa contro la cassa gia' scelta).
         with RuntimeController._drawdown_eval_lock:
+            write_block = RuntimeController._drawdown_write_block(self)
+            if write_block:
+                return write_block                          # Grok su 6d4ac43f: reason() salverebbe il picco
             cash = self._drawdown_gate_cash()
             reason = stop.reason(self._configured_optional(self.config, "max_drawdown_abs"), cash,
                                  pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct"))
@@ -7433,17 +7478,10 @@ class RuntimeController:
             self.force_lockdown(f"drawdown_hard_stop_triggered:{stop.snapshot()['breach'].get('kind')}:{shown}")
         return reason
 
-    def owner_confirm_drawdown_baseline(self, *, authorization: str, reason: str, operation_id: str, confirm: bool,
-                                        confirm_again: bool, declared_peak: Any = None) -> dict:
-        """RO-DD-09 C (decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109): conferma owner della baseline
-        del drawdown dopo un riavvio non pulito. NON esposta da Control API/MCP. Verifica prima cassa verificata,
-        esposizione leggibile e assenza di ordini AMBIGUOUS; doppia conferma; registrazione durevole. La conferma non e'
-        una prova del massimo storico (BB-3 lo ricostruira' da un registro indipendente)."""
-        stop = RuntimeController._hard_stop(self)
-        out = {"confirmed": False, "reason": "", "checks": {}}
-        if stop.baseline_verified:
-            out["reason"] = "baseline_gia_verificata"
-            return out
+    def _owner_drawdown_checks(self) -> dict:
+        """Verifiche comuni alle procedure owner del drawdown: cassa verificata, esposizione leggibile, ordini incerti.
+        Calcolate PRIMA della sezione critica dell'hard-stop: nessun lock dei tavoli o dell'ammissione viene preso
+        con quel lock tenuto (nessuna inversione d'ordine con i gate d'ingresso)."""
         cash = getattr(self.risk_desk, "cash_equity_current", None)
         try:
             exposure = float(self.table_manager.total_exposure())
@@ -7453,21 +7491,52 @@ class RuntimeController:
             uncertain = sorted(self._uncertain_reservations_map())
         except Exception:
             uncertain = None
-        checks = {"cash_verified": validators.finite_number(cash) is not None and float(cash) > 0, "cash": cash,
-                  "exposure": exposure if math.isfinite(exposure) else None, "uncertain_orders": uncertain}
-        out["checks"] = checks
+        return {"cash_verified": validators.finite_number(cash) is not None and float(cash) > 0, "cash": cash,
+                "exposure": exposure if math.isfinite(exposure) else None, "uncertain_orders": uncertain}
+
+    @staticmethod
+    def _owner_drawdown_checks_block(checks: dict) -> str:
         if not checks["cash_verified"]:
-            out["reason"] = "cassa_non_verificata"
-        elif checks["exposure"] is None:
-            out["reason"] = "esposizione_non_leggibile"
-        elif uncertain is None or uncertain:
-            out["reason"] = "ordini_incerti_presenti"
-        elif not stop.owner_confirm_baseline(authorization=authorization, reason=reason, operation_id=operation_id,
-                                             confirm=confirm, confirm_again=confirm_again, cash_equity=cash,
-                                             declared_peak=declared_peak, checks=checks):
-            out["reason"] = "conferma_non_autorizzata_o_non_registrata"
-        else:
-            out["confirmed"] = True
+            return "cassa_non_verificata"
+        if checks["exposure"] is None:
+            return "esposizione_non_leggibile"
+        if checks["uncertain_orders"] is None or checks["uncertain_orders"]:
+            return "ordini_incerti_presenti"
+        return ""
+
+    def owner_confirm_drawdown_baseline(self, *, authorization: str, reason: str, operation_id: str, confirm: bool,
+                                        confirm_again: bool, declared_peak: Any = None) -> dict:
+        """RO-DD-09 C (decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109): conferma owner della baseline
+        del drawdown dopo un riavvio non pulito. NON esposta da Control API/MCP. Verifica prima cassa verificata,
+        esposizione leggibile e assenza di ordini AMBIGUOUS; doppia conferma; registrazione durevole. La conferma non e'
+        una prova del massimo storico (BB-3 lo ricostruira' da un registro indipendente).
+
+        Sol su 2a847087: solo il controller proprietario del runtime, dopo aver riletto lo stato durevole nella
+        sezione critica dell'hard-stop: un controller fermo con stato vecchio non sovrascrive picco e sessione del
+        runtime attivo."""
+        out = {"confirmed": False, "reason": "", "checks": {}}
+        checks = self._owner_drawdown_checks()
+        with RuntimeController._drawdown_eval_lock:
+            block = RuntimeController._drawdown_write_block(self)
+            if block:
+                out["reason"] = block
+                return out
+            stop = RuntimeController._hard_stop(self)
+            stop.restore(reconcile=True)
+            if stop.baseline_verified:
+                out["reason"] = "baseline_gia_verificata"
+                return out
+            out["checks"] = checks
+            out["reason"] = self._owner_drawdown_checks_block(checks)
+            if out["reason"]:
+                return out
+            if not stop.owner_confirm_baseline(authorization=authorization, reason=reason, operation_id=operation_id,
+                                               confirm=confirm, confirm_again=confirm_again,
+                                               cash_equity=checks["cash"], declared_peak=declared_peak,
+                                               checks=checks):
+                out["reason"] = "conferma_non_autorizzata_o_non_registrata"
+            else:
+                out["confirmed"] = True
         return out
 
     def owner_unlock_drawdown_hard_stop(self, *, authorization: str, reason: str, operation_id: str,
@@ -7480,36 +7549,31 @@ class RuntimeController:
         PRIMA cassa verificata, esposizione leggibile e assenza di ordini incerti (AMBIGUOUS) e li registra nello
         stato durevole; qualunque verifica fallita o salvataggio fallito => resta bloccato. Non ribasa il picco:
         se la perdita supera ancora il limite, la lettura successiva blocca di nuovo (nuova baseline = operazione
-        distinta `owner_rebase_peak`). Non riattiva il runtime: la ripresa resta un comando separato."""
-        stop = RuntimeController._hard_stop(self)
+        distinta `owner_rebase_peak`). Non riattiva il runtime: la ripresa resta un comando separato.
+
+        Sol su 2a847087: solo il controller proprietario del runtime, dopo aver riletto lo stato durevole nella
+        sezione critica dell'hard-stop (vedi `owner_confirm_drawdown_baseline`)."""
         out = {"unlocked": False, "reason": "", "checks": {}}
-        if not stop.snapshot()["breached"]:
-            out["reason"] = "nessun_hard_stop_attivo"
-            return out
-        cash = getattr(self.risk_desk, "cash_equity_current", None)
-        try:
-            exposure = float(self.table_manager.total_exposure())
-        except Exception:
-            exposure = float("nan")
-        try:
-            uncertain = sorted(self._uncertain_reservations_map())
-        except Exception:
-            uncertain = None
-        checks = {"cash_verified": validators.finite_number(cash) is not None and float(cash) > 0,
-                  "cash": cash, "exposure": exposure if math.isfinite(exposure) else None,
-                  "uncertain_orders": uncertain}
-        out["checks"] = checks
-        if not checks["cash_verified"]:
-            out["reason"] = "cassa_non_verificata"
-        elif checks["exposure"] is None:
-            out["reason"] = "esposizione_non_leggibile"
-        elif uncertain is None or uncertain:
-            out["reason"] = "ordini_incerti_presenti"
-        elif not stop.owner_clear_breach(authorization=authorization, reason=reason, operation_id=operation_id,
-                                         confirm=confirm, checks=checks):
-            out["reason"] = "sblocco_non_autorizzato_o_non_registrato"
-        else:
-            out["unlocked"] = True
+        checks = self._owner_drawdown_checks()
+        with RuntimeController._drawdown_eval_lock:
+            block = RuntimeController._drawdown_write_block(self)
+            if block:
+                out["reason"] = block
+                return out
+            stop = RuntimeController._hard_stop(self)
+            stop.restore(reconcile=True)
+            if not stop.snapshot()["breached"]:
+                out["reason"] = "nessun_hard_stop_attivo"
+                return out
+            out["checks"] = checks
+            out["reason"] = self._owner_drawdown_checks_block(checks)
+            if out["reason"]:
+                return out
+            if not stop.owner_clear_breach(authorization=authorization, reason=reason, operation_id=operation_id,
+                                           confirm=confirm, checks=checks):
+                out["reason"] = "sblocco_non_autorizzato_o_non_registrato"
+            else:
+                out["unlocked"] = True
         return out
 
     def _maybe_auto_reset(self, available_drawdown: float) -> bool:

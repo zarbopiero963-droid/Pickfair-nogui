@@ -198,7 +198,11 @@ class DrawdownHardStop:
             # verificata => il picco salvato potrebbe non essere il massimo: nessuna presunzione, conferma owner.
             # Codex su 58e635e6: la verifica della baseline segue il record durevole piu' recente, anche verso True:
             # letta mentre un altro processo aveva la sessione aperta, dopo il suo STOP pulito non resta falsa.
-            if any(r["session_open"] for r in records) or not all(r["baseline_verified"] for r in records):
+            # Il record piu' recente e' il nostro (stessa `seq`) e la sessione aperta e' quella di questa istanza:
+            # rilettura durante la propria sessione attiva (procedura owner), non una chiusura non pulita.
+            if self.session_open and not newer:
+                pass
+            elif any(r["session_open"] for r in records) or not all(r["baseline_verified"] for r in records):
                 if self.baseline_verified:
                     logger.critical("D-1: chiusura precedente non pulita: baseline del drawdown NON verificata, "
                                     "nuovi ingressi negati fino alla conferma owner")

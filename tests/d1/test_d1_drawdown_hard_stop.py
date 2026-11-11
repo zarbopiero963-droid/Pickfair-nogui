@@ -1425,3 +1425,381 @@ def test_exact_threshold_with_committed_funds_triggers_in_exact_decimal(tmp_path
     _lettura(c, 80.01, committed=0.01)
     assert c.rc._hard_stop().breached
     assert c.rc._hard_stop().snapshot()["breach"]["loss"] == "10.00"
+
+
+# ----------------------------------------------------------------------------------- Codex su 2a847087 (PR-03a)
+def test_persistent_drawdown_pct_selection_and_calculation_are_atomic(tmp_path):
+    """Codex su 2a847087: la misura di DEFENSE/LOCKDOWN sceglie la cassa (100) e prima di calcolare una lettura
+    concorrente a 130 alza il picco: 100 contro 130 darebbe un LOCKDOWN fittizio. Nella sezione critica: 0 %."""
+    import threading
+    c = _catena(tmp_path, lockdown_drawdown_pct=20.0)
+    _lettura(c, 100.0)
+    reale = c.rc._drawdown_gate_cash
+    scelta, via = threading.Event(), threading.Event()
+    esito = {}
+
+    def gate_cash():
+        valore = reale()
+        scelta.set()
+        via.wait(5)
+        return valore
+
+    c.rc._drawdown_gate_cash = gate_cash
+    a = threading.Thread(target=lambda: esito.setdefault("pct", c.rc._persistent_drawdown_pct()))
+    b = threading.Thread(target=c.rc._evaluate_entry_reading_drawdown,
+                         args=({"available": 130.0, "exposure": 0.0, "ok": True}, 1_000_000.0))
+    a.start()
+    assert scelta.wait(5)
+    b.start()
+    b.join(0.3)
+    via.set()
+    a.join(5)
+    b.join(5)
+    assert esito["pct"] == 0.0 and c.rc._hard_stop().snapshot()["peak"] == 130.0
+
+
+# ----------------------------------------------------------------------------------- Sol su 2a847087 (PR-03a)
+def test_owner_procedures_require_runtime_ownership(tmp_path):
+    """Sol su 2a847087: un controller fermo/non proprietario con stato vecchio non esegue sblocco ne' conferma della
+    baseline: sovrascriverebbe picco e sessione del runtime attivo."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    _lettura(c, 89.0)                                       # superamento
+    c.rc.mode = c.rc.mode.__class__.STOPPED
+    prima = c.rc.db.get_settings()[STATE_KEY]
+    assert c.rc.owner_unlock_drawdown_hard_stop(**_OWNER) == dict(unlocked=False,
+                                                                 reason="drawdown_controller_non_proprietario",
+                                                                 checks={})
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM)["reason"] == "drawdown_controller_non_proprietario"
+    assert c.rc.db.get_settings()[STATE_KEY] == prima
+
+
+def test_owner_unlock_reloads_the_durable_state_first(tmp_path):
+    """Lo sblocco rilegge prima lo stato durevole sotto il lock: un picco piu' alto salvato nel frattempo (stessa epoca)
+    non viene sovrascritto da quello vecchio in memoria."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    _lettura(c, 89.0)
+    altro = DrawdownHardStop(c.rc.db)
+    altro.restore()
+    altro.observe(150.0)
+    esito = c.rc.owner_unlock_drawdown_hard_stop(**_OWNER)
+    assert esito["unlocked"] is True
+    assert json.loads(c.rc.db.get_settings()[STATE_KEY])["peak"] == "150.0"
+
+
+def test_stop_waits_for_an_in_flight_drawdown_write(tmp_path, monkeypatch):
+    """Sol su 2a847087: una valutazione gia' ammessa (proprieta' verificata) non scrive dopo lo STOP e il rilascio del
+    lock d'istanza: lo STOP aspetta che finisca prima di smontare e rilasciare."""
+    import threading
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    calls = _ordine_stop(c, monkeypatch)
+    stop = c.rc._hard_stop()
+    reale = stop.evaluate
+    dentro, via = threading.Event(), threading.Event()
+
+    def evaluate(cap, cash, **kw):
+        dentro.set()
+        via.wait(5)
+        esito = reale(cap, cash, **kw)
+        calls.append("drawdown_write")
+        return esito
+
+    monkeypatch.setattr(stop, "evaluate", evaluate)
+    a = threading.Thread(target=c.rc._evaluate_drawdown_hard_stop, args=(95.0, 1_000_000.0))
+    a.start()
+    assert dentro.wait(5)
+    b = threading.Thread(target=c.rc._stop_serialized)
+    b.start()
+    b.join(0.3)
+    assert "release_lock" not in calls                      # lo STOP aspetta la scrittura in corso
+    via.set()
+    a.join(5)
+    b.join(5)
+    assert calls.index("drawdown_write") < calls.index("release_lock")
+
+
+# ----------------------------------------------------------------------------------- audit finale di B (ciclo 8)
+def test_reload_gives_ownership_only_after_the_state_is_reloaded(tmp_path, monkeypatch):
+    """Durante la rilettura dello START il controller non e' ancora proprietario: una lettura del conto concorrente non
+    puo' scrivere lo stato vecchio prima che la rilettura sia finita."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    c.rc.mode = c.rc.mode.__class__.STOPPED
+    stop = c.rc._hard_stop()
+    reale = stop.restore
+    visto = []
+
+    def restore(**kw):
+        visto.append(c.rc._drawdown_writes_allowed())
+        return reale(**kw)
+
+    monkeypatch.setattr(stop, "restore", restore)
+    c.rc._reload_drawdown_state()
+    assert visto == [False] and c.rc._drawdown_writes_allowed()
+
+
+def test_failed_start_closes_the_session_and_ends_ownership(tmp_path):
+    """Avvio fallito dopo l'apertura della sessione (es. Telegram non raggiungibile), servizi smontati: il trading non
+    e' partito, quindi la sessione si chiude e il riavvio NON chiede la conferma owner della baseline."""
+    c = _catena(tmp_path)
+    c.rc.mode = c.rc.mode.__class__.STOPPED
+    c.rc._reload_drawdown_state()
+    _lettura(c, 100.0)
+    c.rc._open_drawdown_session()
+    assert json.loads(c.rc.db.get_settings()[STATE_KEY])["session_open"] is True
+    c.rc._end_failed_start_drawdown()
+    assert json.loads(c.rc.db.get_settings()[STATE_KEY])["session_open"] is False
+    assert not c.rc._drawdown_writes_allowed()
+    _riavvio(c)
+    assert c.rc._hard_stop().baseline_verified
+
+
+def test_failed_start_path_is_wired_before_the_lock_release():
+    import inspect
+    from core.runtime_controller import RuntimeController
+    src = inspect.getsource(RuntimeController._start_serialized)
+    assert src.count("self._end_failed_start_drawdown()") == 2
+    for blocco in src.split("self._end_failed_start_drawdown()")[1:]:
+        assert blocco.lstrip().startswith("self._release_runtime_instance_lock_if_stopped()")
+
+
+def test_never_started_controller_out_of_stopped_does_not_write_under_a_foreign_lease(tmp_path):
+    """Un controller mai avviato portato fuori da STOPPED (pause()) mentre un altro runtime tiene la lease nel database
+    non e' proprietario: nessuna scrittura dello stato, ingresso manuale negato. Senza lease attiva resta ammesso
+    (nessun altro runtime da sovrascrivere)."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    prima = c.rc.db.get_settings()[STATE_KEY]
+    lease = {"expires_at": _time.time() + 60.0, "owner_id": "altro", "fencing_token": 7}
+    c.rc.db.read_runtime_lease = lambda: dict(lease)
+    c.rc.mode = c.rc.mode.__class__.PAUSED
+    _fondi = {"available": 150.0, "exposure": 0.0, "ok": True}
+    c.rc._apply_funds_reading(dict(_fondi), source="status")
+    assert c.rc.db.get_settings()[STATE_KEY] == prima
+    assert c.rc.absolute_cap_reason_for_orders([dict(_ORDINE_MANUALE)]) == "drawdown_controller_non_proprietario"
+    lease["expires_at"] = _time.time() - 5.0                 # lease scaduta: nessun altro proprietario
+    assert c.rc._drawdown_writes_allowed()
+
+    def illeggibile():
+        raise OSError("db")
+
+    c.rc.db.read_runtime_lease = illeggibile                 # lease illeggibile: fail-closed
+    assert not c.rc._drawdown_writes_allowed()
+
+
+def test_owner_procedures_read_tables_and_orders_outside_the_drawdown_lock(tmp_path):
+    """Le verifiche owner (tavoli, ordini incerti) si leggono fuori dalla sezione critica dell'hard-stop: nessuna
+    inversione d'ordine dei lock con i gate d'ingresso (che prendono prima l'ammissione e poi l'hard-stop)."""
+    import threading
+    from core.runtime_controller import RuntimeController
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    _lettura(c, 89.0)
+    libero = []
+    reale = c.rc.table_manager.total_exposure
+
+    def total_exposure():
+        def prova():
+            preso = RuntimeController._drawdown_eval_lock.acquire(timeout=2)
+            libero.append(preso)
+            if preso:
+                RuntimeController._drawdown_eval_lock.release()
+        t = threading.Thread(target=prova)
+        t.start()
+        t.join(5)
+        return reale()
+
+    c.rc.table_manager.total_exposure = total_exposure
+    assert c.rc.owner_unlock_drawdown_hard_stop(**_OWNER)["unlocked"] is True
+    assert libero == [True]
+
+
+def test_restore_never_mistakes_its_own_open_session_for_a_crash():
+    """Rilettura durante la propria sessione attiva (procedura owner): la sessione aperta su disco e' la nostra, non un
+    crash: la baseline resta verificata. Un record piu' recente di un altro processo con sessione aperta vale."""
+    db = _Db()
+    stop = DrawdownHardStop(db)
+    stop.observe(100.0)
+    assert stop.open_session()
+    stop.restore()
+    assert stop.baseline_verified and stop.baseline_block_reason() == ""
+    altro = DrawdownHardStop(db)
+    altro.restore(reconcile=False)
+    assert not altro.baseline_verified                       # per un altro processo e' una sessione non chiusa
+
+
+def test_owner_unlock_during_the_active_session_does_not_block_the_baseline(tmp_path):
+    """Flusso reale: START (sessione aperta), superamento, sblocco owner. Dopo lo sblocco l'ingresso passa: la
+    rilettura dello sblocco non trasforma la sessione attiva in una baseline non verificata."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._open_drawdown_session()
+    _lettura(c, 89.0)
+    assert c.rc._hard_stop().breached
+    _lettura(c, 95.0)
+    assert c.rc.owner_unlock_drawdown_hard_stop(**_OWNER)["unlocked"] is True
+    assert c.rc._hard_stop().baseline_verified
+    c.rc.mode = c.rc.mode.__class__.ACTIVE
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 1, _rifiuti(c)
+
+
+# =============================================================================================================
+# Prove end-to-end con il broker Betfair simulato (richiesta owner su #631): percorso reale
+# segnale / DutchingController -> RuntimeController -> TradingEngine -> SimulationBroker. Nessuna rete, nessuna VPS.
+# =============================================================================================================
+def _e2e_dutching(c):
+    from tests.acceptance.test_issue523_dutching_manual_bet import _dutching
+    return _dutching(c)
+
+
+def test_e2e_scenario_1_2_capital_100_cap_10_drop_to_90_blocks_the_signal_at_the_broker(tmp_path):
+    """Scenari 1 e 2: capitale 100, limite 10. A 90,01 l'ordine arriva al broker (PASS); a 90 l'hard-stop scatta, il
+    runtime va in LOCKDOWN e il segnale Roserpina successivo non produce alcun ordine al broker (BLOCK)."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    _lettura(c, 90.01)
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 1 and len(c.bus.payloads("CMD_QUICK_BET")) == 1
+    _lettura(c, 90.0)
+    assert c.rc._hard_stop().breached and c.rc.mode.name == "LOCKDOWN"
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK", market_id="1.999"))
+    assert _ordini(c) == 1 and len(c.bus.payloads("CMD_QUICK_BET")) == 1      # nessun nuovo ordine
+
+
+def test_e2e_scenario_3_manual_bet_and_dutching_send_nothing_with_the_hard_stop_active(tmp_path):
+    """Scenario 3: stesso conto e stessi ingressi. Senza superamento la bet manuale e il lotto Dutching arrivano al
+    broker (PASS); con l'hard-stop attivo nessuno dei due pubblica o piazza nulla (BLOCK)."""
+    from tests.acceptance.test_issue523_dutching_manual_bet import _batch, _manual
+    ok = _catena(tmp_path / "ok", max_drawdown_abs=10.0)
+    _lettura(ok, 1000.0)
+    assert _e2e_dutching(ok).manual_bet(_manual(stake=4.0))["ok"] is True
+    assert _ordini(ok) == 1
+    ok2 = _catena(tmp_path / "ok2", max_drawdown_abs=10.0)
+    _lettura(ok2, 1000.0)
+    assert _e2e_dutching(ok2).submit_dutching(_batch(total_stake=10.0))["ok"] is True
+    assert _ordini(ok2) >= 2
+
+    for ingresso in ("manuale", "dutching"):
+        c = _catena(tmp_path / ingresso, max_drawdown_abs=10.0)
+        _lettura(c, 1000.0)
+        _lettura(c, 985.0)                                   # perdita 15 >= 10: hard-stop
+        assert c.rc._hard_stop().breached
+        c.rc.mode = c.rc.mode.__class__.ACTIVE               # anche a runtime riattivato il blocco resta
+        dc = _e2e_dutching(c)
+        esito = dc.manual_bet(_manual(stake=4.0)) if ingresso == "manuale" \
+            else dc.submit_dutching(_batch(total_stake=10.0))
+        assert esito["ok"] is False, esito
+        assert _ordini(c) == 0 and c.bus.payloads("CMD_QUICK_BET") == []
+
+
+def test_e2e_scenario_4_crash_and_restart_on_a_new_controller_keep_the_block(tmp_path):
+    """Scenario 4: superamento, poi crash (nessuno STOP) e riavvio con un controller NUOVO sullo stesso database: il
+    blocco e' ancora li', il segnale non arriva al broker, e resta anche con il conto tornato sopra la soglia."""
+    from tests.integration.test_issue461_pr26a_customer_ref_provenance import _chain
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._open_drawdown_session()
+    _lettura(c, 85.0)
+    assert c.rc._hard_stop().breached
+    # crash: nessuno STOP, quindi nessuna chiusura della sessione su disco
+
+    nuovo = _chain(tmp_path, anti_duplication=True)          # stesso file di database
+    del nuovo.rc.mm.calculate
+    nuovo.rc.config.max_drawdown_abs = 10.0
+    stop = nuovo.rc._hard_stop()
+    assert stop.breached and stop.snapshot()["peak"] == 100.0 and not stop.baseline_verified
+    nuovo.rc._reload_drawdown_state()
+    _lettura(nuovo, 99.0)                                    # conto tornato su: il blocco resta
+    nuovo.rc.mode = nuovo.rc.mode.__class__.ACTIVE
+    nuovo.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(nuovo) == 0 and nuovo.rc._hard_stop().breached
+
+
+def _catena_su(tmp_path, nome, **cfg):
+    from tests.integration.test_issue461_pr26a_customer_ref_provenance import _chain
+    c = _chain(tmp_path, anti_duplication=True, db_name=nome)
+    del c.rc.mm.calculate
+    for chiave, valore in cfg.items():
+        setattr(c.rc.config, chiave, valore)
+    return c
+
+
+def _avvia_con_autorita(c):
+    """Le stesse chiamate di `start()` per il drawdown: lock OS, lease con fencing, rilettura dello stato, sessione."""
+    assert c.rc._acquire_runtime_instance_lock() == ""
+    assert c.rc._acquire_runtime_lease() == ""
+    c.rc._reload_drawdown_state()
+
+
+def test_e2e_scenario_5_full_sequence_start_authority_trade_crash_restart_and_stale_instances(tmp_path, monkeypatch):
+    """Scenario 5 e sequenza completa: avvio con autorita' reale (lock OS + lease + fence) -> operazione -> secondo
+    controller concorrente -> superamento -> crash -> subentro di un nuovo runtime -> istanza vecchia ancora viva.
+    Solo il proprietario aggiorna lo stato finanziario; nessuna istanza obsoleta lo modifica o piazza ordini."""
+    import time as _time
+    from core.runtime_controller import RuntimeController
+    monkeypatch.setattr(RuntimeController, "RUNTIME_LEASE_TTL_SEC", 1.0)
+    monkeypatch.setattr(RuntimeController, "RUNTIME_LEASE_HEARTBEAT_SEC", 0.3)
+    stato = lambda app: json.loads(app.db.get_settings()[STATE_KEY])
+
+    # --- A: avvio, autorita', sessione, prima operazione
+    a = _catena_su(tmp_path, "seq.db", max_drawdown_abs=10.0)
+    _avvia_con_autorita(a)
+    _lettura(a, 100.0)
+    a.rc._open_drawdown_session()
+    a.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(a) == 1 and stato(a)["peak"] == "100.0" and stato(a)["session_open"] is True
+
+    # --- B: secondo controller concorrente sullo stesso database, avvio rifiutato
+    b = _catena_su(tmp_path, "seq.db", max_drawdown_abs=10.0)
+    assert b.rc._acquire_runtime_instance_lock() != ""       # il lock e' di A
+    prima = a.db.get_settings()[STATE_KEY]
+    b.rc.betfair_service.get_account_funds = lambda: {"available": 150.0, "exposure": 0.0, "ok": True}
+    b.rc._apply_funds_reading({"available": 150.0, "exposure": 0.0, "ok": True}, source="status")
+    b.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK", market_id="1.777"))
+    assert a.db.get_settings()[STATE_KEY] == prima           # B non ha scritto nulla
+    assert _ordini(b) == 0
+    assert b.rc.owner_unlock_drawdown_hard_stop(**_OWNER)["unlocked"] is False
+
+    # --- A: superamento => blocco persistente, nessun ordine da nessun percorso
+    _lettura(a, 89.0)
+    assert stato(a)["breached"] is True and a.rc.mode.name == "LOCKDOWN"
+    a.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK", market_id="1.888"))
+    assert _ordini(a) == 1
+
+    # --- crash di A (nessuno STOP): heartbeat fermo, lock sparito, lease scaduta
+    a.rc.runtime_authority.stop_heartbeat()
+    import os as _os
+    _os.unlink(_os.path.normcase(_os.path.realpath(str(tmp_path / "seq.db"))) + ".runtime.lock")
+    _time.sleep(1.3)
+
+    # --- C: nuovo runtime subentra; blocco e sessione non chiusa sono ancora li'
+    c = _catena_su(tmp_path, "seq.db", max_drawdown_abs=10.0)
+    _avvia_con_autorita(c)
+    assert c.rc.runtime_authority.token > a.rc.runtime_authority.token
+    stop_c = c.rc._hard_stop()
+    assert stop_c.breached and stop_c.snapshot()["peak"] == 100.0 and not stop_c.baseline_verified
+    _lettura(c, 95.0)
+    c.rc.mode = c.rc.mode.__class__.ACTIVE
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK", market_id="1.555"))
+    assert _ordini(c) == 0
+
+    # --- A, obsoleta ma viva: non modifica lo stato finanziario e non piazza
+    prima = c.db.get_settings()[STATE_KEY]
+    a.rc.betfair_service.get_account_funds = lambda: {"available": 300.0, "exposure": 0.0, "ok": True}
+    a.rc._apply_funds_reading({"available": 300.0, "exposure": 0.0, "ok": True}, source="status")
+    a.rc._read_funds_for_entry()
+    assert a.rc.owner_unlock_drawdown_hard_stop(**_OWNER)["unlocked"] is False
+    a.rc.mode = a.rc.mode.__class__.ACTIVE
+    a.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK", market_id="1.444"))
+    assert c.db.get_settings()[STATE_KEY] == prima and _ordini(a) == 1
+
+    # --- C: procedure owner del proprietario (conferma baseline + sblocco), poi l'ingresso torna possibile
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM)["confirmed"] is True
+    assert c.rc.owner_unlock_drawdown_hard_stop(**_OWNER)["unlocked"] is True
+    c.rc.mode = c.rc.mode.__class__.ACTIVE
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK", market_id="1.333"))
+    assert _ordini(c) == 1, _rifiuti(c)                      # perdita 5 dal picco 100: sotto il limite
+    c.rc.runtime_authority.stop_heartbeat()

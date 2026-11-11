@@ -431,7 +431,16 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   per la misura di DEFENSE/LOCKDOWN (`_persistent_drawdown_pct`). Una lettura iniziata prima dell'ultima gia' valutata
   (ingresso o contratto) e arrivata tardi non alza il picco e non valuta un superamento (Sol su 4a171465); controllo
   dell'istante e valutazione sono un'unica sezione critica fra letture d'ingresso e del desk (Sol su 6d4ac43f), e
-  nella stessa sezione il gate sceglie la cassa e valuta (Sol su b9cbe0d7). Lo stato dell'hard-stop lo aggiorna solo il controller
+  nella stessa sezione il gate sceglie la cassa e valuta (Sol su b9cbe0d7), come la misura di DEFENSE/LOCKDOWN
+  (Codex su 2a847087). Anche il controllo di proprieta' avviene dentro la sezione critica, e lo STOP toglie la
+  proprieta' prendendo lo stesso lock: una scrittura gia' ammessa finisce prima che lo STOP rilasci il lock d'istanza.
+  Sblocco owner e conferma della baseline sono ammessi solo al controller proprietario, dopo una rilettura dello stato
+  durevole sotto lock (Sol su 2a847087); la rilettura non scambia la propria sessione attiva per una chiusura non
+  pulita, e le verifiche su tavoli e ordini si leggono prima della sezione critica (nessuna inversione dei lock).
+  Allo START la proprieta' dello stato comincia solo a rilettura finita; un avvio fallito con servizi smontati chiude
+  la sessione prima di rilasciare il lock (nessuna conferma owner ingiustificata al riavvio); un controller mai
+  avviato uscito da STOPPED non scrive se nel database un altro runtime tiene una lease attiva (lease illeggibile =>
+  nessuna scrittura). Lo stato dell'hard-stop lo aggiorna solo il controller
   proprietario del runtime (avviato, o nello START dopo la rilettura sotto lock, con l'autorita' dimostrata): un
   controller mai avviato, fermo o che ha perso l'autorita' non scrive nulla, nemmeno leggendo il conto per lo stato
   (Codex su 53c99ceb). Lo stesso vale per i gate d'ingresso (segnale, manuale/Dutching): un controller non
