@@ -604,6 +604,14 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   col picco (perdita fittizia), in entrambi gli ordini di arrivo e dopo un riavvio. Rilettura non verificabile =>
   nessuno sblocco (`cassa_fresca_non_verificata`).
 
+- **Picco e superamento in un'unica scrittura (ciclo 22, PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112).** Il
+  picco che dimostra un superamento (un massimo osservato o confermato dall'owner, anche da una lettura tardiva) sale nello
+  STESSO record persistito del superamento: un crash non puo' piu' lasciare su disco picco 115 con superamento da 130.
+  Recovery dei record scritti prima: alla rilettura il picco e' almeno quello di un superamento attivo, non ribasato e
+  della stessa epoca (un ribasamento owner esplicito resta valido). Picco del superamento attivo corrotto => stato
+  illeggibile (fail-closed). Cosi' nessun crash, riavvio, sblocco o conferma owner riporta implicitamente il picco sotto
+  il massimo dimostrato: lo sblocco non ribasa e la lettura successiva riblocca se la perdita supera ancora il limite.
+
 - **Stato del bot al punto d'invio (M68, PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112).** Nessun nuovo ingresso
   parte se il bot non e' ACTIVE: PAUSA (`runtime_non_attivo:PAUSED`), fermo (`runtime_non_attivo:STOPPED`), LOCKDOWN
   del runtime (`runtime_lockdown:...`) o del desk (`desk_lockdown`: drawdown oltre la soglia di lockdown del money

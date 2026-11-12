@@ -11094,6 +11094,54 @@
       "rationale": "Ciclo 21 (Claude D su abbb6b3b): senza la rilettura fresca valutata come lettura ordinata il gate ripartirebbe da una cassa ambigua (l'ultima arrivata) e inventerebbe una perdita."
     },
     {
+      "id": "c22_breach_saved_without_its_peak",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if self.peak is None or reference > self.peak:\n                self.peak = reference\n",
+      "mutated": "            if False:\n                self.peak = reference\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 22 (PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112): senza il picco nello stesso record del superamento un crash fra le scritture lascerebbe picco 115 con superamento da 130 e lo sblocco owner perderebbe il drawdown."
+    },
+    {
+      "id": "c22_restore_ignores_the_breach_peak",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            candidates += [r[\"breach_peak\"] for r in records + stale\n",
+      "mutated": "            candidates += [] and [r[\"breach_peak\"] for r in records + stale\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 22, recovery: un record scritto prima della correzione (picco 115, superamento da 130) si rileggerebbe col picco piu' basso."
+    },
+    {
+      "id": "c22_corrupted_breach_peak_accepted",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if not breach_peak.is_finite() or breach_peak <= 0:\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 22: un picco del superamento corrotto deve rendere il record illeggibile (fail-closed)."
+    },
+    {
+      "id": "c22_rebased_breach_peak_restored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            breach_peak = None                          # ribasamento owner esplicito: il picco e' quello ribasato\n",
+      "mutated": "            pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 22: un ribasamento owner esplicito non va annullato dal recovery del picco del superamento."
+    },
+    {
       "id": "m65_send_point_ignores_admission_session",
       "module": "core.runtime_controller",
       "area": "money_management",

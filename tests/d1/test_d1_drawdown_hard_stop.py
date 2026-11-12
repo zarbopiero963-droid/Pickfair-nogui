@@ -4519,3 +4519,92 @@ def test_c21_owner_clearance_then_crash_and_restart_never_invents_a_loss(tmp_pat
     c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
     assert not c.rc._hard_stop().breached, c.rc._hard_stop().snapshot()["breach"]
     assert _ordini(c) == 1
+
+
+# ------------------------------------- ciclo 22 (PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112): picco e superamento
+def _c22_superamento_tardivo(tmp_path, monkeypatch, *, crash):
+    """100, poi 115 @t3, poi 130 @t2 tardiva => superamento dimostrato (130 -> 115). ``crash``: il processo muore subito
+    dopo la memorizzazione del superamento (prima di qualunque scrittura successiva del picco)."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    base = time.monotonic()
+    c.rc._apply_funds_reading(_fondi(115.0), source="t", read_at=base + 3)
+    stop = c.rc._hard_stop()
+    if crash:
+        def interrotto(self, cash):
+            raise SystemExit("crash dopo la memorizzazione del superamento")
+        monkeypatch.setattr(type(stop), "observe", interrotto)
+    try:
+        c.rc._apply_funds_reading(_fondi(130.0), source="t", read_at=base + 2)
+    except SystemExit:
+        pass
+    monkeypatch.undo()
+    return c
+
+
+@pytest.mark.parametrize("crash", [True, False])
+def test_c22_breach_and_its_peak_are_one_durable_state(tmp_path, monkeypatch, crash):
+    """Ciclo 22 (Sol su abbb6b3b, Claude D): il superamento e il picco che lo dimostra si salvano nello STESSO record.
+    Un crash subito dopo la memorizzazione non lascia mai su disco picco 115 con superamento da 130."""
+    c = _c22_superamento_tardivo(tmp_path, monkeypatch, crash=crash)
+    salvato = _stato_salvato(c)
+    assert salvato["breached"] is True
+    assert Decimal(salvato["peak"]) == Decimal(salvato["breach"]["peak"]) == Decimal("130")
+
+
+@pytest.mark.parametrize("crash", [True, False])
+def test_c22_after_a_crash_and_an_owner_unlock_the_drop_still_blocks(tmp_path, monkeypatch, crash):
+    """Ciclo 22: dopo crash, riavvio, sblocco owner e uscita dal LOCKDOWN, con il conto ancora a 115 il picco resta 130:
+    la lettura successiva riblocca (lo sblocco non ribasa), nessun ordine. Prima del ciclo 22, col crash: 1 ordine."""
+    c = _c22_superamento_tardivo(tmp_path, monkeypatch, crash=crash)
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    stop = c.rc._hard_stop()
+    assert stop.snapshot()["peak"] == 130.0
+    c.rc.betfair_service.get_account_funds = lambda: _fondi(115.0)
+    assert c.rc.owner_unlock_drawdown_hard_stop(authorization="#631", reason="r", operation_id="PF-C22-U",
+                                                confirm=True)["unlocked"]
+    c.rc._pending_drawdown_lockdown = None                      # uscita dal LOCKDOWN (STOP -> START)
+    c.rc.mode = c.rc.mode.__class__.ACTIVE
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert stop.breached and stop.snapshot()["peak"] == 130.0
+    assert _ordini(c) == 0
+
+
+def _c22_record(c, **campi):
+    record = {"peak": "115", "seq": 7, "peak_epoch": 0, "rebase_ops": [], "breached": True,
+              "breach": {"kind": "max_drawdown_abs", "loss": "15", "cap": "10", "peak": "130", "cash": "115"},
+              "session_open": False, "baseline_verified": True, "baseline": {}, "history_insufficient": {},
+              "scope": None, "scope_history": []}
+    record.update(campi)
+    c.rc.db.save_settings({STATE_KEY: json.dumps(record)})
+    del c.rc._drawdown_hard_stop
+
+
+def test_c22_restore_recovers_the_proven_peak_from_an_inconsistent_record(tmp_path):
+    """Ciclo 22, recovery: un record scritto prima della correzione (picco 115, superamento da 130) si rilegge con il
+    picco massimo dimostrato 130, mai piu' basso."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _c22_record(c)
+    stop = c.rc._hard_stop()
+    assert stop.breached and stop.snapshot()["peak"] == 130.0
+
+
+def test_c22_restore_keeps_an_explicit_owner_rebase(tmp_path):
+    """Ciclo 22: un ribasamento owner esplicito (registrato in breach.rebased, epoca nuova) resta valido: il recovery non
+    riporta il picco al valore del superamento precedente."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _c22_record(c, peak="85", peak_epoch=1, rebase_ops=["PF-RB-1"],
+                breach={"kind": "max_drawdown_abs", "loss": "15", "cap": "10", "peak": "130", "cash": "115",
+                        "rebased": {"operation_id": "PF-RB-1", "from": "130", "to": "85"}})
+    assert c.rc._hard_stop().snapshot()["peak"] == 85.0
+
+
+@pytest.mark.parametrize("valore", ["abc", "-5", "NaN", "0"])
+def test_c22_corrupted_breach_peak_is_unreadable_fail_closed(tmp_path, valore):
+    """Ciclo 22: superamento attivo con picco del superamento corrotto => stato illeggibile, ingressi negati."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _c22_record(c, breach={"kind": "max_drawdown_abs", "loss": "15", "cap": "10", "peak": valore, "cash": "115"})
+    assert not c.rc._hard_stop().state_reliable()
+    assert c.rc.drawdown_entry_block_reason() == "drawdown_stato_illeggibile"

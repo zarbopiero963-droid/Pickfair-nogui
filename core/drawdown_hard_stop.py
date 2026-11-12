@@ -122,7 +122,22 @@ def _parse_record(raw: Any) -> dict:
             or type(epoch) is not int or epoch < 0 \
             or not isinstance(rebase_ops, list) or not all(isinstance(op, str) for op in rebase_ops):
         raise ValueError("record non valido")
-    return {"peak": peak, "seq": seq, "peak_epoch": epoch, "rebase_ops": list(rebase_ops), "breached": breached, "breach": dict(record.get("breach") or {}),
+    breach = record.get("breach") or {}
+    if not isinstance(breach, dict):
+        raise ValueError("record non valido")
+    breach_peak = None
+    if breached and "peak" in breach:
+        # Ciclo 22: picco del superamento attivo corrotto => record illeggibile (fail-closed), mai ignorato.
+        try:
+            breach_peak = Decimal(str(breach["peak"]))
+        except Exception as exc:
+            raise ValueError("record non valido") from exc
+        if not breach_peak.is_finite() or breach_peak <= 0:
+            raise ValueError("record non valido")
+        if "rebased" in breach:
+            breach_peak = None                          # ribasamento owner esplicito: il picco e' quello ribasato
+    return {"peak": peak, "seq": seq, "peak_epoch": epoch, "rebase_ops": list(rebase_ops), "breached": breached, "breach": dict(breach),
+            "breach_peak": breach_peak,
             "session_open": session_open, "baseline_verified": verified,
             "baseline": dict(record.get("baseline") or {}), "history_insufficient": dict(gap),
             "scope": scope, "scope_missing": scope_missing, "scope_history": list(scope_history)}
@@ -259,6 +274,10 @@ class DrawdownHardStop:
             # ribasamento non contano piu'.
             epoch = max([self.peak_epoch] + [r["peak_epoch"] for r in records + stale])
             candidates = [r["peak"] for r in records + stale if r["peak_epoch"] == epoch and r["peak"] is not None]
+            # Ciclo 22 (recovery): un superamento attivo, non ribasato e della stessa epoca dimostra il proprio picco; un record
+            # scritto prima della scrittura unica (picco 115, superamento da 130) si rilegge col massimo dimostrato.
+            candidates += [r["breach_peak"] for r in records + stale
+                           if r["peak_epoch"] == epoch and r.get("breach_peak") is not None]
             if self.peak is not None and self.peak_epoch == epoch:
                 candidates.append(self.peak)
             if candidates:
@@ -600,6 +619,12 @@ class DrawdownHardStop:
             if self.breached or self.unreadable or self._scope_block_locked():
                 return False
             self.breached = True
+            # Ciclo 22 (PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112, Sol/Claude D su abbb6b3b): il picco che dimostra il
+            # superamento e' un massimo osservato (o confermato dall'owner); sale nello STESSO record del superamento,
+            # un'unica scrittura. Prima un crash fra le due scritture lasciava picco 115 con superamento da 130 e lo
+            # sblocco owner perdeva il drawdown senza ribasamento esplicito.
+            if self.peak is None or reference > self.peak:
+                self.peak = reference
             self.breach = {"kind": kind, "at": _now(), "loss": str(loss), "cap": str(cap), "peak": str(reference),
                            "cash": str(validators.money_decimal(cash_equity)),
                            "cleared": list(self.breach.get("cleared", [])) if isinstance(self.breach, dict) else []}
