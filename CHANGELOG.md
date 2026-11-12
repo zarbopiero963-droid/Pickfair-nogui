@@ -101,7 +101,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   al conto corrente uno stato senza provenienza, nemmeno con l'ambito gia' dichiarato. Su 559b39ca (Sol): verifica della modalita' e
   dichiarazione dell'ambito nella stessa sezione critica del cambio modalita'. Ciclo 20 (M65, PF-OWNER-PR631-CYCLE20-M65-GO-20261112): un
   ingresso ammesso prima di uno STOP e consegnato dopo un nuovo START e' negato (`ingresso_di_sessione_precedente`):
-  generazione di sessione allo START, confrontata al controllo finale dentro l'operazione in volo. Review su e98e84c7 (Sol): un marker superato con picco piu'
+  generazione di sessione all'acquisizione della lease, confrontata al controllo del fence e al punto d'invio. M68
+  (PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112): nessun nuovo ingresso parte con il bot in PAUSA, fermo o in
+  LOCKDOWN; operazioni protettive invariate. F2: test di regressione deterministico sulla race SIM/LIVE. Review su e98e84c7 (Sol): un marker superato con picco piu'
   alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
   resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale

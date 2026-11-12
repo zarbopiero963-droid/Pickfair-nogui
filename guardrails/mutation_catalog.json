@@ -10654,8 +10654,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "            if stop.breached:\n                return stop.reason(None, None)\n            if getattr(self, \"mode\", None) is RuntimeMode.LOCKDOWN:",
-      "mutated": "            if getattr(self, \"mode\", None) is RuntimeMode.LOCKDOWN:",
+      "original": "            if stop.breached:\n                return stop.reason(None, None)\n            mode = getattr(self, \"mode\", None)\n",
+      "mutated": "            mode = getattr(self, \"mode\", None)\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10666,8 +10666,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                return f\"runtime_lockdown:{getattr(self, 'last_error', '') or 'LOCKDOWN'}\"\n            return RuntimeController._drawdown_persist_block_reason(self)",
-      "mutated": "                return f\"runtime_lockdown:{getattr(self, 'last_error', '') or 'LOCKDOWN'}\"\n            return \"\"",
+      "original": "                return \"ingresso_di_sessione_precedente\"\n            return RuntimeController._drawdown_persist_block_reason(self)\n",
+      "mutated": "                return \"ingresso_di_sessione_precedente\"\n            return \"\"\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10690,8 +10690,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "            if getattr(self, \"mode\", None) is RuntimeMode.LOCKDOWN:",
-      "mutated": "            if False:",
+      "original": "            if mode is RuntimeMode.LOCKDOWN:\n",
+      "mutated": "            if False:\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10960,6 +10960,78 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "M65: la registrazione deve conservare la sessione d'ammissione, non una costante."
+    },
+    {
+      "id": "f2_mode_flag_set_after_scope_invalidation",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            self.simulation_mode = bool(enabled)\n            RuntimeController._hard_stop(self).invalidate_scope()\n",
+      "mutated": "        with RuntimeController._drawdown_eval_lock:\n            RuntimeController._hard_stop(self).invalidate_scope()\n        self.simulation_mode = bool(enabled)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "F2 (M68): con il flag di modalita' assegnato dopo l'invalidazione, fuori dal lock, una lettura SIM concorrente ridichiarerebbe l'ambito SIM e il controllo finale ammetterebbe ingressi LIVE sullo stato SIM."
+    },
+    {
+      "id": "f2_mode_flag_set_before_the_lock",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            self.simulation_mode = bool(enabled)\n            RuntimeController._hard_stop(self).invalidate_scope()\n",
+      "mutated": "        self.simulation_mode = bool(enabled)\n        with RuntimeController._drawdown_eval_lock:\n            RuntimeController._hard_stop(self).invalidate_scope()\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "F2 (Claude D, sonda test_d_f2_race): con il flag assegnato prima del lock il controllo finale vedrebbe il client gia' LIVE e l'ambito SIM ancora valido (ingresso ammesso sullo stato SIM) fino all'invalidazione."
+    },
+    {
+      "id": "m68_paused_or_stopped_entry_admitted",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if mode is not RuntimeMode.ACTIVE:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M68 (PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112): senza il controllo dello stato un ingresso in coda partirebbe con il bot in PAUSA o fermo."
+    },
+    {
+      "id": "m65_send_point_ignores_admission_session",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    and request.get(\"admission_session\") != RuntimeController._entry_session(self)):\n",
+      "mutated": "                    and False):\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M65: senza il ricontrollo al punto d'invio un invio eseguito in ritardo dopo STOP -> START partirebbe con l'ammissione della sessione precedente."
+    },
+    {
+      "id": "m65_admission_session_not_annotated",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                request[\"admission_session\"] = session       # M65: ricontrollata al punto d'invio\n",
+      "mutated": "                pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M65: senza l'annotazione il punto d'invio non saprebbe a quale sessione appartiene la richiesta."
+    },
+    {
+      "id": "m65_engine_send_point_without_request",
+      "module": "core.trading_engine",
+      "area": "money_management",
+      "file": "core/trading_engine.py",
+      "original": "                drawdown_block = drawdown_block_fn(request)\n",
+      "mutated": "                drawdown_block = drawdown_block_fn()\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M65: il motore deve passare la richiesta al controllo finale, altrimenti la sessione d'ammissione non si ricontrolla all'invio."
     },
     {
       "id": "d1_null_provenance_with_state_attributed",

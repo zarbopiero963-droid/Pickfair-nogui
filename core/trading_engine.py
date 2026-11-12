@@ -2323,9 +2323,10 @@ class TradingEngine:
                 raise RuntimeError("EMERGENCY_STOP_ACTIVE")
             # D-631-13: blocco persistente del drawdown ricontrollato qui, sul comando gia' in coda: rifiuto certo
             # prima dell'invio (mai AMBIGUOUS). Solo nuove entrate: le uscite protettive passano dall'OrderRouter.
+            # M68/M65: anche bot non ACTIVE (PAUSA, fermo, LOCKDOWN) e ingresso di una sessione precedente.
             drawdown_block_fn = getattr(runtime, "drawdown_entry_block_reason", None)
             if callable(drawdown_block_fn):
-                drawdown_block = drawdown_block_fn()
+                drawdown_block = drawdown_block_fn(request)
                 if isinstance(drawdown_block, str) and drawdown_block:
                     raise _ErrorePrimaDellInvio(f"DRAWDOWN_ENTRY_BLOCKED:{drawdown_block}")
             # #536: autorita' esclusiva del runtime verificata immediatamente prima dell'invio, in OGNI modalita'

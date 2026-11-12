@@ -3395,7 +3395,7 @@ class RuntimeController:
         Il bus e' asincrono: la verifica al routing del segnale non copre il momento del piazzamento."""
         return self._runtime_authority_block("cashout_place")
 
-    def drawdown_entry_block_reason(self) -> str:
+    def drawdown_entry_block_reason(self, request: Any = None) -> str:
         """Controllo finale d'ingresso al punto d'invio di una NUOVA entrata (TradingEngine, dopo l'emergenza
         giornaliera e prima dell'autorita' del runtime): '' solo se nessun blocco e' attivo adesso.
 
@@ -3406,15 +3406,26 @@ class RuntimeController:
         D-631-16 (Sol su 9c9121f0): l'intera decisione e' una sola sezione critica sotto `_drawdown_eval_lock`, lo
         stesso lock sotto cui ogni lettura del conto registra un superamento: un superamento gia' registrato prima della
         risposta non puo' essere ignorato; uno registrato dopo e' un evento successivo all'ammissione (l'ordine eventualmente
-        inviato si riconcilia come ogni ordine). Le uscite protettive non passano di qui (OrderRouter del cashout)."""
+        inviato si riconcilia come ogni ordine). Le uscite protettive non passano di qui (OrderRouter del cashout).
+
+        M68 (PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112): nessun nuovo ingresso parte se il bot non e' ACTIVE (PAUSA,
+        fermo, LOCKDOWN), anche con l'autorizzazione tecnica ancora valida. M65: ``request`` (la richiesta al punto
+        d'invio) porta la sessione d'ammissione annotata dal controllo del fence: diversa dalla corrente => negato, anche
+        per un invio eseguito in ritardo dall'esecutore dopo STOP -> START."""
         with RuntimeController._drawdown_eval_lock:
             stop = RuntimeController._hard_stop(self)
             if not stop.state_reliable():
                 return "drawdown_stato_illeggibile"
             if stop.breached:
                 return stop.reason(None, None)
-            if getattr(self, "mode", None) is RuntimeMode.LOCKDOWN:
+            mode = getattr(self, "mode", None)
+            if mode is RuntimeMode.LOCKDOWN:
                 return f"runtime_lockdown:{getattr(self, 'last_error', '') or 'LOCKDOWN'}"
+            if mode is not RuntimeMode.ACTIVE:
+                return f"runtime_non_attivo:{getattr(mode, 'name', mode)}"
+            if (isinstance(request, dict) and "admission_session" in request
+                    and request.get("admission_session") != RuntimeController._entry_session(self)):
+                return "ingresso_di_sessione_precedente"
             return RuntimeController._drawdown_persist_block_reason(self)
 
     def assert_runtime_authority(self, context: str = "") -> None:
@@ -4867,6 +4878,8 @@ class RuntimeController:
                 logger.warning("M65: ingresso %s ammesso nella sessione %s, corrente %s: negato", ref, session,
                                RuntimeController._entry_session(self))
                 return "ingresso_di_sessione_precedente"
+            if isinstance(request, dict):
+                request["admission_session"] = session       # M65: ricontrollata al punto d'invio
             if in_conflict:
                 return "customer_ref_in_conflitto"
             # #529 ciclo A2 (rilievo Codex r4326488240): il lotto e' atomico anche dopo l'ammissione. Una gamba non

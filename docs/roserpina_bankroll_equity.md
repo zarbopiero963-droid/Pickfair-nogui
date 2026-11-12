@@ -586,8 +586,19 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   `ingresso_di_sessione_precedente`, negato prima dell'invio e mai ripristinato. Il confronto avviene dentro
   l'operazione finanziaria in volo (`authority_operation`): lo STOP la attende e un nuovo START non acquisisce la lease
   finche' non finisce (`runtime_authority_draining`), quindi nessun ingresso della sessione precedente viene inviato
-  sotto la nuova. Gli ordini gia' inviati con esito incerto restano alla riconciliazione; la pulizia completa delle
-  code e la PAUSA restano alla PR-05.
+  sotto la nuova. Il controllo del fence annota la sessione sulla richiesta e il punto finale d'invio del motore la
+  ricontrolla (`drawdown_entry_block_reason(request)`): vale anche per un invio eseguito in ritardo dall'esecutore.
+  Gli ordini gia' inviati con esito incerto restano alla riconciliazione.
+
+- **Stato del bot al punto d'invio (M68, PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112).** Nessun nuovo ingresso
+  parte se il bot non e' ACTIVE: PAUSA (`runtime_non_attivo:PAUSED`), fermo (`runtime_non_attivo:STOPPED`), LOCKDOWN
+  (`runtime_lockdown:...`), anche con l'autorizzazione tecnica ancora valida. Il controllo sta nel controllo finale
+  d'ingresso del motore, nella stessa sezione critica del drawdown; una PAUSA arrivata dopo la risposta e' successiva
+  all'ammissione (l'ordine eventualmente inviato si riconcilia). Cancellazioni, cashout e uscite protettive
+  (OrderRouter) e la riconciliazione non passano di qui e restano consentiti. Gestione completa delle code, politiche
+  di ripresa, scadenza e rivalutazione degli ingressi restano alla PR-05. F2: cambio del flag di modalita' e
+  invalidazione dell'ambito sono una sola sezione critica con la dichiarazione dell'ambito; un test deterministico
+  dimostra che una lettura SIM concorrente al passaggio a LIVE non lascia dichiarato l'ambito SIM.
 
 - **Controllo finale, scrittori stantii e picco confermato (D-631-13/16/17/18, ciclo 17).** Il controllo finale
   d'ingresso (`drawdown_entry_block_reason`) rifiuta anche qualsiasi LOCKDOWN del runtime, qualunque ne sia l'origine

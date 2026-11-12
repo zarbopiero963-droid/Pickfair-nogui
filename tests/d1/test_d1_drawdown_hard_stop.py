@@ -4169,3 +4169,123 @@ def test_m65_entry_admitted_in_the_current_session_still_reaches_the_broker(tmp_
         assert _m65_ordini_broker(app) == 1
     finally:
         _m65_chiudi(app)
+
+
+# ------------------------------------- M68 (PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112): stato del runtime all'invio
+@pytest.mark.parametrize("stato", ["PAUSED", "STOPPED", "LOCKDOWN"])
+def test_m68_queued_entry_never_reaches_the_broker_when_the_bot_is_not_active(tmp_path, stato):
+    """M68: un ingresso approvato e messo in coda quando il bot era ACTIVE non arriva al broker se, alla consegna, il
+    bot e' in PAUSA, fermo o in LOCKDOWN: il controllo finale d'invio del motore rifiuta ogni stato diverso da ACTIVE,
+    anche con l'autorizzazione tecnica ancora valida (harness senza autorita' da verificare)."""
+    from core.system_state import RuntimeMode
+    c = _catena(tmp_path)
+    _lettura(c, 100.0)
+    trattenuti = _ingresso_in_coda(c)
+    if stato == "PAUSED":
+        c.rc.pause()
+    else:
+        c.rc.mode = getattr(RuntimeMode, stato)
+    motivo = c.rc.drawdown_entry_block_reason()
+    atteso = "runtime_lockdown:" if stato == "LOCKDOWN" else f"runtime_non_attivo:{stato}"
+    assert motivo.startswith(atteso), motivo                     # motivo distinto: LOCKDOWN non e' una PAUSA
+    for comando in trattenuti:
+        c.rc.bus.publish("CMD_QUICK_BET", comando)
+    assert _ordini(c) == 0
+
+
+def test_m68_protective_paths_stay_open_while_paused(tmp_path):
+    """M68: il blocco dei nuovi ingressi in PAUSA non tocca le operazioni protettive: il cashout (OrderRouter, con il
+    proprio controllo d'autorita') resta ammesso e la PAUSA non e' un LOCKDOWN."""
+    c = _catena(tmp_path)
+    _lettura(c, 100.0)
+    c.rc.pause()
+    assert c.rc.drawdown_entry_block_reason() != ""
+    assert c.rc.cashout_authority_check() == ""
+
+
+def test_m65_session_change_between_the_fence_check_and_the_send_point_blocks_the_order(tmp_path, monkeypatch):
+    """M65: la sessione d'ammissione annotata dal controllo del fence arriva al punto d'invio e vi si ricontrolla. Una
+    sessione nuova aperta fra i due (es. invio eseguito in ritardo dall'esecutore dopo STOP -> START) nega l'ordine
+    prima del broker, con motivo certo."""
+    from core.runtime_controller import RuntimeController
+    from core.trading_engine import TradingEngine
+    c = _catena(tmp_path)
+    _lettura(c, 100.0)
+    trattenuti = _ingresso_in_coda(c)
+    reale = TradingEngine._submit_to_order_path
+    annotate = []
+
+    def nuova_sessione_prima_dell_invio(self, ctx, request):
+        # fuori dal percorso d'invio: un'asserzione qui verrebbe assorbita dal motore come errore d'invio
+        annotate.append((request.get("admission_session"), RuntimeController._entry_session(c.rc)))
+        RuntimeController._new_entry_session(c.rc)
+        return reale(self, ctx, request)
+
+    monkeypatch.setattr(TradingEngine, "_submit_to_order_path", nuova_sessione_prima_dell_invio)
+    for comando in trattenuti:
+        c.rc.bus.publish("CMD_QUICK_BET", comando)
+    assert len(annotate) == 1 and annotate[0][0] == annotate[0][1], annotate   # sessione annotata dal fence
+    assert _ordini(c) == 0
+
+
+def test_f2_sim_reading_racing_the_switch_to_live_never_leaves_the_sim_scope_declared(tmp_path):
+    """F2 (M68, Claude D su e294bd6d): cambio del flag di modalita' e invalidazione dell'ambito sono una sola sezione
+    critica con la dichiarazione dell'ambito. Una lettura SIM che arriva esattamente mentre il flag passa a LIVE non
+    lascia dichiarato l'ambito SIM: il controllo finale nega gli ingressi LIVE finche' non arriva una lettura LIVE.
+    Deterministico: il setter del flag avvia la lettura SIM concorrente e la attende (fino a 0,5 s); se il flag fosse
+    assegnato fuori dal lock, dopo l'invalidazione, la lettura vedrebbe ancora SIM e dichiarerebbe l'ambito SIM."""
+    import threading
+    from core.runtime_controller import RuntimeController
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 100.0, simulated=True)
+    assert c.rc.drawdown_entry_block_reason() == ""
+    letture = []
+
+    class _FlagSpia(type(c.rc)):
+        @property
+        def simulation_mode(self):
+            return self.__dict__.get("_sm_valore", False)
+
+        @simulation_mode.setter
+        def simulation_mode(self, valore):
+            if valore is False and self.__dict__.get("_sm_valore") is True and not letture:
+                lettura = threading.Thread(target=RuntimeController._declare_drawdown_scope,
+                                           args=(self, {"available": 100.0, "total": 100.0, "ok": True,
+                                                        "simulated": True}))
+                letture.append(lettura)
+                lettura.start()
+                lettura.join(timeout=0.5)                      # col lock tenuto la lettura attende il cambio
+            self.__dict__["_sm_valore"] = valore
+
+    c.rc.__dict__["_sm_valore"] = c.rc.__dict__.pop("simulation_mode", True)
+    c.rc.__class__ = _FlagSpia
+    c.rc.set_simulation_mode(False)
+    letture[0].join(timeout=5)
+    assert not letture[0].is_alive()
+    assert c.rc._hard_stop().scope != {"env": "SIM", "account": "sim"}
+    assert c.rc.drawdown_entry_block_reason() != ""
+
+
+def test_f2_final_check_never_sees_the_live_flag_with_the_sim_scope_still_valid(tmp_path):
+    """F2 (M68, sonda D test_d_f2_race): il controllo finale d'ingresso non vede mai, nella propria sezione critica, il
+    flag gia' LIVE (client verso LIVE) insieme all'ambito SIM ancora valido ('' = ingresso ammesso sullo stato SIM).
+    Con il controllo in corso (lock tenuto) un passaggio a LIVE concorrente attende: flag e invalidazione cambiano
+    insieme, dentro il lock. Uccide la variante con l'assegnazione del flag PRIMA del lock."""
+    import threading
+    import time
+    from core.drawdown_hard_stop import REASON_ACCOUNT_UNKNOWN
+    from core.runtime_controller import RuntimeController
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    c.rc.set_simulation_mode(True)
+    _lettura_ambito(c, 100.0, simulated=True)
+    assert c.rc.drawdown_entry_block_reason() == ""
+    with RuntimeController._drawdown_eval_lock:                    # controllo finale in corso
+        cambio = threading.Thread(target=lambda: c.rc.set_simulation_mode(False), daemon=True)
+        cambio.start()
+        time.sleep(0.2)
+        client_live = not c.rc.simulation_mode
+        ingresso = c.rc.drawdown_entry_block_reason()              # RLock: stesso thread
+        assert not (client_live and ingresso == ""), (client_live, ingresso)
+    cambio.join(5)
+    assert not cambio.is_alive()
+    assert c.rc.drawdown_entry_block_reason() == REASON_ACCOUNT_UNKNOWN
