@@ -276,9 +276,17 @@ class DrawdownHardStop:
             self.baseline = dict(records[0]["baseline"])
             # S18-1: provenienza del record piu' recente; un record senza provenienza la mette in quarantena (mai
             # attribuita d'ufficio a SIM o LIVE). Storia delle attribuzioni owner: unione (operation_id monouso).
-            scoped = [r for r in records if not r["scope_missing"]]
-            self.scope_legacy = not scoped
-            self.record_scope = dict(scoped[0]["scope"]) if scoped and scoped[0]["scope"] else None
+            # Sol e Grok su 12618e75: conta la provenienza VALORIZZATA. Un record con stato finanziario (picco,
+            # superamento o storia insufficiente) e provenienza assente o nulla resta in quarantena anche dopo le scritture
+            # di sessione (esenti dal controllo d'ambito), che non possono attribuirlo d'ufficio.
+            scoped = [r for r in records if r["scope"]]
+            if scoped:
+                self.scope_legacy = False
+                self.record_scope = dict(scoped[0]["scope"])
+            else:
+                self.record_scope = None
+                self.scope_legacy = any(r["peak"] is not None or r["breached"]
+                                        or r["history_insufficient"].get("active") for r in records)
             for r in records + stale:
                 for entry in r["scope_history"]:
                     if entry not in self.scope_history:

@@ -611,8 +611,11 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   identificabile (`drawdown_conto_non_identificabile`) nessuna valutazione, nessuna scrittura, nessuna procedura owner
   (ribasamento, sblocchi, conferma) e nessun nuovo ingresso su ogni percorso, controllo finale prima dell'invio compreso.
   Lo stato salvato resta intatto: nessun azzeramento del picco. Tornando all'ambito del record il drawdown riprende con
-  il suo picco. Un cambio di modalita' SIM/LIVE (`set_simulation_mode`) invalida l'ambito dichiarato: fino alla prima
-  lettura del conto nella nuova modalita' gli ingressi sono negati (`drawdown_conto_non_identificabile`), anche quelli gia'
-  in coda. L'unica uscita e' la procedura owner `owner_assign_drawdown_scope` (tracciata, stesse verifiche degli
+  il suo picco. Un cambio di modalita' SIM/LIVE (`set_simulation_mode`) invalida l'ambito gia' dichiarato: fino alla
+  prima lettura del conto nella nuova modalita' gli ingressi sono negati (`drawdown_conto_non_identificabile`), anche quelli
+  gia' in coda. Una lettura della modalita' precedente consegnata dopo il cambio non si valuta e non riapre gli ingressi;
+  il ramo del disponibile zero usa l'ambito della propria lettura come gli altri. Uno stato con dati finanziari (picco,
+  superamento, storia insufficiente) e provenienza assente o nulla resta in quarantena anche dopo le scritture di
+  sessione, che non lo attribuiscono mai d'ufficio. L'unica uscita e' la procedura owner `owner_assign_drawdown_scope` (tracciata, stesse verifiche degli
   sblocchi, nessun ordine AMBIGUOUS): attribuisce lo stato all'ambito corrente senza reset (picco, superamento e storia
   insufficiente restano) e rimette la baseline da confermare. Emergency Stop, STOP BOT e LOCKDOWN restano globali.

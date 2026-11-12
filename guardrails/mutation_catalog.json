@@ -9778,8 +9778,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                elif verifica[\"reason\"] == \"CASH_NOT_POSITIVE\":\n                    self._evaluate_drawdown_hard_stop(0.0, read_at)\n",
-      "mutated": "                elif False:\n                    self._evaluate_drawdown_hard_stop(0.0, read_at)\n",
+      "original": "                elif verifica[\"reason\"] == \"CASH_NOT_POSITIVE\":\n                    self._evaluate_drawdown_hard_stop(0.0, read_at, scope=scope)\n",
+      "mutated": "                elif False:\n                    self._evaluate_drawdown_hard_stop(0.0, read_at, scope=scope)\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -9802,8 +9802,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                if verifica[\"ok\"]:\n                    self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at)\n",
-      "mutated": "                if False:\n                    self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at)\n",
+      "original": "                if verifica[\"ok\"]:\n                    self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at, scope=scope)\n",
+      "mutated": "                if False:\n                    self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at, scope=scope)\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10888,6 +10888,54 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "S18-1 (Claude D): dopo il cambio SIM/LIVE l'ambito dichiarato resterebbe quello vecchio: un ingresso in coda partirebbe verso il nuovo client valutato contro lo stato dell'altro ambito."
+    },
+    {
+      "id": "d1_zero_available_reading_without_scope",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    self._evaluate_drawdown_hard_stop(0.0, read_at, scope=scope)",
+      "mutated": "                    self._evaluate_drawdown_hard_stop(0.0, read_at)",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Codex su 12618e75): una lettura con disponibile 0 di un altro ambito scriverebbe un superamento fittizio sul record."
+    },
+    {
+      "id": "d1_null_provenance_with_state_attributed",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                self.scope_legacy = any(r[\"peak\"] is not None or r[\"breached\"]\n",
+      "mutated": "                self.scope_legacy = False and any(r[\"peak\"] is not None or r[\"breached\"]\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Sol/Grok su 12618e75): uno stato senza provenienza (anche dopo le scritture di sessione) verrebbe adottato dal primo conto."
+    },
+    {
+      "id": "d1_stale_mode_reading_redeclares_scope",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if scope is not None and RuntimeController._drawdown_scope_is_current(self, scope):\n",
+      "mutated": "        if scope is not None:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Sol su 12618e75): una lettura in volo della modalita' precedente ridichiarerebbe il vecchio ambito e riaprirebbe gli ingressi."
+    },
+    {
+      "id": "d1_stale_mode_reading_evaluated",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                if not RuntimeController._drawdown_scope_is_current(self, scope):\n                    return                                   # lettura della modalita' precedente: mai valutata\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Sol su 12618e75): una lettura della modalita' precedente verrebbe valutata e ridichiarerebbe il suo ambito per i gate."
     },
     {
       "id": "d1_failed_start_keeps_startup_lockdown",

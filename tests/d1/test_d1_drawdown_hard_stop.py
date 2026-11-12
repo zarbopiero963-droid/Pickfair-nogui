@@ -2393,7 +2393,8 @@ def test_start_first_reading_is_evaluated_after_a_rebase_by_another_process(tmp_
         return config
 
     monkeypatch.setattr(rc.settings_service, "load_roserpina_config", con_limite)
-    altro = DrawdownHardStop(rc.db)                           # altro processo, dopo la costruzione di rc
+    altro = DrawdownHardStop(rc.db)
+    altro.set_scope(_AMBITO_NON_MARCATO)                       # S18-1: stesso ambito delle letture dell'harness                           # altro processo, dopo la costruzione di rc
     altro.restore()
     altro.observe(100.0)
     assert altro.owner_rebase_peak(90.0, authorization="PF-OWNER-X", reason="nuova baseline",
@@ -2983,6 +2984,7 @@ def test_failed_start_after_a_startup_lockdown_releases_what_it_owns(tmp_path, m
     from core.system_state import RuntimeMode
     app, rc = _start_reale(tmp_path, monkeypatch, cassa, telegram_fallisce=True)
     altro = DrawdownHardStop(rc.db)
+    altro.set_scope(_AMBITO_NON_MARCATO)                       # S18-1: stesso ambito delle letture dell'harness
     altro.restore()
     altro.observe(100.0)
     try:
@@ -3026,6 +3028,7 @@ def test_start_is_refused_when_the_drawdown_session_cannot_be_made_durable(tmp_p
     from core.system_state import RuntimeMode
     app, rc = _start_reale(tmp_path, monkeypatch, 130.0)
     altro = DrawdownHardStop(rc.db)
+    altro.set_scope(_AMBITO_NON_MARCATO)                       # S18-1: stesso ambito delle letture dell'harness
     altro.restore()
     altro.observe(100.0)
     letture = []
@@ -3610,10 +3613,17 @@ def test_s19b_rebase_retry_after_failure_succeeds_and_survives_restart(tmp_path,
     assert c.rc._hard_stop().peak == Decimal("80")
 
 
-def _lettura_ambito(c, cassa, *, simulated, conto="conto-a"):
+_AMBITO_NON_MARCATO = {"env": "UNTAGGED", "account": "untagged"}
+
+
+def _lettura_ambito(c, cassa, *, simulated, conto="conto-a", allinea=True):
     """Lettura del conto marcata come quella di BetfairService (``simulated``); in LIVE l'identita' del conto e' lo
-    username di login del client connesso (None => conto non identificabile)."""
+    username di login del client connesso (None => conto non identificabile). ``allinea``: il runtime e' nella modalita'
+    della lettura, come in produzione (BetfairService marca la lettura con la propria modalita'); False = lettura in volo
+    di una modalita' diversa da quella corrente."""
     import types
+    if allinea:
+        c.rc.simulation_mode = bool(simulated)
     if not getattr(c, "conto_iniziato", False):
         c.rc.risk_desk.equity_peak = 0.0
         c.rc.risk_desk.bankroll_start = 0.0
@@ -3909,3 +3919,89 @@ def test_s18_mode_set_before_any_reading_does_not_block_the_first_entry(tmp_path
     _lettura(c, 100.0)
     c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
     assert _ordini(c) == 1
+
+
+@pytest.mark.parametrize("impegnato", [100.0, 0.0])
+def test_s18_zero_available_reading_of_another_scope_never_touches_the_record(tmp_path, impegnato):
+    """S18-1 (Codex su 12618e75): stato SIM salvato a 1000, nuovo processo (ambito non ancora dichiarato), prima lettura
+    LIVE con disponibile 0 (impegnato 100, oppure 0 = perdita totale). Il ramo del disponibile zero dichiara l'ambito
+    della lettura come gli altri: nessun superamento fittizio scritto sul record SIM, ingressi negati per ambito diverso."""
+    import types
+    from core.drawdown_hard_stop import REASON_SCOPE_MISMATCH
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 1000.0, simulated=True)
+    salvato = _stato_salvato(c)
+    del c.rc._drawdown_hard_stop                                 # nuovo processo: stato riletto, ambito non dichiarato
+    c.rc.simulation_mode = False                                 # il nuovo processo e' in LIVE
+    c.rc.betfair_service.client = types.SimpleNamespace(username="conto-a")
+    fondi = {"available": 0.0, "exposure": -impegnato, "ok": True, "simulated": False}
+    c.rc._apply_funds_reading(dict(fondi), source="test")
+    assert _stato_salvato(c) == salvato
+    assert not c.rc._hard_stop().breached
+    assert c.rc.drawdown_entry_block_reason() == REASON_SCOPE_MISMATCH
+
+
+def _record_senza_provenienza(c, **extra):
+    vecchio = {"peak": "150", "seq": 4, "peak_epoch": 0, "rebase_ops": [], "breached": True,
+               "breach": {"kind": "max_drawdown_abs", "loss": "20"}, "session_open": False, "baseline_verified": True,
+               "baseline": {}, "history_insufficient": {}}
+    vecchio.update(extra)
+    c.rc.db.save_settings({STATE_KEY: json.dumps(vecchio)})
+    del c.rc._drawdown_hard_stop
+
+
+def test_s18_session_writes_never_lift_the_quarantine_of_a_state_without_provenance(tmp_path):
+    """S18-1 (Sol e Grok su 12618e75): apertura e chiusura della sessione (esenti dal controllo d'ambito) non cancellano
+    la quarantena di un record senza provenienza: dopo la loro scrittura e una rilettura lo stato resta non attribuito
+    finche' l'owner non lo assegna."""
+    from core.drawdown_hard_stop import REASON_SCOPE_UNATTRIBUTED
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _record_senza_provenienza(c)
+    stop = c.rc._hard_stop()
+    assert stop.open_session() and stop.close_session()
+    del c.rc._drawdown_hard_stop                                 # nuovo processo
+    _lettura_ambito(c, 140.0, simulated=False)
+    assert c.rc._hard_stop().scope_block_reason() == REASON_SCOPE_UNATTRIBUTED
+    assert c.rc.drawdown_entry_block_reason() != ""
+
+
+@pytest.mark.parametrize("campo", [{"scope": None}])
+def test_s18_state_with_null_provenance_is_quarantined_too(tmp_path, campo):
+    """S18-1: un record con stato finanziario e provenienza nulla (scritto senza ambito) e' non attribuito come uno
+    senza il campo: quarantena, mai adottato dal primo conto che legge."""
+    from core.drawdown_hard_stop import REASON_SCOPE_UNATTRIBUTED
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _record_senza_provenienza(c, **campo)
+    _lettura_ambito(c, 140.0, simulated=False)
+    assert c.rc._hard_stop().scope_block_reason() == REASON_SCOPE_UNATTRIBUTED
+
+
+def test_s18_late_reading_of_the_previous_mode_never_reenables_entries(tmp_path):
+    """S18-1 (Sol su 12618e75): una lettura SIM iniziata prima del passaggio a LIVE e consegnata dopo non ridichiara
+    l'ambito SIM per i gate: con il client gia' LIVE gli ingressi restano negati finche' non arriva una lettura LIVE."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    c.rc.simulation_mode = True
+    _lettura_ambito(c, 100.0, simulated=True)
+    trattenuti = _ingresso_in_coda(c)
+    c.rc.set_simulation_mode(False)
+    _lettura_ambito(c, 100.0, simulated=True, allinea=False)     # risposta SIM in volo, consegnata dopo il cambio
+    assert c.rc.drawdown_entry_block_reason() != ""
+    for comando in trattenuti:
+        c.rc.bus.publish("CMD_QUICK_BET", comando)
+    assert _ordini(c) == 0
+
+
+def test_s18_zero_available_reading_of_the_other_mode_in_a_new_process_is_never_evaluated(tmp_path):
+    """S18-1: nuovo processo in SIM (ambito non ancora dichiarato) e una lettura LIVE con disponibile 0 consegnata
+    comunque: non e' della modalita' corrente, quindi non si dichiara ne' si valuta. Il ramo del disponibile zero passa
+    l'ambito della lettura alla valutazione: senza, la valutazione userebbe l'ambito non dichiarato (nessun controllo) e
+    scriverebbe una perdita totale fittizia sul record SIM."""
+    import types
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 1000.0, simulated=True)
+    salvato = _stato_salvato(c)
+    del c.rc._drawdown_hard_stop                                 # nuovo processo, ancora in SIM
+    c.rc.betfair_service.client = types.SimpleNamespace(username="conto-a")
+    c.rc._apply_funds_reading({"available": 0.0, "exposure": 0.0, "ok": True, "simulated": False}, source="test")
+    assert _stato_salvato(c) == salvato
+    assert not c.rc._hard_stop().breached

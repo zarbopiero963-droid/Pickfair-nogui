@@ -6838,10 +6838,22 @@ class RuntimeController:
         la valutazione, che lo ridichiara nella propria sezione critica (nessuna lettura valutata nell'ambito di
         un'altra)."""
         scope = RuntimeController._drawdown_scope_of_funds(self, funds)
-        if scope is not None:
+        if scope is not None and RuntimeController._drawdown_scope_is_current(self, scope):
             with RuntimeController._drawdown_eval_lock:
                 RuntimeController._hard_stop(self).set_scope(scope)
         return scope
+
+    def _drawdown_scope_is_current(self, scope: dict) -> bool:
+        """S18-1 (Sol su 12618e75): l'ambito di una lettura vale solo se e' quello della modalita' corrente del runtime.
+        Una risposta SIM iniziata prima del passaggio a LIVE (o viceversa) e consegnata dopo non ridichiara il vecchio
+        ambito e non si valuta: gli ingressi restano negati fino a una lettura della modalita' attiva. Le sorgenti non
+        marcate (stub) non portano un ambiente e restano coerenti con se stesse."""
+        env = scope.get("env")
+        if env == "SIM":
+            return bool(getattr(self, "simulation_mode", False))
+        if env == "LIVE":
+            return not bool(getattr(self, "simulation_mode", False))
+        return True
 
     def _drawdown_writes_allowed(self) -> bool:
         """Codex su 53c99ceb: lo stato dell'hard-stop (picco, superamento, marker) lo aggiorna solo il controller
@@ -6899,6 +6911,8 @@ class RuntimeController:
         # che alza il picco e poi registrare una perdita falsa.
         with RuntimeController._drawdown_eval_lock:
             if scope is not _DRAWDOWN_SCOPE_UNSET and scope is not None:
+                if not RuntimeController._drawdown_scope_is_current(self, scope):
+                    return                                   # lettura della modalita' precedente: mai valutata
                 # S18-1: l'ambito di questa lettura, nella stessa sezione critica della valutazione.
                 RuntimeController._hard_stop(self).set_scope(scope)
             # Sol su 2a847087: la proprieta' si verifica DENTRO la sezione critica: lo STOP la toglie prendendo lo
@@ -7161,10 +7175,13 @@ class RuntimeController:
                 # D-631-08 (Sol su 9209f0d8): vale anche per la lettura che il desk scarta perche' arrivata tardi;
                 # l'hard-stop decide col proprio istante (tardiva = solo massimo osservato, mai cassa corrente).
                 verifica = self._cash_equity_verification(funds)
+                # S18-1 (Codex su 12618e75): come gli altri percorsi, l'ambito di QUESTA lettura entra nella valutazione:
+                # una lettura di un altro ambiente o conto non tocca lo stato salvato (mai un superamento fittizio).
+                scope = RuntimeController._declare_drawdown_scope(self, funds)
                 if verifica["ok"]:
-                    self._evaluate_drawdown_hard_stop(verifica["cash"], read_at)
+                    self._evaluate_drawdown_hard_stop(verifica["cash"], read_at, scope=scope)
                 elif verifica["reason"] == "CASH_NOT_POSITIVE":
-                    self._evaluate_drawdown_hard_stop(0.0, read_at)
+                    self._evaluate_drawdown_hard_stop(0.0, read_at, scope=scope)
             if applied:
                 self._account_state = state
                 self._account_state_source = str(source)
