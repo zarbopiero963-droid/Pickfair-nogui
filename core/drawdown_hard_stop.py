@@ -392,8 +392,11 @@ class DrawdownHardStop:
             # S18-1: mai scrivere lo stato di un altro ambito (difesa: i chiamanti non mutano lo stato fuori ambito).
             self.persist_failed = True
             return False
-        if self.record_scope is None and self.scope is not None and self.scope.get("account"):
+        if (self.record_scope is None and not self.scope_legacy and self.scope is not None
+                and self.scope.get("account")):
             # prima scrittura: provenienza = ambito corrente, solo se identificato (mai un ambito invalidato o senza conto)
+            # e mai su uno stato senza provenienza (Grok su 559b39ca): le scritture di sessione, esenti dal controllo
+            # d'ambito, non attribuiscono il record al conto corrente; lo fa solo l'assegnazione owner.
             self.record_scope = dict(self.scope)
         newer = self._newer_on_disk_locked()
         if newer:

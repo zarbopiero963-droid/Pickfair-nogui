@@ -1556,10 +1556,11 @@ class RuntimeController:
         """
         Metodo richiesto da mini_gui.py.
         """
-        self.simulation_mode = bool(enabled)
         # S18-1: il conto (e quindi l'ambito dello stato del drawdown) cambia con la modalita': fino alla prima lettura
         # del conto nella nuova modalita' gli ingressi restano negati, anche quelli gia' in coda (controllo finale).
+        # Cambio e invalidazione sotto il lock delle dichiarazioni d'ambito (Sol su 559b39ca).
         with RuntimeController._drawdown_eval_lock:
+            self.simulation_mode = bool(enabled)
             RuntimeController._hard_stop(self).invalidate_scope()
         if hasattr(self.betfair_service, "set_simulation_mode"):
             self.betfair_service.set_simulation_mode(self.simulation_mode)
@@ -6838,9 +6839,12 @@ class RuntimeController:
         la valutazione, che lo ridichiara nella propria sezione critica (nessuna lettura valutata nell'ambito di
         un'altra)."""
         scope = RuntimeController._drawdown_scope_of_funds(self, funds)
-        if scope is not None and RuntimeController._drawdown_scope_is_current(self, scope):
+        if scope is not None:
+            # Sol su 559b39ca: verifica della modalita' e dichiarazione in una sola sezione critica, la stessa del cambio
+            # modalita' (`set_simulation_mode`): un passaggio a LIVE fra le due non lascia dichiarato l'ambito SIM.
             with RuntimeController._drawdown_eval_lock:
-                RuntimeController._hard_stop(self).set_scope(scope)
+                if RuntimeController._drawdown_scope_is_current(self, scope):
+                    RuntimeController._hard_stop(self).set_scope(scope)
         return scope
 
     def _drawdown_scope_is_current(self, scope: dict) -> bool:

@@ -10902,6 +10902,30 @@
       "rationale": "S18-1 (Codex su 12618e75): una lettura con disponibile 0 di un altro ambito scriverebbe un superamento fittizio sul record."
     },
     {
+      "id": "d1_session_write_attributes_unattributed_state",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if (self.record_scope is None and not self.scope_legacy and self.scope is not None\n",
+      "mutated": "        if (self.record_scope is None and self.scope is not None\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Grok su 559b39ca): una scrittura di sessione con l'ambito gia' dichiarato attribuirebbe al conto corrente uno stato senza provenienza, togliendone la quarantena al riavvio."
+    },
+    {
+      "id": "d1_scope_check_outside_declaration_lock",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            with RuntimeController._drawdown_eval_lock:\n                if RuntimeController._drawdown_scope_is_current(self, scope):\n                    RuntimeController._hard_stop(self).set_scope(scope)\n",
+      "mutated": "            if RuntimeController._drawdown_scope_is_current(self, scope):\n                with RuntimeController._drawdown_eval_lock:\n                    RuntimeController._hard_stop(self).set_scope(scope)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Sol su 559b39ca): con la verifica della modalita' fuori dal lock un passaggio a LIVE concorrente lascerebbe dichiarato l'ambito SIM e il controllo finale ammetterebbe ingressi LIVE sullo stato SIM."
+    },
+    {
       "id": "d1_null_provenance_with_state_attributed",
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
@@ -10918,8 +10942,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        if scope is not None and RuntimeController._drawdown_scope_is_current(self, scope):\n",
-      "mutated": "        if scope is not None:\n",
+      "original": "                if RuntimeController._drawdown_scope_is_current(self, scope):\n",
+      "mutated": "                if True:\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],

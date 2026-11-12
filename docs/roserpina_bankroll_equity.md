@@ -614,8 +614,10 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   il suo picco. Un cambio di modalita' SIM/LIVE (`set_simulation_mode`) invalida l'ambito gia' dichiarato: fino alla
   prima lettura del conto nella nuova modalita' gli ingressi sono negati (`drawdown_conto_non_identificabile`), anche quelli
   gia' in coda. Una lettura della modalita' precedente consegnata dopo il cambio non si valuta e non riapre gli ingressi;
-  il ramo del disponibile zero usa l'ambito della propria lettura come gli altri. Uno stato con dati finanziari (picco,
+  il ramo del disponibile zero usa l'ambito della propria lettura come gli altri. Verifica della modalita', dichiarazione dell'ambito e
+  cambio modalita' (con l'invalidazione) sono una sola sezione critica: un passaggio a LIVE concorrente non lascia
+  dichiarato l'ambito SIM (Sol su 559b39ca). Uno stato con dati finanziari (picco,
   superamento, storia insufficiente) e provenienza assente o nulla resta in quarantena anche dopo le scritture di
-  sessione, che non lo attribuiscono mai d'ufficio. L'unica uscita e' la procedura owner `owner_assign_drawdown_scope` (tracciata, stesse verifiche degli
+  sessione, che non lo attribuiscono mai d'ufficio, nemmeno con l'ambito gia' dichiarato da una lettura (Grok su 559b39ca). L'unica uscita e' la procedura owner `owner_assign_drawdown_scope` (tracciata, stesse verifiche degli
   sblocchi, nessun ordine AMBIGUOUS): attribuisce lo stato all'ambito corrente senza reset (picco, superamento e storia
   insufficiente restano) e rimette la baseline da confermare. Emergency Stop, STOP BOT e LOCKDOWN restano globali.

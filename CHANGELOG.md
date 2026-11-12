@@ -97,7 +97,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (PF-OWNER-PR631-CYCLE19-GO-20261112 e SCOPE-AMENDMENT): un calo dimostrato precede sempre la storia insufficiente
   (S19-A); un ribasamento fallito ripristina anche il picco confermato (S19-B); lo stato porta la provenienza (ambiente
   e conto) e uno stato di un altro ambito, senza provenienza o con conto non identificabile non si valuta, non si
-  scrive e nega gli ingressi fino all'attribuzione owner (S18-1, separazione completa in PR-04). Review su e98e84c7 (Sol): un marker superato con picco piu'
+  scrive e nega gli ingressi fino all'attribuzione owner (S18-1, separazione completa in PR-04). Su 559b39ca (Grok): le scritture di sessione non attribuiscono mai
+  al conto corrente uno stato senza provenienza, nemmeno con l'ambito gia' dichiarato. Su 559b39ca (Sol): verifica della modalita' e
+  dichiarazione dell'ambito nella stessa sezione critica del cambio modalita'. Review su e98e84c7 (Sol): un marker superato con picco piu'
   alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
   resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale

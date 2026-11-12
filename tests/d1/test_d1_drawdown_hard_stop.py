@@ -3965,6 +3965,25 @@ def test_s18_session_writes_never_lift_the_quarantine_of_a_state_without_provena
     assert c.rc.drawdown_entry_block_reason() != ""
 
 
+@pytest.mark.parametrize("violato", [True, False])
+def test_s18_session_writes_after_a_declared_scope_never_attribute_a_state_without_provenance(tmp_path, violato):
+    """S18-1 (Grok su 559b39ca): con l'ambito gia' dichiarato da una lettura, apertura e chiusura della sessione non
+    scrivono quell'ambito come provenienza del record senza provenienza: dopo il riavvio lo stato resta in quarantena
+    (picco e superamento mai adottati dal conto corrente senza l'assegnazione owner)."""
+    from core.drawdown_hard_stop import REASON_SCOPE_UNATTRIBUTED
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _record_senza_provenienza(c, breached=violato, breach={"kind": "max_drawdown_abs", "loss": "20"} if violato else {})
+    _lettura_ambito(c, 140.0, simulated=False)                   # ambito dichiarato: quarantena
+    stop = c.rc._hard_stop()
+    assert stop.scope_block_reason() == REASON_SCOPE_UNATTRIBUTED
+    assert stop.open_session() and stop.close_session()
+    assert _stato_salvato(c).get("scope") is None
+    del c.rc._drawdown_hard_stop                                 # nuovo processo
+    _lettura_ambito(c, 140.0, simulated=False)
+    assert c.rc._hard_stop().scope_block_reason() == REASON_SCOPE_UNATTRIBUTED
+    assert c.rc.drawdown_entry_block_reason() != ""
+
+
 @pytest.mark.parametrize("campo", [{"scope": None}])
 def test_s18_state_with_null_provenance_is_quarantined_too(tmp_path, campo):
     """S18-1: un record con stato finanziario e provenienza nulla (scritto senza ambito) e' non attribuito come uno
@@ -3974,6 +3993,37 @@ def test_s18_state_with_null_provenance_is_quarantined_too(tmp_path, campo):
     _record_senza_provenienza(c, **campo)
     _lettura_ambito(c, 140.0, simulated=False)
     assert c.rc._hard_stop().scope_block_reason() == REASON_SCOPE_UNATTRIBUTED
+
+
+def test_s18_mode_switch_between_check_and_declaration_never_restores_the_old_scope(tmp_path, monkeypatch):
+    """S18-1 (Sol su 559b39ca): verifica della modalita' e dichiarazione dell'ambito sono una sola sezione critica con
+    l'invalidazione del cambio modalita'. Una lettura SIM che ha appena superato il controllo e un passaggio a LIVE
+    concorrente non lasciano dichiarato l'ambito SIM: gli ingressi restano negati fino a una lettura LIVE."""
+    import threading
+    from core.runtime_controller import RuntimeController
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 100.0, simulated=True)
+    assert c.rc.drawdown_entry_block_reason() == ""
+    originale = RuntimeController._drawdown_scope_is_current
+    passaggi = []
+
+    def controllo_poi_cambio(self, scope):
+        esito = originale(self, scope)
+        if not passaggi:                                         # una sola volta: il cambio arriva dopo il controllo
+            t = threading.Thread(target=c.rc.set_simulation_mode, args=(False,))
+            t.start()
+            t.join(timeout=0.5)                                  # col lock tenuto il cambio attende la dichiarazione
+            passaggi.append(t)
+        return esito
+
+    monkeypatch.setattr(RuntimeController, "_drawdown_scope_is_current", controllo_poi_cambio)
+    RuntimeController._declare_drawdown_scope(c.rc, {"available": 100.0, "ok": True, "simulated": True})
+    passaggi[0].join(timeout=5)
+    assert not passaggi[0].is_alive()
+    monkeypatch.setattr(RuntimeController, "_drawdown_scope_is_current", originale)
+    assert c.rc.simulation_mode is False
+    assert c.rc._hard_stop().scope != {"env": "SIM", "account": "sim"}
+    assert c.rc.drawdown_entry_block_reason() != ""
 
 
 def test_s18_late_reading_of_the_previous_mode_never_reenables_entries(tmp_path):
