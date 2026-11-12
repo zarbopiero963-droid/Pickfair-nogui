@@ -802,6 +802,10 @@ class DrawdownHardStop:
             proven = self._proven_peak_before_locked(at)
             known, known_exact = self._peak_before_window_locked(at)
             low, low_exact = self._min_after_locked(at)
+            # Ciclo 21 (PF-OWNER-PR631-C21-EQUAL-TIMESTAMP-GO-20261112): letture conservate con lo STESSO istante di
+            # inizio. L'ordine reale fra loro e questa e' ignoto: non sono ne' prima ne' dopo (nessuna prova), ma un calo
+            # fra le due in uno qualsiasi dei due ordini e' possibile.
+            peers = [c for t, c in self._history if t == at]
             already = self.breached or bool(self.history_insufficient.get("active"))
             self._store_locked(at, cash)
             epoch = self.peak_epoch
@@ -834,6 +838,13 @@ class DrawdownHardStop:
         if check_after and not low_exact and self._limit_exceeded(cap_raw, pct_cap_raw, Decimal(0), cash):
             return self._mark_history_insufficient("massimo_precedente_alla_storia_conservata", at, cash, epoch,
                                                    reference=reference)
+        # Ciclo 21: stesso istante d'inizio, ordine ignoto. Se in uno dei due ordini il calo raggiunge un limite, il
+        # superamento e' possibile ma non dimostrabile => storia insufficiente (mai un PASS, mai un hard-stop inventato).
+        for peer in peers:
+            high, low_peer = (peer, cash) if peer >= cash else (cash, peer)
+            if self._limit_exceeded(cap_raw, pct_cap_raw, low_peer, high):
+                return self._mark_history_insufficient("letture_con_lo_stesso_istante", at, cash, epoch,
+                                                       reference=high)
         return ""
 
     def _mark_history_insufficient(self, why: str, at: float, cash: Decimal, epoch: int,

@@ -6986,8 +6986,11 @@ class RuntimeController:
                 # G17-1 (Grok su bcd19a32): una lettura iniziata prima della conferma owner della baseline e' anteriore
                 # al picco confermato anche se arriva in ordine: si valuta come tardiva (mai un hard-stop non
                 # dimostrato; superamento possibile => storia insufficiente).
+                # Ciclo 21 (PF-OWNER-PR631-C21-EQUAL-TIMESTAMP-GO-20261112): una lettura iniziata nello STESSO istante
+                # dell'ultima valutata (granularita' del clock, es. Windows) non e' in ordine: l'ordine reale e' ignoto,
+                # si valuta come tardiva (calo possibile ma non dimostrabile => storia insufficiente).
                 confirmed_at = RuntimeController._hard_stop(self).baseline_confirmed_at
-                if (last is not None and started < last) or (confirmed_at is not None and started < confirmed_at):
+                if (last is not None and started <= last) or (confirmed_at is not None and started < confirmed_at):
                     self._observe_late_drawdown_reading(cassa, started)
                     return
                 self._drawdown_read_at = started

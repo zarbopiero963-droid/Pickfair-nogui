@@ -4322,3 +4322,53 @@ def test_m68_unreadable_desk_state_blocks_the_queued_entry(tmp_path, monkeypatch
     for comando in trattenuti:
         c.rc.bus.publish("CMD_QUICK_BET", comando)
     assert _ordini(c) == 0
+
+
+# ---------------------------------- ciclo 21 (PF-OWNER-PR631-C21-EQUAL-TIMESTAMP-GO-20261112): letture con lo stesso istante
+def _letture_stesso_istante(tmp_path, valori, **cfg):
+    import time
+    c = _catena(tmp_path, **(cfg or {"max_drawdown_abs": 10.0}))
+    _lettura(c, 100.0)
+    istante = time.monotonic() + 100.0
+    for valore in valori:
+        c.rc._apply_funds_reading(_fondi(valore), source="test", read_at=istante)
+    return c
+
+
+@pytest.mark.parametrize("ordine", [(130.0, 115.0), (115.0, 130.0)])
+def test_c21_equal_start_readings_with_a_possible_drop_are_history_insufficient_in_both_orders(tmp_path, ordine):
+    """Ciclo 21 (Sol su d771e1f8, Claude D): picco 100, limite 10, letture 130 e 115 iniziate nello STESSO istante.
+    L'ordine reale e' ignoto: un calo di 15 e' possibile ma non dimostrabile => storia insufficiente in ENTRAMBI gli
+    ordini di arrivo. Mai un hard-stop inventato (130 -> 115) ne' un PASS (115 -> 130); un ingresso in coda non parte."""
+    c = _letture_stesso_istante(tmp_path, ordine)
+    stop = c.rc._hard_stop()
+    assert not stop.breached
+    assert stop.history_insufficient.get("active") is True
+    assert stop.history_insufficient.get("reason") == "letture_con_lo_stesso_istante"
+    assert c.rc.drawdown_entry_block_reason() == REASON_HISTORY_INSUFFICIENT
+
+
+@pytest.mark.parametrize("ordine", [(130.0, 85.0), (85.0, 130.0)])
+def test_c21_a_drop_proven_by_the_history_still_triggers_the_hard_stop(tmp_path, ordine):
+    """Ciclo 21: una perdita gia' dimostrata dalla cronologia resta un hard-stop anche con letture dello stesso istante:
+    85 contro il picco 100 letto PRIMA (calo di 15 >= 10), in qualunque ordine di arrivo."""
+    c = _letture_stesso_istante(tmp_path, ordine)
+    assert c.rc._hard_stop().breached
+    assert c.rc.drawdown_entry_block_reason() != ""
+
+
+@pytest.mark.parametrize("ordine", [(130.0, 130.0), (105.0, 100.0), (100.0, 105.0)])
+def test_c21_equal_start_readings_without_a_possible_breach_do_not_block(tmp_path, ordine):
+    """Ciclo 21: letture dello stesso istante senza un calo possibile pari al limite (uguali, o 5 < 10) non bloccano."""
+    c = _letture_stesso_istante(tmp_path, ordine)
+    stop = c.rc._hard_stop()
+    assert not stop.breached and not stop.history_insufficient.get("active")
+    assert c.rc.drawdown_entry_block_reason() == ""
+
+
+@pytest.mark.parametrize("ordine", [(130.0, 115.0), (115.0, 130.0)])
+def test_c21_equal_start_readings_with_the_percentage_cap(tmp_path, ordine):
+    """Ciclo 21: lo stesso vale per il limite percentuale (10% di 130 = 13 <= 15) => storia insufficiente."""
+    c = _letture_stesso_istante(tmp_path, ordine, max_drawdown_hard_stop_pct=10.0)
+    stop = c.rc._hard_stop()
+    assert not stop.breached and stop.history_insufficient.get("active") is True

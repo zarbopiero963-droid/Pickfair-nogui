@@ -9982,7 +9982,7 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                if (last is not None and started < last) or (confirmed_at is not None and started < confirmed_at):\n                    self._observe_late_drawdown_reading(cassa, started)\n                    return\n                self._drawdown_read_at = started\n",
+      "original": "                if (last is not None and started <= last) or (confirmed_at is not None and started < confirmed_at):\n                    self._observe_late_drawdown_reading(cassa, started)\n                    return\n                self._drawdown_read_at = started\n",
       "mutated": "                self._drawdown_read_at = started\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
@@ -10738,8 +10738,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                if (last is not None and started < last) or (confirmed_at is not None and started < confirmed_at):",
-      "mutated": "                if last is not None and started < last:",
+      "original": "                if (last is not None and started <= last) or (confirmed_at is not None and started < confirmed_at):",
+      "mutated": "                if last is not None and started <= last:",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -11020,6 +11020,42 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "M68: uno stato del desk non leggibile deve negare l'ingresso (fail-closed), mai ammetterlo."
+    },
+    {
+      "id": "c21_equal_start_reading_treated_as_ordered",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                if (last is not None and started <= last) or (confirmed_at is not None and started < confirmed_at):\n",
+      "mutated": "                if (last is not None and started < last) or (confirmed_at is not None and started < confirmed_at):\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 21 (PF-OWNER-PR631-C21-EQUAL-TIMESTAMP-GO-20261112): una lettura iniziata nello stesso istante dell'ultima valutata andrebbe nel ramo ordinato: falso hard-stop (130 -> 115) o PASS su un calo possibile (115 -> 130)."
+    },
+    {
+      "id": "c21_same_instant_peers_ignored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        for peer in peers:\n",
+      "mutated": "        for peer in []:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 21: senza il confronto con le letture dello stesso istante un calo possibile ma non dimostrabile non diventerebbe storia insufficiente."
+    },
+    {
+      "id": "c21_same_instant_order_assumed",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            high, low_peer = (peer, cash) if peer >= cash else (cash, peer)\n",
+      "mutated": "            high, low_peer = (peer, cash)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 21: l'ordine fra letture dello stesso istante e' ignoto: il calo va considerato in entrambi i versi, non solo dalla lettura gia' conservata."
     },
     {
       "id": "m65_send_point_ignores_admission_session",

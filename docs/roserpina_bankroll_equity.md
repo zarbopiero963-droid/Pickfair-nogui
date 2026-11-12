@@ -590,6 +590,14 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   ricontrolla (`drawdown_entry_block_reason(request)`): vale anche per un invio eseguito in ritardo dall'esecutore.
   Gli ordini gia' inviati con esito incerto restano alla riconciliazione.
 
+- **Letture con lo stesso istante (ciclo 21, PF-OWNER-PR631-C21-EQUAL-TIMESTAMP-GO-20261112).** Due letture del conto
+  iniziate nello stesso istante (`read_at` uguale: possibile con la granularita' del clock, es. Windows) hanno ordine
+  reale ignoto. La seconda arrivata si valuta come tardiva (`evaluate_late`): le prove di calo (letture strettamente
+  prima o dopo) restano invariate e una perdita dimostrata e' un hard-stop; poi, se in uno qualsiasi dei due ordini il
+  calo fra le due raggiunge un limite, il superamento e' solo possibile => storia insufficiente
+  (`letture_con_lo_stesso_istante`), ingressi negati. Mai un hard-stop inventato, mai un PASS (picco 100, limite 10,
+  letture 130 e 115 dello stesso istante => storia insufficiente in entrambi gli ordini di arrivo).
+
 - **Stato del bot al punto d'invio (M68, PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112).** Nessun nuovo ingresso
   parte se il bot non e' ACTIVE: PAUSA (`runtime_non_attivo:PAUSED`), fermo (`runtime_non_attivo:STOPPED`), LOCKDOWN
   del runtime (`runtime_lockdown:...`) o del desk (`desk_lockdown`: drawdown oltre la soglia di lockdown del money
