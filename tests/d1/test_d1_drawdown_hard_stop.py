@@ -4408,3 +4408,26 @@ def test_c21_equal_start_lower_peer_in_the_summary_and_a_late_higher_reading(tmp
     stop = c.rc._hard_stop()
     assert not stop.breached
     assert stop.history_insufficient.get("active") is True
+
+
+def test_c21_owner_clearance_after_equal_start_readings_never_judges_the_stale_gate_cash(tmp_path):
+    """Ciclo 21 (Codex su ccecc8db): 115 poi 130 dello stesso istante => storia insufficiente; la 130, tardiva, non
+    aggiornava l'ultima cassa del gate (restava 115) mentre picco e cassa del desk erano 130. Dopo lo sblocco owner
+    (verifiche con la cassa verificata 130) il segnale successivo confrontava la cassa vecchia 115 col picco 130 e
+    memorizzava una perdita fittizia di 15. Lo sblocco allinea la cassa del gate alla cassa verificata delle verifiche:
+    nessun hard-stop inventato, il segnale passa."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    istante = time.monotonic() + 100.0
+    for valore in (115.0, 130.0):
+        c.rc._apply_funds_reading(_fondi(valore), source="test", read_at=istante)
+    assert c.rc._hard_stop().history_block_reason() == REASON_HISTORY_INSUFFICIENT
+    esito = c.rc.owner_clear_drawdown_history_insufficient(authorization="#631 decisione owner",
+                                                           reason="riconciliazione verificata",
+                                                           operation_id="PF-C21-CLR", confirm=True)
+    assert esito["cleared"] is True, esito
+    c.rc.betfair_service.get_account_funds = lambda: _fondi(float(esito["checks"]["cash"]))
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert not c.rc._hard_stop().breached, c.rc._hard_stop().snapshot()["breach"]
+    assert _ordini(c) == 1

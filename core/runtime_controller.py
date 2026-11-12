@@ -7843,6 +7843,10 @@ class RuntimeController:
                 out["reason"] = "sblocco_non_autorizzato_o_non_registrato"
             else:
                 out["cleared"] = True
+                # Ciclo 21 (Codex su ccecc8db): con letture dello stesso istante la lettura tardiva non aggiorna la cassa
+                # del gate (ordine ignoto). Lo sblocco owner chiude quell'incertezza sulla cassa verificata appena
+                # controllata: il gate riparte da li', mai da una cassa vecchia confrontata col picco (perdita fittizia).
+                self._drawdown_last_cash = checks["cash"]
         return out
 
     def owner_assign_drawdown_scope(self, *, authorization: str, reason: str, operation_id: str,

@@ -11070,6 +11070,18 @@
       "rationale": "Ciclo 21 (Codex su 954b226b): una gemella dello stesso istante gia' passata al riepilogo verrebbe ignorata e un calo possibile diventerebbe un PASS."
     },
     {
+      "id": "c21_owner_clearance_keeps_stale_gate_cash",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                self._drawdown_last_cash = checks[\"cash\"]\n",
+      "mutated": "                pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 21 (Codex su ccecc8db): dopo lo sblocco owner della storia insufficiente nata da letture dello stesso istante, il gate confronterebbe una cassa vecchia col picco e memorizzerebbe una perdita fittizia."
+    },
+    {
       "id": "m65_send_point_ignores_admission_session",
       "module": "core.runtime_controller",
       "area": "money_management",
