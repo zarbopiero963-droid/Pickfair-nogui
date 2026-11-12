@@ -594,7 +594,8 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   iniziate nello stesso istante (`read_at` uguale: possibile con la granularita' del clock, es. Windows) hanno ordine
   reale ignoto. La seconda arrivata si valuta come tardiva (`evaluate_late`): le prove di calo (letture strettamente
   prima o dopo) restano invariate e una perdita dimostrata e' un hard-stop; poi, se in uno qualsiasi dei due ordini il
-  calo fra le due raggiunge un limite, il superamento e' solo possibile => storia insufficiente
+  calo fra le due (anche con una gemella gia' passata al riepilogo dei massimi e dei minimi) raggiunge un limite, il
+  superamento e' solo possibile => storia insufficiente
   (`letture_con_lo_stesso_istante`), ingressi negati. Mai un hard-stop inventato, mai un PASS (picco 100, limite 10,
   letture 130 e 115 dello stesso istante => storia insufficiente in entrambi gli ordini di arrivo).
 

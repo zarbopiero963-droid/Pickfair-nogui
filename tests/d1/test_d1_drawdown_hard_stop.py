@@ -4372,3 +4372,39 @@ def test_c21_equal_start_readings_with_the_percentage_cap(tmp_path, ordine):
     c = _letture_stesso_istante(tmp_path, ordine, max_drawdown_hard_stop_pct=10.0)
     stop = c.rc._hard_stop()
     assert not stop.breached and stop.history_insufficient.get("active") is True
+
+
+def test_c21_equal_start_peer_already_moved_to_the_summary_is_still_compared(tmp_path):
+    """Ciclo 21 (Codex su 954b226b): la lettura gemella dello stesso istante gia' passata dalle recenti al riepilogo
+    (oltre il limite delle letture recenti) e' ancora una gemella: picco 100, 130 a t2, molte letture successive a 130,
+    poi 115 a t2 => calo possibile ma non dimostrabile => storia insufficiente, mai un PASS."""
+    import time
+    from core.drawdown_hard_stop import RECENT_READINGS_LIMIT
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    t2 = time.monotonic() + 100.0
+    c.rc._apply_funds_reading(_fondi(130.0), source="test", read_at=t2)
+    for i in range(1, RECENT_READINGS_LIMIT + 2):
+        c.rc._apply_funds_reading(_fondi(130.0), source="test", read_at=t2 + i)
+    c.rc._apply_funds_reading(_fondi(115.0), source="test", read_at=t2)
+    stop = c.rc._hard_stop()
+    assert not stop.breached
+    assert stop.history_insufficient.get("active") is True
+    assert c.rc.drawdown_entry_block_reason() == REASON_HISTORY_INSUFFICIENT
+
+
+def test_c21_equal_start_lower_peer_in_the_summary_and_a_late_higher_reading(tmp_path):
+    """Ciclo 21, caso speculare: 115 a t2 passata al riepilogo, poi 130 a t2 consegnata in ritardo (dopo molte letture
+    a 125: calo dimostrabile 130 -> 125 = 5 sotto il limite): se 130 era prima di 115 il calo di 15 e' possibile => storia insufficiente, mai un PASS."""
+    import time
+    from core.drawdown_hard_stop import RECENT_READINGS_LIMIT
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    t2 = time.monotonic() + 100.0
+    c.rc._apply_funds_reading(_fondi(115.0), source="test", read_at=t2)
+    for i in range(1, RECENT_READINGS_LIMIT + 2):
+        c.rc._apply_funds_reading(_fondi(125.0), source="test", read_at=t2 + i)
+    c.rc._apply_funds_reading(_fondi(130.0), source="test", read_at=t2)
+    stop = c.rc._hard_stop()
+    assert not stop.breached
+    assert stop.history_insufficient.get("active") is True

@@ -11058,6 +11058,18 @@
       "rationale": "Ciclo 21: l'ordine fra letture dello stesso istante e' ignoto: il calo va considerato in entrambi i versi, non solo dalla lettura gia' conservata."
     },
     {
+      "id": "c21_same_instant_peers_only_recent",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            peers = [c for t, c in (*self._history, *self._ladder, *self._valleys) if t == at]\n",
+      "mutated": "            peers = [c for t, c in self._history if t == at]\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 21 (Codex su 954b226b): una gemella dello stesso istante gia' passata al riepilogo verrebbe ignorata e un calo possibile diventerebbe un PASS."
+    },
+    {
       "id": "m65_send_point_ignores_admission_session",
       "module": "core.runtime_controller",
       "area": "money_management",

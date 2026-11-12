@@ -805,7 +805,10 @@ class DrawdownHardStop:
             # Ciclo 21 (PF-OWNER-PR631-C21-EQUAL-TIMESTAMP-GO-20261112): letture conservate con lo STESSO istante di
             # inizio. L'ordine reale fra loro e questa e' ignoto: non sono ne' prima ne' dopo (nessuna prova), ma un calo
             # fra le due in uno qualsiasi dei due ordini e' possibile.
-            peers = [c for t, c in self._history if t == at]
+            # Anche quelle gia' passate dalle recenti al riepilogo (gradini dei massimi e dei minimi, Codex su
+            # 954b226b): una gemella scartata anche dal riepilogo e' dominata da una prova gia' valutata (un massimo
+            # precedente maggiore o uguale, verifica A; un minimo successivo minore o uguale, misurato al suo arrivo).
+            peers = [c for t, c in (*self._history, *self._ladder, *self._valleys) if t == at]
             already = self.breached or bool(self.history_insufficient.get("active"))
             self._store_locked(at, cash)
             epoch = self.peak_epoch
