@@ -2936,6 +2936,7 @@ class RuntimeController:
         return None
 
     def _start_serialized(self, *, password, simulation_mode, execution_mode, live_enabled, live_readiness_ok) -> dict:
+        mode_before_start = getattr(self, "mode", RuntimeMode.STOPPED)
         gate_block = self._blackbox_gate_a("runtime_controller.start")
         if gate_block:
             return gate_block
@@ -2962,11 +2963,13 @@ class RuntimeController:
         except BaseException:
             # Codex su e3fe4d7: un avvio fallito dopo connect()/telegram.start() smonta prima i servizi gia' partiti;
             # smontaggio non riuscito => il lock resta preso (nessun secondo runtime con una sessione ancora viva).
+            self._back_to_stopped_after_failed_start(mode_before_start)
             if self._teardown_failed_start():
                 self._end_failed_start_drawdown()
                 self._release_runtime_instance_lock_if_stopped()
             raise
         if not (result or {}).get("started"):
+            self._back_to_stopped_after_failed_start(mode_before_start)
             # Sol su ad315ca: uno smontaggio precedente non riuscito si ritenta qui; finche' non riesce il lock resta.
             if not getattr(self, "_instance_teardown_pending", False) or self._teardown_failed_start():
                 self._end_failed_start_drawdown()
@@ -3122,6 +3125,11 @@ class RuntimeController:
         # P3 START (Sol su 3e6a3e0a): la rilettura precede anche l'INIZIO della lettura dei fondi, cosi' un ribasamento
         # di un altro processo adottato qui non rende «precedente al ribasamento» la prima lettura dello START.
         self._reload_drawdown_state()
+        # D-631-15 (Sol/Claude D su 3689ae8f): la sessione si apre su disco PRIMA di ogni lettura finanziaria dello
+        # START. Un picco osservato e poi perso (DB e marker giu', crash) lascia cosi' la sessione aperta: al riavvio la
+        # baseline non e' verificata e nessun ingresso parte senza la conferma owner. Non salvabile => START interrotto.
+        if not self._open_drawdown_session():
+            raise RuntimeError("DRAWDOWN_SESSION_NOT_DURABLE: sessione del drawdown non salvata, START interrotto")
         start_funds = time.monotonic()
         try:
             funds = self.betfair_service.get_account_funds()
@@ -3135,8 +3143,6 @@ class RuntimeController:
             )
             raise
         self._applica_fondi_avvio(funds, read_at=start_funds)
-        # RO-DD-09 C: sessione di trading aperta su disco fino a uno STOP pulito con picco durevole.
-        self._open_drawdown_session()
 
         start_telegram = time.monotonic()
         try:
@@ -3375,6 +3381,18 @@ class RuntimeController:
         Il bus e' asincrono: la verifica al routing del segnale non copre il momento del piazzamento."""
         return self._runtime_authority_block("cashout_place")
 
+    def drawdown_entry_block_reason(self) -> str:
+        """D-631-13 (Codex/Claude D su 3689ae8f): ricontrollo del drawdown al punto finale d'invio di una NUOVA entrata
+        (TradingEngine, come l'emergenza giornaliera). Un ingresso approvato e messo in coda prima del blocco non parte
+        dopo: superamento memorizzato, storia insufficiente, picco non persistito, baseline non verificata o stato
+        illeggibile => '' mai. Le uscite protettive non passano di qui (OrderRouter del cashout)."""
+        stop = RuntimeController._hard_stop(self)
+        if not stop.state_reliable():
+            return "drawdown_stato_illeggibile"
+        if stop.breached:
+            return stop.reason(None, None)
+        return RuntimeController._drawdown_persist_block_reason(self)
+
     def assert_runtime_authority(self, context: str = "") -> None:
         """Choke point per il TradingEngine prima di OGNI invio (SIM e LIVE): solleva `RuntimeAuthorityLost`."""
         block = self._runtime_authority_block(context or "order_submit")
@@ -3423,6 +3441,20 @@ class RuntimeController:
                 bus.publish("RUNTIME_AUTHORITY_LOST", {"reason": reason, "mode": RuntimeMode.LOCKDOWN.value})
             except Exception:
                 logger.exception("Evento RUNTIME_AUTHORITY_LOST non pubblicato")
+
+    def _back_to_stopped_after_failed_start(self, mode_before_start: Any) -> None:
+        """D-631-14 (Codex/Claude D su 3689ae8f): uno START partito da fermo e non riuscito lascia il runtime fermo.
+        Il LOCKDOWN imposto durante l'avvio (es. hard-stop superato dalla lettura dei fondi dello START) e' uno stato del
+        runtime in avvio, non un blocco persistente: senza tornare a STOPPED lo smontaggio dell'avvio fallito non
+        partiva e restavano lock, autorita' e sessione. I blocchi finanziari restano su disco (superamento, storia
+        insufficiente, emergenza) e il prossimo START li rilegge. Non tocca un runtime che era gia' attivo."""
+        if mode_before_start is not RuntimeMode.STOPPED:
+            return
+        current = getattr(self, "mode", RuntimeMode.STOPPED)
+        if current is RuntimeMode.LOCKDOWN:
+            logger.warning("Avvio non riuscito dopo un LOCKDOWN d'avvio (%s): runtime riportato a STOPPED per lo "
+                           "smontaggio; i blocchi persistenti restano", getattr(self, "last_error", ""))
+            self.mode = RuntimeMode.STOPPED
 
     def _teardown_failed_start(self) -> bool:
         """Smonta i servizi eventualmente avviati da uno `start()` fallito (runtime rimasto fermo). True se tutto e'
@@ -3499,7 +3531,7 @@ class RuntimeController:
             stop.open_window(time.monotonic())
             self._drawdown_start_owned = True
 
-    def _open_drawdown_session(self) -> None:
+    def _open_drawdown_session(self) -> bool:
         """RO-DD-09 C: apre su disco la sessione del drawdown all'avvio del trading. Non salvata (Grok/Claude D su
         dc2f5f25) => log critico; gli ingressi restano negati da `_drawdown_persist_block_reason` (picco non
         persistito, RO-DD-08) finche' un nuovo salvataggio, ritentato a ogni ammissione, la rende durevole."""
@@ -3511,6 +3543,7 @@ class RuntimeController:
         if not aperta:
             logger.critical("D-1: sessione del drawdown non salvata all'avvio: nuovi ingressi negati finche' non "
                             "risulta aperta su disco")
+        return bool(aperta)
 
     def _end_failed_start_drawdown(self) -> None:
         """Avvio non riuscito con servizi smontati: il trading non e' mai partito, quindi la sessione eventualmente

@@ -84,7 +84,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (ingressi negati, motivo distinto, persistito, sblocco solo owner), mai un PASS (D-631-11); uno sblocco owner non
   rinasce da una lettura fuori ordine iniziata prima. Ciclo 15 (PF-OWNER-PR631-CYCLE15-GO-20261112, D-631-12): una
   lettura precedente alla storia conservata si verifica sempre come possibile massimo, anche sotto il limite superiore;
-  il calo successivo uscito dalla memoria non passa piu' in silenzio. Review su e98e84c7 (Sol): un marker superato con picco piu'
+  il calo successivo uscito dalla memoria non passa piu' in silenzio. Ciclo 16 (PF-OWNER-PR631-CYCLE16-GO-20261112):
+  un ingresso gia' in coda non parte dopo l'hard-stop (ricontrollo al punto d'invio del motore, D-631-13); uno START
+  fallito dopo un LOCKDOWN d'avvio rilascia lock, autorita' e sessione (D-631-14); la sessione del drawdown si apre su
+  disco prima di leggere il conto e lo START si interrompe se non e' salvabile (D-631-15). Review su e98e84c7 (Sol): un marker superato con picco piu'
   alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
   resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale

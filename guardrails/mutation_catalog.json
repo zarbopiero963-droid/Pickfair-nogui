@@ -9838,8 +9838,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "            return \"drawdown_stato_illeggibile\"\n",
-      "mutated": "            pass\n",
+      "original": "            # (anche manuale/Dutching senza hard-stop configurati), mai sovrascritto.\n            return \"drawdown_stato_illeggibile\"\n",
+      "mutated": "            # (anche manuale/Dutching senza hard-stop configurati), mai sovrascritto.\n            pass\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -9862,8 +9862,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        self._reload_drawdown_state()\n        start_funds = time.monotonic()\n",
-      "mutated": "        start_funds = time.monotonic()\n",
+      "original": "        self._reload_drawdown_state()\n        # D-631-15",
+      "mutated": "        # D-631-15",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10434,18 +10434,6 @@
       "rationale": "Lettura precedente alla storia conservata confrontata come se il limite noto fosse il picco esatto: falso drawdown."
     },
     {
-      "id": "d1_start_reload_after_funds_reading",
-      "module": "core.runtime_controller",
-      "area": "money_management",
-      "file": "core/runtime_controller.py",
-      "original": "        self._reload_drawdown_state()\n        start_funds = time.monotonic()",
-      "mutated": "        start_funds = time.monotonic()\n        self._reload_drawdown_state()",
-      "tests": [
-        "tests/d1/test_d1_drawdown_hard_stop.py"
-      ],
-      "rationale": "P3 START: rilettura dopo l'inizio della lettura dei fondi, che un ribasamento adottato rende vecchia."
-    },
-    {
       "id": "d1_insufficient_history_ignored",
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
@@ -10636,6 +10624,66 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "D-631-12: lettura precedente alla storia conservata sotto il limite superiore: il calo successivo uscito dalla memoria passa in silenzio."
+    },
+    {
+      "id": "d1_queued_entry_skips_drawdown_block",
+      "module": "core.trading_engine",
+      "area": "money_management",
+      "file": "core/trading_engine.py",
+      "original": "                if isinstance(drawdown_block, str) and drawdown_block:\n                    raise _ErrorePrimaDellInvio(f\"DRAWDOWN_ENTRY_BLOCKED:{drawdown_block}\")",
+      "mutated": "                if False:\n                    raise _ErrorePrimaDellInvio(f\"DRAWDOWN_ENTRY_BLOCKED:{drawdown_block}\")",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-13: un ingresso in coda parte dopo l'hard-stop."
+    },
+    {
+      "id": "d1_entry_block_ignores_breach",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if stop.breached:\n            return stop.reason(None, None)\n        return RuntimeController._drawdown_persist_block_reason(self)",
+      "mutated": "        return RuntimeController._drawdown_persist_block_reason(self)",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-13: il ricontrollo d'invio non vede il superamento memorizzato."
+    },
+    {
+      "id": "d1_entry_block_ignores_persist_and_history",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            return stop.reason(None, None)\n        return RuntimeController._drawdown_persist_block_reason(self)",
+      "mutated": "            return stop.reason(None, None)\n        return \"\"",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-13: il ricontrollo d'invio non vede storia insufficiente / picco non persistito."
+    },
+    {
+      "id": "d1_failed_start_keeps_startup_lockdown",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if current is RuntimeMode.LOCKDOWN:\n            logger.warning(\"Avvio non riuscito dopo un LOCKDOWN d'avvio",
+      "mutated": "        if False:\n            logger.warning(\"Avvio non riuscito dopo un LOCKDOWN d'avvio",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-14: START fallito dopo un LOCKDOWN d'avvio non smonta lock, autorita' e sessione."
+    },
+    {
+      "id": "d1_start_continues_without_durable_session",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if not self._open_drawdown_session():\n            raise RuntimeError(\"DRAWDOWN_SESSION_NOT_DURABLE",
+      "mutated": "        if not self._open_drawdown_session() and False:\n            raise RuntimeError(\"DRAWDOWN_SESSION_NOT_DURABLE",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-15: START prosegue senza sessione durevole: un picco perso col doppio guasto non lascia traccia."
     }
   ]
 }

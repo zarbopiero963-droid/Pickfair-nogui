@@ -531,7 +531,9 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   un'istanza superata non pubblica nulla che il nuovo proprietario leggerebbe come stato dell'hard-stop, e resta
   negata (Sol su e98e84c7).
 - **Baseline dopo un riavvio non pulito (RO-DD-09 C, decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109).**
-  Lo START del trading registra su disco una sessione aperta; solo uno STOP pulito con il picco durevole la chiude,
+  Lo START del trading registra su disco una sessione aperta PRIMA di qualunque lettura del conto, e si interrompe
+  (`DRAWDOWN_SESSION_NOT_DURABLE`) se non riesce a salvarla: un picco osservato e poi perso per un doppio guasto di
+  storage seguito da un crash lascia la sessione aperta, quindi baseline da confermare (D-631-15); solo uno STOP pulito con il picco durevole la chiude,
   e la chiude PRIMA di rilasciare il lock di istanza (Sol su dc2f5f25): dopo il rilascio un nuovo processo puo' aver
   gia' aperto la propria sessione, che la chiusura del vecchio sovrascriverebbe. Smontaggio fallito => sessione aperta.
   Simmetricamente lo START rilegge lo stato dell'hard-stop con il lock di istanza tenuto, prima della prima lettura del
@@ -566,3 +568,11 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   (stesso dominio di guasto): la sua perdita insieme al DB e' coperta dal blocco della baseline non verificata, non
   da una ricostruzione. Grandezze
   esposte in `get_status`: `loss_drawdown_pct`, `capital_at_risk_pct` (solo informativo), `drawdown_hard_stop`.
+
+- **Ingressi gia' in coda e avvio fallito (D-631-13/14, ciclo 16).** Il punto finale d'invio delle nuove entrate del
+  `TradingEngine` ricontrolla il blocco del drawdown (`RuntimeController.drawdown_entry_block_reason`: superamento,
+  storia insufficiente, picco non persistito, baseline non verificata, stato illeggibile), come gia' l'emergenza
+  giornaliera: un ingresso approvato e messo in coda prima del blocco non parte dopo; il rifiuto e' certo, prima
+  dell'invio (mai AMBIGUOUS). Le uscite protettive passano dall'OrderRouter del cashout e restano libere. Uno START
+  partito da fermo e non riuscito torna a STOPPED anche dal LOCKDOWN nato durante l'avvio, cosi' lo smontaggio rilascia
+  lock, autorita' e sessione; superamento e storia insufficiente restano su disco e il prossimo START li rilegge.

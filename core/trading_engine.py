@@ -2321,6 +2321,13 @@ class TradingEngine:
                     raise RuntimeError("EMERGENCY_STOP_ACTIVE")
             elif getattr(runtime, "is_emergency_stopped", False) is True:
                 raise RuntimeError("EMERGENCY_STOP_ACTIVE")
+            # D-631-13: blocco persistente del drawdown ricontrollato qui, sul comando gia' in coda: rifiuto certo
+            # prima dell'invio (mai AMBIGUOUS). Solo nuove entrate: le uscite protettive passano dall'OrderRouter.
+            drawdown_block_fn = getattr(runtime, "drawdown_entry_block_reason", None)
+            if callable(drawdown_block_fn):
+                drawdown_block = drawdown_block_fn()
+                if isinstance(drawdown_block, str) and drawdown_block:
+                    raise _ErrorePrimaDellInvio(f"DRAWDOWN_ENTRY_BLOCKED:{drawdown_block}")
             # #536: autorita' esclusiva del runtime verificata immediatamente prima dell'invio, in OGNI modalita'
             # (lock OS, identita' del file di lock, lease nel DB con fencing token): persa => nessun invio.
             assert_authority = getattr(runtime, "assert_runtime_authority", None)

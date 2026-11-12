@@ -3604,7 +3604,7 @@
       "max_files": 35
     },
     "roserpina_d1_drawdown_hard_stop": {
-      "description": "D-1/D-2/D-3, RO-DD-01..07 (#586, P0): hard-stop di drawdown su cassa verificata con picco persistente, blocco memorizzato e sblocco owner tracciato; DEFENSE/LOCKDOWN sulla perdita cumulativa; cap Decimal esatti. Decisioni owner 09/11/2026 (PF-ROSERPINA-D1-D2-B2-B3-FINANCIAL-SAFETY, DRAWDOWN-AND-RECOVERY, FINANCIAL-CONTRACT-FINAL, D2-LOCKDOWN-UNLOCK-FINAL). Estensione dichiarata: harness tests/f026/child_f026.py (op confirm_baseline) e test F032 dopo crash (RO-DD-09 C). ESTENSIONE DICHIARATA (ciclo 4, Sol su 53c99ceb): +tests/unit/test_runtime_controller_best_price_direct.py, il DB finto riceve get_settings/save_settings in memoria perche' la lettura fresca d'ingresso ora salva il picco dell'hard-stop (RO-DD-08: un DB che non salva il picco nega gli ingressi).",
+      "description": "D-1/D-2/D-3, RO-DD-01..07 (#586, P0): hard-stop di drawdown su cassa verificata con picco persistente, blocco memorizzato e sblocco owner tracciato; DEFENSE/LOCKDOWN sulla perdita cumulativa; cap Decimal esatti. Decisioni owner 09/11/2026 (PF-ROSERPINA-D1-D2-B2-B3-FINANCIAL-SAFETY, DRAWDOWN-AND-RECOVERY, FINANCIAL-CONTRACT-FINAL, D2-LOCKDOWN-UNLOCK-FINAL). Estensione dichiarata: harness tests/f026/child_f026.py (op confirm_baseline) e test F032 dopo crash (RO-DD-09 C). ESTENSIONE DICHIARATA (ciclo 4, Sol su 53c99ceb): +tests/unit/test_runtime_controller_best_price_direct.py, il DB finto riceve get_settings/save_settings in memoria perche' la lettura fresca d'ingresso ora salva il picco dell'hard-stop (RO-DD-08: un DB che non salva il picco nega gli ingressi). ESTENSIONE DICHIARATA (ciclo 16, PF-OWNER-PR631-CYCLE16-GO-20261112, D-631-13 Codex su 3689ae8f): +core/trading_engine.py, il punto finale d'invio delle nuove entrate ricontrolla il blocco del drawdown (drawdown_entry_block_reason) come gia' l'emergenza giornaliera: un ingresso in coda non parte dopo l'hard-stop. ESTENSIONE DICHIARATA (ciclo 16, D-631-15): +tests/integration/test_sim_live_switch.py, +tests/integration/test_deploy_gate.py, +tests/integration/test_live_readiness_gate.py, +tests/guardrails/test_no_live_without_gate.py, +tests/failure/test_live_switch_fail_closed.py: i DB finti dei test SIM/LIVE non avevano get_settings/save_settings; lo START ora si interrompe se non puo' salvare la sessione del drawdown, quindi ricevono un salvataggio delle impostazioni in memoria (nessuna modifica alle asserzioni).",
       "allow_tests": true,
       "files": [
         ".guardrails/allowed_scope.json",
@@ -3627,9 +3627,15 @@
         "tests/f026/test_stake_precision_e2e.py",
         "tests/integration/test_runtime_controller_auto_trade_mm.py",
         "tests/integration/test_runtime_controller_live_sim_parity.py",
-        "tests/unit/test_runtime_controller_best_price_direct.py"
+        "tests/unit/test_runtime_controller_best_price_direct.py",
+        "core/trading_engine.py",
+        "tests/integration/test_sim_live_switch.py",
+        "tests/integration/test_deploy_gate.py",
+        "tests/integration/test_live_readiness_gate.py",
+        "tests/guardrails/test_no_live_without_gate.py",
+        "tests/failure/test_live_switch_fail_closed.py"
       ],
-      "max_files": 21
+      "max_files": 27
     }
   }
 }

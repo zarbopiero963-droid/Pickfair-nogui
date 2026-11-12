@@ -653,7 +653,8 @@ def test_dd09c_start_opens_and_stop_closes_the_session_in_the_runtime():
     start_src = inspect.getsource(RuntimeController._start_with_instance_lock)
     stop_src = inspect.getsource(RuntimeController._stop_serialized)
     assert "_open_drawdown_session()" in start_src
-    assert start_src.index("_applica_fondi_avvio") < start_src.index("_open_drawdown_session()")
+    # D-631-15: la sessione si apre su disco PRIMA della lettura dei fondi (prima l'ordine era invertito)
+    assert start_src.index("_open_drawdown_session()") < start_src.index("_applica_fondi_avvio")
     assert "_close_drawdown_session()" in stop_src
 
 
@@ -2863,3 +2864,216 @@ def test_long_out_of_order_sequences_with_tiny_memory_end_in_one_of_three_correc
         superato, incerta, oracolo, arrivo = _esito_a_proprieta(rnd, limiti, 3, 24)
         assert not (superato and not oracolo), ("falso superamento", limiti, arrivo)
         assert not (oracolo and not superato and not incerta), ("perdita silenziosa", limiti, arrivo)
+
+
+# ------------------------------------------------- D-631-13/14/15 (Codex/Sol/Claude D su 3689ae8f): ciclo 16
+# Mandato owner PF-OWNER-PR631-CYCLE16-GO-20261112.
+def _ingresso_in_coda(c):
+    """Segnale approvato con il `CMD_QUICK_BET` trattenuto (in coda verso il motore). Restituisce i comandi."""
+    trattenuti = []
+    reale = c.rc.bus.publish
+
+    def publish(topic, payload=None):
+        if topic == "CMD_QUICK_BET":
+            trattenuti.append(payload)
+            c.rc.bus.events.append((topic, payload))
+            return None
+        return reale(topic, payload)
+
+    c.rc.bus.publish = publish
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    c.rc.bus.publish = reale
+    assert len(trattenuti) == 1 and _ordini(c) == 0
+    return trattenuti
+
+
+@pytest.mark.parametrize("blocco", ["superamento", "storia_insufficiente", "picco_non_persistito"])
+def test_queued_entry_never_reaches_the_broker_after_the_drawdown_block(tmp_path, monkeypatch, blocco):
+    """D-631-13 (P1): un ingresso approvato e messo in coda prima del blocco non arriva al broker dopo: il blocco del
+    drawdown si ricontrolla al punto finale d'invio del motore (come l'emergenza giornaliera). Rifiuto certo prima
+    dell'invio (nessun esito AMBIGUOUS)."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    trattenuti = _ingresso_in_coda(c)
+    stop = c.rc._hard_stop()
+    if blocco == "superamento":
+        _lettura(c, 85.0)
+        assert stop.breached
+    elif blocco == "storia_insufficiente":
+        stop._mark_history_insufficient("test", 1.0, Decimal("90"), stop.peak_epoch)
+    else:
+        def guasto(values):
+            raise OSError("disco pieno")
+        monkeypatch.setattr(c.rc.db, "save_settings", guasto)
+        monkeypatch.setattr(modulo_hard_stop(), "atomic_write_text", lambda *a, **k: (_ for _ in ()).throw(OSError()))
+        stop.observe(150.0)
+        assert stop.persist_failed
+    for comando in trattenuti:
+        c.rc.bus.publish("CMD_QUICK_BET", comando)
+    assert _ordini(c) == 0
+    assert not c.rc._uncertain_reservations_map()                # rifiuto certo, nessuna incertezza
+
+
+def modulo_hard_stop():
+    import core.drawdown_hard_stop as modulo
+    return modulo
+
+
+def test_queued_entry_without_any_block_is_still_placed(tmp_path):
+    """Controllo positivo: senza blocco il comando in coda arriva al broker."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    trattenuti = _ingresso_in_coda(c)
+    for comando in trattenuti:
+        c.rc.bus.publish("CMD_QUICK_BET", comando)
+    assert _ordini(c) == 1
+
+
+def test_protective_exits_stay_allowed_with_the_drawdown_block(tmp_path):
+    """Le uscite protettive (hedge del cashout) non passano dal punto d'invio delle entrate: con l'hard-stop attivo il
+    controllo d'autorita' del cashout resta libero."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    _lettura(c, 85.0)
+    assert c.rc._hard_stop().breached
+    assert c.rc.cashout_authority_check() == ""
+
+
+def _start_reale(tmp_path, monkeypatch, cassa, *, telegram_fallisce=False, nome="start.db", **cfg):
+    from core import blackbox_runtime
+    from tests.acceptance.test_issue461_pr29c_settlement_processes_and_schema import _app_su
+    monkeypatch.chdir(tmp_path)
+    if blackbox_runtime.get() is None:
+        blackbox_runtime.install(str(tmp_path / "bb" / "blackbox.sqlite"), entrypoint="test_d1_c16")
+    app = _app_su(str(tmp_path / nome), monkeypatch)
+    rc = app.runtime
+    carica = rc.settings_service.load_roserpina_config
+
+    def con_limite():
+        config = carica()
+        for chiave, valore in (cfg or {"max_drawdown_abs": 10.0}).items():
+            setattr(config, chiave, valore)
+        return config
+
+    monkeypatch.setattr(rc.settings_service, "load_roserpina_config", con_limite)
+    rc.betfair_service.get_account_funds = lambda: _fondi(cassa)
+    if telegram_fallisce:
+        def giu(*a, **k):
+            raise RuntimeError("telegram non raggiungibile")
+        app.telegram_service.start = giu
+    return app, rc
+
+
+def _lock_di(rc):
+    import os
+    return os.path.normcase(os.path.realpath(rc.db.db_path)) + ".runtime.lock"
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("cassa", [85.0, 95.0])
+def test_failed_start_after_a_startup_lockdown_releases_what_it_owns(tmp_path, monkeypatch, cassa):
+    """D-631-14 (P2): picco 100, START con cassa 85 (superamento => LOCKDOWN durante l'avvio), Telegram fallisce.
+    L'avvio fallito torna a STOPPED e smonta: lock di istanza, autorita' e sessione del drawdown rilasciati; il
+    superamento resta su disco; un nuovo START e' possibile e ritrova il blocco. Con 95 (nessun superamento) idem."""
+    import os
+    from core import blackbox_runtime
+    from core.system_state import RuntimeMode
+    app, rc = _start_reale(tmp_path, monkeypatch, cassa, telegram_fallisce=True)
+    altro = DrawdownHardStop(rc.db)
+    altro.restore()
+    altro.observe(100.0)
+    try:
+        with pytest.raises(RuntimeError, match="telegram non raggiungibile"):
+            rc.start(execution_mode="SIMULATION")
+        assert rc.mode is RuntimeMode.STOPPED
+        assert getattr(rc, "_instance_lock_fh", None) is None          # lock di istanza rilasciato
+        authority = getattr(rc, "runtime_authority", None)
+        assert authority is None or authority.released
+        stato = json.loads(rc.db.get_settings()[STATE_KEY])
+        assert stato["session_open"] is False
+        assert stato["breached"] is (cassa == 85.0)                 # il blocco finanziario resta
+        # nuovo START coerente: Telegram torna, il blocco (se c'era) viene riletto
+        app.telegram_service.start = lambda *a, **k: {"started": False, "stub": True}
+        esito = rc.start(execution_mode="SIMULATION")
+        assert esito.get("started") is True, esito
+        assert rc._hard_stop().breached is (cassa == 85.0)
+    finally:
+        try:
+            app.stop()
+        except Exception:
+            pass
+        blackbox_runtime.shutdown()
+
+
+def test_start_opens_the_durable_session_before_any_funds_reading():
+    """D-631-15: la sessione si apre su disco PRIMA della lettura dei fondi dello START."""
+    import inspect
+    from core.runtime_controller import RuntimeController
+    src = inspect.getsource(RuntimeController._start_with_instance_lock)
+    assert src.index("self._open_drawdown_session()") < src.index("start_funds = time.monotonic()")
+    assert src.index("self._reload_drawdown_state()") < src.index("self._open_drawdown_session()")
+
+
+@pytest.mark.real_blackbox
+def test_start_is_refused_when_the_drawdown_session_cannot_be_made_durable(tmp_path, monkeypatch):
+    """D-631-15: DB e marker non scrivibili allo START => nessuna lettura dei fondi, nessun trading, START interrotto
+    (fail-closed) e risorse rilasciate. Il picco salvato resta intatto."""
+    import os
+    from core import blackbox_runtime
+    from core.system_state import RuntimeMode
+    app, rc = _start_reale(tmp_path, monkeypatch, 130.0)
+    altro = DrawdownHardStop(rc.db)
+    altro.restore()
+    altro.observe(100.0)
+    letture = []
+    rc.betfair_service.get_account_funds = lambda: (letture.append(1), _fondi(130.0))[1]
+    reale = rc.db.save_settings
+
+    def guasto(values):
+        if STATE_KEY in values:
+            raise OSError("disco pieno")
+        return reale(values)
+
+    monkeypatch.setattr(rc.db, "save_settings", guasto)
+    monkeypatch.setattr(modulo_hard_stop(), "atomic_write_text", lambda *a, **k: (_ for _ in ()).throw(OSError()))
+    try:
+        with pytest.raises(RuntimeError, match="DRAWDOWN_SESSION_NOT_DURABLE"):
+            rc.start(execution_mode="SIMULATION")
+        assert letture == [] and rc.mode is RuntimeMode.STOPPED
+        assert getattr(rc, "_instance_lock_fh", None) is None          # lock di istanza rilasciato
+        stato = json.loads(reale.__self__.get_settings()[STATE_KEY])
+        assert stato["peak"] == "100.0" and stato["session_open"] is False
+    finally:
+        try:
+            app.stop()
+        except Exception:
+            pass
+        blackbox_runtime.shutdown()
+
+
+def test_double_storage_fault_during_start_then_crash_never_loses_the_observed_peak(tmp_path, monkeypatch):
+    """D-631-15 (P1), riproduzione di Sol: picco 100 su disco, sessione precedente chiusa. START: sessione aperta su
+    disco (prima delle letture); poi DB e marker giu', lettura 130 non salvata; crash; riavvio a 115 con lo storage
+    tornato. La sessione risulta aperta: baseline non verificata, nessun ingresso fino alla conferma owner (con il
+    picco dichiarato). Prima la sessione si apriva DOPO la lettura e, con lo storage giu', su disco restava chiusa:
+    baseline verificata e 115 ammesso contro il picco 100."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    c.rc._hard_stop().close_session()
+    c.rc._reload_drawdown_state()
+    c.rc._open_drawdown_session()                                # START: prima delle letture
+    reale = _failing_db_and_marker(c, monkeypatch)
+    _lettura(c, 130.0)                                           # picco osservato, non salvato
+    monkeypatch.undo()
+    c.rc.db.save_settings = reale
+    _riavvio(c)                                                  # crash, storage tornato
+    stop = c.rc._hard_stop()
+    assert not stop.baseline_verified and stop.snapshot()["peak"] == 100.0   # nessuna presunzione sul massimo
+    _lettura(c, 115.0)
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0 and _rifiuti(c)[-1] == "drawdown_baseline_non_verificata"
+    esito = c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=130.0)
+    assert esito["confirmed"] is True and c.rc._hard_stop().snapshot()["peak"] == 130.0
+    _lettura(c, 115.0)
+    assert c.rc._hard_stop().breached                            # 130 -> 115 = 15 >= 10
