@@ -598,9 +598,11 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   superamento e' solo possibile => storia insufficiente
   (`letture_con_lo_stesso_istante`), ingressi negati. Mai un hard-stop inventato, mai un PASS (picco 100, limite 10,
   letture 130 e 115 dello stesso istante => storia insufficiente in entrambi gli ordini di arrivo). Lo sblocco owner della storia
-  insufficiente allinea la cassa del gate alla cassa verificata delle sue verifiche: una lettura tardiva dello stesso
-  istante non aggiorna la cassa del gate, e senza l'allineamento il segnale successivo confronterebbe una cassa vecchia
-  col picco (perdita fittizia).
+  insufficiente rilegge il conto (prova fresca, valutata come lettura ordinata) prima di sbloccare: con letture ambigue
+  anche la cassa del desk e quella del gate sono ambigue (l'ultima arrivata). Perdita reale => hard-stop dimostrato, che
+  lo sblocco non cancella; nessuna perdita => il gate riparte dalla cassa fresca, mai da una cassa ambigua confrontata
+  col picco (perdita fittizia), in entrambi gli ordini di arrivo e dopo un riavvio. Rilettura non verificabile =>
+  nessuno sblocco (`cassa_fresca_non_verificata`).
 
 - **Stato del bot al punto d'invio (M68, PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112).** Nessun nuovo ingresso
   parte se il bot non e' ACTIVE: PAUSA (`runtime_non_attivo:PAUSED`), fermo (`runtime_non_attivo:STOPPED`), LOCKDOWN

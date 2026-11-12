@@ -10594,8 +10594,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "            checks = self._owner_drawdown_checks()\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_clear_history_insufficient(",
-      "mutated": "            checks = dict(self._owner_drawdown_checks(), uncertain_orders=[])\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_clear_history_insufficient(",
+      "original": "            checks = self._owner_drawdown_checks()\n            checks[\"fresh_cash\"] = fresh_cash.get(\"cash\")\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_clear_history_insufficient(",
+      "mutated": "            checks = dict(self._owner_drawdown_checks(), uncertain_orders=[])\n            checks[\"fresh_cash\"] = fresh_cash.get(\"cash\")\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_clear_history_insufficient(",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -11070,16 +11070,28 @@
       "rationale": "Ciclo 21 (Codex su 954b226b): una gemella dello stesso istante gia' passata al riepilogo verrebbe ignorata e un calo possibile diventerebbe un PASS."
     },
     {
-      "id": "c21_owner_clearance_keeps_stale_gate_cash",
+      "id": "c21_owner_clearance_without_fresh_reading",
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                self._drawdown_last_cash = checks[\"cash\"]\n",
-      "mutated": "                pass\n",
+      "original": "            if not fresh_cash.get(\"ok\"):\n",
+      "mutated": "            if False:\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "Ciclo 21 (Codex su ccecc8db): dopo lo sblocco owner della storia insufficiente nata da letture dello stesso istante, il gate confronterebbe una cassa vecchia col picco e memorizzerebbe una perdita fittizia."
+      "rationale": "Ciclo 21 (PF-OWNER-PR631-C21-CONTINUATION-20261112): lo sblocco della storia insufficiente senza una rilettura fresca verificata del conto resterebbe ammesso."
+    },
+    {
+      "id": "c21_owner_clearance_skips_the_fresh_reading",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        fresh = self._read_funds_for_entry()\n",
+      "mutated": "        fresh = {\"funds\": dict(getattr(self.risk_desk, \"__dict__\", {}) or {}), \"read_at\": None}\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 21 (Claude D su abbb6b3b): senza la rilettura fresca valutata come lettura ordinata il gate ripartirebbe da una cassa ambigua (l'ultima arrivata) e inventerebbe una perdita."
     },
     {
       "id": "m65_send_point_ignores_admission_session",

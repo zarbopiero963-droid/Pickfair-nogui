@@ -3824,6 +3824,7 @@ def test_s19b_failed_owner_unlock_or_confirmation_keeps_every_verified_value(tmp
         raise OSError("disco pieno")
 
     monkeypatch.setattr(c.rc.db, "save_settings", guasto)
+    c.rc.betfair_service.get_account_funds = lambda: _fondi(130.0)   # conto reale per la rilettura dello sblocco
     if procedura == "sblocco_superamento":
         esito = c.rc.owner_unlock_drawdown_hard_stop(authorization="#628", reason="t", operation_id="U9", confirm=True)
         assert esito["unlocked"] is False
@@ -4414,20 +4415,21 @@ def test_c21_owner_clearance_after_equal_start_readings_never_judges_the_stale_g
     """Ciclo 21 (Codex su ccecc8db): 115 poi 130 dello stesso istante => storia insufficiente; la 130, tardiva, non
     aggiornava l'ultima cassa del gate (restava 115) mentre picco e cassa del desk erano 130. Dopo lo sblocco owner
     (verifiche con la cassa verificata 130) il segnale successivo confrontava la cassa vecchia 115 col picco 130 e
-    memorizzava una perdita fittizia di 15. Lo sblocco allinea la cassa del gate alla cassa verificata delle verifiche:
-    nessun hard-stop inventato, il segnale passa."""
+    memorizzava una perdita fittizia di 15. Lo sblocco rilegge il conto (prova fresca, lettura ordinata): nessun
+    hard-stop inventato, il segnale passa."""
     import time
     c = _catena(tmp_path, max_drawdown_abs=10.0)
     _lettura(c, 100.0)
-    istante = time.monotonic() + 100.0
+    istante = time.monotonic()                                    # t2 nel passato (realistico)
     for valore in (115.0, 130.0):
         c.rc._apply_funds_reading(_fondi(valore), source="test", read_at=istante)
     assert c.rc._hard_stop().history_block_reason() == REASON_HISTORY_INSUFFICIENT
+    c.rc.betfair_service.get_account_funds = lambda: _fondi(130.0)   # conto reale: lo sblocco lo rilegge
     esito = c.rc.owner_clear_drawdown_history_insufficient(authorization="#631 decisione owner",
                                                            reason="riconciliazione verificata",
                                                            operation_id="PF-C21-CLR", confirm=True)
     assert esito["cleared"] is True, esito
-    c.rc.betfair_service.get_account_funds = lambda: _fondi(float(esito["checks"]["cash"]))
+    assert esito["checks"]["fresh_cash"] == 130.0
     c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
     assert not c.rc._hard_stop().breached, c.rc._hard_stop().snapshot()["breach"]
     assert _ordini(c) == 1
@@ -4452,3 +4454,68 @@ def test_c21_owner_clearance_keeps_a_drop_proven_by_the_fresh_entry_reading(tmp_
     c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
     assert c.rc._hard_stop().breached
     assert _ordini(c) == 0
+
+
+@pytest.mark.parametrize("ordine,conto", [((130.0, 115.0), 130.0), ((130.0, 115.0), 121.0), ((115.0, 130.0), 130.0)])
+def test_c21_owner_clearance_in_both_arrival_orders_never_invents_a_loss(tmp_path, ordine, conto):
+    """Ciclo 21 (Claude D su abbb6b3b, PF-OWNER-PR631-C21-CONTINUATION-20261112): letture 130 e 115 dello stesso
+    istante t2 GIA' PASSATO, storia insufficiente, sblocco owner, conto reale `conto` (nessun calo dimostrato rispetto
+    a 130 oltre il limite 10). In NESSUN ordine di arrivo lo sblocco riparte da una cassa ambigua: il segnale successivo
+    rilegge il conto e passa, nessun hard-stop inventato."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    istante = time.monotonic()                                    # t2 nel passato rispetto a sblocco e segnale
+    for valore in ordine:
+        c.rc._apply_funds_reading(_fondi(valore), source="test", read_at=istante)
+    assert c.rc._hard_stop().history_block_reason() == REASON_HISTORY_INSUFFICIENT
+    c.rc.betfair_service.get_account_funds = lambda: _fondi(conto)
+    esito = c.rc.owner_clear_drawdown_history_insufficient(authorization="#631 decisione owner",
+                                                           reason="riconciliazione verificata",
+                                                           operation_id="PF-C21-ORD", confirm=True)
+    assert esito["cleared"] is True, esito
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert not c.rc._hard_stop().breached, c.rc._hard_stop().snapshot()["breach"]
+    assert _ordini(c) == 1
+
+
+def _c21_insufficiente_ambigua(tmp_path, ordine=(130.0, 115.0)):
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    istante = time.monotonic()
+    for valore in ordine:
+        c.rc._apply_funds_reading(_fondi(valore), source="test", read_at=istante)
+    assert c.rc._hard_stop().history_block_reason() == REASON_HISTORY_INSUFFICIENT
+    return c
+
+
+def test_c21_owner_clearance_without_a_verifiable_fresh_reading_is_refused(tmp_path):
+    """Ciclo 21: lo sblocco della storia insufficiente richiede una rilettura fresca verificata del conto. Conto non
+    leggibile => nessuno sblocco (fail-closed), la storia insufficiente resta e gli ingressi restano negati."""
+    c = _c21_insufficiente_ambigua(tmp_path)
+
+    def giu():
+        raise RuntimeError("conto non raggiungibile")
+
+    c.rc.betfair_service.get_account_funds = giu
+    esito = c.rc.owner_clear_drawdown_history_insufficient(authorization="#631", reason="r", operation_id="PF-C21-NF",
+                                                           confirm=True)
+    assert esito["cleared"] is False and esito["reason"] == "cassa_fresca_non_verificata"
+    assert c.rc._hard_stop().history_block_reason() == REASON_HISTORY_INSUFFICIENT
+    assert c.rc.drawdown_entry_block_reason() != ""
+
+
+@pytest.mark.parametrize("ordine", [(130.0, 115.0), (115.0, 130.0)])
+def test_c21_owner_clearance_then_crash_and_restart_never_invents_a_loss(tmp_path, ordine):
+    """Ciclo 21 (Claude D su abbb6b3b): sblocco owner con conto reale 130, crash e riavvio subito dopo, segnale: nessun
+    hard-stop inventato dalle letture ambigue di prima, in entrambi gli ordini."""
+    c = _c21_insufficiente_ambigua(tmp_path, ordine)
+    c.rc.betfair_service.get_account_funds = lambda: _fondi(130.0)
+    assert c.rc.owner_clear_drawdown_history_insufficient(authorization="#631", reason="r", operation_id="PF-C21-RS",
+                                                          confirm=True)["cleared"] is True
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert not c.rc._hard_stop().breached, c.rc._hard_stop().snapshot()["breach"]
+    assert _ordini(c) == 1

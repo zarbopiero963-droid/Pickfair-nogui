@@ -105,8 +105,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112): nessun nuovo ingresso parte con il bot in PAUSA, fermo o in
   LOCKDOWN (del runtime o del desk, Sol su 4c627189); operazioni protettive invariate. Ciclo 21 (PF-OWNER-PR631-C21-EQUAL-TIMESTAMP-GO-
   20261112): letture con lo stesso istante d'inizio = ordine ignoto; calo possibile => storia insufficiente in entrambi
-  gli ordini, perdita dimostrata => hard-stop. Codex su 954b226b: anche le letture gemelle gia' passate al riepilogo. Codex su ccecc8db: lo sblocco owner allinea la cassa
-  del gate alla cassa verificata. F2: test di regressione deterministico sulla race SIM/LIVE. Review su e98e84c7 (Sol): un marker superato con picco piu'
+  gli ordini, perdita dimostrata => hard-stop. Codex su 954b226b: anche le letture gemelle gia' passate al riepilogo. Codex su ccecc8db e Claude D su abbb6b3b: lo sblocco
+  owner della storia insufficiente rilegge il conto (prova fresca ordinata) e non riparte mai da una cassa ambigua;
+  rilettura non verificabile => nessuno sblocco. F2: test di regressione deterministico sulla race SIM/LIVE. Review su e98e84c7 (Sol): un marker superato con picco piu'
   alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
   resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale

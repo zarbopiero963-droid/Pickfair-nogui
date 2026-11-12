@@ -7823,6 +7823,14 @@ class RuntimeController:
         solo il controller proprietario del runtime. Non sblocca un superamento ne' ribasa il picco: l'hard-stop resta
         valutato normalmente a ogni lettura. NON esposta da Control API/MCP."""
         out = {"cleared": False, "reason": "", "checks": {}}
+        # Ciclo 21 (PF-OWNER-PR631-C21-CONTINUATION-20261112, Claude D su abbb6b3b): una storia insufficiente nata da
+        # letture ambigue (stesso istante) lascia ambigue anche la cassa del desk e quella del gate (l'ultima arrivata).
+        # Lo sblocco la risolve con una PROVA: rilettura fresca del conto, fuori dalla sezione critica (rete), valutata
+        # nell'hard-stop come lettura ordinata. Perdita reale => hard-stop dimostrato (lo sblocco non lo cancella);
+        # nessuna perdita => il gate riparte dalla cassa fresca. Rilettura non verificabile => nessuno sblocco.
+        fresh = self._read_funds_for_entry()
+        fresh_cash = (RuntimeController._cash_equity_verification(fresh.get("funds"))
+                      if isinstance(fresh.get("funds"), dict) else {"ok": False, "cash": None})
         with RuntimeController._drawdown_eval_lock:
             block = RuntimeController._drawdown_write_block(self)
             if block:
@@ -7833,7 +7841,11 @@ class RuntimeController:
             if not stop.history_block_reason():
                 out["reason"] = "nessuna_storia_insufficiente"
                 return out
+            if not fresh_cash.get("ok"):
+                out["reason"] = "cassa_fresca_non_verificata"
+                return out
             checks = self._owner_drawdown_checks()
+            checks["fresh_cash"] = fresh_cash.get("cash")
             out["checks"] = checks
             out["reason"] = self._owner_drawdown_checks_block(checks)
             if out["reason"]:
@@ -7843,10 +7855,6 @@ class RuntimeController:
                 out["reason"] = "sblocco_non_autorizzato_o_non_registrato"
             else:
                 out["cleared"] = True
-                # Ciclo 21 (Codex su ccecc8db): con letture dello stesso istante la lettura tardiva non aggiorna la cassa
-                # del gate (ordine ignoto). Lo sblocco owner chiude quell'incertezza sulla cassa verificata appena
-                # controllata: il gate riparte da li', mai da una cassa vecchia confrontata col picco (perdita fittizia).
-                self._drawdown_last_cash = checks["cash"]
         return out
 
     def owner_assign_drawdown_scope(self, *, authorization: str, reason: str, operation_id: str,
