@@ -4055,3 +4055,117 @@ def test_s18_zero_available_reading_of_the_other_mode_in_a_new_process_is_never_
     c.rc._apply_funds_reading({"available": 0.0, "exposure": 0.0, "ok": True, "simulated": False}, source="test")
     assert _stato_salvato(c) == salvato
     assert not c.rc._hard_stop().breached
+
+
+# ------------------------------------------------- M65 (PF-OWNER-PR631-CYCLE20-M65-GO-20261112): sessione dell'ingresso
+def _m65_sessioni(tmp_path, monkeypatch):
+    """App reale in SIM: START (sessione A) con 100 EUR, un ingresso da 5 EUR ammesso e trattenuto in coda verso il
+    motore (CMD_QUICK_BET non ancora consegnato), STOP BOT, START (sessione B) con 0,20 EUR: nella sessione B lo stesso
+    ingresso nuovo sarebbe rifiutato dal gate fondi. Configurazione MM completa dei test; Liquidity Guard spento perche'
+    il book del mercato fittizio non esiste (estraneo al caso)."""
+    from tests.risk_config_fixtures import legacy_test_config
+    app, rc = _start_reale(tmp_path, monkeypatch, 100.0)
+    monkeypatch.setattr(rc.settings_service, "load_roserpina_config",
+                        lambda: legacy_test_config(max_drawdown_abs=1000.0, liquidity_guard_enabled=False))
+    assert rc.start(execution_mode="SIMULATION").get("started") is True
+    trattenuti = []
+    reale = rc.bus.publish
+
+    def publish(topic, payload=None):
+        if topic == "CMD_QUICK_BET":
+            trattenuti.append(payload)
+            return None
+        return reale(topic, payload)
+
+    rc.bus.publish = publish
+    rc._on_signal_received(_signal(stake=5.0, bet_type="BACK"))   # ordine normale (sopra il minimo exchange)
+    rc.bus.publish = reale
+    assert len(trattenuti) == 1
+    return app, rc, trattenuti[0]
+
+
+def _m65_ordini_broker(app):
+    import time
+    broker = app.betfair_service.simulation_broker
+    fine = time.monotonic() + 1.0                                  # l'esecutore SIM e' asincrono
+    while time.monotonic() < fine and not broker.state.orders:
+        time.sleep(0.02)
+    return len(broker.state.orders)
+
+
+def _m65_chiudi(app):
+    from core import blackbox_runtime
+    try:
+        app.stop()
+    except Exception:
+        pass
+    blackbox_runtime.shutdown()
+
+
+@pytest.mark.real_blackbox
+def test_m65_entry_admitted_in_a_previous_session_never_reaches_the_broker_after_stop_start(tmp_path, monkeypatch):
+    """M65: un ingresso ammesso nella sessione A e rimasto in coda non arriva al broker dopo STOP -> START: i controlli
+    finanziari della sessione A (fondi, esposizione aggregata) non valgono per la sessione B. Rifiuto prima di
+    qualunque persistenza dell'intento o invio, mai ripristinato automaticamente."""
+    app, rc, vecchio = _m65_sessioni(tmp_path, monkeypatch)
+    try:
+        rc.stop()                                              # STOP BOT: l'autorizzazione della sessione A decade
+        rc.betfair_service.get_account_funds = lambda: _fondi(0.2)
+        assert rc.start(execution_mode="SIMULATION").get("started") is True    # sessione B
+        esito = app.trading_engine.submit_quick_bet(vecchio)   # consegna tardiva del vecchio ingresso
+        assert esito.get("ok") is False and esito.get("status") == "DENIED", esito.get("status")
+        assert _m65_ordini_broker(app) == 0
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+def test_m65_new_session_cannot_start_while_an_entry_of_the_old_session_is_being_sent(tmp_path, monkeypatch):
+    """M65, concorrenza STOP -> START -> invio: un ingresso della sessione A che ha gia' superato il controllo finale ed
+    e' in invio (dentro l'operazione finanziaria in volo) blocca la nascita della sessione B: lo STOP lo attende e un
+    nuovo START non acquisisce la lease finche' non finisce. Non esiste quindi un istante in cui un ingresso della
+    sessione A venga inviato sotto la sessione B (nessun TOCTOU fra controllo e invio)."""
+    import threading
+    from core.runtime_controller import RuntimeController
+    monkeypatch.setattr(RuntimeController, "RUNTIME_AUTHORITY_DRAIN_SEC", 0.3)
+    app, rc, vecchio = _m65_sessioni(tmp_path, monkeypatch)
+    in_invio, prosegui = threading.Event(), threading.Event()
+    verdetto = RuntimeController.admission_fence_verdict
+
+    def fermo_dopo_il_controllo(self, request):
+        esito = verdetto(self, request)
+        if (request or {}).get("customer_ref") == vecchio["customer_ref"]:
+            in_invio.set()
+            assert prosegui.wait(10)
+        return esito
+
+    monkeypatch.setattr(RuntimeController, "admission_fence_verdict", fermo_dopo_il_controllo)
+    esiti = []
+    invio = threading.Thread(target=lambda: esiti.append(app.trading_engine.submit_quick_bet(vecchio)))
+    try:
+        invio.start()
+        assert in_invio.wait(10)                               # sessione A, controllo superato, invio in volo
+        rc.stop()
+        rc.betfair_service.get_account_funds = lambda: _fondi(0.2)
+        esito_start = rc.start(execution_mode="SIMULATION")
+        assert esito_start.get("started") is not True                 # nessuna sessione B con l'invio in volo
+        assert esito_start.get("reason") == "runtime_authority_draining", esito_start.get("reason")
+        assert rc.drawdown_entry_block_reason() != "" or rc.mode.name != "ACTIVE"
+        prosegui.set()
+        invio.join(10)
+        assert not invio.is_alive()
+    finally:
+        prosegui.set()
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+def test_m65_entry_admitted_in_the_current_session_still_reaches_the_broker(tmp_path, monkeypatch):
+    """M65, non regressione: un ingresso ammesso e consegnato nella stessa sessione parte come prima."""
+    app, rc, corrente = _m65_sessioni(tmp_path, monkeypatch)
+    try:
+        esito = app.trading_engine.submit_quick_bet(corrente)
+        assert esito.get("ok") is True, esito.get("status")
+        assert _m65_ordini_broker(app) == 1
+    finally:
+        _m65_chiudi(app)

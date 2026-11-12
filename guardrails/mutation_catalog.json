@@ -10926,6 +10926,42 @@
       "rationale": "S18-1 (Sol su 559b39ca): con la verifica della modalita' fuori dal lock un passaggio a LIVE concorrente lascerebbe dichiarato l'ambito SIM e il controllo finale ammetterebbe ingressi LIVE sullo stato SIM."
     },
     {
+      "id": "m65_previous_session_entry_not_rejected",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if session != RuntimeController._entry_session(self):\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M65 (PF-OWNER-PR631-CYCLE20-M65-GO-20261112): senza il confronto della sessione un ingresso ammesso prima di STOP partirebbe nella sessione successiva con fondi ed esposizione di allora."
+    },
+    {
+      "id": "m65_start_keeps_the_entry_session",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        RuntimeController._new_entry_session(self)\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M65: senza la generazione nuova allo START gli ingressi della sessione precedente resterebbero validi."
+    },
+    {
+      "id": "m65_registration_without_admission_session",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            pending.append((fence, payload, RuntimeController._entry_session(self)))\n",
+      "mutated": "            pending.append((fence, payload, 0))\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M65: la registrazione deve conservare la sessione d'ammissione, non una costante."
+    },
+    {
       "id": "d1_null_provenance_with_state_attributed",
       "module": "core.drawdown_hard_stop",
       "area": "money_management",

@@ -577,6 +577,18 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   partito da fermo e non riuscito torna a STOPPED anche dal LOCKDOWN nato durante l'avvio, cosi' lo smontaggio rilascia
   lock, autorita' e sessione; superamento e storia insufficiente restano su disco e il prossimo START li rilegge.
 
+- **Ingressi di una sessione precedente (M65, ciclo 20, PF-OWNER-PR631-CYCLE20-M65-GO-20261112).** Un ingresso
+  ammesso (gate fondi, esposizione, limiti) in una sessione e ancora in coda allo STOP non parte nella sessione
+  successiva: la sua ammissione valeva per i fondi e l'esposizione di allora. Ogni START, preso il lock di istanza,
+  apre una generazione di sessione nuova sotto il lock d'ammissione; la registrazione dell'ingresso (fence
+  d'ammissione: segnali, Dutching, ordini manuali) conserva la propria e il controllo finale del motore
+  (`admission_fence_verdict`) la confronta nella stessa sezione critica: generazione diversa =>
+  `ingresso_di_sessione_precedente`, negato prima dell'invio e mai ripristinato. Il confronto avviene dentro
+  l'operazione finanziaria in volo (`authority_operation`): lo STOP la attende e un nuovo START non acquisisce la lease
+  finche' non finisce (`runtime_authority_draining`), quindi nessun ingresso della sessione precedente viene inviato
+  sotto la nuova. Gli ordini gia' inviati con esito incerto restano alla riconciliazione; la pulizia completa delle
+  code e la PAUSA restano alla PR-05.
+
 - **Controllo finale, scrittori stantii e picco confermato (D-631-13/16/17/18, ciclo 17).** Il controllo finale
   d'ingresso (`drawdown_entry_block_reason`) rifiuta anche qualsiasi LOCKDOWN del runtime, qualunque ne sia l'origine
   (amministrativo, rischio, desk), per segnali, ordini manuali (`REQ_QUICK_BET`), Dutching e auto-next, che arrivano

@@ -3336,6 +3336,9 @@ class RuntimeController:
         """#536 strato 3: lease persistente con fencing token, vincolata al `Database` (ogni scrittura la verifica)
         e rinnovata dall'heartbeat. '' se acquisita; altrimenti il motivo (lease di un altro runtime vivo, DB non
         disponibile). Senza lock OS (DB in memoria) non c'e' lease: solo test single-process."""
+        # M65: ogni tentativo di nuova autorita' (lo START, preso il lock di istanza) apre una generazione di sessione
+        # nuova: gli ingressi ammessi nelle sessioni precedenti non partono piu'.
+        RuntimeController._new_entry_session(self)
         authority = getattr(self, "runtime_authority", None)
         if authority is None or getattr(self, "_instance_lock_fh", None) is None:
             return ""
@@ -4607,6 +4610,23 @@ class RuntimeController:
     # piazzamento (`admission_fence_verdict`): se nel frattempo e' iniziato un cashout nel suo ambito l'ordine
     # e' negato (QUICK_BET_FAILED => tavolo e dedupe liberati). Il cashout non viene ritardato (PF-EXEC-03).
 
+    # ---- M65 (PF-OWNER-PR631-CYCLE20-M65-GO-20261112): sessione dell'ingresso ----
+    # Un ingresso ammesso (gate fondi, esposizione, limiti) in una sessione e ancora in coda allo STOP non parte nella
+    # sessione successiva: la sua ammissione valeva per i fondi e l'esposizione di allora. Ogni START (preso il lock di
+    # istanza, all'acquisizione della lease: `_acquire_runtime_lease`) apre una generazione nuova sotto il lock d'ammissione (fra STOP e START gli ingressi sono gia' negati
+    # dall'autorita' rilasciata); ogni registrazione conserva la propria e il controllo finale
+    # (`admission_fence_verdict`) la confronta nella stessa sezione critica, dentro l'operazione in volo che lo STOP
+    # attende (`authority_operation`) e che impedisce a un nuovo START di acquisire la lease finche' non finisce.
+    # L'ingresso scaduto e' negato e mai ripristinato; la pulizia completa delle code resta alla PR-05.
+
+    def _entry_session(self) -> int:
+        return int(getattr(self, "_entry_session_generation", 0) or 0)
+
+    def _new_entry_session(self) -> None:
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            self._entry_session_generation = RuntimeController._entry_session(self) + 1
+
     def _register_queued_entry_fence(self, payload: dict, fence) -> None:
         ref = str((payload or {}).get("customer_ref") or "")
         if not ref or fence is None:
@@ -4619,7 +4639,8 @@ class RuntimeController:
             # Un fence per richiesta (Codex r4318304393): due ingressi in coda con lo stesso customer_ref non si
             # sovrascrivono. Il conflitto nega tutti gli ingressi con quel ref finche' la coda non si svuota.
             pending = queued.setdefault(ref, [])
-            pending.append((fence, payload))     # il payload pubblicato e' lo stesso oggetto che riceve l'engine
+            # il payload pubblicato e' lo stesso oggetto che riceve l'engine; M65: con la sessione d'ammissione
+            pending.append((fence, payload, RuntimeController._entry_session(self)))
             if len(pending) > 1:
                 conflicts = getattr(self, "_queued_ref_conflicts", None)
                 if conflicts is None:
@@ -4811,7 +4832,7 @@ class RuntimeController:
         with lock:
             queued = getattr(self, "_queued_entry_fences", None) or {}
             pending = queued.get(ref) or []
-            index = next((i for i, (_fence, owner) in enumerate(pending) if owner is request), None)
+            index = next((i for i, entry in enumerate(pending) if entry[1] is request), None)
             if index is None:
                 return                       # nessun fence di QUESTA richiesta: quello di un'altra non si tocca
             pending.pop(index)
@@ -4834,12 +4855,18 @@ class RuntimeController:
             pending = queued.get(ref)
             if not pending:
                 return ""
-            fence = pending.pop(0)[0]
+            fence, _owner, session = pending.pop(0)
             conflicts = getattr(self, "_queued_ref_conflicts", None) or set()
             in_conflict = ref in conflicts
             if not pending:
                 queued.pop(ref, None)
                 conflicts.discard(ref)
+            if session != RuntimeController._entry_session(self):
+                # M65: ammesso in una sessione precedente (prima di uno STOP): fondi ed esposizione di allora non
+                # valgono adesso. Negato prima dell'invio, mai ripristinato.
+                logger.warning("M65: ingresso %s ammesso nella sessione %s, corrente %s: negato", ref, session,
+                               RuntimeController._entry_session(self))
+                return "ingresso_di_sessione_precedente"
             if in_conflict:
                 return "customer_ref_in_conflitto"
             # #529 ciclo A2 (rilievo Codex r4326488240): il lotto e' atomico anche dopo l'ammissione. Una gamba non
