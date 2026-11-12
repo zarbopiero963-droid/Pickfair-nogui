@@ -576,3 +576,19 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   dell'invio (mai AMBIGUOUS). Le uscite protettive passano dall'OrderRouter del cashout e restano libere. Uno START
   partito da fermo e non riuscito torna a STOPPED anche dal LOCKDOWN nato durante l'avvio, cosi' lo smontaggio rilascia
   lock, autorita' e sessione; superamento e storia insufficiente restano su disco e il prossimo START li rilegge.
+
+- **Controllo finale, scrittori stantii e picco confermato (D-631-13/16/17/18, ciclo 17).** Il controllo finale
+  d'ingresso (`drawdown_entry_block_reason`) rifiuta anche qualsiasi LOCKDOWN del runtime, qualunque ne sia l'origine
+  (amministrativo, rischio, desk), per segnali, ordini manuali (`REQ_QUICK_BET`), Dutching e auto-next, che arrivano
+  tutti allo stesso handler del motore; Emergency Stop e STOP BOT (autorita' rilasciata o in svuotamento) restano i
+  controlli dedicati subito prima e subito dopo. L'intera decisione e' una sola sezione critica sotto lo stesso lock
+  in cui ogni lettura del conto registra un superamento: un superamento registrato prima della risposta non viene mai
+  ignorato; uno registrato dopo e' successivo all'ammissione e l'ordine eventualmente inviato si riconcilia. Un
+  controller mai avviato non scrive lo stato del drawdown su un database governato da un runtime (lease presente,
+  anche scaduta o rilasciata): dopo lo STOP del proprietario la sua pausa non riscrive piu' il picco ne' cancella il
+  superamento. In piu' ogni salvataggio usa la concorrenza ottimistica sul `seq`: uno stato in memoria piu' vecchio
+  del record su disco non lo sovrascrive mai (nessun marker), l'istanza nega gli ingressi finche' non rilegge lo stato
+  (START o procedura owner). La conferma owner della baseline riapre la cronologia delle letture con il picco
+  confermato (massimo fra salvato, dichiarato e cassa, mai ribassato) come base: un calo letto dopo, anche fuori
+  ordine, si misura da quel picco; una lettura iniziata prima della conferma e' precedente alla storia (superamento
+  possibile => storia insufficiente, mai un PASS).

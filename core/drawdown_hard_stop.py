@@ -298,6 +298,16 @@ class DrawdownHardStop:
         su disco come record piu' recente e al riavvio varrebbe lo stesso. Il marker resta il ripiego dei soli stati
         che stringono (picco che sale, superamento, sessione aperta)."""
         saver = getattr(self._db, "save_settings", None)
+        newer = self._newer_on_disk_locked()
+        if newer:
+            # D-631-18 (Codex su 9c9121f0): su disco c'e' un record piu' recente di quello da cui parte questo stato in
+            # memoria (un altro processo, o un'istanza costruita prima delle sue scritture). Salvare adesso cancellerebbe
+            # il suo picco o il suo superamento con uno snapshot vecchio: nessuna scrittura (nemmeno il marker), nessun
+            # ingresso da questa istanza finche' non rilegge lo stato (`restore`, allo START o nelle procedure owner).
+            logger.critical("D-1: stato del drawdown su disco piu' recente (%s) di quello in memoria (seq %s): "
+                            "salvataggio rifiutato, nuovi ingressi negati fino alla rilettura", newer, self.seq)
+            self.persist_failed = True
+            return False
         seq = self.seq + 1
         record = {"peak": None if self.peak is None else str(self.peak), "seq": seq, "peak_epoch": self.peak_epoch,
                   "rebase_ops": list(self.rebase_ops),
@@ -332,6 +342,22 @@ class DrawdownHardStop:
         self.persist_failed = False
         self._remove_stale_marker()
         return True
+
+    def _newer_on_disk_locked(self) -> str:
+        """'' se il record del DB non e' piu' recente dello stato in memoria (``seq`` su disco <= ``self.seq``),
+        altrimenti la sua descrizione. Concorrenza ottimistica: ogni salvataggio parte dall'ultimo record letto o scritto
+        da questa istanza. DB non leggibile => '' (il salvataggio decide: se fallisce anche lui vale il ripiego)."""
+        getter = getattr(self._db, "get_settings", None)
+        if not callable(getter):
+            return ""
+        try:
+            raw = (getter() or {}).get(STATE_KEY)
+            if raw in (None, ""):
+                return ""
+            disk_seq = _parse_record(raw)["seq"]
+        except Exception:
+            return ""
+        return f"seq {disk_seq}" if disk_seq > self.seq else ""
 
     def _remove_stale_marker(self) -> None:
         marker = _marker_path(self._db)
@@ -409,6 +435,11 @@ class DrawdownHardStop:
                 self.peak, self.baseline = old
                 self.baseline_verified = False
                 return False
+            # D-631-17 (Codex su 9c9121f0): il picco confermato e' il massimo noto da adesso. La cronologia delle
+            # letture si riapre con lui come base: un calo letto dopo la conferma, anche arrivato fuori ordine, si
+            # misura da questo picco. Una lettura iniziata prima della conferma e' precedente alla storia: valutata
+            # con il solo limite superiore (superamento possibile => storia insufficiente, mai un PASS).
+            self._open_window_locked(time.monotonic())
             logger.warning("D-1: baseline del drawdown confermata dall'owner (op %s): picco %s", op, self.peak)
             return True
 

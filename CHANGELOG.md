@@ -87,7 +87,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   il calo successivo uscito dalla memoria non passa piu' in silenzio. Ciclo 16 (PF-OWNER-PR631-CYCLE16-GO-20261112):
   un ingresso gia' in coda non parte dopo l'hard-stop (ricontrollo al punto d'invio del motore, D-631-13); uno START
   fallito dopo un LOCKDOWN d'avvio rilascia lock, autorita' e sessione (D-631-14); la sessione del drawdown si apre su
-  disco prima di leggere il conto e lo START si interrompe se non e' salvabile (D-631-15). Review su e98e84c7 (Sol): un marker superato con picco piu'
+  disco prima di leggere il conto e lo START si interrompe se non e' salvabile (D-631-15). Ciclo 17
+  (PF-OWNER-PR631-CYCLE17-GO-20261112): il controllo finale d'ingresso rifiuta ogni LOCKDOWN ed e' atomico rispetto
+  alla registrazione di un superamento (D-631-13/16); un controller mai avviato o uno snapshot piu' vecchio del disco
+  non riscrivono picco e superamento (D-631-18); il picco confermato dall'owner diventa la base della cronologia
+  (D-631-17). Review su e98e84c7 (Sol): un marker superato con picco piu'
   alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
   resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale

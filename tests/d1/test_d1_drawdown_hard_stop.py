@@ -1567,8 +1567,9 @@ def test_failed_start_path_is_wired_before_the_lock_release():
 
 def test_never_started_controller_out_of_stopped_does_not_write_under_a_foreign_lease(tmp_path):
     """Un controller mai avviato portato fuori da STOPPED (pause()) mentre un altro runtime tiene la lease nel database
-    non e' proprietario: nessuna scrittura dello stato, ingresso manuale negato. Senza lease attiva resta ammesso
-    (nessun altro runtime da sovrascrivere)."""
+    non e' proprietario: nessuna scrittura dello stato, ingresso manuale negato. D-631-18 (Codex su 9c9121f0): lo resta
+    anche dopo che quel runtime ha rilasciato la lease o l'ha lasciata scadere (prima era ammesso: il suo snapshot vecchio
+    cancellava il superamento). Solo un database mai governato da un runtime (nessuna lease) resta scrivibile."""
     import time as _time
     c = _catena(tmp_path, max_drawdown_abs=10.0)
     _lettura(c, 100.0)
@@ -1580,7 +1581,9 @@ def test_never_started_controller_out_of_stopped_does_not_write_under_a_foreign_
     c.rc._apply_funds_reading(dict(_fondi), source="status")
     assert c.rc.db.get_settings()[STATE_KEY] == prima
     assert c.rc.absolute_cap_reason_for_orders([dict(_ORDINE_MANUALE)]) == "drawdown_controller_non_proprietario"
-    lease["expires_at"] = _time.time() - 5.0                 # lease scaduta: nessun altro proprietario
+    lease["expires_at"] = _time.time() - 5.0                 # lease scaduta o rilasciata: non e' comunque sua
+    assert not c.rc._drawdown_writes_allowed()
+    c.rc.db.read_runtime_lease = lambda: None                 # nessun runtime ha mai governato questo DB
     assert c.rc._drawdown_writes_allowed()
 
     def illeggibile():
@@ -3077,3 +3080,271 @@ def test_double_storage_fault_during_start_then_crash_never_loses_the_observed_p
     assert esito["confirmed"] is True and c.rc._hard_stop().snapshot()["peak"] == 130.0
     _lettura(c, 115.0)
     assert c.rc._hard_stop().breached                            # 130 -> 115 = 15 >= 10
+
+
+# ------------------------------------------------- ciclo 17 (PF-OWNER-PR631-CYCLE17-GO-20261112): D-631-13/16/17/18
+@pytest.mark.parametrize("blocco", ["lockdown_amministrativo", "lockdown_da_altra_origine", "emergency_stop"])
+def test_queued_entry_never_reaches_the_broker_under_any_lockdown(tmp_path, blocco):
+    """D-631-13 (Claude D su 9c9121f0): qualsiasi LOCKDOWN attivo nega l'ingresso gia' in coda al punto finale d'invio,
+    qualunque ne sia l'origine (amministrativo, rischio, desk), come l'Emergency Stop. Rifiuto certo prima dell'invio."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    trattenuti = _ingresso_in_coda(c)
+    if blocco == "lockdown_amministrativo":
+        c.rc.force_lockdown("owner_lockdown")
+    elif blocco == "lockdown_da_altra_origine":
+        c.rc.mode = c.rc.mode.__class__.LOCKDOWN                 # LOCKDOWN impostato da un altro componente
+    else:
+        c.rc._emergency_stopped = True
+    for comando in trattenuti:
+        c.rc.bus.publish("CMD_QUICK_BET", comando)
+    assert _ordini(c) == 0
+    assert not c.rc._uncertain_reservations_map()
+
+
+def test_final_entry_check_reports_lockdown_with_its_reason(tmp_path):
+    """D-631-13: il controllo finale restituisce un motivo esplicito per il LOCKDOWN, '' senza blocchi."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    assert c.rc.drawdown_entry_block_reason() == ""
+    c.rc.force_lockdown("owner_lockdown")
+    assert c.rc.drawdown_entry_block_reason().startswith("runtime_lockdown")
+
+
+def test_final_entry_check_is_atomic_with_a_concurrent_breach(tmp_path, monkeypatch):
+    """D-631-16 (Sol su 9c9121f0): il controllo finale e la registrazione di un superamento sono serializzati. Un
+    superamento concorrente o finisce prima del controllo (=> rifiuto) o dopo che il controllo e' terminato: mai un
+    '' restituito quando il superamento era gia' registrato prima della risposta."""
+    import threading
+    import time as _time
+    from core.runtime_controller import RuntimeController
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    stop = c.rc._hard_stop()
+    momenti = {}
+    originale = RuntimeController._drawdown_persist_block_reason
+
+    def concorrente():
+        _lettura(c, 85.0)                                      # superamento registrato da un altro thread
+        momenti["superamento"] = _time.monotonic()
+
+    def intercetta(self):
+        t = threading.Thread(target=concorrente)
+        t.start()
+        t.join(timeout=0.5)                                    # con il controllo atomico il thread aspetta
+        return originale(self)
+
+    monkeypatch.setattr(RuntimeController, "_drawdown_persist_block_reason", intercetta)
+    esito = c.rc.drawdown_entry_block_reason()
+    risposta = _time.monotonic()
+    deadline = _time.monotonic() + 5
+    while "superamento" not in momenti and _time.monotonic() < deadline:
+        _time.sleep(0.01)
+    assert stop.breached
+    assert esito != "" or momenti["superamento"] > risposta, (esito, momenti, risposta)
+
+
+def _sessione_lasciata_aperta_e_baseline_confermata(c, dichiarato):
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    assert c.rc._hard_stop().baseline_block_reason()
+    _lettura(c, 120.0)
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=dichiarato)["confirmed"]
+
+
+def test_late_dip_after_owner_baseline_confirmation_is_measured_from_the_declared_peak(tmp_path):
+    """D-631-17 (Codex su 9c9121f0, riprodotto da B e D): il picco dichiarato dall'owner alla conferma della baseline
+    e' il massimo noto da quell'istante. 130 a t+3 e poi 115 arrivata da t+2 => calo 15 dal picco 130, oltre il limite
+    10: superamento, mai perso perche' il picco dichiarato non entrava nella cronologia."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _sessione_lasciata_aperta_e_baseline_confermata(c, 130.0)
+    stop = c.rc._hard_stop()
+    assert stop.peak == Decimal("130")
+    base = _time.monotonic() + 100
+    c.rc._apply_funds_reading(_fondi(130.0), source="t", read_at=base + 3)
+    c.rc._apply_funds_reading(_fondi(115.0), source="t", read_at=base + 2)
+    assert stop.breached
+    assert Decimal(stop.snapshot()["breach"]["peak"]) == Decimal("130")
+
+
+def test_owner_baseline_confirmation_never_lowers_the_declared_or_saved_peak(tmp_path):
+    """D-631-17: la conferma non sostituisce mai il picco con uno inferiore: dichiarato 90 sotto il salvato 120 =>
+    resta 120; e il calo successivo si misura da li'."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _sessione_lasciata_aperta_e_baseline_confermata(c, 90.0)
+    stop = c.rc._hard_stop()
+    assert stop.peak == Decimal("120")
+    base = _time.monotonic() + 100
+    c.rc._apply_funds_reading(_fondi(125.0), source="t", read_at=base + 3)
+    c.rc._apply_funds_reading(_fondi(108.0), source="t", read_at=base + 2)
+    assert stop.breached and Decimal(stop.snapshot()["breach"]["peak"]) == Decimal("120")
+
+
+def test_declared_peak_confirmed_by_another_process_is_adopted_for_late_readings(tmp_path):
+    """D-631-17, subentro: la conferma salvata da un altro processo, adottata alla rilettura, apre la cronologia dal
+    picco dichiarato: un calo tardivo successivo si misura da quel picco."""
+    import time as _time
+    a = _catena_su(tmp_path, "conferma.db", max_drawdown_abs=10.0)
+    _lettura(a, 100.0)
+    a.rc._hard_stop().open_session()
+    b = _catena_su(tmp_path, "conferma.db", max_drawdown_abs=10.0)
+    b.rc._reload_drawdown_state()
+    b.rc.mode = b.rc.mode.__class__.ACTIVE
+    _riavvio(a)
+    a.rc._reload_drawdown_state()
+    _lettura(a, 100.0)
+    assert a.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=130.0)["confirmed"]
+    b.rc._reload_drawdown_state()
+    stop = b.rc._hard_stop()
+    assert stop.peak == Decimal("130") and not stop.baseline_block_reason()
+    base = _time.monotonic() + 100
+    b.rc._apply_funds_reading(_fondi(130.0), source="t", read_at=base + 3)
+    b.rc._apply_funds_reading(_fondi(115.0), source="t", read_at=base + 2)
+    assert stop.breached
+
+
+def _proprietario_con_superamento_poi_fermo(tmp_path, nome):
+    a = _catena_su(tmp_path, nome, max_drawdown_abs=10.0)
+    b = _catena_su(tmp_path, nome, max_drawdown_abs=10.0)       # costruito prima che A scriva
+    _avvia_con_autorita(a)
+    _lettura(a, 100.0)
+    _lettura(a, 130.0)
+    _lettura(a, 115.0)
+    assert a.rc._hard_stop().breached
+    salvato = json.loads(a.rc.db.get_settings()[STATE_KEY])
+    _stop_pulito(a)
+    return a, b, salvato
+
+
+def _stato_salvato(c):
+    return json.loads(c.rc.db.get_settings()[STATE_KEY])
+
+
+@pytest.mark.parametrize("azione", ["pause", "lettura_di_stato", "ingresso"])
+def test_never_started_controller_never_rewrites_the_owner_breach(tmp_path, azione):
+    """D-631-18 (Codex su 9c9121f0, riprodotto da B e D): un controller mai avviato, costruito prima delle scritture
+    del proprietario, non modifica lo stato finanziario persistito dopo lo STOP del proprietario (lease rilasciata):
+    ne' con pause(), ne' leggendo il conto per lo stato, ne' su un ingresso. Il superamento resta."""
+    import time as _time
+    a, b, salvato = _proprietario_con_superamento_poi_fermo(tmp_path, f"stantio_{azione}.db")
+    b.rc.betfair_service.get_account_funds = lambda: _fondi(120.0)
+    b.rc.betfair_service.disconnect = lambda *x, **k: None
+    if azione == "pause":
+        b.rc.pause()
+    elif azione == "lettura_di_stato":
+        b.rc.mode = b.rc.mode.__class__.ACTIVE
+        b.rc._apply_funds_reading(_fondi(120.0), source="status", read_at=_time.monotonic())
+    else:
+        b.rc.mode = b.rc.mode.__class__.ACTIVE
+        b.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+        assert _ordini(b) == 0
+    dopo = _stato_salvato(a)
+    assert dopo["breached"] is True and Decimal(dopo["peak"]) == Decimal("130")
+    assert dopo["seq"] >= salvato["seq"]
+
+
+def test_stale_snapshot_never_overwrites_a_newer_persisted_record(tmp_path):
+    """D-631-18, causa nella persistenza: uno stato in memoria piu' vecchio del record su disco (seq inferiore) non lo
+    sovrascrive mai, qualunque sia il chiamante. Il salvataggio rifiutato nega gli ingressi di quell'istanza."""
+    c = _catena(tmp_path)
+    vecchio = DrawdownHardStop(c.rc.db)
+    vecchio.restore(reconcile=False)
+    nuovo = DrawdownHardStop(c.rc.db)
+    nuovo.restore(reconcile=False)
+    nuovo.observe(100.0)
+    nuovo.observe(130.0)
+    assert nuovo._memorize_if_exceeded(10.0, None, 115.0, nuovo.peak)
+    vecchio.observe(120.0)                                       # snapshot stantio: seq 0 contro il disco piu' avanti
+    record = json.loads(c.rc.db.get_settings()[STATE_KEY])
+    assert record["breached"] is True and Decimal(record["peak"]) == Decimal("130")
+    assert vecchio.persist_failed
+    assert vecchio.retry_persist() is False                      # resta rifiutato finche' non rilegge
+    vecchio.restore(reconcile=False)
+    assert vecchio.breached and vecchio.peak == Decimal("130")
+
+
+@pytest.mark.parametrize("bloccato", [True, False])
+def test_manual_quick_bet_topic_hits_the_same_final_check(tmp_path, bloccato):
+    """D-631-13: anche la richiesta manuale (`REQ_QUICK_BET`) arriva allo stesso controllo finale del motore: in
+    LOCKDOWN nessun ordine, senza blocco l'ordine parte (controllo positivo)."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    trattenuti = _ingresso_in_coda(c)
+    if bloccato:
+        c.rc.force_lockdown("owner_lockdown")
+    for comando in trattenuti:
+        c.rc.bus.publish("REQ_QUICK_BET", comando)
+    assert _ordini(c) == (0 if bloccato else 1)
+
+
+def test_reading_started_before_the_baseline_confirmation_is_never_silently_passed(tmp_path):
+    """D-631-17: una lettura iniziata prima della conferma e arrivata dopo e' precedente alla storia del picco
+    confermato: con un calo possibile oltre il limite non e' un PASS silenzioso (storia insufficiente o superamento)."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    prima = _time.monotonic()
+    _lettura(c, 120.0)
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=130.0)["confirmed"]
+    c.rc._apply_funds_reading(_fondi(118.0), source="t", read_at=_time.monotonic() + 50)
+    c.rc._apply_funds_reading(_fondi(115.0), source="t", read_at=prima + 0.0001)
+    stop = c.rc._hard_stop()
+    assert stop.breached or stop.history_block_reason()
+    assert c.rc.drawdown_entry_block_reason() != ""
+
+
+def test_confirmed_peak_survives_restart_and_takeover(tmp_path):
+    """D-631-17: il picco dichiarato e confermato e' durevole: dopo un riavvio (stesso DB) non torna piu' basso e la
+    baseline resta verificata finche' la sessione si chiude in modo pulito."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _sessione_lasciata_aperta_e_baseline_confermata(c, 130.0)
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    assert c.rc._hard_stop().peak == Decimal("130")
+
+
+def test_proper_takeover_after_owner_stop_inherits_the_breach_and_writes_again(tmp_path):
+    """D-631-18, controllo positivo: il controller costruito prima, quando si avvia davvero (lock, lease, rilettura),
+    eredita il superamento del proprietario precedente e torna a poter salvare: la protezione dagli snapshot vecchi non
+    blocca il subentro legittimo."""
+    a, b, salvato = _proprietario_con_superamento_poi_fermo(tmp_path, "subentro.db")
+    _avvia_con_autorita(b)
+    stop = b.rc._hard_stop()
+    assert stop.breached and stop.peak == Decimal("130")
+    assert b.rc._drawdown_writes_allowed()
+    stop.observe(140.0)
+    dopo = _stato_salvato(b)
+    assert dopo["breached"] is True and Decimal(dopo["peak"]) == Decimal("140") and dopo["seq"] > salvato["seq"]
+    assert not stop.persist_failed
+
+
+def test_final_entry_check_names_the_breach_before_the_lockdown_it_caused(tmp_path):
+    """D-631-13/16: con l'hard-stop superato (che ha anche portato il runtime in LOCKDOWN) il controllo finale riporta il
+    motivo del superamento, piu' preciso del LOCKDOWN che ne deriva."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    _lettura(c, 85.0)
+    assert c.rc._hard_stop().breached
+    assert c.rc.drawdown_entry_block_reason() == REASON_ACTIVE
+
+
+def test_non_owner_with_the_current_seq_never_retries_its_unsaved_peak(tmp_path):
+    """Grok su 6d4ac43f, con la concorrenza ottimistica del ciclo 17: anche un controller non proprietario allineato al
+    disco (stesso seq) non ritenta il salvataggio del proprio picco non persistito sul record del proprietario: nega
+    l'ingresso e il disco resta com'e'."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    stop = c.rc._hard_stop()
+    stop.peak = Decimal("150")                                   # picco solo in memoria, salvataggio fallito
+    stop.persist_failed = True
+    c.rc.mode = c.rc.mode.__class__.STOPPED                      # mai avviato e fermo: non proprietario
+    assert c.rc._drawdown_write_block()
+    assert c.rc._drawdown_persist_block_reason() == "drawdown_picco_non_persistito"
+    assert Decimal(_stato_salvato(c)["peak"]) == Decimal("100")

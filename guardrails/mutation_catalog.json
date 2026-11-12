@@ -10174,7 +10174,7 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                and RuntimeController._foreign_runtime_lease_active(self):\n",
+      "original": "                and RuntimeController._runtime_lease_recorded(self):\n",
       "mutated": "                and False:\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
@@ -10642,8 +10642,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        if stop.breached:\n            return stop.reason(None, None)\n        return RuntimeController._drawdown_persist_block_reason(self)",
-      "mutated": "        return RuntimeController._drawdown_persist_block_reason(self)",
+      "original": "            if stop.breached:\n                return stop.reason(None, None)\n            if getattr(self, \"mode\", None) is RuntimeMode.LOCKDOWN:",
+      "mutated": "            if getattr(self, \"mode\", None) is RuntimeMode.LOCKDOWN:",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10654,12 +10654,72 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "            return stop.reason(None, None)\n        return RuntimeController._drawdown_persist_block_reason(self)",
-      "mutated": "            return stop.reason(None, None)\n        return \"\"",
+      "original": "                return f\"runtime_lockdown:{getattr(self, 'last_error', '') or 'LOCKDOWN'}\"\n            return RuntimeController._drawdown_persist_block_reason(self)",
+      "mutated": "                return f\"runtime_lockdown:{getattr(self, 'last_error', '') or 'LOCKDOWN'}\"\n            return \"\"",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "D-631-13: il ricontrollo d'invio non vede storia insufficiente / picco non persistito."
+    },
+    {
+      "id": "d1_lease_released_or_expired_allows_write",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        return isinstance(row, dict)\n",
+      "mutated": "        return isinstance(row, dict) and (validators.finite_number(row.get(\"expires_at\")) or 0) >= time.time()\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-18: dopo lo STOP del proprietario (lease rilasciata o scaduta) un controller mai avviato tornerebbe a scrivere il proprio snapshot vecchio."
+    },
+    {
+      "id": "d1_final_check_ignores_lockdown",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if getattr(self, \"mode\", None) is RuntimeMode.LOCKDOWN:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-13: un ingresso in coda partirebbe con un LOCKDOWN di altra origine attivo."
+    },
+    {
+      "id": "d1_final_check_outside_drawdown_lock",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            stop = RuntimeController._hard_stop(self)\n            if not stop.state_reliable():\n                return \"drawdown_stato_illeggibile\"\n            if stop.breached:",
+      "mutated": "        with contextlib.nullcontext():\n            stop = RuntimeController._hard_stop(self)\n            if not stop.state_reliable():\n                return \"drawdown_stato_illeggibile\"\n            if stop.breached:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-16: controllo finale e registrazione del superamento non serializzati; un superamento gia' registrato prima della risposta verrebbe ignorato."
+    },
+    {
+      "id": "d1_stale_snapshot_overwrites_newer_record",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        newer = self._newer_on_disk_locked()\n        if newer:",
+      "mutated": "        newer = self._newer_on_disk_locked()\n        if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-18: uno stato in memoria piu' vecchio del disco sovrascriverebbe picco e superamento salvati da un altro processo."
+    },
+    {
+      "id": "d1_baseline_confirmation_keeps_old_history",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self._open_window_locked(time.monotonic())\n            logger.warning(\"D-1: baseline del drawdown confermata",
+      "mutated": "            pass\n            logger.warning(\"D-1: baseline del drawdown confermata",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-17: il picco confermato dall'owner non entrerebbe nella cronologia: un calo tardivo da quel picco andrebbe perso."
     },
     {
       "id": "d1_failed_start_keeps_startup_lockdown",

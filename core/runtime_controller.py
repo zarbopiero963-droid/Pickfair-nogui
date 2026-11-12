@@ -3382,16 +3382,26 @@ class RuntimeController:
         return self._runtime_authority_block("cashout_place")
 
     def drawdown_entry_block_reason(self) -> str:
-        """D-631-13 (Codex/Claude D su 3689ae8f): ricontrollo del drawdown al punto finale d'invio di una NUOVA entrata
-        (TradingEngine, come l'emergenza giornaliera). Un ingresso approvato e messo in coda prima del blocco non parte
-        dopo: superamento memorizzato, storia insufficiente, picco non persistito, baseline non verificata o stato
-        illeggibile => '' mai. Le uscite protettive non passano di qui (OrderRouter del cashout)."""
-        stop = RuntimeController._hard_stop(self)
-        if not stop.state_reliable():
-            return "drawdown_stato_illeggibile"
-        if stop.breached:
-            return stop.reason(None, None)
-        return RuntimeController._drawdown_persist_block_reason(self)
+        """Controllo finale d'ingresso al punto d'invio di una NUOVA entrata (TradingEngine, dopo l'emergenza
+        giornaliera e prima dell'autorita' del runtime): '' solo se nessun blocco e' attivo adesso.
+
+        D-631-13 (Codex/Claude D su 3689ae8f e 9c9121f0): un ingresso approvato e messo in coda prima del blocco non
+        parte dopo: superamento memorizzato, LOCKDOWN di qualunque origine (amministrativo, rischio, desk), storia
+        insufficiente, picco non persistito, baseline non verificata o stato illeggibile. Emergency Stop e STOP BOT
+        (autorita' rilasciata) restano i controlli dedicati del motore subito prima e subito dopo.
+        D-631-16 (Sol su 9c9121f0): l'intera decisione e' una sola sezione critica sotto `_drawdown_eval_lock`, lo
+        stesso lock sotto cui ogni lettura del conto registra un superamento: un superamento gia' registrato prima della
+        risposta non puo' essere ignorato; uno registrato dopo e' un evento successivo all'ammissione (l'ordine eventualmente
+        inviato si riconcilia come ogni ordine). Le uscite protettive non passano di qui (OrderRouter del cashout)."""
+        with RuntimeController._drawdown_eval_lock:
+            stop = RuntimeController._hard_stop(self)
+            if not stop.state_reliable():
+                return "drawdown_stato_illeggibile"
+            if stop.breached:
+                return stop.reason(None, None)
+            if getattr(self, "mode", None) is RuntimeMode.LOCKDOWN:
+                return f"runtime_lockdown:{getattr(self, 'last_error', '') or 'LOCKDOWN'}"
+            return RuntimeController._drawdown_persist_block_reason(self)
 
     def assert_runtime_authority(self, context: str = "") -> None:
         """Choke point per il TradingEngine prima di OGNI invio (SIM e LIVE): solleva `RuntimeAuthorityLost`."""
@@ -6800,15 +6810,19 @@ class RuntimeController:
         if stopped and not owned:
             return "drawdown_controller_non_proprietario"
         if not owned and getattr(self, "runtime_authority", None) is None \
-                and RuntimeController._foreign_runtime_lease_active(self):
-            # Mai avviato (nessuna autorita' armata) ma uscito da STOPPED (es. pause()) mentre un altro runtime tiene
-            # la lease nel database: non e' il proprietario dello stato.
+                and RuntimeController._runtime_lease_recorded(self):
+            # Mai avviato (nessuna autorita' armata) ma uscito da STOPPED (es. pause()) su un database governato da un
+            # runtime: non e' il proprietario dello stato, ne' mentre l'altro tiene la lease ne' dopo che l'ha
+            # rilasciata o lasciata scadere (D-631-18, Codex su 9c9121f0: dopo lo STOP del proprietario la sua pausa
+            # riscriveva il picco e cancellava il superamento con uno snapshot vecchio).
             return "drawdown_controller_non_proprietario"
         return RuntimeController._runtime_authority_block(self, "drawdown_state")
 
-    def _foreign_runtime_lease_active(self) -> bool:
-        """True se nel database c'e' una lease di runtime non scaduta (di un altro runtime: questo controller non ne
-        ha mai presa una). DB senza lease (in memoria, stub) => False; lease illeggibile => True (fail-closed)."""
+    def _runtime_lease_recorded(self) -> bool:
+        """True se il database e' governato da un runtime: c'e' (o c'e' stata: scaduta o rilasciata resta nella tabella)
+        una lease di runtime, di un altro processo, perche' questo controller non ne ha mai presa una. Solo un
+        controller con l'autorita' armata vi scrive lo stato finanziario. DB senza lease (in memoria, stub di test che
+        non avviano mai) => False; lease illeggibile => True (fail-closed)."""
         reader = getattr(getattr(self, "db", None), "read_runtime_lease", None)
         if not callable(reader):
             return False
@@ -6817,10 +6831,7 @@ class RuntimeController:
         except Exception:
             logger.exception("D-1: lease del runtime non leggibile: stato del drawdown non scritto")
             return True
-        if not isinstance(row, dict):
-            return False
-        expires = validators.finite_number(row.get("expires_at"))
-        return expires is None or expires >= time.time()
+        return isinstance(row, dict)
 
     def _evaluate_drawdown_hard_stop(self, cassa: Any, read_at: Any = None) -> None:
         """D-1: ogni cassa verificata alza (mai abbassa) il picco persistente dell'hard-stop e, con il limite
