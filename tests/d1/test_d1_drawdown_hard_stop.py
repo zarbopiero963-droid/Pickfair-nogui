@@ -3348,3 +3348,157 @@ def test_non_owner_with_the_current_seq_never_retries_its_unsaved_peak(tmp_path)
     assert c.rc._drawdown_write_block()
     assert c.rc._drawdown_persist_block_reason() == "drawdown_picco_non_persistito"
     assert Decimal(_stato_salvato(c)["peak"]) == Decimal("100")
+
+
+# ------------------------------------------------------- ciclo 18 (PF-OWNER-PR631-CYCLE18-GO-20261112): G17-1
+def _riavvio_con_baseline_da_confermare(c):
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    _lettura(c, 120.0)
+
+
+@pytest.mark.parametrize("ordine", ["in_ordine", "fuori_ordine"])
+def test_reading_started_before_baseline_confirmation_is_insufficient_history_never_a_false_hard_stop(tmp_path, ordine):
+    """G17-1 (Grok su bcd19a32, riprodotto da B e D): conferma owner con picco dichiarato 130; una lettura 115 iniziata
+    PRIMA della conferma e arrivata dopo non dimostra un calo dal 130 (il picco dichiarato non ha un istante noto: prima
+    della lettura si conoscono solo 100 e 120, calo provabile 5). Superamento possibile ma non dimostrabile => storia
+    insufficiente (ingressi negati, motivo distinto), mai un hard-stop. Vale arrivata in ordine e fuori ordine."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _riavvio_con_baseline_da_confermare(c)
+    prima = _time.monotonic()
+    if ordine == "fuori_ordine":
+        prima -= 0.0005                                          # precede anche l'ultima lettura valutata (120)
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=130.0)["confirmed"]
+    c.rc._apply_funds_reading(_fondi(115.0), source="t", read_at=prima)
+    stop = c.rc._hard_stop()
+    assert not stop.breached
+    assert stop.history_block_reason()
+    assert c.rc.drawdown_entry_block_reason() == stop.history_block_reason()
+    assert c.rc.mode is not c.rc.mode.__class__.LOCKDOWN or not stop.breached
+
+
+def test_reading_started_before_baseline_confirmation_without_any_possible_breach_does_not_block(tmp_path):
+    """G17-1, terzo stato: lettura iniziata prima della conferma con un calo massimo possibile sotto il limite (130 ->
+    125 = 5 < 10) => nessun blocco dal drawdown (ne' hard-stop ne' storia insufficiente)."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _riavvio_con_baseline_da_confermare(c)
+    prima = _time.monotonic()
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=130.0)["confirmed"]
+    c.rc._apply_funds_reading(_fondi(125.0), source="t", read_at=prima)
+    stop = c.rc._hard_stop()
+    assert not stop.breached and not stop.history_block_reason()
+    assert c.rc.drawdown_entry_block_reason() == ""
+
+
+def test_dip_proven_after_the_baseline_confirmation_is_still_a_hard_stop(tmp_path):
+    """G17-1, primo stato: dopo la conferma un calo dimostrato dalle letture successive resta un hard-stop (nessuna
+    perdita reale ignorata), anche con una lettura pre-conferma arrivata nel mezzo."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _riavvio_con_baseline_da_confermare(c)
+    prima = _time.monotonic()
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=130.0)["confirmed"]
+    base = _time.monotonic() + 100
+    c.rc._apply_funds_reading(_fondi(129.0), source="t", read_at=prima)          # pre-conferma, nessun calo possibile
+    c.rc._apply_funds_reading(_fondi(140.0), source="t", read_at=base + 1)
+    c.rc._apply_funds_reading(_fondi(125.0), source="t", read_at=base + 2)       # 140 -> 125 = 15 dimostrato
+    stop = c.rc._hard_stop()
+    assert stop.breached and Decimal(stop.snapshot()["breach"]["peak"]) == Decimal("140")
+
+
+def test_baseline_confirmation_records_its_instant_and_epoch(tmp_path):
+    """G17-1: la conferma registra istante (processo) ed epoca (numero progressivo delle conferme, persistito nella
+    storia della baseline); ogni conferma successiva avanza l'epoca."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _riavvio_con_baseline_da_confermare(c)
+    prima = _time.monotonic()
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=130.0)["confirmed"]
+    stop = c.rc._hard_stop()
+    assert stop.baseline_confirmed_at is not None and stop.baseline_confirmed_at >= prima
+    assert stop.baseline_epoch() == 1
+    stop.open_session()
+    _riavvio(c)                                                  # nuovo crash a sessione aperta: nuova conferma richiesta
+    c.rc._reload_drawdown_state()
+    _lettura(c, 120.0)
+    assert c.rc.owner_confirm_drawdown_baseline(**dict(_CONFIRM, operation_id="PF-BASELINE-0002"))["confirmed"]
+    assert c.rc._hard_stop().baseline_epoch() == 2
+
+
+def test_confirmation_adopted_from_another_process_also_marks_earlier_readings_as_pre_confirmation(tmp_path):
+    """G17-1, subentro: la conferma salvata da un altro processo e adottata alla rilettura vale da quell'istante anche
+    qui: una lettura iniziata prima dell'adozione con un calo possibile ma non dimostrabile => storia insufficiente."""
+    import time as _time
+    a = _catena_su(tmp_path, "epoca.db", max_drawdown_abs=10.0)
+    _riavvio_con_baseline_da_confermare(a)
+    b = _catena_su(tmp_path, "epoca.db", max_drawdown_abs=10.0)
+    b.rc._reload_drawdown_state()
+    b.rc.mode = b.rc.mode.__class__.ACTIVE
+    _lettura(b, 120.0)
+    prima = _time.monotonic()
+    assert a.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=130.0)["confirmed"]
+    b.rc._hard_stop().restore(reconcile=False)                   # B adotta la conferma di A
+    stop = b.rc._hard_stop()
+    assert stop.peak == Decimal("130") and stop.baseline_epoch() == 1
+    b.rc._apply_funds_reading(_fondi(115.0), source="t", read_at=prima)
+    assert not stop.breached and stop.history_block_reason()
+
+
+@pytest.mark.parametrize("cassa,quando,esito", [
+    (115.0, "prima", "storia_insufficiente"),
+    (115.0, "fuori_ordine", "storia_insufficiente"),
+    (105.0, "prima", "hard_stop"),                               # 120 -> 105 dimostrato: mai declassato
+    (125.0, "prima", "nessun_blocco"),
+    (119.0, "prima", "storia_insufficiente"),
+    (115.0, "dopo", "hard_stop"),
+])
+def test_owner_matrix_for_readings_around_the_baseline_confirmation(tmp_path, cassa, quando, esito):
+    """G17-1, matrice owner/Claude D (#628 M50): lettura 120 a t0 (con il suo istante), conferma owner a 130, limite
+    10. Calo dimostrato dalle letture => hard-stop; possibile solo rispetto al picco dichiarato => storia insufficiente;
+    impossibile => nessun blocco. Una correzione di G17-1 non deve eliminare un hard-stop legittimo (caso 105)."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    t0 = _time.monotonic()
+    c.rc._apply_funds_reading(_fondi(120.0), source="t", read_at=t0)
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=130.0)["confirmed"]
+    confermata = c.rc._hard_stop().baseline_confirmed_at
+    assert confermata > t0
+    at = {"prima": (t0 + confermata) / 2,                        # dopo 120, prima della conferma (mai dipendente dai tempi)
+          "fuori_ordine": t0 - 0.001, "dopo": confermata + 1}[quando]
+    c.rc._apply_funds_reading(_fondi(cassa), source="t", read_at=at)
+    stop = c.rc._hard_stop()
+    ottenuto = ("hard_stop" if stop.breached
+                else "storia_insufficiente" if stop.history_block_reason() else "nessun_blocco")
+    assert ottenuto == esito
+    assert (c.rc.drawdown_entry_block_reason() == "") is (esito == "nessun_blocco")
+
+
+def test_epoch_one_reading_delivered_after_a_second_confirmation_is_never_proof_against_the_new_base(tmp_path):
+    """G17-1, matrice M50: una lettura dell'epoca 1 (iniziata prima della seconda conferma) consegnata dopo la seconda
+    conferma non e' mai una prova contro la nuova base: al piu' storia insufficiente."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    t0 = _time.monotonic()
+    c.rc._apply_funds_reading(_fondi(120.0), source="t", read_at=t0)
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=125.0)["confirmed"]
+    epoca_uno = _time.monotonic()
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    assert c.rc.owner_confirm_drawdown_baseline(**dict(_CONFIRM, operation_id="PF-BASELINE-0002"),
+                                                declared_peak=130.0)["confirmed"]
+    assert c.rc._hard_stop().baseline_epoch() == 2
+    c.rc._apply_funds_reading(_fondi(119.0), source="t", read_at=epoca_uno)
+    assert not c.rc._hard_stop().breached

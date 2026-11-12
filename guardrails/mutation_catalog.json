@@ -9982,7 +9982,7 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                if last is not None and started < last:\n                    self._observe_late_drawdown_reading(cassa, started)\n                    return\n                self._drawdown_read_at = started\n",
+      "original": "                if (last is not None and started < last) or (confirmed_at is not None and started < confirmed_at):\n                    self._observe_late_drawdown_reading(cassa, started)\n                    return\n                self._drawdown_read_at = started\n",
       "mutated": "                self._drawdown_read_at = started\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
@@ -10606,8 +10606,8 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "        self.rebased_at = time.monotonic()\n        self._open_window_locked(self.rebased_at)\n\n    def _open_window_locked",
-      "mutated": "        self._open_window_locked(time.monotonic())\n\n    def _open_window_locked",
+      "original": "        self.rebased_at = time.monotonic()\n        self._open_window_locked(self.rebased_at)\n\n    def _mark_baseline_confirmed_locked",
+      "mutated": "        self._open_window_locked(time.monotonic())\n\n    def _mark_baseline_confirmed_locked",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10714,12 +10714,60 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "            self._open_window_locked(time.monotonic())\n            logger.warning(\"D-1: baseline del drawdown confermata",
-      "mutated": "            pass\n            logger.warning(\"D-1: baseline del drawdown confermata",
+      "original": "        if self._confirmed_peak is not None:\n",
+      "mutated": "        if False:\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "D-631-17: il picco confermato dall'owner non entrerebbe nella cronologia: un calo tardivo da quel picco andrebbe perso."
+    },
+    {
+      "id": "d1_pre_confirmation_reading_valued_as_current",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                if (last is not None and started < last) or (confirmed_at is not None and started < confirmed_at):",
+      "mutated": "                if last is not None and started < last:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "G17-1: una lettura iniziata prima della conferma della baseline, arrivata in ordine, verrebbe confrontata col picco dichiarato: hard-stop non dimostrato."
+    },
+    {
+      "id": "d1_confirmed_peak_exact_before_its_instant",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                exact = exact and at >= confirmed_at\n",
+      "mutated": "                exact = exact\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "G17-1: il picco dichiarato varrebbe come massimo noto anche prima della conferma: hard-stop invece di storia insufficiente."
+    },
+    {
+      "id": "d1_adopted_confirmation_not_marked",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if newer and self.baseline_epoch() > old_epoch:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "G17-1: la conferma adottata da un altro processo non segnerebbe l'istante: letture precedenti valutate come correnti."
+    },
+    {
+      "id": "d1_proven_dip_downgraded_to_insufficient",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if (not ref_exact and known_exact and known is not None\n                and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, known)):",
+      "mutated": "        if (False and known_exact and known is not None\n                and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, known)):",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "G17-1 (owner, caso 105): un calo dimostrato dalle letture conservate prima della conferma diventerebbe storia insufficiente invece di hard-stop."
     },
     {
       "id": "d1_failed_start_keeps_startup_lockdown",

@@ -588,7 +588,11 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   anche scaduta o rilasciata): dopo lo STOP del proprietario la sua pausa non riscrive piu' il picco ne' cancella il
   superamento. In piu' ogni salvataggio usa la concorrenza ottimistica sul `seq`: uno stato in memoria piu' vecchio
   del record su disco non lo sovrascrive mai (nessun marker), l'istanza nega gli ingressi finche' non rilegge lo stato
-  (START o procedura owner). La conferma owner della baseline riapre la cronologia delle letture con il picco
-  confermato (massimo fra salvato, dichiarato e cassa, mai ribassato) come base: un calo letto dopo, anche fuori
-  ordine, si misura da quel picco; una lettura iniziata prima della conferma e' precedente alla storia (superamento
-  possibile => storia insufficiente, mai un PASS).
+  (START o procedura owner). La conferma owner della baseline registra istante ed epoca (numero progressivo delle
+  conferme, persistito nella storia della baseline; adottata anche da un altro processo alla rilettura) e il picco
+  confermato (massimo fra salvato, dichiarato e cassa, mai ribassato), senza cancellare la cronologia delle letture.
+  Una lettura iniziata dalla conferma in poi, anche arrivata fuori ordine, misura il calo da quel picco. Una lettura
+  iniziata prima della conferma si valuta sempre come lettura tardiva, anche se arriva in ordine (ciclo 18, G17-1):
+  il picco dichiarato non ha un istante noto ed e' per lei solo un limite superiore. Calo dimostrato dalle letture
+  conservate => hard-stop; calo possibile solo rispetto al picco dichiarato => storia insufficiente (ingressi negati,
+  mai un hard-stop non dimostrato); nessun calo possibile oltre il limite => nessun blocco dal drawdown.

@@ -149,6 +149,13 @@ class DrawdownHardStop:
         # o sblocco (superamento o storia insufficiente). Una lettura del conto iniziata prima e' ignorata: non rialza
         # il picco ribasato (D-631-08) e non fa rinascere cio' che l'owner ha sbloccato (Sol/Codex su b76466a3).
         self.rebased_at: Optional[float] = None
+        # G17-1 (Grok su bcd19a32): istante (monotonic, del processo) dell'ultima conferma owner della baseline, propria o
+        # adottata da un altro processo. Una lettura del conto iniziata prima non e' una lettura successiva al picco
+        # confermato (il picco dichiarato non ha un istante noto): si valuta come lettura tardiva (`evaluate_late`).
+        self.baseline_confirmed_at: Optional[float] = None
+        # G17-1: (istante della conferma, picco confermato). Per una lettura dall'istante in poi il picco confermato e'
+        # un massimo noto prima di lei; per una lettura iniziata prima e' solo un limite superiore (istante ignoto).
+        self._confirmed_peak: Optional[tuple] = None
         # D-631-10: finestra temporale delle letture di questo processo (sola memoria, mai persistita). `_window_base` e'
         # il picco noto all'apertura (`_window_open`, monotonic): precede ogni lettura in `_history`, ordinata per
         # istante. Si riapre allo START (stato appena riletto) e a ogni ribasamento (epoca nuova).
@@ -234,7 +241,11 @@ class DrawdownHardStop:
                 for op in r["rebase_ops"]:
                     if op not in self.rebase_ops:
                         self.rebase_ops.append(op)
+            old_epoch = self.baseline_epoch()
             self.baseline = dict(records[0]["baseline"])
+            if newer and self.baseline_epoch() > old_epoch:
+                # G17-1: conferma owner salvata da un altro processo, adottata adesso: vale da questo istante anche qui.
+                self._mark_baseline_confirmed_locked()
             # RO-DD-09 C: sessione rimasta aperta (crash, stop non pulito, picco mai salvato) o baseline gia' non
             # verificata => il picco salvato potrebbe non essere il massimo: nessuna presunzione, conferma owner.
             # Codex su 58e635e6: la verifica della baseline segue il record durevole piu' recente, anche verso True:
@@ -422,12 +433,13 @@ class DrawdownHardStop:
             if any(isinstance(h, dict) and h.get("operation_id") == op for h in history):
                 return False
             old = (self.peak, dict(self.baseline))
+            epoch = len(history) + 1
             candidates = [v for v in (self.peak, declared, cash) if v is not None]
             self.peak = max(candidates)
             entry = {"at": _now(), "authorization": ref, "reason": why, "operation_id": op,
                      "previous_peak": None if old[0] is None else str(old[0]),
                      "declared_peak": None if declared is None else str(declared), "cash": str(cash),
-                     "baseline_peak": str(self.peak), "checks": dict(checks or {}),
+                     "baseline_peak": str(self.peak), "checks": dict(checks or {}), "epoch": epoch,
                      "nota": "conferma owner della baseline: non e' una prova del massimo storico"}
             self.baseline = {"confirmations": history + [entry]}
             self.baseline_verified = True
@@ -435,11 +447,13 @@ class DrawdownHardStop:
                 self.peak, self.baseline = old
                 self.baseline_verified = False
                 return False
-            # D-631-17 (Codex su 9c9121f0): il picco confermato e' il massimo noto da adesso. La cronologia delle
-            # letture si riapre con lui come base: un calo letto dopo la conferma, anche arrivato fuori ordine, si
-            # misura da questo picco. Una lettura iniziata prima della conferma e' precedente alla storia: valutata
-            # con il solo limite superiore (superamento possibile => storia insufficiente, mai un PASS).
-            self._open_window_locked(time.monotonic())
+            # D-631-17 (Codex su 9c9121f0): il picco confermato e' il massimo noto da adesso: un calo letto dopo la
+            # conferma, anche arrivato fuori ordine, si misura da questo picco. G17-1 (Grok su bcd19a32): il picco
+            # dichiarato non ha un istante noto, quindi per una lettura iniziata PRIMA della conferma (che il runtime
+            # valuta come tardiva anche se arriva in ordine) e' solo un limite superiore: superamento dimostrato dalle
+            # letture conservate => hard-stop; solo possibile => storia insufficiente; impossibile => nessun blocco.
+            # La cronologia delle letture resta (serve proprio a distinguere i tre casi).
+            self._mark_baseline_confirmed_locked()
             logger.warning("D-1: baseline del drawdown confermata dall'owner (op %s): picco %s", op, self.peak)
             return True
 
@@ -507,10 +521,23 @@ class DrawdownHardStop:
         self.rebased_at = time.monotonic()
         self._open_window_locked(self.rebased_at)
 
+    def _mark_baseline_confirmed_locked(self) -> None:
+        """G17-1: conferma della baseline (propria o adottata): registra l'istante e il picco confermato."""
+        self.baseline_confirmed_at = time.monotonic()
+        self._confirmed_peak = None if self.peak is None else (self.baseline_confirmed_at, self.peak)
+
+    def baseline_epoch(self) -> int:
+        """G17-1: epoca della baseline = numero delle conferme owner registrate (persistite nella storia della
+        baseline); 0 se mai confermata."""
+        with self._lock:
+            confirmations = self.baseline.get("confirmations", []) if isinstance(self.baseline, dict) else []
+            return len(confirmations) if isinstance(confirmations, list) else 0
+
     def _open_window_locked(self, at: float) -> None:
         # Senza alcun picco noto non c'e' nulla prima dell'apertura che possa mancare: tutta la cronologia e' esatta.
         self._window_open = float(at) if self.peak is not None else -math.inf
         self._window_base = self.peak
+        self._confirmed_peak = None                      # la base (picco noto adesso) lo comprende gia'
         self._history = []
         self._ladder = []
         self._valleys = []
@@ -540,6 +567,17 @@ class DrawdownHardStop:
     def _peak_before_locked(self, at: float):
         """``(massimo letto STRETTAMENTE prima di at, esatto?)``. Prima della finestra non e' esatto: la base e' solo un
         limite superiore (il vero massimo a ``at`` non puo' superare cio' che era noto all'apertura)."""
+        best, exact = self._peak_before_window_locked(at)
+        if self._confirmed_peak is not None:
+            # G17-1: picco confermato dall'owner. Dalla conferma in poi e' un massimo noto; prima solo un limite
+            # superiore (non si sa quando e' stato toccato).
+            confirmed_at, confirmed = self._confirmed_peak
+            if best is None or confirmed > best:
+                best = confirmed
+                exact = exact and at >= confirmed_at
+        return best, exact
+
+    def _peak_before_window_locked(self, at: float):
         if self._window_open is None:
             return self.peak, False
         if at < self._window_open:
@@ -649,13 +687,19 @@ class DrawdownHardStop:
             if self._window_open is None:
                 self._open_window_locked(at)             # nessuna storia: la base e' il picco noto
             reference, ref_exact = self._peak_before_locked(at)
+            known, known_exact = self._peak_before_window_locked(at)
             low, low_exact = self._min_after_locked(at)
             already = self.breached or bool(self.history_insufficient.get("active"))
             self._store_locked(at, cash)
             epoch = self.peak_epoch
         if already and self.breached:
             return ""
-        # (A) calo di questa lettura
+        # (A) calo di questa lettura. G17-1 (Claude D, owner): prima il calo dimostrato dalle letture conservate (massimo
+        # esatto, senza il picco confermato di istante ignoto) => hard-stop: 120 a t0 e 105 iniziata prima della conferma
+        # a 130 e' un calo di 15 provato, mai declassato a storia insufficiente.
+        if (not ref_exact and known_exact and known is not None
+                and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, known)):
+            return "breached"
         if reference is not None:
             if ref_exact:
                 if self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, reference):

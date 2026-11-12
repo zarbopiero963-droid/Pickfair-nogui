@@ -91,7 +91,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (PF-OWNER-PR631-CYCLE17-GO-20261112): il controllo finale d'ingresso rifiuta ogni LOCKDOWN ed e' atomico rispetto
   alla registrazione di un superamento (D-631-13/16); un controller mai avviato o uno snapshot piu' vecchio del disco
   non riscrivono picco e superamento (D-631-18); il picco confermato dall'owner diventa la base della cronologia
-  (D-631-17). Review su e98e84c7 (Sol): un marker superato con picco piu'
+  (D-631-17). Ciclo 18 (PF-OWNER-PR631-CYCLE18-GO-20261112, G17-1): la conferma della baseline registra istante ed
+  epoca; una lettura iniziata prima della conferma e arrivata dopo non produce piu' un hard-stop non dimostrato
+  (storia insufficiente se il calo e' solo possibile, nessun blocco se impossibile). Review su e98e84c7 (Sol): un marker superato con picco piu'
   alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
   resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale

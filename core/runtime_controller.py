@@ -6857,7 +6857,11 @@ class RuntimeController:
                 if rebased_at is not None and started < rebased_at:
                     return
                 last = getattr(self, "_drawdown_read_at", None)
-                if last is not None and started < last:
+                # G17-1 (Grok su bcd19a32): una lettura iniziata prima della conferma owner della baseline e' anteriore
+                # al picco confermato anche se arriva in ordine: si valuta come tardiva (mai un hard-stop non
+                # dimostrato; superamento possibile => storia insufficiente).
+                confirmed_at = RuntimeController._hard_stop(self).baseline_confirmed_at
+                if (last is not None and started < last) or (confirmed_at is not None and started < confirmed_at):
                     self._observe_late_drawdown_reading(cassa, started)
                     return
                 self._drawdown_read_at = started
