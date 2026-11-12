@@ -632,8 +632,11 @@ class DrawdownHardStop:
             elif self._limit_exceeded(cap_raw, pct_cap_raw, cash, reference):
                 return self._mark_history_insufficient("lettura_precedente_alla_storia_conservata", at, cash, epoch,
                                                        reference=reference)
-        # (B) un massimo nuovo rende reale un calo successivo
-        if cash > 0 and (reference is None or cash > reference):
+        # (B) questa lettura come massimo che rende reale un calo successivo. Con il massimo esatto serve solo se lo
+        # supera (altrimenti il calo successivo e' gia' stato misurato da un massimo piu' alto). Con il solo limite
+        # superiore (lettura precedente alla storia conservata) il vero massimo a `at` puo' essere piu' basso di questa
+        # lettura: la verifica si fa sempre (D-631-12, Sol/Claude D su f0f521dc).
+        if cash > 0 and (not ref_exact or reference is None or cash > reference):
             if low is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, low, cash):
                 return "breached"
             if not low_exact and self._limit_exceeded(cap_raw, pct_cap_raw, Decimal(0), cash):

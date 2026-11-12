@@ -2621,14 +2621,30 @@ def test_owner_clear_of_insufficient_history_is_refused_to_a_non_owner(tmp_path,
     assert esito["cleared"] is False and esito["reason"].startswith("runtime_authority_lost")
 
 
-def test_late_reading_before_the_retained_history_without_a_possible_breach_is_not_blocked(tmp_path, monkeypatch):
-    """Storia mancante ma nessun superamento possibile (anche contro il limite noto 108 - 100 = 8 < 10): nessun
-    blocco, nessun superamento."""
+def test_late_reading_before_the_retained_history_is_insufficient_when_lost_dips_could_matter(tmp_path, monkeypatch):
+    """D-631-12 (oracolo corretto): prima questo test si aspettava «nessun blocco» per una lettura di t1.5 caduta prima
+    della cronologia conservata (limite noto 108 - 100 = 8 < 10). Ma fra t1.5 e la finestra c'erano letture non piu' in
+    memoria (98, 108, 102): se il vero massimo a t1.5 era sotto 100, i cali successivi da 100 non si possono escludere.
+    Esito corretto: storia insufficiente, non un PASS."""
     import core.drawdown_hard_stop as modulo
     monkeypatch.setattr(modulo, "RECENT_READINGS_LIMIT", 2)
     monkeypatch.setattr(modulo, "SUMMARY_LIMIT", 2)
     c, base = _letture_dal_conto(tmp_path, [(100.0, 1), (104.0, 2), (98.0, 3), (108.0, 4), (102.0, 5), (112.0, 6),
                                             (106.0, 7), (116.0, 8)])
+    c.rc._apply_funds_reading(_fondi(100.0), source="test", read_at=base + 1.5)
+    stop = c.rc._hard_stop()
+    assert not stop.breached
+    assert stop.history_insufficient.get("reason") == "massimo_precedente_alla_storia_conservata"
+
+
+def test_late_reading_before_the_retained_history_with_no_possible_breach_is_not_blocked(tmp_path, monkeypatch):
+    """Terzo esito: nessun superamento e' possibile nemmeno nel caso peggiore (limite 200 su casse intorno a 100):
+    nessun blocco, nessun superamento."""
+    import core.drawdown_hard_stop as modulo
+    monkeypatch.setattr(modulo, "RECENT_READINGS_LIMIT", 2)
+    monkeypatch.setattr(modulo, "SUMMARY_LIMIT", 2)
+    c, base = _letture_dal_conto(tmp_path, [(100.0, 1), (104.0, 2), (98.0, 3), (108.0, 4), (102.0, 5), (112.0, 6),
+                                            (106.0, 7), (116.0, 8)], max_drawdown_abs=200.0)
     c.rc._apply_funds_reading(_fondi(100.0), source="test", read_at=base + 1.5)
     stop = c.rc._hard_stop()
     assert not stop.breached and not stop.history_insufficient.get("active")
@@ -2780,3 +2796,70 @@ def test_after_an_owner_clearance_new_losses_are_still_measured(tmp_path):
     c.rc._apply_funds_reading(_fondi(120.0), source="test", read_at=adesso + 2)
     stop = c.rc._hard_stop()
     assert stop.breached and stop.snapshot()["peak"] == 130.0
+
+
+# ------------------------------------------------- D-631-12 (Sol/Claude D su f0f521dc): ciclo 15
+# Mandato owner PF-OWNER-PR631-CYCLE15-GO-20261112. Tre esiti ammessi: superamento accertato -> hard-stop;
+# superamento possibile ma non accertabile -> DRAWDOWN_HISTORY_INSUFFICIENT; altrimenti nulla. Mai una perdita silenziosa.
+@pytest.mark.parametrize("limiti", [(1, 1), (2, 1), (1, 2)])
+def test_late_reading_before_the_retained_history_never_hides_a_later_dip(tmp_path, monkeypatch, limiti):
+    """D-631-12: limite 15; arrivo 90@1, 80@3, 100@4, 100@5, 100@6, poi 95 da t2. In ordine (90, 95, 80) e' un
+    superamento di 15. Con la memoria ridotta 90 e 80 non ci sono piu': il vero massimo a t2 e' sconosciuto (puo' essere
+    sotto 95), quindi 95 puo' essere un massimo nuovo che rende reale il calo successivo. Prima la verifica (B) partiva
+    solo se 95 superava il limite superiore (100): nessun superamento e nessuna storia insufficiente."""
+    import core.drawdown_hard_stop as modulo
+    monkeypatch.setattr(modulo, "RECENT_READINGS_LIMIT", limiti[0])
+    monkeypatch.setattr(modulo, "SUMMARY_LIMIT", limiti[1])
+    c, _ = _letture_dal_conto(tmp_path, [(90.0, 1), (80.0, 3), (100.0, 4), (100.0, 5), (100.0, 6), (95.0, 2)],
+                              max_drawdown_abs=15.0)
+    stop = c.rc._hard_stop()
+    assert stop.breached or stop.history_insufficient.get("active"), (limiti, stop.snapshot())
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0
+
+
+def _esito_a_proprieta(rnd, limiti, n_min, n_max, cap=15.0):
+    """Una sequenza casuale fuori ordine: (superamento, storia insufficiente, oracolo in ordine, arrivo)."""
+    stop = DrawdownHardStop(_Db())
+    tempi = rnd.sample(range(1, 400), rnd.randint(n_min, n_max))
+    letture = [(float(t), float(rnd.randint(70, 130))) for t in tempi]
+    arrivo = letture[:]
+    # spesso solo poche letture arrivano in ritardo, e molto in ritardo: il caso che svuota la memoria
+    if rnd.random() < 0.5:
+        arrivo.sort()
+        for _ in range(rnd.randint(1, 3)):
+            i = rnd.randrange(len(arrivo))
+            arrivo.append(arrivo.pop(i))
+    else:
+        rnd.shuffle(arrivo)
+    ultima = None
+    for t, cassa in arrivo:
+        if ultima is None or t >= ultima:
+            stop.record_reading(t, cassa, may_open=True)
+            stop.evaluate(cap, cassa)
+            ultima = t
+        else:
+            stop.evaluate_late(cap, t, cassa)
+            stop.observe(cassa)
+    migliore, oracolo = None, False
+    for _, cassa in sorted(letture):
+        if migliore is not None and migliore - cassa >= cap:
+            oracolo = True
+        migliore = cassa if migliore is None or cassa > migliore else migliore
+    return stop.breached, bool(stop.history_insufficient.get("active")), oracolo, arrivo
+
+
+@pytest.mark.parametrize("limiti", [(r, s) for r in (1, 2, 3) for s in (1, 2, 3)])
+def test_long_out_of_order_sequences_with_tiny_memory_end_in_one_of_three_correct_states(monkeypatch, limiti):
+    """Criterio owner (ciclo 15): ogni sequenza finisce in superamento accertato, storia insufficiente o nessun
+    superamento dimostrabile. Memoria minima, sequenze lunghe, letture molto in ritardo. Mai un superamento falso
+    (oracolo in ordine), mai una perdita silenziosa."""
+    import random
+    import core.drawdown_hard_stop as modulo
+    monkeypatch.setattr(modulo, "RECENT_READINGS_LIMIT", limiti[0])
+    monkeypatch.setattr(modulo, "SUMMARY_LIMIT", limiti[1])
+    rnd = random.Random(1000 + 10 * limiti[0] + limiti[1])
+    for _ in range(2500):
+        superato, incerta, oracolo, arrivo = _esito_a_proprieta(rnd, limiti, 3, 24)
+        assert not (superato and not oracolo), ("falso superamento", limiti, arrivo)
+        assert not (oracolo and not superato and not incerta), ("perdita silenziosa", limiti, arrivo)

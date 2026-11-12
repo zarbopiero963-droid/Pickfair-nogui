@@ -440,15 +440,17 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   diventa la cassa corrente. Cronologia delle letture (D-631-10/11, Codex/Claude D su 3e6a3e0a e b76466a3): ogni
   lettura verificata resta in memoria con il suo istante (`DrawdownHardStop.record_reading`). Una lettura tardiva
   (`evaluate_late`) si valuta (A) contro il massimo letto STRETTAMENTE PRIMA del suo istante e (B), se lo supera,
-  contro il minimo letto STRETTAMENTE DOPO: 130 a t1, 130 a t3 e poi 115 arrivata da t2 memorizzano la perdita di 15
+  contro il minimo letto STRETTAMENTE DOPO (per una lettura precedente alla storia conservata, di cui si conosce solo
+  un limite superiore del massimo, (B) si verifica sempre: D-631-12, Sol/Claude D su f0f521dc): 130 a t1, 130 a t3 e poi 115 arrivata da t2 memorizzano la perdita di 15
   come in ordine, e un massimo tardivo rende reale un calo successivo. Mai contro un massimo successivo; letture dello
   stesso istante non si confrontano fra loro. Memoria limitata per l'intera struttura (`READING_HISTORY_LIMIT` = 512):
   al massimo 256 letture recenti (`RECENT_READINGS_LIMIT`); le piu' vecchie passano in un riepilogo esatto di al
   massimo 256 punti (`SUMMARY_LIMIT`): la scala dei massimi crescenti (massimo letto prima di t, ricerca binaria) e la
   scala dei minimi successivi (minimo letto dopo t). Oltre il riepilogo la finestra avanza: cio' che precede non e'
   piu' esatto e il picco noto all'apertura vale solo come limite superiore. Una lettura che cade prima della finestra
-  si confronta con quel limite: se nemmeno cosi' un superamento e' possibile non succede nulla; se e' possibile, o se
-  e' un massimo nuovo che potrebbe rendere reale un calo non piu' in memoria, lo stato e'
+  ha tre esiti possibili: superamento dimostrato con le letture conservate => hard-stop; superamento possibile ma non
+  dimostrabile (contro il limite superiore, oppure perche' puo' essere un massimo che rende reale un calo non piu' in
+  memoria) => storia insufficiente; nessun superamento possibile nemmeno nel caso peggiore => nulla. Lo stato e'
   **DRAWDOWN_HISTORY_INSUFFICIENT** (motivo `drawdown_storia_insufficiente`): persistito con motivo, istante, cassa ed
   epoca; NON e' un superamento (nessuna perdita dichiarata, nessun LOCKDOWN) e non e' un PASS: nega i nuovi ingressi
   su ogni percorso (segnali, auto-next, ripresa via `_loss_block_reason`; manuale e Dutching via

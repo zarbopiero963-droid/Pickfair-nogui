@@ -10624,6 +10624,18 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "Sblocco owner senza istante di taglio: letture iniziate prima ancora valutate."
+    },
+    {
+      "id": "d1_prewindow_reading_skips_later_dips",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if cash > 0 and (not ref_exact or reference is None or cash > reference):",
+      "mutated": "        if cash > 0 and (reference is None or cash > reference):",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-12: lettura precedente alla storia conservata sotto il limite superiore: il calo successivo uscito dalla memoria passa in silenzio."
     }
   ]
 }
