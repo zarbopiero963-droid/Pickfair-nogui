@@ -4431,3 +4431,24 @@ def test_c21_owner_clearance_after_equal_start_readings_never_judges_the_stale_g
     c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
     assert not c.rc._hard_stop().breached, c.rc._hard_stop().snapshot()["breach"]
     assert _ordini(c) == 1
+
+
+def test_c21_owner_clearance_keeps_a_drop_proven_by_the_fresh_entry_reading(tmp_path):
+    """Ciclo 21 (caso di controllo di Claude D): 130 poi 115 dello stesso istante, conto reale a 115. Dopo lo sblocco
+    owner la lettura fresca del segnale (115, successiva a t2) dimostra il calo 130 -> 115 = 15: hard-stop, nessun
+    ordine. L'allineamento della cassa del gate allo sblocco non lo trasforma mai in un PASS."""
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    istante = time.monotonic() + 100.0
+    for valore in (130.0, 115.0):
+        c.rc._apply_funds_reading(_fondi(valore), source="test", read_at=istante)
+    assert c.rc._hard_stop().history_block_reason() == REASON_HISTORY_INSUFFICIENT
+    esito = c.rc.owner_clear_drawdown_history_insufficient(authorization="#631 decisione owner",
+                                                           reason="riconciliazione verificata",
+                                                           operation_id="PF-C21-CTRL", confirm=True)
+    assert esito["cleared"] is True, esito
+    c.rc.betfair_service.get_account_funds = lambda: _fondi(115.0)
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert c.rc._hard_stop().breached
+    assert _ordini(c) == 0
