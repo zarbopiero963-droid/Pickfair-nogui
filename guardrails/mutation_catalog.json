@@ -10018,8 +10018,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        with RuntimeController._drawdown_eval_lock:\n            # Sol su 2a847087: la proprieta'",
-      "mutated": "        with contextlib.nullcontext():\n            # Sol su 2a847087: la proprieta'",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            if scope is not _DRAWDOWN_SCOPE_UNSET and scope is not None:",
+      "mutated": "        with contextlib.nullcontext():\n            if scope is not _DRAWDOWN_SCOPE_UNSET and scope is not None:",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10318,7 +10318,7 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "            if verifica[\"ok\"]:\n                self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at)\n            return False",
+      "original": "            if verifica[\"ok\"]:\n                self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at, scope=scope)\n            return False",
       "mutated": "            return False",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
@@ -10366,8 +10366,8 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "            if ref_exact:\n                if self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, reference):",
-      "mutated": "            if ref_exact:\n                if self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, self.peak):",
+      "original": "        if reference is not None and ref_exact and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, reference):",
+      "mutated": "        if reference is not None and ref_exact and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, self.peak):",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10378,8 +10378,8 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "            if low is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, low, cash):",
-      "mutated": "            if False:",
+      "original": "        if check_after and low is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, low, cash):",
+      "mutated": "        if False:",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10438,8 +10438,8 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "            elif self._limit_exceeded(cap_raw, pct_cap_raw, cash, reference):",
-      "mutated": "            elif False:",
+      "original": "        if reference is not None and not ref_exact and self._limit_exceeded(cap_raw, pct_cap_raw, cash, reference):",
+      "mutated": "        if False:",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10450,8 +10450,8 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "            if not low_exact and self._limit_exceeded(cap_raw, pct_cap_raw, Decimal(0), cash):",
-      "mutated": "            if False:",
+      "original": "        if check_after and not low_exact and self._limit_exceeded(cap_raw, pct_cap_raw, Decimal(0), cash):",
+      "mutated": "        if False:",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10522,12 +10522,24 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "            if t >= at:\n                break",
-      "mutated": "            if t > at:\n                break",
+      "original": "            if t >= at:\n                break\n            if cash > 0 and (best is None or cash > best):\n                best = cash\n        return best, True",
+      "mutated": "            if t > at:\n                break\n            if cash > 0 and (best is None or cash > best):\n                best = cash\n        return best, True",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "Letture dello stesso istante trattate come precedenti: falso drawdown fra letture concorrenti."
+    },
+    {
+      "id": "d1_proof_counts_same_instant_as_before",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if t >= at:\n                break\n            if cash > 0 and (best is None or cash > best):\n                best = cash\n        return best\n",
+      "mutated": "            if t > at:\n                break\n            if cash > 0 and (best is None or cash > best):\n                best = cash\n        return best\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S19-A: una lettura allo stesso istante varrebbe come massimo PRECEDENTE (prova di un calo inesistente)."
     },
     {
       "id": "d1_same_instant_counted_as_after",
@@ -10618,8 +10630,8 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "        if cash > 0 and (not ref_exact or reference is None or cash > reference):",
-      "mutated": "        if cash > 0 and (reference is None or cash > reference):",
+      "original": "        check_after = cash > 0 and (not ref_exact or reference is None or cash > reference)",
+      "mutated": "        check_after = cash > 0 and (reference is None or cash > reference)",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -10762,12 +10774,120 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "        if (not ref_exact and known_exact and known is not None\n                and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, known)):",
-      "mutated": "        if (False and known_exact and known is not None\n                and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, known)):",
+      "original": "        if proven is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, proven):\n            return \"breached\"",
+      "mutated": "        if False:\n            return \"breached\"",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "G17-1 (owner, caso 105): un calo dimostrato dalle letture conservate prima della conferma diventerebbe storia insufficiente invece di hard-stop."
+    },
+    {
+      "id": "d1_exact_window_max_not_proof",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if known_exact and known is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, known):\n            return \"breached\"",
+      "mutated": "        if False:\n            return \"breached\"",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S19-A (R49 caso 240): il massimo esatto della finestra (base del picco all'apertura) non proverebbe piu' il calo: storia insufficiente invece di hard-stop."
+    },
+    {
+      "id": "d1_prewindow_reading_not_kept_as_proof",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            # prima o dopo di lei), qualunque cosa sia successa fuori dalla memoria.\n        bisect.insort(self._history, (float(at), cash))",
+      "mutated": "            # prima o dopo di lei), qualunque cosa sia successa fuori dalla memoria.\n            return\n        bisect.insort(self._history, (float(at), cash))",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S19-A (R49): una lettura precedente alla finestra non resterebbe come prova: un calo dimostrato fra letture vere diventerebbe storia insufficiente."
+    },
+    {
+      "id": "d1_failed_rebase_loses_confirmed_peak",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                (self._window_open, self._window_base, self._history, self._ladder, self._valleys,\n                 self._confirmed_peak, self.baseline_confirmed_at) = old_window",
+      "mutated": "                (self._window_open, self._window_base, self._history, self._ladder, self._valleys,\n                 _x, _y) = old_window",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S19-B: un ribasamento fallito perderebbe il picco confermato (lettura tardiva senza il suo limite superiore)."
+    },
+    {
+      "id": "d1_scope_mismatch_ignored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if self.record_scope is not None and self.record_scope != self.scope:\n            return REASON_SCOPE_MISMATCH",
+      "mutated": "        if False:\n            return REASON_SCOPE_MISMATCH",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1: il picco SIM giudicherebbe il conto LIVE (falso hard-stop) e una procedura in SIM toccherebbe il LIVE."
+    },
+    {
+      "id": "d1_legacy_state_attributed_silently",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if self.scope_legacy:\n            return REASON_SCOPE_UNATTRIBUTED",
+      "mutated": "        if False:\n            return REASON_SCOPE_UNATTRIBUTED",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1: uno stato senza provenienza verrebbe attribuito d'ufficio al primo ambito che legge."
+    },
+    {
+      "id": "d1_unknown_live_account_allowed",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if not self.scope.get(\"account\"):\n            return REASON_ACCOUNT_UNKNOWN",
+      "mutated": "        if False:\n            return REASON_ACCOUNT_UNKNOWN",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1: un conto LIVE non identificabile opererebbe."
+    },
+    {
+      "id": "d1_entry_gate_ignores_scope",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        scope_block = stop.scope_block_reason()\n        if scope_block:\n            return scope_block                           # S18-1",
+      "mutated": "        scope_block = ''\n        if scope_block:\n            return scope_block                           # S18-1",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1: i gate d'ingresso (e il controllo finale) non vedrebbero lo stato di un altro ambito."
+    },
+    {
+      "id": "d1_reading_scope_not_declared_in_evaluation",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                RuntimeController._hard_stop(self).set_scope(scope)\n            # Sol su 2a847087",
+      "mutated": "                pass\n            # Sol su 2a847087",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1: una lettura verrebbe valutata nell'ambito dichiarato da un'altra lettura."
+    },
+    {
+      "id": "d1_mode_switch_keeps_stale_scope",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            RuntimeController._hard_stop(self).invalidate_scope()\n",
+      "mutated": "            pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Claude D): dopo il cambio SIM/LIVE l'ambito dichiarato resterebbe quello vecchio: un ingresso in coda partirebbe verso il nuovo client valutato contro lo stato dell'altro ambito."
     },
     {
       "id": "d1_failed_start_keeps_startup_lockdown",

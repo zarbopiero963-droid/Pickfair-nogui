@@ -2402,10 +2402,10 @@ def test_start_first_reading_is_evaluated_after_a_rebase_by_another_process(tmp_
     valutate = []
     reale = RuntimeController._evaluate_drawdown_hard_stop
 
-    def spia(self, cassa, read_at=None):
+    def spia(self, cassa, read_at=None, **kwargs):
         stop = self._hard_stop()
         prima = (stop.breached, stop.snapshot()["peak"])
-        reale(self, cassa, read_at)
+        reale(self, cassa, read_at, **kwargs)
         valutate.append((cassa, prima, (stop.breached, stop.snapshot()["peak"])))
 
     monkeypatch.setattr(RuntimeController, "_evaluate_drawdown_hard_stop", spia)
@@ -3502,3 +3502,410 @@ def test_epoch_one_reading_delivered_after_a_second_confirmation_is_never_proof_
     assert c.rc._hard_stop().baseline_epoch() == 2
     c.rc._apply_funds_reading(_fondi(119.0), source="t", read_at=epoca_uno)
     assert not c.rc._hard_stop().breached
+
+
+# ------------------------------------------------- ciclo 19 (PF-OWNER-PR631-CYCLE19-GO / SCOPE-AMENDMENT-20261112)
+def _letture_prima_della_conferma(c, letture, cap=15.0):
+    """Baseline da confermare; letture (offset, cassa) con istanti tutti precedenti alla conferma owner (senza picco
+    dichiarato). Restituisce l'istante base."""
+    import time as _time
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    t = _time.monotonic()
+    _time.sleep(0.01)
+    for offset, cassa in letture:
+        c.rc._apply_funds_reading(_fondi(cassa), source="t", read_at=t + offset)
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM)["confirmed"]
+    assert c.rc._hard_stop().baseline_confirmed_at > t + max(o for o, _ in letture)
+    return t
+
+
+def test_s19a_proven_dip_after_a_late_reading_is_a_hard_stop_not_insufficient_history(tmp_path):
+    """S19-A (Sol su 5bb61f7f, riprodotto da B e D): 100, 90, 130 prima della conferma, poi 110 tardiva fra 100 e 90
+    (limite 15). Il calo 110 -> 90 = 20 e' dimostrato dalle letture conservate: hard-stop, mai storia insufficiente
+    (il picco confermato 130 e' solo un limite superiore e non deve anticipare l'incertezza)."""
+    c = _catena(tmp_path, max_drawdown_abs=15.0)
+    t = _letture_prima_della_conferma(c, [(0.001, 100.0), (0.003, 90.0), (0.004, 130.0)])
+    c.rc._apply_funds_reading(_fondi(110.0), source="t", read_at=t + 0.002)
+    stop = c.rc._hard_stop()
+    assert stop.breached and not stop.history_block_reason()
+    assert Decimal(stop.snapshot()["breach"]["loss"]) == Decimal("20")
+
+
+@pytest.mark.parametrize("ordine", [(0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0)])
+def test_s19a_proven_dip_between_late_readings_in_any_order(tmp_path, ordine):
+    """S19-A, famiglia dei casi casuali di Claude D: letture iniziate prima della conferma (picco dichiarato 130) e
+    consegnate dopo, in ordine qualunque. 112 -> 95 = 17 >= 15 e' dimostrato dalle letture: hard-stop qualunque sia
+    l'ordine di arrivo (uno stato di storia insufficiente segnato prima, quando il calo era davvero solo possibile,
+    puo' restare: bloccano entrambi; il superamento dimostrato non si perde)."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=15.0)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    t = _time.monotonic()
+    _time.sleep(0.01)
+    c.rc._apply_funds_reading(_fondi(98.0), source="t", read_at=t + 0.001)
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=130.0)["confirmed"]
+    tardive = [(t + 0.002, 112.0), (t + 0.004, 95.0), (t + 0.006, 129.0)]
+    for i in ordine:
+        istante, cassa = tardive[i]
+        c.rc._apply_funds_reading(_fondi(cassa), source="t", read_at=istante)
+    stop = c.rc._hard_stop()
+    assert stop.breached
+    assert Decimal(stop.snapshot()["breach"]["loss"]) >= Decimal("15")
+
+
+def test_s19b_failed_owner_rebase_restores_the_confirmed_peak(tmp_path, monkeypatch):
+    """S19-B (Sol su 5bb61f7f, riprodotto da B e D): un ribasamento owner con salvataggio fallito ripristina tutto lo
+    stato precedente, picco confermato incluso: una lettura iniziata prima della conferma resta valutata contro il
+    limite superiore 130 (119 => storia insufficiente, mai un passaggio senza blocco)."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    t0 = _time.monotonic()
+    c.rc._apply_funds_reading(_fondi(120.0), source="t", read_at=t0)
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=130.0)["confirmed"]
+    stop = c.rc._hard_stop()
+    prima = (stop._confirmed_peak, stop.baseline_confirmed_at, stop.peak, stop.peak_epoch)
+    reale = c.rc.db.save_settings
+
+    def guasto(values):
+        raise OSError("disco pieno")
+
+    monkeypatch.setattr(c.rc.db, "save_settings", guasto)
+    monkeypatch.setattr(modulo_hard_stop(), "atomic_write_text", lambda *a, **k: (_ for _ in ()).throw(OSError()))
+    assert stop.owner_rebase_peak(200.0, authorization="#628", reason="test", operation_id="REB-S19B", confirm=True) is False
+    assert (stop._confirmed_peak, stop.baseline_confirmed_at, stop.peak, stop.peak_epoch) == prima
+    monkeypatch.setattr(c.rc.db, "save_settings", reale)
+    c.rc._apply_funds_reading(_fondi(119.0), source="t", read_at=(t0 + stop.baseline_confirmed_at) / 2)
+    assert stop.breached or stop.history_block_reason()
+    assert c.rc.drawdown_entry_block_reason() != ""
+
+
+def test_s19b_rebase_retry_after_failure_succeeds_and_survives_restart(tmp_path, monkeypatch):
+    """S19-B: dopo il fallimento, un nuovo tentativo con un operation_id nuovo riesce e il picco ribasato e' durevole
+    (riavvio); il fallimento non lascia stato parziale su disco."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    stop = c.rc._hard_stop()
+    reale = c.rc.db.save_settings
+    salvato = _stato_salvato(c)
+
+    def guasto(values):
+        raise OSError("disco pieno")
+
+    monkeypatch.setattr(c.rc.db, "save_settings", guasto)
+    assert stop.owner_rebase_peak(80.0, authorization="#628", reason="test", operation_id="REB-1", confirm=True) is False
+    monkeypatch.setattr(c.rc.db, "save_settings", reale)
+    assert _stato_salvato(c) == salvato
+    assert stop.owner_rebase_peak(80.0, authorization="#628", reason="test", operation_id="REB-2", confirm=True) is True
+    _riavvio(c)
+    assert c.rc._hard_stop().peak == Decimal("80")
+
+
+def _lettura_ambito(c, cassa, *, simulated, conto="conto-a"):
+    """Lettura del conto marcata come quella di BetfairService (``simulated``); in LIVE l'identita' del conto e' lo
+    username di login del client connesso (None => conto non identificabile)."""
+    import types
+    if not getattr(c, "conto_iniziato", False):
+        c.rc.risk_desk.equity_peak = 0.0
+        c.rc.risk_desk.bankroll_start = 0.0
+        c.conto_iniziato = True
+    c.rc.betfair_service.client = types.SimpleNamespace(username=conto) if conto else None
+    fondi = {"available": cassa, "exposure": 0.0, "ok": True, "simulated": simulated}
+    if simulated:
+        fondi["total"] = cassa                                   # come il broker simulato (PFC-008: totale coerente)
+    c.rc.betfair_service.get_account_funds = lambda: dict(fondi)
+    return c.rc._apply_funds_reading(dict(fondi), source="test")
+
+
+def test_s18_sim_peak_never_judges_the_live_account(tmp_path):
+    """S18-1 (Sol su bcd19a32, riprodotto da B e D): SIM a 1000 poi LIVE a 100 con limite 10%. Nessun hard-stop falso
+    memorizzato, picco SIM intatto, nuovi ingressi negati con il motivo distinto dell'ambito (fail-closed fino alla
+    separazione completa della PR-04)."""
+    from core.drawdown_hard_stop import REASON_SCOPE_MISMATCH
+    c = _catena(tmp_path, max_drawdown_hard_stop_pct=10.0)
+    _lettura_ambito(c, 1000.0, simulated=True)
+    salvato = _stato_salvato(c)
+    assert salvato["scope"] == {"env": "SIM", "account": "sim"}
+    _lettura_ambito(c, 100.0, simulated=False)
+    stop = c.rc._hard_stop()
+    assert not stop.breached and stop.peak == Decimal("1000")
+    assert _stato_salvato(c) == salvato                          # nessuna scrittura
+    assert c.rc.drawdown_entry_block_reason() == REASON_SCOPE_MISMATCH
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0
+
+
+def test_s18_live_peak_never_judges_the_sim_account(tmp_path):
+    """S18-1: LIVE poi SIM: il picco LIVE non giudica il conto simulato e non viene toccato."""
+    from core.drawdown_hard_stop import REASON_SCOPE_MISMATCH
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 130.0, simulated=False)
+    salvato = _stato_salvato(c)
+    _lettura_ambito(c, 50.0, simulated=True)
+    assert not c.rc._hard_stop().breached and _stato_salvato(c) == salvato
+    assert c.rc.drawdown_entry_block_reason() == REASON_SCOPE_MISMATCH
+
+
+def test_s18_live_account_a_never_judges_live_account_b(tmp_path):
+    """S18-1: LIVE conto A poi LIVE conto B: stati separati, B bloccato, stato di A intatto."""
+    from core.drawdown_hard_stop import REASON_SCOPE_MISMATCH
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 500.0, simulated=False, conto="conto-a")
+    salvato = _stato_salvato(c)
+    assert salvato["scope"]["env"] == "LIVE" and "conto-a" not in json.dumps(salvato)   # mai lo username in chiaro
+    _lettura_ambito(c, 100.0, simulated=False, conto="conto-b")
+    assert not c.rc._hard_stop().breached and _stato_salvato(c) == salvato
+    assert c.rc.drawdown_entry_block_reason() == REASON_SCOPE_MISMATCH
+
+
+def test_s18_unidentifiable_live_account_blocks_new_entries(tmp_path):
+    """S18-1: conto LIVE non identificabile con certezza => nessuna valutazione e nessun ingresso."""
+    from core.drawdown_hard_stop import REASON_ACCOUNT_UNKNOWN
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 100.0, simulated=False, conto=None)
+    assert c.rc.drawdown_entry_block_reason() == REASON_ACCOUNT_UNKNOWN
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 0
+
+
+def test_s18_switching_back_to_the_owning_scope_resumes_normally_without_any_reset(tmp_path):
+    """S18-1, cambio in sessione: SIM -> LIVE -> SIM. Tornando all'ambito del record il drawdown riprende con il SUO
+    picco (nessun azzeramento): un calo SIM vero resta un hard-stop."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 1000.0, simulated=True)
+    _lettura_ambito(c, 100.0, simulated=False)
+    _lettura_ambito(c, 995.0, simulated=True)
+    assert c.rc.drawdown_entry_block_reason() == ""
+    _lettura_ambito(c, 985.0, simulated=True)
+    stop = c.rc._hard_stop()
+    assert stop.breached and Decimal(stop.snapshot()["breach"]["peak"]) == Decimal("1000")
+
+
+def test_s18_provenance_survives_stop_restart_and_takeover(tmp_path):
+    """S18-1: la provenienza e' persistita: dopo riavvio, e in un altro processo sullo stesso DB, una lettura LIVE resta
+    bloccata contro lo stato SIM; una lettura dello stesso ambito procede."""
+    from core.drawdown_hard_stop import REASON_SCOPE_MISMATCH
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 1000.0, simulated=True)
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    _lettura_ambito(c, 100.0, simulated=False)
+    assert c.rc.drawdown_entry_block_reason() == REASON_SCOPE_MISMATCH
+    del c.rc._drawdown_hard_stop                                 # subentro: nuovo stato riletto dallo stesso DB
+    _lettura_ambito(c, 995.0, simulated=True)
+    assert c.rc.drawdown_entry_block_reason() == ""
+    assert c.rc._hard_stop().peak == Decimal("1000")
+
+
+def test_s18_owner_procedures_in_another_scope_never_touch_the_live_state(tmp_path):
+    """S18-1 (prova di Claude D: rebase in SIM ribassava il picco LIVE). Fuori ambito ribasamento, sblocchi e conferma
+    sono rifiutati: il picco LIVE 130 resta e il calo LIVE successivo e' un hard-stop."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 130.0, simulated=False)
+    _lettura_ambito(c, 1000.0, simulated=True)                   # passaggio a SIM
+    stop = c.rc._hard_stop()
+    assert stop.owner_rebase_peak(100.0, authorization="#628", reason="t", operation_id="REB-SIM", confirm=True) is False
+    assert c.rc.owner_unlock_drawdown_hard_stop(authorization="#628", reason="t", operation_id="U1",
+                                                confirm=True)["unlocked"] is False
+    assert c.rc.owner_clear_drawdown_history_insufficient(authorization="#628", reason="t", operation_id="C1",
+                                                          confirm=True)["cleared"] is False
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM)["confirmed"] is False
+    assert stop.peak == Decimal("130") and _stato_salvato(c)["peak"] == "130.0"
+    _lettura_ambito(c, 115.0, simulated=False)                   # ritorno a LIVE: calo 15 vero
+    assert stop.breached
+
+
+def test_s18_state_without_provenance_is_quarantined_until_owner_assignment(tmp_path):
+    """S18-1, migrazione conservativa: un record scritto prima della provenienza (nessun campo `scope`) non si
+    attribuisce d'ufficio: quarantena (ingressi negati, nessuna scrittura), blocchi preservati. L'attribuzione owner lo
+    assegna all'ambito corrente senza reset (picco e superamento restano) e rimette la baseline da confermare."""
+    from core.drawdown_hard_stop import REASON_SCOPE_UNATTRIBUTED
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    vecchio = {"peak": "150", "seq": 4, "peak_epoch": 0, "rebase_ops": [], "breached": True,
+               "breach": {"kind": "max_drawdown_abs", "loss": "20"}, "session_open": False, "baseline_verified": True,
+               "baseline": {}, "history_insufficient": {}}
+    c.rc.db.save_settings({STATE_KEY: json.dumps(vecchio)})
+    del c.rc._drawdown_hard_stop
+    _lettura_ambito(c, 140.0, simulated=False)
+    stop = c.rc._hard_stop()
+    assert c.rc.drawdown_entry_block_reason() in (REASON_ACTIVE, REASON_SCOPE_UNATTRIBUTED)
+    assert stop.scope_block_reason() == REASON_SCOPE_UNATTRIBUTED
+    assert _stato_salvato(c)["seq"] == 4 and "scope" not in _stato_salvato(c)
+    esito = c.rc.owner_assign_drawdown_scope(authorization="#628 M53", reason="attribuzione al conto LIVE",
+                                             operation_id="ASSIGN-1", confirm=True)
+    assert esito["assigned"], esito
+    salvato = _stato_salvato(c)
+    assert salvato["breached"] is True and salvato["peak"] == "150"          # nessun reset
+    assert salvato["baseline_verified"] is False and salvato["scope"]["env"] == "LIVE"
+    assert stop.scope_block_reason() == ""
+    assert c.rc.owner_assign_drawdown_scope(authorization="#628", reason="r", operation_id="ASSIGN-2",
+                                            confirm=True)["assigned"] is False   # nulla da attribuire
+
+
+def test_s18_owner_assignment_refused_with_uncertain_orders(tmp_path):
+    """S18-1: nessun cambio operativo con ordini incerti: l'attribuzione owner richiede le stesse verifiche degli
+    sblocchi (nessun ordine AMBIGUOUS)."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 1000.0, simulated=True)
+    _lettura_ambito(c, 100.0, simulated=False)
+    c.rc._owner_drawdown_checks = lambda: {"cash_verified": True, "cash": 100.0, "exposure": 0.0,
+                                          "uncertain_orders": ["ref-incerto"]}
+    esito = c.rc.owner_assign_drawdown_scope(authorization="#628", reason="r", operation_id="A1", confirm=True)
+    assert esito["assigned"] is False and esito["reason"]
+    assert _stato_salvato(c)["scope"] == {"env": "SIM", "account": "sim"}
+
+
+def test_s18_queued_entry_never_reaches_the_broker_after_a_scope_switch(tmp_path):
+    """S18-1 (precauzione owner): un ingresso approvato e messo in coda in SIM non parte dopo il passaggio a LIVE: il
+    controllo d'ambito vale anche al punto finale d'invio del motore."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 100.0, simulated=True)
+    trattenuti = _ingresso_in_coda(c)
+    _lettura_ambito(c, 100.0, simulated=False)
+    for comando in trattenuti:
+        c.rc.bus.publish("CMD_QUICK_BET", comando)
+    assert _ordini(c) == 0
+
+
+@pytest.mark.parametrize("ambito", [True, False])
+def test_s18_global_lockdown_blocks_entries_in_every_scope(tmp_path, ambito):
+    """S18-1: la separazione non aggira i blocchi globali: LOCKDOWN amministrativo nega l'ingresso in ogni ambito."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 100.0, simulated=ambito)
+    assert c.rc.drawdown_entry_block_reason() == ""
+    c.rc.force_lockdown("owner_lockdown")
+    assert c.rc.drawdown_entry_block_reason().startswith("runtime_lockdown")
+
+
+@pytest.mark.parametrize("procedura", ["sblocco_superamento", "sblocco_storia", "conferma"])
+def test_s19b_failed_owner_unlock_or_confirmation_keeps_every_verified_value(tmp_path, monkeypatch, procedura):
+    """S19-B esteso (PF-OWNER-PR631-CYCLE19-FINAL-SCOPE-20261112): un salvataggio fallito durante sblocco o conferma owner
+    non perde nulla: picco, epoca, picco confermato con il suo istante, superamento, storia insufficiente e baseline
+    restano quelli di prima (fail-closed: il blocco resta)."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    c.rc._reload_drawdown_state()
+    c.rc._apply_funds_reading(_fondi(120.0), source="t", read_at=_time.monotonic())
+    stop = c.rc._hard_stop()
+    if procedura != "conferma":
+        assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=130.0)["confirmed"]
+        if procedura == "sblocco_superamento":
+            c.rc._apply_funds_reading(_fondi(115.0), source="t", read_at=_time.monotonic() + 1)
+            assert stop.breached
+        else:
+            stop._mark_history_insufficient("test", 1.0, Decimal("110"), stop.peak_epoch)
+    prima = (stop.peak, stop.peak_epoch, stop._confirmed_peak, stop.baseline_confirmed_at, stop.breached,
+             dict(stop.history_insufficient), stop.baseline_verified)
+    salvato = _stato_salvato(c)
+
+    def guasto(values):
+        raise OSError("disco pieno")
+
+    monkeypatch.setattr(c.rc.db, "save_settings", guasto)
+    if procedura == "sblocco_superamento":
+        esito = c.rc.owner_unlock_drawdown_hard_stop(authorization="#628", reason="t", operation_id="U9", confirm=True)
+        assert esito["unlocked"] is False
+    elif procedura == "sblocco_storia":
+        esito = c.rc.owner_clear_drawdown_history_insufficient(authorization="#628", reason="t", operation_id="H9",
+                                                                confirm=True)
+        assert esito["cleared"] is False
+    else:
+        assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=130.0)["confirmed"] is False
+    assert (stop.peak, stop.peak_epoch, stop._confirmed_peak, stop.baseline_confirmed_at, stop.breached,
+            dict(stop.history_insufficient), stop.baseline_verified) == prima
+    assert _stato_salvato(c) == salvato
+    assert c.rc.drawdown_entry_block_reason() != ""
+
+
+def test_s19a_proof_between_real_readings_older_than_the_window(tmp_path):
+    """S19-A generale (oracolo R49 di Claude D, caso 16): letture vere con istante precedente all'apertura della finestra
+    (92, poi 110) consegnate prima della conferma owner a 131; 96 iniziata dopo il 110 ma consegnata dopo la conferma.
+    110 -> 96 = 14 >= 10 e' dimostrato da due letture vere: hard-stop, anche se fuori dalla finestra il massimo e' noto solo
+    come limite superiore (mai storia insufficiente)."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    c.rc._reload_drawdown_state()                                # finestra aperta adesso
+    t = _time.monotonic() - 50                                   # istanti precedenti all'apertura
+    c.rc._apply_funds_reading(_fondi(92.0), source="t", read_at=t + 1)
+    c.rc._apply_funds_reading(_fondi(110.0), source="t", read_at=t + 3)
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=131.0)["confirmed"]
+    c.rc._apply_funds_reading(_fondi(96.0), source="t", read_at=t + 12)
+    stop = c.rc._hard_stop()
+    assert stop.breached and Decimal(stop.snapshot()["breach"]["loss"]) == Decimal("14")
+
+
+def test_s19a_proof_from_the_exact_window_base_for_a_late_pre_confirmation_reading(tmp_path):
+    """S19-A (oracolo R49 di Claude D, caso 240 con tempi realistici): picco 100 noto all'apertura della finestra (START),
+    96 consegnata prima della conferma owner a 106, poi 87 iniziata prima della conferma e consegnata dopo. 100 -> 87 = 13
+    e' dimostrato dal massimo esatto della finestra: hard-stop, mai storia insufficiente."""
+    import time as _time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    c.rc._hard_stop().open_session()
+    _riavvio(c)
+    c.rc._reload_drawdown_state()                                # finestra aperta adesso, base 100
+    _time.sleep(0.01)
+    t = _time.monotonic()
+    c.rc._apply_funds_reading(_fondi(96.0), source="t", read_at=t + 0.001)
+    _time.sleep(0.01)
+    assert c.rc.owner_confirm_drawdown_baseline(**_CONFIRM, declared_peak=106.0)["confirmed"]
+    c.rc._apply_funds_reading(_fondi(87.0), source="t", read_at=t + 0.005)
+    stop = c.rc._hard_stop()
+    assert stop.breached and Decimal(stop.snapshot()["breach"]["loss"]) == Decimal("13")
+
+
+def test_s18_evaluation_uses_the_scope_of_its_own_reading_not_the_last_declared(tmp_path):
+    """S18-1: l'ambito di una lettura si ridichiara nella sezione critica della sua valutazione. Se fra la dichiarazione e
+    la valutazione un'altra lettura ha dichiarato un altro ambito (LIVE), la lettura SIM e' valutata comunque come SIM sul
+    record SIM: il picco SIM sale, mai bloccato ne' valutato con l'ambito di un'altra lettura."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 1000.0, simulated=True)
+    stop = c.rc._hard_stop()
+    stop.set_scope({"env": "LIVE", "account": "betfair:altro"})  # dichiarato da una lettura LIVE concorrente
+    c.rc._evaluate_drawdown_hard_stop(1200.0, None, scope={"env": "SIM", "account": "sim"})
+    assert stop.peak == Decimal("1200")
+    assert Decimal(_stato_salvato(c)["peak"]) == Decimal("1200")
+
+
+@pytest.mark.parametrize("verso", [False, True])
+def test_s18_mode_switch_invalidates_the_declared_scope_until_a_new_reading(tmp_path, verso):
+    """S18-1 (Claude D in anteprima sulla patch del ciclo 19): al cambio di modalita' SIM/LIVE l'ambito dichiarato non
+    vale piu'. Fino alla prima lettura del conto nella nuova modalita' il controllo finale nega gli ingressi: un ingresso
+    gia' in coda non parte verso il client della nuova modalita' valutato contro lo stato dell'altra."""
+    from core.drawdown_hard_stop import REASON_ACCOUNT_UNKNOWN
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura_ambito(c, 100.0, simulated=not verso)
+    trattenuti = _ingresso_in_coda(c)
+    c.rc.set_simulation_mode(verso)
+    assert c.rc.drawdown_entry_block_reason() == REASON_ACCOUNT_UNKNOWN
+    for comando in trattenuti:
+        c.rc.bus.publish("CMD_QUICK_BET", comando)
+    assert _ordini(c) == 0
+    _lettura_ambito(c, 100.0, simulated=not verso)              # di nuovo l'ambito del record: si riprende
+    assert c.rc.drawdown_entry_block_reason() == ""
+
+
+def test_s18_mode_set_before_any_reading_does_not_block_the_first_entry(tmp_path):
+    """S18-1: impostare la modalita' prima di qualunque lettura del conto (avvio di headless_main) non invalida nulla:
+    il primo ingresso legge il conto, dichiara il proprio ambito e parte."""
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    c.rc.set_simulation_mode(True)
+    assert c.rc._hard_stop().scope is None
+    _lettura(c, 100.0)
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert _ordini(c) == 1

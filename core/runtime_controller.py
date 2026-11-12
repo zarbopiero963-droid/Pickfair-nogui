@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import inspect
 import json
 import logging
@@ -47,6 +48,8 @@ from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from core.order_ref import customer_order_ref
 from core.drawdown_hard_stop import (DrawdownHardStop, REASON_ACTIVE as DRAWDOWN_ABS_ACTIVE,
                                      REASON_PCT_ACTIVE as DRAWDOWN_PCT_ACTIVE)
+
+_DRAWDOWN_SCOPE_UNSET = object()
 from core.order_identity import (
     response_bet_id,
     derive_customer_ref,
@@ -1336,6 +1339,9 @@ class RuntimeController:
             # Sol su 92155c24: stato persistito illeggibile => picco sconosciuto, nessun ingresso su ogni percorso
             # (anche manuale/Dutching senza hard-stop configurati), mai sovrascritto.
             return "drawdown_stato_illeggibile"
+        scope_block = stop.scope_block_reason()
+        if scope_block:
+            return scope_block                           # S18-1: stato di un altro ambito/conto, mai usato ne' scritto
         with RuntimeController._drawdown_eval_lock:          # proprieta' e scrittura insieme (Sol su 2a847087)
             if RuntimeController._drawdown_write_block(self):
                 # Grok su 6d4ac43f: un controller non proprietario non ritenta il salvataggio (scriverebbe sul record
@@ -1551,6 +1557,10 @@ class RuntimeController:
         Metodo richiesto da mini_gui.py.
         """
         self.simulation_mode = bool(enabled)
+        # S18-1: il conto (e quindi l'ambito dello stato del drawdown) cambia con la modalita': fino alla prima lettura
+        # del conto nella nuova modalita' gli ingressi restano negati, anche quelli gia' in coda (controllo finale).
+        with RuntimeController._drawdown_eval_lock:
+            RuntimeController._hard_stop(self).invalidate_scope()
         if hasattr(self.betfair_service, "set_simulation_mode"):
             self.betfair_service.set_simulation_mode(self.simulation_mode)
 
@@ -6773,6 +6783,7 @@ class RuntimeController:
         Con `bankroll` il disponibile si sincronizza nella stessa operazione, dopo il controllo di `read_at`
         (`RiskDesk.sync_funds_reading`): una lettura arrivata tardi non tocca ne' bankroll ne' cassa (False)."""
         verifica = self._cash_equity_verification(funds)
+        scope = RuntimeController._declare_drawdown_scope(self, funds)
         committed = self._account_from_funds(funds)["committed"] if verifica["ok"] else 0.0
         applicata = self.risk_desk.sync_funds_reading(bankroll, verifica["cash"], available,
                                                       reason=verifica["reason"], committed_exposure=committed,
@@ -6781,17 +6792,56 @@ class RuntimeController:
             # D-631-08 (Sol su 9209f0d8): il desk scarta la lettura arrivata tardi (bankroll e cassa invariati), ma la
             # sua cassa verificata resta un massimo osservato: l'hard-stop la riceve e decide col proprio istante.
             if verifica["ok"]:
-                self._evaluate_drawdown_hard_stop(verifica["cash"], read_at)
+                self._evaluate_drawdown_hard_stop(verifica["cash"], read_at, scope=scope)
             return False
         cassa = getattr(self.risk_desk, "cash_equity_current", None)
         if cassa is not None:
-            self._evaluate_drawdown_hard_stop(cassa, read_at)
+            self._evaluate_drawdown_hard_stop(cassa, read_at, scope=scope)
         motivo = str(getattr(self.risk_desk, "cash_equity_reason", "") or "")
         if motivo and motivo != getattr(self, "_cash_warning_reason", ""):
             # Una volta per motivo, non a ogni lettura di stato (la GUI legge i fondi periodicamente).
             logger.warning("Cassa non verificata (%s): nuove entrate bloccate", motivo)
         self._cash_warning_reason = motivo
         return True
+
+    def _drawdown_scope_of_funds(self, funds: Any) -> Optional[dict]:
+        """S18-1: ambito della lettura del conto. ``simulated`` True => SIM; False => LIVE con l'identita' del conto
+        Betfair (hash dello username di login, mai il nome in chiaro; vuota se non determinabile => conto non
+        identificabile, nessun ingresso); flag assente (sorgente non marcata, es. stub) => ambito proprio, separato da SIM
+        e LIVE. Lettura non valida => None (ambito invariato)."""
+        if not isinstance(funds, dict):
+            return None
+        flag = funds.get("simulated")
+        if flag is True:
+            return {"env": "SIM", "account": "sim"}
+        if flag is False:
+            return {"env": "LIVE", "account": RuntimeController._live_account_identity(self)}
+        return {"env": "UNTAGGED", "account": "untagged"}
+
+    def _live_account_identity(self) -> str:
+        """Identita' stabile del conto Betfair LIVE: hash dello username di login del client connesso (o della
+        configurazione Betfair). '' se non determinabile con certezza (fail-closed a valle)."""
+        service = getattr(self, "betfair_service", None)
+        username = getattr(getattr(service, "client", None), "username", None)
+        if not (isinstance(username, str) and username.strip()):
+            try:
+                username = getattr(service.settings_service.load_betfair_config(), "username", None)
+            except Exception:
+                username = None
+        if not (isinstance(username, str) and username.strip()):
+            return ""
+        digest = hashlib.sha256(username.strip().lower().encode("utf-8")).hexdigest()
+        return f"betfair:{digest[:24]}"
+
+    def _declare_drawdown_scope(self, funds: Any) -> Optional[dict]:
+        """S18-1: dichiara all'hard-stop l'ambito della lettura appena fatta (per i gate d'ingresso); lo restituisce per
+        la valutazione, che lo ridichiara nella propria sezione critica (nessuna lettura valutata nell'ambito di
+        un'altra)."""
+        scope = RuntimeController._drawdown_scope_of_funds(self, funds)
+        if scope is not None:
+            with RuntimeController._drawdown_eval_lock:
+                RuntimeController._hard_stop(self).set_scope(scope)
+        return scope
 
     def _drawdown_writes_allowed(self) -> bool:
         """Codex su 53c99ceb: lo stato dell'hard-stop (picco, superamento, marker) lo aggiorna solo il controller
@@ -6801,10 +6851,16 @@ class RuntimeController:
         proprietario attuale. Non fa trading, quindi non c'e' nulla da bloccare; il proprietario rivaluta da se'."""
         return not RuntimeController._drawdown_write_block(self)
 
-    def _drawdown_write_block(self) -> str:
+    def _drawdown_write_block(self, *, ignore_scope: bool = False) -> str:
         """'' se questo controller puo' scrivere lo stato dell'hard-stop, altrimenti il motivo (vedi
         `_drawdown_writes_allowed`). Usato anche dai gate d'ingresso (Grok su 6d4ac43f): un controller non
-        proprietario non scrive e nega l'ingresso invece di valutare (la valutazione salverebbe il picco)."""
+        proprietario non scrive e nega l'ingresso invece di valutare (la valutazione salverebbe il picco).
+        S18-1: stato di un altro ambito, senza provenienza o conto non identificabile => nessuna valutazione, nessuna
+        scrittura, nessuna procedura owner (``ignore_scope`` solo per l'attribuzione owner)."""
+        if not ignore_scope:
+            scope_block = RuntimeController._hard_stop(self).scope_block_reason()
+            if scope_block:
+                return scope_block
         owned = getattr(self, "_drawdown_start_owned", False)
         stopped = getattr(self, "mode", RuntimeMode.STOPPED) is RuntimeMode.STOPPED
         if stopped and not owned:
@@ -6833,7 +6889,7 @@ class RuntimeController:
             return True
         return isinstance(row, dict)
 
-    def _evaluate_drawdown_hard_stop(self, cassa: Any, read_at: Any = None) -> None:
+    def _evaluate_drawdown_hard_stop(self, cassa: Any, read_at: Any = None, *, scope: Any = _DRAWDOWN_SCOPE_UNSET) -> None:
         """D-1: ogni cassa verificata alza (mai abbassa) il picco persistente dell'hard-stop e, con il limite
         configurato, ne verifica subito il superamento: blocco persistente e LOCKDOWN senza attendere il segnale
         successivo (contratto owner PF-ROSERPINA-DRAWDOWN-AND-RECOVERY-20261109). Chiamata dentro
@@ -6842,6 +6898,9 @@ class RuntimeController:
         # d'ingresso e del desk: una lettura vecchia non puo' superare il controllo, farsi sorpassare da una piu' nuova
         # che alza il picco e poi registrare una perdita falsa.
         with RuntimeController._drawdown_eval_lock:
+            if scope is not _DRAWDOWN_SCOPE_UNSET and scope is not None:
+                # S18-1: l'ambito di questa lettura, nella stessa sezione critica della valutazione.
+                RuntimeController._hard_stop(self).set_scope(scope)
             # Sol su 2a847087: la proprieta' si verifica DENTRO la sezione critica: lo STOP la toglie prendendo lo
             # stesso lock, quindi una valutazione gia' ammessa finisce prima che lo STOP rilasci il lock d'istanza.
             if not self._drawdown_writes_allowed():
@@ -6932,6 +6991,7 @@ class RuntimeController:
         un picco nuovo non si confronta mai con una cassa piu' vecchia (falso superamento). Il superamento si
         memorizza e va in LOCKDOWN; il gate dei fondi d'ingresso lo rifiuta."""
         verifica = self._cash_equity_verification(funds) if isinstance(funds, dict) else {"ok": False, "reason": ""}
+        scope = RuntimeController._declare_drawdown_scope(self, funds)
         if verifica["ok"]:
             cassa = verifica["cash"]
         elif verifica["reason"] == "CASH_NOT_POSITIVE":
@@ -6940,7 +7000,7 @@ class RuntimeController:
             return
         if not self._drawdown_writes_allowed():
             return
-        self._evaluate_drawdown_hard_stop(cassa, read_at)
+        self._evaluate_drawdown_hard_stop(cassa, read_at, scope=scope)
         pending_lockdown = getattr(self, "_pending_drawdown_lockdown", None)
         if pending_lockdown:
             self._pending_drawdown_lockdown = None
@@ -7710,6 +7770,36 @@ class RuntimeController:
                 out["reason"] = "sblocco_non_autorizzato_o_non_registrato"
             else:
                 out["cleared"] = True
+        return out
+
+    def owner_assign_drawdown_scope(self, *, authorization: str, reason: str, operation_id: str,
+                                    confirm: bool) -> dict:
+        """S18-1 (piano di chiusura owner, 12/11/2026): procedura owner-only che attribuisce all'ambito corrente
+        (ambiente + conto della lettura del conto piu' recente) uno stato del drawdown di un altro ambito o senza
+        provenienza. Nessun reset: picco, superamento e storia insufficiente restano; la baseline torna da confermare.
+        Stesse verifiche degli sblocchi (cassa verificata, esposizione leggibile, nessun ordine AMBIGUOUS). NON esposta
+        da Control API/MCP. La separazione completa per ambiente e conto e' della PR-04."""
+        out = {"assigned": False, "reason": "", "checks": {}}
+        with RuntimeController._drawdown_eval_lock:
+            block = RuntimeController._drawdown_write_block(self, ignore_scope=True)
+            if block:
+                out["reason"] = block
+                return out
+            stop = RuntimeController._hard_stop(self)
+            stop.restore(reconcile=True)
+            if stop.scope_block_reason() not in ("drawdown_stato_di_altro_ambito", "drawdown_stato_senza_provenienza"):
+                out["reason"] = "nessuno_stato_da_attribuire"
+                return out
+            checks = self._owner_drawdown_checks()
+            out["checks"] = checks
+            out["reason"] = self._owner_drawdown_checks_block(checks)
+            if out["reason"]:
+                return out
+            if not stop.owner_assign_scope(authorization=authorization, reason=reason, operation_id=operation_id,
+                                           confirm=confirm, checks=checks):
+                out["reason"] = "attribuzione_non_autorizzata_o_non_registrata"
+            else:
+                out["assigned"] = True
         return out
 
     def _maybe_auto_reset(self, available_drawdown: float) -> bool:

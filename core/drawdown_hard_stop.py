@@ -67,6 +67,14 @@ REASON_BASELINE_UNVERIFIED = "drawdown_baseline_non_verificata"
 REASON_HISTORY_INSUFFICIENT = "drawdown_storia_insufficiente"
 STATE_HISTORY_INSUFFICIENT = "DRAWDOWN_HISTORY_INSUFFICIENT"
 REASON_PCT_INVALID = "max_drawdown_hard_stop_pct_non_valido"
+# S18-1 (Sol su bcd19a32, decisione owner PF-OWNER-PR631-CYCLE19-GO-20261112 e conferma del piano di chiusura): lo stato
+# persistito porta la PROVENIENZA (ambiente + identita' del conto che lo ha scritto). Protezione fail-closed fino alla
+# separazione completa per ambiente e conto (PR-04): con un ambito diverso, uno stato senza provenienza o un conto non
+# identificabile nessuna valutazione, nessuna scrittura, nessuna procedura owner (salvo l'attribuzione esplicita) e
+# nessun nuovo ingresso; lo stato salvato resta intatto (nessun reset del picco).
+REASON_SCOPE_MISMATCH = "drawdown_stato_di_altro_ambito"
+REASON_SCOPE_UNATTRIBUTED = "drawdown_stato_senza_provenienza"
+REASON_ACCOUNT_UNKNOWN = "drawdown_conto_non_identificabile"
 KIND_ABS = "max_drawdown_abs"
 KIND_PCT = "max_drawdown_hard_stop_pct"
 # D-631-10/11: letture verificate ricordate in memoria (istante monotonic, cassa) per valutare un calo visto da una
@@ -101,6 +109,11 @@ def _parse_record(raw: Any) -> dict:
     verified = record.get("baseline_verified", True)
     epoch = record.get("peak_epoch", 0)
     rebase_ops = record.get("rebase_ops", [])
+    scope_missing = "scope" not in record               # S18-1: record scritto prima della provenienza (quarantena)
+    scope = _parse_scope(record.get("scope"))
+    scope_history = record.get("scope_history", [])
+    if not isinstance(scope_history, list):
+        raise ValueError("record non valido")
     gap = record.get("history_insufficient") or {}
     if not isinstance(gap, dict) or type(gap.get("active", False)) is not bool:
         raise ValueError("record non valido")
@@ -111,7 +124,18 @@ def _parse_record(raw: Any) -> dict:
         raise ValueError("record non valido")
     return {"peak": peak, "seq": seq, "peak_epoch": epoch, "rebase_ops": list(rebase_ops), "breached": breached, "breach": dict(record.get("breach") or {}),
             "session_open": session_open, "baseline_verified": verified,
-            "baseline": dict(record.get("baseline") or {}), "history_insufficient": dict(gap)}
+            "baseline": dict(record.get("baseline") or {}), "history_insufficient": dict(gap),
+            "scope": scope, "scope_missing": scope_missing, "scope_history": list(scope_history)}
+
+
+def _parse_scope(value: Any) -> Optional[dict]:
+    """Provenienza ``{"env", "account"}`` (stringhe non vuote) oppure None; altro => ValueError (record illeggibile)."""
+    if value is None:
+        return None
+    if (isinstance(value, dict) and set(value) == {"env", "account"}
+            and all(isinstance(value[k], str) and value[k] for k in ("env", "account"))):
+        return {"env": value["env"], "account": value["account"]}
+    raise ValueError("provenienza non valida")
 
 
 def _now() -> str:
@@ -182,6 +206,13 @@ class DrawdownHardStop:
         self.session_open = False
         self.baseline_verified = True
         self.baseline: dict = {}
+        # S18-1: ambito corrente dichiarato dal runtime (None = non dichiarato: nessun controllo, uso diretto senza runtime)
+        # e provenienza dello stato persistito (None = nessuno stato ancora attribuito). `scope_legacy`: record letto
+        # senza provenienza (scritto prima della protezione) => quarantena fino all'attribuzione owner.
+        self.scope: Optional[dict] = None
+        self.record_scope: Optional[dict] = None
+        self.scope_legacy = False
+        self.scope_history: list = []
 
     # ------------------------------------------------------------ persistenza
     def restore(self, *, reconcile: bool = True) -> None:
@@ -243,6 +274,15 @@ class DrawdownHardStop:
                         self.rebase_ops.append(op)
             old_epoch = self.baseline_epoch()
             self.baseline = dict(records[0]["baseline"])
+            # S18-1: provenienza del record piu' recente; un record senza provenienza la mette in quarantena (mai
+            # attribuita d'ufficio a SIM o LIVE). Storia delle attribuzioni owner: unione (operation_id monouso).
+            scoped = [r for r in records if not r["scope_missing"]]
+            self.scope_legacy = not scoped
+            self.record_scope = dict(scoped[0]["scope"]) if scoped and scoped[0]["scope"] else None
+            for r in records + stale:
+                for entry in r["scope_history"]:
+                    if entry not in self.scope_history:
+                        self.scope_history.append(entry)
             if newer and self.baseline_epoch() > old_epoch:
                 # G17-1: conferma owner salvata da un altro processo, adottata adesso: vale da questo istante anche qui.
                 self._mark_baseline_confirmed_locked()
@@ -302,13 +342,51 @@ class DrawdownHardStop:
                 else:
                     self._remove_stale_marker()
 
-    def _persist_locked(self, *, marker_fallback: bool = True) -> bool:
+    def set_scope(self, scope: Optional[dict]) -> None:
+        """S18-1: ambito operativo corrente (ambiente + identita' del conto), dichiarato dal runtime per ogni lettura."""
+        with self._lock:
+            self.scope = None if scope is None else dict(scope)
+
+    def invalidate_scope(self) -> None:
+        """S18-1 (Claude D, anteprima del ciclo 19): cambio di modalita' SIM/LIVE. L'ambito dichiarato non vale piu' finche'
+        una lettura del conto nella nuova modalita' non lo ridichiara: fino ad allora conto non identificabile (nessun
+        ingresso, nessuna valutazione ne' scrittura). Senza un ambito gia' dichiarato (nessuna lettura ancora) non c'e' nulla
+        da invalidare: il primo ingresso legge comunque il conto e dichiara il proprio ambito."""
+        with self._lock:
+            if self.scope is not None:
+                self.scope = {"env": "CAMBIO_MODALITA", "account": ""}
+
+    def scope_block_reason(self) -> str:
+        """S18-1: '' se lo stato persistito appartiene all'ambito corrente (o nessun ambito e' dichiarato), altrimenti il
+        motivo fail-closed. Uno stato ancora senza provenienza (nessun record) si attribuisce alla prima scrittura."""
+        with self._lock:
+            return self._scope_block_locked()
+
+    def _scope_block_locked(self) -> str:
+        if self.scope is None:
+            return ""
+        if not self.scope.get("account"):
+            return REASON_ACCOUNT_UNKNOWN
+        if self.scope_legacy:
+            return REASON_SCOPE_UNATTRIBUTED
+        if self.record_scope is not None and self.record_scope != self.scope:
+            return REASON_SCOPE_MISMATCH
+        return ""
+
+    def _persist_locked(self, *, marker_fallback: bool = True, scope_exempt: bool = False) -> bool:
         """Salva lo stato nel DB. ``marker_fallback`` False (Sol su 92155c24) per le transizioni che ALLENTANO un
         blocco (sblocco owner, conferma della baseline, ribasamento del picco, chiusura della sessione): se il DB non
         salva non va scritto nemmeno il marker, altrimenti un'operazione fallita (stato in RAM ripristinato) resterebbe
         su disco come record piu' recente e al riavvio varrebbe lo stesso. Il marker resta il ripiego dei soli stati
         che stringono (picco che sale, superamento, sessione aperta)."""
         saver = getattr(self._db, "save_settings", None)
+        if not scope_exempt and self._scope_block_locked():
+            # S18-1: mai scrivere lo stato di un altro ambito (difesa: i chiamanti non mutano lo stato fuori ambito).
+            self.persist_failed = True
+            return False
+        if self.record_scope is None and self.scope is not None and self.scope.get("account"):
+            # prima scrittura: provenienza = ambito corrente, solo se identificato (mai un ambito invalidato o senza conto)
+            self.record_scope = dict(self.scope)
         newer = self._newer_on_disk_locked()
         if newer:
             # D-631-18 (Codex su 9c9121f0): su disco c'e' un record piu' recente di quello da cui parte questo stato in
@@ -325,7 +403,9 @@ class DrawdownHardStop:
                   "breached": self.breached,
                   "breach": dict(self.breach), "session_open": self.session_open,
                   "baseline_verified": self.baseline_verified, "baseline": dict(self.baseline),
-                  "history_insufficient": dict(self.history_insufficient), "updated_at": _now()}
+                  "history_insufficient": dict(self.history_insufficient),
+                  "scope": None if self.record_scope is None else dict(self.record_scope),
+                  "scope_history": list(self.scope_history), "updated_at": _now()}
         payload = json.dumps(record)
         marker = _marker_path(self._db)
         try:
@@ -388,7 +468,9 @@ class DrawdownHardStop:
             if self.unreadable:
                 return False
             self.session_open = True
-            return self._persist_locked()
+            # S18-1: solo il flag di sessione sullo stato del record (mai mutato fuori ambito): esente dal controllo
+            # d'ambito, cosi' lo START non si blocca e lo stato resta attribuibile dall'owner.
+            return self._persist_locked(scope_exempt=True)
 
     def close_session(self) -> bool:
         """STOP pulito: chiude la sessione su disco SOLO se il picco e' durevole. Picco non salvato o stato
@@ -397,7 +479,7 @@ class DrawdownHardStop:
             if self.unreadable or self.persist_failed:
                 return False
             self.session_open = False
-            if not self._persist_locked(marker_fallback=False):
+            if not self._persist_locked(marker_fallback=False, scope_exempt=True):
                 self.session_open = True
                 return False
             return True
@@ -427,7 +509,7 @@ class DrawdownHardStop:
         if declared_peak is not None and declared is None:
             return False
         with self._lock:
-            if self.unreadable or self.baseline_verified:
+            if self.unreadable or self.baseline_verified or self._scope_block_locked():
                 return False
             history = list(self.baseline.get("confirmations", []))
             if any(isinstance(h, dict) and h.get("operation_id") == op for h in history):
@@ -465,8 +547,8 @@ class DrawdownHardStop:
         if cash is None:
             return
         with self._lock:
-            if self.unreadable:
-                return                                   # mai sovrascrivere uno stato che non si e' potuto leggere
+            if self.unreadable or self._scope_block_locked():
+                return                                   # mai sovrascrivere uno stato illeggibile o di altro ambito
             if self.peak is None or cash > self.peak:
                 self.peak = cash
                 self._persist_locked()
@@ -504,7 +586,7 @@ class DrawdownHardStop:
         if kind is None:
             return False
         with self._lock:
-            if self.breached or self.unreadable:
+            if self.breached or self.unreadable or self._scope_block_locked():
                 return False
             self.breached = True
             self.breach = {"kind": kind, "at": _now(), "loss": str(loss), "cap": str(cap), "peak": str(reference),
@@ -594,6 +676,21 @@ class DrawdownHardStop:
                 best = cash
         return best, True
 
+    def _proven_peak_before_locked(self, at: float) -> Optional[Decimal]:
+        """S19-A: massimo delle sole letture VERE conservate (recenti e gradini del riepilogo) STRETTAMENTE prima di
+        ``at``; None se nessuna. Mai la base della finestra ne' il picco confermato (limiti superiori senza istante): un
+        calo da questo massimo e' dimostrato."""
+        best = None
+        i = bisect.bisect_left(self._ladder, (at,))
+        if i > 0:
+            best = self._ladder[i - 1][1]
+        for t, cash in self._history:
+            if t >= at:
+                break
+            if cash > 0 and (best is None or cash > best):
+                best = cash
+        return best
+
     def _min_after_locked(self, at: float):
         """``(minimo letto STRETTAMENTE dopo at fra le letture conservate, esatto?)``. Non esatto prima della finestra:
         fra ``at`` e l'apertura ci sono letture che questo processo non ha conservato."""
@@ -636,7 +733,9 @@ class DrawdownHardStop:
         if at < self._window_open:
             if cash > 0 and (self._window_base is None or cash > self._window_base):
                 self._window_base = cash
-            return
+            # S19-A (oracolo R49 di Claude D): resta anche una lettura vera con il suo istante. La base ne fa il limite
+            # superiore di cio' che precede la finestra; fra le conservate e' una PROVA di calo (con un'altra lettura vera
+            # prima o dopo di lei), qualunque cosa sia successa fuori dalla memoria.
         bisect.insort(self._history, (float(at), cash))
         while len(self._history) > RECENT_READINGS_LIMIT:
             t0, c0 = self._history.pop(0)
@@ -661,6 +760,8 @@ class DrawdownHardStop:
         if cash is None:
             return
         with self._lock:
+            if self._scope_block_locked():
+                return
             if self._window_open is None:
                 if not may_open:
                     return
@@ -682,11 +783,12 @@ class DrawdownHardStop:
             return ""
         at = float(at)
         with self._lock:
-            if self.unreadable:
+            if self.unreadable or self._scope_block_locked():
                 return ""
             if self._window_open is None:
                 self._open_window_locked(at)             # nessuna storia: la base e' il picco noto
             reference, ref_exact = self._peak_before_locked(at)
+            proven = self._proven_peak_before_locked(at)
             known, known_exact = self._peak_before_window_locked(at)
             low, low_exact = self._min_after_locked(at)
             already = self.breached or bool(self.history_insufficient.get("active"))
@@ -694,29 +796,33 @@ class DrawdownHardStop:
             epoch = self.peak_epoch
         if already and self.breached:
             return ""
-        # (A) calo di questa lettura. G17-1 (Claude D, owner): prima il calo dimostrato dalle letture conservate (massimo
-        # esatto, senza il picco confermato di istante ignoto) => hard-stop: 120 a t0 e 105 iniziata prima della conferma
-        # a 130 e' un calo di 15 provato, mai declassato a storia insufficiente.
-        if (not ref_exact and known_exact and known is not None
-                and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, known)):
+        # S19-A (Sol su 5bb61f7f, Claude D): PRIMA tutte le prove di un calo, POI l'incertezza. Un superamento dimostrato
+        # dalle letture conservate e' un hard-stop anche quando un limite superiore (picco confermato di istante ignoto,
+        # base della finestra) renderebbe possibile anche un calo non dimostrabile: mai declassato a storia insufficiente.
+        # (A) calo di questa lettura dal massimo letto prima di lei: dal massimo esatto delle letture conservate (G17-1,
+        # caso 105) e, se esatto, dal riferimento completo.
+        if proven is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, proven):
             return "breached"
-        if reference is not None:
-            if ref_exact:
-                if self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, reference):
-                    return "breached"
-            elif self._limit_exceeded(cap_raw, pct_cap_raw, cash, reference):
-                return self._mark_history_insufficient("lettura_precedente_alla_storia_conservata", at, cash, epoch,
-                                                       reference=reference)
-        # (B) questa lettura come massimo che rende reale un calo successivo. Con il massimo esatto serve solo se lo
-        # supera (altrimenti il calo successivo e' gia' stato misurato da un massimo piu' alto). Con il solo limite
-        # superiore (lettura precedente alla storia conservata) il vero massimo a `at` puo' essere piu' basso di questa
-        # lettura: la verifica si fa sempre (D-631-12, Sol/Claude D su f0f521dc).
-        if cash > 0 and (not ref_exact or reference is None or cash > reference):
-            if low is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, low, cash):
-                return "breached"
-            if not low_exact and self._limit_exceeded(cap_raw, pct_cap_raw, Decimal(0), cash):
-                return self._mark_history_insufficient("massimo_precedente_alla_storia_conservata", at, cash, epoch,
-                                                       reference=reference)
+        # Massimo esatto della finestra (base = picco noto all'apertura, che precede ogni lettura dalla finestra in poi;
+        # senza il picco confermato di istante ignoto): anche lui dimostra il calo (G17-1, caso 105; R49 caso 240).
+        if known_exact and known is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, known):
+            return "breached"
+        if reference is not None and ref_exact and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, reference):
+            return "breached"
+        # (B) questa lettura come massimo che rende reale un calo successivo (minimo letto dopo di lei, una lettura
+        # vera). Con il massimo esatto serve solo se lo supera (altrimenti il calo successivo e' gia' stato misurato da un
+        # massimo piu' alto); con il solo limite superiore il vero massimo a `at` puo' essere piu' basso di questa
+        # lettura: la verifica si fa sempre (D-631-12, Sol/Claude D su f0f521dc). 110 poi 90 = 20 dimostrato (S19-A).
+        check_after = cash > 0 and (not ref_exact or reference is None or cash > reference)
+        if check_after and low is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, low, cash):
+            return "breached"
+        # Nessuna prova: superamento solo possibile con i limiti superiori noti => storia insufficiente, mai un PASS.
+        if reference is not None and not ref_exact and self._limit_exceeded(cap_raw, pct_cap_raw, cash, reference):
+            return self._mark_history_insufficient("lettura_precedente_alla_storia_conservata", at, cash, epoch,
+                                                   reference=reference)
+        if check_after and not low_exact and self._limit_exceeded(cap_raw, pct_cap_raw, Decimal(0), cash):
+            return self._mark_history_insufficient("massimo_precedente_alla_storia_conservata", at, cash, epoch,
+                                                   reference=reference)
         return ""
 
     def _mark_history_insufficient(self, why: str, at: float, cash: Decimal, epoch: int,
@@ -724,7 +830,7 @@ class DrawdownHardStop:
         """D-631-11: memorizza (persistito) lo stato di storia insufficiente: distinto dall'hard-stop, nessuna perdita
         dichiarata, nuovi ingressi negati fino allo sblocco owner."""
         with self._lock:
-            if self.unreadable:
+            if self.unreadable or self._scope_block_locked():
                 return ""
             if self.history_insufficient.get("active"):
                 return "insufficient"
@@ -750,7 +856,7 @@ class DrawdownHardStop:
         if not (ref and why and op and confirm is True):
             return False
         with self._lock:
-            if self.unreadable or not self.history_insufficient.get("active"):
+            if self.unreadable or not self.history_insufficient.get("active") or self._scope_block_locked():
                 return False
             before = dict(self.history_insufficient)
             history = list(before.pop("cleared", []))
@@ -780,7 +886,7 @@ class DrawdownHardStop:
         if not (ref and why and op and confirm is True):
             return False
         with self._lock:
-            if self.unreadable or not self.breached:
+            if self.unreadable or not self.breached or self._scope_block_locked():
                 return False
             before = dict(self.breach)
             history = list(before.pop("cleared", []))
@@ -807,13 +913,15 @@ class DrawdownHardStop:
         if not (ref and why and op and confirm is True) or peak is None:
             return False
         with self._lock:
-            if self.unreadable:
-                return False
+            if self.unreadable or self._scope_block_locked():
+                return False                             # S18-1: mai il picco di un altro ambito (rebase in SIM su LIVE)
             if op in self.rebase_ops:
                 return False                             # operation_id gia' usato: nessun replay (Grok su b9cbe0d7)
             old_peak, old_breach, old_epoch, old_at = self.peak, dict(self.breach), self.peak_epoch, self.rebased_at
+            # S19-B (Sol su 5bb61f7f): la finestra si riapre qui PRIMA del salvataggio e azzera il picco confermato;
+            # un salvataggio fallito ripristina TUTTO lo stato precedente, picco confermato e istante inclusi.
             old_window = (self._window_open, self._window_base, list(self._history), list(self._ladder),
-                          list(self._valleys))
+                          list(self._valleys), self._confirmed_peak, self.baseline_confirmed_at)
             self.peak = peak
             self.peak_epoch = old_epoch + 1
             self.rebased_at = time.monotonic()
@@ -826,10 +934,43 @@ class DrawdownHardStop:
             if not self._persist_locked(marker_fallback=False):
                 self.peak, self.breach, self.peak_epoch = old_peak, old_breach, old_epoch
                 self.rebased_at = old_at
-                self._window_open, self._window_base, self._history, self._ladder, self._valleys = old_window
+                (self._window_open, self._window_base, self._history, self._ladder, self._valleys,
+                 self._confirmed_peak, self.baseline_confirmed_at) = old_window
                 self.rebase_ops.remove(op)
                 return False
             logger.warning("D-1: picco dell'hard-stop ribasato dall'owner %s -> %s (op %s)", old_peak, peak, op)
+            return True
+
+    def owner_assign_scope(self, *, authorization: str, reason: str = "", operation_id: str = "",
+                           confirm: bool = False, checks: Optional[dict] = None) -> bool:
+        """S18-1: procedura owner esplicita e tracciata che attribuisce lo stato persistito (di un altro ambito o senza
+        provenienza) all'ambito corrente. NON azzera nulla: picco, superamento, storia insufficiente ed epoca restano;
+        la baseline torna NON verificata (conferma owner obbligatoria, ed eventuale ribasamento tracciato del picco). Le
+        letture iniziate prima non si valutano piu'. Salvataggio fallito => nulla cambia. Fino alla separazione completa
+        per ambiente e conto (PR-04) e' l'unica uscita dalla protezione."""
+        ref, why, op = (str(v or "").strip() for v in (authorization, reason, operation_id))
+        if not (ref and why and op and confirm is True):
+            return False
+        with self._lock:
+            if self.unreadable or self.scope is None or not self.scope.get("account"):
+                return False
+            if self._scope_block_locked() not in (REASON_SCOPE_MISMATCH, REASON_SCOPE_UNATTRIBUTED):
+                return False                             # nulla da attribuire
+            if any(isinstance(h, dict) and h.get("operation_id") == op for h in self.scope_history):
+                return False
+            old = (self.record_scope, self.scope_legacy, self.baseline_verified, list(self.scope_history))
+            entry = {"at": _now(), "authorization": ref, "reason": why, "operation_id": op,
+                     "from": "senza_provenienza" if self.scope_legacy else dict(self.record_scope or {}),
+                     "to": dict(self.scope), "checks": dict(checks or {}),
+                     "nota": "attribuzione owner: nessun reset; baseline da confermare"}
+            self.record_scope, self.scope_legacy = dict(self.scope), False
+            self.baseline_verified = False
+            self.scope_history = self.scope_history + [entry]
+            if not self._persist_locked(marker_fallback=False):
+                self.record_scope, self.scope_legacy, self.baseline_verified, self.scope_history = old
+                return False
+            self._close_history_locked()
+            logger.warning("D-1: stato del drawdown attribuito dall'owner all'ambito %s (op %s)", self.scope, op)
             return True
 
     # ------------------------------------------------------------ decisione

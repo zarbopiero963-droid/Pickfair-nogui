@@ -596,3 +596,23 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   il picco dichiarato non ha un istante noto ed e' per lei solo un limite superiore. Calo dimostrato dalle letture
   conservate => hard-stop; calo possibile solo rispetto al picco dichiarato => storia insufficiente (ingressi negati,
   mai un hard-stop non dimostrato); nessun calo possibile oltre il limite => nessun blocco dal drawdown.
+
+- **Precedenza delle prove, ripristino integrale e ambito dello stato (ciclo 19: S19-A, S19-B, S18-1).** Per una
+  lettura tardiva si cercano prima tutte le prove di un calo fra letture vere conservate con il loro istante (anche
+  quelle con istante precedente all'apertura della finestra): dal massimo delle letture vere lette prima di lei, dal
+  riferimento esatto, e dal minimo letto dopo di lei. Solo senza prova un limite superiore (picco confermato di istante
+  ignoto, base della finestra) porta alla storia insufficiente: un calo dimostrato resta sempre un hard-stop (S19-A,
+  110 -> 90 con limite 15). Un ribasamento owner con salvataggio fallito ripristina tutto lo stato precedente, picco
+  confermato e istante della conferma inclusi (S19-B). Lo stato persistito porta la **provenienza**: ambiente (`SIM`,
+  `LIVE`, oppure una sorgente non marcata) e identita' del conto (in LIVE l'hash dello username di login Betfair, mai il
+  nome in chiaro), ricavati da ogni lettura del conto. Protezione fail-closed fino alla separazione completa per
+  ambiente e conto della PR-04: con uno stato di un altro ambito (`drawdown_stato_di_altro_ambito`), senza provenienza
+  (`drawdown_stato_senza_provenienza`, record scritto prima della protezione: quarantena) o con un conto LIVE non
+  identificabile (`drawdown_conto_non_identificabile`) nessuna valutazione, nessuna scrittura, nessuna procedura owner
+  (ribasamento, sblocchi, conferma) e nessun nuovo ingresso su ogni percorso, controllo finale prima dell'invio compreso.
+  Lo stato salvato resta intatto: nessun azzeramento del picco. Tornando all'ambito del record il drawdown riprende con
+  il suo picco. Un cambio di modalita' SIM/LIVE (`set_simulation_mode`) invalida l'ambito dichiarato: fino alla prima
+  lettura del conto nella nuova modalita' gli ingressi sono negati (`drawdown_conto_non_identificabile`), anche quelli gia'
+  in coda. L'unica uscita e' la procedura owner `owner_assign_drawdown_scope` (tracciata, stesse verifiche degli
+  sblocchi, nessun ordine AMBIGUOUS): attribuisce lo stato all'ambito corrente senza reset (picco, superamento e storia
+  insufficiente restano) e rimette la baseline da confermare. Emergency Stop, STOP BOT e LOCKDOWN restano globali.
