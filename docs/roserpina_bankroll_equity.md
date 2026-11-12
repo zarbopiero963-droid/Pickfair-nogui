@@ -592,7 +592,9 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
 
 - **Stato del bot al punto d'invio (M68, PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112).** Nessun nuovo ingresso
   parte se il bot non e' ACTIVE: PAUSA (`runtime_non_attivo:PAUSED`), fermo (`runtime_non_attivo:STOPPED`), LOCKDOWN
-  (`runtime_lockdown:...`), anche con l'autorizzazione tecnica ancora valida. Il controllo sta nel controllo finale
+  del runtime (`runtime_lockdown:...`) o del desk (`desk_lockdown`: drawdown oltre la soglia di lockdown del money
+  management, anche senza hard-stop configurati; stato del desk illeggibile => `desk_non_verificabile`), anche con
+  l'autorizzazione tecnica ancora valida. Il controllo sta nel controllo finale
   d'ingresso del motore, nella stessa sezione critica del drawdown; una PAUSA arrivata dopo la risposta e' successiva
   all'ammissione (l'ordine eventualmente inviato si riconcilia). Cancellazioni, cashout e uscite protettive
   (OrderRouter) e la riconciliazione non passano di qui e restano consentiti. Gestione completa delle code, politiche

@@ -4289,3 +4289,36 @@ def test_f2_final_check_never_sees_the_live_flag_with_the_sim_scope_still_valid(
     cambio.join(5)
     assert not cambio.is_alive()
     assert c.rc.drawdown_entry_block_reason() == REASON_ACCOUNT_UNKNOWN
+
+
+def test_m68_queued_entry_never_reaches_the_broker_when_the_desk_is_in_lockdown(tmp_path):
+    """M68 (Sol su 4c627189): il LOCKDOWN del desk (money management: drawdown dal picco oltre `lockdown_drawdown_pct`)
+    nega anche gli ingressi gia' in coda al punto d'invio, senza hard-stop configurati e con il runtime ancora ACTIVE:
+    picco 100, lettura fresca 75, soglia 20% => nessun ordine."""
+    from core.system_state import DeskMode
+    c = _catena(tmp_path, lockdown_drawdown_pct=20.0)
+    _lettura(c, 100.0)
+    trattenuti = _ingresso_in_coda(c)
+    _lettura(c, 75.0)
+    assert c.rc._desk_mode() == DeskMode.LOCKDOWN
+    assert c.rc.drawdown_entry_block_reason() == "desk_lockdown"
+    for comando in trattenuti:
+        c.rc.bus.publish("CMD_QUICK_BET", comando)
+    assert _ordini(c) == 0
+
+
+def test_m68_unreadable_desk_state_blocks_the_queued_entry(tmp_path, monkeypatch):
+    """M68: stato del desk non leggibile al punto d'invio => ingresso negato (fail-closed), mai ammesso."""
+    from core.runtime_controller import RuntimeController
+    c = _catena(tmp_path)
+    _lettura(c, 100.0)
+    trattenuti = _ingresso_in_coda(c)
+
+    def illeggibile(self):
+        raise RuntimeError("desk non leggibile")
+
+    monkeypatch.setattr(RuntimeController, "_desk_mode", illeggibile)
+    assert c.rc.drawdown_entry_block_reason() == "desk_non_verificabile"
+    for comando in trattenuti:
+        c.rc.bus.publish("CMD_QUICK_BET", comando)
+    assert _ordini(c) == 0

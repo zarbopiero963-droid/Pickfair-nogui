@@ -3409,7 +3409,7 @@ class RuntimeController:
         inviato si riconcilia come ogni ordine). Le uscite protettive non passano di qui (OrderRouter del cashout).
 
         M68 (PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112): nessun nuovo ingresso parte se il bot non e' ACTIVE (PAUSA,
-        fermo, LOCKDOWN), anche con l'autorizzazione tecnica ancora valida. M65: ``request`` (la richiesta al punto
+        fermo, LOCKDOWN del runtime o del desk), anche con l'autorizzazione tecnica ancora valida. M65: ``request`` (la richiesta al punto
         d'invio) porta la sessione d'ammissione annotata dal controllo del fence: diversa dalla corrente => negato, anche
         per un invio eseguito in ritardo dall'esecutore dopo STOP -> START."""
         with RuntimeController._drawdown_eval_lock:
@@ -3423,6 +3423,15 @@ class RuntimeController:
                 return f"runtime_lockdown:{getattr(self, 'last_error', '') or 'LOCKDOWN'}"
             if mode is not RuntimeMode.ACTIVE:
                 return f"runtime_non_attivo:{getattr(mode, 'name', mode)}"
+            # M68 (Sol su 4c627189): anche il LOCKDOWN del desk (money management: drawdown oltre la soglia di
+            # lockdown) nega gli ingressi gia' in coda, con o senza hard-stop configurati e col runtime ancora ACTIVE.
+            try:
+                desk = RuntimeController._desk_mode(self)
+            except Exception:
+                logger.exception("M68: stato del desk non leggibile al punto d'invio: ingresso negato")
+                return "desk_non_verificabile"
+            if desk == DeskMode.LOCKDOWN:
+                return "desk_lockdown"
             if (isinstance(request, dict) and "admission_session" in request
                     and request.get("admission_session") != RuntimeController._entry_session(self)):
                 return "ingresso_di_sessione_precedente"

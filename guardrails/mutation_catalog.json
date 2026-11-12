@@ -10998,6 +10998,30 @@
       "rationale": "M68 (PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112): senza il controllo dello stato un ingresso in coda partirebbe con il bot in PAUSA o fermo."
     },
     {
+      "id": "m68_desk_lockdown_entry_admitted",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if desk == DeskMode.LOCKDOWN:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M68 (Sol su 4c627189): senza il controllo del desk un ingresso in coda partirebbe con il desk in LOCKDOWN (drawdown oltre la soglia del money management) e il runtime ancora ACTIVE."
+    },
+    {
+      "id": "m68_unreadable_desk_fail_open",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                return \"desk_non_verificabile\"\n",
+      "mutated": "                desk = None\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M68: uno stato del desk non leggibile deve negare l'ingresso (fail-closed), mai ammetterlo."
+    },
+    {
       "id": "m65_send_point_ignores_admission_session",
       "module": "core.runtime_controller",
       "area": "money_management",
