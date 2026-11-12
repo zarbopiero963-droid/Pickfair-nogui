@@ -2,7 +2,7 @@
  "schema": "pf-pr-t3-map/1",
  "base": "c535c1d559f11fdab4f09fa02c04c7824d1d2a19",
  "source": "GATEA-1062-CLASSIFICAZIONE-v5.1.csv, gruppo PR-T3",
- "note_env": "RISOLTO: tests/acceptance/test_issue437_pr02.py::test_block_firma_non_ispezionabile_conserva_il_customer_ref PASSA con Python 3.11 (venv uv, requirements.txt) e FALLISCE con 3.13: ENVIRONMENT_ONLY del test (time.time e' ispezionabile da 3.13, la fixture 'firma non ispezionabile' non lo e' piu'); nessun difetto di produzione",
+ "note_env": "RISOLTO: tests/acceptance/test_issue437_pr02.py::test_block_firma_non_ispezionabile_conserva_il_customer_ref PASSA con Python 3.11 (venv uv, requirements.txt) e FALLISCE con 3.13: ENVIRONMENT_ONLY del test (time.time e' ispezionabile da 3.13, la fixture 'firma non ispezionabile' non lo e' piu'); nessun difetto di produzione | TELETHON (12/11/2026, Claude D): i 33 test Telegram che falliscono in questo ambiente per telethon assente PASSANO con telethon==1.36.0 (versione del lock) sia su main c535c1d5 sia su #631 f0f521dc (Python 3.13 venv e Python 3.11 venv con requirements.txt: 75 passed includendo test_issue437_pr02.py). Vanno rieseguiti con telethon installato nella certificazione finale, non esclusi.",
  "rows": [
   {
    "req": "PF-B1-R2-MATCH-CONSUME-PRICE",
@@ -356,6 +356,15 @@
    "red": true,
    "green": true,
    "note": "Race del test ereditata da #630: usciva dal polling appena vedeva i due ORDER_CANCEL_REQUEST e asseriva subito la GAP, scritta dopo. Rossa in CI su #631 e98e84c7 (dynamic / merge-simulation-hard). Codice di produzione corretto."
+  },
+  {
+   "req": "D-631-12 / R40 (registro #628 M40)",
+   "status": "DEPENDS_ON_PR631",
+   "test": "tests/regression_t3/test_t3_r40_drawdown_window_oracle.py::test_r40_cycle14_silent_losses_are_blocked[3 casi] + ::test_r40_reduced_window_random_oracle (seed 6310150, 3000 casi)",
+   "mutation": "esecuzione sul ciclo 14 di #631 (f0f521dc), che contiene D-631-12",
+   "red": "f0f521dc: 4 failed (3 casi fissi + oracolo: 0 falsi hard-stop, 3 perdite silenziose; stati 2582/33/48/334, identici a M40)",
+   "green": "da verificare sul ciclo 15 di #631 e poi sul main che la contiene",
+   "note": "Oracolo temporale indipendente con memoria ridotta (1..3 letture recenti e 1..3 voci di riepilogo), letture fuori ordine o molto in ritardo, percorso reale _record_account_snapshot + _apply_funds_reading. Tre esiti: hard-stop vero, storia insufficiente (sospensione precauzionale distinta), operativo. Vietati falso hard-stop e perdita silenziosa. Usa il drawdown persistente della #631: su main c535c1d5 non e' eseguibile; il branch va ribasato sul main che contiene #631 prima della PR."
   }
  ]
 }
