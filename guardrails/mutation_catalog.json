@@ -11187,7 +11187,8 @@
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "M65: senza l'annotazione il punto d'invio non saprebbe a quale sessione appartiene la richiesta."
+      "rationale": "M65: senza l'annotazione il punto d'invio non saprebbe a quale sessione appartiene la richiesta.",
+      "equivalent": "Dal ciclo 23 (PF-OWNER-PR631-C23-P1-P2-GO-20261113, Codex P1) la sessione d'ammissione e' annotata sul comando gia' alla registrazione del fence (`_register_queued_entry_fence`), sullo stesso oggetto pubblicato che il motore normalizza: la richiesta al punto d'invio porta gia' `admission_session` anche senza l'annotazione del verdetto, quindi l'esito osservabile e' identico. Verificato da test_m65_session_change_between_the_fence_check_and_the_send_point_blocks_the_order (la sessione arriva al punto d'invio) e dai test c23 della doppia consegna. L'annotazione del verdetto resta come seconda difesa; la prima e' coperta da c23_admission_session_not_stamped_at_registration (ucciso)."
     },
     {
       "id": "m65_engine_send_point_without_request",
