@@ -80,9 +80,18 @@ class _Bus:
 
 
 class _Db:
+    def __init__(self):
+        self.settings = {}                      # PR-03a: lo stato dell'hard-stop D-1 si salva (RO-DD-08)
+
     @staticmethod
     def _execute(*_args, **_kwargs):
         return None
+
+    def get_settings(self):
+        return dict(self.settings)
+
+    def save_settings(self, values):
+        self.settings.update(values)
 
     @staticmethod
     def get_pending_sagas():

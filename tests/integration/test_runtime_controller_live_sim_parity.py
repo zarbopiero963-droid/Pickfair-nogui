@@ -21,6 +21,16 @@ class _Bus:
 
 
 class _DB:
+    # D-1: il picco dell'hard-stop si persiste nei settings (senza persistenza => ingressi negati, fail-closed)
+    def __init__(self):
+        self._settings = {}
+
+    def get_settings(self):
+        return dict(self._settings)
+
+    def save_settings(self, payload):
+        self._settings.update(dict(payload or {}))
+
     def _execute(self, *_args, **_kwargs):
         return None
     def _fetch_one(self, *_args, **_kwargs):
@@ -206,6 +216,8 @@ def test_runtime_controller_routing_parity(simulation_mode):
     bus = _Bus()
     rc = RuntimeController(bus=bus, db=_DB(), settings_service=_Settings(), betfair_service=_Betfair(), telegram_service=_Telegram())
     rc.mode = RuntimeMode.ACTIVE
+    # RO-DD-05: `max_drawdown_hard_stop_pct` (configurato da _Settings) vale anche in SIM e richiede la cassa verificata
+    rc.risk_desk.cash_equity_current = 1000.0
     rc.duplication_guard = type("DG", (), {"build_event_key": staticmethod(lambda s: "1.2:11:BACK:default"), "is_duplicate": staticmethod(lambda _k: False), "register": staticmethod(lambda _k: None)})()
     rc.mm.calculate = lambda **_kw: type("D", (), {"approved": True, "recommended_stake": 4.0, "table_id": 1, "reason": "ok", "desk_mode": DeskMode.NORMAL, "metadata": {}})()
 
@@ -238,6 +250,8 @@ def test_runtime_controller_preserves_origin_metadata_passthrough(meta_field, me
         telegram_service=_Telegram(),
     )
     rc.mode = RuntimeMode.ACTIVE
+    # RO-DD-05: `max_drawdown_hard_stop_pct` (configurato da _Settings) vale anche in SIM e richiede la cassa verificata
+    rc.risk_desk.cash_equity_current = 1000.0
     rc.duplication_guard = type(
         "DG",
         (),
@@ -291,6 +305,8 @@ def test_runtime_controller_accepts_telegram_boundary_marker_without_contract_dr
         telegram_service=_Telegram(),
     )
     rc.mode = RuntimeMode.ACTIVE
+    # RO-DD-05: `max_drawdown_hard_stop_pct` (configurato da _Settings) vale anche in SIM e richiede la cassa verificata
+    rc.risk_desk.cash_equity_current = 1000.0
     rc.duplication_guard = type(
         "DG",
         (),
@@ -363,6 +379,8 @@ def test_telegram_routing_markers_survive_runtime_to_risk_to_trading_intake_path
         telegram_service=_Telegram(),
     )
     rc.mode = RuntimeMode.ACTIVE
+    # RO-DD-05: `max_drawdown_hard_stop_pct` (configurato da _Settings) vale anche in SIM e richiede la cassa verificata
+    rc.risk_desk.cash_equity_current = 1000.0
     rc.duplication_guard = type(
         "DG",
         (),
@@ -448,6 +466,8 @@ def test_runtime_controller_rejects_signal_when_copy_and_pattern_meta_are_both_p
         telegram_service=_Telegram(),
     )
     rc.mode = RuntimeMode.ACTIVE
+    # RO-DD-05: `max_drawdown_hard_stop_pct` (configurato da _Settings) vale anche in SIM e richiede la cassa verificata
+    rc.risk_desk.cash_equity_current = 1000.0
 
     signal = {
         "market_id": "1.2",
@@ -487,6 +507,8 @@ def test_duplication_lock_released_on_table_allocation_failure():
         telegram_service=_Telegram(),
     )
     rc.mode = RuntimeMode.ACTIVE
+    # RO-DD-05: `max_drawdown_hard_stop_pct` (configurato da _Settings) vale anche in SIM e richiede la cassa verificata
+    rc.risk_desk.cash_equity_current = 1000.0
     # Force allocate to always return None regardless of table_count
     rc.table_manager.allocate = lambda **_kw: None
 
@@ -528,6 +550,8 @@ def test_duplication_lock_released_on_mm_rejection():
         telegram_service=_Telegram(),
     )
     rc.mode = RuntimeMode.ACTIVE
+    # RO-DD-05: `max_drawdown_hard_stop_pct` (configurato da _Settings) vale anche in SIM e richiede la cassa verificata
+    rc.risk_desk.cash_equity_current = 1000.0
 
     # Override MM to always reject without triggering LOCKDOWN
     rc.mm.calculate = lambda **_kw: type(
@@ -1406,6 +1430,8 @@ def test_runtime_controller_legacy_non_canonical_close_is_hard_rejected_fail_clo
         telegram_service=_Telegram(),
     )
     rc.mode = RuntimeMode.ACTIVE
+    # RO-DD-05: `max_drawdown_hard_stop_pct` (configurato da _Settings) vale anche in SIM e richiede la cassa verificata
+    rc.risk_desk.cash_equity_current = 1000.0
     rc.betfair_service.get_account_funds = lambda: {"available": 150.0, "exposure": 0.0}
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -1556,6 +1582,8 @@ def test_runtime_controller_logs_structured_context_for_non_canonical_settlement
         telegram_service=_Telegram(),
     )
     rc.mode = RuntimeMode.ACTIVE
+    # RO-DD-05: `max_drawdown_hard_stop_pct` (configurato da _Settings) vale anche in SIM e richiede la cassa verificata
+    rc.risk_desk.cash_equity_current = 1000.0
     rc.betfair_service.get_account_funds = lambda: {"available": 200.0, "exposure": 0.0}
     rc.risk_desk.sync_bankroll(150.0)
 
@@ -1595,6 +1623,8 @@ def test_runtime_controller_rejected_settlement_boundary_is_fail_closed_and_does
         telegram_service=_Telegram(),
     )
     rc.mode = RuntimeMode.ACTIVE
+    # RO-DD-05: `max_drawdown_hard_stop_pct` (configurato da _Settings) vale anche in SIM e richiede la cassa verificata
+    rc.risk_desk.cash_equity_current = 1000.0
     rc.betfair_service.get_account_funds = lambda: {"available": 500.0, "exposure": 0.0}
     rc.risk_desk.sync_bankroll(500.0)
 

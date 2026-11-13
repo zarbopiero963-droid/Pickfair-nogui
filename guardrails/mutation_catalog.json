@@ -115,7 +115,7 @@
       "module": "core.validators",
       "area": "lay_liability",
       "file": "core/validators.py",
-      "original": "    return importo * (order_price(price) - 1.0)",
+      "original": "    return float(money_decimal(importo) * (money_decimal(order_price(price)) - Decimal(1)))",
       "mutated": "    return importo",
       "tests": [
         "tests/acceptance/test_issue437_pr28.py",
@@ -140,8 +140,8 @@
       "module": "core.validators",
       "area": "exposure",
       "file": "core/validators.py",
-      "original": "    if exceeds_cap(total_exposure + order_risk, cap):",
-      "mutated": "    if exceeds_cap(order_risk, cap):",
+      "original": "    if exceeds_cap((total_exposure, order_risk), cap):",
+      "mutated": "    if exceeds_cap((order_risk,), cap):",
       "tests": [
         "tests/acceptance/test_issue437_pr28.py",
         "tests/unit/test_runtime_controller_best_price_direct.py",
@@ -154,8 +154,8 @@
       "module": "core.money_management",
       "area": "exposure",
       "file": "core/money_management.py",
-      "original": "        if validators.exceeds_cap(current_total_exposure + external + exposure, max_total):",
-      "mutated": "        if validators.exceeds_cap(external + exposure, max_total):",
+      "original": "        if validators.exceeds_cap((current_total_exposure, external, exposure), max_total):",
+      "mutated": "        if validators.exceeds_cap((external, exposure), max_total):",
       "tests": [
         "tests/core/test_money_management_caps_and_malformed.py"
       ],
@@ -166,7 +166,7 @@
       "module": "core.money_management",
       "area": "exposure",
       "file": "core/money_management.py",
-      "original": "        if validators.exceeds_cap(event_current_exposure + exposure, max_event):",
+      "original": "        if validators.exceeds_cap((event_current_exposure, exposure), max_event):",
       "mutated": "        if False:",
       "tests": [
         "tests/core/test_money_management_caps_and_malformed.py"
@@ -2156,8 +2156,8 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "                self._instance_teardown_pending = not smontato\n                self._release_runtime_instance_lock_if_stopped()",
-      "mutated": "                self._instance_teardown_pending = not smontato",
+      "original": "                self._release_runtime_instance_lock_if_stopped()\n        status = self.get_status()",
+      "mutated": "        status = self.get_status()",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
@@ -2168,7 +2168,7 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "            if self._teardown_failed_start():\n                self._release_runtime_instance_lock_if_stopped()\n            raise",
+      "original": "            if self._teardown_failed_start():\n                self._end_failed_start_drawdown()\n                self._release_runtime_instance_lock_if_stopped()\n            raise",
       "mutated": "            raise",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
@@ -2228,8 +2228,8 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "            if self._teardown_failed_start():\n                self._release_runtime_instance_lock_if_stopped()",
-      "mutated": "            if True:\n                self._release_runtime_instance_lock_if_stopped()",
+      "original": "            if self._teardown_failed_start():\n                self._end_failed_start_drawdown()\n                self._release_runtime_instance_lock_if_stopped()\n            raise",
+      "mutated": "            if True:\n                self._end_failed_start_drawdown()\n                self._release_runtime_instance_lock_if_stopped()\n            raise",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
@@ -3193,8 +3193,8 @@
       "module": "core.money_management",
       "area": "money_management",
       "file": "core/money_management.py",
-      "original": "        if validators.exceeds_cap(current_total_exposure + external + exposure, max_total):",
-      "mutated": "        if validators.exceeds_cap(current_total_exposure + exposure, max_total):",
+      "original": "        if validators.exceeds_cap((current_total_exposure, external, exposure), max_total):",
+      "mutated": "        if validators.exceeds_cap((current_total_exposure, exposure), max_total):",
       "tests": [
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
@@ -9760,6 +9760,1507 @@
         "tests/blackbox/test_bb1g_gates.py"
       ],
       "rationale": "Sol su #630 (b9530e72): un cancel accettato dopo end_session e bufferizzato da un guasto transitorio andrebbe perso alla chiusura anche a registro guarito."
+    },
+    {
+      "id": "d1_zero_cash_not_a_loss",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "    return amount if amount >= 0 else None\n",
+      "mutated": "    return amount if amount > 0 else None\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su dc2f5f25: una cassa verificata a 0 verrebbe scartata e la perdita totale non si memorizzerebbe: dopo una ricarica gli ingressi riprenderebbero senza sblocco owner."
+    },
+    {
+      "id": "d1_empty_account_skips_hard_stop",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                elif verifica[\"reason\"] == \"CASH_NOT_POSITIVE\":\n                    self._evaluate_drawdown_hard_stop(0.0, read_at, scope=scope)\n",
+      "mutated": "                elif False:\n                    self._evaluate_drawdown_hard_stop(0.0, read_at, scope=scope)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su dc2f5f25: il conto letto vuoto (disponibile 0, impegnato 0) non arriverebbe all'hard-stop: perdita totale mai memorizzata."
+    },
+    {
+      "id": "d1_session_closed_after_lock_release",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    self._close_drawdown_session()\n                self._release_runtime_instance_lock_if_stopped()\n",
+      "mutated": "                    pass\n                self._release_runtime_instance_lock_if_stopped()\n                self._close_drawdown_session()\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su dc2f5f25: chiusa dopo il rilascio del lock di istanza, la sessione del vecchio processo sovrascriverebbe quella del nuovo."
+    },
+    {
+      "id": "d1_zero_available_committed_skips_hard_stop",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                if verifica[\"ok\"]:\n                    self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at, scope=scope)\n",
+      "mutated": "                if False:\n                    self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at, scope=scope)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su dc2f5f25: disponibile 0 con impegnato (cassa verificata 85 dopo picco 100) non arriverebbe all'hard-stop: perdita 15 mai memorizzata."
+    },
+    {
+      "id": "d1_controller_entries_skip_persist_gate",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                         or RuntimeController._drawdown_persist_block_reason(self))\n",
+      "mutated": "                         or \"\")\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex/Grok/Claude D su dc2f5f25: bet manuale e Dutching passerebbero con picco non persistito o baseline non confermata dopo un crash."
+    },
+    {
+      "id": "d1_stale_marker_overrides_db",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            records = [r for r in records if r[\"seq\"] == latest]\n",
+      "mutated": "            records = records\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex/Grok/Claude D su dc2f5f25: un marker vecchio non rimosso resusciterebbe un superamento gia' sbloccato dall'owner."
+    },
+    {
+      "id": "d1_unreadable_state_admits_controller_entries",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            # (anche manuale/Dutching senza hard-stop configurati), mai sovrascritto.\n            return \"drawdown_stato_illeggibile\"\n",
+      "mutated": "            # (anche manuale/Dutching senza hard-stop configurati), mai sovrascritto.\n            pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 92155c24: con stato del picco illeggibile e nessun hard-stop, bet manuale e Dutching passerebbero con picco sconosciuto."
+    },
+    {
+      "id": "d1_relaxing_transition_written_to_marker",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                if marker and marker_fallback:\n",
+      "mutated": "                if marker:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 92155c24: uno sblocco owner fallito col DB giu' finirebbe nel marker come record piu' recente e al riavvio il superamento sparirebbe."
+    },
+    {
+      "id": "d1_start_without_state_reload",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        self._reload_drawdown_state()\n        # D-631-15",
+      "mutated": "        # D-631-15",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 92155c24: lo START scriverebbe lo stato vecchio costruito prima di diventare proprietario, sovrascrivendo picco e superamento del processo precedente."
+    },
+    {
+      "id": "d1_restore_writes_before_ownership",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if not reconcile:\n                return\n",
+      "mutated": "            pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 58e635e6: la lettura alla costruzione, prima del lock di istanza, migrerebbe il marker nel DB sovrascrivendo un record piu' recente del proprietario attuale."
+    },
+    {
+      "id": "d1_entry_reading_skips_hard_stop",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        self._evaluate_entry_reading_drawdown(funds, started_at)\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 58e635e6: con la cassa del desk gia' verificata la lettura fresca d'ingresso non arriverebbe all'hard-stop: ordine al broker oltre il limite."
+    },
+    {
+      "id": "d1_entry_funds_gate_ignores_breach",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if stop is not None and stop.breached:              # memorizzato anche dalla lettura d'ingresso (Codex)\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 58e635e6: il gate fondi del percorso manuale/Dutching ignorerebbe un superamento memorizzato dalla sua stessa lettura."
+    },
+    {
+      "id": "d1_stop_closes_unowned_session",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if not getattr(self, \"_drawdown_session_owned\", False):\n                return\n",
+      "mutated": "            pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 58e635e6: un controller mai avviato o un secondo STOP chiuderebbero la sessione del proprietario attuale, cancellandone picco e superamento."
+    },
+    {
+      "id": "d1_baseline_never_refreshed",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            else:\n                self.baseline_verified = True\n",
+      "mutated": "            else:\n                pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 58e635e6: una baseline letta durante la sessione di un altro processo resterebbe non verificata dopo il suo STOP pulito (blocco permanente senza crash)."
+    },
+    {
+      "id": "d1_reload_ignores_newer_owner_clearance",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            elif newer and self.breached:\n",
+      "mutated": "            elif False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 53c99ceb: un superamento letto alla costruzione resterebbe dopo uno sblocco owner durevole di un altro processo e verrebbe riscritto sopra lo sblocco."
+    },
+    {
+      "id": "d1_non_owner_writes_drawdown_state",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if stopped and not owned:\n            return \"drawdown_controller_non_proprietario\"\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 53c99ceb: un controller mai avviato scriverebbe lo stato dell'hard-stop leggendo il conto per lo stato, sovrascrivendo picco e superamento del proprietario."
+    },
+    {
+      "id": "d1_gate_uses_stale_desk_cash",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        return getattr(self, \"_drawdown_last_cash\", cash)\n",
+      "mutated": "        return cash\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 53c99ceb/96b03d7e: il gate confronterebbe il picco alzato da una lettura con la cassa piu' vecchia del desk: falso superamento (30 invece di 15) e blocco persistente."
+    },
+    {
+      "id": "d1_lockdown_ignores_entry_cash",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            pct = stop.loss_pct(self._drawdown_gate_cash())   # Sol su 4a171465: anche la lettura d'ingresso piu' recente\n",
+      "mutated": "            pct = stop.loss_pct(getattr(getattr(self, \"risk_desk\", None), \"cash_equity_current\", None))\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 4a171465: la misura di DEFENSE/LOCKDOWN ignorerebbe la lettura d'ingresso piu' recente (0 % invece di 21 %)."
+    },
+    {
+      "id": "d1_stale_reading_evaluated",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                if (last is not None and started <= last) or (confirmed_at is not None and started < confirmed_at):\n                    self._observe_late_drawdown_reading(cassa, started)\n                    return\n                self._drawdown_read_at = started\n",
+      "mutated": "                self._drawdown_read_at = started\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 4a171465: una lettura vecchia arrivata tardi memorizzerebbe una perdita falsa contro un picco piu' recente."
+    },
+    {
+      "id": "d1_restart_drops_clearance_history",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            elif not self.breached or newer:\n",
+      "mutated": "            elif False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 4a171465: dopo un riavvio un operation_id di sblocco gia' consumato tornerebbe valido."
+    },
+    {
+      "id": "d1_restore_ignores_newer_rebase",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            epoch = max([self.peak_epoch] + [r[\"peak_epoch\"] for r in records + stale])\n",
+      "mutated": "            epoch = self.peak_epoch\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 4a171465 / Sol su 6d4ac43f: un controller costruito prima ignorerebbe il ribasamento owner del picco (anche se poi risalito) e valuterebbe un superamento falso sulla vecchia baseline."
+    },
+    {
+      "id": "d1_drawdown_eval_not_serialized",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            if scope is not _DRAWDOWN_SCOPE_UNSET and scope is not None:",
+      "mutated": "        with contextlib.nullcontext():\n            if scope is not _DRAWDOWN_SCOPE_UNSET and scope is not None:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 6d4ac43f: una lettura d'ingresso vecchia supererebbe il controllo dell'istante, verrebbe sorpassata da una piu' nuova e registrerebbe una perdita falsa."
+    },
+    {
+      "id": "d1_failed_rebase_advances_epoch",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                self.peak, self.breach, self.peak_epoch = old_peak, old_breach, old_epoch\n",
+      "mutated": "                self.peak, self.breach = old_peak, old_breach\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Un ribasamento non salvato avanzerebbe l'epoca in memoria: i record della baseline vera verrebbero scartati come vecchi."
+    },
+    {
+      "id": "d1_entry_gate_writes_from_non_owner",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                return write_block                          # Grok su 6d4ac43f: reason() salverebbe il picco\n",
+      "mutated": "                pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Grok su 6d4ac43f: il gate manuale/Dutching di un controller non proprietario salverebbe il picco e sovrascriverebbe il record del proprietario."
+    },
+    {
+      "id": "d1_non_owner_retries_persist",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if RuntimeController._drawdown_write_block(self):\n                # Grok su 6d4ac43f",
+      "mutated": "            if False:\n                # Grok su 6d4ac43f",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Grok su 6d4ac43f: un controller non proprietario ritenterebbe il salvataggio del picco sul record del proprietario."
+    },
+    {
+      "id": "d1_gate_evaluation_not_serialized",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            write_block = RuntimeController._drawdown_write_block(self)\n",
+      "mutated": "        with contextlib.nullcontext():\n            write_block = RuntimeController._drawdown_write_block(self)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su b9cbe0d7: fra la scelta della cassa e la valutazione del gate una lettura concorrente alzerebbe il picco: perdita falsa e blocco persistente."
+    },
+    {
+      "id": "d1_manual_gate_skips_ownership",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        persist_block = (RuntimeController._drawdown_write_block(self)          # Grok su b9cbe0d7: anche senza cap\n",
+      "mutated": "        persist_block = (\"\"\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Grok su b9cbe0d7: senza cap il gate manuale/Dutching di un controller non proprietario ammetterebbe l'ingresso."
+    },
+    {
+      "id": "d1_rebase_replayable",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if op in self.rebase_ops:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Grok su b9cbe0d7: un replay del ribasamento owner riabbasserebbe il picco e scarterebbe un massimo successivo."
+    },
+    {
+      "id": "d1_cash_float_sum",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        cash = float(validators.money_decimal(available) + validators.money_decimal(committed))\n",
+      "mutated": "        cash = available + committed\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su b9cbe0d7: la somma in float ritarderebbe l'hard-stop sulla soglia esatta (9.99999999999999 invece di 10)."
+    },
+    {
+      "id": "d1_pct_not_serialized",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:          # Codex su 2a847087: cassa e picco coerenti\n",
+      "mutated": "        with contextlib.nullcontext():\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Codex su 2a847087: la misura di DEFENSE/LOCKDOWN confronterebbe una cassa vecchia con un picco alzato in parallelo: LOCKDOWN fittizio."
+    },
+    {
+      "id": "d1_stop_does_not_wait_drawdown_write",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            self._drawdown_start_owned = False             # da qui nessun'altra scrittura dello stato del drawdown\n",
+      "mutated": "        with contextlib.nullcontext():\n            self._drawdown_start_owned = False             # da qui nessun'altra scrittura dello stato del drawdown\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 2a847087: una scrittura del drawdown gia' ammessa finirebbe dopo lo STOP e il rilascio del lock d'istanza, sovrascrivendo il nuovo proprietario."
+    },
+    {
+      "id": "d1_owner_procedure_without_ownership",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            block = RuntimeController._drawdown_write_block(self)\n            if block:\n                out[\"reason\"] = block\n                return out\n            stop = RuntimeController._hard_stop(self)\n            stop.restore(reconcile=True)\n            if not stop.snapshot()[\"breached\"]:",
+      "mutated": "            stop = RuntimeController._hard_stop(self)\n            if not stop.snapshot()[\"breached\"]:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 2a847087: un controller fermo con stato vecchio sbloccherebbe sovrascrivendo picco e sessione del runtime attivo."
+    },
+    {
+      "id": "d1_reload_owns_before_restore",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            stop.restore(reconcile=True)\n            # D-631-10: finestra delle letture aperta adesso, con il picco appena riletto come base: ogni lettura di\n            # questa sessione (a cominciare da quella dei fondi dello START) inizia dopo.\n            stop.open_window(time.monotonic())\n            self._drawdown_start_owned = True\n",
+      "mutated": "            self._drawdown_start_owned = True\n            stop.restore(reconcile=True)\n            # D-631-10: finestra delle letture aperta adesso, con il picco appena riletto come base: ogni lettura di\n            # questa sessione (a cominciare da quella dei fondi dello START) inizia dopo.\n            stop.open_window(time.monotonic())\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Audit ciclo 8: la proprieta' data prima della rilettura permetterebbe a una lettura concorrente di scrivere lo stato vecchio sul record del proprietario precedente."
+    },
+    {
+      "id": "d1_failed_start_leaves_session_open",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if getattr(self, \"mode\", RuntimeMode.STOPPED) is RuntimeMode.STOPPED:\n            self._close_drawdown_session()\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Audit ciclo 8: un avvio fallito lascerebbe la sessione aperta e il riavvio chiederebbe senza motivo la conferma owner della baseline."
+    },
+    {
+      "id": "d1_foreign_lease_ignored",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                and RuntimeController._runtime_lease_recorded(self):\n",
+      "mutated": "                and False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Audit ciclo 8: un controller mai avviato uscito da STOPPED scriverebbe lo stato del drawdown mentre un altro runtime tiene la lease."
+    },
+    {
+      "id": "d1_own_session_read_as_crash",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if self.session_open and not newer:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Audit ciclo 8: la rilettura durante la propria sessione attiva (sblocco owner) renderebbe la baseline non verificata: blocco ingiustificato."
+    },
+    {
+      "id": "d1_stale_instance_closes_session",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if perso:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sol su 96b03d7e: lo STOP di un'istanza che ha perso l'autorita' scriverebbe la chiusura della sessione sul record del nuovo proprietario."
+    },
+    {
+      "id": "d1_stale_marker_removed_without_persist",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                if self.peak is not None and (not durable or self.peak > max(durable)):",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Marker superato con picco piu' alto rimosso senza salvare il picco nel DB: un crash lo perde."
+    },
+    {
+      "id": "d1_stale_marker_always_rewrites_db",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                if self.peak is not None and (not durable or self.peak > max(durable)):",
+      "mutated": "                if True:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Marker superato senza nulla in piu': il record del DB viene riscritto comunque."
+    },
+    {
+      "id": "d1_fenced_writer_writes_marker",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if isinstance(exc, RuntimeFenceViolation):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Istanza superata (scrittura rifiutata dal fencing) pubblica il proprio stato nel marker."
+    },
+    {
+      "id": "d1_late_reading_discarded",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    self._observe_late_drawdown_reading(cassa, started)\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Lettura tardiva scartata anche come massimo: 130 arrivato dopo 115 non blocca (D-631-08)."
+    },
+    {
+      "id": "d1_late_reading_ignores_rebase",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                if rebased_at is not None and started < rebased_at:",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Lettura iniziata prima di un ribasamento owner (tardiva o no) rialza il picco ribasato: falso hard-stop."
+    },
+    {
+      "id": "d1_rebase_instant_not_recorded",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self.rebased_at = time.monotonic()\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Il ribasamento owner non registra il proprio istante: le letture precedenti rialzano il picco."
+    },
+    {
+      "id": "d1_mark_uncertain_outside_owner_section",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            uncertain = self._uncertain_reservations_map()",
+      "mutated": "        if True:\n            uncertain = self._uncertain_reservations_map()",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Un ordine puo' diventare AMBIGUOUS in mezzo a una transizione owner (D-631-09)."
+    },
+    {
+      "id": "d1_owner_unlock_stale_order_checks",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            checks = self._owner_drawdown_checks()\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_clear_breach(",
+      "mutated": "            checks = dict(self._owner_drawdown_checks(), uncertain_orders=[])\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_clear_breach(",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Lo sblocco owner non vede gli ordini incerti presenti al momento della transizione."
+    },
+    {
+      "id": "d1_owner_baseline_stale_order_checks",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            checks = self._owner_drawdown_checks()\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_confirm_baseline(",
+      "mutated": "            checks = dict(self._owner_drawdown_checks(), uncertain_orders=[])\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_confirm_baseline(",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "La conferma della baseline non vede gli ordini incerti presenti al momento della transizione."
+    },
+    {
+      "id": "d1_late_desk_reading_dropped_before_hard_stop",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if verifica[\"ok\"]:\n                self._evaluate_drawdown_hard_stop(verifica[\"cash\"], read_at, scope=scope)\n            return False",
+      "mutated": "            return False",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "La lettura tardiva scartata dal desk non arriva all'hard-stop: il massimo osservato si perde (Sol su 9209f0d8)."
+    },
+    {
+      "id": "d1_timeline_not_evaluated",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        esito = stop.evaluate_late(cap, started, cassa, pct_cap_raw=pct_cap)\n",
+      "mutated": "        esito = \"\"\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "La lettura tardiva non si valuta con la cronologia: calo transitorio perso (D-631-10)."
+    },
+    {
+      "id": "d1_late_reading_not_in_timeline",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self._store_locked(at, cash)\n            epoch = self.peak_epoch\n",
+      "mutated": "            epoch = self.peak_epoch\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "La lettura tardiva non entra nella cronologia: i suoi effetti sulle letture successive si perdono."
+    },
+    {
+      "id": "d1_current_reading_not_in_timeline",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                RuntimeController._hard_stop(self).record_reading(started, cassa, may_open=True)\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Le letture correnti non fanno da massimo per le tardive: calo transitorio perso (D-631-10)."
+    },
+    {
+      "id": "d1_timeline_against_later_peak",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if reference is not None and ref_exact and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, reference):",
+      "mutated": "        if reference is not None and ref_exact and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, self.peak):",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Lettura tardiva confrontata con il massimo globale (anche successivo): falso drawdown."
+    },
+    {
+      "id": "d1_timeline_running_max_not_raised",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if check_after and low is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, low, cash):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Un massimo tardivo non rende reale un calo successivo gia' conservato."
+    },
+    {
+      "id": "d1_rebase_keeps_previous_timeline",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self._open_window_locked(self.rebased_at)    # le letture dell'epoca precedente non fanno piu' da massimo\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Dopo un ribasamento owner i massimi dell'epoca precedente restano nella cronologia: falso drawdown."
+    },
+    {
+      "id": "d1_timeline_window_not_opened_at_start",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            stop.open_window(time.monotonic())\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Finestra delle letture non riaperta allo START dopo la rilettura dello stato."
+    },
+    {
+      "id": "d1_timeline_history_unbounded",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        while len(self._history) > RECENT_READINGS_LIMIT:",
+      "mutated": "        while False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Letture recenti senza limite di memoria."
+    },
+    {
+      "id": "d1_late_reading_before_window_compared",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if at < self._window_open:\n            return self._window_base, False",
+      "mutated": "        if at < self._window_open:\n            return self._window_base, True",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Lettura precedente alla storia conservata confrontata come se il limite noto fosse il picco esatto: falso drawdown."
+    },
+    {
+      "id": "d1_insufficient_history_ignored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if reference is not None and not ref_exact and self._limit_exceeded(cap_raw, pct_cap_raw, cash, reference):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-11: lettura non valutabile scartata in silenzio (PASS)."
+    },
+    {
+      "id": "d1_insufficient_history_ignored_for_a_late_maximum",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if check_after and not low_exact and self._limit_exceeded(cap_raw, pct_cap_raw, Decimal(0), cash):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-11: massimo precedente alla storia conservata scartato in silenzio."
+    },
+    {
+      "id": "d1_insufficient_history_does_not_block",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        return stop.baseline_block_reason() or stop.history_block_reason()",
+      "mutated": "        return stop.baseline_block_reason()",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Storia insufficiente registrata ma ingressi ancora ammessi."
+    },
+    {
+      "id": "d1_insufficient_history_lost_on_restart",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if gaps:                                     # come il superamento: rileggere non lo cancella mai\n                self.history_insufficient = dict(gaps[0][\"history_insufficient\"])",
+      "mutated": "            if gaps:                                     # come il superamento: rileggere non lo cancella mai\n                self.history_insufficient = {}",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Crash/riavvio/subentro cancellano lo stato di storia insufficiente."
+    },
+    {
+      "id": "d1_insufficient_history_cleared_by_start",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        self._ladder = []\n        self._valleys = []\n\n    def open_window",
+      "mutated": "        self._ladder = []\n        self._valleys = []\n        self.history_insufficient = {}\n\n    def open_window",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Un nuovo START (finestra riaperta) cancella lo stato di storia insufficiente."
+    },
+    {
+      "id": "d1_evicted_maxima_lost",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self._ladder_insert_locked(t0, c0)\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "I massimi usciti dalle letture recenti si perdono: tardiva fra due massimi valutata male."
+    },
+    {
+      "id": "d1_evicted_minima_lost",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self._valley_insert_locked(t0, c0)\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "I minimi usciti si perdono: un massimo tardivo non rende reale un calo successivo uscito."
+    },
+    {
+      "id": "d1_same_instant_counted_as_before",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if t >= at:\n                break\n            if cash > 0 and (best is None or cash > best):\n                best = cash\n        return best, True",
+      "mutated": "            if t > at:\n                break\n            if cash > 0 and (best is None or cash > best):\n                best = cash\n        return best, True",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Letture dello stesso istante trattate come precedenti: falso drawdown fra letture concorrenti."
+    },
+    {
+      "id": "d1_proof_counts_same_instant_as_before",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if t >= at:\n                break\n            if cash > 0 and (best is None or cash > best):\n                best = cash\n        return best\n",
+      "mutated": "            if t > at:\n                break\n            if cash > 0 and (best is None or cash > best):\n                best = cash\n        return best\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S19-A: una lettura allo stesso istante varrebbe come massimo PRECEDENTE (prova di un calo inesistente)."
+    },
+    {
+      "id": "d1_same_instant_counted_as_after",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if t > at and (low is None or cash < low):",
+      "mutated": "            if t >= at and (low is None or cash < low):",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Letture dello stesso istante trattate come successive: falso drawdown fra letture concorrenti."
+    },
+    {
+      "id": "d1_window_not_advanced_on_compaction",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self._window_open = max(self._window_open, math.nextafter(t0, math.inf))\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Compattazione senza avanzare il confine: letture precedenti confrontate con massimi successivi."
+    },
+    {
+      "id": "d1_summary_unbounded",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        while len(self._ladder) + len(self._valleys) > SUMMARY_LIMIT:",
+      "mutated": "        while False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Riepilogo dei massimi/minimi senza limite di memoria."
+    },
+    {
+      "id": "d1_window_without_peak_inexact",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        self._window_open = float(at) if self.peak is not None else -math.inf",
+      "mutated": "        self._window_open = float(at)",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Finestra senza picco precedente trattata come storia mancante: letture note valutate solo col limite."
+    },
+    {
+      "id": "d1_insufficient_history_owner_clear_without_checks",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            checks = self._owner_drawdown_checks()\n            checks[\"fresh_cash\"] = fresh_cash.get(\"cash\")\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_clear_history_insufficient(",
+      "mutated": "            checks = dict(self._owner_drawdown_checks(), uncertain_orders=[])\n            checks[\"fresh_cash\"] = fresh_cash.get(\"cash\")\n            out[\"checks\"] = checks\n            out[\"reason\"] = self._owner_drawdown_checks_block(checks)\n            if out[\"reason\"]:\n                return out\n            if not stop.owner_clear_history_insufficient(",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sblocco owner della storia insufficiente senza la verifica degli ordini AMBIGUOUS."
+    },
+    {
+      "id": "d1_owner_clear_keeps_old_history",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            self._close_history_locked()\n            logger.warning(\"D-1: hard-stop sbloccato",
+      "mutated": "            logger.warning(\"D-1: hard-stop sbloccato",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Dopo lo sblocco owner una lettura iniziata prima fa rinascere il superamento sbloccato (Sol/Codex su b76466a3)."
+    },
+    {
+      "id": "d1_close_history_without_cutoff",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        self.rebased_at = time.monotonic()\n        self._open_window_locked(self.rebased_at)\n\n    def _mark_baseline_confirmed_locked",
+      "mutated": "        self._open_window_locked(time.monotonic())\n\n    def _mark_baseline_confirmed_locked",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Sblocco owner senza istante di taglio: letture iniziate prima ancora valutate."
+    },
+    {
+      "id": "d1_prewindow_reading_skips_later_dips",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        check_after = cash > 0 and (not ref_exact or reference is None or cash > reference)",
+      "mutated": "        check_after = cash > 0 and (reference is None or cash > reference)",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-12: lettura precedente alla storia conservata sotto il limite superiore: il calo successivo uscito dalla memoria passa in silenzio."
+    },
+    {
+      "id": "d1_queued_entry_skips_drawdown_block",
+      "module": "core.trading_engine",
+      "area": "money_management",
+      "file": "core/trading_engine.py",
+      "original": "                if isinstance(drawdown_block, str) and drawdown_block:\n                    raise _ErrorePrimaDellInvio(f\"DRAWDOWN_ENTRY_BLOCKED:{drawdown_block}\")",
+      "mutated": "                if False:\n                    raise _ErrorePrimaDellInvio(f\"DRAWDOWN_ENTRY_BLOCKED:{drawdown_block}\")",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-13: un ingresso in coda parte dopo l'hard-stop."
+    },
+    {
+      "id": "d1_entry_block_ignores_breach",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if stop.breached:\n                return stop.reason(None, None)\n            mode = getattr(self, \"mode\", None)\n",
+      "mutated": "            mode = getattr(self, \"mode\", None)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-13: il ricontrollo d'invio non vede il superamento memorizzato."
+    },
+    {
+      "id": "d1_entry_block_ignores_persist_and_history",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                return \"ingresso_di_sessione_precedente\"\n            return RuntimeController._drawdown_persist_block_reason(self)\n",
+      "mutated": "                return \"ingresso_di_sessione_precedente\"\n            return \"\"\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-13: il ricontrollo d'invio non vede storia insufficiente / picco non persistito."
+    },
+    {
+      "id": "d1_lease_released_or_expired_allows_write",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        return isinstance(row, dict)\n",
+      "mutated": "        return isinstance(row, dict) and (validators.finite_number(row.get(\"expires_at\")) or 0) >= time.time()\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-18: dopo lo STOP del proprietario (lease rilasciata o scaduta) un controller mai avviato tornerebbe a scrivere il proprio snapshot vecchio."
+    },
+    {
+      "id": "d1_final_check_ignores_lockdown",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if mode is RuntimeMode.LOCKDOWN:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-13: un ingresso in coda partirebbe con un LOCKDOWN di altra origine attivo."
+    },
+    {
+      "id": "d1_final_check_outside_drawdown_lock",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            stop = RuntimeController._hard_stop(self)\n            if not stop.state_reliable():\n                return \"drawdown_stato_illeggibile\"\n            if stop.breached:",
+      "mutated": "        with contextlib.nullcontext():\n            stop = RuntimeController._hard_stop(self)\n            if not stop.state_reliable():\n                return \"drawdown_stato_illeggibile\"\n            if stop.breached:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-16: controllo finale e registrazione del superamento non serializzati; un superamento gia' registrato prima della risposta verrebbe ignorato."
+    },
+    {
+      "id": "d1_stale_snapshot_overwrites_newer_record",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        newer = self._newer_on_disk_locked()\n        if newer:",
+      "mutated": "        newer = self._newer_on_disk_locked()\n        if False:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-18: uno stato in memoria piu' vecchio del disco sovrascriverebbe picco e superamento salvati da un altro processo."
+    },
+    {
+      "id": "d1_baseline_confirmation_keeps_old_history",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if self._confirmed_peak is not None:\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-17: il picco confermato dall'owner non entrerebbe nella cronologia: un calo tardivo da quel picco andrebbe perso."
+    },
+    {
+      "id": "d1_pre_confirmation_reading_valued_as_current",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                if (last is not None and started <= last) or (confirmed_at is not None and started < confirmed_at):",
+      "mutated": "                if last is not None and started <= last:",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "G17-1: una lettura iniziata prima della conferma della baseline, arrivata in ordine, verrebbe confrontata col picco dichiarato: hard-stop non dimostrato."
+    },
+    {
+      "id": "d1_confirmed_peak_exact_before_its_instant",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                exact = exact and at >= confirmed_at\n",
+      "mutated": "                exact = exact\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "G17-1: il picco dichiarato varrebbe come massimo noto anche prima della conferma: hard-stop invece di storia insufficiente."
+    },
+    {
+      "id": "d1_adopted_confirmation_not_marked",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if newer and self.baseline_epoch() > old_epoch:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "G17-1: la conferma adottata da un altro processo non segnerebbe l'istante: letture precedenti valutate come correnti."
+    },
+    {
+      "id": "d1_proven_dip_downgraded_to_insufficient",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if proven is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, proven):\n            return \"breached\"",
+      "mutated": "        if False:\n            return \"breached\"",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "G17-1 (owner, caso 105): un calo dimostrato dalle letture conservate prima della conferma diventerebbe storia insufficiente invece di hard-stop."
+    },
+    {
+      "id": "d1_exact_window_max_not_proof",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if known_exact and known is not None and self._memorize_if_exceeded(cap_raw, pct_cap_raw, cash, known):\n            return \"breached\"",
+      "mutated": "        if False:\n            return \"breached\"",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S19-A (R49 caso 240): il massimo esatto della finestra (base del picco all'apertura) non proverebbe piu' il calo: storia insufficiente invece di hard-stop."
+    },
+    {
+      "id": "d1_prewindow_reading_not_kept_as_proof",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            # prima o dopo di lei), qualunque cosa sia successa fuori dalla memoria.\n        bisect.insort(self._history, (float(at), cash))",
+      "mutated": "            # prima o dopo di lei), qualunque cosa sia successa fuori dalla memoria.\n            return\n        bisect.insort(self._history, (float(at), cash))",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S19-A (R49): una lettura precedente alla finestra non resterebbe come prova: un calo dimostrato fra letture vere diventerebbe storia insufficiente."
+    },
+    {
+      "id": "d1_failed_rebase_loses_confirmed_peak",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                (self._window_open, self._window_base, self._history, self._ladder, self._valleys,\n                 self._confirmed_peak, self.baseline_confirmed_at) = old_window",
+      "mutated": "                (self._window_open, self._window_base, self._history, self._ladder, self._valleys,\n                 _x, _y) = old_window",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S19-B: un ribasamento fallito perderebbe il picco confermato (lettura tardiva senza il suo limite superiore)."
+    },
+    {
+      "id": "d1_scope_mismatch_ignored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if self.record_scope is not None and self.record_scope != self.scope:\n            return REASON_SCOPE_MISMATCH",
+      "mutated": "        if False:\n            return REASON_SCOPE_MISMATCH",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1: il picco SIM giudicherebbe il conto LIVE (falso hard-stop) e una procedura in SIM toccherebbe il LIVE."
+    },
+    {
+      "id": "d1_legacy_state_attributed_silently",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if self.scope_legacy:\n            return REASON_SCOPE_UNATTRIBUTED",
+      "mutated": "        if False:\n            return REASON_SCOPE_UNATTRIBUTED",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1: uno stato senza provenienza verrebbe attribuito d'ufficio al primo ambito che legge."
+    },
+    {
+      "id": "d1_unknown_live_account_allowed",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if not self.scope.get(\"account\"):\n            return REASON_ACCOUNT_UNKNOWN",
+      "mutated": "        if False:\n            return REASON_ACCOUNT_UNKNOWN",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1: un conto LIVE non identificabile opererebbe."
+    },
+    {
+      "id": "d1_entry_gate_ignores_scope",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        scope_block = stop.scope_block_reason()\n        if scope_block:\n            return scope_block                           # S18-1",
+      "mutated": "        scope_block = ''\n        if scope_block:\n            return scope_block                           # S18-1",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1: i gate d'ingresso (e il controllo finale) non vedrebbero lo stato di un altro ambito."
+    },
+    {
+      "id": "d1_reading_scope_not_declared_in_evaluation",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                RuntimeController._hard_stop(self).set_scope(scope)\n            # Sol su 2a847087",
+      "mutated": "                pass\n            # Sol su 2a847087",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1: una lettura verrebbe valutata nell'ambito dichiarato da un'altra lettura."
+    },
+    {
+      "id": "d1_mode_switch_keeps_stale_scope",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            RuntimeController._hard_stop(self).invalidate_scope()\n",
+      "mutated": "            pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Claude D): dopo il cambio SIM/LIVE l'ambito dichiarato resterebbe quello vecchio: un ingresso in coda partirebbe verso il nuovo client valutato contro lo stato dell'altro ambito."
+    },
+    {
+      "id": "d1_zero_available_reading_without_scope",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    self._evaluate_drawdown_hard_stop(0.0, read_at, scope=scope)",
+      "mutated": "                    self._evaluate_drawdown_hard_stop(0.0, read_at)",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Codex su 12618e75): una lettura con disponibile 0 di un altro ambito scriverebbe un superamento fittizio sul record."
+    },
+    {
+      "id": "d1_session_write_attributes_unattributed_state",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if (self.record_scope is None and not self.scope_legacy and self.scope is not None\n",
+      "mutated": "        if (self.record_scope is None and self.scope is not None\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Grok su 559b39ca): una scrittura di sessione con l'ambito gia' dichiarato attribuirebbe al conto corrente uno stato senza provenienza, togliendone la quarantena al riavvio."
+    },
+    {
+      "id": "d1_scope_check_outside_declaration_lock",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            with RuntimeController._drawdown_eval_lock:\n                if RuntimeController._drawdown_scope_is_current(self, scope):\n                    RuntimeController._hard_stop(self).set_scope(scope)\n",
+      "mutated": "            if RuntimeController._drawdown_scope_is_current(self, scope):\n                with RuntimeController._drawdown_eval_lock:\n                    RuntimeController._hard_stop(self).set_scope(scope)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Sol su 559b39ca): con la verifica della modalita' fuori dal lock un passaggio a LIVE concorrente lascerebbe dichiarato l'ambito SIM e il controllo finale ammetterebbe ingressi LIVE sullo stato SIM."
+    },
+    {
+      "id": "m65_previous_session_entry_not_rejected",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if session != RuntimeController._entry_session(self):\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M65 (PF-OWNER-PR631-CYCLE20-M65-GO-20261112): senza il confronto della sessione un ingresso ammesso prima di STOP partirebbe nella sessione successiva con fondi ed esposizione di allora."
+    },
+    {
+      "id": "m65_start_keeps_the_entry_session",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        RuntimeController._new_entry_session(self)\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M65: senza la generazione nuova allo START gli ingressi della sessione precedente resterebbero validi."
+    },
+    {
+      "id": "m65_registration_without_admission_session",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            pending.append((fence, payload, RuntimeController._entry_session(self)))\n",
+      "mutated": "            pending.append((fence, payload, 0))\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M65: la registrazione deve conservare la sessione d'ammissione, non una costante."
+    },
+    {
+      "id": "f2_mode_flag_set_after_scope_invalidation",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            self.simulation_mode = bool(enabled)\n            RuntimeController._hard_stop(self).invalidate_scope()\n",
+      "mutated": "        with RuntimeController._drawdown_eval_lock:\n            RuntimeController._hard_stop(self).invalidate_scope()\n        self.simulation_mode = bool(enabled)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "F2 (M68): con il flag di modalita' assegnato dopo l'invalidazione, fuori dal lock, una lettura SIM concorrente ridichiarerebbe l'ambito SIM e il controllo finale ammetterebbe ingressi LIVE sullo stato SIM."
+    },
+    {
+      "id": "f2_mode_flag_set_before_the_lock",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        with RuntimeController._drawdown_eval_lock:\n            self.simulation_mode = bool(enabled)\n            RuntimeController._hard_stop(self).invalidate_scope()\n",
+      "mutated": "        self.simulation_mode = bool(enabled)\n        with RuntimeController._drawdown_eval_lock:\n            RuntimeController._hard_stop(self).invalidate_scope()\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "F2 (Claude D, sonda test_d_f2_race): con il flag assegnato prima del lock il controllo finale vedrebbe il client gia' LIVE e l'ambito SIM ancora valido (ingresso ammesso sullo stato SIM) fino all'invalidazione."
+    },
+    {
+      "id": "m68_paused_or_stopped_entry_admitted",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if mode is not RuntimeMode.ACTIVE:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M68 (PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112): senza il controllo dello stato un ingresso in coda partirebbe con il bot in PAUSA o fermo."
+    },
+    {
+      "id": "m68_desk_lockdown_entry_admitted",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if desk == DeskMode.LOCKDOWN:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M68 (Sol su 4c627189): senza il controllo del desk un ingresso in coda partirebbe con il desk in LOCKDOWN (drawdown oltre la soglia del money management) e il runtime ancora ACTIVE."
+    },
+    {
+      "id": "m68_unreadable_desk_fail_open",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                return \"desk_non_verificabile\"\n",
+      "mutated": "                desk = None\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M68: uno stato del desk non leggibile deve negare l'ingresso (fail-closed), mai ammetterlo."
+    },
+    {
+      "id": "c21_equal_start_reading_treated_as_ordered",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                if (last is not None and started <= last) or (confirmed_at is not None and started < confirmed_at):\n",
+      "mutated": "                if (last is not None and started < last) or (confirmed_at is not None and started < confirmed_at):\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 21 (PF-OWNER-PR631-C21-EQUAL-TIMESTAMP-GO-20261112): una lettura iniziata nello stesso istante dell'ultima valutata andrebbe nel ramo ordinato: falso hard-stop (130 -> 115) o PASS su un calo possibile (115 -> 130)."
+    },
+    {
+      "id": "c21_same_instant_peers_ignored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        for peer in peers:\n",
+      "mutated": "        for peer in []:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 21: senza il confronto con le letture dello stesso istante un calo possibile ma non dimostrabile non diventerebbe storia insufficiente."
+    },
+    {
+      "id": "c21_same_instant_order_assumed",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            high, low_peer = (peer, cash) if peer >= cash else (cash, peer)\n",
+      "mutated": "            high, low_peer = (peer, cash)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 21: l'ordine fra letture dello stesso istante e' ignoto: il calo va considerato in entrambi i versi, non solo dalla lettura gia' conservata."
+    },
+    {
+      "id": "c21_same_instant_peers_only_recent",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            peers = [c for t, c in (*self._history, *self._ladder, *self._valleys) if t == at]\n",
+      "mutated": "            peers = [c for t, c in self._history if t == at]\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 21 (Codex su 954b226b): una gemella dello stesso istante gia' passata al riepilogo verrebbe ignorata e un calo possibile diventerebbe un PASS."
+    },
+    {
+      "id": "c21_owner_clearance_without_fresh_reading",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if not fresh_cash.get(\"ok\"):\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 21 (PF-OWNER-PR631-C21-CONTINUATION-20261112): lo sblocco della storia insufficiente senza una rilettura fresca verificata del conto resterebbe ammesso."
+    },
+    {
+      "id": "c21_owner_clearance_skips_the_fresh_reading",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        fresh = self._read_funds_for_entry()\n",
+      "mutated": "        fresh = {\"funds\": dict(getattr(self.risk_desk, \"__dict__\", {}) or {}), \"read_at\": None}\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 21 (Claude D su abbb6b3b): senza la rilettura fresca valutata come lettura ordinata il gate ripartirebbe da una cassa ambigua (l'ultima arrivata) e inventerebbe una perdita."
+    },
+    {
+      "id": "c22_breach_saved_without_its_peak",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if self.peak is None or reference > self.peak:\n                self.peak = reference\n",
+      "mutated": "            if False:\n                self.peak = reference\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 22 (PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112): senza il picco nello stesso record del superamento un crash fra le scritture lascerebbe picco 115 con superamento da 130 e lo sblocco owner perderebbe il drawdown."
+    },
+    {
+      "id": "c22_restore_ignores_the_breach_peak",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            candidates += [r[\"breach_peak\"] for r in records + stale\n",
+      "mutated": "            candidates += [] and [r[\"breach_peak\"] for r in records + stale\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 22, recovery: un record scritto prima della correzione (picco 115, superamento da 130) si rileggerebbe col picco piu' basso."
+    },
+    {
+      "id": "c22_corrupted_breach_peak_accepted",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if not breach_peak.is_finite() or breach_peak <= 0:\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 22: un picco del superamento corrotto deve rendere il record illeggibile (fail-closed)."
+    },
+    {
+      "id": "c22_rebased_breach_peak_restored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            breach_peak = None                          # ribasamento owner esplicito: il picco e' quello ribasato\n",
+      "mutated": "            pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 22: un ribasamento owner esplicito non va annullato dal recovery del picco del superamento."
+    },
+    {
+      "id": "c23_admission_session_not_stamped_at_registration",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                payload[\"admission_session\"] = RuntimeController._entry_session(self)\n",
+      "mutated": "                pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 23 (PF-OWNER-PR631-C23-P1-P2-GO-20261113, Codex P1): senza la sessione sul comando dalla registrazione una seconda consegna di un ingresso della sessione precedente arriverebbe al broker."
+    },
+    {
+      "id": "c23_gate_invents_breach_over_insufficient_history",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if history and not stop.breached:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 23 (Sol n. 2, Codex P2): con storia insufficiente il gate memorizzerebbe un hard-stop su un calo non dimostrato."
+    },
+    {
+      "id": "m65_send_point_ignores_admission_session",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    and request.get(\"admission_session\") != RuntimeController._entry_session(self)):\n",
+      "mutated": "                    and False):\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M65: senza il ricontrollo al punto d'invio un invio eseguito in ritardo dopo STOP -> START partirebbe con l'ammissione della sessione precedente."
+    },
+    {
+      "id": "m65_admission_session_not_annotated",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                request[\"admission_session\"] = session       # M65: ricontrollata al punto d'invio\n",
+      "mutated": "                pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M65: senza l'annotazione il punto d'invio non saprebbe a quale sessione appartiene la richiesta.",
+      "equivalent": "Dal ciclo 23 (PF-OWNER-PR631-C23-P1-P2-GO-20261113, Codex P1) la sessione d'ammissione e' annotata sul comando gia' alla registrazione del fence (`_register_queued_entry_fence`), sullo stesso oggetto pubblicato che il motore normalizza: la richiesta al punto d'invio porta gia' `admission_session` anche senza l'annotazione del verdetto, quindi l'esito osservabile e' identico. Verificato da test_m65_session_change_between_the_fence_check_and_the_send_point_blocks_the_order (la sessione arriva al punto d'invio) e dai test c23 della doppia consegna. L'annotazione del verdetto resta come seconda difesa; la prima e' coperta da c23_admission_session_not_stamped_at_registration (ucciso)."
+    },
+    {
+      "id": "m65_engine_send_point_without_request",
+      "module": "core.trading_engine",
+      "area": "money_management",
+      "file": "core/trading_engine.py",
+      "original": "                drawdown_block = drawdown_block_fn(request)\n",
+      "mutated": "                drawdown_block = drawdown_block_fn()\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "M65: il motore deve passare la richiesta al controllo finale, altrimenti la sessione d'ammissione non si ricontrolla all'invio."
+    },
+    {
+      "id": "d1_null_provenance_with_state_attributed",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                self.scope_legacy = any(r[\"peak\"] is not None or r[\"breached\"]\n",
+      "mutated": "                self.scope_legacy = False and any(r[\"peak\"] is not None or r[\"breached\"]\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Sol/Grok su 12618e75): uno stato senza provenienza (anche dopo le scritture di sessione) verrebbe adottato dal primo conto."
+    },
+    {
+      "id": "d1_stale_mode_reading_redeclares_scope",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                if RuntimeController._drawdown_scope_is_current(self, scope):\n",
+      "mutated": "                if True:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Sol su 12618e75): una lettura in volo della modalita' precedente ridichiarerebbe il vecchio ambito e riaprirebbe gli ingressi."
+    },
+    {
+      "id": "d1_stale_mode_reading_evaluated",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                if not RuntimeController._drawdown_scope_is_current(self, scope):\n                    return                                   # lettura della modalita' precedente: mai valutata\n",
+      "mutated": "",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "S18-1 (Sol su 12618e75): una lettura della modalita' precedente verrebbe valutata e ridichiarerebbe il suo ambito per i gate."
+    },
+    {
+      "id": "d1_failed_start_keeps_startup_lockdown",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if current is RuntimeMode.LOCKDOWN:\n            logger.warning(\"Avvio non riuscito dopo un LOCKDOWN d'avvio",
+      "mutated": "        if False:\n            logger.warning(\"Avvio non riuscito dopo un LOCKDOWN d'avvio",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-14: START fallito dopo un LOCKDOWN d'avvio non smonta lock, autorita' e sessione."
+    },
+    {
+      "id": "d1_start_continues_without_durable_session",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        if not self._open_drawdown_session():\n            raise RuntimeError(\"DRAWDOWN_SESSION_NOT_DURABLE",
+      "mutated": "        if not self._open_drawdown_session() and False:\n            raise RuntimeError(\"DRAWDOWN_SESSION_NOT_DURABLE",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "D-631-15: START prosegue senza sessione durevole: un picco perso col doppio guasto non lascia traccia."
     }
   ]
 }

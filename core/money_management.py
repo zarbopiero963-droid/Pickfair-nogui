@@ -72,7 +72,7 @@ class RoserpinaMoneyManagement:
 
     def _max_single_stake_abs(self, bankroll_current: float) -> float:
         bankroll_current = self._safe_float(bankroll_current, 0.0)
-        pct_cap = bankroll_current * (self._safe_float(self.config.max_single_bet_pct, 0.0) / 100.0)
+        pct_cap = validators.pct_of(bankroll_current, self._safe_float(self.config.max_single_bet_pct, 0.0))  # D-3
         raw_abs_cap = getattr(self.config, "max_stake_abs", None)
         if raw_abs_cap is not None and validators.finite_number(raw_abs_cap) is None:
             # Tetto assoluto configurato ma illeggibile (NaN/inf/bool/testo):
@@ -92,14 +92,14 @@ class RoserpinaMoneyManagement:
         bankroll_current = self._safe_float(bankroll_current, 0.0)
         return max(
             0.0,
-            bankroll_current * (self._safe_float(self.config.max_total_exposure_pct, 0.0) / 100.0),
+            validators.pct_of(bankroll_current, self._safe_float(self.config.max_total_exposure_pct, 0.0)),
         )
 
     def _max_event_exposure_abs(self, bankroll_current: float) -> float:
         bankroll_current = self._safe_float(bankroll_current, 0.0)
         return max(
             0.0,
-            bankroll_current * (self._safe_float(self.config.max_event_exposure_pct, 0.0) / 100.0),
+            validators.pct_of(bankroll_current, self._safe_float(self.config.max_event_exposure_pct, 0.0)),
         )
 
     def fresh_caps_reason(self, *, cash: Any, order_exposure: Any, total_exposure: Any,
@@ -136,6 +136,8 @@ class RoserpinaMoneyManagement:
         daily_loss: float = 0.0,
         expansion_growth_pct: Any = None,
         expansion_growth_given: bool = False,
+        persistent_drawdown_pct: Any = None,
+        persistent_drawdown_given: bool = False,
     ) -> DeskMode:
         bankroll_current = self._safe_float(bankroll_current, 0.0)
         equity_peak = self._safe_float(equity_peak, 0.0)
@@ -145,11 +147,26 @@ class RoserpinaMoneyManagement:
         if self.config.max_daily_loss is not None and daily_loss >= self.config.max_daily_loss:
             return DeskMode.LOCKDOWN
 
-        if equity_peak <= 0.0:
+        # D-2 / RO-DD-04: drawdown dal picco PERSISTENTE della cassa verificata (perdita, non esposizione), calcolato
+        # dal runtime. Dato fornito ma non valutabile (None, NaN) => LOCKDOWN: lo stato del picco non e' affidabile.
+        persistent = None
+        if persistent_drawdown_given:
+            persistent = validators.finite_number(persistent_drawdown_pct)
+            if persistent is None or persistent < 0:
+                return DeskMode.LOCKDOWN
+
+        if equity_peak <= 0.0 and persistent is None:
             return DeskMode.NORMAL
 
+        # Contratto owner PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL-20261109: la componente di drawdown di DEFENSE e
+        # LOCKDOWN e' la perdita CUMULATIVA di cassa dal picco persistente (l'auto-reset non la ribasa, l'esposizione
+        # aperta non e' una perdita). L'esposizione resta governata dai suoi limiti separati (cap totale, evento,
+        # mercato, liability LAY, riserve). Solo senza alcuna cassa verificata (dato persistente assente: gli ingressi
+        # sono comunque negati dai controlli della cassa) resta la misura storica sul disponibile.
         drawdown_pct = 0.0
-        if bankroll_current < equity_peak:
+        if persistent is not None:
+            drawdown_pct = persistent
+        elif equity_peak > 0.0 and bankroll_current < equity_peak:
             drawdown_pct = ((equity_peak - bankroll_current) / equity_peak) * 100.0
 
         if drawdown_pct >= self._safe_float(self.config.lockdown_drawdown_pct, 20.0):
@@ -410,6 +427,8 @@ class RoserpinaMoneyManagement:
             daily_loss=daily_loss,
             expansion_growth_pct=signal.get("expansion_growth_snapshot"),
             expansion_growth_given="expansion_growth_snapshot" in signal,
+            persistent_drawdown_pct=signal.get("persistent_drawdown_snapshot"),
+            persistent_drawdown_given="persistent_drawdown_snapshot" in signal,
         )
 
         if desk_mode == DeskMode.LOCKDOWN:
@@ -584,7 +603,7 @@ class RoserpinaMoneyManagement:
         # ridimensiona MAI in silenzio al tetto del singolo ordine. Il cap resta un limite di
         # rischio valido: oltre, rifiuto esplicito con lo stake RICHIESTO in chiaro (prima il BACK
         # veniva ridotto al cap e approvato). Rischio dell'ordine (#461 PR28): BACK = stake,
-        # LAY = liability stake*(quota-1); soglia esatta con tolleranza float.
+        # LAY = liability stake*(quota-1); soglia esatta in Decimal, senza tolleranza (D-3).
         exposure = validators.order_exposure(side, recommended, price)
 
         if validators.exceeds_cap(exposure, max_single):
@@ -604,7 +623,7 @@ class RoserpinaMoneyManagement:
                 },
             )
 
-        if validators.exceeds_cap(current_total_exposure + external + exposure, max_total):
+        if validators.exceeds_cap((current_total_exposure, external, exposure), max_total):
             return MoneyManagementDecision(
                 approved=False,
                 recommended_stake=0.0,
@@ -621,7 +640,7 @@ class RoserpinaMoneyManagement:
                 },
             )
 
-        if validators.exceeds_cap(event_current_exposure + exposure, max_event):
+        if validators.exceeds_cap((event_current_exposure, exposure), max_event):
             return MoneyManagementDecision(
                 approved=False,
                 recommended_stake=0.0,

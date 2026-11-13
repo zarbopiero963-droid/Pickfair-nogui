@@ -26,6 +26,14 @@ class _Db:
     def _execute(self, *_args, **_kwargs):
         return None
 
+    # D-631-15 (#631): lo START apre la sessione del drawdown su disco prima di leggere il conto e si interrompe se
+    # non la puo' salvare; il DB finto conserva le impostazioni in memoria come il Database reale.
+    def get_settings(self):
+        return dict(getattr(self, "_settings", {}))
+
+    def save_settings(self, values):
+        self._settings = dict(getattr(self, "_settings", {}), **dict(values))
+
 
 class _Settings:
     def load_betfair_live_key_status(self):

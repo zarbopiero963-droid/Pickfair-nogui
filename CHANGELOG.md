@@ -56,6 +56,85 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   piattaforma dichiarata supportata senza le proprie evidenze. Solo documentazione, nessun cambiamento funzionale.
 
 ### Fixed
+- **D-1/D-2/D-3, RO-DD-01..07 (#586, P0): hard-stop di drawdown non aggirabile.** Decisioni owner del 09/11/2026
+  (PF-ROSERPINA-D1-D2-B2-B3-FINANCIAL-SAFETY, DRAWDOWN-AND-RECOVERY, FINANCIAL-CONTRACT-FINAL, D2-LOCKDOWN-UNLOCK-FINAL).
+  Nuovo `core/drawdown_hard_stop.py`: picco della **cassa verificata** (disponibile + impegnato), persistito in
+  `roserpina.drawdown_hard_stop_state`, mai ribasato da auto-reset, riavvio o settlement. `max_drawdown_abs` (euro) e
+  `max_drawdown_hard_stop_pct` (% del picco, ora anche in SIM) si valutano a ogni lettura verificata del conto e prima
+  di ogni ingresso; il superamento si **memorizza** e si sblocca solo con `owner_unlock_drawdown_hard_stop`
+  (autorizzazione, motivo, operation_id monouso, conferma, verifiche di cassa/esposizione/AMBIGUOUS, registrazione
+  durevole; non ribasa il picco). DEFENSE/LOCKDOWN usano la perdita cumulativa di cassa dal picco persistente:
+  l'esposizione aperta non e' piu' una perdita e resta governata dai suoi cap. Stato illeggibile o picco non salvato =>
+  nessun nuovo ingresso, anche senza hard-stop configurati (RO-DD-08); con il DB non scrivibile il picco va in un marker su file
+  separato, cosi' un riavvio non riparte da un picco vecchio (RO-DD-09); dopo un riavvio non pulito la baseline e'
+  non verificata e gli ingressi restano negati fino alla conferma owner `owner_confirm_drawdown_baseline` (doppia
+  conferma, registrata come conferma e non come prova del massimo storico; RO-DD-09 C). Cap in Decimal esatto, senza tolleranza (`validators.exceeds_cap`, `pct_of`, liability LAY).
+  `get_status` espone `loss_drawdown_pct`, `capital_at_risk_pct` e `drawdown_hard_stop`. Prima: l'auto-reset cancellava
+  la perdita, il picco seguiva il disponibile, il riavvio lo azzerava, il % valeva solo in LIVE, 60.0000000001 passava
+  il cap 60 (campagna Grok 5 tavoli, #586 c.6747305390). Review su c715c59e (Sol, Claude D; cicli 11-12 autorizzati da PF-OWNER-PR631-EXTRA-2-CYCLES-20261111): una lettura
+  del conto arrivata in ritardo alza comunque il picco e il superamento si rivaluta con l'ultima cassa (prima 130
+  arrivato dopo 115 non bloccava); le verifiche delle procedure owner e la registrazione di un ordine AMBIGUOUS sono
+  nella stessa sezione critica della transizione; la lettura tardiva scartata dal desk arriva comunque all'hard-stop e
+  una lettura precedente a un ribasamento owner non rialza mai il picco (Sol su 9209f0d8). Ciclo 13
+  (PF-OWNER-PR631-CYCLE13-GO-20261111): un calo vero visto solo da una lettura arrivata in ritardo si memorizza contro
+  il massimo letto prima del suo istante (prima 130, 130, poi 115 arrivata tardi non bloccava; D-631-10), mai contro un
+  massimo successivo; allo START lo stato si rilegge prima di leggere i fondi (P3). Ciclo 14
+  (PF-OWNER-PR631-CYCLE14-GO-20261111): le letture uscite dalla memoria restano valutabili con un riepilogo esatto
+  (scala dei massimi e dei minimi); quando la storia necessaria manca davvero lo stato e' DRAWDOWN_HISTORY_INSUFFICIENT
+  (ingressi negati, motivo distinto, persistito, sblocco solo owner), mai un PASS (D-631-11); uno sblocco owner non
+  rinasce da una lettura fuori ordine iniziata prima. Ciclo 15 (PF-OWNER-PR631-CYCLE15-GO-20261112, D-631-12): una
+  lettura precedente alla storia conservata si verifica sempre come possibile massimo, anche sotto il limite superiore;
+  il calo successivo uscito dalla memoria non passa piu' in silenzio. Ciclo 16 (PF-OWNER-PR631-CYCLE16-GO-20261112):
+  un ingresso gia' in coda non parte dopo l'hard-stop (ricontrollo al punto d'invio del motore, D-631-13); uno START
+  fallito dopo un LOCKDOWN d'avvio rilascia lock, autorita' e sessione (D-631-14); la sessione del drawdown si apre su
+  disco prima di leggere il conto e lo START si interrompe se non e' salvabile (D-631-15). Ciclo 17
+  (PF-OWNER-PR631-CYCLE17-GO-20261112): il controllo finale d'ingresso rifiuta ogni LOCKDOWN ed e' atomico rispetto
+  alla registrazione di un superamento (D-631-13/16); un controller mai avviato o uno snapshot piu' vecchio del disco
+  non riscrivono picco e superamento (D-631-18); il picco confermato dall'owner diventa la base della cronologia
+  (D-631-17). Ciclo 18 (PF-OWNER-PR631-CYCLE18-GO-20261112, G17-1): la conferma della baseline registra istante ed
+  epoca; una lettura iniziata prima della conferma e arrivata dopo non produce piu' un hard-stop non dimostrato
+  (storia insufficiente se il calo e' solo possibile, nessun blocco se impossibile). Ciclo 19
+  (PF-OWNER-PR631-CYCLE19-GO-20261112 e SCOPE-AMENDMENT): un calo dimostrato precede sempre la storia insufficiente
+  (S19-A); un ribasamento fallito ripristina anche il picco confermato (S19-B); lo stato porta la provenienza (ambiente
+  e conto) e uno stato di un altro ambito, senza provenienza o con conto non identificabile non si valuta, non si
+  scrive e nega gli ingressi fino all'attribuzione owner (S18-1, separazione completa in PR-04). Su 559b39ca (Grok): le scritture di sessione non attribuiscono mai
+  al conto corrente uno stato senza provenienza, nemmeno con l'ambito gia' dichiarato. Su 559b39ca (Sol): verifica della modalita' e
+  dichiarazione dell'ambito nella stessa sezione critica del cambio modalita'. Ciclo 20 (M65, PF-OWNER-PR631-CYCLE20-M65-GO-20261112): un
+  ingresso ammesso prima di uno STOP e consegnato dopo un nuovo START e' negato (`ingresso_di_sessione_precedente`):
+  generazione di sessione all'acquisizione della lease, confrontata al controllo del fence e al punto d'invio. M68
+  (PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112): nessun nuovo ingresso parte con il bot in PAUSA, fermo o in
+  LOCKDOWN (del runtime o del desk, Sol su 4c627189); operazioni protettive invariate. Ciclo 21 (PF-OWNER-PR631-C21-EQUAL-TIMESTAMP-GO-
+  20261112): letture con lo stesso istante d'inizio = ordine ignoto; calo possibile => storia insufficiente in entrambi
+  gli ordini, perdita dimostrata => hard-stop. Codex su 954b226b: anche le letture gemelle gia' passate al riepilogo. Codex su ccecc8db e Claude D su abbb6b3b: lo sblocco
+  owner della storia insufficiente rilegge il conto (prova fresca ordinata) e non riparte mai da una cassa ambigua;
+  rilettura non verificabile => nessuno sblocco. Ciclo 22 (PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112): picco e
+  superamento nello stesso record (crash fra le scritture: picco perso); recovery del picco dimostrato dai record
+  precedenti; picco del superamento corrotto => stato illeggibile. Ciclo 23 (PF-OWNER-PR631-C23-P1-P2-GO-20261113):
+  ingresso della sessione precedente negato a ogni consegna; il gate non inventa un hard-stop sopra la storia
+  insufficiente. F2: test di regressione deterministico sulla race SIM/LIVE. Review su e98e84c7 (Sol): un marker superato con picco piu'
+  alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
+  disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
+  resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale
+  e Dutching applicano picco non persistito e baseline non confermata; un marker superato dal DB non annulla
+  sblocchi o conferme owner; sessione non salvata all'avvio = log critico e ingressi negati. Su 92155c24 (Sol):
+  stato illeggibile nega anche manuale/Dutching senza hard-stop; sblocco, conferma, ribasamento e chiusura della
+  sessione falliti col DB giu' non scrivono il marker; lo START rilegge lo stato dell'hard-stop sotto il lock di
+  istanza prima di scriverlo (Codex); la lettura alla costruzione non scrive, la migrazione del marker avviene solo
+  sotto il lock (Sol su 58e635e6); la lettura fresca d'ingresso entra nell'hard-stop, la baseline segue l'ultimo
+  record durevole e lo STOP chiude solo la sessione aperta da questo controller (Codex); uno sblocco owner piu'
+  recente su disco vale alla rilettura dello START (Codex su 53c99ceb); la lettura d'ingresso alza il picco e il gate
+  usa la cassa piu' recente (Sol) e solo il controller proprietario scrive lo stato (Codex); su 4a171465 (Sol): la
+  misura di LOCKDOWN usa la stessa cassa, le letture vecchie arrivate tardi non valgono, la storia degli sblocchi
+  resta dopo il riavvio; un ribasamento owner piu' recente vale alla rilettura (Codex); su 6d4ac43f (Sol):
+  epoca del picco per i ribasamenti e sezione critica fra controllo dell'istante e valutazione; i gate d'ingresso
+  di un controller non proprietario negano senza scrivere (Grok); il gate valuta nella stessa sezione critica (Sol);
+  su b9cbe0d7: manuale/Dutching controlla la proprieta' anche senza cap, ribasamento con operation_id monouso
+  (Grok), cassa sommata in Decimal (Codex); su 2a847087 anche la misura di LOCKDOWN nella sezione critica (Codex),
+  proprieta' verificata sotto lock e attesa dallo STOP, procedure owner solo dal proprietario con rilettura (Sol);
+  audit finale: proprieta' allo START solo dopo la rilettura, avvio fallito chiude la sessione, lease di un altro
+  runtime nega le scritture di un controller mai avviato, verifiche owner fuori dalla sezione critica; su 96b03d7e
+  (Sol): il gate usa l'ultima cassa valutata insieme al picco, lo STOP senza autorita' non chiude la sessione.
+  Test `tests/d1`.
 - **G7-R06 (#586): AMBIGUOUS gia' regolato non rinasce come riserva al riavvio.** La ricostruzione F018 chiude gli
   intenti con un effetto di settlement applicato (`Database.settled_customer_refs`, prova = chiave del settlement)
   invece di ricrearne il tavolo come posizione incerta su un mercato gia' chiuso. Senza prova o con registro

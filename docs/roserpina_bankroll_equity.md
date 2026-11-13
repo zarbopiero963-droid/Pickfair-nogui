@@ -403,3 +403,275 @@ posizioni sullo stesso tavolo, tavolo non più rilasciabile al settlement della 
 - `resume()` ritenta la riconciliazione e rifiuta finché non è completa.
 - Le righe senza `market_id` o `event_key` sono riportate in `unattributed`, mai indovinate.
 - Il risultato è pubblicato come `STARTUP_POSITIONS_REBUILT`.
+
+
+## Hard-stop di drawdown, picco persistente e DEFENSE/LOCKDOWN (D-1/D-2/D-3, RO-DD-01..07)
+
+Contratti owner del 09/11/2026: PF-ROSERPINA-D1-D2-B2-B3-FINANCIAL-SAFETY, PF-ROSERPINA-DRAWDOWN-AND-RECOVERY,
+PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#586).
+
+- **Formula.** `drawdown_abs = max(0, picco_cassa_verificata - cassa_verificata_corrente)`, in Decimal, confronto esatto.
+  Anche la cassa (disponibile + impegnato) e' sommata in Decimal: 80.01 + 0.01 = 80.02, cosi' una perdita esattamente
+  pari al limite scatta (in float sarebbe 9.99999999999999; Codex su b9cbe0d7).
+  La cassa e' disponibile + impegnato della stessa lettura (PFC-008): riserve e puntate aperte non sono perdite.
+- **Picco** (`core/drawdown_hard_stop.py`): massimo della cassa verificata, persistito in settings
+  (`roserpina.drawdown_hard_stop_state`, con `seq`) prima di valere. Lo alza ogni lettura verificata
+  (`_sync_cash_equity_from_funds`); auto-reset, reset di ciclo, settlement e riavvio non lo abbassano. Una lettura non
+  verificata non lo alza mai. Prima esecuzione dopo l'aggiornamento: il picco parte dalla prima cassa verificata
+  (non e' una ricostruzione dello storico, che resta il metodo owner del 13/10).
+- **Hard-stop.** `max_drawdown_abs` (euro) e `max_drawdown_hard_stop_pct` (% del picco), opzionali: senza valore non
+  bloccano nulla. Valutati a ogni lettura verificata del conto (superamento => LOCKDOWN subito) e prima di ogni
+  ingresso (segnale, auto-next, manuale/Dutching). Stessa regola in SIM e LIVE (prima il % valeva solo in LIVE).
+  Anche la lettura fresca del conto fatta per un ingresso entra nell'hard-stop, pure con la cassa del desk gia'
+  verificata (Codex su 58e635e6): il superamento si memorizza (LOCKDOWN) e il gate fondi d'ingresso lo rifiuta. Come
+  ogni lettura verificata alza il picco (Sol su 53c99ceb: 130 poi 115 con picco 100 e limite 10 blocca), ma non
+  cambia la cassa del desk (PFC-008: una lettura concorrente del desk resta da ricontrollare): il gate dell'hard-stop
+  usa l'ultima cassa valutata (del desk o d'ingresso), aggiornata insieme al picco nella stessa sezione critica, cosi'
+  un picco nuovo non si confronta mai con una cassa piu' vecchia e il desk non viene letto a pezzi (Sol su 96b03d7e);
+  cassa del desk non verificata resta un rifiuto. La stessa cassa piu' recente vale
+  per la misura di DEFENSE/LOCKDOWN (`_persistent_drawdown_pct`). Una lettura iniziata prima dell'ultima gia' valutata
+  (ingresso o contratto) e arrivata tardi non diventa la cassa corrente e non misura una perdita (Sol su 4a171465:
+  100 arrivato dopo 130 non e' una perdita di 30), ma resta un massimo osservato davvero: alza il picco persistente e,
+  se lo alza, il superamento si rivaluta contro l'ultima cassa valutata (130 arrivato dopo 115 con limite 10 blocca;
+  D-631-08, Sol/Claude D su c715c59e). Vale anche sul percorso reale del conto: la lettura che il RiskDesk scarta
+  perche' arrivata tardi (bankroll e cassa del desk invariati) arriva comunque all'hard-stop, che decide col proprio
+  istante (Sol su 9209f0d8). Una lettura iniziata prima dell'ultimo ribasamento owner
+  (`DrawdownHardStop.rebased_at`) appartiene all'epoca precedente del picco: tardiva o no, non lo rialza e non
+  diventa la cassa corrente. Cronologia delle letture (D-631-10/11, Codex/Claude D su 3e6a3e0a e b76466a3): ogni
+  lettura verificata resta in memoria con il suo istante (`DrawdownHardStop.record_reading`). Una lettura tardiva
+  (`evaluate_late`) si valuta (A) contro il massimo letto STRETTAMENTE PRIMA del suo istante e (B), se lo supera,
+  contro il minimo letto STRETTAMENTE DOPO (per una lettura precedente alla storia conservata, di cui si conosce solo
+  un limite superiore del massimo, (B) si verifica sempre: D-631-12, Sol/Claude D su f0f521dc): 130 a t1, 130 a t3 e poi 115 arrivata da t2 memorizzano la perdita di 15
+  come in ordine, e un massimo tardivo rende reale un calo successivo. Mai contro un massimo successivo; letture dello
+  stesso istante non si confrontano fra loro. Memoria limitata per l'intera struttura (`READING_HISTORY_LIMIT` = 512):
+  al massimo 256 letture recenti (`RECENT_READINGS_LIMIT`); le piu' vecchie passano in un riepilogo esatto di al
+  massimo 256 punti (`SUMMARY_LIMIT`): la scala dei massimi crescenti (massimo letto prima di t, ricerca binaria) e la
+  scala dei minimi successivi (minimo letto dopo t). Oltre il riepilogo la finestra avanza: cio' che precede non e'
+  piu' esatto e il picco noto all'apertura vale solo come limite superiore. Una lettura che cade prima della finestra
+  ha tre esiti possibili: superamento dimostrato con le letture conservate => hard-stop; superamento possibile ma non
+  dimostrabile (contro il limite superiore, oppure perche' puo' essere un massimo che rende reale un calo non piu' in
+  memoria) => storia insufficiente; nessun superamento possibile nemmeno nel caso peggiore => nulla. Lo stato e'
+  **DRAWDOWN_HISTORY_INSUFFICIENT** (motivo `drawdown_storia_insufficiente`): persistito con motivo, istante, cassa ed
+  epoca; NON e' un superamento (nessuna perdita dichiarata, nessun LOCKDOWN) e non e' un PASS: nega i nuovi ingressi
+  su ogni percorso (segnali, auto-next, ripresa via `_loss_block_reason`; manuale e Dutching via
+  `absolute_cap_reason_for_orders`), mai le uscite, le cancellazioni e la riconciliazione. Una nuova lettura non lo
+  scioglie (non ricostruisce la storia mancante), ne' STOP/START, crash, subentro o ribasamento: solo la procedura
+  owner `owner_clear_drawdown_history_insufficient` (stesse regole e verifiche dello sblocco dell'hard-stop, nella
+  sezione critica). Nessuno sblocco automatico: la storia mancante non si puo' ricostruire da letture successive. La
+  finestra si apre allo START (picco riletto come base), a ogni ribasamento owner e a ogni sblocco owner (superamento o
+  storia insufficiente): le letture iniziate prima di una decisione owner sono ignorate, cosi' una lettura fuori ordine
+  non fa rinascere un superamento gia' sbloccato (Sol/Codex su b76466a3); il picco resta. Senza alcun picco noto la
+  finestra e' esatta da subito. Sola memoria: dopo un riavvio valgono picco, superamento e storia insufficiente
+  persistiti. Allo START lo stato si rilegge PRIMA che inizi la lettura dei fondi (P3, Sol su 3e6a3e0a): un
+  ribasamento di un altro processo adottato in quel momento non rende «precedente al ribasamento» la prima lettura;
+  controllo
+  dell'istante e valutazione sono un'unica sezione critica fra letture d'ingresso e del desk (Sol su 6d4ac43f), e
+  nella stessa sezione il gate sceglie la cassa e valuta (Sol su b9cbe0d7), come la misura di DEFENSE/LOCKDOWN
+  (Codex su 2a847087). Anche il controllo di proprieta' avviene dentro la sezione critica, e lo STOP toglie la
+  proprieta' prendendo lo stesso lock: una scrittura gia' ammessa finisce prima che lo STOP rilasci il lock d'istanza.
+  Sblocco owner e conferma della baseline sono ammessi solo al controller proprietario, dopo una rilettura dello stato
+  durevole sotto lock (Sol su 2a847087); lo STOP di un'istanza che ha perso l'autorita' non scrive la chiusura della
+  sessione (controllo esplicito, oltre al fence del database: Sol su 96b03d7e); la rilettura non scambia la propria sessione attiva per una chiusura non
+  pulita, e le verifiche su tavoli e ordini si leggono prima della sezione critica (nessuna inversione dei lock).
+  Allo START la proprieta' dello stato comincia solo a rilettura finita; un avvio fallito con servizi smontati chiude
+  la sessione prima di rilasciare il lock (nessuna conferma owner ingiustificata al riavvio); un controller mai
+  avviato uscito da STOPPED non scrive se nel database un altro runtime tiene una lease attiva (lease illeggibile =>
+  nessuna scrittura). Lo stato dell'hard-stop lo aggiorna solo il controller
+  proprietario del runtime (avviato, o nello START dopo la rilettura sotto lock, con l'autorita' dimostrata): un
+  controller mai avviato, fermo o che ha perso l'autorita' non scrive nulla, nemmeno leggendo il conto per lo stato
+  (Codex su 53c99ceb). Lo stesso vale per i gate d'ingresso (segnale, manuale/Dutching): un controller non
+  proprietario nega l'ingresso (`drawdown_controller_non_proprietario`, o il motivo dell'autorita' persa) senza
+  valutare, perche' la valutazione salverebbe il picco (Grok su 6d4ac43f).
+- **Disponibile 0: l'hard-stop valuta comunque la cassa (Sol e Codex su dc2f5f25).** Con una lettura valida a
+  disponibile 0 l'hard-stop riceve la cassa verificata della stessa lettura: con impegnato
+  (`BALANCE_ZERO_COMMITTED`) e' l'impegnato (85 impegnati dopo un picco 100 = perdita 15), senza
+  (`ACCOUNT_EMPTY_VERIFIED`) e' 0, cioe' perdita totale e non dato mancante. Il superamento si memorizza, anche con
+  soglia percentuale 100 %, e resta dopo una ricarica (regola piu' severa). Bankroll e cassa del desk non cambiano
+  (PF-POST-556) e gli ingressi restano negati; una cassa 0 non diventa mai picco. Cassa negativa, non finita o
+  assente resta `max_drawdown_abs_cassa_non_verificata`.
+- **Blocco persistente.** Il superamento si memorizza (kind, perdita, limite, picco, cassa) e resta dopo riavvio,
+  settlement in utile, reset strategico, rimozione del limite dalla configurazione e nuovo segnale. Blocca solo i nuovi
+  ingressi: riconciliazione, settlement e riduzione dell'esposizione continuano.
+- **Sblocco owner** (`RuntimeController.owner_unlock_drawdown_hard_stop(authorization, reason, operation_id,
+  confirm)`): tutti i campi obbligatori, `operation_id` monouso, verifica di cassa verificata, esposizione leggibile e
+  assenza di ordini AMBIGUOUS, registrazione durevole prima che valga (salvataggio fallito => resta bloccato). Le
+  verifiche si calcolano dentro la sezione critica dell'hard-stop, subito prima della transizione, e la registrazione
+  di un ordine AMBIGUOUS (`_mark_uncertain`) prende lo stesso lock: un ordine che diventa incerto durante la procedura
+  la nega, mai in mezzo fra verifiche e salvataggio; vale anche per la conferma della baseline (D-631-09). Non
+  ribasa il picco: se la perdita e' ancora oltre il limite, la lettura successiva blocca di nuovo. La nuova baseline e'
+  un'operazione distinta (`DrawdownHardStop.owner_rebase_peak`). Nessun endpoint Control API/MCP; il comando owner che
+  le invoca non e' ancora previsto (limite dichiarato).
+- **DEFENSE/LOCKDOWN.** La componente di drawdown e' la perdita cumulativa di cassa dal picco persistente
+  (`RuntimeController._persistent_drawdown_pct`). Caso della transizione: cassa 100 con 30 impegnati e nessuna perdita,
+  prima LOCKDOWN (30 % sul disponibile), ora NORMAL; il capitale impegnato resta limitato dai cap di esposizione gia'
+  configurati (`max_total_exposure_pct`, evento, singolo, `max_open_exposure`, liability LAY, riserve). Senza alcuna
+  cassa verificata resta la misura storica (gli ingressi sono comunque negati dai controlli della cassa).
+- **Fail-closed.** Stato persistito illeggibile => desk in LOCKDOWN e hard-stop `*_stato_illeggibile`, mai
+  sovrascritto; picco non salvato => nessun nuovo ingresso su ogni percorso, con o senza hard-stop configurati
+  (`drawdown_picco_non_persistito`, in coda ai motivi dei gate a monte; RO-DD-08: altrimenti un riavvio ripartirebbe
+  dal picco salvato e renderebbe aggirabile il LOCKDOWN cumulativo), con nuovo tentativo di salvataggio a ogni
+  ammissione; con hard-stop configurato anche `max_drawdown_abs_picco_non_persistito`; cassa non verificata =>
+  `max_drawdown_abs_cassa_non_verificata`. Picco non persistito e baseline non confermata negano anche bet manuale e
+  Dutching (`absolute_cap_reason_for_orders`), con o senza cap configurati (Codex/Grok/Claude D su dc2f5f25: prima
+  quel percorso usciva subito senza cap e ignorava la baseline); stato illeggibile => `drawdown_stato_illeggibile`
+  anche li' senza hard-stop configurati (Sol su 92155c24). Sessione non salvata all'avvio => log critico e
+  ingressi negati come picco non persistito, finche' un salvataggio la rende durevole.
+- **Doppio guasto (RO-DD-09).** Se il DB non salva il picco, lo stesso record va in un marker su file separato
+  (`<db>.drawdown_peak_pending.json`, scrittura atomica, stesso schema del marker della perdita giornaliera). Al
+  riavvio vale il picco piu' alto fra DB e marker; il marker si riporta nel DB e si rimuove solo dopo il salvataggio.
+  Sessione, baseline e superamento li decide il record piu' recente (`seq`): un marker rimasto da un guasto rientrato
+  (rimozione fallita, file bloccato su Windows) non annulla uno sblocco o una conferma owner salvati dopo nel DB; a pari
+  `seq` vale l'unione. Il marker e' il ripiego dei soli stati che stringono (picco che sale, superamento, sessione
+  aperta): sblocco owner, conferma della baseline, ribasamento del picco e chiusura della sessione richiedono il DB, e
+  se il DB non salva non scrivono neanche il marker (Sol su 92155c24: altrimenti l'operazione fallita varrebbe al
+  riavvio come record piu' recente). Marker illeggibile => stato illeggibile (fail-closed). Un marker superato (`seq`
+  inferiore al DB) che porta un picco piu' alto della stessa epoca viene prima salvato nel DB e solo dopo rimosso: un
+  crash fra le due cose non perde il picco; se non porta nulla in piu' si rimuove soltanto. Una scrittura rifiutata
+  dal fencing del runtime (`RuntimeFenceViolation`: l'istanza non e' piu' il proprietario) **non** usa il marker:
+  un'istanza superata non pubblica nulla che il nuovo proprietario leggerebbe come stato dell'hard-stop, e resta
+  negata (Sol su e98e84c7).
+- **Baseline dopo un riavvio non pulito (RO-DD-09 C, decisione owner PF-ROSERPINA-DD09-FAIL-CLOSED-AND-BB3-20261109).**
+  Lo START del trading registra su disco una sessione aperta PRIMA di qualunque lettura del conto, e si interrompe
+  (`DRAWDOWN_SESSION_NOT_DURABLE`) se non riesce a salvarla: un picco osservato e poi perso per un doppio guasto di
+  storage seguito da un crash lascia la sessione aperta, quindi baseline da confermare (D-631-15); solo uno STOP pulito con il picco durevole la chiude,
+  e la chiude PRIMA di rilasciare il lock di istanza (Sol su dc2f5f25): dopo il rilascio un nuovo processo puo' aver
+  gia' aperto la propria sessione, che la chiusura del vecchio sovrascriverebbe. Smontaggio fallito => sessione aperta.
+  Simmetricamente lo START rilegge lo stato dell'hard-stop con il lock di istanza tenuto, prima della prima lettura del
+  conto e della sessione (Codex su 92155c24): un controller costruito mentre un altro processo era proprietario non
+  sovrascrive il picco o il superamento salvati da quello nel frattempo. La lettura alla costruzione e' di sola
+  lettura (`restore(reconcile=False)`): migrazione del marker nel DB e rimozione di un marker superato avvengono solo
+  allo START, sotto il lock (Sol su 58e635e6). La verifica della baseline segue il record durevole piu' recente anche
+  verso «verificata»: letta mentre un altro processo aveva la sessione aperta, dopo il suo STOP pulito non resta
+  bloccata; lo STOP chiude la sessione solo se e' stato questo controller ad aprirla allo START, e una volta sola
+  (un controller mai avviato o un secondo STOP non scrivono; Codex su 58e635e6). Allo stesso modo uno sblocco owner
+  salvato da un altro processo dopo la costruzione vale alla rilettura dello START, con la sua storia; un superamento
+  piu' recente rimasto solo in memoria (salvataggio fallito) resta (Codex su 53c99ceb). La storia degli sblocchi
+  (operation_id gia' usati) si riprende dal disco anche senza superamento attivo: un riavvio non rende di nuovo
+  valido un operation_id consumato (Sol su 4a171465). Il picco riletto non scende mai sotto quello gia' in memoria,
+  salvo un ribasamento owner esplicito (`owner_rebase_peak`), che apre un'epoca nuova del picco (`peak_epoch`, nel
+  record): conta solo l'epoca piu' recente fra memoria, DB e marker, e dentro quella il massimo di tutti i record.
+  Cosi' un ribasamento a 85 seguito da un picco a 90 vale anche per un controller costruito prima (Codex su
+  4a171465, Sol su 6d4ac43f); un ribasamento non salvato non avanza l'epoca. Anche l'operation_id del ribasamento e'
+  monouso, persistito nel record (`rebase_ops`) e valido dopo il riavvio (Grok su b9cbe0d7).
+  Se al riavvio la sessione risulta aperta (crash, kill, STOP con picco non salvato, DB e marker entrambi non
+  scrivibili) il picco salvato potrebbe non essere il massimo: la baseline e' **non verificata** e nessun nuovo
+  ingresso passa (`drawdown_baseline_non_verificata`), anche dopo piu' riavvii e dopo un reset strategico.
+  Riconciliazione, settlement e riduzione del rischio restano disponibili. Sblocco solo con
+  `RuntimeController.owner_confirm_drawdown_baseline(authorization, reason, operation_id, confirm, confirm_again,
+  declared_peak=None)`: doppia conferma, `operation_id` monouso, verifica di cassa verificata, esposizione leggibile e
+  assenza di ordini AMBIGUOUS, registrazione durevole. La baseline diventa il massimo fra picco salvato, picco
+  dichiarato dall'owner e cassa corrente, ed e' registrata come conferma owner, **non** come prova del massimo storico.
+  Nessun endpoint Control API/MCP. Un primo avvio senza alcuno stato e' un nuovo perimetro contabile (per le
+  installazioni esistenti vale la decisione owner del 13/10, opzione A). Soluzione definitiva prevista in BB-3:
+  ricostruzione del picco da un registro finanziario indipendente.
+- **Limiti dichiarati.** Un `seq` regressivo al riavvio non e' rilevabile. Il marker sta sullo stesso filesystem del DB
+  (stesso dominio di guasto): la sua perdita insieme al DB e' coperta dal blocco della baseline non verificata, non
+  da una ricostruzione. Grandezze
+  esposte in `get_status`: `loss_drawdown_pct`, `capital_at_risk_pct` (solo informativo), `drawdown_hard_stop`.
+
+- **Ingressi gia' in coda e avvio fallito (D-631-13/14, ciclo 16).** Il punto finale d'invio delle nuove entrate del
+  `TradingEngine` ricontrolla il blocco del drawdown (`RuntimeController.drawdown_entry_block_reason`: superamento,
+  storia insufficiente, picco non persistito, baseline non verificata, stato illeggibile), come gia' l'emergenza
+  giornaliera: un ingresso approvato e messo in coda prima del blocco non parte dopo; il rifiuto e' certo, prima
+  dell'invio (mai AMBIGUOUS). Le uscite protettive passano dall'OrderRouter del cashout e restano libere. Uno START
+  partito da fermo e non riuscito torna a STOPPED anche dal LOCKDOWN nato durante l'avvio, cosi' lo smontaggio rilascia
+  lock, autorita' e sessione; superamento e storia insufficiente restano su disco e il prossimo START li rilegge.
+
+- **Ingressi di una sessione precedente (M65, ciclo 20, PF-OWNER-PR631-CYCLE20-M65-GO-20261112).** Un ingresso
+  ammesso (gate fondi, esposizione, limiti) in una sessione e ancora in coda allo STOP non parte nella sessione
+  successiva: la sua ammissione valeva per i fondi e l'esposizione di allora. Ogni START, preso il lock di istanza,
+  apre una generazione di sessione nuova sotto il lock d'ammissione; la registrazione dell'ingresso (fence
+  d'ammissione: segnali, Dutching, ordini manuali) conserva la propria e il controllo finale del motore
+  (`admission_fence_verdict`) la confronta nella stessa sezione critica: generazione diversa =>
+  `ingresso_di_sessione_precedente`, negato prima dell'invio e mai ripristinato. Il confronto avviene dentro
+  l'operazione finanziaria in volo (`authority_operation`): lo STOP la attende e un nuovo START non acquisisce la lease
+  finche' non finisce (`runtime_authority_draining`), quindi nessun ingresso della sessione precedente viene inviato
+  sotto la nuova. Il controllo del fence annota la sessione sulla richiesta e il punto finale d'invio del motore la
+  ricontrolla (`drawdown_entry_block_reason(request)`): vale anche per un invio eseguito in ritardo dall'esecutore.
+  Gli ordini gia' inviati con esito incerto restano alla riconciliazione.
+
+- **Letture con lo stesso istante (ciclo 21, PF-OWNER-PR631-C21-EQUAL-TIMESTAMP-GO-20261112).** Due letture del conto
+  iniziate nello stesso istante (`read_at` uguale: possibile con la granularita' del clock, es. Windows) hanno ordine
+  reale ignoto. La seconda arrivata si valuta come tardiva (`evaluate_late`): le prove di calo (letture strettamente
+  prima o dopo) restano invariate e una perdita dimostrata e' un hard-stop; poi, se in uno qualsiasi dei due ordini il
+  calo fra le due (anche con una gemella gia' passata al riepilogo dei massimi e dei minimi) raggiunge un limite, il
+  superamento e' solo possibile => storia insufficiente
+  (`letture_con_lo_stesso_istante`), ingressi negati. Mai un hard-stop inventato, mai un PASS (picco 100, limite 10,
+  letture 130 e 115 dello stesso istante => storia insufficiente in entrambi gli ordini di arrivo). Lo sblocco owner della storia
+  insufficiente rilegge il conto (prova fresca, valutata come lettura ordinata) prima di sbloccare: con letture ambigue
+  anche la cassa del desk e quella del gate sono ambigue (l'ultima arrivata). Perdita reale => hard-stop dimostrato, che
+  lo sblocco non cancella; nessuna perdita => il gate riparte dalla cassa fresca, mai da una cassa ambigua confrontata
+  col picco (perdita fittizia), in entrambi gli ordini di arrivo e dopo un riavvio. Rilettura non verificabile =>
+  nessuno sblocco (`cassa_fresca_non_verificata`).
+
+- **Ciclo 23 (PF-OWNER-PR631-C23-P1-P2-GO-20261113).** (1) La sessione d'ammissione sta sul comando fin dalla
+  registrazione del fence: un ingresso della sessione precedente consegnato piu' volte dopo STOP -> START e' negato al
+  punto d'invio a ogni consegna (prima la seconda consegna, trovata la registrazione gia' consumata, arrivava al broker).
+  (2) Con storia insufficiente attiva il gate d'ammissione resta sulla storia insufficiente e non confronta la cassa
+  ambigua col picco: nessun hard-stop memorizzato su un calo non dimostrato. Le perdite dimostrate restano hard-stop:
+  nascono dalla valutazione delle letture, anche con la storia insufficiente attiva.
+
+- **Picco e superamento in un'unica scrittura (ciclo 22, PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112).** Il
+  picco che dimostra un superamento (un massimo osservato o confermato dall'owner, anche da una lettura tardiva) sale nello
+  STESSO record persistito del superamento: un crash non puo' piu' lasciare su disco picco 115 con superamento da 130.
+  Recovery dei record scritti prima: alla rilettura il picco e' almeno quello di un superamento attivo, non ribasato e
+  della stessa epoca (un ribasamento owner esplicito resta valido). Picco del superamento attivo corrotto => stato
+  illeggibile (fail-closed). Cosi' nessun crash, riavvio, sblocco o conferma owner riporta implicitamente il picco sotto
+  il massimo dimostrato: lo sblocco non ribasa e la lettura successiva riblocca se la perdita supera ancora il limite.
+
+- **Stato del bot al punto d'invio (M68, PF-OWNER-PR631-C20-FINAL-SAFETY-GATES-20261112).** Nessun nuovo ingresso
+  parte se il bot non e' ACTIVE: PAUSA (`runtime_non_attivo:PAUSED`), fermo (`runtime_non_attivo:STOPPED`), LOCKDOWN
+  del runtime (`runtime_lockdown:...`) o del desk (`desk_lockdown`: drawdown oltre la soglia di lockdown del money
+  management, anche senza hard-stop configurati; stato del desk illeggibile => `desk_non_verificabile`), anche con
+  l'autorizzazione tecnica ancora valida. Il controllo sta nel controllo finale
+  d'ingresso del motore, nella stessa sezione critica del drawdown; una PAUSA arrivata dopo la risposta e' successiva
+  all'ammissione (l'ordine eventualmente inviato si riconcilia). Cancellazioni, cashout e uscite protettive
+  (OrderRouter) e la riconciliazione non passano di qui e restano consentiti. Gestione completa delle code, politiche
+  di ripresa, scadenza e rivalutazione degli ingressi restano alla PR-05. F2: cambio del flag di modalita' e
+  invalidazione dell'ambito sono una sola sezione critica con la dichiarazione dell'ambito; un test deterministico
+  dimostra che una lettura SIM concorrente al passaggio a LIVE non lascia dichiarato l'ambito SIM.
+
+- **Controllo finale, scrittori stantii e picco confermato (D-631-13/16/17/18, ciclo 17).** Il controllo finale
+  d'ingresso (`drawdown_entry_block_reason`) rifiuta anche qualsiasi LOCKDOWN del runtime, qualunque ne sia l'origine
+  (amministrativo, rischio, desk), per segnali, ordini manuali (`REQ_QUICK_BET`), Dutching e auto-next, che arrivano
+  tutti allo stesso handler del motore; Emergency Stop e STOP BOT (autorita' rilasciata o in svuotamento) restano i
+  controlli dedicati subito prima e subito dopo. L'intera decisione e' una sola sezione critica sotto lo stesso lock
+  in cui ogni lettura del conto registra un superamento: un superamento registrato prima della risposta non viene mai
+  ignorato; uno registrato dopo e' successivo all'ammissione e l'ordine eventualmente inviato si riconcilia. Un
+  controller mai avviato non scrive lo stato del drawdown su un database governato da un runtime (lease presente,
+  anche scaduta o rilasciata): dopo lo STOP del proprietario la sua pausa non riscrive piu' il picco ne' cancella il
+  superamento. In piu' ogni salvataggio usa la concorrenza ottimistica sul `seq`: uno stato in memoria piu' vecchio
+  del record su disco non lo sovrascrive mai (nessun marker), l'istanza nega gli ingressi finche' non rilegge lo stato
+  (START o procedura owner). La conferma owner della baseline registra istante ed epoca (numero progressivo delle
+  conferme, persistito nella storia della baseline; adottata anche da un altro processo alla rilettura) e il picco
+  confermato (massimo fra salvato, dichiarato e cassa, mai ribassato), senza cancellare la cronologia delle letture.
+  Una lettura iniziata dalla conferma in poi, anche arrivata fuori ordine, misura il calo da quel picco. Una lettura
+  iniziata prima della conferma si valuta sempre come lettura tardiva, anche se arriva in ordine (ciclo 18, G17-1):
+  il picco dichiarato non ha un istante noto ed e' per lei solo un limite superiore. Calo dimostrato dalle letture
+  conservate => hard-stop; calo possibile solo rispetto al picco dichiarato => storia insufficiente (ingressi negati,
+  mai un hard-stop non dimostrato); nessun calo possibile oltre il limite => nessun blocco dal drawdown.
+
+- **Precedenza delle prove, ripristino integrale e ambito dello stato (ciclo 19: S19-A, S19-B, S18-1).** Per una
+  lettura tardiva si cercano prima tutte le prove di un calo fra letture vere conservate con il loro istante (anche
+  quelle con istante precedente all'apertura della finestra): dal massimo delle letture vere lette prima di lei, dal
+  riferimento esatto, e dal minimo letto dopo di lei. Solo senza prova un limite superiore (picco confermato di istante
+  ignoto, base della finestra) porta alla storia insufficiente: un calo dimostrato resta sempre un hard-stop (S19-A,
+  110 -> 90 con limite 15). Un ribasamento owner con salvataggio fallito ripristina tutto lo stato precedente, picco
+  confermato e istante della conferma inclusi (S19-B). Lo stato persistito porta la **provenienza**: ambiente (`SIM`,
+  `LIVE`, oppure una sorgente non marcata) e identita' del conto (in LIVE l'hash dello username di login Betfair, mai il
+  nome in chiaro), ricavati da ogni lettura del conto. Protezione fail-closed fino alla separazione completa per
+  ambiente e conto della PR-04: con uno stato di un altro ambito (`drawdown_stato_di_altro_ambito`), senza provenienza
+  (`drawdown_stato_senza_provenienza`, record scritto prima della protezione: quarantena) o con un conto LIVE non
+  identificabile (`drawdown_conto_non_identificabile`) nessuna valutazione, nessuna scrittura, nessuna procedura owner
+  (ribasamento, sblocchi, conferma) e nessun nuovo ingresso su ogni percorso, controllo finale prima dell'invio compreso.
+  Lo stato salvato resta intatto: nessun azzeramento del picco. Tornando all'ambito del record il drawdown riprende con
+  il suo picco. Un cambio di modalita' SIM/LIVE (`set_simulation_mode`) invalida l'ambito gia' dichiarato: fino alla
+  prima lettura del conto nella nuova modalita' gli ingressi sono negati (`drawdown_conto_non_identificabile`), anche quelli
+  gia' in coda. Una lettura della modalita' precedente consegnata dopo il cambio non si valuta e non riapre gli ingressi;
+  il ramo del disponibile zero usa l'ambito della propria lettura come gli altri. Verifica della modalita', dichiarazione dell'ambito e
+  cambio modalita' (con l'invalidazione) sono una sola sezione critica: un passaggio a LIVE concorrente non lascia
+  dichiarato l'ambito SIM (Sol su 559b39ca). Uno stato con dati finanziari (picco,
+  superamento, storia insufficiente) e provenienza assente o nulla resta in quarantena anche dopo le scritture di
+  sessione, che non lo attribuiscono mai d'ufficio, nemmeno con l'ambito gia' dichiarato da una lettura (Grok su 559b39ca). L'unica uscita e' la procedura owner `owner_assign_drawdown_scope` (tracciata, stesse verifiche degli
+  sblocchi, nessun ordine AMBIGUOUS): attribuisce lo stato all'ambito corrente senza reset (picco, superamento e storia
+  insufficiente restano) e rimette la baseline da confermare. Emergency Stop, STOP BOT e LOCKDOWN restano globali.
