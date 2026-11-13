@@ -4608,3 +4608,57 @@ def test_c22_corrupted_breach_peak_is_unreadable_fail_closed(tmp_path, valore):
     _c22_record(c, breach={"kind": "max_drawdown_abs", "loss": "15", "cap": "10", "peak": valore, "cash": "115"})
     assert not c.rc._hard_stop().state_reliable()
     assert c.rc.drawdown_entry_block_reason() == "drawdown_stato_illeggibile"
+
+
+# ------------------------------------- ciclo 23 (PF-OWNER-PR631-C23-P1-P2-GO-20261113)
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("consegne", [2, 3])
+def test_c23_entry_of_a_previous_session_never_reaches_the_broker_however_many_times_it_is_delivered(
+        tmp_path, monkeypatch, consegne):
+    """Ciclo 23 (Codex P1 su a483d371): un ingresso della sessione A consegnato piu' volte dopo STOP -> START non
+    arriva mai al broker. Prima la prima consegna consumava la registrazione del fence e la seconda passava (1 ordine)
+    perche' la sessione d'ammissione era annotata solo dal verdetto positivo: ora e' sul comando dalla registrazione."""
+    app, rc, vecchio = _m65_sessioni(tmp_path, monkeypatch)
+    try:
+        rc.stop()
+        rc.betfair_service.get_account_funds = lambda: _fondi(95.0)
+        assert rc.start(execution_mode="SIMULATION").get("started") is True
+        esiti = [app.trading_engine.submit_quick_bet(vecchio).get("status") for _ in range(consegne)]
+        assert "ACCEPTED_FOR_PROCESSING" not in esiti, esiti
+        assert _m65_ordini_broker(app) == 0
+    finally:
+        _m65_chiudi(app)
+
+
+def _c23_storia_insufficiente(tmp_path):
+    import time
+    c = _catena(tmp_path, max_drawdown_abs=10.0)
+    _lettura(c, 100.0)
+    istante = time.monotonic()
+    for valore in (115.0, 130.0):                               # cassa del gate 115, picco 130, ordine ignoto
+        c.rc._apply_funds_reading(_fondi(valore), source="t", read_at=istante)
+    stop = c.rc._hard_stop()
+    assert stop.history_block_reason() == REASON_HISTORY_INSUFFICIENT and not stop.breached
+    return c, stop
+
+
+def test_c23_entry_gate_keeps_insufficient_history_and_never_invents_a_breach(tmp_path):
+    """Ciclo 23 (Sol n. 2 su 2159fea4, Codex P2 su a483d371): con storia insufficiente attiva il gate d'ammissione non
+    confronta la cassa ambigua (115) col picco (130): resta la storia insufficiente, nessun hard-stop memorizzato,
+    nessun ingresso, anche con un segnale reale."""
+    c, stop = _c23_storia_insufficiente(tmp_path)
+    assert c.rc._drawdown_hard_stop_reason() == REASON_HISTORY_INSUFFICIENT
+    c.rc.betfair_service.get_account_funds = lambda: _fondi(130.0)
+    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
+    assert not stop.breached and stop.history_block_reason() == REASON_HISTORY_INSUFFICIENT
+    assert _ordini(c) == 0
+
+
+def test_c23_a_proven_loss_still_breaches_while_history_is_insufficient(tmp_path):
+    """Ciclo 23: la storia insufficiente non nasconde una perdita dimostrata: una lettura ordinata successiva a 115
+    contro il picco 130 memorizza l'hard-stop persistente."""
+    import time
+    c, stop = _c23_storia_insufficiente(tmp_path)
+    c.rc._apply_funds_reading(_fondi(115.0), source="t", read_at=time.monotonic() + 1)
+    assert stop.breached
+    assert c.rc.drawdown_entry_block_reason() != ""

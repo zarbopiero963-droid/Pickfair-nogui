@@ -4661,6 +4661,11 @@ class RuntimeController:
             pending = queued.setdefault(ref, [])
             # il payload pubblicato e' lo stesso oggetto che riceve l'engine; M65: con la sessione d'ammissione
             pending.append((fence, payload, RuntimeController._entry_session(self)))
+            if isinstance(payload, dict):
+                # Ciclo 23 (Codex P1 su a483d371): la sessione d'ammissione sta sul comando fin dalla registrazione. Una
+                # seconda consegna dello stesso comando, dopo che la prima ha consumato la registrazione, resta della
+                # sessione precedente e il punto d'invio la nega (prima passava e piazzava l'ordine).
+                payload["admission_session"] = RuntimeController._entry_session(self)
             if len(pending) > 1:
                 conflicts = getattr(self, "_queued_ref_conflicts", None)
                 if conflicts is None:
@@ -7705,6 +7710,12 @@ class RuntimeController:
             write_block = RuntimeController._drawdown_write_block(self)
             if write_block:
                 return write_block                          # Grok su 6d4ac43f: reason() salverebbe il picco
+            # Ciclo 23 (Sol n. 2 su 2159fea4, Codex P2 su a483d371): con storia insufficiente attiva la cassa del gate
+            # e' ambigua (ordine ignoto): resta la storia insufficiente, mai un hard-stop memorizzato su un calo non
+            # dimostrato. Le perdite dimostrate nascono dalla valutazione delle letture, non da qui.
+            history = stop.history_block_reason()
+            if history and not stop.breached:
+                return history
             cash = self._drawdown_gate_cash()
             reason = stop.reason(self._configured_optional(self.config, "max_drawdown_abs"), cash,
                                  pct_cap_raw=self._configured_optional(self.config, "max_drawdown_hard_stop_pct"))

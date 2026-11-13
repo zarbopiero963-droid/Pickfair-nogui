@@ -11142,6 +11142,30 @@
       "rationale": "Ciclo 22: un ribasamento owner esplicito non va annullato dal recovery del picco del superamento."
     },
     {
+      "id": "c23_admission_session_not_stamped_at_registration",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                payload[\"admission_session\"] = RuntimeController._entry_session(self)\n",
+      "mutated": "                pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 23 (PF-OWNER-PR631-C23-P1-P2-GO-20261113, Codex P1): senza la sessione sul comando dalla registrazione una seconda consegna di un ingresso della sessione precedente arriverebbe al broker."
+    },
+    {
+      "id": "c23_gate_invents_breach_over_insufficient_history",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if history and not stop.breached:\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 23 (Sol n. 2, Codex P2): con storia insufficiente il gate memorizzerebbe un hard-stop su un calo non dimostrato."
+    },
+    {
       "id": "m65_send_point_ignores_admission_session",
       "module": "core.runtime_controller",
       "area": "money_management",

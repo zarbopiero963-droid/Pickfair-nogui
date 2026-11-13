@@ -109,7 +109,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   owner della storia insufficiente rilegge il conto (prova fresca ordinata) e non riparte mai da una cassa ambigua;
   rilettura non verificabile => nessuno sblocco. Ciclo 22 (PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112): picco e
   superamento nello stesso record (crash fra le scritture: picco perso); recovery del picco dimostrato dai record
-  precedenti; picco del superamento corrotto => stato illeggibile. F2: test di regressione deterministico sulla race SIM/LIVE. Review su e98e84c7 (Sol): un marker superato con picco piu'
+  precedenti; picco del superamento corrotto => stato illeggibile. Ciclo 23 (PF-OWNER-PR631-C23-P1-P2-GO-20261113):
+  ingresso della sessione precedente negato a ogni consegna; il gate non inventa un hard-stop sopra la storia
+  insufficiente. F2: test di regressione deterministico sulla race SIM/LIVE. Review su e98e84c7 (Sol): un marker superato con picco piu'
   alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
   resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale

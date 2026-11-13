@@ -604,6 +604,13 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   col picco (perdita fittizia), in entrambi gli ordini di arrivo e dopo un riavvio. Rilettura non verificabile =>
   nessuno sblocco (`cassa_fresca_non_verificata`).
 
+- **Ciclo 23 (PF-OWNER-PR631-C23-P1-P2-GO-20261113).** (1) La sessione d'ammissione sta sul comando fin dalla
+  registrazione del fence: un ingresso della sessione precedente consegnato piu' volte dopo STOP -> START e' negato al
+  punto d'invio a ogni consegna (prima la seconda consegna, trovata la registrazione gia' consumata, arrivava al broker).
+  (2) Con storia insufficiente attiva il gate d'ammissione resta sulla storia insufficiente e non confronta la cassa
+  ambigua col picco: nessun hard-stop memorizzato su un calo non dimostrato. Le perdite dimostrate restano hard-stop:
+  nascono dalla valutazione delle letture, anche con la storia insufficiente attiva.
+
 - **Picco e superamento in un'unica scrittura (ciclo 22, PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112).** Il
   picco che dimostra un superamento (un massimo osservato o confermato dall'owner, anche da una lettura tardiva) sale nello
   STESSO record persistito del superamento: un crash non puo' piu' lasciare su disco picco 115 con superamento da 130.
