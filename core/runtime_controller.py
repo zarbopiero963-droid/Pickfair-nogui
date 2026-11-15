@@ -7042,7 +7042,9 @@ class RuntimeController:
         pct_cap = self._configured_optional(self.config, "max_drawdown_hard_stop_pct")
         # D-631-11: prima la valutazione con la cronologia (picco e minimi con istante coerente; storia insufficiente
         # = stato distinto, mai un PASS), poi il massimo globale.
-        esito = stop.evaluate_late(cap, started, cassa, pct_cap_raw=pct_cap)
+        # Ciclo 25-B (Sol su 49ac83c4): anche la soglia LOCKDOWN del desk, per le letture dello stesso istante.
+        esito = stop.evaluate_late(cap, started, cassa, pct_cap_raw=pct_cap,
+                                   lockdown_pct_raw=getattr(self.config, "lockdown_drawdown_pct", None))
         if esito == "breached":
             breach = stop.snapshot()["breach"]
             self._pending_drawdown_lockdown = (f"drawdown_hard_stop_triggered:{breach.get('kind')}:"
@@ -7853,6 +7855,12 @@ class RuntimeController:
         # Lo sblocco la risolve con una PROVA: rilettura fresca del conto, fuori dalla sezione critica (rete), valutata
         # nell'hard-stop come lettura ordinata. Perdita reale => hard-stop dimostrato (lo sblocco non lo cancella);
         # nessuna perdita => il gate riparte dalla cassa fresca. Rilettura non verificabile => nessuno sblocco.
+        # Ciclo 25-A (PF-OWNER-PR631-C25-GROK-SOL-FAILOPEN-20261116, Grok su 49ac83c4): la prova deve essere una
+        # lettura ORDINATA dopo quelle che hanno creato l'incertezza. Istante dell'ultima lettura valutata, preso prima
+        # della rilettura: una rilettura con lo stesso istante (stesso tick del clock, es. Windows) e' tardiva, non
+        # aggiorna la cassa del gate, e non prova nulla.
+        with RuntimeController._drawdown_eval_lock:
+            ordered_before = getattr(self, "_drawdown_read_at", None)
         fresh = self._read_funds_for_entry()
         fresh_cash = (RuntimeController._cash_equity_verification(fresh.get("funds"))
                       if isinstance(fresh.get("funds"), dict) else {"ok": False, "cash": None})
@@ -7868,6 +7876,18 @@ class RuntimeController:
                 return out
             if not fresh_cash.get("ok"):
                 out["reason"] = "cassa_fresca_non_verificata"
+                return out
+            # Ciclo 25-A: la rilettura e' una prova solo se e' iniziata DOPO l'ultima lettura valutata ed e' diventata
+            # la cassa del gate (valutata come lettura ordinata, con la sua cassa). Altrimenti nessuno sblocco: la
+            # storia insufficiente resta (fail-closed), l'owner riprova con una lettura successiva.
+            started = validators.finite_number(fresh.get("read_at"))
+            if (started is None or (ordered_before is not None and started <= ordered_before)
+                    or getattr(self, "_drawdown_read_at", None) != started
+                    or validators.finite_number(getattr(self, "_drawdown_last_cash", None))
+                    != validators.finite_number(fresh_cash.get("cash"))):
+                logger.warning("D-1: sblocco della storia insufficiente rifiutato: la rilettura del conto non e' "
+                               "ordinata dopo le letture ambigue (stesso istante o superata)")
+                out["reason"] = "cassa_fresca_non_ordinata"
                 return out
             checks = self._owner_drawdown_checks()
             checks["fresh_cash"] = fresh_cash.get("cash")

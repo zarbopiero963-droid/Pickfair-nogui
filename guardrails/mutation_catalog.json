@@ -10330,7 +10330,7 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        esito = stop.evaluate_late(cap, started, cassa, pct_cap_raw=pct_cap)\n",
+      "original": "        esito = stop.evaluate_late(cap, started, cassa, pct_cap_raw=pct_cap,\n                                   lockdown_pct_raw=getattr(self.config, \"lockdown_drawdown_pct\", None))\n",
       "mutated": "        esito = \"\"\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
@@ -11212,6 +11212,90 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "Ciclo 24: senza il token d'ammissione sul comando l'identita' del proprietario del fence non sarebbe verificabile."
+    },
+    {
+      "id": "c25a_clearance_ordering_check_removed",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if (started is None or (ordered_before is not None and started <= ordered_before)\n",
+      "mutated": "            if False and (started is None or (ordered_before is not None and started <= ordered_before)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 25-A (PF-OWNER-PR631-C25-GROK-SOL-FAILOPEN-20261116, Grok): senza la prova ordinata lo sblocco owner nello stesso tick riaprirebbe gli ingressi in coda sulla cassa ambigua (1 ordine con perdita reale oltre il limite)."
+    },
+    {
+      "id": "c25a_clearance_same_tick_accepted",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if (started is None or (ordered_before is not None and started <= ordered_before)\n",
+      "mutated": "            if (started is None or (ordered_before is not None and started < ordered_before)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 25-A: una rilettura con lo STESSO istante dell'ultima lettura valutata non e' una prova dell'ordine (granularita' del clock)."
+    },
+    {
+      "id": "c25a_clearance_gate_cash_not_compared",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    or validators.finite_number(getattr(self, \"_drawdown_last_cash\", None))\n",
+      "mutated": "                    or False and validators.finite_number(getattr(self, \"_drawdown_last_cash\", None))\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 25-A: la rilettura deve essere la cassa del gate; una lettura concorrente dello stesso tick arrivata prima lascerebbe il gate su una cassa di ordine ignoto."
+    },
+    {
+      "id": "c25b_lockdown_ambiguity_ignored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if any(cash < peer for peer in peers) and self._lockdown_possible(lockdown_pct_raw, cash):\n",
+      "mutated": "        if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 25-B (Sol): due letture dello stesso istante con calo possibile oltre la soglia LOCKDOWN del desk lascerebbero partire l'ingresso in coda (1 ordine con calo possibile del 23%)."
+    },
+    {
+      "id": "c25b_lockdown_threshold_not_passed",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                                   lockdown_pct_raw=getattr(self.config, \"lockdown_drawdown_pct\", None))\n",
+      "mutated": "                                   lockdown_pct_raw=None)\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 25-B: senza la soglia LOCKDOWN del desk la valutazione tardiva vede solo i cap dell'hard-stop."
+    },
+    {
+      "id": "c25b_lockdown_possible_inverted_threshold",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        return (max(Decimal(0), peak - cash) / peak * Decimal(100)) >= threshold\n",
+      "mutated": "        return (max(Decimal(0), peak - cash) / peak * Decimal(100)) >= threshold * 2\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 25-B: la perdita possibile si confronta con la soglia del desk, non con una soglia piu' larga."
+    },
+    {
+      "id": "c25b_lockdown_check_also_on_lower_peer",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if any(cash < peer for peer in peers) and self._lockdown_possible(lockdown_pct_raw, cash):\n",
+      "mutated": "        if peers and self._lockdown_possible(lockdown_pct_raw, min(peers + [cash])):\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 25-B: solo una lettura piu' bassa della gemella nasconde il calo alla cassa del gate; con la gemella gia' bassa vale il LOCKDOWN del desk (nessuna storia insufficiente aggiunta)."
     },
     {
       "id": "m65_send_point_ignores_admission_session",

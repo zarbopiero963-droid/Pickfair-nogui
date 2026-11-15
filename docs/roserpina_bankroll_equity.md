@@ -624,6 +624,23 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   ricontrollo al punto d'invio stanno prima della scelta del trasporto, quindi sono gli stessi in LIVE; cambia solo
   il trasporto finale (`SimulationBroker` invece del client Betfair), non provato contro i server Betfair.
 
+- **Ciclo 25 (PF-OWNER-PR631-C25-GROK-SOL-FAILOPEN-20261116): due fail-open riprodotti end-to-end in SIM.** Entrambi
+  colpivano gli ingressi gia' ammessi e in coda, che al punto d'invio non rileggono il conto e si fidano dello stato
+  del drawdown.
+  (A, Grok) Lo sblocco owner della storia insufficiente accetta la rilettura del conto solo se e' una lettura
+  ORDINATA: iniziata dopo l'ultima lettura valutata (istante preso prima della rilettura) e diventata la cassa del
+  gate. Una rilettura nello stesso tick del clock (granularita' Windows), o superata da una lettura concorrente dello
+  stesso tick, non prova nulla: sblocco rifiutato (`cassa_fresca_non_ordinata`), storia insufficiente intatta,
+  l'owner riprova. Prima lo sblocco riusciva, il gate restava sulla cassa ambigua (130 con conto reale 115, limite
+  10) e l'ingresso in coda partiva.
+  (B, Sol) La valutazione delle letture dello stesso istante considera anche la soglia LOCKDOWN del desk
+  (`lockdown_drawdown_pct`), con o senza hard-stop configurato: se una lettura piu' bassa della gemella (gia' cassa
+  del gate) puo' essere la cassa corrente e la sua perdita dal picco raggiunge la soglia, la perdita e' possibile ma
+  non dimostrata => storia insufficiente, ingressi negati, mai un hard-stop. Perdita dimostrata (letture ordinate) o
+  gemella gia' bassa => LOCKDOWN del desk come prima; nessuna perdita oltre soglia possibile (130 e 120) => nessun
+  blocco. Prima 130 poi 100 dello stesso istante lasciavano la cassa del gate a 130 (0%) e l'ingresso in coda partiva
+  con un calo possibile del 23%. Uscite protettive (cashout, cancellazioni, riduzioni) invariate.
+
 - **Picco e superamento in un'unica scrittura (ciclo 22, PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112).** Il
   picco che dimostra un superamento (un massimo osservato o confermato dall'owner, anche da una lettura tardiva) sale nello
   STESSO record persistito del superamento: un crash non puo' piu' lasciare su disco picco 115 con superamento da 130.

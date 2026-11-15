@@ -804,7 +804,8 @@ class DrawdownHardStop:
                 self._open_window_locked(at)
             self._store_locked(float(at), cash)
 
-    def evaluate_late(self, cap_raw: Any, at: float, cash_equity: Any, *, pct_cap_raw: Any = None) -> str:
+    def evaluate_late(self, cap_raw: Any, at: float, cash_equity: Any, *, pct_cap_raw: Any = None,
+                      lockdown_pct_raw: Any = None) -> str:
         """Lettura verificata arrivata dopo una piu' recente (D-631-10/11). Esito: "" (niente), "breached" (superamento
         dimostrato e memorizzato), "insufficient" (storia insufficiente, memorizzata). Due verifiche, sempre contro
         letture con istante coerente, mai contro un massimo successivo:
@@ -873,7 +874,30 @@ class DrawdownHardStop:
             if self._limit_exceeded(cap_raw, pct_cap_raw, low_peer, high):
                 return self._mark_history_insufficient("letture_con_lo_stesso_istante", at, cash, epoch,
                                                        reference=high)
+        # Ciclo 25-B (PF-OWNER-PR631-C25-GROK-SOL-FAILOPEN-20261116, Sol su 49ac83c4): la soglia LOCKDOWN del desk si
+        # misura sulla cassa del gate (una gemella arrivata prima). Se questa lettura, piu' bassa della gemella, puo'
+        # essere la cassa corrente e la sua perdita dal picco raggiunge la soglia, la perdita e' possibile ma non
+        # dimostrata => storia insufficiente (ingressi negati), mai un hard-stop. Gemella gia' piu' bassa: e' lei la
+        # cassa del gate e il LOCKDOWN del desk la vede gia'.
+        if any(cash < peer for peer in peers) and self._lockdown_possible(lockdown_pct_raw, cash):
+            return self._mark_history_insufficient("letture_con_lo_stesso_istante_soglia_lockdown", at, cash, epoch,
+                                                   reference=max(peers))
         return ""
+
+    def _lockdown_possible(self, lockdown_pct_raw: Any, cash: Decimal) -> bool:
+        """Ciclo 25-B: perdita % di ``cash`` dal picco persistente >= soglia LOCKDOWN del desk (soglia non valida o
+        picco assente => False: nessun blocco inventato, il resto dei controlli resta)."""
+        try:
+            threshold = Decimal(str(lockdown_pct_raw))
+        except Exception:
+            return False
+        if not threshold.is_finite() or threshold <= 0:
+            return False
+        with self._lock:
+            peak = self.peak
+        if peak is None or peak <= 0:
+            return False
+        return (max(Decimal(0), peak - cash) / peak * Decimal(100)) >= threshold
 
     def _mark_history_insufficient(self, why: str, at: float, cash: Decimal, epoch: int,
                                    reference: Optional[Decimal] = None) -> str:

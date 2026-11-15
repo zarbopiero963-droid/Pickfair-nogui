@@ -2601,7 +2601,13 @@ def test_insufficient_history_survives_stop_start_crash_and_takeover(tmp_path, m
 def test_insufficient_history_is_cleared_only_by_the_owner_procedure_with_checks(tmp_path, monkeypatch):
     """Sblocco solo owner: campi obbligatori, verifiche (ordini AMBIGUOUS => negato), operation_id monouso, salvato
     prima che valga; non tocca il picco ne' un superamento."""
-    c, _ = _storia_insufficiente(tmp_path, monkeypatch, max_drawdown_abs=10.0)
+    import itertools
+    import core.runtime_controller as rcmod
+    c, base = _storia_insufficiente(tmp_path, monkeypatch, max_drawdown_abs=10.0)
+    # Ciclo 25-A: lo sblocco rilegge il conto DOPO le letture (orologio che avanza oltre l'ultima, t8): la rilettura
+    # e' ordinata. Prima il test passava con una rilettura «tardiva» perche' le letture stavano nel futuro (base+100).
+    orologio = itertools.count(1)
+    monkeypatch.setattr(rcmod.time, "monotonic", lambda: base + 8 + next(orologio))
     owner = dict(authorization="#631 decisione owner", reason="riconciliazione verificata", operation_id="PF-HIST-1",
                  confirm=True)
     assert c.rc.owner_clear_drawdown_history_insufficient(**dict(owner, confirm=False))["cleared"] is False
@@ -4442,10 +4448,11 @@ def test_c21_owner_clearance_keeps_a_drop_proven_by_the_fresh_entry_reading(tmp_
     import time
     c = _catena(tmp_path, max_drawdown_abs=10.0)
     _lettura(c, 100.0)
-    istante = time.monotonic() + 100.0
+    istante = time.monotonic()                     # t2 nel passato (ciclo 25-A: la rilettura dello sblocco e' dopo)
     for valore in (130.0, 115.0):
         c.rc._apply_funds_reading(_fondi(valore), source="test", read_at=istante)
     assert c.rc._hard_stop().history_block_reason() == REASON_HISTORY_INSUFFICIENT
+    c.rc.betfair_service.get_account_funds = lambda: _fondi(130.0)   # rilettura ordinata dello sblocco: 130
     esito = c.rc.owner_clear_drawdown_history_insufficient(authorization="#631 decisione owner",
                                                            reason="riconciliazione verificata",
                                                            operation_id="PF-C21-CTRL", confirm=True)
@@ -4894,5 +4901,218 @@ def test_c24_e2e_pickfair_sim_new_entry_first_then_old_redeliveries(tmp_path, mo
         assert [t["token"] for t in spia.tentativi] == _oracolo_m65(sequenza) == ["P_B"], \
             spia.tentativi
         assert len(spia.ordini_accettati()) == 1
+    finally:
+        _m65_chiudi(app)
+
+
+# ------------------------------------- ciclo 25 (PF-OWNER-PR631-C25-GROK-SOL-FAILOPEN-20261116)
+def _c25_ingresso_in_coda(tmp_path, monkeypatch, **cfg):
+    """App reale in SIM (START a 100): un ingresso da 5 EUR ammesso e trattenuto in coda verso il motore, poi la spia
+    sul SimulationBroker. Restituisce app, controller, comando trattenuto e spia."""
+    from tests.risk_config_fixtures import legacy_test_config
+    app, rc = _start_reale(tmp_path, monkeypatch, 100.0)
+    monkeypatch.setattr(rc.settings_service, "load_roserpina_config",
+                        lambda: legacy_test_config(liquidity_guard_enabled=False, **cfg))
+    assert rc.start(execution_mode="SIMULATION").get("started") is True
+    trattenuti, reale = [], rc.bus.publish
+    rc.bus.publish = lambda t, p=None: trattenuti.append(p) if t == "CMD_QUICK_BET" else reale(t, p)
+    rc._on_signal_received(_signal(stake=5.0, bet_type="BACK"))
+    rc.bus.publish = reale
+    assert len(trattenuti) == 1
+    trattenuti[0]["e2e_sonda"] = "in_coda"
+    return app, rc, trattenuti[0], _SpiaBroker(app.betfair_service.simulation_broker, rc)
+
+
+def _c25_stesso_istante(rc, valori):
+    import time
+    istante = time.monotonic()
+    for valore in valori:
+        rc._apply_funds_reading(_fondi(valore), source="t", read_at=istante)
+    return istante
+
+
+def _c25_sblocco(rc, monkeypatch=None, istante=None):
+    import core.runtime_controller as rcmod
+    with pytest.MonkeyPatch.context() as mp:
+        if istante is not None:                       # granularita' del clock (Windows): stesso tick delle letture
+            mp.setattr(rcmod.time, "monotonic", lambda: istante)
+        return rc.owner_clear_drawdown_history_insufficient(authorization="#631 decisione owner", reason="verifica",
+                                                            operation_id="PF-C25-CLR", confirm=True)
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("tick", ["stesso", "successivo"])
+def test_c25_owner_clearance_never_lets_a_queued_entry_through_on_an_unordered_fresh_reading(
+        tmp_path, monkeypatch, tick):
+    """Ciclo 25-A (Grok su 49ac83c4, riprodotto E2E): cap 10, letture 130 e 115 dello stesso istante => storia
+    insufficiente; conto reale 115. Lo sblocco owner nello STESSO tick (clock Windows) leggeva la cassa fresca come
+    tardiva, non aggiornava la cassa del gate (130) e cancellava comunque la storia insufficiente: l'ingresso gia' in
+    coda partiva (1 ordine). Ora: stesso tick => sblocco rifiutato (`cassa_fresca_non_ordinata`), storia insufficiente
+    intatta; tick successivo => la prova ordinata dimostra la perdita (hard-stop). In entrambi 0 tentativi al broker."""
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=10.0)
+    try:
+        istante = _c25_stesso_istante(rc, (130.0, 115.0))
+        stop = rc._hard_stop()
+        assert stop.history_block_reason() == REASON_HISTORY_INSUFFICIENT
+        rc.betfair_service.get_account_funds = lambda: _fondi(115.0)
+        esito = _c25_sblocco(rc, istante=istante if tick == "stesso" else None)
+        if tick == "stesso":
+            assert esito["cleared"] is False and esito["reason"] == "cassa_fresca_non_ordinata", esito
+            assert stop.history_block_reason() == REASON_HISTORY_INSUFFICIENT
+        else:
+            assert stop.breached
+        assert rc.drawdown_entry_block_reason(cmd) != ""
+        assert app.trading_engine.submit_quick_bet(cmd).get("status") != "ACCEPTED_FOR_PROCESSING"
+        _m65_ordini_broker(app)
+        assert spia.tentativi == [] and spia.ordini_accettati() == []
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+def test_c25_owner_clearance_with_an_ordered_fresh_reading_and_no_loss_reopens_the_queued_entry(
+        tmp_path, monkeypatch):
+    """Ciclo 25-A, caso innocuo: stesse letture ambigue, conto reale 130 (nessuna perdita). Lo sblocco con una lettura
+    fresca ordinata riesce e l'ingresso in coda parte: nessun blocco ingiustificato (1 ordine)."""
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=10.0)
+    try:
+        _c25_stesso_istante(rc, (130.0, 115.0))
+        rc.betfair_service.get_account_funds = lambda: _fondi(130.0)
+        esito = _c25_sblocco(rc)
+        assert esito["cleared"] is True, esito
+        assert rc.drawdown_entry_block_reason(cmd) == ""
+        assert app.trading_engine.submit_quick_bet(cmd).get("status") == "ACCEPTED_FOR_PROCESSING"
+        _m65_ordini_broker(app)
+        assert [t["token"] for t in spia.tentativi] == ["in_coda"]
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("letture,atteso", [
+    ((130.0, 100.0), "storia_insufficiente"),      # 23% possibile, cassa del gate 130: prima partiva (1 ordine)
+    ((100.0, 130.0), "desk_lockdown"),              # la cassa del gate e' gia' la bassa: LOCKDOWN del desk
+    ("ordinate", "desk_lockdown"),                  # 130 -> 100 ordinate: perdita dimostrata, LOCKDOWN
+    ("picco_poi_100_130", "desk_lockdown"),         # picco 130 gia' noto, poi 100 e 130 dello stesso istante
+    ((130.0, 120.0), ""),                           # 7,7%: nessuna perdita oltre soglia possibile, l'ordine parte
+])
+def test_c25_ambiguous_readings_over_the_desk_lockdown_threshold_block_the_queued_entry(
+        tmp_path, monkeypatch, letture, atteso):
+    """Ciclo 25-B (Sol su 49ac83c4, riprodotto E2E): soglia LOCKDOWN del desk 20%, hard-stop di fatto assente (cap
+    1000). Due letture dello stesso istante 130 e 100: ordine reale ignoto, calo possibile del 23%. Prima la cassa del
+    gate restava 130 e l'ingresso in coda partiva. Ora: perdita possibile ma non dimostrata => storia insufficiente,
+    ingressi negati, nessun hard-stop; perdita dimostrata (letture ordinate) => LOCKDOWN; nessuna perdita possibile
+    oltre soglia => l'ordine parte."""
+    import time
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=1000.0)
+    try:
+        if letture == "ordinate":
+            t = time.monotonic()
+            rc._apply_funds_reading(_fondi(130.0), source="t", read_at=t)
+            rc._apply_funds_reading(_fondi(100.0), source="t", read_at=t + 0.001)
+        elif letture == "picco_poi_100_130":
+            t = time.monotonic()
+            rc._apply_funds_reading(_fondi(130.0), source="t", read_at=t - 0.001)
+            _c25_stesso_istante(rc, (100.0, 130.0))
+        else:
+            _c25_stesso_istante(rc, letture)
+        stop = rc._hard_stop()
+        motivo = rc.drawdown_entry_block_reason(cmd)
+        assert not stop.breached                                     # nessun hard-stop fittizio
+        if atteso == "storia_insufficiente":
+            assert stop.history_block_reason() == REASON_HISTORY_INSUFFICIENT and motivo, motivo
+        elif atteso == "desk_lockdown":
+            # la cassa del gate e' gia' la bassa (o la perdita e' dimostrata): vale il LOCKDOWN del desk, nessuna storia
+            # insufficiente in piu' (distinzione dimostrata / possibile del mandato owner)
+            assert motivo == "desk_lockdown" and stop.history_block_reason() == "", motivo
+        else:
+            assert motivo == "" and stop.history_block_reason() == "", motivo
+        stato = app.trading_engine.submit_quick_bet(cmd).get("status")
+        _m65_ordini_broker(app)
+        if atteso:
+            assert stato != "ACCEPTED_FOR_PROCESSING" and spia.tentativi == [], (stato, spia.tentativi)
+        else:
+            assert stato == "ACCEPTED_FOR_PROCESSING" and [t["token"] for t in spia.tentativi] == ["in_coda"]
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("evento", ["letture_ambigue", "sblocco_stesso_tick"])
+def test_c25_state_change_during_the_final_authorization_blocks_the_queued_entry(tmp_path, monkeypatch, evento):
+    """Ciclo 25, concorrenza deterministica: il cambio di stato avviene mentre l'ingresso in coda e' gia' nel motore,
+    immediatamente prima del ricontrollo al punto d'invio (hook su `drawdown_entry_block_reason`). ``letture_ambigue``:
+    arrivano 130 e 100 dello stesso istante (soglia 20%); ``sblocco_stesso_tick``: con la storia insufficiente gia'
+    attiva arriva lo sblocco owner nello stesso tick. In entrambi il ricontrollo nega: 0 tentativi al broker."""
+    cap = 1000.0 if evento == "letture_ambigue" else 10.0
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=cap)
+    try:
+        istante = None
+        if evento == "sblocco_stesso_tick":
+            istante = _c25_stesso_istante(rc, (130.0, 115.0))
+            rc.betfair_service.get_account_funds = lambda: _fondi(115.0)
+        reale = rc.drawdown_entry_block_reason
+        esiti = []
+
+        def ricontrollo(request=None):
+            if not esiti:
+                if evento == "letture_ambigue":
+                    esiti.append(_c25_stesso_istante(rc, (130.0, 100.0)))
+                else:
+                    esiti.append(_c25_sblocco(rc, istante=istante))
+            return reale(request)
+
+        monkeypatch.setattr(rc, "drawdown_entry_block_reason", ricontrollo)
+        stato = app.trading_engine.submit_quick_bet(cmd).get("status")
+        _m65_ordini_broker(app)
+        assert esiti, "il cambio di stato non e' avvenuto durante l'autorizzazione finale"
+        assert stato != "ACCEPTED_FOR_PROCESSING" and spia.tentativi == [], (stato, spia.tentativi)
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+def test_c25_owner_clearance_in_the_same_tick_is_refused_even_without_a_visible_loss(tmp_path, monkeypatch):
+    """Ciclo 25-A: l'istante d'inizio della rilettura non e' una prova dell'ordine. Stesso tick delle letture ambigue e
+    conto reale 130 (uguale alla cassa del gate): lo sblocco resta rifiutato (`cassa_fresca_non_ordinata`), nessuna
+    riapertura senza una lettura ordinata; l'owner riprova con una lettura successiva."""
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=10.0)
+    try:
+        istante = _c25_stesso_istante(rc, (130.0, 115.0))
+        rc.betfair_service.get_account_funds = lambda: _fondi(130.0)
+        esito = _c25_sblocco(rc, istante=istante)
+        assert esito["cleared"] is False and esito["reason"] == "cassa_fresca_non_ordinata", esito
+        assert rc._hard_stop().history_block_reason() == REASON_HISTORY_INSUFFICIENT
+        assert _c25_sblocco(rc)["cleared"] is True                       # tick successivo: prova ordinata
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+def test_c25_owner_clearance_refused_when_a_concurrent_reading_of_the_same_tick_is_the_gate_cash(
+        tmp_path, monkeypatch):
+    """Ciclo 25-A, concorrenza: durante la rilettura dello sblocco (tick T, successivo alle letture ambigue) una lettura
+    concorrente del desk dello STESSO tick T arriva prima con 130; la rilettura (115) arriva tardiva. La cassa del gate
+    e' 130, non la rilettura: ordine fra le due ignoto => sblocco rifiutato, l'ingresso in coda non parte."""
+    import core.runtime_controller as rcmod
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=10.0)
+    try:
+        istante = _c25_stesso_istante(rc, (130.0, 115.0))
+        dopo = istante + 0.5
+
+        def rilettura():
+            rc._apply_funds_reading(_fondi(130.0), source="desk", read_at=dopo)    # concorrente, stesso tick
+            return _fondi(115.0)
+
+        rc.betfair_service.get_account_funds = rilettura
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(rcmod.time, "monotonic", lambda: dopo)
+            esito = rc.owner_clear_drawdown_history_insufficient(authorization="#631 decisione owner", reason="v",
+                                                                operation_id="PF-C25-CONC", confirm=True)
+        assert esito["cleared"] is False and esito["reason"] == "cassa_fresca_non_ordinata", esito
+        assert rc.drawdown_entry_block_reason(cmd) != ""
+        assert app.trading_engine.submit_quick_bet(cmd).get("status") != "ACCEPTED_FOR_PROCESSING"
+        _m65_ordini_broker(app)
+        assert spia.tentativi == []
     finally:
         _m65_chiudi(app)

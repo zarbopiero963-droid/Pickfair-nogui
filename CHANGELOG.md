@@ -113,7 +113,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ingresso della sessione precedente negato a ogni consegna; il gate non inventa un hard-stop sopra la storia
   insufficiente. Ciclo 24 (PF-OWNER-PR631-C24, Sol P1 su cddc14c9): il fence si consuma solo dal comando
   proprietario (stessa sessione e stesso token d'ammissione); una riconsegna della sessione precedente non prende piu'
-  il fence riammesso nella sessione nuova. F2: test di regressione deterministico sulla race SIM/LIVE. Review su e98e84c7 (Sol): un marker superato con picco piu'
+  il fence riammesso nella sessione nuova. Ciclo 25 (PF-OWNER-PR631-C25-GROK-SOL-FAILOPEN-20261116): lo sblocco owner
+  della storia insufficiente richiede una rilettura ordinata (`cassa_fresca_non_ordinata` altrimenti); letture dello
+  stesso istante con calo possibile oltre la soglia LOCKDOWN del desk => storia insufficiente (ingressi in coda negati).
+  F2: test di regressione deterministico sulla race SIM/LIVE. Review su e98e84c7 (Sol): un marker superato con picco piu'
   alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento
   resta dopo una ricarica; lo STOP chiude la sessione su disco prima di rilasciare il lock di istanza; bet manuale
