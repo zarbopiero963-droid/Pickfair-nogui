@@ -4666,6 +4666,9 @@ class RuntimeController:
                 # seconda consegna dello stesso comando, dopo che la prima ha consumato la registrazione, resta della
                 # sessione precedente e il punto d'invio la nega (prima passava e piazzava l'ordine).
                 payload["admission_session"] = RuntimeController._entry_session(self)
+                # Ciclo 24 (Sol P1 su cddc14c9): identita' del comando proprietario del fence. Un altro comando con lo
+                # stesso customer_ref (es. quello di una sessione precedente) non consuma questo fence.
+                payload["admission_token"] = uuid.uuid4().hex
             if len(pending) > 1:
                 conflicts = getattr(self, "_queued_ref_conflicts", None)
                 if conflicts is None:
@@ -4880,6 +4883,17 @@ class RuntimeController:
             pending = queued.get(ref)
             if not pending:
                 return ""
+            # Ciclo 24 (Sol P1 su cddc14c9, PF-OWNER-PR631-C24): il fence si consuma solo dal comando che lo possiede,
+            # nella sua sessione. Una riconsegna di un comando della sessione A che trova il fence della sessione B
+            # (stesso customer_ref riammesso dopo STOP -> START) e' negata senza toccare il fence ne' la propria
+            # sessione d'ammissione: prima lo consumava, prendeva la sessione B e piazzava l'ordine calcolato in A.
+            _f, head_owner, head_session = pending[0]
+            if isinstance(request, dict) and isinstance(head_owner, dict) and (
+                    request.get("admission_session") != head_session
+                    or request.get("admission_token") != head_owner.get("admission_token")):
+                logger.warning("M65: ingresso %s (sessione %s) non proprietario del fence in coda (sessione %s): "
+                               "negato, fence intatto", ref, request.get("admission_session"), head_session)
+                return "ingresso_di_sessione_precedente"
             fence, _owner, session = pending.pop(0)
             conflicts = getattr(self, "_queued_ref_conflicts", None) or set()
             in_conflict = ref in conflicts

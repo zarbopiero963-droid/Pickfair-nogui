@@ -611,6 +611,14 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   ambigua col picco: nessun hard-stop memorizzato su un calo non dimostrato. Le perdite dimostrate restano hard-stop:
   nascono dalla valutazione delle letture, anche con la storia insufficiente attiva.
 
+- **Ciclo 24 (PF-OWNER-PR631-C24, Sol P1 su cddc14c9): proprieta' del fence.** Alla registrazione il comando riceve
+  anche un token d'ammissione (`admission_token`). Il verdetto consuma il fence in testa solo se la richiesta ne e' la
+  proprietaria: stessa sessione d'ammissione E stesso token. Altrimenti nega (`ingresso_di_sessione_precedente`) senza
+  consumare il fence e senza toccare la sessione annotata sul comando. Caso chiuso: dopo STOP -> START lo stesso segnale
+  riammesso nella sessione B (stesso customer_ref) creava il fence di P_B; una riconsegna di P_A (sessione A) lo
+  consumava, prendeva la sessione B e piazzava l'ordine calcolato in A. Ora P_A e' negato a ogni consegna, anche in
+  concorrenza con P_B, e P_B parte: un solo ordine.
+
 - **Picco e superamento in un'unica scrittura (ciclo 22, PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112).** Il
   picco che dimostra un superamento (un massimo osservato o confermato dall'owner, anche da una lettura tardiva) sale nello
   STESSO record persistito del superamento: un crash non puo' piu' lasciare su disco picco 115 con superamento da 130.

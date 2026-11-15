@@ -11166,6 +11166,54 @@
       "rationale": "Ciclo 23 (Sol n. 2, Codex P2): con storia insufficiente il gate memorizzerebbe un hard-stop su un calo non dimostrato."
     },
     {
+      "id": "c24_fence_owner_check_removed",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if isinstance(request, dict) and isinstance(head_owner, dict) and (\n",
+      "mutated": "            if False and isinstance(request, dict) and isinstance(head_owner, dict) and (\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 24 (PF-OWNER-PR631-C24, Sol P1 su cddc14c9): senza il controllo di proprieta' una riconsegna di un ingresso della sessione A consumerebbe il fence della sessione B e piazzerebbe l'ordine calcolato in A."
+    },
+    {
+      "id": "c24_fence_owner_session_not_compared",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    request.get(\"admission_session\") != head_session\n",
+      "mutated": "                    False\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 24: senza il confronto della sessione un comando con lo stesso token ma di un'altra sessione consumerebbe il fence (difesa in profondita' del confronto del token)."
+    },
+    {
+      "id": "c24_fence_owner_token_not_compared",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    or request.get(\"admission_token\") != head_owner.get(\"admission_token\")):\n",
+      "mutated": "                    or False):\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 24: senza il confronto del token un comando estraneo con lo stesso customer_ref e la stessa sessione consumerebbe il fence del proprietario."
+    },
+    {
+      "id": "c24_admission_token_not_stamped",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                payload[\"admission_token\"] = uuid.uuid4().hex\n",
+      "mutated": "                pass\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 24: senza il token d'ammissione sul comando l'identita' del proprietario del fence non sarebbe verificabile."
+    },
+    {
       "id": "m65_send_point_ignores_admission_session",
       "module": "core.runtime_controller",
       "area": "money_management",

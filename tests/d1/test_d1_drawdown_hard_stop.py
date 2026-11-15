@@ -4662,3 +4662,133 @@ def test_c23_a_proven_loss_still_breaches_while_history_is_insufficient(tmp_path
     c.rc._apply_funds_reading(_fondi(115.0), source="t", read_at=time.monotonic() + 1)
     assert stop.breached
     assert c.rc.drawdown_entry_block_reason() != ""
+
+
+# ------------------------------------- ciclo 24 (PF-OWNER-PR631-C24, Sol P1 su cddc14c9: proprieta' del fence)
+def _c24_riammissione(app, rc):
+    """Nella sessione B lo stesso segnale e' riammesso (stesso customer_ref): nuovo fence e nuovo comando P_B."""
+    trattenuti = []
+    reale = rc.bus.publish
+
+    def publish(topic, payload=None):
+        if topic == "CMD_QUICK_BET":
+            trattenuti.append(payload)
+            return None
+        return reale(topic, payload)
+
+    rc.bus.publish = publish
+    rc._on_signal_received(_signal(stake=5.0, bet_type="BACK"))
+    rc.bus.publish = reale
+    assert len(trattenuti) == 1
+    return trattenuti[0]
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("consegne", [1, 2, 3])
+def test_c24_old_session_entry_never_takes_the_fence_of_the_new_session(tmp_path, monkeypatch, consegne):
+    """Ciclo 24 (Sol P1 su cddc14c9): P_A (sessione A) consegnato dopo STOP -> START e' negato; lo stesso segnale
+    riammesso in B crea il fence di P_B. Ogni ulteriore consegna di P_A resta negata, non consuma il fence di P_B e
+    non cambia la propria sessione d'ammissione; P_B parte, un solo ordine. Prima la seconda consegna di P_A
+    consumava il fence B, prendeva la sessione B e piazzava l'ordine calcolato in A."""
+    app, rc, vecchio = _m65_sessioni(tmp_path, monkeypatch)
+    try:
+        rc.stop()
+        rc.betfair_service.get_account_funds = lambda: _fondi(100.0)
+        assert rc.start(execution_mode="SIMULATION").get("started") is True
+        sessione_a = vecchio["admission_session"]
+        assert app.trading_engine.submit_quick_bet(vecchio).get("status") != "ACCEPTED_FOR_PROCESSING"
+        nuovo = _c24_riammissione(app, rc)
+        assert nuovo["customer_ref"] == vecchio["customer_ref"] and nuovo["admission_session"] != sessione_a
+        esiti = [app.trading_engine.submit_quick_bet(vecchio).get("status") for _ in range(consegne)]
+        assert "ACCEPTED_FOR_PROCESSING" not in esiti, esiti
+        assert vecchio["admission_session"] == sessione_a
+        assert _m65_ordini_broker(app) == 0
+        assert len(rc._queued_entry_fences.get(nuovo["customer_ref"]) or []) == 1     # fence di P_B intatto
+        assert app.trading_engine.submit_quick_bet(nuovo).get("status") == "ACCEPTED_FOR_PROCESSING"
+        assert _m65_ordini_broker(app) == 1
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("ordine", ["vecchi_prima", "nuovo_in_volo"])
+def test_c24_concurrent_deliveries_of_the_old_entry_and_the_new_one_place_only_the_new_one(
+        tmp_path, monkeypatch, ordine):
+    """Ciclo 24, concorrenza deterministica. ``vecchi_prima``: tre consegne di P_A partono insieme (barriera) con il
+    fence di P_B in coda, poi P_B. ``nuovo_in_volo``: P_B ha superato il verdetto del fence ed e' trattenuto prima
+    dell'invio mentre tre consegne di P_A partono insieme. In entrambi P_A non parte mai e P_B parte: un solo ordine al
+    broker, nessun duplicato. Prima, in ``vecchi_prima`` una consegna di P_A consumava il fence di P_B e partiva."""
+    import threading
+    app, rc, vecchio = _m65_sessioni(tmp_path, monkeypatch)
+    try:
+        rc.stop()
+        rc.betfair_service.get_account_funds = lambda: _fondi(100.0)
+        assert rc.start(execution_mode="SIMULATION").get("started") is True
+        assert app.trading_engine.submit_quick_bet(vecchio).get("status") != "ACCEPTED_FOR_PROCESSING"
+        nuovo = _c24_riammissione(app, rc)
+        token_nuovo = nuovo["admission_token"]
+        verdetto_reale = rc.admission_fence_verdict
+        nuovo_dentro, vecchi_finiti = threading.Event(), threading.Event()
+
+        def verdetto(request):
+            esito = verdetto_reale(request)
+            if ordine == "nuovo_in_volo" and request.get("admission_token") == token_nuovo:
+                nuovo_dentro.set()
+                vecchi_finiti.wait(15)
+            return esito
+
+        monkeypatch.setattr(rc, "admission_fence_verdict", verdetto)
+        esiti_vecchi, esito_nuovo = [None] * 3, [None]
+        barriera = threading.Barrier(3)
+
+        def consegna_vecchio(i):
+            barriera.wait(10)
+            esiti_vecchi[i] = app.trading_engine.submit_quick_bet(vecchio).get("status")
+
+        def consegna_nuovo():
+            esito_nuovo[0] = app.trading_engine.submit_quick_bet(nuovo).get("status")
+
+        def vecchi():
+            fili = [threading.Thread(target=consegna_vecchio, args=(i,)) for i in range(3)]
+            for f in fili:
+                f.start()
+            for f in fili:
+                f.join(15)
+
+        if ordine == "vecchi_prima":
+            vecchi()
+            consegna_nuovo()
+        else:
+            filo_nuovo = threading.Thread(target=consegna_nuovo)
+            filo_nuovo.start()
+            assert nuovo_dentro.wait(10)
+            vecchi()
+            vecchi_finiti.set()
+            filo_nuovo.join(15)
+        assert None not in esiti_vecchi and "ACCEPTED_FOR_PROCESSING" not in esiti_vecchi, esiti_vecchi
+        assert esito_nuovo[0] == "ACCEPTED_FOR_PROCESSING", esito_nuovo
+        assert vecchio["admission_session"] != nuovo["admission_session"]
+        assert _m65_ordini_broker(app) == 1
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+def test_c24_a_foreign_command_of_the_same_session_never_consumes_the_fence(tmp_path, monkeypatch):
+    """Ciclo 24, identita' del comando: un comando con lo stesso customer_ref e la stessa sessione ma che non e'
+    il proprietario del fence (token d'ammissione diverso) e' negato; lo e' anche un comando col token del proprietario
+    ma una sessione d'ammissione diversa da quella del fence. Il fence resta al proprietario, che poi passa."""
+    app, rc, comando = _m65_sessioni(tmp_path, monkeypatch)
+    try:
+        estraneo = {k: v for k, v in comando.items() if k != "admission_token"}
+        assert rc.admission_fence_verdict(estraneo) == "ingresso_di_sessione_precedente"
+        assert estraneo["admission_session"] == comando["admission_session"]
+        assert len(rc._queued_entry_fences.get(comando["customer_ref"]) or []) == 1
+        # stesso token ma sessione d'ammissione diversa da quella del fence: negato anche questo (sessione verificata)
+        altra_sessione = {**comando, "admission_session": comando["admission_session"] - 1}
+        assert rc.admission_fence_verdict(altra_sessione) == "ingresso_di_sessione_precedente"
+        assert len(rc._queued_entry_fences.get(comando["customer_ref"]) or []) == 1
+        assert app.trading_engine.submit_quick_bet(comando).get("status") == "ACCEPTED_FOR_PROCESSING"
+        assert _m65_ordini_broker(app) == 1
+    finally:
+        _m65_chiudi(app)
