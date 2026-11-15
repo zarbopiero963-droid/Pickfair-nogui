@@ -4792,3 +4792,107 @@ def test_c24_a_foreign_command_of_the_same_session_never_consumes_the_fence(tmp_
         assert _m65_ordini_broker(app) == 1
     finally:
         _m65_chiudi(app)
+
+
+# ------------------------------------- ciclo 24: prova end-to-end Pickfair SIM (direttiva owner PICKFAIR SIM E2E)
+class _SpiaBroker:
+    """Registra OGNI tentativo d'invio che arriva al SimulationBroker reale (place_bet / place_orders) e ne inoltra
+    la chiamata invariata: il test guarda cosa arriva al broker, non solo la risposta del gate. Ogni tentativo porta
+    l'etichetta di sonda (`e2e_sonda`, chiave solo di test copiata dal motore nella richiesta normalizzata) del comando
+    che lo sta inviando, letta dalla registrazione d'invio del runtime."""
+
+    def __init__(self, broker, rc):
+        self.tentativi = []
+        self._broker = broker
+        for nome in ("place_bet", "place_orders"):
+            reale = getattr(broker, nome)
+
+            def spia(*a, _reale=reale, _nome=nome, **kw):
+                ref = kw.get("customer_ref")
+                in_volo = (getattr(rc, "_entries_in_flight", None) or {}).get(ref)
+                token = in_volo[1].get("e2e_sonda") if in_volo else None
+                self.tentativi.append({"via": _nome, "customer_ref": ref, "token": token, "size": kw.get("size")})
+                return _reale(*a, **kw)
+
+            setattr(broker, nome, spia)
+
+    def ordini_accettati(self):
+        ordini = self._broker.state.orders
+        return list(ordini.values()) if isinstance(ordini, dict) else list(ordini)
+
+
+def _oracolo_m65(sequenza):
+    """Oracolo indipendente dal codice: un comando arriva al broker solo se e' stato ammesso nella sessione corrente
+    e nessun ordine con lo stesso customer_ref e' gia' partito. Restituisce le etichette attese al broker, in ordine."""
+    attesi, partiti = [], set()
+    for passo in sequenza:
+        if passo["sessione"] == "corrente" and passo["ref"] not in partiti:
+            attesi.append(passo["token"])
+            partiti.add(passo["ref"])
+    return attesi
+
+
+def _c24_e2e_setup(tmp_path, monkeypatch):
+    app, rc, vecchio = _m65_sessioni(tmp_path, monkeypatch)
+    rc.stop()
+    rc.betfair_service.get_account_funds = lambda: _fondi(100.0)
+    assert rc.start(execution_mode="SIMULATION").get("started") is True
+    broker = app.betfair_service.simulation_broker
+    assert broker is not None and not broker.state.orders
+    vecchio["e2e_sonda"] = "P_A"
+    return app, rc, vecchio, _SpiaBroker(broker, rc)
+
+
+def _passo(cmd, sessione):
+    return {"sessione": sessione, "ref": cmd["customer_ref"], "token": cmd["e2e_sonda"]}
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("riconsegne", [1, 2, 3])
+def test_c24_e2e_pickfair_sim_old_session_entry_and_new_legit_entry(tmp_path, monkeypatch, riconsegne):
+    """Prova end-to-end in SIM (direttiva owner PICKFAIR SIM E2E): runtime, money management, fence, motore e
+    SimulationBroker reali; solo il bus trattiene il comando in coda e la cassa e' simulata. Sessione A: START,
+    segnale Over 2.5, ingresso P_A ammesso e trattenuto. STOP -> START: sessione B. Prima consegna di P_A, lo stesso
+    segnale riammesso in B (P_B, stesso customer_ref), altre consegne di P_A, infine P_B. Ogni tentativo d'invio al
+    broker e' registrato: arriva solo P_B, uguale all'oracolo; un solo ordine accettato."""
+    app, rc, vecchio, spia = _c24_e2e_setup(tmp_path, monkeypatch)
+    try:
+        sequenza = [_passo(vecchio, "precedente")]
+        app.trading_engine.submit_quick_bet(vecchio)
+        nuovo = _c24_riammissione(app, rc)
+        nuovo["e2e_sonda"] = "P_B"
+        assert nuovo["customer_ref"] == vecchio["customer_ref"]
+        for _ in range(riconsegne):
+            app.trading_engine.submit_quick_bet(vecchio)
+            sequenza.append(_passo(vecchio, "precedente"))
+        app.trading_engine.submit_quick_bet(nuovo)
+        sequenza.append(_passo(nuovo, "corrente"))
+        _m65_ordini_broker(app)
+        assert [t["token"] for t in spia.tentativi] == _oracolo_m65(sequenza) == ["P_B"], \
+            spia.tentativi
+        assert len(spia.ordini_accettati()) == 1
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+def test_c24_e2e_pickfair_sim_new_entry_first_then_old_redeliveries(tmp_path, monkeypatch):
+    """E2E SIM, ordine inverso: P_B consegnato per primo (parte), poi tre riconsegne di P_A. Al broker solo P_B;
+    le riconsegne non producono alcun tentativo d'invio (nessun duplicato)."""
+    app, rc, vecchio, spia = _c24_e2e_setup(tmp_path, monkeypatch)
+    try:
+        app.trading_engine.submit_quick_bet(vecchio)
+        nuovo = _c24_riammissione(app, rc)
+        nuovo["e2e_sonda"] = "P_B"
+        sequenza = [_passo(vecchio, "precedente"), _passo(nuovo, "corrente")]
+        app.trading_engine.submit_quick_bet(nuovo)
+        _m65_ordini_broker(app)
+        for _ in range(3):
+            app.trading_engine.submit_quick_bet(vecchio)
+            sequenza.append(_passo(vecchio, "precedente"))
+        _m65_ordini_broker(app)
+        assert [t["token"] for t in spia.tentativi] == _oracolo_m65(sequenza) == ["P_B"], \
+            spia.tentativi
+        assert len(spia.ordini_accettati()) == 1
+    finally:
+        _m65_chiudi(app)

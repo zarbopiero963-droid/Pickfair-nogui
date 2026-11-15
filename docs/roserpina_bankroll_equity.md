@@ -618,6 +618,11 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   riammesso nella sessione B (stesso customer_ref) creava il fence di P_B; una riconsegna di P_A (sessione A) lo
   consumava, prendeva la sessione B e piazzava l'ordine calcolato in A. Ora P_A e' negato a ogni consegna, anche in
   concorrenza con P_B, e P_B parte: un solo ordine.
+  Prova end-to-end Pickfair SIM (direttiva owner): app reale (runtime, money management, fence, motore,
+  `SimulationBroker`), sessioni A/B con STOP -> START, riconsegne ripetute e ingresso legittimo; una spia registra ogni
+  tentativo d'invio al broker e lo confronta con un oracolo indipendente (arriva solo P_B). Differenze SIM/LIVE: fence e
+  ricontrollo al punto d'invio stanno prima della scelta del trasporto, quindi sono gli stessi in LIVE; cambia solo
+  il trasporto finale (`SimulationBroker` invece del client Betfair), non provato contro i server Betfair.
 
 - **Picco e superamento in un'unica scrittura (ciclo 22, PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112).** Il
   picco che dimostra un superamento (un massimo osservato o confermato dall'owner, anche da una lettura tardiva) sale nello
