@@ -9143,29 +9143,48 @@ class RuntimeController:
             # (es. il breach non si e' materializzato): evita un pending-stop
             # appiccicato che bloccherebbe i segnali leciti fino al reset, e
             # ripulisci il marker durevole speculativo scritto prima del sync.
+            keep_global_marker = False
+            if (not settlement_completed and realized_now and attribution.get("kind") == "unattributed_loss"
+                    and settlement_key in (self.__dict__.get("_daily_loss_settle_staged") or {})):
+                # Interruzione dopo l'applicazione: l'effetto e' gia' in memoria; si completa il libro (tutti gli ambiti,
+                # quarantena e chiave insieme) per non lasciare i salvataggi rinviati. D su 4e1ff71b (M114): se un
+                # ambito LIVE (o non verificabile) risulta superato, il marker durevole dell'Emergency Stop scritto
+                # prima del sync RESTA (con il pending-stop armato): al riavvio l'emergenza globale si ripristina,
+                # perche' la chiave ormai salvata impedisce alla riconsegna di rifare l'escalation.
+                try:
+                    completed_states = []
+                    for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
+                        completed_states.append(self._monitor_daily_loss_breach(
+                            source="RUNTIME_CLOSE_POSITION_UNATTRIBUTED", payload=payload, scope=other, persist=False))
+                    keep_global_marker = any(
+                        st.get("breached") and financial_scope.escalates_globally(str(st.get("financial_scope") or ""))
+                        for st in completed_states)
+                    if keep_global_marker and not (arm_pending or stopped_marker):
+                        self._persist_db_emergency_marker(active=True, reason="DAILY_LOSS_BREACH_PENDING:interrotto")
+                    with self._daily_loss_state_lock:
+                        RuntimeController._promote_settled_keys_locked(self, keys=(settlement_key,))
+                        RuntimeController._persist_daily_loss_book(self)
+                except Exception:
+                    # Sol su 4e1ff71b: anche il completamento e' fallito. La perdita non resta in attesa (rinvierebbe ogni
+                    # salvataggio successivo in silenzio): si toglie dall'attesa, il gate segnala lo stato non salvato
+                    # (nessun nuovo ingresso finche' un salvataggio riesce) e il marker globale resta (fail-closed).
+                    logger.exception("PR-04a: libro giornaliero non completato dopo l'interruzione del settlement")
+                    with self._daily_loss_state_lock:
+                        (self.__dict__.get("_daily_loss_settle_staged") or {}).pop(settlement_key, None)
+                        last = getattr(self, "_daily_loss_persisted", None)
+                        self._daily_loss_persisted = {loss_limits.PERSIST_FAILED_KEY: True,
+                                                      "seq": (last or {}).get("seq") if isinstance(last, dict) else None}
+                    keep_global_marker = True
             if local_pending:
                 with self._daily_loss_stop_lock:
                     self.__dict__.setdefault("_daily_loss_scope_pending", set()).difference_update(local_pending)
-            if arm_pending and not self._emergency_stopped:
+            if arm_pending and not self._emergency_stopped and not keep_global_marker:
                 with self._daily_loss_stop_lock:
                     self._daily_loss_pending_stop = False
                 self._persist_db_emergency_marker(active=False)
             elif stopped_marker and settlement_completed and not self._emergency_stopped:
                 # solo a settlement completato: un'interruzione a meta' lascia l'emergenza durevole (fail-closed)
                 self._persist_db_emergency_marker(active=False)
-            if (not settlement_completed and realized_now and attribution.get("kind") == "unattributed_loss"
-                    and settlement_key in (self.__dict__.get("_daily_loss_settle_staged") or {})):
-                # Interruzione dopo l'applicazione (eccezione nel processo): l'effetto e' gia' in memoria; si completa
-                # il libro (tutti gli ambiti, quarantena e chiave insieme) per non lasciare i salvataggi rinviati.
-                try:
-                    for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
-                        self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION_UNATTRIBUTED", payload=payload,
-                                                        scope=other, persist=False)
-                    with self._daily_loss_state_lock:
-                        RuntimeController._promote_settled_keys_locked(self, keys=(settlement_key,))
-                        RuntimeController._persist_daily_loss_book(self)
-                except Exception:
-                    logger.exception("PR-04a: libro giornaliero non completato dopo l'interruzione del settlement")
         if unrecorded:
             # nessun ordine successivo su un settlement il cui effetto non e' registrato (fail-closed)
             auto_trade_result = {"auto_trade_status": "AUTO_TRADE_SKIPPED_EFFECT_UNRECORDED",

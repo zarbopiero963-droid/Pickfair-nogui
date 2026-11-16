@@ -1385,3 +1385,74 @@ def test_crash_durante_la_propagazione_della_perdita_non_attribuibile(tmp_path):
     r.rc.betfair_service.settings_service = None
     _consegna(r.rc)
     assert r.rc._monitor_daily_loss_breach(source="T", scope=conto_a)["daily_loss_amount"] == pytest.approx(35.0)
+
+
+@pytest.mark.parametrize("errore", [SystemExit, RuntimeError])
+def test_interruzione_dopo_superamento_live_non_attribuibile_lascia_l_emergenza_globale(tmp_path, errore):
+    """D su 4e1ff71b (M114): conto LIVE A -20, poi -15 non attribuibile (A 35 oltre il limite 30); il sync si
+    interrompe; riavvio dallo stato salvato e riconsegna: l'Emergency Stop globale e' attivo e un segnale SIM non parte
+    (superamento LIVE = emergenza globale, mai solo un blocco locale)."""
+    c = _banco(tmp_path, "uaes.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE")
+    conto_a = c.rc._current_financial_scope()
+    _settle(c, -20.0)
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+
+    def _interrotto(p):
+        raise errore("sync interrotto")
+
+    def _consegna(rc):
+        rc._on_close_position(_canonical_close_payload(
+            event_key="cleared:1.81:1", batch_id="b-uaes", correlation_id="c-uaes", gross_pnl=-15.0,
+            commission_amount=0.0, net_pnl=-15.0, pnl=-15.0, commission_pct=4.5))
+
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc._sync_bankroll_post_settlement = _interrotto
+    with pytest.raises(errore):
+        _consegna(c.rc)
+    r = _banco(tmp_path, "uaes.db", max_daily_loss=30.0)
+    _ambiente(r, "LIVE")
+    r.rc.betfair_service.client = None
+    r.rc.betfair_service.settings_service = None
+    _consegna(r.rc)
+    assert r.rc._monitor_daily_loss_breach(source="T", scope=conto_a)["breached"] is True
+    assert r.rc._emergency_stopped is True
+    _ambiente(r, "SIM")
+    assert _ingresso(r, "1.882")[0] == 0
+
+
+def test_completamento_fallito_dopo_interruzione_non_blocca_i_salvataggi_in_silenzio(tmp_path):
+    """Sol su 4e1ff71b: sync interrotto E completamento del libro fallito. La perdita non attribuibile non resta in
+    attesa per sempre (che rinvierebbe ogni salvataggio successivo in silenzio): il gate segnala lo stato non salvato
+    (nessun nuovo ingresso) e un salvataggio successivo torna a scrivere il libro."""
+    import json
+    c = _banco(tmp_path, "uaf.db", max_daily_loss=100.0)
+    _ambiente(c, "LIVE")
+    conto_a = c.rc._current_financial_scope()
+    _settle(c, -20.0)
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+    vero_monitor = c.rc._monitor_daily_loss_breach
+
+    def _monitor(**kw):
+        if kw.get("source") == "RUNTIME_CLOSE_POSITION_UNATTRIBUTED":
+            raise RuntimeError("completamento fallito")
+        return vero_monitor(**kw)
+
+    def _errore(p):
+        raise RuntimeError("sync fallito")
+
+    c.rc._sync_bankroll_post_settlement = _errore
+    c.rc._monitor_daily_loss_breach = _monitor
+    with pytest.raises(RuntimeError):
+        c.rc._on_close_position(_canonical_close_payload(
+            event_key="cleared:1.82:1", batch_id="b-uaf", correlation_id="c-uaf", gross_pnl=-15.0,
+            commission_amount=0.0, net_pnl=-15.0, pnl=-15.0, commission_pct=4.5))
+    c.rc._monitor_daily_loss_breach = vero_monitor
+    assert not any(kind == "unattributed_loss" for _t, kind in (c.rc._daily_loss_settle_staged or {}).values())
+    _ambiente(c, "LIVE")
+    assert c.rc._limits_block_reason() == "daily_loss_state_non_persistito"
+    c.rc._monitor_daily_loss_breach(source="RUNTIME_STATUS_SNAPSHOT", scope=conto_a)
+    salvato = json.loads(c.db.get_settings()["daily_loss_state"])
+    assert salvato["scopes"][conto_a]["intraday_realized_pnl"] == pytest.approx(-35.0)

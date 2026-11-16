@@ -829,7 +829,12 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   sync) e' rinviato, e il libro si salva una sola volta con tutti gli ambiti, la quarantena e la chiave insieme (mai
   quarantena nuova accanto ad ambiti vecchi = sottostima, Sol su 385c7598; mai ambito gia' ricalcolato senza la chiave
   = doppio conteggio dopo la riconsegna, Grok su 3389ace9). Se il settlement si interrompe con un'eccezione dopo
-  l'applicazione, il libro si completa comunque, cosi' i salvataggi non restano rinviati. Ogni ambito si scrive, anche a zero (uno zero omesso
+  l'applicazione, il libro si completa comunque, cosi' i salvataggi non restano rinviati; se in quel libro un ambito
+  LIVE (o non verificabile) risulta superato, il marker durevole dell'Emergency Stop e il pending-stop restano: al
+  riavvio l'emergenza globale si ripristina anche se la chiave gia' salvata fa saltare la riconsegna (D su 4e1ff71b).
+  Se fallisce anche il completamento, la perdita esce dall'attesa (i salvataggi successivi non restano rinviati in
+  silenzio), il gate segnala `daily_loss_state_non_persistito` finche' un salvataggio riesce e il marker globale resta
+  (Sol su 4e1ff71b). Ogni ambito si scrive, anche a zero (uno zero omesso
   farebbe risorgere un profitto piu' vecchio di un marker rimasto).
   Record v1 (senza ambito) = quarantena `legacy`, applicata a ogni ambito solo come perdita (mai come profitto) e col
   suo breach, mai attribuita in automatico a un conto. Db e marker si riconciliano per ambito (seq piu' alta,

@@ -18,6 +18,7 @@ from typing import Any, Optional
 from core import validators
 from core.daily_loss_store import (  # noqa: F401  (API usata dal runtime)
     DAILY_LOSS_STATE_KEY,
+    PERSIST_FAILED_KEY,
     SEQ_KEY,
     daily_loss_record,
     persist_daily_loss,
