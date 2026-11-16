@@ -11369,7 +11369,8 @@
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "Ciclo 27-A (PF-OWNER-PR631-C27-M89-THREE-FAILOPEN-20261116, Codex): una lettura con disponibile positivo ma riserva incoerente lascerebbe partire l'ingresso in coda (1 ordine)."
+      "rationale": "Ciclo 27-A (PF-OWNER-PR631-C27-M89-THREE-FAILOPEN-20261116, Codex): una lettura con disponibile positivo ma riserva incoerente lascerebbe partire l'ingresso in coda (1 ordine).",
+      "equivalent": "Dal ciclo 28 (PF-OWNER-PR631-C28-SETTLEMENT-FUNDS-FAILOPEN-20261116) l'esito della verifica dell'ultima lettura applicata e' conservato in `_funds_reading_block` e controllato al punto d'invio. Nel RiskDesk ogni invalidazione della cassa con motivo diverso da CASH_NOT_READ avviene dentro `sync_funds_reading`, cioe' per una lettura applicata da `_apply_funds_reading`, che registra lo stesso motivo in `_funds_reading_block`; le altre invalidazioni (P&L, snapshot, ripristino, bankroll) usano solo CASH_NOT_READ. Quindi il controllo del motivo del desk nega sempre insieme a `_funds_reading_block`: esito osservabile identico. Verificato dai test c27 della riserva e c28 del settlement. Resta come difesa leggibile; la prima e' coperta da c28_reading_block_ignored_at_send_point (ucciso)."
     },
     {
       "id": "c27a_barrier_reason_treated_as_incoherent",
@@ -11431,6 +11432,45 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "Ciclo 27-C: solo una lettura piu' bassa della cassa del gate nasconde un calo; una piu' alta non e' un'ambiguita' di perdita."
+    },
+    {
+      "id": "c28_reading_block_ignored_at_send_point",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if reading_block:\n                return \"cassa_non_verificata:\" + reading_block\n",
+      "mutated": "            if False:\n                return \"cassa_non_verificata:\" + reading_block\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py",
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "Ciclo 28 (PF-OWNER-PR631-C28-SETTLEMENT-FUNDS-FAILOPEN-20261116, Codex): senza l'esito conservato della lettura, una barriera di settlement dopo una lettura incoerente riaprirebbe l'ingresso in coda (1 ordine)."
+    },
+    {
+      "id": "c28_reading_block_always_cleared",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    \"\" if state == self.ACCOUNT_FUNDS_VERIFIED and desk_cash is not None and desk_cash > 0\n",
+      "mutated": "                    \"\" if True\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py",
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "Ciclo 28: una lettura incoerente non deve registrare un esito valido."
+    },
+    {
+      "id": "c28_reading_block_ignores_desk_cash",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    \"\" if state == self.ACCOUNT_FUNDS_VERIFIED and desk_cash is not None and desk_cash > 0\n",
+      "mutated": "                    \"\" if state == self.ACCOUNT_FUNDS_VERIFIED\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py",
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "Ciclo 28: FUNDS_VERIFIED con cassa del desk invalidata dalla verifica (riserva incoerente) non e' una lettura coerente."
     },
     {
       "id": "m65_send_point_ignores_admission_session",

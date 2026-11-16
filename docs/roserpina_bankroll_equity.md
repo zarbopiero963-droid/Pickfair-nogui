@@ -671,6 +671,15 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   del desk e contro i cap dell'hard-stop (assoluto e %): perdita dal picco oltre il cap => storia insufficiente
   (`lettura_fuori_ordine_limite_hard_stop`), mai un hard-stop; calo dimostrato => hard-stop come prima.
 
+- **Ciclo 28 (PF-OWNER-PR631-C28-SETTLEMENT-FUNDS-FAILOPEN-20261116, Codex su b4b03636).** Validita' dell'ultima lettura
+  del conto e necessita' di rileggere i fondi sono due informazioni distinte. `_apply_funds_reading` conserva l'esito
+  della verifica della cassa della lettura applicata (`_funds_reading_block`: vuoto solo se `FUNDS_VERIFIED` con cassa
+  del desk verificata, altrimenti il motivo). Il punto d'invio lo controlla: un aggiornamento contabile senza lettura
+  (settlement `apply_closed_pnl`, snapshot dell'esposizione: `CASH_NOT_READ`) non lo cancella e non riapre un ingresso
+  bloccato da una lettura incoerente o non verificabile. Solo una nuova lettura coerente lo toglie (poi decidono tutti
+  gli altri gate); una nuova lettura fallita lo mantiene. Dopo un riavvio la lettura d'avvio lo ricalcola. Un
+  settlement dopo una lettura coerente non blocca nulla.
+
 - **Picco e superamento in un'unica scrittura (ciclo 22, PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112).** Il
   picco che dimostra un superamento (un massimo osservato o confermato dall'owner, anche da una lettura tardiva) sale nello
   STESSO record persistito del superamento: un crash non puo' piu' lasciare su disco picco 115 con superamento da 130.

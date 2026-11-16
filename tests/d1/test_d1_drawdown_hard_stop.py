@@ -5406,3 +5406,75 @@ def test_c27_account_state_still_blocks_after_a_settlement_barrier_follows_the_b
         assert spia.tentativi == []
     finally:
         _m65_chiudi(app)
+
+
+# ------------------------------------- ciclo 28 (PF-OWNER-PR631-C28-SETTLEMENT-FUNDS-FAILOPEN-20261116)
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("barriera", ["apply_closed_pnl", "apply_open_exposure_snapshot"])
+@pytest.mark.parametrize("limite", sorted(_C27_LIMITI))
+@pytest.mark.parametrize("riserva", [5.0, -1.0])
+def test_c28_settlement_barrier_never_reopens_an_entry_blocked_by_an_incoherent_reading(
+        tmp_path, monkeypatch, barriera, limite, riserva):
+    """Ciclo 28 (Codex su b4b03636): dopo una lettura incoerente (riserva 5 o -1, CASH_RESERVE_INCOHERENT) un
+    aggiornamento contabile senza lettura (settlement: P&L chiuso o snapshot dell'esposizione) sostituiva il motivo
+    della cassa con CASH_NOT_READ e il punto d'invio riapriva l'ingresso in coda (1 ordine) senza alcuna lettura
+    coerente. Ora l'esito della verifica dell'ultima lettura e' conservato a parte: 0 tentativi al broker."""
+    import time
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, **_C27_LIMITI[limite])
+    try:
+        rc._apply_funds_reading({"available": 100.0, "exposure": 0.0, "reserved_unmatched": riserva, "ok": True},
+                                source="t", read_at=time.monotonic())
+        if barriera == "apply_closed_pnl":
+            rc.risk_desk.apply_closed_pnl(0.0)
+        else:
+            rc.risk_desk.apply_open_exposure_snapshot(100.0)
+        assert rc.risk_desk.cash_equity_reason == "CASH_NOT_READ"
+        assert rc.drawdown_entry_block_reason(cmd).startswith("cassa_non_verificata")
+        assert app.trading_engine.submit_quick_bet(cmd).get("status") != "ACCEPTED_FOR_PROCESSING"
+        _m65_ordini_broker(app)
+        assert spia.tentativi == []
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("seguito", ["coerente", "fallita", "coerente_poi_fallita"])
+def test_c28_only_a_new_coherent_reading_lifts_the_incoherent_reading_block(tmp_path, monkeypatch, seguito):
+    """Ciclo 28: lettura incoerente, settlement, poi una nuova lettura. Coerente e verificata => il blocco cade e gli
+    altri gate decidono (1 ordine, l'ingresso in coda); fallita => ingresso ancora negato (0); coerente e poi fallita =>
+    negato (l'ultima lettura decide)."""
+    import time
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=1000.0)
+    try:
+        rc._apply_funds_reading({"available": 100.0, "exposure": 0.0, "reserved_unmatched": 5.0, "ok": True},
+                                source="t", read_at=time.monotonic())
+        rc.risk_desk.apply_closed_pnl(0.0)
+        if seguito in ("coerente", "coerente_poi_fallita"):
+            rc._apply_funds_reading(_fondi(100.0), source="t", read_at=time.monotonic())
+        if seguito in ("fallita", "coerente_poi_fallita"):
+            rc._apply_funds_reading({"error": "BETFAIR_TIMEOUT"}, source="t", read_at=time.monotonic())
+        stato = app.trading_engine.submit_quick_bet(cmd).get("status")
+        _m65_ordini_broker(app)
+        if seguito == "coerente":
+            assert stato == "ACCEPTED_FOR_PROCESSING" and [t["token"] for t in spia.tentativi] == ["in_coda"]
+        else:
+            assert stato != "ACCEPTED_FOR_PROCESSING" and spia.tentativi == [], (stato, spia.tentativi)
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+def test_c28_a_settlement_after_a_coherent_reading_does_not_block_the_queued_entry(tmp_path, monkeypatch):
+    """Ciclo 28, caso innocuo: dopo una lettura coerente un settlement (CASH_NOT_READ) non blocca l'ingresso in coda:
+    la barriera di settlement non e' una lettura incoerente (1 ordine)."""
+    import time
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=1000.0)
+    try:
+        rc._apply_funds_reading(_fondi(100.0), source="t", read_at=time.monotonic())
+        rc.risk_desk.apply_closed_pnl(0.0)
+        assert rc.drawdown_entry_block_reason(cmd) == ""
+        assert app.trading_engine.submit_quick_bet(cmd).get("status") == "ACCEPTED_FOR_PROCESSING"
+        _m65_ordini_broker(app)
+        assert [t["token"] for t in spia.tentativi] == ["in_coda"]
+    finally:
+        _m65_chiudi(app)

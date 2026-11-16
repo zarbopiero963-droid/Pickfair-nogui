@@ -3457,6 +3457,11 @@ class RuntimeController:
             if (validators.finite_number(getattr(desk, "cash_equity_current", None)) is None
                     and desk_reason and desk_reason != "CASH_NOT_READ"):
                 return "cassa_non_verificata:" + desk_reason
+            # Ciclo 28: l'esito dell'ultima lettura applicata resta anche dopo una barriera di settlement (CASH_NOT_READ)
+            # o un altro aggiornamento contabile: solo una nuova lettura coerente lo toglie.
+            reading_block = str(getattr(self, "_funds_reading_block", "") or "")
+            if reading_block:
+                return "cassa_non_verificata:" + reading_block
             return ""
 
     def assert_runtime_authority(self, context: str = "") -> None:
@@ -7284,6 +7289,14 @@ class RuntimeController:
             if applied:
                 self._account_state = state
                 self._account_state_source = str(source)
+                # Ciclo 28 (PF-OWNER-PR631-C28-SETTLEMENT-FUNDS-FAILOPEN-20261116, Codex su b4b03636): esito della
+                # verifica della cassa di QUESTA lettura, conservato a parte dal motivo transitorio del desk. Un
+                # aggiornamento contabile senza lettura (settlement: CASH_NOT_READ) non lo cancella; solo una nuova
+                # lettura applicata lo sostituisce ("" = lettura coerente e cassa del desk verificata).
+                desk_cash = validators.finite_number(getattr(self.risk_desk, "cash_equity_current", None))
+                self._funds_reading_block = (
+                    "" if state == self.ACCOUNT_FUNDS_VERIFIED and desk_cash is not None and desk_cash > 0
+                    else str(getattr(self.risk_desk, "cash_equity_reason", "") or state))
             current = str(getattr(self, "_account_state", "") or "")
         pending_lockdown = getattr(self, "_pending_drawdown_lockdown", None)
         if pending_lockdown:
