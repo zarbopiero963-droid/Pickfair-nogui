@@ -1427,9 +1427,42 @@ class RuntimeController:
             current[loss_limits.SEQ_KEY] = book["seq"]
         RuntimeController._persist_daily_loss_book(self)
 
-    def _settlement_attribution(self, pnl: float, effect: Optional[dict], payload: Optional[dict] = None) -> dict:
+    def _reservation_scope_hint(self, payload: Optional[dict]) -> Optional[str]:
+        """Ambito registrato sulla riserva del settlement (tavolo per ``table_id``+evento, per evento o per lotto), letto
+        PRIMA del rilascio. None = nessuna riserva trovata; '' = riserva trovata ma senza ambito (legacy)."""
+        p = payload or {}
+        tm = getattr(self, "table_manager", None)
+        if tm is None:
+            return None
+        event_key = str(p.get("event_key") or "")
+        batch_id = str(p.get("batch_id") or "")
+        try:
+            candidates = []
+            tid = p.get("table_id")
+            if tid is not None:
+                table = tm.get_table(int(tid))
+                if table is not None and event_key and table.current_event_key == event_key:
+                    candidates.append(table)
+            if not candidates and event_key:
+                found = tm.find_by_event_key(event_key)
+                if found is not None:
+                    candidates.append(found)
+            if not candidates and batch_id:
+                candidates = [t for t in tm.active_tables() if str((t.meta or {}).get("batch_id") or "") == batch_id]
+        except Exception:
+            logger.warning("PR-04a: riserva del settlement non leggibile per l'ambito", exc_info=True)
+            return ""
+        if not candidates:
+            return None
+        scopes = {str((t.meta or {}).get("financial_scope") or "") for t in candidates}
+        return scopes.pop() if len(scopes) == 1 else ""
+
+    def _settlement_attribution(self, pnl: float, effect: Optional[dict], payload: Optional[dict] = None,
+                                hint: Optional[str] = None) -> dict:
         """Ambito del P&L di un settlement. Identita' della scommessa (ambito registrato alla riserva) => quell'ambito.
-        Senza identita' verificata: una PERDITA va all'ambito corrente se verificato, altrimenti e' non attribuibile
+        Riserva trovata ma senza ambito verificabile (legacy, F018 di ordini precedenti) => perdita NON attribuibile
+        (conta per ogni ambito), profitto non accreditato: mai l'ambito corrente per supposizione.
+        Senza alcuna riserva: una PERDITA va all'ambito corrente se verificato, altrimenti e' non attribuibile
         (conta per ogni ambito, in quarantena); un PROFITTO non si accredita a nessun ambito (prudenza)."""
         declared = str((effect or {}).get("financial_scope") or "")
         event_key = str((payload or {}).get("event_key") or "")
@@ -1440,8 +1473,14 @@ class RuntimeController:
             # ordini regolati letti dall'exchange (poller `cleared:`): conto LIVE del client Betfair connesso;
             # conto non identificabile => ambito non verificabile (perdite in quarantena, profitti non accreditati)
             declared = RuntimeController._financial_scope_for(self, False)
+        if not declared and hint:
+            declared = str(hint)
         if declared and financial_scope.is_verified(declared):
             return {"scope": declared, "kind": "scoped"}
+        if not declared and (hint is not None or "financial_scope" in (effect or {})):
+            # riserva della scommessa nota ma senza ambito: nessuna supposizione sull'ambito corrente
+            target = RuntimeController._current_financial_scope(self)
+            return {"scope": target, "kind": "unscoped_profit" if float(pnl) >= 0.0 else "unattributed_loss"}
         target = declared or RuntimeController._current_financial_scope(self)
         if float(pnl) >= 0.0:
             return {"scope": target, "kind": "unscoped_profit"}
@@ -1449,9 +1488,20 @@ class RuntimeController:
             return {"scope": target, "kind": "scoped"}
         return {"scope": target, "kind": "unattributed_loss"}
 
+    def _apply_and_attribute_realized_pnl(self, pnl: float, attribution: dict) -> None:
+        """Totale del desk e ambito del P&L aggiornati INSIEME sotto il lock dello stato giornaliero (Codex su
+        d86404ef): un monitor concorrente (es. get_status) non vede mai il totale senza la sua attribuzione."""
+        with self._daily_loss_state_lock:
+            self._apply_realized_pnl_without_mutating_bankroll(pnl)
+            RuntimeController._attribute_realized_pnl_locked(self, pnl, attribution)
+
     def _attribute_realized_pnl(self, pnl: float, attribution: dict) -> None:
         """Registra l'ambito del P&L appena applicato al desk (sotto il lock dello stato giornaliero)."""
         with self._daily_loss_state_lock:
+            RuntimeController._attribute_realized_pnl_locked(self, pnl, attribution)
+
+    def _attribute_realized_pnl_locked(self, pnl: float, attribution: dict) -> None:
+        if True:
             kind = attribution.get("kind")
             if kind == "scoped":
                 key = str(attribution["scope"])
@@ -5629,6 +5679,8 @@ class RuntimeController:
         # identita'. Stesso messaggio riconsegnato = stesso ref = doppione
         # bloccato. Due messaggi dal contenuto identico nella stessa chat sono
         # trattati come lo stesso intento (fail-closed: mai una puntata doppia).
+        # PR-04a: ambito finanziario dell'ingresso, persistito con la request (F018 lo ricostruisce dopo un riavvio)
+        payload["financial_scope"] = RuntimeController._current_financial_scope(self)
         payload["customer_ref"] = resolve_customer_ref(
             signal_upstream_customer_ref(signal),
             "sig",
@@ -5690,7 +5742,7 @@ class RuntimeController:
                 "customer_ref": payload["customer_ref"],          # #461 PR28-e: correlazione esito-riserva
                 # PR-04a: ambito finanziario della scommessa, per attribuirle il P&L del suo settlement
                 # (modalita' del runtime: e' quella del servizio Betfair che esegue l'ordine)
-                "financial_scope": RuntimeController._current_financial_scope(self),
+                "financial_scope": payload["financial_scope"],
             },
         )
         # #461 PR29-c: l'identita' della riserva viaggia con la request (persistita in `orders`): dopo un riavvio
@@ -6113,7 +6165,8 @@ class RuntimeController:
                 # event_id/event_identity (#505): identita' dell'evento per il cap evento dopo il riavvio;
                 # assenti negli ordini salvati prima => None, resta il confronto per nome.
                 "meta": {k: p.get(k) for k in ("event_name", "event_id", "event_identity", "market_name",
-                                               "runner_name", "bet_type", "price", "simulation_mode")},
+                                               "runner_name", "bet_type", "price", "simulation_mode",
+                                               "financial_scope")},  # PR-04a: assente (legacy) => non attribuibile
             }
             # #461 PR29-c: il tavolo ricostruito porta l'identita' della riserva (intento e riserva persistiti),
             # cosi' il settlement della sua bet lo riconosce dopo il riavvio.
@@ -8731,6 +8784,7 @@ class RuntimeController:
             return
 
         settlement_key = self._settlement_effect_key(payload)
+        scope_hint = RuntimeController._reservation_scope_hint(self, payload)   # PR-04a: prima del rilascio
         # PF-ALL-F026 / F2 / #461 PR29-c: effetto sul tavolo della riserva identificata, una sola volta.
         effect = self._release_settled_tables(payload, table_id=table_id, pnl=pnl, settlement_key=settlement_key)
         # #461 PR29-c: un settlement senza effetto non cambia i tavoli: si riscrive lo stato solo per ritentare una
@@ -8780,7 +8834,7 @@ class RuntimeController:
             # (proiezione read-only). Un eventuale falso positivo da duplicato e'
             # piu' sicuro di un kill-switch mancato.
             projected_recovery = self._projected_daily_loss_breach(
-                pnl, RuntimeController._settlement_attribution(self, pnl, effect, payload))
+                pnl, RuntimeController._settlement_attribution(self, pnl, effect, payload, scope_hint))
             stopped = self._enforce_daily_loss_hard_stop(projected_recovery)
             if projected_recovery.get("breached"):
                 # Persisti il breach nello stato del monitor (in-memory) cosi' un
@@ -8831,22 +8885,33 @@ class RuntimeController:
         # ogni SIGNAL_RECEIVED concorrente (dispatch multi-worker) e' rifiutato,
         # chiudendo la finestra tra apply-PnL e emergency_stop in cui altrimenti
         # vedrebbe _emergency_stopped ancora False e piazzerebbe un ordine.
-        attribution = RuntimeController._settlement_attribution(self, pnl, effect, payload)
+        attribution = RuntimeController._settlement_attribution(self, pnl, effect, payload, scope_hint)
         projected_close = self._projected_daily_loss_breach(pnl, attribution)
+        projections = [projected_close]
+        if attribution.get("kind") == "unattributed_loss":
+            # Codex su d86404ef: la perdita non attribuibile conta per ogni ambito esistente: si proietta su tutti, cosi'
+            # le barriere (globale o locale SIM) sono armate prima dell'I/O del sync anche per gli altri ambiti.
+            for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
+                if other != str(attribution["scope"]):
+                    projections.append(self._projected_daily_loss_breach(
+                        pnl, {"scope": other, "kind": "unattributed_loss"}))
         # PR-04a: il pending-stop (globale) si arma solo se il superamento sale all'Emergency Stop globale
-        arm_pending = bool(projected_close.get("breached")) and financial_scope.escalates_globally(
-            str(projected_close.get("financial_scope") or "")) and self.mode in (
+        arm_pending = any(bool(pr.get("breached")) and financial_scope.escalates_globally(
+            str(pr.get("financial_scope") or "")) for pr in projections) and self.mode in (
             RuntimeMode.ACTIVE,
             RuntimeMode.PAUSED,
         )
+        if arm_pending:
+            projected_close = next(pr for pr in projections if pr.get("breached") and financial_scope.escalates_globally(
+                str(pr.get("financial_scope") or "")))
         # Codex su 1587e3cf: superamento SIM proiettato => barriera d'ingresso LOCALE (solo quell'ambito) prima
         # dell'I/O del sync, senza pending-stop ne' marker globali; si toglie quando lo stato breached e' scritto.
-        local_pending = (bool(projected_close.get("breached")) and not arm_pending
-                         and not financial_scope.escalates_globally(str(projected_close.get("financial_scope") or "")))
+        local_pending = {str(pr["financial_scope"]) for pr in projections
+                         if pr.get("breached") and not financial_scope.escalates_globally(
+                             str(pr.get("financial_scope") or ""))}
         if local_pending:
             with self._daily_loss_stop_lock:
-                self.__dict__.setdefault("_daily_loss_scope_pending", set()).add(
-                    str(projected_close["financial_scope"]))
+                self.__dict__.setdefault("_daily_loss_scope_pending", set()).update(local_pending)
         if arm_pending:
             with self._daily_loss_stop_lock:
                 self._daily_loss_pending_stop = True
@@ -8869,8 +8934,7 @@ class RuntimeController:
                         and float(pnl) >= 0.0)
             if (settlement_key and settlement_key not in self._processed_realized_pnl_keys
                     and not effect.get("realized_already") and not unproven):
-                self._apply_realized_pnl_without_mutating_bankroll(pnl)
-                RuntimeController._attribute_realized_pnl(self, pnl, attribution)
+                RuntimeController._apply_and_attribute_realized_pnl(self, pnl, attribution)
                 self._processed_realized_pnl_keys.add(settlement_key)
                 realized_now = True
             # Bankroll sync PRIMA dell'enforce: emergency_stop flippa il service a
@@ -8897,19 +8961,26 @@ class RuntimeController:
             # _risk_allows_auto_trade e nessun ordine parte dopo il breach.
             daily_loss_state = self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload,
                                                                scope=str(attribution["scope"]))
+            # Codex su 1587e3cf: una perdita non attribuibile conta per OGNI ambito; ogni stato esistente la
+            # registra e la persiste PRIMA della marcatura del settlement (Sol su d86404ef: un crash fra le due
+            # scritture non deve lasciare un ambito senza la perdita; al riavvio la quarantena si combina col minimo).
+            touched = [str(attribution["scope"])]
+            other_states = []
+            if realized_now and attribution.get("kind") == "unattributed_loss":
+                for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
+                    if other != str(attribution["scope"]):
+                        touched.append(other)
+                        other_states.append(self._monitor_daily_loss_breach(
+                            source="RUNTIME_CLOSE_POSITION_UNATTRIBUTED", payload=payload, scope=other))
             if realized_now:
                 # Dopo il monitor della perdita giornaliera: un crash fra le due scritture puo' solo far contare
                 # la perdita di piu' dopo il riavvio (fail-closed), mai perderla.
                 self._mark_settlement_realized(settlement_key)
             self._enforce_daily_loss_hard_stop(daily_loss_state)
-            if realized_now and attribution.get("kind") == "unattributed_loss":
-                # Codex su 1587e3cf: una perdita non attribuibile conta per OGNI ambito; ogni stato esistente la
-                # registra e la persiste subito (al riavvio la quarantena si combina col minimo, mai con la somma).
-                for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
-                    if other != str(attribution["scope"]):
-                        self._enforce_daily_loss_hard_stop(self._monitor_daily_loss_breach(
-                            source="RUNTIME_CLOSE_POSITION_UNATTRIBUTED", payload=payload, scope=other))
-            self._publish_session_loss_breach(scope=str(attribution["scope"]))
+            for state in other_states:
+                self._enforce_daily_loss_hard_stop(state)
+            for key in touched:   # Sol su d86404ef: perdita di sessione in ogni ambito interessato
+                self._publish_session_loss_breach(scope=key)
         finally:
             # Disarma il bridge se NON e' subentrato l'emergency_stop definitivo
             # (es. il breach non si e' materializzato): evita un pending-stop
@@ -8917,8 +8988,7 @@ class RuntimeController:
             # ripulisci il marker durevole speculativo scritto prima del sync.
             if local_pending:
                 with self._daily_loss_stop_lock:
-                    self.__dict__.setdefault("_daily_loss_scope_pending", set()).discard(
-                        str(projected_close["financial_scope"]))
+                    self.__dict__.setdefault("_daily_loss_scope_pending", set()).difference_update(local_pending)
             if arm_pending and not self._emergency_stopped:
                 with self._daily_loss_stop_lock:
                     self._daily_loss_pending_stop = False
@@ -9726,6 +9796,8 @@ class RuntimeController:
                     "simulation_mode": bool(submit_payload.get("simulation_mode", self.simulation_mode)),
                     "auto_trade_source": submit_payload.get("auto_trade_source") or "",
                     "customer_ref": str(submit_payload.get("customer_ref") or ""),  # PR28-e: esito-riserva
+                    "financial_scope": submit_payload.setdefault(          # PR-04a, persistito con la request
+                        "financial_scope", RuntimeController._current_financial_scope(self)),
                 },
             )
             # #461 PR29-c (Codex su 29903af): il tavolo e la riserva dell'auto-next viaggiano con la request

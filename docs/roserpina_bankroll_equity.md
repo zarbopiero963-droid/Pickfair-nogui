@@ -777,12 +777,19 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   mai un ambito; nessun adapter SX Bet. Ambito LIVE senza conto identificato, ambiente sconosciuto o campo mancante =
   **non verificabile**.
 - **P&L per ambito.** Il P&L di un settlement va all'ambito della scommessa, registrato nella riserva del tavolo
-  (`meta.financial_scope`, modalita' del runtime all'invio). Senza identita' dimostrata: una PERDITA va all'ambito
+  (`meta.financial_scope`, modalita' del runtime all'invio) per ogni percorso d'ingresso: segnale, auto-next, Dutching e
+  puntata manuale (`DutchingController._allocate_table`). L'ambito e' persistito con la request in `orders` e
+  ricostruito da F018 dopo un riavvio; il settlement lo ritrova dalla riserva (tavolo+evento, evento o lotto) letta
+  PRIMA del rilascio. Riserva trovata ma senza ambito (ordine precedente a PR-04a) => perdita non attribuibile (conta
+  per ogni ambito, LIVE compreso), profitto non accreditato: mai l'ambito corrente per supposizione. Totale del desk e
+  attribuzione si aggiornano insieme sotto il lock dello stato giornaliero (nessun monitor concorrente li vede a meta'). Senza identita' dimostrata: una PERDITA va all'ambito
   corrente se verificato, altrimenti e' **non attribuibile** (quarantena: conta per ogni ambito fino al cambio di
-  giorno; ogni stato d'ambito gia' esistente la registra e la persiste subito, cosi' al riavvio la quarantena si combina
-  col minimo senza perdere perdite); un PROFITTO non si accredita a nessun ambito. Nessuna compensazione SIM/LIVE ne'
+  giorno; ogni stato d'ambito gia' esistente la registra e la persiste subito, PRIMA della marcatura del settlement,
+  cosi' al riavvio la quarantena si combina col minimo senza perdere perdite; anche la perdita di sessione si rivaluta in
+  ogni ambito interessato); un PROFITTO non si accredita a nessun ambito. Nessuna compensazione SIM/LIVE ne'
   fra conti LIVE. Un superamento SIM proiettato arma una barriera d'ingresso LOCALE prima della sincronizzazione del
-  bankroll (nessun pending-stop ne' marker globale).
+  bankroll (nessun pending-stop ne' marker globale); una perdita non attribuibile si proietta su ogni ambito esistente
+  e arma le barriere (globale o locale) di ciascuno.
 - **Superamento del limite giornaliero.** SIM verificata: bloccati solo i nuovi ingressi di quell'ambito
   (`daily_loss_breached:SIM`); nessun Emergency Stop, nessuna cancellazione di ordini LIVE, LIVE non disattivato,
   nessun LOCKDOWN globale, nessun pending-stop globale. LIVE o ambito non verificabile: Emergency Stop globale come

@@ -783,6 +783,14 @@ class DutchingController:
         if table is None:
             return None
 
+        # PR-04a: ambito finanziario della riserva (SIM/LIVE + conto), per attribuire il P&L del lotto al suo ambito
+        scope_of = getattr(self.runtime, "_current_financial_scope", None)
+        if callable(scope_of) and "financial_scope" not in meta:
+            try:
+                meta = dict(meta, financial_scope=scope_of())
+            except Exception:
+                logger.warning("PR-04a: ambito finanziario non determinabile per la riserva", exc_info=True)
+
         if hasattr(table_manager, "activate"):
             try:
                 table_manager.activate(

@@ -619,3 +619,145 @@ def test_perdita_di_sessione_live_regolata_mentre_il_runtime_e_in_sim(tmp_path):
     _settle(c, -40.0, event_key="cleared:1.900:77")
     assert c.rc._risk_stop_reason.startswith("session_loss_breached")
     assert "@ambito=" not in c.rc._risk_stop_reason, "perdita di sessione LIVE: RISK_STOP globale"
+
+
+# ============================================================================ rilievi Sol su d86404ef
+def test_crash_dopo_la_marcatura_non_perde_la_perdita_non_attribuibile(tmp_path):
+    """Crash subito dopo `_mark_settlement_realized`: ogni ambito deve aver gia' persistito la perdita condivisa."""
+    c = _banco(tmp_path, "cr.db", max_daily_loss=50.0)
+    _ambiente(c, "LIVE")
+    conto_a = c.rc._current_financial_scope()
+    _settle(c, -20.0)
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+
+    def _crash(_key):
+        raise RuntimeError("crash dopo la marcatura")
+
+    c.rc._mark_settlement_realized = _crash
+    with pytest.raises(RuntimeError):
+        _settle(c, -15.0)
+    r = _banco(tmp_path, "cr.db", max_daily_loss=50.0)
+    _ambiente(r, "LIVE")
+    assert r.rc._current_financial_scope() == conto_a
+    assert r.rc._monitor_daily_loss_breach(source="T")["daily_loss_amount"] == pytest.approx(35.0)
+
+
+def test_perdita_non_attribuibile_valuta_la_sessione_di_ogni_ambito(tmp_path):
+    c = _banco(tmp_path, max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    instradati = []
+    c.rc._route_cashout_signal = lambda segnale: instradati.append(dict(segnale))
+    _ambiente(c, "LIVE")
+    _settle(c, -20.0)
+    c.rc._daily_loss_state_for(c.rc._current_financial_scope())     # ambito A noto al registro
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+    _settle(c, -15.0)
+    assert c.rc._risk_stop_reason.startswith("session_loss_breached"), c.rc._risk_stop_reason
+    assert "@ambito=" not in c.rc._risk_stop_reason and instradati
+
+
+# ============================================================================ rilievi Codex su d86404ef + domanda D
+def test_ambito_della_riserva_persistito_e_ricostruito_da_f018(tmp_path):
+    c = _banco(tmp_path, "f018.db", max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    tavolo = _riserva(c, "1.950")
+    righe = c.db._execute("SELECT payload_json FROM orders", fetch=True, commit=False)
+    assert any(json.loads(dict(r)["payload_json"]).get("financial_scope") == _sim() for r in righe)
+    r = _banco(tmp_path, "f018.db", max_daily_loss=30.0)
+    candidati, _ = r.rc._open_order_candidates()
+    meta = [x["meta"] for x in candidati if x["customer_ref"] == tavolo.meta["customer_ref"]]
+    assert meta and meta[0]["financial_scope"] == _sim()
+
+
+def test_riserva_senza_ambito_legacy_non_va_all_ambito_corrente(tmp_path):
+    """Riserva nota ma senza ambito (ordine precedente a PR-04a ricostruito da F018): la perdita non e' mai attribuita
+    per supposizione all'ambito corrente (SIM): conta per ogni ambito, LIVE compreso => escalation globale."""
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    tavolo = _riserva(c, "1.951")
+    _ambiente(c, "LIVE")
+    live = c.rc._current_financial_scope()
+    c.rc._daily_loss_state_for(live)
+    c.rc.set_simulation_mode(True)                       # settlement mentre il runtime e' in SIM
+    meta = dict(tavolo.meta)
+    meta.pop("financial_scope")
+    c.rc.table_manager.force_unlock(tavolo.table_id)
+    c.rc.table_manager.activate(table_id=tavolo.table_id, event_key=tavolo.current_event_key, exposure=2.0,
+                                market_id=tavolo.market_id, selection_id=tavolo.selection_id, meta=meta)
+    _settle(c, -40.0, table_id=tavolo.table_id, customer_ref=meta["customer_ref"],
+            event_key=tavolo.current_event_key, market_id=tavolo.market_id)
+    assert c.rc._daily_loss_scopes[live]["daily_loss_amount"] == pytest.approx(40.0)
+    assert c.rc._emergency_stopped, "perdita di una riserva senza ambito: conta anche per il LIVE"
+
+
+def test_dutching_registra_l_ambito_nella_riserva(tmp_path):
+    from controllers.dutching_controller import DutchingController
+    c = _banco(tmp_path)
+    _ambiente(c, "SIM")
+    dc = DutchingController(c.rc.bus, c.rc)
+    tid = dc._allocate_table("evt-dutch-1", 2.0, {"market_id": "1.952", "batch_id": "lotto-1"})
+    assert c.rc.table_manager.get_table(tid).meta["financial_scope"] == _sim()
+    _ambiente(c, "LIVE")
+    tid2 = dc._allocate_table("evt-dutch-2", 2.0, {"market_id": "1.953", "batch_id": "lotto-2"})
+    assert c.rc.table_manager.get_table(tid2).meta["financial_scope"] == _live(c)
+
+
+def test_settlement_di_lotto_attribuito_tramite_la_riserva(tmp_path):
+    """Chiusura di un lotto (stesso batch_id, senza identita' nel payload) mentre il runtime e' passato a LIVE:
+    il P&L e' della SIM della riserva."""
+    from controllers.dutching_controller import DutchingController
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    dc = DutchingController(c.rc.bus, c.rc)
+    dc._allocate_table("evt-dutch-3", 2.0, {"market_id": "1.954", "batch_id": "lotto-3", "type": "dutching_batch"})
+    _ambiente(c, "LIVE")
+    _settle(c, -40.0, batch_id="lotto-3", table_id=None, event_key="evt-dutch-other")
+    assert not c.rc._emergency_stopped
+    assert c.rc._daily_loss_scopes[_sim()]["breached"] is True
+
+
+def test_totale_e_attribuzione_atomici_rispetto_a_un_monitor_concorrente(tmp_path):
+    c = _banco(tmp_path, "atom.db", max_daily_loss=100.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    tavolo = _riserva(c, "1.955")
+    _ambiente(c, "LIVE")
+    live = c.rc._current_financial_scope()
+    _settle(c, -20.0)
+    vero = c.rc._apply_realized_pnl_without_mutating_bankroll
+    fili, visti = [], []
+
+    def _monitor():
+        visti.append(c.rc._monitor_daily_loss_breach(source="STATUS", scope=live)["intraday_realized_pnl"])
+
+    def _con_monitor_concorrente(pnl):
+        vero(pnl)
+        f = threading.Thread(target=_monitor)
+        f.start()
+        f.join(0.3)                                    # finestra fra totale e attribuzione
+        fili.append(f)
+
+    c.rc._apply_realized_pnl_without_mutating_bankroll = _con_monitor_concorrente
+    _settle_tavolo(c, tavolo, 50.0)                    # profitto SIM tardivo
+    for f in fili:
+        f.join(5)
+    assert visti and visti[0] == pytest.approx(-20.0), "il monitor concorrente ha visto il totale senza ambito"
+    record = json.loads(c.db.get_settings()["daily_loss_state"])
+    assert record["scopes"][live]["intraday_realized_pnl"] == pytest.approx(-20.0)
+
+
+def test_perdita_non_attribuibile_arma_la_barriera_sim_prima_del_sync(tmp_path):
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    _settle(c, -20.0)
+    visti = []
+    vero_sync = c.rc._sync_bankroll_post_settlement
+    c.rc._sync_bankroll_post_settlement = lambda p: (visti.append(c.rc._limits_block_reason()), vero_sync(p))[1]
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+    _settle(c, -15.0, event_key="cleared:1.956:9")       # LIVE senza conto identificabile
+    assert visti == ["daily_loss_breached:SIM"]
