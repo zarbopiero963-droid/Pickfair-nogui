@@ -1400,7 +1400,9 @@ class RuntimeController:
         self.__dict__.setdefault("_daily_loss_scopes", {})[key] = state
 
     def _persist_daily_loss_book(self) -> None:
-        unattributed = getattr(self, "_daily_loss_unattributed", None)
+        unattributed = (self.__dict__["_daily_loss_unattributed_durable"]
+                        if "_daily_loss_unattributed_durable" in self.__dict__
+                        else getattr(self, "_daily_loss_unattributed", None))
         settled = getattr(self, "_daily_loss_settled", None)
         if settled and str(settled.get("day_utc") or "") != datetime.utcnow().date().isoformat():
             settled = None                                      # chiavi del giorno precedente: scadute
@@ -1514,6 +1516,12 @@ class RuntimeController:
         quello stato (``_promote_settled_keys_locked``). Un salvataggio concorrente non puo' quindi rendere durevole la
         chiave con lo stato vecchio: dopo un crash la riconsegna riapplica l'effetto invece di saltarlo."""
         with self._daily_loss_state_lock:
+            if settlement_key and attribution.get("kind") == "unattributed_loss" \
+                    and "_daily_loss_unattributed_durable" not in self.__dict__:
+                # Sol su 385c7598: finche' la perdita non attribuibile non e' riflessa in TUTTI gli ambiti, il libro si
+                # salva con la quarantena di prima (mai quarantena nuova con ambiti vecchi: al riavvio il minimo la
+                # assorbirebbe); quarantena e chiave diventano durevoli insieme, in `_promote_settled_keys_locked`.
+                self._daily_loss_unattributed_durable = getattr(self, "_daily_loss_unattributed", None)
             self._apply_realized_pnl_without_mutating_bankroll(pnl)
             RuntimeController._attribute_realized_pnl_locked(self, pnl, attribution)
             if settlement_key:
@@ -1538,6 +1546,8 @@ class RuntimeController:
             settled["keys"].add(k)
             staged.pop(k, None)
         self._daily_loss_settled = settled
+        if not any(kind == "unattributed_loss" for _target, kind in staged.values()):
+            self.__dict__.pop("_daily_loss_unattributed_durable", None)
 
     def _attribute_realized_pnl(self, pnl: float, attribution: dict) -> None:
         """Registra l'ambito del P&L appena applicato al desk (sotto il lock dello stato giornaliero)."""

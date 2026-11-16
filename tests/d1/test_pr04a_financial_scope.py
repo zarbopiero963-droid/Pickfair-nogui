@@ -1230,3 +1230,38 @@ def test_m111_cashout_all_resta_disponibile_con_la_sim_bloccata(app_headless):
     a.svuota_bus()
     assert a.rt._limits_block_reason() == "daily_loss_breached:SIM"
     assert len(a.hedge()) == 1 and a.rt._emergency_stopped is False
+
+
+def test_perdita_non_attribuibile_mai_salvata_a_meta_durante_il_sync(tmp_path):
+    """Sol su 385c7598: conto A -20, poi -15 non attribuibile; durante il sync un get_status salva il libro e il
+    processo muore. Il libro salvato non contiene mai la quarantena senza la chiave del settlement (stato a meta': al
+    riavvio il minimo darebbe A = 20 con la quarantena gia' consumata); dopo riavvio e riconsegna A vale 35."""
+    import json
+    c = _banco(tmp_path, "uas.db", max_daily_loss=50.0)
+    _ambiente(c, "LIVE")
+    conto_a = c.rc._current_financial_scope()
+    _settle(c, -20.0)
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+    salvato = {}
+
+    def _sync_con_status(p):
+        c.rc._monitor_daily_loss_breach(source="RUNTIME_STATUS_SNAPSHOT")
+        salvato.update(json.loads(c.db.get_settings()["daily_loss_state"]))
+        raise SystemExit("crash durante il sync")
+
+    c.rc._sync_bankroll_post_settlement = _sync_con_status
+    with pytest.raises(SystemExit):
+        c.rc._on_close_position(_canonical_close_payload(
+            event_key="cleared:1.77:1", batch_id="b-ua", correlation_id="c-ua", gross_pnl=-15.0,
+            commission_amount=0.0, net_pnl=-15.0, pnl=-15.0, commission_pct=4.5))
+    assert not (salvato.get("legacy") or {}).get("intraday_realized_pnl"), salvato.get("legacy")
+    r = _banco(tmp_path, "uas.db", max_daily_loss=50.0)
+    _ambiente(r, "LIVE")
+    assert r.rc._current_financial_scope() == conto_a
+    r.rc.betfair_service.client = None
+    r.rc.betfair_service.settings_service = None
+    r.rc._on_close_position(_canonical_close_payload(
+        event_key="cleared:1.77:1", batch_id="b-ua", correlation_id="c-ua", gross_pnl=-15.0,
+        commission_amount=0.0, net_pnl=-15.0, pnl=-15.0, commission_pct=4.5))
+    assert r.rc._monitor_daily_loss_breach(source="T", scope=conto_a)["daily_loss_amount"] == pytest.approx(35.0)

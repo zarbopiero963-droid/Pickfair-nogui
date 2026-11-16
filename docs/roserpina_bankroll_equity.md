@@ -824,7 +824,9 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   in attesa e diventa salvabile solo nella stessa sezione critica (lock dello stato giornaliero) che ricalcola e salva lo
   stato dell'ambito interessato (per una perdita non attribuibile: dopo il ricalcolo di TUTTI gli ambiti); un salvataggio
   concorrente (es. `get_status`) non puo' rendere durevole la chiave con lo stato vecchio, quindi dopo un crash la
-  riconsegna riapplica l'effetto invece di saltarlo (Sol/Codex su c5dd0bab). Ogni ambito si scrive, anche a zero (uno zero omesso
+  riconsegna riapplica l'effetto invece di saltarlo (Sol/Codex su c5dd0bab). Allo stesso modo, finche' una perdita
+  non attribuibile non e' riflessa in tutti gli ambiti, ogni salvataggio scrive la quarantena di PRIMA: quarantena e
+  chiave diventano durevoli insieme, mai una quarantena nuova accanto ad ambiti vecchi (Sol su 385c7598). Ogni ambito si scrive, anche a zero (uno zero omesso
   farebbe risorgere un profitto piu' vecchio di un marker rimasto).
   Record v1 (senza ambito) = quarantena `legacy`, applicata a ogni ambito solo come perdita (mai come profitto) e col
   suo breach, mai attribuita in automatico a un conto. Db e marker si riconciliano per ambito (seq piu' alta,
