@@ -665,7 +665,8 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   (B, Sol 1) Sblocco owner della storia insufficiente: oltre alla rilettura non deve esistere un'altra lettura iniziata
   nello stesso istante o dopo con un valore diverso (`DrawdownHardStop.readings_since`); una lettura concorrente dello
   stesso tick arrivata dopo la rilettura (nuova ambiguita' assorbita dallo stato gia' attivo) => sblocco rifiutato
-  (`cassa_fresca_non_ordinata`). Stesso valore => nessuna ambiguita' di valore, sblocco valido.
+  (`cassa_fresca_non_ordinata`), anche con lo stesso valore (precisazione owner: 130/130 senza prova temporale non
+  sblocca); l'owner riprova con una rilettura successiva.
   (C, Sol 2) La lettura fuori ordine piu' bassa della cassa del gate si valuta SEPARATAMENTE contro la soglia LOCKDOWN
   del desk e contro i cap dell'hard-stop (assoluto e %): perdita dal picco oltre il cap => storia insufficiente
   (`lettura_fuori_ordine_limite_hard_stop`), mai un hard-stop; calo dimostrato => hard-stop come prima.

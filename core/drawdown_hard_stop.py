@@ -902,14 +902,16 @@ class DrawdownHardStop:
         return ""
 
     def readings_since(self, at: Any) -> int:
-        """Ciclo 27-B: quante letture conservate sono iniziate nello stesso istante di ``at`` o dopo (recenti e
-        riepilogo, senza doppioni). Usato dallo sblocco owner: la rilettura deve essere l'unica."""
+        """Ciclo 27-B: quante letture conservate sono iniziate nello stesso istante di ``at`` o dopo, una per lettura
+        (anche con lo stesso valore: precisazione owner, 130/130 senza prova temporale non sblocca). Usato dallo sblocco
+        owner: la rilettura deve essere l'unica. Le letture recenti stanno tutte in `_history` (una voce per lettura);
+        una lettura gia' passata al riepilogo vuol dire almeno RECENT_READINGS_LIMIT letture successive, quindi > 1."""
         try:
             at = float(at)
         except (TypeError, ValueError):
             return -1
         with self._lock:
-            return len({(t, c) for t, c in (*self._history, *self._ladder, *self._valleys) if t >= at})
+            return sum(1 for t, _c in self._history if t >= at)
 
     def _lockdown_possible(self, lockdown_pct_raw: Any, cash: Decimal) -> bool:
         """Ciclo 25-B: perdita % di ``cash`` dal picco persistente >= soglia LOCKDOWN del desk (soglia non valida o

@@ -5305,7 +5305,8 @@ def test_c27_owner_clearance_with_a_concurrent_same_tick_reading_after_the_fresh
     barriera, fra la rilettura e la sezione critica, una lettura concorrente del desk dello STESSO tick T arriva con 115:
     nuova ambiguita' 130/115 assorbita dallo stato gia' attivo. L'istante d'inizio non prova l'ordine degli snapshot:
     lo sblocco e' rifiutato (`cassa_fresca_non_ordinata`), storia insufficiente intatta, l'ingresso in coda non parte.
-    Prima lo sblocco riusciva e partiva 1 ordine. Con 130 (stesso valore) nessuna ambiguita' di valore: sblocco valido."""
+    Prima lo sblocco riusciva e partiva 1 ordine. Anche con 130 (stesso valore) l'ordine resta non dimostrato: sblocco
+    rifiutato (precisazione owner del requisito B, ciclo 27)."""
     import threading
     import core.runtime_controller as rcmod
     app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=10.0)
@@ -5334,13 +5335,6 @@ def test_c27_owner_clearance_with_a_concurrent_same_tick_reading_after_the_fresh
             rc._apply_funds_reading(_fondi(concorrente), source="desk", read_at=tick)
             concorrente_arrivata.set()
             sblocco.join(10)
-        if concorrente == 130.0:
-            # stesso valore: qualunque ordine, la cassa corrente e' 130 (nessuna ambiguita' di valore) => sblocco valido
-            assert esiti and esiti[0]["cleared"] is True, esiti
-            assert app.trading_engine.submit_quick_bet(cmd).get("status") == "ACCEPTED_FOR_PROCESSING"
-            _m65_ordini_broker(app)
-            assert [t["token"] for t in spia.tentativi] == ["in_coda"]
-            return
         assert esiti and esiti[0]["cleared"] is False and esiti[0]["reason"] == "cassa_fresca_non_ordinata", esiti
         assert rc._hard_stop().history_block_reason() == REASON_HISTORY_INSUFFICIENT
         assert app.trading_engine.submit_quick_bet(cmd).get("status") != "ACCEPTED_FOR_PROCESSING"

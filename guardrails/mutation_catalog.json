@@ -11394,6 +11394,18 @@
       "rationale": "Ciclo 27-B (Sol 1): una lettura concorrente dello stesso tick arrivata dopo la rilettura renderebbe lo sblocco owner valido su un ordine non dimostrato (1 ordine)."
     },
     {
+      "id": "c27b_same_value_concurrent_reading_merged",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            return sum(1 for t, _c in self._history if t >= at)\n",
+      "mutated": "            return len({(t, c) for t, c in self._history if t >= at})\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 27-B (precisazione owner): una lettura concorrente dello stesso tick con lo stesso valore (130/130) non prova l'ordine: fonderla per valore renderebbe valido lo sblocco."
+    },
+    {
       "id": "c27c_out_of_order_hard_stop_cap_ignored",
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
