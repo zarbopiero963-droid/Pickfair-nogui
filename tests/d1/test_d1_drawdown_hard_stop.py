@@ -5383,3 +5383,26 @@ def test_c27_out_of_order_reading_is_checked_against_the_hard_stop_cap_and_the_d
             assert stato == "ACCEPTED_FOR_PROCESSING" and [t["token"] for t in spia.tentativi] == ["in_coda"]
     finally:
         _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("lettura", sorted(_C26_LETTURE) + ["impegnato_senza_disponibile"])
+def test_c27_account_state_still_blocks_after_a_settlement_barrier_follows_the_bad_reading(
+        tmp_path, monkeypatch, lettura):
+    """Cicli 26-A/27-A, due difese distinte: dopo una lettura a zero, fallita o con solo impegnato, un P&L applicato
+    senza lettura (barriera di settlement, motivo della cassa `CASH_NOT_READ`) non riapre l'ingresso in coda: lo stato
+    dell'ultima lettura del conto continua a negarlo. 0 tentativi al broker."""
+    import time
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=1000.0)
+    try:
+        fondi = (dict(_C26_LETTURE[lettura]) if lettura in _C26_LETTURE
+                 else {"available": 0.0, "exposure": -5.0, "ok": True})
+        rc._apply_funds_reading(fondi, source="t", read_at=time.monotonic())
+        rc.risk_desk.apply_closed_pnl(0.0)                          # barriera di settlement: CASH_NOT_READ
+        assert rc.risk_desk.cash_equity_reason == "CASH_NOT_READ"
+        assert rc.drawdown_entry_block_reason(cmd).startswith("cassa_non_verificata")
+        assert app.trading_engine.submit_quick_bet(cmd).get("status") != "ACCEPTED_FOR_PROCESSING"
+        _m65_ordini_broker(app)
+        assert spia.tentativi == []
+    finally:
+        _m65_chiudi(app)

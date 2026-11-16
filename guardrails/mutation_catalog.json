@@ -11235,7 +11235,8 @@
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "Ciclo 25-A: una rilettura con lo STESSO istante dell'ultima lettura valutata non e' una prova dell'ordine (granularita' del clock)."
+      "rationale": "Ciclo 25-A: una rilettura con lo STESSO istante dell'ultima lettura valutata non e' una prova dell'ordine (granularita' del clock).",
+      "equivalent": "Dal ciclo 27-B (PF-OWNER-PR631-C27-M89-THREE-FAILOPEN-20261116) lo sblocco richiede che la rilettura sia l'unica lettura conservata con inizio >= al suo (`readings_since(started) != 1`): una rilettura con lo stesso istante dell'ultima lettura valutata trova sempre quella lettura (stesso istante, gia' conservata fra le recenti) e viene rifiutata comunque. Esito osservabile identico; verificato da test_c25_owner_clearance_never_lets_a_queued_entry_through_on_an_unordered_fresh_reading[stesso] e test_c25_owner_clearance_in_the_same_tick_is_refused_even_without_a_visible_loss. Il confronto degli istanti resta come prima difesa leggibile; la seconda e' coperta da c27b_concurrent_same_tick_reading_ignored (ucciso)."
     },
     {
       "id": "c25a_clearance_gate_cash_not_compared",
@@ -11247,7 +11248,8 @@
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
-      "rationale": "Ciclo 25-A: la rilettura deve essere la cassa del gate; una lettura concorrente dello stesso tick arrivata prima lascerebbe il gate su una cassa di ordine ignoto."
+      "rationale": "Ciclo 25-A: la rilettura deve essere la cassa del gate; una lettura concorrente dello stesso tick arrivata prima lascerebbe il gate su una cassa di ordine ignoto.",
+      "equivalent": "Dal ciclo 27-B la rilettura deve essere l'unica lettura conservata con inizio >= al suo: una cassa del gate diversa dalla rilettura con `_drawdown_read_at == started` richiede un'altra lettura dello stesso istante, gia' contata da `readings_since` (rifiuto). Una lettura con inizio successivo cambia `_drawdown_read_at` (altro controllo). Esito osservabile identico; verificato da test_c25_owner_clearance_refused_when_a_concurrent_reading_of_the_same_tick_is_the_gate_cash e dai test c27 della concorrenza. Resta come difesa in profondita'; la prima e' coperta da c27b_concurrent_same_tick_reading_ignored e c27b_same_value_concurrent_reading_merged (uccisi)."
     },
     {
       "id": "c25b_lockdown_ambiguity_ignored",
@@ -11377,7 +11379,8 @@
       "original": "                    and desk_reason and desk_reason != \"CASH_NOT_READ\"):\n",
       "mutated": "                    and desk_reason):\n",
       "tests": [
-        "tests/d1/test_d1_drawdown_hard_stop.py"
+        "tests/d1/test_d1_drawdown_hard_stop.py",
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
       "rationale": "Ciclo 27-A: la barriera CASH_NOT_READ dopo un P&L/settlement non e' una lettura incoerente: negarla bloccherebbe ingressi legittimi."
     },
