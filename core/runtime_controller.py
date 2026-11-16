@@ -6517,8 +6517,7 @@ class RuntimeController:
         record.update(owner)
         tm = self.table_manager
         tid, ev, ref = int(owner["table_id"]), owner["event_key"], owner["customer_ref"]
-        held_table = tm.get_table(tid)
-        bet_scope = str(((held_table.meta if held_table else None) or {}).get("financial_scope") or "")
+        bet_scope = RuntimeController._settled_bet_scope(self, tid, ev, ref)
         with tm.locked():
             snapshot = tm.snapshot_table(tid)
             try:
@@ -6574,6 +6573,28 @@ class RuntimeController:
             return {"outcome": outcome, "applied": True, "replayed": True,
                     "realized_already": bool(existing.get("realized_applied")), "financial_scope": bet_scope}
         return {"outcome": outcome, "applied": True, "realized_already": False, "financial_scope": bet_scope}
+
+    def _settled_bet_scope(self, table_id: int, event_key: str, customer_ref: str) -> str:
+        """PR-04a (Codex su 38979e59): ambito della scommessa REGOLATA, mai dell'occupante attuale del tavolo. Dal tavolo
+        solo se porta ancora la stessa riserva (evento + customer_ref); altrimenti dalla request persistita in
+        ``orders``; '' (=> quarantena, origine non verificabile) se l'identita' non e' recuperabile."""
+        table = self.table_manager.get_table(int(table_id))
+        meta = (table.meta if table else None) or {}
+        if (table is not None and table.current_event_key == str(event_key or "")
+                and str(meta.get("customer_ref") or "") == str(customer_ref or "")):
+            return str(meta.get("financial_scope") or "")
+        ref = str(customer_ref or "")
+        if not ref:
+            return ""
+        try:
+            rows = self.db._execute("SELECT payload_json FROM orders WHERE customer_ref = ? ORDER BY id DESC",
+                                    (ref,), fetch=True, commit=False) or []
+            scopes = {str((json.loads(dict(r).get("payload_json") or "{}") or {}).get("financial_scope") or "")
+                      for r in rows}
+        except Exception:
+            logger.warning("PR-04a: ambito dell'ordine %s non leggibile (quarantena)", ref, exc_info=True)
+            return ""
+        return scopes.pop() if len(scopes) == 1 else ""
 
     def _reconcile_held_after_rebuild(self, rebuild: dict) -> dict:
         """#461 PR29-c, all'avvio e alla ripresa: tavoli ricostruiti (F018 riuscito) => i settlement trattenuti si
@@ -9004,14 +9025,15 @@ class RuntimeController:
                         other_states.append(self._monitor_daily_loss_breach(
                             source="RUNTIME_CLOSE_POSITION_UNATTRIBUTED", payload=payload, scope=other))
             if realized_now:
+                # Sol su 38979e59: l'escalation a runtime fermo (Emergency Stop durevole) PRIMA della marcatura: un
+                # crash fra le due puo' solo far riapplicare la perdita al riavvio (fail-closed), mai perdere lo stop.
+                RuntimeController._escalate_stopped_live_breach(self, [daily_loss_state, *other_states])
                 # Dopo il monitor della perdita giornaliera: un crash fra le due scritture puo' solo far contare
                 # la perdita di piu' dopo il riavvio (fail-closed), mai perderla.
                 self._mark_settlement_realized(settlement_key)
             self._enforce_daily_loss_hard_stop(daily_loss_state)
             for state in other_states:
                 self._enforce_daily_loss_hard_stop(state)
-            if realized_now:
-                RuntimeController._escalate_stopped_live_breach(self, [daily_loss_state, *other_states])
             for key in touched:   # Sol su d86404ef: perdita di sessione in ogni ambito interessato
                 self._publish_session_loss_breach(scope=key)
         finally:

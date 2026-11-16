@@ -780,7 +780,8 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   (`meta.financial_scope`, modalita' del runtime all'invio) per ogni percorso d'ingresso: segnale, auto-next, Dutching e
   puntata manuale (`DutchingController._allocate_table`). L'ambito e' persistito con la request in `orders` e
   ricostruito da F018 dopo un riavvio; il settlement lo ritrova dalla riserva (tavolo+evento, evento o lotto) letta
-  PRIMA del rilascio. Riserva trovata ma senza ambito (ordine precedente a PR-04a) => perdita non attribuibile
+  PRIMA del rilascio e, per un tavolo gia' riassegnato a un'altra riserva, dalla request persistita della scommessa
+  regolata (mai dall'occupante attuale del tavolo; identita' non recuperabile => quarantena). Riserva trovata ma senza ambito (ordine precedente a PR-04a) => perdita non attribuibile
   sull'ambito `betfair|UNVERIFIED||EUR` (origine non verificabile: escalation globale; conta anche per ogni ambito
   esistente, LIVE compreso), profitto non accreditato: mai l'ambito corrente per supposizione. Anche il ramo recovery
   fail-closed proietta la perdita non attribuibile su ogni ambito. Totale del desk e
@@ -806,7 +807,8 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   arma lo stop globale). Il latch dell'allarme di sessione e' per ambito; uno stop globale successivo SOSTITUISCE uno stop SIM locale
   (escalation, persistita, con CASHOUT_ALL), mentre uno stop locale non sostituisce mai un globale.
 - **Persistenza (v2).** `daily_loss_state = {"version": 2, "scopes": {ambito: {day_utc, intraday_realized_pnl,
-  breached, breached_at}}, "legacy": {...}|null, "seq": n}`; gli ambiti senza perdite ne' breach non si scrivono.
+  breached, breached_at}}, "legacy": {...}|null, "seq": n}`; ogni ambito si scrive, anche a zero (uno zero omesso
+  farebbe risorgere un profitto piu' vecchio di un marker rimasto).
   Record v1 (senza ambito) = quarantena `legacy`, applicata a ogni ambito solo come perdita (mai come profitto) e col
   suo breach, mai attribuita in automatico a un conto. Db e marker si riconciliano per ambito (seq piu' alta,
   altrimenti perdita maggiore; breach se uno dei due); la `seq` riparte sopra quella ripristinata. Stato illeggibile

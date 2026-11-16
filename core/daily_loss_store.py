@@ -262,15 +262,11 @@ def restore_daily_loss_book(db: Any, *, today_utc: str) -> dict:
     return reconcile_books(from_db, from_marker) or {"scopes": {}, "legacy": None, "seq": None}
 
 
-def _worth_saving(state: dict) -> bool:
-    """Un ambito senza perdite ne' breach equivale a un ambito assente: non si scrive."""
-    intraday = validators.finite_number(state.get("intraday_realized_pnl"))
-    return state.get("breached") is True or intraday is None or intraday != 0.0
-
-
 def book_record(scopes: dict, legacy: Optional[dict]) -> dict:
+    # Ogni ambito si scrive, anche a zero (Codex su 38979e59): omettere uno zero farebbe risorgere, alla
+    # riconciliazione con un marker rimasto, un profitto piu' vecchio dello stesso ambito.
     return {"version": BOOK_VERSION,
-            "scopes": {str(k): daily_loss_record(v) for k, v in sorted((scopes or {}).items()) if _worth_saving(v)},
+            "scopes": {str(k): daily_loss_record(v) for k, v in sorted((scopes or {}).items())},
             "legacy": daily_loss_record(legacy) if legacy else None}
 
 

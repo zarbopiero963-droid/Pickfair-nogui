@@ -306,7 +306,7 @@ def test_riavvio_conserva_gli_ambiti_e_la_sim_non_blocca_il_live(tmp_path):
     _ambiente(c, "SIM"); _settle(c, -40.0)
     _ambiente(c, "LIVE"); _settle(c, -10.0)
     record = json.loads(c.db.get_settings()["daily_loss_state"])
-    assert record["version"] == 2 and set(record["scopes"]) == {_sim(), _live(c)}
+    assert record["version"] == 2 and {_sim(), _live(c)} <= set(record["scopes"])     # anche gli ambiti a zero
     r = _banco(tmp_path, "r.db", max_daily_loss=30.0)
     _ambiente(r, "SIM")
     assert r.rc._daily_loss_monitor_state["breached"] is True
@@ -818,3 +818,62 @@ def test_recovery_fail_closed_proietta_la_perdita_non_attribuibile_su_ogni_ambit
     c.rc._on_close_position(_canonical_close_payload(event_key="cleared:1.971:1", batch_id="b-rc", correlation_id="c-rc",
                                                      gross_pnl=-15.0, commission_amount=0.0, net_pnl=-15.0, pnl=-15.0))
     assert c.rc._emergency_stopped, "LIVE A 20 + 15 non attribuibile = 35 >= 30: Emergency Stop"
+
+
+# ============================================================================ Codex su 38979e59
+def test_settlement_tardivo_su_tavolo_riassegnato_usa_l_ambito_della_scommessa(tmp_path):
+    """Tavolo della riserva SIM riassegnato a una riserva LIVE prima del settlement: il P&L resta della SIM (identita'
+    persistita dell'ordine), mai l'ambito del nuovo occupante."""
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    tavolo = _riserva(c, "1.980")
+    ref, ev = tavolo.meta["customer_ref"], tavolo.current_event_key
+    _ambiente(c, "LIVE")
+    live = c.rc._current_financial_scope()
+    c.rc.table_manager.force_unlock(tavolo.table_id)
+    c.rc.table_manager.activate(table_id=tavolo.table_id, event_key="evt-live-altro", exposure=2.0, market_id="1.981",
+                                selection_id=11, meta={"customer_ref": "ref-live-altro", "financial_scope": live})
+    _settle(c, -40.0, table_id=tavolo.table_id, customer_ref=ref, event_key=ev, market_id="1.980")
+    assert not c.rc._emergency_stopped, "perdita della scommessa SIM attribuita al LIVE del nuovo occupante"
+    assert c.rc._daily_loss_scopes[_sim()]["breached"] is True
+
+
+def test_ambito_tornato_a_zero_non_fa_risorgere_un_profitto_del_marker(tmp_path, monkeypatch):
+    import core.daily_loss_store as store
+    c = _banco(tmp_path, "z.db", max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    salva = c.db.save_settings
+
+    def _guasto(_valori):
+        raise OSError("disk full")
+
+    c.db.save_settings = _guasto
+    _settle(c, 20.0, event_key="sim:1.982:1")                  # profitto SIM solo nel marker
+    c.db.save_settings = salva
+    vero = store.os.remove
+    monkeypatch.setattr(store.os, "remove", lambda p: (_ for _ in ()).throw(PermissionError("locked"))
+                        if str(p).endswith(".daily_loss_pending.json") else vero(p))
+    netto = c.rc._realized_for_scope(_sim())
+    _settle(c, -netto, event_key="sim:1.982:2")                # torna a zero, salvato nel db; marker non rimosso
+    r = _banco(tmp_path, "z.db", max_daily_loss=30.0)
+    _ambiente(r, "SIM")
+    assert r.rc._monitor_daily_loss_breach(source="T")["intraday_realized_pnl"] == pytest.approx(0.0, abs=1e-6)
+
+
+# ============================================================================ Sol su 38979e59
+def test_crash_dopo_la_marcatura_a_runtime_fermo_conserva_l_emergency_stop(tmp_path):
+    c = _banco(tmp_path, "cm.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.STOPPED
+
+    def _crash(_key):
+        raise RuntimeError("crash dopo la marcatura")
+
+    c.rc._mark_settlement_realized = _crash
+    with pytest.raises(RuntimeError):
+        c.rc._on_close_position(_canonical_close_payload(
+            event_key="cleared:1.990:1", batch_id="b-cm", correlation_id="c-cm",
+            gross_pnl=-40.0, commission_amount=0.0, net_pnl=-40.0, pnl=-40.0))
+    r = _banco(tmp_path, "cm.db", max_daily_loss=30.0)
+    assert r.rc._emergency_stopped, "l'Emergency Stop globale deve essere durevole prima della marcatura"
