@@ -877,3 +877,46 @@ def test_crash_dopo_la_marcatura_a_runtime_fermo_conserva_l_emergency_stop(tmp_p
             gross_pnl=-40.0, commission_amount=0.0, net_pnl=-40.0, pnl=-40.0))
     r = _banco(tmp_path, "cm.db", max_daily_loss=30.0)
     assert r.rc._emergency_stopped, "l'Emergency Stop globale deve essere durevole prima della marcatura"
+
+
+# ============================================================================ Sol su b02ebcf0
+def test_superamento_sim_proiettato_e_durevole_prima_del_sync(tmp_path):
+    """Crash durante il sync del bankroll: il superamento SIM proiettato e' gia' persistito (blocco SIM durevole)."""
+    c = _banco(tmp_path, "sy.db", max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+
+    def _crash(_payload):
+        raise RuntimeError("crash durante il sync")
+
+    c.rc._sync_bankroll_post_settlement = _crash
+    with pytest.raises(RuntimeError):
+        _settle(c, -40.0, event_key="sim:1.995:1")
+    r = _banco(tmp_path, "sy.db", max_daily_loss=30.0)
+    _ambiente(r, "SIM")
+    assert r.rc._monitor_daily_loss_breach(source="T")["breached"] is True
+    assert not r.rc._emergency_stopped
+
+
+def test_quarantena_e_ambiti_salvati_insieme(tmp_path):
+    """Crash durante l'aggiornamento degli altri ambiti per una perdita non attribuibile: sul disco non deve mai
+    restare la quarantena aggiornata con un ambito ancora vecchio (al riavvio il minimo perderebbe la perdita)."""
+    c = _banco(tmp_path, "qa.db", max_daily_loss=50.0)
+    _ambiente(c, "LIVE")
+    conto_a = c.rc._current_financial_scope()
+    _settle(c, -20.0)
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+    vero = c.rc._monitor_daily_loss_breach
+
+    def _monitor(**kw):
+        if kw.get("source") == "RUNTIME_CLOSE_POSITION_UNATTRIBUTED":
+            raise RuntimeError("crash fra gli ambiti")
+        return vero(**kw)
+
+    c.rc._monitor_daily_loss_breach = _monitor
+    with pytest.raises(RuntimeError):
+        _settle(c, -15.0)
+    record = json.loads(c.db.get_settings()["daily_loss_state"])
+    quarantena = (record.get("legacy") or {}).get("intraday_realized_pnl", 0.0)
+    if quarantena <= -15.0:
+        assert record["scopes"][conto_a]["intraday_realized_pnl"] == pytest.approx(-35.0), record

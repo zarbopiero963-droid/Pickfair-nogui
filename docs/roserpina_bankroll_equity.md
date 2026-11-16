@@ -791,7 +791,9 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   cosi' al riavvio la quarantena si combina col minimo senza perdere perdite; anche la perdita di sessione si rivaluta in
   ogni ambito interessato); un PROFITTO non si accredita a nessun ambito. Nessuna compensazione SIM/LIVE ne'
   fra conti LIVE. Un superamento SIM proiettato arma una barriera d'ingresso LOCALE prima della sincronizzazione del
-  bankroll (nessun pending-stop ne' marker globale); una perdita non attribuibile si proietta su ogni ambito esistente
+  bankroll e lo registra in modo durevole (stato breached dell'ambito salvato prima dell'I/O; nessun pending-stop ne'
+  marker globale); per una perdita non attribuibile ambito attribuito, altri ambiti e quarantena si salvano con UNA
+  sola scrittura del libro; una perdita non attribuibile si proietta su ogni ambito esistente
   e arma le barriere (globale o locale) di ciascuno.
 - **Superamento del limite giornaliero.** SIM verificata: bloccati solo i nuovi ingressi di quell'ambito
   (`daily_loss_breached:SIM`); nessun Emergency Stop, nessuna cancellazione di ordini LIVE, LIVE non disattivato,

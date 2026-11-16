@@ -1701,7 +1701,7 @@ class RuntimeController:
         return "exposure_stop_candidate_rejected:" + reason.split(":", 1)[1]
 
     def _monitor_daily_loss_breach(self, *, source: str, payload: Optional[dict] = None,
-                                   scope: Optional[str] = None) -> dict[str, Any]:
+                                   scope: Optional[str] = None, persist: bool = True) -> dict[str, Any]:
         """Perdita giornaliera dell'ambito ``scope`` (default: l'ambito corrente), PR-04a."""
         key = str(scope or RuntimeController._current_financial_scope(self))
         now = datetime.utcnow()
@@ -1795,7 +1795,8 @@ class RuntimeController:
             if unattributed and str(unattributed.get("day_utc") or "") != today_utc:
                 self._daily_loss_unattributed = None             # quarantena del giorno precedente: scaduta
             self.__dict__.setdefault("_daily_loss_scopes", {})[key] = state
-            RuntimeController._persist_daily_loss_book(self)
+            if persist:
+                RuntimeController._persist_daily_loss_book(self)
             result = dict(state)
 
         if pending_log is not None:
@@ -8964,6 +8965,11 @@ class RuntimeController:
         if local_pending:
             with self._daily_loss_stop_lock:
                 self.__dict__.setdefault("_daily_loss_scope_pending", set()).update(local_pending)
+            # Sol su b02ebcf0: il superamento SIM proiettato si registra e si salva PRIMA dell'I/O del sync (blocco SIM
+            # durevole anche con un crash nel sync), senza pending-stop ne' marker globali.
+            for pr in projections:
+                if str(pr.get("financial_scope") or "") in local_pending:
+                    self._record_pending_daily_loss_breach(pr)
         if arm_pending:
             with self._daily_loss_stop_lock:
                 self._daily_loss_pending_stop = True
@@ -9011,8 +9017,12 @@ class RuntimeController:
             # Daily-loss hard stop SINCRONO (persist + cancel-all + lockdown) dopo
             # il sync ma PRIMA dell'auto-trade: l'auto-trade sotto e' bloccato da
             # _risk_allows_auto_trade e nessun ordine parte dopo il breach.
+            # Sol su b02ebcf0: per una perdita non attribuibile ambito attribuito e altri ambiti si aggiornano senza
+            # salvare, poi UN SOLO salvataggio del libro (mai quarantena aggiornata con un ambito ancora vecchio).
+            shared_loss = bool(realized_now and attribution.get("kind") == "unattributed_loss")
             daily_loss_state = self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload,
-                                                               scope=str(attribution["scope"]))
+                                                               scope=str(attribution["scope"]),
+                                                               persist=not shared_loss)
             # Codex su 1587e3cf: una perdita non attribuibile conta per OGNI ambito; ogni stato esistente la
             # registra e la persiste PRIMA della marcatura del settlement (Sol su d86404ef: un crash fra le due
             # scritture non deve lasciare un ambito senza la perdita; al riavvio la quarantena si combina col minimo).
@@ -9023,7 +9033,11 @@ class RuntimeController:
                     if other != str(attribution["scope"]):
                         touched.append(other)
                         other_states.append(self._monitor_daily_loss_breach(
-                            source="RUNTIME_CLOSE_POSITION_UNATTRIBUTED", payload=payload, scope=other))
+                            source="RUNTIME_CLOSE_POSITION_UNATTRIBUTED", payload=payload, scope=other,
+                            persist=False))
+            if shared_loss:
+                with self._daily_loss_state_lock:
+                    RuntimeController._persist_daily_loss_book(self)
             if realized_now:
                 # Sol su 38979e59: l'escalation a runtime fermo (Emergency Stop durevole) PRIMA della marcatura: un
                 # crash fra le due puo' solo far riapplicare la perdita al riavvio (fail-closed), mai perdere lo stop.
