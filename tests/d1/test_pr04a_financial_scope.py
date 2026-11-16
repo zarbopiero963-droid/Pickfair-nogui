@@ -532,3 +532,90 @@ def test_superamento_sim_non_arma_pending_stop_ne_marker_di_emergenza(tmp_path):
     _ambiente(c, "LIVE")
     _settle(c, -40.0)
     assert True in marker and pending[-1] is True, "LIVE: pending-stop e marker restano come prima"
+
+
+def test_risk_stop_sim_poi_superamento_live_sale_al_globale(tmp_path):
+    """Sol su 1587e3cf: dopo lo stop di sessione SIM, il superamento della sessione LIVE deve armare il RISK_STOP
+    globale persistito e il CASHOUT_ALL (latch per ambito; uno stop locale non assorbe uno globale)."""
+    c = _banco(tmp_path, "esc.db", max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    instradati = []
+    c.rc._route_cashout_signal = lambda segnale: instradati.append(dict(segnale))
+    _ambiente(c, "SIM")
+    _settle(c, -40.0)
+    assert c.rc._risk_stop_reason.endswith("@ambito=" + _sim())
+    _ambiente(c, "LIVE")
+    _settle(c, -40.0)                                   # sessione LIVE: -40 (la perdita SIM non conta)
+    assert c.rc._risk_stop_reason.startswith("session_loss_breached")
+    assert "@ambito=" not in c.rc._risk_stop_reason, "lo stop LIVE deve essere globale"
+    assert len(instradati) == 2, instradati
+    r = _banco(tmp_path, "esc.db", max_session_loss=30.0)
+    assert "@ambito=" not in r.rc._risk_stop_reason, "globale anche dopo il riavvio"
+    _ambiente(r, "SIM")
+    assert r.rc._loss_block_reason().startswith("risk_stop_active")
+
+
+def test_stop_di_esposizione_dopo_uno_stop_sim_e_globale(tmp_path):
+    c = _banco(tmp_path, max_session_loss=30.0)
+    c.rc._route_cashout_signal = lambda segnale: None
+    _ambiente(c, "SIM")
+    c.rc.risk_stop("session_loss_breached:x", scope=_sim())
+    esito = c.rc.risk_stop("exposure_stop:limit=1")
+    assert c.rc._risk_stop_reason == "exposure_stop:limit=1" and esito["reason"] == "exposure_stop:limit=1"
+    assert c.rc.risk_stop("session_loss_breached:y", scope=_sim())["reason"] == "exposure_stop:limit=1", \
+        "uno stop locale non sostituisce mai uno globale"
+
+
+# ============================================================================ rilievi Codex su 1587e3cf
+def test_perdita_non_attribuibile_si_somma_alle_perdite_dell_ambito_anche_dopo_il_riavvio(tmp_path):
+    """Conto A -20, poi -15 senza conto identificabile (limite 50): A deve valere 35, in processo e al riavvio
+    (non il minimo fra 20 e la quarantena 15)."""
+    c = _banco(tmp_path, "ua.db", max_daily_loss=50.0)
+    _ambiente(c, "LIVE")
+    conto_a = c.rc._current_financial_scope()
+    _settle(c, -20.0)
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+    _settle(c, -15.0)
+    assert c.rc._daily_loss_scopes[conto_a]["daily_loss_amount"] == pytest.approx(35.0)
+    r = _banco(tmp_path, "ua.db", max_daily_loss=50.0)
+    _ambiente(r, "LIVE")
+    assert r.rc._current_financial_scope() == conto_a
+    assert r.rc._monitor_daily_loss_breach(source="T")["daily_loss_amount"] == pytest.approx(35.0)
+
+
+def test_perdita_non_attribuibile_che_porta_un_conto_oltre_il_limite_ferma(tmp_path):
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "LIVE")
+    _settle(c, -20.0)
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+    _settle(c, -15.0)
+    assert c.rc._emergency_stopped
+
+
+def test_barriera_locale_sim_durante_il_sync_del_bankroll(tmp_path):
+    """Superamento SIM proiettato: durante l'I/O del sync gli ingressi SIM sono gia' negati (nessun pending globale)."""
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    visti = []
+    vero_sync = c.rc._sync_bankroll_post_settlement
+    c.rc._sync_bankroll_post_settlement = lambda p: (
+        visti.append((c.rc._limits_block_reason(), c.rc._daily_loss_pending_stop)), vero_sync(p))[1]
+    _settle(c, -40.0)
+    assert visti == [("daily_loss_breached:SIM", False)]
+    _ambiente(c, "LIVE")
+    assert c.rc._limits_block_reason() == "", "la barriera SIM non tocca il LIVE"
+
+
+def test_perdita_di_sessione_live_regolata_mentre_il_runtime_e_in_sim(tmp_path):
+    c = _banco(tmp_path, max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    instradati = []
+    c.rc._route_cashout_signal = lambda segnale: instradati.append(dict(segnale))
+    _ambiente(c, "LIVE")
+    _ambiente(c, "SIM")
+    c.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+    _settle(c, -40.0, event_key="cleared:1.900:77")
+    assert c.rc._risk_stop_reason.startswith("session_loss_breached")
+    assert "@ambito=" not in c.rc._risk_stop_reason, "perdita di sessione LIVE: RISK_STOP globale"

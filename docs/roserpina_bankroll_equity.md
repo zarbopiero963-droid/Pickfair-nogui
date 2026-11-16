@@ -779,7 +779,10 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
 - **P&L per ambito.** Il P&L di un settlement va all'ambito della scommessa, registrato nella riserva del tavolo
   (`meta.financial_scope`, modalita' del runtime all'invio). Senza identita' dimostrata: una PERDITA va all'ambito
   corrente se verificato, altrimenti e' **non attribuibile** (quarantena: conta per ogni ambito fino al cambio di
-  giorno); un PROFITTO non si accredita a nessun ambito. Nessuna compensazione SIM/LIVE ne' fra conti LIVE.
+  giorno; ogni stato d'ambito gia' esistente la registra e la persiste subito, cosi' al riavvio la quarantena si combina
+  col minimo senza perdere perdite); un PROFITTO non si accredita a nessun ambito. Nessuna compensazione SIM/LIVE ne'
+  fra conti LIVE. Un superamento SIM proiettato arma una barriera d'ingresso LOCALE prima della sincronizzazione del
+  bankroll (nessun pending-stop ne' marker globale).
 - **Superamento del limite giornaliero.** SIM verificata: bloccati solo i nuovi ingressi di quell'ambito
   (`daily_loss_breached:SIM`); nessun Emergency Stop, nessuna cancellazione di ordini LIVE, LIVE non disattivato,
   nessun LOCKDOWN globale, nessun pending-stop globale. LIVE o ambito non verificabile: Emergency Stop globale come
@@ -788,6 +791,9 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   SIM verificata resta locale (motivo con suffisso `@ambito=<ambito SIM>`): blocca solo quell'ambito, il CASHOUT_ALL
   parte solo mentre il runtime e' in quell'ambito (mai instradato al LIVE), il reset si fa da quell'ambito
   (`risk_stop_di_altro_ambito` altrimenti). LIVE, ambito non verificabile o stop senza ambito (esposizione): globale.
+  La perdita di sessione si valuta nell'ambito del settlement (un `cleared:` LIVE regolato mentre il runtime e' in SIM
+  arma lo stop globale). Il latch dell'allarme di sessione e' per ambito; uno stop globale successivo SOSTITUISCE uno stop SIM locale
+  (escalation, persistita, con CASHOUT_ALL), mentre uno stop locale non sostituisce mai un globale.
 - **Persistenza (v2).** `daily_loss_state = {"version": 2, "scopes": {ambito: {day_utc, intraday_realized_pnl,
   breached, breached_at}}, "legacy": {...}|null, "seq": n}`; gli ambiti senza perdite ne' breach non si scrivono.
   Record v1 (senza ambito) = quarantena `legacy`, applicata a ogni ambito solo come perdita (mai come profitto) e col

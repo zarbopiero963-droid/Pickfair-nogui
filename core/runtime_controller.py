@@ -1472,6 +1472,9 @@ class RuntimeController:
                 self._daily_loss_unattributed = current
 
     def _session_loss_block_reason(self) -> str:
+        return RuntimeController._session_loss_reason_for(self, RuntimeController._current_financial_scope(self))
+
+    def _session_loss_reason_for(self, key: str) -> str:
         limit = getattr(getattr(self, "config", None), "max_session_loss", None)
         if limit is None:
             return ""
@@ -1481,7 +1484,6 @@ class RuntimeController:
         # PR-04a: perdita di sessione dell'ambito corrente; base senza vettore (impostata a mano) = nessun P&L
         # d'ambito alla base
         vector = getattr(self, "_session_pnl_vector", None) or (float(baseline), {}, 0.0)
-        key = RuntimeController._current_financial_scope(self)
         return loss_limits.session_loss_reason(
             limit, RuntimeController._realized_for_scope(self, key, vector),
             RuntimeController._realized_for_scope(self, key))
@@ -1490,6 +1492,8 @@ class RuntimeController:
         if loss_limits.persist_failed(getattr(self, "_daily_loss_persisted", None)):
             return "daily_loss_state_non_persistito"
         state = RuntimeController._daily_loss_monitor_state.fget(self)
+        if RuntimeController._current_financial_scope(self) in (self.__dict__.get("_daily_loss_scope_pending") or ()):
+            return f"daily_loss_breached:{financial_scope.parts(state.get('financial_scope', ''))[1] or 'ambito'}"
         if state.get("breached") and str(state.get("day_utc") or "") == datetime.utcnow().date().isoformat():
             # PR-04a: superamento dell'ambito corrente => nessun nuovo ingresso in QUESTO ambito (SIM: blocco locale)
             return f"daily_loss_breached:{financial_scope.parts(state.get('financial_scope', ''))[1] or 'ambito'}"
@@ -1544,13 +1548,19 @@ class RuntimeController:
             return "recovery_state_not_persisted"
         return ""
 
-    def _publish_session_loss_breach(self) -> None:
-        reason = self._session_loss_block_reason()
-        if reason.startswith("session_loss_breached") and not getattr(self, "_session_loss_alerted", False):
-            self._session_loss_alerted = True
+    def _publish_session_loss_breach(self, scope: Optional[str] = None) -> None:
+        # PR-04a: valutata nell'ambito del settlement (Codex su 1587e3cf: un `cleared:` LIVE regolato mentre il
+        # runtime e' in SIM e' una perdita di sessione LIVE). Latch PER AMBITO (Sol su 1587e3cf): uno stop SIM non
+        # sopprime il superamento LIVE successivo.
+        key = str(scope or RuntimeController._current_financial_scope(self))
+        reason = RuntimeController._session_loss_reason_for(self, key)
+        alerted = getattr(self, "_session_loss_alerted", False)
+        alerted_scopes = alerted if isinstance(alerted, set) else ({key} if alerted is True else set())
+        if reason.startswith("session_loss_breached") and key not in alerted_scopes:
+            self._session_loss_alerted = alerted_scopes | {key}
             logger.critical("SESSION LOSS BREACH: %s", reason)
             self.bus.publish("SESSION_LOSS_BREACH_TRIGGERED", {"reason": reason})
-            self.risk_stop(reason, scope=RuntimeController._current_financial_scope(self))  # P38, PR-04a
+            self.risk_stop(reason, scope=key)  # P38, PR-04a
 
     _RISK_STOP_SCOPE_SEP = "@ambito="
 
@@ -1577,10 +1587,14 @@ class RuntimeController:
         solo mentre il runtime e' in quell'ambito: mai verso il LIVE). LIVE, ambito non verificabile o senza ambito
         (es. esposizione) => globale come prima."""
         with self._risk_stop_lock:
-            if self._risk_stop_reason:
-                return {"risk_stopped": True, "reason": self._risk_stop_reason}
+            local = bool(scope and financial_scope.is_sim(str(scope)))
+            current = self._risk_stop_reason
+            # Uno stop esistente resta, salvo uno locale (SIM) davanti a uno globale: lo stop sale al globale
+            # (Sol su 1587e3cf). Uno locale non sostituisce mai un globale ne' un altro locale.
+            if current and (local or not RuntimeController._risk_stop_scope(current)):
+                return {"risk_stopped": True, "reason": current}
             reason = str(reason or "risk_stop")
-            if scope and financial_scope.is_sim(str(scope)):
+            if local:
                 reason = f"{reason}{RuntimeController._RISK_STOP_SCOPE_SEP}{scope}"
             self._risk_stop_reason = reason
             persisted = stop_rules.persist_risk_stop(self.db, reason)
@@ -8825,6 +8839,14 @@ class RuntimeController:
             RuntimeMode.ACTIVE,
             RuntimeMode.PAUSED,
         )
+        # Codex su 1587e3cf: superamento SIM proiettato => barriera d'ingresso LOCALE (solo quell'ambito) prima
+        # dell'I/O del sync, senza pending-stop ne' marker globali; si toglie quando lo stato breached e' scritto.
+        local_pending = (bool(projected_close.get("breached")) and not arm_pending
+                         and not financial_scope.escalates_globally(str(projected_close.get("financial_scope") or "")))
+        if local_pending:
+            with self._daily_loss_stop_lock:
+                self.__dict__.setdefault("_daily_loss_scope_pending", set()).add(
+                    str(projected_close["financial_scope"]))
         if arm_pending:
             with self._daily_loss_stop_lock:
                 self._daily_loss_pending_stop = True
@@ -8880,12 +8902,23 @@ class RuntimeController:
                 # la perdita di piu' dopo il riavvio (fail-closed), mai perderla.
                 self._mark_settlement_realized(settlement_key)
             self._enforce_daily_loss_hard_stop(daily_loss_state)
-            self._publish_session_loss_breach()
+            if realized_now and attribution.get("kind") == "unattributed_loss":
+                # Codex su 1587e3cf: una perdita non attribuibile conta per OGNI ambito; ogni stato esistente la
+                # registra e la persiste subito (al riavvio la quarantena si combina col minimo, mai con la somma).
+                for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
+                    if other != str(attribution["scope"]):
+                        self._enforce_daily_loss_hard_stop(self._monitor_daily_loss_breach(
+                            source="RUNTIME_CLOSE_POSITION_UNATTRIBUTED", payload=payload, scope=other))
+            self._publish_session_loss_breach(scope=str(attribution["scope"]))
         finally:
             # Disarma il bridge se NON e' subentrato l'emergency_stop definitivo
             # (es. il breach non si e' materializzato): evita un pending-stop
             # appiccicato che bloccherebbe i segnali leciti fino al reset, e
             # ripulisci il marker durevole speculativo scritto prima del sync.
+            if local_pending:
+                with self._daily_loss_stop_lock:
+                    self.__dict__.setdefault("_daily_loss_scope_pending", set()).discard(
+                        str(projected_close["financial_scope"]))
             if arm_pending and not self._emergency_stopped:
                 with self._daily_loss_stop_lock:
                     self._daily_loss_pending_stop = False
