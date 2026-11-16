@@ -1401,14 +1401,22 @@ class RuntimeController:
 
     def _persist_daily_loss_book(self) -> None:
         unattributed = getattr(self, "_daily_loss_unattributed", None)
+        settled = getattr(self, "_daily_loss_settled", None)
+        if settled and str(settled.get("day_utc") or "") != datetime.utcnow().date().isoformat():
+            settled = None                                      # chiavi del giorno precedente: scadute
         self._daily_loss_persisted = loss_limits.persist_daily_loss_book(
             self.db, self.__dict__.setdefault("_daily_loss_scopes", {}), unattributed,
-            getattr(self, "_daily_loss_persisted", None), getattr(self, "_daily_loss_restored_seq", None))
+            getattr(self, "_daily_loss_persisted", None), getattr(self, "_daily_loss_restored_seq", None),
+            settled if settled and settled.get("keys") else None)
 
     def _restore_daily_loss_book(self) -> None:
         today = datetime.utcnow().date().isoformat()
         book = loss_limits.restore_daily_loss_book(self.db, today_utc=today)
         self._daily_loss_restored_seq = book.get("seq")
+        # settlement gia' realizzati oggi (salvati con lo stato): mai riapplicati dopo un riavvio
+        restored_keys = set(book.get("settled_keys") or ())
+        self._daily_loss_settled = {"day_utc": today, "keys": set(restored_keys)}
+        self.__dict__.setdefault("_processed_realized_pnl_keys", set()).update(restored_keys)
         legacy = book.get("legacy")
         self._daily_loss_unattributed = None if legacy is None else {
             "day_utc": today, "intraday_realized_pnl": float(min(0.0, legacy[0])), "breached": bool(legacy[1]),
@@ -1436,16 +1444,22 @@ class RuntimeController:
             return None
         event_key = str(p.get("event_key") or "")
         batch_id = str(p.get("batch_id") or "")
+        ref = str(p.get("customer_ref") or "")
+
+        def _same_bet(table) -> bool:
+            # Sol su 3c1ff9e4: con un customer_ref nel payload la riserva deve essere QUELLA scommessa
+            return not ref or str((table.meta or {}).get("customer_ref") or "") == ref
+
         try:
             candidates = []
             tid = p.get("table_id")
             if tid is not None:
                 table = tm.get_table(int(tid))
-                if table is not None and event_key and table.current_event_key == event_key:
+                if table is not None and event_key and table.current_event_key == event_key and _same_bet(table):
                     candidates.append(table)
             if not candidates and event_key:
                 found = tm.find_by_event_key(event_key)
-                if found is not None:
+                if found is not None and _same_bet(found):
                     candidates.append(found)
             if not candidates and batch_id:
                 candidates = [t for t in tm.active_tables() if str((t.meta or {}).get("batch_id") or "") == batch_id]
@@ -1465,6 +1479,8 @@ class RuntimeController:
         Senza alcuna riserva: una PERDITA va all'ambito corrente se verificato, altrimenti e' non attribuibile
         (conta per ogni ambito, in quarantena); un PROFITTO non si accredita a nessun ambito (prudenza)."""
         declared = str((effect or {}).get("financial_scope") or "")
+        if "financial_scope" in (effect or {}):
+            hint = None          # Sol su 3c1ff9e4: la riserva identificata dal rilascio prevale sempre, anche vuota
         event_key = str((payload or {}).get("event_key") or "")
         if not declared and event_key.startswith("sim:"):
             # regolamento del broker simulato (chiave `sim:` di PnLEngine): appartiene alla SIM per costruzione
@@ -1489,12 +1505,20 @@ class RuntimeController:
             return {"scope": target, "kind": "scoped"}
         return {"scope": target, "kind": "unattributed_loss"}
 
-    def _apply_and_attribute_realized_pnl(self, pnl: float, attribution: dict) -> None:
+    def _apply_and_attribute_realized_pnl(self, pnl: float, attribution: dict, settlement_key: str = "") -> None:
         """Totale del desk e ambito del P&L aggiornati INSIEME sotto il lock dello stato giornaliero (Codex su
-        d86404ef): un monitor concorrente (es. get_status) non vede mai il totale senza la sua attribuzione."""
+        d86404ef): un monitor concorrente (es. get_status) non vede mai il totale senza la sua attribuzione. La chiave
+        del settlement entra nell'insieme salvato con lo stato giornaliero (stessa scrittura dell'effetto)."""
         with self._daily_loss_state_lock:
             self._apply_realized_pnl_without_mutating_bankroll(pnl)
             RuntimeController._attribute_realized_pnl_locked(self, pnl, attribution)
+            if settlement_key:
+                today = datetime.utcnow().date().isoformat()
+                settled = getattr(self, "_daily_loss_settled", None)
+                if not settled or str(settled.get("day_utc") or "") != today:
+                    settled = {"day_utc": today, "keys": set()}
+                settled["keys"].add(str(settlement_key))
+                self._daily_loss_settled = settled
 
     def _attribute_realized_pnl(self, pnl: float, attribution: dict) -> None:
         """Registra l'ambito del P&L appena applicato al desk (sotto il lock dello stato giornaliero)."""
@@ -3138,6 +3162,14 @@ class RuntimeController:
         persist_error = self._persist_emergency_state()
         self.bus.publish("EMERGENCY_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
         return {"emergency_reset": True, "persist_error": persist_error}
+
+    @staticmethod
+    def _settlement_realization_unproven(effect: Optional[dict], pnl: float) -> bool:
+        """Stessa regola del blocco di realizzazione (#461 PR29-c): una consegna duplicata/non verificabile o
+        rielaborata non rientra nel realizzato se e' una vincita (una perdita si', fail-closed)."""
+        effect = effect or {}
+        replay = effect.get("outcome") in ("duplicate", "unverifiable") or bool(effect.get("replayed"))
+        return bool(replay) and not float(pnl) < 0.0
 
     def _settlement_projections(self, pnl: float, attribution: dict) -> list:
         """Proiezioni del settlement: ambito attribuito e, per una perdita non attribuibile, ogni ambito esistente
@@ -8954,9 +8986,23 @@ class RuntimeController:
             RuntimeMode.ACTIVE,
             RuntimeMode.PAUSED,
         )
-        if arm_pending:
+        will_realize = bool(
+            settlement_key and settlement_key not in self._processed_realized_pnl_keys
+            and not effect.get("realized_already")
+            and not RuntimeController._settlement_realization_unproven(effect, pnl))
+        # Sol su 3c1ff9e4: a runtime fermo (STOPPED/LOCKDOWN) un superamento che sale al globale si rende durevole come
+        # emergenza (marker) PRIMA di salvare lo stato: un crash fra le due scritture riapre in emergenza, mai con il
+        # solo superamento registrato. Rimosso sotto se l'emergenza non subentra.
+        stopped_marker = bool(will_realize and not self._emergency_stopped and self.mode not in (
+            RuntimeMode.ACTIVE, RuntimeMode.PAUSED) and any(
+            bool(pr.get("breached")) and financial_scope.escalates_globally(str(pr.get("financial_scope") or ""))
+            for pr in projections))
+        if arm_pending or stopped_marker:
             projected_close = next(pr for pr in projections if pr.get("breached") and financial_scope.escalates_globally(
                 str(pr.get("financial_scope") or "")))
+        if stopped_marker:
+            self._persist_db_emergency_marker(
+                active=True, reason=f"DAILY_LOSS_BREACH_PENDING:{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}")
         # Codex su 1587e3cf: superamento SIM proiettato => barriera d'ingresso LOCALE (solo quell'ambito) prima
         # dell'I/O del sync, senza pending-stop ne' marker globali; si toglie quando lo stato breached e' scritto.
         local_pending = {str(pr["financial_scope"]) for pr in projections
@@ -8967,8 +9013,10 @@ class RuntimeController:
                 self.__dict__.setdefault("_daily_loss_scope_pending", set()).update(local_pending)
             # Sol su b02ebcf0: il superamento SIM proiettato si registra e si salva PRIMA dell'I/O del sync (blocco SIM
             # durevole anche con un crash nel sync), senza pending-stop ne' marker globali.
+            # Codex su 3c1ff9e4: solo per un settlement che verra' davvero realizzato (stesso predicato del sotto),
+            # mai per una consegna gia' realizzata (un duplicato non crea uno stop giornaliero).
             for pr in projections:
-                if str(pr.get("financial_scope") or "") in local_pending:
+                if will_realize and str(pr.get("financial_scope") or "") in local_pending:
                     self._record_pending_daily_loss_breach(pr)
         if arm_pending:
             with self._daily_loss_stop_lock:
@@ -8981,6 +9029,7 @@ class RuntimeController:
             # client live e l'emergency_stop sotto esegue il lockdown completo.
             self._persist_db_emergency_marker(active=True, reason=f"DAILY_LOSS_BREACH_PENDING:{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}")
         realized_now = False
+        settlement_completed = False
         try:
             # #461 PR29-c: P&L realizzato una sola volta per settlement, nel processo (set in memoria, sotto il lock
             # del consumer) e dopo un riavvio (flag `realized_applied` del registro). Quando la registrazione non e'
@@ -8992,7 +9041,7 @@ class RuntimeController:
                         and float(pnl) >= 0.0)
             if (settlement_key and settlement_key not in self._processed_realized_pnl_keys
                     and not effect.get("realized_already") and not unproven):
-                RuntimeController._apply_and_attribute_realized_pnl(self, pnl, attribution)
+                RuntimeController._apply_and_attribute_realized_pnl(self, pnl, attribution, settlement_key)
                 self._processed_realized_pnl_keys.add(settlement_key)
                 realized_now = True
             # Bankroll sync PRIMA dell'enforce: emergency_stop flippa il service a
@@ -9050,6 +9099,7 @@ class RuntimeController:
                 self._enforce_daily_loss_hard_stop(state)
             for key in touched:   # Sol su d86404ef: perdita di sessione in ogni ambito interessato
                 self._publish_session_loss_breach(scope=key)
+            settlement_completed = True
         finally:
             # Disarma il bridge se NON e' subentrato l'emergency_stop definitivo
             # (es. il breach non si e' materializzato): evita un pending-stop
@@ -9061,6 +9111,9 @@ class RuntimeController:
             if arm_pending and not self._emergency_stopped:
                 with self._daily_loss_stop_lock:
                     self._daily_loss_pending_stop = False
+                self._persist_db_emergency_marker(active=False)
+            elif stopped_marker and settlement_completed and not self._emergency_stopped:
+                # solo a settlement completato: un'interruzione a meta' lascia l'emergenza durevole (fail-closed)
                 self._persist_db_emergency_marker(active=False)
         if unrecorded:
             # nessun ordine successivo su un settlement il cui effetto non e' registrato (fail-closed)

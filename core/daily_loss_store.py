@@ -212,7 +212,23 @@ def parse_book(raw: Any, *, today_utc: str) -> Optional[dict]:
             scopes[str(key)] = fields
     legacy_raw = record.get("legacy")
     legacy = None if legacy_raw is None else _parse_fields(legacy_raw, today=today)
-    return {"scopes": scopes, "legacy": legacy, "seq": seq}
+    return {"scopes": scopes, "legacy": legacy, "seq": seq, "settled_keys": _parse_settled(record, today=today)}
+
+
+def _parse_settled(record: dict, *, today: date) -> set:
+    """Chiavi dei settlement gia' realizzati OGGI, salvate nella stessa scrittura dello stato giornaliero."""
+    raw = record.get("settled")
+    if raw is None:
+        return set()
+    if not isinstance(raw, dict) or not isinstance(raw.get("keys"), list):
+        raise ValueError("daily_loss_state: chiavi dei settlement non valide")
+    try:
+        day = date.fromisoformat(raw["day_utc"])
+    except Exception as exc:
+        raise ValueError("daily_loss_state: giorno delle chiavi non valido") from exc
+    if day != today:
+        return set()
+    return {str(k) for k in raw["keys"]}
 
 
 def _merge_fields(a: Optional[tuple], b: Optional[tuple], newer: Optional[str]) -> Optional[tuple]:
@@ -238,7 +254,8 @@ def reconcile_books(a: Optional[dict], b: Optional[dict]) -> Optional[dict]:
     seqs = [s for s in (sa, sb) if s is not None]
     return {"scopes": {k: _merge_fields(a["scopes"].get(k), b["scopes"].get(k), newer) for k in keys},
             "legacy": _merge_fields(a.get("legacy"), b.get("legacy"), newer),
-            "seq": max(seqs) if seqs else None}
+            "seq": max(seqs) if seqs else None,
+            "settled_keys": set(a.get("settled_keys") or ()) | set(b.get("settled_keys") or ())}
 
 
 def unreadable_book() -> dict:
@@ -262,12 +279,15 @@ def restore_daily_loss_book(db: Any, *, today_utc: str) -> dict:
     return reconcile_books(from_db, from_marker) or {"scopes": {}, "legacy": None, "seq": None}
 
 
-def book_record(scopes: dict, legacy: Optional[dict]) -> dict:
+def book_record(scopes: dict, legacy: Optional[dict], settled: Optional[dict] = None) -> dict:
     # Ogni ambito si scrive, anche a zero (Codex su 38979e59): omettere uno zero farebbe risorgere, alla
     # riconciliazione con un marker rimasto, un profitto piu' vecchio dello stesso ambito.
     return {"version": BOOK_VERSION,
             "scopes": {str(k): daily_loss_record(v) for k, v in sorted((scopes or {}).items())},
-            "legacy": daily_loss_record(legacy) if legacy else None}
+            "legacy": daily_loss_record(legacy) if legacy else None,
+            # mandato owner P2 (PF-OWNER-PR638-BETFAIR-SIM-E2E-GATE-20261116): chiavi dei settlement realizzati oggi,
+            # nella STESSA scrittura dello stato: un crash prima della marcatura non fa contare due volte il P&L
+            "settled": ({"day_utc": settled["day_utc"], "keys": sorted(settled["keys"])} if settled else None)}
 
 
 def _strip_seq(record: Any) -> Any:
@@ -275,10 +295,10 @@ def _strip_seq(record: Any) -> Any:
 
 
 def persist_daily_loss_book(db: Any, scopes: dict, legacy: Optional[dict], last: Optional[dict],
-                            restored_seq: Optional[int] = None) -> Optional[dict]:
+                            restored_seq: Optional[int] = None, settled: Optional[dict] = None) -> Optional[dict]:
     """Come `persist_daily_loss`, per il libro v2 di tutti gli ambiti; la `seq` riparte sopra quella ripristinata
     (un marker rimasto non puo' mai superare un salvataggio successivo). Mai raise."""
-    record = book_record(scopes, legacy)
+    record = book_record(scopes, legacy, settled)
     last_seq = _seq((last or {}).get("seq"))
     if not hasattr(db, "save_settings") or (
             not persist_failed(last) and last is not None and _strip_seq(last) == record):

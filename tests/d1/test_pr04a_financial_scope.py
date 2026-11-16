@@ -920,3 +920,180 @@ def test_quarantena_e_ambiti_salvati_insieme(tmp_path):
     quarantena = (record.get("legacy") or {}).get("intraday_realized_pnl", 0.0)
     if quarantena <= -15.0:
         assert record["scopes"][conto_a]["intraday_realized_pnl"] == pytest.approx(-35.0), record
+
+
+# ============================================================================ Codex su 3c1ff9e4
+def test_settlement_duplicato_non_registra_un_superamento_sim_falso(tmp_path):
+    c = _banco(tmp_path, "dup.db", max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    payload = _canonical_close_payload(event_key="sim:1.996:1", batch_id="b-dup", correlation_id="c-dup",
+                                       gross_pnl=-20.0, commission_amount=0.0, net_pnl=-20.0, pnl=-20.0)
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc._on_close_position(dict(payload))
+    c.rc._on_close_position(dict(payload))               # stessa consegna di nuovo
+    assert c.rc.risk_desk.realized_pnl == pytest.approx(-20.0)
+    assert c.rc._daily_loss_scopes[_sim()]["breached"] is False
+    r = _banco(tmp_path, "dup.db", max_daily_loss=30.0)
+    _ambiente(r, "SIM")
+    assert r.rc._monitor_daily_loss_breach(source="T")["breached"] is False
+
+
+# ============================================================================ mandato owner P2 (idempotenza durevole)
+def _payload_sim(n, importo):
+    return _canonical_close_payload(event_key=f"sim:1.997:{n}", batch_id=f"b-idem-{n}", correlation_id=f"c-idem-{n}",
+                                    gross_pnl=importo, commission_amount=0.0, net_pnl=importo, pnl=importo)
+
+
+def test_due_settlement_distinti_con_importi_uguali_contano_entrambi(tmp_path):
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc._on_close_position(_payload_sim(1, -20.0))
+    c.rc._on_close_position(_payload_sim(2, -20.0))
+    assert c.rc.risk_desk.realized_pnl == pytest.approx(-40.0)
+    assert c.rc._daily_loss_scopes[_sim()]["breached"] is True
+
+
+def test_doppia_consegna_dopo_riavvio_un_solo_effetto(tmp_path):
+    c = _banco(tmp_path, "rr.db", max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc._on_close_position(_payload_sim(3, -20.0))
+    r = _banco(tmp_path, "rr.db", max_daily_loss=30.0)
+    _ambiente(r, "SIM")
+    r.rc.mode = RuntimeMode.ACTIVE
+    r.rc._on_close_position(_payload_sim(3, -20.0))
+    stato = r.rc._monitor_daily_loss_breach(source="T")
+    assert stato["daily_loss_amount"] == pytest.approx(20.0) and stato["breached"] is False
+
+
+def test_crash_fra_stato_giornaliero_e_marcatura_poi_riconsegna_un_solo_effetto(tmp_path):
+    """Crash dopo il salvataggio dello stato giornaliero e prima della marcatura del settlement: alla riconsegna dopo
+    il riavvio la perdita NON si conta due volte (la chiave viaggia nella stessa scrittura dello stato)."""
+    c = _banco(tmp_path, "cr2.db", max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+
+    def _crash(_key):
+        raise RuntimeError("crash prima della marcatura")
+
+    c.rc._mark_settlement_realized = _crash
+    with pytest.raises(RuntimeError):
+        c.rc._on_close_position(_payload_sim(4, -20.0))
+    r = _banco(tmp_path, "cr2.db", max_daily_loss=30.0)
+    _ambiente(r, "SIM")
+    r.rc.mode = RuntimeMode.ACTIVE
+    r.rc._on_close_position(_payload_sim(4, -20.0))
+    stato = r.rc._monitor_daily_loss_breach(source="T")
+    assert stato["daily_loss_amount"] == pytest.approx(20.0), "perdita contata due volte dopo il crash"
+    assert stato["breached"] is False
+
+
+# ============================================================================ Sol su 3c1ff9e4
+def test_hint_della_riserva_richiede_lo_stesso_customer_ref(tmp_path):
+    """Tavolo riusato sullo stesso evento da una nuova riserva SIM: un settlement legacy (riserva senza ambito, altro
+    customer_ref) non prende l'ambito SIM della nuova riserva: resta non attribuibile (escalation globale)."""
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    tavolo = _riserva(c, "1.998")
+    for chiave in [k for k in c.rc._daily_loss_scopes if k != _sim()]:
+        del c.rc._daily_loss_scopes[chiave]
+    _settle(c, -40.0, table_id=tavolo.table_id, customer_ref="ref-legacy-altra-riserva",
+            event_key=tavolo.current_event_key, market_id=tavolo.market_id)
+    assert c.rc._emergency_stopped, "la perdita legacy ha preso l'ambito SIM del nuovo occupante"
+
+
+def test_ambito_vuoto_dell_effetto_prevale_sull_hint():
+    from core.runtime_controller import RuntimeController
+    rc = RuntimeController.__new__(RuntimeController)
+    rc.simulation_mode = True
+    esito = rc._settlement_attribution(-10.0, {"financial_scope": ""}, {"event_key": "evt-x"}, _sim())
+    assert esito["kind"] == "unattributed_loss" and not financial_scope.is_sim(esito["scope"])
+
+
+def test_crash_dopo_il_salvataggio_del_superamento_live_a_runtime_fermo_riavvio_in_emergenza(tmp_path):
+    """Sol su 3c1ff9e4: in STOPPED il superamento LIVE si salva prima dell'Emergency Stop; un crash fra le due
+    scritture non deve lasciare il superamento senza emergenza al riavvio."""
+    import core.runtime_controller as rcmod
+    c = _banco(tmp_path, "sa.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.STOPPED
+
+    def _muore(self, *a, **k):
+        raise SystemExit("crash prima dell'Emergency Stop")
+
+    vero = rcmod.RuntimeController._escalate_stopped_live_breach
+    rcmod.RuntimeController._escalate_stopped_live_breach = _muore
+    try:
+        with pytest.raises(SystemExit):
+            c.rc._on_close_position(_canonical_close_payload(
+                event_key="cleared:1.999:1", batch_id="b-sa", correlation_id="c-sa",
+                gross_pnl=-40.0, commission_amount=0.0, net_pnl=-40.0, pnl=-40.0))
+    finally:
+        rcmod.RuntimeController._escalate_stopped_live_breach = vero
+    r = _banco(tmp_path, "sa.db", max_daily_loss=30.0)
+    assert r.rc._emergency_stopped, "superamento LIVE persistito senza Emergency Stop dopo il riavvio"
+
+
+# ============================================================================ criteri D M110 / M110-bis (equivalenti B)
+def test_g11_concorrenza_due_distinti_e_una_riconsegna_identica(tmp_path):
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    via = threading.Barrier(3)
+    voci = [("sim:1.9301:1", "cc0"), ("sim:1.9301:2", "cc1"), ("sim:1.9301:1", "cc0")]
+
+    def _uno(chiave, corr):
+        via.wait(5)
+        c.rc._on_close_position(_canonical_close_payload(
+            event_key=chiave, batch_id=f"b-{corr}", correlation_id=f"c-{corr}", gross_pnl=-12.0,
+            commission_amount=0.0, net_pnl=-12.0, pnl=-12.0))
+
+    fili = [threading.Thread(target=_uno, args=v) for v in voci]
+    for f in fili:
+        f.start()
+    for f in fili:
+        f.join(10)
+    stato = c.rc._monitor_daily_loss_breach(source="T", scope=_sim())
+    assert c.rc.risk_desk.realized_pnl == pytest.approx(-24.0)
+    assert stato["daily_loss_amount"] == pytest.approx(24.0) and stato["breached"] is False
+
+
+@pytest.mark.parametrize("punto", ["_persist_daily_loss_book", "_mark_settlement_realized",
+                                   "_commit_settlement_effect"])
+def test_g9_crash_nel_salvataggio_poi_riavvio_e_riconsegna_un_solo_effetto(tmp_path, monkeypatch, punto):
+    import core.runtime_controller as rcmod
+    c = _banco(tmp_path, "g9.db", max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    reale = getattr(rcmod.RuntimeController, punto)
+
+    def _muore(self, *a, **k):
+        raise SystemExit(f"crash in {punto}")
+
+    monkeypatch.setattr(rcmod.RuntimeController, punto, _muore)
+    try:
+        c.rc._on_close_position(_payload_sim(9, -20.0))
+    except BaseException:                                   # SystemExit: morte simulata del processo
+        pass
+    monkeypatch.setattr(rcmod.RuntimeController, punto, reale)
+    r = _banco(tmp_path, "g9.db", max_daily_loss=30.0)
+    _ambiente(r, "SIM")
+    r.rc.mode = RuntimeMode.ACTIVE
+    r.rc._on_close_position(_payload_sim(9, -20.0))
+    stato = r.rc._monitor_daily_loss_breach(source="T")
+    assert stato["daily_loss_amount"] == pytest.approx(20.0) and stato["breached"] is False, punto
+
+
+def test_hint_per_evento_ignora_una_riserva_di_un_altra_scommessa(tmp_path):
+    """Settlement senza table_id (riserva non identificata dal rilascio) con un customer_ref diverso da quello della
+    riserva viva sullo stesso evento: l'hint non deve prendere l'ambito SIM di quella riserva."""
+    c = _banco(tmp_path, max_daily_loss=100.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    tavolo = _riserva(c, "1.9401")
+    _ambiente(c, "LIVE")
+    _settle(c, -40.0, table_id=None, customer_ref="ref-di-un-altra-scommessa",
+            event_key=tavolo.current_event_key, market_id=tavolo.market_id)
+    assert c.rc._scope_pnl.get(_sim(), 0.0) == 0.0, "perdita attribuita alla riserva SIM di un'altra scommessa"

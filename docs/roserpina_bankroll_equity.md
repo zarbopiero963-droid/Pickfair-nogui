@@ -780,7 +780,8 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   (`meta.financial_scope`, modalita' del runtime all'invio) per ogni percorso d'ingresso: segnale, auto-next, Dutching e
   puntata manuale (`DutchingController._allocate_table`). L'ambito e' persistito con la request in `orders` e
   ricostruito da F018 dopo un riavvio; il settlement lo ritrova dalla riserva (tavolo+evento, evento o lotto) letta
-  PRIMA del rilascio e, per un tavolo gia' riassegnato a un'altra riserva, dalla request persistita della scommessa
+  PRIMA del rilascio (solo la riserva della stessa scommessa: stesso evento e stesso `customer_ref`; l'ambito portato dal
+  rilascio prevale sempre, anche vuoto) e, per un tavolo gia' riassegnato a un'altra riserva, dalla request persistita della scommessa
   regolata (mai dall'occupante attuale del tavolo; identita' non recuperabile => quarantena). Riserva trovata ma senza ambito (ordine precedente a PR-04a) => perdita non attribuibile
   sull'ambito `betfair|UNVERIFIED||EUR` (origine non verificabile: escalation globale; conta anche per ogni ambito
   esistente, LIVE compreso), profitto non accreditato: mai l'ambito corrente per supposizione. Anche il ramo recovery
@@ -799,8 +800,8 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   (`daily_loss_breached:SIM`); nessun Emergency Stop, nessuna cancellazione di ordini LIVE, LIVE non disattivato,
   nessun LOCKDOWN globale, nessun pending-stop globale. LIVE o ambito non verificabile: Emergency Stop globale come
   prima (SIM e LIVE bloccati; passare a SIM non lo scioglie), armato e persistito anche quando il superamento arriva da
-  un settlement a runtime fermo (STOPPED/LOCKDOWN), cosi' un avvio successivo in SIM o con un altro conto non riapre gli
-  ingressi. Emergency Stop manuale: sempre globale, invariato.
+  un settlement a runtime fermo (STOPPED/LOCKDOWN; marker d'emergenza durevole scritto PRIMA dello stato, tolto solo a
+  settlement completato), cosi' un avvio successivo in SIM o con un altro conto non riapre gli ingressi. Emergency Stop manuale: sempre globale, invariato.
 - **Perdita di sessione e RISK_STOP.** La perdita di sessione si misura nell'ambito corrente. Un RISK_STOP nato da una
   SIM verificata resta locale (motivo con suffisso `@ambito=<ambito SIM>`): blocca solo quell'ambito, il CASHOUT_ALL
   parte solo mentre il runtime e' in quell'ambito (mai instradato al LIVE), il reset si fa da quell'ambito
@@ -809,7 +810,10 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   arma lo stop globale). Il latch dell'allarme di sessione e' per ambito; uno stop globale successivo SOSTITUISCE uno stop SIM locale
   (escalation, persistita, con CASHOUT_ALL), mentre uno stop locale non sostituisce mai un globale.
 - **Persistenza (v2).** `daily_loss_state = {"version": 2, "scopes": {ambito: {day_utc, intraday_realized_pnl,
-  breached, breached_at}}, "legacy": {...}|null, "seq": n}`; ogni ambito si scrive, anche a zero (uno zero omesso
+  breached, breached_at}}, "legacy": {...}|null, "settled": {"day_utc", "keys"}|null, "seq": n}`. `settled` porta le
+  chiavi dei settlement gia' realizzati oggi, nella STESSA scrittura dello stato: al riavvio entrano fra i settlement
+  realizzati, quindi una riconsegna (anche dopo un crash fra lo stato e la marcatura) non conta due volte il P&L; una
+  consegna gia' realizzata non registra mai un superamento proiettato. Ogni ambito si scrive, anche a zero (uno zero omesso
   farebbe risorgere un profitto piu' vecchio di un marker rimasto).
   Record v1 (senza ambito) = quarantena `legacy`, applicata a ogni ambito solo come perdita (mai come profitto) e col
   suo breach, mai attribuita in automatico a un conto. Db e marker si riconciliano per ambito (seq piu' alta,
