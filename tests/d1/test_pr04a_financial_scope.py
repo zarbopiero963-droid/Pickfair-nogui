@@ -1232,6 +1232,22 @@ def test_m111_cashout_all_resta_disponibile_con_la_sim_bloccata(app_headless):
     assert len(a.hedge()) == 1 and a.rt._emergency_stopped is False
 
 
+def _fotografa_al_crash(tmp_path, nome, copia):
+    """Morte del processo in questo istante: copia coerente del DB (backup SQLite) e dei file accanto (marker). Il
+    riavvio parte dalla copia, quindi nessun `finally` successivo del processo «morto» la modifica."""
+    import shutil
+    import sqlite3
+    for f in tmp_path.iterdir():
+        if f.name.startswith(nome) and f.name != nome and not f.name.endswith(("-wal", "-shm", "-journal")):
+            shutil.copy(f, tmp_path / (copia + f.name[len(nome):]))
+    src, dst = sqlite3.connect(str(tmp_path / nome)), sqlite3.connect(str(tmp_path / copia))
+    try:
+        src.backup(dst)
+    finally:
+        src.close()
+        dst.close()
+
+
 def test_perdita_non_attribuibile_mai_salvata_a_meta_durante_il_sync(tmp_path):
     """Sol su 385c7598: conto A -20, poi -15 non attribuibile; durante il sync un get_status salva il libro e il
     processo muore. Il libro salvato non contiene mai la quarantena senza la chiave del settlement (stato a meta': al
@@ -1248,6 +1264,7 @@ def test_perdita_non_attribuibile_mai_salvata_a_meta_durante_il_sync(tmp_path):
     def _sync_con_status(p):
         c.rc._monitor_daily_loss_breach(source="RUNTIME_STATUS_SNAPSHOT")
         salvato.update(json.loads(c.db.get_settings()["daily_loss_state"]))
+        _fotografa_al_crash(tmp_path, "uas.db", "uas_crash.db")
         raise SystemExit("crash durante il sync")
 
     c.rc._sync_bankroll_post_settlement = _sync_con_status
@@ -1256,7 +1273,7 @@ def test_perdita_non_attribuibile_mai_salvata_a_meta_durante_il_sync(tmp_path):
             event_key="cleared:1.77:1", batch_id="b-ua", correlation_id="c-ua", gross_pnl=-15.0,
             commission_amount=0.0, net_pnl=-15.0, pnl=-15.0, commission_pct=4.5))
     assert not (salvato.get("legacy") or {}).get("intraday_realized_pnl"), salvato.get("legacy")
-    r = _banco(tmp_path, "uas.db", max_daily_loss=50.0)
+    r = _banco(tmp_path, "uas_crash.db", max_daily_loss=50.0)
     _ambiente(r, "LIVE")
     assert r.rc._current_financial_scope() == conto_a
     r.rc.betfair_service.client = None
@@ -1264,4 +1281,107 @@ def test_perdita_non_attribuibile_mai_salvata_a_meta_durante_il_sync(tmp_path):
     r.rc._on_close_position(_canonical_close_payload(
         event_key="cleared:1.77:1", batch_id="b-ua", correlation_id="c-ua", gross_pnl=-15.0,
         commission_amount=0.0, net_pnl=-15.0, pnl=-15.0, commission_pct=4.5))
+    assert r.rc._monitor_daily_loss_breach(source="T", scope=conto_a)["daily_loss_amount"] == pytest.approx(35.0)
+
+
+def test_perdita_non_attribuibile_contata_una_sola_volta_dopo_crash_e_riconsegna(tmp_path):
+    """Grok su 3389ace9: conto A corrente -20, poi -15 non attribuibile; un get_status su A durante il sync salva A
+    gia' aggiornato senza la chiave, crash, riavvio e riconsegna: A deve valere 35 (mai 50, doppio conteggio)."""
+    c = _banco(tmp_path, "uad.db", max_daily_loss=100.0)
+    _ambiente(c, "LIVE")
+    conto_a = c.rc._current_financial_scope()
+    _settle(c, -20.0)
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+
+    def _sync_con_status(p):
+        c.rc._monitor_daily_loss_breach(source="RUNTIME_STATUS_SNAPSHOT", scope=conto_a)
+        _fotografa_al_crash(tmp_path, "uad.db", "uad_crash.db")
+        raise SystemExit("crash durante il sync")
+
+    def _consegna(rc):
+        rc._on_close_position(_canonical_close_payload(
+            event_key="cleared:1.78:1", batch_id="b-uad", correlation_id="c-uad", gross_pnl=-15.0,
+            commission_amount=0.0, net_pnl=-15.0, pnl=-15.0, commission_pct=4.5))
+
+    c.rc._sync_bankroll_post_settlement = _sync_con_status
+    with pytest.raises(SystemExit):
+        _consegna(c.rc)
+    r = _banco(tmp_path, "uad_crash.db", max_daily_loss=100.0)
+    _ambiente(r, "LIVE")
+    r.rc.betfair_service.client = None
+    r.rc.betfair_service.settings_service = None
+    _consegna(r.rc)
+    assert r.rc._monitor_daily_loss_breach(source="T", scope=conto_a)["daily_loss_amount"] == pytest.approx(35.0)
+
+
+def test_eccezione_nel_settlement_non_attribuibile_non_blocca_i_salvataggi_successivi(tmp_path):
+    """Eccezione (non crash) durante il sync di una perdita non attribuibile: il libro si completa comunque (ambiti,
+    quarantena e chiave insieme), quindi i salvataggi successivi non restano rinviati. A -20, -15 non attribuibile con
+    errore nel sync, poi A -10: dopo il riavvio A vale 45 e la riconsegna del -15 non lo cambia."""
+    c = _banco(tmp_path, "uae.db", max_daily_loss=100.0)
+    _ambiente(c, "LIVE")
+    conto_a = c.rc._current_financial_scope()
+    _settle(c, -20.0)
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+    vero_sync = c.rc._sync_bankroll_post_settlement
+
+    def _errore(p):
+        raise RuntimeError("sync fallito")
+
+    def _consegna(rc):
+        rc._on_close_position(_canonical_close_payload(
+            event_key="cleared:1.79:1", batch_id="b-uae", correlation_id="c-uae", gross_pnl=-15.0,
+            commission_amount=0.0, net_pnl=-15.0, pnl=-15.0, commission_pct=4.5))
+
+    c.rc._sync_bankroll_post_settlement = _errore
+    with pytest.raises(RuntimeError):
+        _consegna(c.rc)
+    c.rc._sync_bankroll_post_settlement = vero_sync
+    _ambiente(c, "LIVE")
+    _settle(c, -10.0)
+    _fotografa_al_crash(tmp_path, "uae.db", "uae_crash.db")
+    r = _banco(tmp_path, "uae_crash.db", max_daily_loss=100.0)
+    _ambiente(r, "LIVE")
+    assert r.rc._monitor_daily_loss_breach(source="T", scope=conto_a)["daily_loss_amount"] == pytest.approx(45.0)
+    r.rc.betfair_service.client = None
+    r.rc.betfair_service.settings_service = None
+    _consegna(r.rc)
+    assert r.rc._monitor_daily_loss_breach(source="T", scope=conto_a)["daily_loss_amount"] == pytest.approx(45.0)
+
+
+def test_crash_durante_la_propagazione_della_perdita_non_attribuibile(tmp_path):
+    """Morte del processo mentre la perdita non attribuibile si propaga agli altri ambiti (copia del DB in quel punto,
+    nessun `finally`): la riconsegna dopo il riavvio deve riapplicarla (conto A 35), mai saltarla con il libro vecchio."""
+    c = _banco(tmp_path, "uap.db", max_daily_loss=100.0)
+    _ambiente(c, "SIM")
+    _settle(c, -5.0)
+    _ambiente(c, "LIVE")
+    conto_a = c.rc._current_financial_scope()
+    _settle(c, -20.0)
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+    vero = c.rc._monitor_daily_loss_breach
+    preso = []
+
+    def _monitor(**kw):
+        if kw.get("source") == "RUNTIME_CLOSE_POSITION_UNATTRIBUTED" and not preso:
+            _fotografa_al_crash(tmp_path, "uap.db", "uap_crash.db")
+            preso.append(1)
+        return vero(**kw)
+
+    def _consegna(rc):
+        rc._on_close_position(_canonical_close_payload(
+            event_key="cleared:1.80:1", batch_id="b-uap", correlation_id="c-uap", gross_pnl=-15.0,
+            commission_amount=0.0, net_pnl=-15.0, pnl=-15.0, commission_pct=4.5))
+
+    c.rc._monitor_daily_loss_breach = _monitor
+    _consegna(c.rc)
+    assert preso, "precondizione: propagazione agli altri ambiti eseguita"
+    r = _banco(tmp_path, "uap_crash.db", max_daily_loss=100.0)
+    _ambiente(r, "LIVE")
+    r.rc.betfair_service.client = None
+    r.rc.betfair_service.settings_service = None
+    _consegna(r.rc)
     assert r.rc._monitor_daily_loss_breach(source="T", scope=conto_a)["daily_loss_amount"] == pytest.approx(35.0)

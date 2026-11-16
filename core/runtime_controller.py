@@ -1400,9 +1400,13 @@ class RuntimeController:
         self.__dict__.setdefault("_daily_loss_scopes", {})[key] = state
 
     def _persist_daily_loss_book(self) -> None:
-        unattributed = (self.__dict__["_daily_loss_unattributed_durable"]
-                        if "_daily_loss_unattributed_durable" in self.__dict__
-                        else getattr(self, "_daily_loss_unattributed", None))
+        if any(kind == "unattributed_loss" for _t, kind in (self.__dict__.get("_daily_loss_settle_staged") or {}).values()):
+            # Sol su 385c7598 / Grok su 3389ace9: una perdita non attribuibile in corso tocca la quarantena e TUTTI gli
+            # ambiti; un salvataggio intermedio (es. get_status durante il sync) sarebbe a meta' (ambiti vecchi accanto
+            # alla quarantena nuova => sottostima; ambito gia' ricalcolato senza la chiave => doppio conteggio dopo la
+            # riconsegna). Si rinvia: il libro si salva una volta, con tutti gli ambiti, quarantena e chiave insieme.
+            return
+        unattributed = getattr(self, "_daily_loss_unattributed", None)
         settled = getattr(self, "_daily_loss_settled", None)
         if settled and str(settled.get("day_utc") or "") != datetime.utcnow().date().isoformat():
             settled = None                                      # chiavi del giorno precedente: scadute
@@ -1516,12 +1520,6 @@ class RuntimeController:
         quello stato (``_promote_settled_keys_locked``). Un salvataggio concorrente non puo' quindi rendere durevole la
         chiave con lo stato vecchio: dopo un crash la riconsegna riapplica l'effetto invece di saltarlo."""
         with self._daily_loss_state_lock:
-            if settlement_key and attribution.get("kind") == "unattributed_loss" \
-                    and "_daily_loss_unattributed_durable" not in self.__dict__:
-                # Sol su 385c7598: finche' la perdita non attribuibile non e' riflessa in TUTTI gli ambiti, il libro si
-                # salva con la quarantena di prima (mai quarantena nuova con ambiti vecchi: al riavvio il minimo la
-                # assorbirebbe); quarantena e chiave diventano durevoli insieme, in `_promote_settled_keys_locked`.
-                self._daily_loss_unattributed_durable = getattr(self, "_daily_loss_unattributed", None)
             self._apply_realized_pnl_without_mutating_bankroll(pnl)
             RuntimeController._attribute_realized_pnl_locked(self, pnl, attribution)
             if settlement_key:
@@ -1546,8 +1544,6 @@ class RuntimeController:
             settled["keys"].add(k)
             staged.pop(k, None)
         self._daily_loss_settled = settled
-        if not any(kind == "unattributed_loss" for _target, kind in staged.values()):
-            self.__dict__.pop("_daily_loss_unattributed_durable", None)
 
     def _attribute_realized_pnl(self, pnl: float, attribution: dict) -> None:
         """Registra l'ambito del P&L appena applicato al desk (sotto il lock dello stato giornaliero)."""
@@ -9157,6 +9153,19 @@ class RuntimeController:
             elif stopped_marker and settlement_completed and not self._emergency_stopped:
                 # solo a settlement completato: un'interruzione a meta' lascia l'emergenza durevole (fail-closed)
                 self._persist_db_emergency_marker(active=False)
+            if (not settlement_completed and realized_now and attribution.get("kind") == "unattributed_loss"
+                    and settlement_key in (self.__dict__.get("_daily_loss_settle_staged") or {})):
+                # Interruzione dopo l'applicazione (eccezione nel processo): l'effetto e' gia' in memoria; si completa
+                # il libro (tutti gli ambiti, quarantena e chiave insieme) per non lasciare i salvataggi rinviati.
+                try:
+                    for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
+                        self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION_UNATTRIBUTED", payload=payload,
+                                                        scope=other, persist=False)
+                    with self._daily_loss_state_lock:
+                        RuntimeController._promote_settled_keys_locked(self, keys=(settlement_key,))
+                        RuntimeController._persist_daily_loss_book(self)
+                except Exception:
+                    logger.exception("PR-04a: libro giornaliero non completato dopo l'interruzione del settlement")
         if unrecorded:
             # nessun ordine successivo su un settlement il cui effetto non e' registrato (fail-closed)
             auto_trade_result = {"auto_trade_status": "AUTO_TRADE_SKIPPED_EFFECT_UNRECORDED",
