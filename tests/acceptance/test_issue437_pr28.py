@@ -63,10 +63,15 @@ def test_block_esposizione_lato_sconosciuto(lato):
 
 
 def test_pass_soglia_esatta_con_epsilon_e_superamento():
-    assert validators.exceeds_cap(0.1 + 0.2, 0.3) is False
-    assert validators.exceeds_cap(2.0 * (1.1 - 1.0), 0.2) is False
+    # D-3 (decisione owner PF-ROSERPINA-D1-D2-B2-B3-FINANCIAL-SAFETY-20261109): nessuna tolleranza. I termini di una
+    # somma si passano separati e si sommano in Decimal: 0.1 + 0.2 al cap 0.3 non supera. Una somma float gia'
+    # fatta (0.30000000000000004) supera: un artefatto puo' solo negare, mai ammettere.
+    assert validators.exceeds_cap((0.1, 0.2), 0.3) is False
+    assert validators.exceeds_cap(0.1 + 0.2, 0.3) is True
+    assert validators.exceeds_cap(0.3, 0.3) is False
     assert validators.exceeds_cap(0.31, 0.3) is True
     assert validators.exceeds_cap(10.000001, 10.0) is True
+    assert validators.exceeds_cap(60.0000000001, 60) is True
 
 
 def _gate(max_win):

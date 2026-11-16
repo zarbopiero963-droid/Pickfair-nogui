@@ -18,6 +18,7 @@ Modulo **puro**: nessuna dipendenza da GUI/CSV/Telegram, testabile headless.
 """
 
 import math
+from decimal import Decimal
 
 # Nomi device riservati di Windows: un file con questo nome-base (anche con
 # estensione) non è creabile. Match ESATTO, case-insensitive (es. "con" sì,
@@ -157,12 +158,38 @@ def order_stake(value) -> float:
 # Rischio dell'ordine (#461 PR28, PKG-P24-B): formula UNICA per tutti i
 # consumer dei cap owner (money management, cap A2, tavoli, auto-next,
 # RiskGate). BACK rischia lo stake; LAY rischia la liability stake*(prezzo-1)
-# (decisione owner #393, H-14). La soglia vale con tolleranza +-epsilon: la
-# somma float 0.1+0.2 o il prodotto 0.1*3 non devono negare un ordine esatto
-# al cap, e un superamento reale (anche di un centesimo) resta un superamento.
+# (decisione owner #393, H-14).
+# D-3 (decisione owner PF-ROSERPINA-D1-D2-B2-B3-FINANCIAL-SAFETY-20261109): i cap
+# si confrontano in Decimal, ESATTI, senza tolleranza. Ogni importo float vale
+# il decimale piu' corto che lo rappresenta (`money_decimal`, repr), i termini di
+# una somma si sommano in Decimal (`exceeds_cap` accetta una tupla), la liability
+# LAY e i cap percentuali si calcolano in Decimal: 0.1 + 0.2 al cap 0.3 non
+# supera, 60.0000000001 al cap 60 supera. Un artefatto float gia' presente in un
+# importo (somma float fatta dal chiamante) puo' solo negare, mai ammettere.
+# `reaches_limit` (soglie di ARRESTO) conserva la tolleranza: la' anticipa lo
+# stop, non permette mai un superamento.
 # ---------------------------------------------------------------------------
 EXPOSURE_REL_TOL = 1e-9
 EXPOSURE_ABS_TOL = 1e-9
+
+
+def money_decimal(value) -> Decimal:
+    """Decimal esatto di un importo: il decimale piu' corto che rappresenta il float (``repr``).
+
+    bool, NaN, inf o valore non numerico => ValueError (nessun importo inventato)."""
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("INVALID_AMOUNT")
+        return value
+    number = finite_number(value)
+    if number is None:
+        raise ValueError("INVALID_AMOUNT")
+    return Decimal(repr(float(number)))
+
+
+def pct_of(base, pct) -> float:
+    """``base * pct / 100`` calcolato in Decimal (cap percentuali senza artefatti float)."""
+    return float(money_decimal(base) * money_decimal(pct) / Decimal(100))
 
 
 def order_exposure(side, stake, price) -> float:
@@ -176,7 +203,8 @@ def order_exposure(side, stake, price) -> float:
     importo = order_stake(stake)
     if lato == "BACK":
         return importo
-    return importo * (order_price(price) - 1.0)
+    # D-3: liability in Decimal (0.52 a 1.92 = 0.4784, non 0.47840000000000005)
+    return float(money_decimal(importo) * (money_decimal(order_price(price)) - Decimal(1)))
 
 
 def signal_side(signal, *, default=None) -> str:
@@ -257,7 +285,7 @@ def open_exposure_cap_reason(cap_raw, total_exposure, order_risk) -> str:
     cap = finite_number(cap_raw)
     if cap is None:
         return "max_open_exposure_non_valido"
-    if exceeds_cap(total_exposure + order_risk, cap):
+    if exceeds_cap((total_exposure, order_risk), cap):
         return f"max_open_exposure_exceeded:limit={cap_raw}€"
     return ""
 
@@ -286,7 +314,7 @@ def absolute_cap_reason(name, cap_raw, current, order_risk) -> str:
         return f"{name}_non_valido"
     if base is None or base < 0 or risk is None or risk < 0:
         return f"{name}_non_verificabile"
-    if exceeds_cap(base + risk, cap):
+    if exceeds_cap((base, risk), cap):
         return f"{name}_exceeded:limit={cap_raw}€"
     return ""
 
@@ -378,17 +406,34 @@ def desk_cash_basis(risk_desk, available, table_manager=None, tables_total=None)
 
 
 def reaches_limit(amount, limit) -> bool:
-    """True se `amount` raggiunge `limit` (soglia di arresto, con tolleranza)."""
-    return amount >= limit or math.isclose(amount, limit, rel_tol=EXPOSURE_REL_TOL, abs_tol=EXPOSURE_ABS_TOL)
+    """True se `amount` raggiunge `limit` (soglia di ARRESTO).
+
+    Confronto esatto in Decimal; la tolleranza float resta solo per far scattare lo stop anche quando
+    l'importo arriva alla soglia con un errore di arrotondamento verso il basso (anticipa, non ritarda)."""
+    try:
+        if money_decimal(amount) >= money_decimal(limit):
+            return True
+    except ValueError:
+        return True                      # importo o soglia non valutabili: arresto (fail-closed)
+    return math.isclose(amount, limit, rel_tol=EXPOSURE_REL_TOL, abs_tol=EXPOSURE_ABS_TOL)
 
 
 def exceeds_cap(amount, cap) -> bool:
-    """True se `amount` supera `cap` oltre la tolleranza float.
+    """True se `amount` supera `cap`, confronto ESATTO in Decimal (D-3, nessuna tolleranza).
 
-    Alla soglia esatta (anche con errore di arrotondamento) non supera."""
-    if amount <= cap:
-        return False
-    return not math.isclose(amount, cap, rel_tol=EXPOSURE_REL_TOL, abs_tol=EXPOSURE_ABS_TOL)
+    ``amount`` puo' essere una tupla/lista di termini: si sommano in Decimal, cosi' 0.1 + 0.2 al cap 0.3 non
+    supera mentre 60.0000000001 al cap 60 supera. Un termine +inf (rischio non stimabile) supera sempre;
+    un valore non valutabile (NaN, bool, testo, cap non finito) => supera (fail-closed)."""
+    parts = amount if isinstance(amount, (tuple, list)) else (amount,)
+    try:
+        if any(isinstance(p, float) and math.isinf(p) and p > 0 for p in parts):
+            return True
+        if isinstance(cap, float) and math.isinf(cap) and cap > 0:
+            return False                 # nessun tetto (+inf): solo un rischio non stimabile lo supera
+        total = sum((money_decimal(p) for p in parts), Decimal(0))
+        return total > money_decimal(cap)
+    except ValueError:
+        return True
 
 
 def safe_filename_core(name: str) -> str:

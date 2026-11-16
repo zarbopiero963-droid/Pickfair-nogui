@@ -101,6 +101,9 @@ def test_doppione_bloccato_da_un_altro_processo_rilascia_la_propria_riserva_mai_
     b.rc._consumed_intent_reason = lambda _ref: ""        # B ha controllato l'intento PRIMA che A lo consumasse
     a.rc._on_signal_received(_signal())
     assert len(a.bus.payloads("CMD_QUICK_BET")) == 1 and len(a.broker.state.orders) == 1
+    # PR-03a ciclo 17 (D-631-18): B rilegge lo stato del drawdown scritto da A sul DB condiviso; da uno snapshot
+    # piu' vecchio del disco non salverebbe (concorrenza ottimistica sul seq) e negherebbe l'ingresso prima del dedup.
+    b.rc._hard_stop().restore(reconcile=False)
     b.rc._on_signal_received(_signal())
     (dup,) = b.bus.payloads("QUICK_BET_DUPLICATE")
     assert dup.get("duplicate_in_process") is False, dup
@@ -220,6 +223,9 @@ def test_chiavi_ripopolate_dal_db_condiviso_non_rendono_propria_la_riserva_di_un
     (cmd,) = a.bus.payloads("CMD_QUICK_BET")
     b.engine._repopulate_inflight_from_db()
     assert cmd["customer_ref"] in b.engine._inflight_keys        # chiave di dedup recuperata dal DB condiviso
+    # PR-03a ciclo 17 (D-631-18): B rilegge lo stato del drawdown scritto da A sul DB condiviso; da uno snapshot
+    # piu' vecchio del disco non salverebbe (concorrenza ottimistica sul seq) e negherebbe l'ingresso prima del dedup.
+    b.rc._hard_stop().restore(reconcile=False)
     b.rc._on_signal_received(_signal())
     (dup,) = b.bus.payloads("QUICK_BET_DUPLICATE")
     assert dup.get("duplicate_in_process") is False, dup
