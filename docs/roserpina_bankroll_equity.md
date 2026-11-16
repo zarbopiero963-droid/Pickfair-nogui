@@ -809,11 +809,22 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   La perdita di sessione si valuta nell'ambito del settlement (un `cleared:` LIVE regolato mentre il runtime e' in SIM
   arma lo stop globale). Il latch dell'allarme di sessione e' per ambito; uno stop globale successivo SOSTITUISCE uno stop SIM locale
   (escalation, persistita, con CASHOUT_ALL), mentre uno stop locale non sostituisce mai un globale.
+- **Controllo finale d'invio.** Il superamento giornaliero dell'ambito corrente (in attesa o registrato oggi, o stato
+  non salvato) blocca anche un ingresso gia' approvato e in coda (`drawdown_entry_block_reason`, punto d'invio del
+  TradingEngine), con lo stesso motivo dell'ammissione (`daily_loss_breached:SIM`); per la SIM resta locale, nessuna
+  emergenza globale (Codex su c5dd0bab). Vale per ogni produttore di ingressi: segnali, puntata manuale e ogni gamba
+  Dutching (M111, `PF-OWNER-PR638-M111-SIM-ENTRY-BYPASS-GO-20261116`); il DutchingController rifiuta inoltre in modo
+  esplicito all'ammissione (`Limite giornaliero dell'ambito superato: daily_loss_breached:SIM`; lettura fallita =>
+  rifiuto). CASHOUT ALL e le uscite protettive non passano da questi controlli e restano disponibili.
 - **Persistenza (v2).** `daily_loss_state = {"version": 2, "scopes": {ambito: {day_utc, intraday_realized_pnl,
   breached, breached_at}}, "legacy": {...}|null, "settled": {"day_utc", "keys"}|null, "seq": n}`. `settled` porta le
   chiavi dei settlement gia' realizzati oggi, nella STESSA scrittura dello stato: al riavvio entrano fra i settlement
   realizzati, quindi una riconsegna (anche dopo un crash fra lo stato e la marcatura) non conta due volte il P&L; una
-  consegna gia' realizzata non registra mai un superamento proiettato. Ogni ambito si scrive, anche a zero (uno zero omesso
+  consegna gia' realizzata non registra mai un superamento proiettato. La chiave di un settlement appena applicato resta
+  in attesa e diventa salvabile solo nella stessa sezione critica (lock dello stato giornaliero) che ricalcola e salva lo
+  stato dell'ambito interessato (per una perdita non attribuibile: dopo il ricalcolo di TUTTI gli ambiti); un salvataggio
+  concorrente (es. `get_status`) non puo' rendere durevole la chiave con lo stato vecchio, quindi dopo un crash la
+  riconsegna riapplica l'effetto invece di saltarlo (Sol/Codex su c5dd0bab). Ogni ambito si scrive, anche a zero (uno zero omesso
   farebbe risorgere un profitto piu' vecchio di un marker rimasto).
   Record v1 (senza ambito) = quarantena `legacy`, applicata a ogni ambito solo come perdita (mai come profitto) e col
   suo breach, mai attribuita in automatico a un conto. Db e marker si riconciliano per ambito (seq piu' alta,

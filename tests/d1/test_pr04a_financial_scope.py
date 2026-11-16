@@ -1097,3 +1097,136 @@ def test_hint_per_evento_ignora_una_riserva_di_un_altra_scommessa(tmp_path):
     _settle(c, -40.0, table_id=None, customer_ref="ref-di-un-altra-scommessa",
             event_key=tavolo.current_event_key, market_id=tavolo.market_id)
     assert c.rc._scope_pnl.get(_sim(), 0.0) == 0.0, "perdita attribuita alla riserva SIM di un'altra scommessa"
+
+
+# ============================================================================ Sol/Codex su c5dd0bab
+def test_chiave_del_settlement_salvata_solo_con_lo_stato_aggiornato_dell_ambito(tmp_path):
+    """Settlement SIM tardivo (-20) mentre il runtime e' LIVE; un get_status concorrente durante il sync salva il libro;
+    crash; riavvio e riconsegna: la perdita SIM deve valere 20 (mai chiave salvata con lo stato vecchio => 0)."""
+    c = _banco(tmp_path, "k1.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.ACTIVE
+    vero_sync = c.rc._sync_bankroll_post_settlement
+
+    def _sync_con_status(p):
+        c.rc._monitor_daily_loss_breach(source="RUNTIME_STATUS_SNAPSHOT")     # get_status concorrente (ambito LIVE)
+        raise SystemExit("crash durante il sync")
+
+    c.rc._sync_bankroll_post_settlement = _sync_con_status
+    with pytest.raises(SystemExit):
+        c.rc._on_close_position(_payload_sim(61, -20.0))
+    r = _banco(tmp_path, "k1.db", max_daily_loss=30.0)
+    r.rc.set_simulation_mode(True)
+    r.rc.mode = RuntimeMode.ACTIVE
+    r.rc._on_close_position(_payload_sim(61, -20.0))
+    assert r.rc._monitor_daily_loss_breach(source="T", scope=_sim())["daily_loss_amount"] == pytest.approx(20.0)
+
+
+def test_stop_sim_locale_al_punto_d_invio_per_un_ordine_gia_in_coda(tmp_path):
+    """Un ingresso SIM gia' approvato e in coda non parte dopo il superamento SIM (controllo finale d'invio), senza
+    nessuna emergenza globale."""
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    from tests.d1.test_d1_drawdown_hard_stop import _lettura
+    c.rc.set_simulation_mode(True)
+    _lettura(c, 1000.0)
+    c.rc.mode = RuntimeMode.ACTIVE
+    assert c.rc.drawdown_entry_block_reason() == ""
+    c.rc._on_close_position(_payload_sim(62, -40.0))
+    _lettura(c, 1000.0)
+    c.rc.mode = RuntimeMode.ACTIVE
+    assert c.rc.drawdown_entry_block_reason() == "daily_loss_breached:SIM"
+    assert not c.rc._emergency_stopped
+
+
+# ============================================================================ M111 (PF-OWNER-PR638-M111-SIM-ENTRY-BYPASS-GO)
+@pytest.fixture
+def app_headless(tmp_path, monkeypatch):
+    from tests.acceptance.test_issue437_pr04 import _App
+    from tests.risk_config_fixtures import legacy_test_config
+    from core import blackbox_runtime
+    monkeypatch.chdir(tmp_path)
+    a = _App("headless", tmp_path, monkeypatch)
+    if blackbox_runtime.get() is None:
+        blackbox_runtime.install("bb/bb.sqlite", entrypoint="test_pr04a_m111")
+    monkeypatch.setattr(a.rt.settings_service, "load_roserpina_config",
+                        lambda: legacy_test_config(liquidity_guard_enabled=False, max_daily_loss=30.0))
+    a.rt.betfair_service.get_account_funds = lambda: {"available": 1000.0, "exposure": 0.0, "ok": True}
+    yield a
+    a.chiudi()
+
+
+def _m111_perdita_sim(a, key="sim:1.995:1"):
+    a.rt.config.max_daily_loss = 30.0
+    a.rt._on_close_position(_canonical_close_payload(
+        event_key=key, batch_id="b-" + key, correlation_id="c-" + key, gross_pnl=-40.0, commission_amount=0.0,
+        net_pnl=-40.0, pnl=-40.0, commission_pct=4.5))
+
+
+def _m111_ordini(a):
+    return {o.get("betId") for o in a.broker.get_current_orders(None)}
+
+
+def _m111_ingresso(a, percorso):
+    from tests.acceptance.test_issue523_dutching_manual_bet import _batch, _manual
+    return (a.app.dutching_controller.submit_dutching(_batch(total_stake=10.0)) if percorso == "dutching"
+            else a.app.dutching_controller.manual_bet(_manual(stake=2.0)))
+
+
+@pytest.mark.parametrize("percorso", ["dutching", "manuale"])
+def test_m111_ingresso_sim_oltre_limite_rifiutato_all_ammissione(app_headless, percorso):
+    """SIM -40 (limite 30): puntata manuale e Dutching rifiutati in modo esplicito, nessun ordine al broker simulato,
+    nessuna emergenza globale. Sotto il limite lo stesso ingresso arriva al broker (controllo positivo)."""
+    a = app_headless
+    a.avvia()
+    a.rt.mode = RuntimeMode.ACTIVE
+    prima = _m111_ordini(a)
+    assert _m111_ingresso(a, percorso)["ok"] is True
+    a.svuota_bus()
+    assert _m111_ordini(a) - prima, "ingresso lecito non arrivato al broker SIM"
+    _m111_perdita_sim(a)
+    a.svuota_bus()
+    a.rt.mode = RuntimeMode.ACTIVE
+    prima = _m111_ordini(a)
+    esito = _m111_ingresso(a, percorso)
+    a.svuota_bus()
+    assert esito["ok"] is False and "daily_loss_breached:SIM" in esito["error"]
+    assert _m111_ordini(a) == prima and a.rt._emergency_stopped is False
+
+
+@pytest.mark.parametrize("percorso", ["dutching", "manuale"])
+def test_m111_blocco_fra_ammissione_e_invio_ferma_ogni_gamba(app_headless, percorso):
+    """Ingresso ammesso (comandi trattenuti), poi il limite SIM scatta, poi le gambe arrivano al motore: nessun ordine
+    (controllo ripetuto al punto finale d'invio)."""
+    a = app_headless
+    a.avvia()
+    a.rt.mode = RuntimeMode.ACTIVE
+    prima = _m111_ordini(a)
+    held, reale = [], a.app.bus.publish
+
+    def trattieni(topic, payload=None, *x, **k):
+        if topic == "CMD_QUICK_BET":
+            held.append(payload)
+            return None
+        return reale(topic, payload, *x, **k)
+
+    a.app.bus.publish = trattieni
+    assert _m111_ingresso(a, percorso)["ok"] is True
+    a.app.bus.publish = reale
+    _m111_perdita_sim(a)
+    for payload in held:
+        reale("CMD_QUICK_BET", payload)
+    a.svuota_bus()
+    assert held and _m111_ordini(a) == prima and a.rt._emergency_stopped is False
+
+
+def test_m111_cashout_all_resta_disponibile_con_la_sim_bloccata(app_headless):
+    a = app_headless
+    a.avvia()
+    a.posizione()
+    _m111_perdita_sim(a)
+    a.svuota_bus()
+    a.eventi.clear()
+    a.messaggio("CASHOUT ALL")
+    a.svuota_bus()
+    assert a.rt._limits_block_reason() == "daily_loss_breached:SIM"
+    assert len(a.hedge()) == 1 and a.rt._emergency_stopped is False

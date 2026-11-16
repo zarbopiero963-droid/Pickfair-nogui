@@ -920,6 +920,20 @@ class DutchingController:
         mode = self._mode()
         return bool(mode and str(getattr(mode, "value", mode)) == "ACTIVE")
 
+    def _scope_daily_loss_block(self) -> str:
+        """PR-04a (M111, PF-OWNER-PR638-M111-SIM-ENTRY-BYPASS-GO-20261116): perdita giornaliera dell'ambito corrente
+        superata => nessun nuovo ingresso manuale o Dutching, con rifiuto esplicito all'ammissione. Il controllo
+        decisivo resta quello ripetuto al punto finale d'invio (`drawdown_entry_block_reason` del TradingEngine), che
+        ferma anche le gambe gia' ammesse. Lettura fallita => rifiuto (fail-closed)."""
+        check = getattr(self.runtime, "_scope_daily_loss_block_reason", None)
+        if not callable(check):
+            return ""
+        try:
+            return str(check() or "")
+        except Exception:
+            logger.exception("M111: perdita giornaliera dell'ambito non leggibile: ingresso negato")
+            return "daily_loss_non_verificabile"
+
     def _bus_available(self) -> bool:
         return self.bus is not None and hasattr(self.bus, "publish")
 
@@ -1195,6 +1209,9 @@ class DutchingController:
 
         if not self._runtime_active():
             return self._fail("Runtime non attivo")
+        scope_block = self._scope_daily_loss_block()
+        if scope_block:
+            return self._fail(f"Limite giornaliero dell'ambito superato: {scope_block}")
 
         try:
             results, avg_profit, book_pct, avg_net_profit = (
@@ -1805,6 +1822,9 @@ class DutchingController:
 
             if not self._runtime_active():
                 return self._fail("Runtime non attivo")
+            scope_block = self._scope_daily_loss_block()
+            if scope_block:
+                return self._fail(f"Limite giornaliero dell'ambito superato: {scope_block}")
 
             if not self._bus_available():
                 return self._fail("EventBus non disponibile")

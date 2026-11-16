@@ -1507,18 +1507,37 @@ class RuntimeController:
 
     def _apply_and_attribute_realized_pnl(self, pnl: float, attribution: dict, settlement_key: str = "") -> None:
         """Totale del desk e ambito del P&L aggiornati INSIEME sotto il lock dello stato giornaliero (Codex su
-        d86404ef): un monitor concorrente (es. get_status) non vede mai il totale senza la sua attribuzione. La chiave
-        del settlement entra nell'insieme salvato con lo stato giornaliero (stessa scrittura dell'effetto)."""
+        d86404ef): un monitor concorrente (es. get_status) non vede mai il totale senza la sua attribuzione.
+
+        Sol/Codex su c5dd0bab: la chiave del settlement resta IN ATTESA (mai salvata) finche' lo stato dell'ambito
+        interessato non e' stato ricalcolato; entra nell'insieme salvato solo nella stessa sezione critica che scrive
+        quello stato (``_promote_settled_keys_locked``). Un salvataggio concorrente non puo' quindi rendere durevole la
+        chiave con lo stato vecchio: dopo un crash la riconsegna riapplica l'effetto invece di saltarlo."""
         with self._daily_loss_state_lock:
             self._apply_realized_pnl_without_mutating_bankroll(pnl)
             RuntimeController._attribute_realized_pnl_locked(self, pnl, attribution)
             if settlement_key:
-                today = datetime.utcnow().date().isoformat()
-                settled = getattr(self, "_daily_loss_settled", None)
-                if not settled or str(settled.get("day_utc") or "") != today:
-                    settled = {"day_utc": today, "keys": set()}
-                settled["keys"].add(str(settlement_key))
-                self._daily_loss_settled = settled
+                self.__dict__.setdefault("_daily_loss_settle_staged", {})[str(settlement_key)] = (
+                    str(attribution.get("scope") or ""), str(attribution.get("kind") or ""))
+
+    def _promote_settled_keys_locked(self, scope: Optional[str] = None, keys: tuple = ()) -> None:
+        """Sposta nell'insieme salvato le chiavi in attesa il cui effetto e' riflesso nello stato appena ricalcolato
+        (sotto ``_daily_loss_state_lock``, subito prima del salvataggio del libro): quelle attribuite a ``scope``, i
+        profitti senza ambito (nessuno stato d'ambito li contiene) e le ``keys`` indicate esplicitamente (perdita non
+        attribuibile, dopo il ricalcolo di TUTTI gli ambiti)."""
+        staged = self.__dict__.get("_daily_loss_settle_staged") or {}
+        ready = [k for k, (target, kind) in staged.items()
+                 if k in keys or kind == "unscoped_profit" or (kind == "scoped" and scope is not None and target == scope)]
+        if not ready:
+            return
+        today = datetime.utcnow().date().isoformat()
+        settled = getattr(self, "_daily_loss_settled", None)
+        if not settled or str(settled.get("day_utc") or "") != today:
+            settled = {"day_utc": today, "keys": set()}
+        for k in ready:
+            settled["keys"].add(k)
+            staged.pop(k, None)
+        self._daily_loss_settled = settled
 
     def _attribute_realized_pnl(self, pnl: float, attribution: dict) -> None:
         """Registra l'ambito del P&L appena applicato al desk (sotto il lock dello stato giornaliero)."""
@@ -1564,6 +1583,12 @@ class RuntimeController:
             RuntimeController._realized_for_scope(self, key))
 
     def _limits_block_reason(self) -> str:
+        return RuntimeController._scope_daily_loss_block_reason(self) or self._session_loss_block_reason()
+
+    def _scope_daily_loss_block_reason(self) -> str:
+        """Perdita giornaliera dell'ambito corrente (stato non salvato, superamento in attesa o registrato oggi).
+        Usato sia dall'ammissione sia dal controllo finale d'invio (Codex su c5dd0bab): un ingresso SIM gia' in coda
+        non parte dopo il superamento SIM, senza nessuna emergenza globale."""
         if loss_limits.persist_failed(getattr(self, "_daily_loss_persisted", None)):
             return "daily_loss_state_non_persistito"
         state = RuntimeController._daily_loss_monitor_state.fget(self)
@@ -1572,7 +1597,7 @@ class RuntimeController:
         if state.get("breached") and str(state.get("day_utc") or "") == datetime.utcnow().date().isoformat():
             # PR-04a: superamento dell'ambito corrente => nessun nuovo ingresso in QUESTO ambito (SIM: blocco locale)
             return f"daily_loss_breached:{financial_scope.parts(state.get('financial_scope', ''))[1] or 'ambito'}"
-        return self._session_loss_block_reason()
+        return ""
 
     def _loss_block_reason(self) -> str:
         stopped = getattr(self, "_risk_stop_reason", "")
@@ -1820,6 +1845,7 @@ class RuntimeController:
                 self._daily_loss_unattributed = None             # quarantena del giorno precedente: scaduta
             self.__dict__.setdefault("_daily_loss_scopes", {})[key] = state
             if persist:
+                RuntimeController._promote_settled_keys_locked(self, key)
                 RuntimeController._persist_daily_loss_book(self)
             result = dict(state)
 
@@ -3782,6 +3808,11 @@ class RuntimeController:
             if (isinstance(request, dict) and "admission_session" in request
                     and request.get("admission_session") != RuntimeController._entry_session(self)):
                 return "ingresso_di_sessione_precedente"
+            # PR-04a (Codex su c5dd0bab): lo stop locale della perdita giornaliera dell'ambito corrente vale anche per
+            # gli ingressi gia' in coda; per la SIM resta locale (nessuna emergenza globale ripristinata qui).
+            scope_reason = RuntimeController._scope_daily_loss_block_reason(self)
+            if scope_reason:
+                return scope_reason
             # Ciclo 26 (PF-OWNER-PR631-C26-ZERO-FAILCLOSED-20261116, Sol su 7852e457): l'ultima lettura del conto
             # applicata decide anche per gli ingressi gia' in coda. Contratto Phase 2 (`_apply_funds_reading`): lettura
             # non valida (C), disponibile 0 verificato senza impegnato (B, patrimonio zero) o con impegnato (A) => cassa
@@ -9086,6 +9117,7 @@ class RuntimeController:
                             persist=False))
             if shared_loss:
                 with self._daily_loss_state_lock:
+                    RuntimeController._promote_settled_keys_locked(self, keys=(settlement_key,))
                     RuntimeController._persist_daily_loss_book(self)
             if realized_now:
                 # Sol su 38979e59: l'escalation a runtime fermo (Emergency Stop durevole) PRIMA della marcatura: un
