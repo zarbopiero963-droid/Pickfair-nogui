@@ -5116,3 +5116,120 @@ def test_c25_owner_clearance_refused_when_a_concurrent_reading_of_the_same_tick_
         assert spia.tentativi == []
     finally:
         _m65_chiudi(app)
+
+
+# ------------------------------------- ciclo 26 (PF-OWNER-PR631-C26-ZERO-FAILCLOSED-20261116)
+_C26_LETTURE = {
+    "saldo_zero": {"available": 0.0, "exposure": -0.0, "ok": True},       # disponibile 0, impegnato 0 (verificato)
+    "lettura_fallita": {"error": "BETFAIR_TIMEOUT"},                       # saldo non verificabile
+}
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("limite", ["cap_1000", "senza_cap", "cap_10"])
+@pytest.mark.parametrize("lettura", sorted(_C26_LETTURE))
+def test_c26_queued_entry_never_reaches_the_broker_after_a_zero_or_unverifiable_funds_reading(
+        tmp_path, monkeypatch, limite, lettura):
+    """Ciclo 26 (Sol su 7852e457, riprodotto E2E): un ingresso ammesso con cassa verificata (100) e trattenuto in coda;
+    poi la lettura del conto e' verificata a zero (disponibile 0, impegnato 0) oppure fallisce. La cassa del desk non e'
+    piu' verificata e la misura protettiva ripiegava sul bankroll precedente (0%): il ricontrollo al punto d'invio
+    restituiva '' e l'ingresso partiva (1 ordine) con cap alto o senza cap, e con la lettura fallita anche col cap 10.
+    Ora il punto d'invio nega con cassa non verificata (mai una perdita zero, mai la vecchia lettura positiva): 0
+    tentativi al broker in tutte le sei combinazioni."""
+    import time
+    cfg = {"cap_1000": {"max_drawdown_abs": 1000.0}, "senza_cap": {}, "cap_10": {"max_drawdown_abs": 10.0}}[limite]
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, **cfg)
+    try:
+        rc._apply_funds_reading(dict(_C26_LETTURE[lettura]), source="t", read_at=time.monotonic())
+        motivo = rc.drawdown_entry_block_reason(cmd)
+        assert motivo != "", motivo
+        stato = app.trading_engine.submit_quick_bet(cmd).get("status")
+        _m65_ordini_broker(app)
+        assert stato != "ACCEPTED_FOR_PROCESSING" and spia.tentativi == [] and spia.ordini_accettati() == [], \
+            (stato, spia.tentativi)
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("limite", ["cap_1000", "senza_cap", "cap_10"])
+def test_c26_queued_entry_still_leaves_with_a_positive_verified_funds_reading(tmp_path, monkeypatch, limite):
+    """Ciclo 26, caso innocuo: dopo l'ammissione una nuova lettura verificata positiva (98, calo 2) non blocca
+    l'ingresso in coda con nessuna delle tre configurazioni: un ordine al broker, quello in coda."""
+    import time
+    cfg = {"cap_1000": {"max_drawdown_abs": 1000.0}, "senza_cap": {}, "cap_10": {"max_drawdown_abs": 10.0}}[limite]
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, **cfg)
+    try:
+        rc._apply_funds_reading(_fondi(98.0), source="t", read_at=time.monotonic())
+        assert rc.drawdown_entry_block_reason(cmd) == ""
+        assert app.trading_engine.submit_quick_bet(cmd).get("status") == "ACCEPTED_FOR_PROCESSING"
+        _m65_ordini_broker(app)
+        assert [t["token"] for t in spia.tentativi] == ["in_coda"]
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+def test_c26_a_failed_reading_after_a_positive_one_never_reuses_the_old_cash(tmp_path, monkeypatch):
+    """Ciclo 26: lettura positiva verificata (100), poi una lettura fallita. La vecchia lettura positiva non autorizza
+    l'ingresso in coda; una nuova lettura verificata positiva lo riapre (nessun blocco permanente inventato)."""
+    import time
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch)
+    try:
+        rc._apply_funds_reading(_fondi(100.0), source="t", read_at=time.monotonic())
+        rc._apply_funds_reading({"error": "BETFAIR_TIMEOUT"}, source="t", read_at=time.monotonic())
+        assert rc.drawdown_entry_block_reason(cmd).startswith("cassa_non_verificata")
+        rc._apply_funds_reading(_fondi(100.0), source="t", read_at=time.monotonic())
+        assert rc.drawdown_entry_block_reason(cmd) == ""
+        assert app.trading_engine.submit_quick_bet(cmd).get("status") == "ACCEPTED_FOR_PROCESSING"
+        _m65_ordini_broker(app)
+        assert [t["token"] for t in spia.tentativi] == ["in_coda"]
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("scenario,atteso", [
+    ("100_avviata_prima_arriva_dopo", "storia_insufficiente"),   # 130 (t2) arriva, poi 100 (t1): prima 1 ordine
+    ("130_avviata_prima_arriva_dopo", "desk_lockdown"),           # 100 (t2) e' la cassa del gate: LOCKDOWN del desk
+    ("ordinate_100_poi_130", ""),                                 # 100 (t1) poi 130 (t2): nessuna perdita, l'ordine parte
+    ("120_avviata_prima_arriva_dopo", ""),                        # calo possibile 7,7% < 20%: nessun blocco
+    ("130_poi_95_e_100_tardiva", "desk_lockdown"),                # cassa del gate 95: LOCKDOWN, nessun blocco in piu'
+])
+def test_c26_desk_lockdown_threshold_with_readings_completed_out_of_start_order(
+        tmp_path, monkeypatch, scenario, atteso):
+    """Ciclo 26-B (PF-OWNER-PR631-C26-DESK-OUT-OF-ORDER-20261116, Claude D #628 M85): soglia LOCKDOWN del desk 20%,
+    hard-stop di fatto assente (cap 1000). Due letture del conto avviate in un ordine diverso da quello di
+    completamento: la 100, iniziata per prima, arriva dopo la 130. L'istante d'inizio non dimostra l'ordine degli
+    snapshot: la 100 puo' essere la cassa corrente (calo possibile del 23%). Prima la cassa del gate restava 130 (0%) e
+    l'ingresso in coda partiva (1 ordine). Ora: perdita possibile oltre soglia => storia insufficiente, 0 ordini, nessun
+    hard-stop; cassa del gate gia' bassa => LOCKDOWN del desk; nessuna perdita oltre soglia possibile => l'ordine parte."""
+    import time
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=1000.0)
+    try:
+        t1 = time.monotonic()
+        t2 = t1 + 0.001
+        arrivi = {"100_avviata_prima_arriva_dopo": [(130.0, t2), (100.0, t1)],
+                  "130_avviata_prima_arriva_dopo": [(100.0, t2), (130.0, t1)],
+                  "ordinate_100_poi_130": [(100.0, t1), (130.0, t2)],
+                  "120_avviata_prima_arriva_dopo": [(130.0, t2), (120.0, t1)],
+                  "130_poi_95_e_100_tardiva": [(130.0, t2), (95.0, t2 + 0.001), (100.0, t1)]}[scenario]
+        for valore, inizio in arrivi:
+            rc._apply_funds_reading(_fondi(valore), source="t", read_at=inizio)
+        stop = rc._hard_stop()
+        motivo = rc.drawdown_entry_block_reason(cmd)
+        assert not stop.breached                                     # nessun hard-stop fittizio
+        if atteso == "storia_insufficiente":
+            assert stop.history_block_reason() == REASON_HISTORY_INSUFFICIENT and motivo, motivo
+        elif atteso == "desk_lockdown":
+            assert motivo == "desk_lockdown" and stop.history_block_reason() == "", motivo
+        else:
+            assert motivo == "" and stop.history_block_reason() == "", motivo
+        stato = app.trading_engine.submit_quick_bet(cmd).get("status")
+        _m65_ordini_broker(app)
+        if atteso:
+            assert stato != "ACCEPTED_FOR_PROCESSING" and spia.tentativi == [], (stato, spia.tentativi)
+        else:
+            assert stato == "ACCEPTED_FOR_PROCESSING" and [t["token"] for t in spia.tentativi] == ["in_coda"]
+    finally:
+        _m65_chiudi(app)

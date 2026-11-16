@@ -10666,8 +10666,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "                return \"ingresso_di_sessione_precedente\"\n            return RuntimeController._drawdown_persist_block_reason(self)\n",
-      "mutated": "                return \"ingresso_di_sessione_precedente\"\n            return \"\"\n",
+      "original": "            reason = RuntimeController._drawdown_persist_block_reason(self)\n            if reason:\n                return reason\n",
+      "mutated": "            reason = \"\"\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
@@ -11254,7 +11254,7 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "        if any(cash < peer for peer in peers) and self._lockdown_possible(lockdown_pct_raw, cash):\n",
+      "original": "        if any(cash < peer for peer in gate_group) and self._lockdown_possible(lockdown_pct_raw, cash):\n",
       "mutated": "        if False:\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
@@ -11290,12 +11290,72 @@
       "module": "core.drawdown_hard_stop",
       "area": "money_management",
       "file": "core/drawdown_hard_stop.py",
-      "original": "        if any(cash < peer for peer in peers) and self._lockdown_possible(lockdown_pct_raw, cash):\n",
-      "mutated": "        if peers and self._lockdown_possible(lockdown_pct_raw, min(peers + [cash])):\n",
+      "original": "        if any(cash < peer for peer in gate_group) and self._lockdown_possible(lockdown_pct_raw, cash):\n",
+      "mutated": "        if gate_group and self._lockdown_possible(lockdown_pct_raw, min(gate_group + [cash])):\n",
       "tests": [
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "Ciclo 25-B: solo una lettura piu' bassa della gemella nasconde il calo alla cassa del gate; con la gemella gia' bassa vale il LOCKDOWN del desk (nessuna storia insufficiente aggiunta)."
+    },
+    {
+      "id": "c26a_send_point_ignores_account_state",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if account_state in (RuntimeController.ACCOUNT_UNVERIFIABLE, RuntimeController.ACCOUNT_EMPTY_VERIFIED,\n",
+      "mutated": "            if False and account_state in (RuntimeController.ACCOUNT_UNVERIFIABLE, RuntimeController.ACCOUNT_EMPTY_VERIFIED,\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 26-A (PF-OWNER-PR631-C26-ZERO-FAILCLOSED-20261116, Sol su 7852e457): senza lo stato del conto al punto d'invio un ingresso in coda partirebbe dopo una lettura a zero o fallita (1 ordine)."
+    },
+    {
+      "id": "c26a_unverifiable_reading_allowed",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if account_state in (RuntimeController.ACCOUNT_UNVERIFIABLE, RuntimeController.ACCOUNT_EMPTY_VERIFIED,\n",
+      "mutated": "            if account_state in (\"\", RuntimeController.ACCOUNT_EMPTY_VERIFIED,\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 26-A: una lettura non verificabile non e' mai una perdita zero: l'ingresso in coda resta negato."
+    },
+    {
+      "id": "c26a_empty_account_allowed",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if account_state in (RuntimeController.ACCOUNT_UNVERIFIABLE, RuntimeController.ACCOUNT_EMPTY_VERIFIED,\n",
+      "mutated": "            if account_state in (RuntimeController.ACCOUNT_UNVERIFIABLE, \"\",\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 26-A: disponibile 0 e impegnato 0 verificati (patrimonio zero) negano l'ingresso in coda anche con cap alto o senza cap."
+    },
+    {
+      "id": "c26b_out_of_order_reading_ignored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            gate_group = [c for t, c in later if t == latest_at] if later else peers\n",
+      "mutated": "            gate_group = peers\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 26-B (PF-OWNER-PR631-C26-DESK-OUT-OF-ORDER-20261116): una lettura iniziata prima e arrivata dopo con calo possibile oltre la soglia LOCKDOWN del desk lascerebbe partire l'ingresso in coda (1 ordine)."
+    },
+    {
+      "id": "c26b_out_of_order_against_any_later_reading",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            gate_group = [c for t, c in later if t == latest_at] if later else peers\n",
+      "mutated": "            gate_group = [c for t, c in later] if later else peers\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 26-B: il confronto e' con la cassa del gate (lettura con l'inizio piu' recente), non con qualunque lettura successiva."
     },
     {
       "id": "m65_send_point_ignores_admission_session",

@@ -835,6 +835,12 @@ class DrawdownHardStop:
             # 954b226b): una gemella scartata anche dal riepilogo e' dominata da una prova gia' valutata (un massimo
             # precedente maggiore o uguale, verifica A; un minimo successivo minore o uguale, misurato al suo arrivo).
             peers = [c for t, c in (*self._history, *self._ladder, *self._valleys) if t == at]
+            # Ciclo 26-B (PF-OWNER-PR631-C26-DESK-OUT-OF-ORDER-20261116): le letture iniziate DOPO di questa e gia'
+            # arrivate. La piu' recente per istante d'inizio e' la cassa del gate, ma questa lettura e' arrivata dopo
+            # di lei: l'ordine reale degli snapshot fra le due e' ignoto (l'istante d'inizio non lo dimostra).
+            later = [(t, c) for t, c in (*self._history, *self._ladder, *self._valleys) if t > at]
+            latest_at = max((t for t, _c in later), default=None)
+            gate_group = [c for t, c in later if t == latest_at] if later else peers
             already = self.breached or bool(self.history_insufficient.get("active"))
             self._store_locked(at, cash)
             epoch = self.peak_epoch
@@ -874,14 +880,16 @@ class DrawdownHardStop:
             if self._limit_exceeded(cap_raw, pct_cap_raw, low_peer, high):
                 return self._mark_history_insufficient("letture_con_lo_stesso_istante", at, cash, epoch,
                                                        reference=high)
-        # Ciclo 25-B (PF-OWNER-PR631-C25-GROK-SOL-FAILOPEN-20261116, Sol su 49ac83c4): la soglia LOCKDOWN del desk si
-        # misura sulla cassa del gate (una gemella arrivata prima). Se questa lettura, piu' bassa della gemella, puo'
-        # essere la cassa corrente e la sua perdita dal picco raggiunge la soglia, la perdita e' possibile ma non
-        # dimostrata => storia insufficiente (ingressi negati), mai un hard-stop. Gemella gia' piu' bassa: e' lei la
-        # cassa del gate e il LOCKDOWN del desk la vede gia'.
-        if any(cash < peer for peer in peers) and self._lockdown_possible(lockdown_pct_raw, cash):
-            return self._mark_history_insufficient("letture_con_lo_stesso_istante_soglia_lockdown", at, cash, epoch,
-                                                   reference=max(peers))
+        # Ciclo 25-B (PF-OWNER-PR631-C25-GROK-SOL-FAILOPEN-20261116, Sol su 49ac83c4) e 26-B: la soglia LOCKDOWN del
+        # desk si misura sulla cassa del gate (la lettura con l'istante d'inizio piu' recente, o la gemella dello
+        # stesso istante arrivata prima). Questa lettura e' arrivata dopo di lei: se e' piu' bassa puo' essere la cassa
+        # corrente, e se la sua perdita dal picco raggiunge la soglia la perdita e' possibile ma non dimostrata =>
+        # storia insufficiente (ingressi negati), mai un hard-stop. Cassa del gate gia' piu' bassa: il LOCKDOWN del
+        # desk la vede gia' (perdita dimostrata o gia' misurata, nessun blocco aggiuntivo).
+        if any(cash < peer for peer in gate_group) and self._lockdown_possible(lockdown_pct_raw, cash):
+            return self._mark_history_insufficient(
+                "letture_con_lo_stesso_istante_soglia_lockdown" if not later else "lettura_fuori_ordine_soglia_lockdown",
+                at, cash, epoch, reference=max(gate_group))
         return ""
 
     def _lockdown_possible(self, lockdown_pct_raw: Any, cash: Decimal) -> bool:

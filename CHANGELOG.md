@@ -116,6 +116,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   il fence riammesso nella sessione nuova. Ciclo 25 (PF-OWNER-PR631-C25-GROK-SOL-FAILOPEN-20261116): lo sblocco owner
   della storia insufficiente richiede una rilettura ordinata (`cassa_fresca_non_ordinata` altrimenti); letture dello
   stesso istante con calo possibile oltre la soglia LOCKDOWN del desk => storia insufficiente (ingressi in coda negati).
+  Ciclo 26 (PF-OWNER-PR631-C26-ZERO-FAILCLOSED-20261116, -DESK-OUT-OF-ORDER-): ingresso in coda negato con l'ultima
+  lettura del conto non valida o a zero (`cassa_non_verificata:<stato>`); lettura iniziata prima e arrivata dopo con
+  calo possibile oltre la soglia LOCKDOWN => storia insufficiente.
   F2: test di regressione deterministico sulla race SIM/LIVE. Review su e98e84c7 (Sol): un marker superato con picco piu'
   alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento

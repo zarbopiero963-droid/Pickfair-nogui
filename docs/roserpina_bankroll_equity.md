@@ -641,6 +641,22 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   blocco. Prima 130 poi 100 dello stesso istante lasciavano la cassa del gate a 130 (0%) e l'ingresso in coda partiva
   con un calo possibile del 23%. Uscite protettive (cashout, cancellazioni, riduzioni) invariate.
 
+- **Ciclo 26 (PF-OWNER-PR631-C26-ZERO-FAILCLOSED-20261116 e PF-OWNER-PR631-C26-DESK-OUT-OF-ORDER-20261116).** Altri due
+  fail-open degli ingressi gia' in coda, riprodotti end-to-end in SIM.
+  (A) Il ricontrollo al punto d'invio applica anche lo stato dell'ultima lettura del conto (contratto Phase 2):
+  lettura non valida (`FUNDS_UNVERIFIABLE`), disponibile 0 verificato senza impegnato (`ACCOUNT_EMPTY_VERIFIED`) o con
+  impegnato (`BALANCE_ZERO_COMMITTED`) => `cassa_non_verificata:<stato>`, ingresso negato. Prima la misura protettiva
+  ripiegava sul bankroll precedente (0%) e l'ingresso partiva con cap alto, senza cap e, a lettura fallita, anche col
+  cap 10. Mai una perdita zero, mai la vecchia lettura positiva; una nuova lettura verificata positiva riapre. Il
+  contratto Phase 2 resta: il saldo zero non forza il LOCKDOWN (puo' essere un prelievo), nega gli ingressi; con un
+  hard-stop configurato la cassa 0 e' perdita totale (hard-stop e LOCKDOWN). I blocchi del drawdown piu' specifici
+  restano prioritari nel motivo.
+  (B) L'istante d'inizio della lettura non dimostra l'ordine degli snapshot: una lettura iniziata prima e arrivata
+  dopo quella che e' la cassa del gate puo' essere la cassa corrente. Se e' piu' bassa e la sua perdita dal picco
+  raggiunge la soglia LOCKDOWN del desk => storia insufficiente (`lettura_fuori_ordine_soglia_lockdown`), anche senza
+  hard-stop; nessun hard-stop. Cassa del gate gia' bassa => LOCKDOWN del desk; calo possibile sotto soglia => nessun
+  blocco. Prima la 100 iniziata prima della 130 e arrivata dopo lasciava il gate a 130 e l'ingresso in coda partiva.
+
 - **Picco e superamento in un'unica scrittura (ciclo 22, PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112).** Il
   picco che dimostra un superamento (un massimo osservato o confermato dall'owner, anche da una lettura tardiva) sale nello
   STESSO record persistito del superamento: un crash non puo' piu' lasciare su disco picco 115 con superamento da 130.

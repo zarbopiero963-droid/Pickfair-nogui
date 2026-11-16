@@ -3435,7 +3435,20 @@ class RuntimeController:
             if (isinstance(request, dict) and "admission_session" in request
                     and request.get("admission_session") != RuntimeController._entry_session(self)):
                 return "ingresso_di_sessione_precedente"
-            return RuntimeController._drawdown_persist_block_reason(self)
+            # Ciclo 26 (PF-OWNER-PR631-C26-ZERO-FAILCLOSED-20261116, Sol su 7852e457): l'ultima lettura del conto
+            # applicata decide anche per gli ingressi gia' in coda. Contratto Phase 2 (`_apply_funds_reading`): lettura
+            # non valida (C), disponibile 0 verificato senza impegnato (B, patrimonio zero) o con impegnato (A) => cassa
+            # non verificata, nuove entrate bloccate. Prima la misura protettiva ripiegava sul bankroll precedente (0%) e
+            # l'ingresso in coda partiva: mai una perdita zero, mai la vecchia lettura positiva; nessun cap inventato.
+            # I blocchi del drawdown (piu' specifici) restano prioritari: il motivo e' comunque un rifiuto.
+            reason = RuntimeController._drawdown_persist_block_reason(self)
+            if reason:
+                return reason
+            account_state = str(getattr(self, "_account_state", "") or "")
+            if account_state in (RuntimeController.ACCOUNT_UNVERIFIABLE, RuntimeController.ACCOUNT_EMPTY_VERIFIED,
+                                 RuntimeController.ACCOUNT_ZERO_COMMITTED):
+                return "cassa_non_verificata:" + account_state
+            return ""
 
     def assert_runtime_authority(self, context: str = "") -> None:
         """Choke point per il TradingEngine prima di OGNI invio (SIM e LIVE): solleva `RuntimeAuthorityLost`."""
