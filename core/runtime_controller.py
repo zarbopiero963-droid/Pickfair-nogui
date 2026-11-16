@@ -3462,6 +3462,15 @@ class RuntimeController:
             reading_block = str(getattr(self, "_funds_reading_block", "") or "")
             if reading_block:
                 return "cassa_non_verificata:" + reading_block
+            # Ciclo 28, Sol 1 (PF-OWNER-PR631-C28-SETTLEMENT-FRESHNESS-20261116): CASH_NOT_READ non e' un'esenzione.
+            # Dopo una lettura del conto, un aggiornamento contabile senza lettura (settlement: P&L chiuso, snapshot,
+            # ripristino) invalida la cassa e sposta la soglia di `read_at` (barriera del RiskDesk): fondi da rileggere.
+            # Ingressi negati, anche in coda, finche' una lettura iniziata DOPO la barriera non rifissa la cassa (una
+            # lettura iniziata prima e' scartata dal RiskDesk). Le uscite protettive non passano di qui.
+            if desk is not None and desk_reason == "CASH_NOT_READ":
+                cash_now, _committed, cash_read_at = desk.cash_basis()
+                if cash_now is None and cash_read_at is not None:
+                    return "fondi_da_rileggere:CASH_NOT_READ"
             return ""
 
     def assert_runtime_authority(self, context: str = "") -> None:

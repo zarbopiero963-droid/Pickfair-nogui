@@ -5464,17 +5464,57 @@ def test_c28_only_a_new_coherent_reading_lifts_the_incoherent_reading_block(tmp_
 
 
 @pytest.mark.real_blackbox
-def test_c28_a_settlement_after_a_coherent_reading_does_not_block_the_queued_entry(tmp_path, monkeypatch):
-    """Ciclo 28, caso innocuo: dopo una lettura coerente un settlement (CASH_NOT_READ) non blocca l'ingresso in coda:
-    la barriera di settlement non e' una lettura incoerente (1 ordine)."""
+@pytest.mark.parametrize("rilettura", ["successiva", "iniziata_prima", "nessuna"])
+def test_c28_settlement_freshness_barrier_blocks_queued_entries_until_a_later_reading(
+        tmp_path, monkeypatch, rilettura):
+    """Ciclo 28, Sol 1 (PF-OWNER-PR631-C28-SETTLEMENT-FRESHNESS-20261116): CASH_NOT_READ non e' un'esenzione. Dopo una
+    lettura coerente (100) un settlement senza lettura (P&L 0) rende i fondi da rileggere: l'ingresso in coda e' negato
+    (`fondi_da_rileggere`). Una lettura iniziata PRIMA del settlement e completata dopo e' scartata e non toglie la
+    barriera (0 ordini); senza rilettura resta negato (0); una lettura iniziata DOPO il settlement, coerente, la toglie
+    e decidono gli altri gate (1 ordine). Prima di questo ciclo il settlement non bloccava nulla."""
     import time
     app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=1000.0)
     try:
         rc._apply_funds_reading(_fondi(100.0), source="t", read_at=time.monotonic())
-        rc.risk_desk.apply_closed_pnl(0.0)
-        assert rc.drawdown_entry_block_reason(cmd) == ""
-        assert app.trading_engine.submit_quick_bet(cmd).get("status") == "ACCEPTED_FOR_PROCESSING"
+        prima_del_settlement = time.monotonic()
+        rc._apply_realized_pnl_without_mutating_bankroll(0.0)          # passo reale del settlement
+        assert rc.drawdown_entry_block_reason(cmd).startswith("fondi_da_rileggere")
+        if rilettura == "iniziata_prima":
+            esito = rc._apply_funds_reading(_fondi(100.0), source="settlement", read_at=prima_del_settlement)
+            assert esito["applied"] is False
+        elif rilettura == "successiva":
+            rc._apply_funds_reading(_fondi(100.0), source="settlement", read_at=time.monotonic())
+        stato = app.trading_engine.submit_quick_bet(cmd).get("status")
         _m65_ordini_broker(app)
-        assert [t["token"] for t in spia.tentativi] == ["in_coda"]
+        if rilettura == "successiva":
+            assert stato == "ACCEPTED_FOR_PROCESSING" and [t["token"] for t in spia.tentativi] == ["in_coda"]
+        else:
+            assert stato != "ACCEPTED_FOR_PROCESSING" and spia.tentativi == [], (stato, spia.tentativi)
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("limite", ["cap_10", "senza_cap"])
+def test_c28_losing_settlement_window_never_lets_a_queued_entry_reach_the_broker(tmp_path, monkeypatch, limite):
+    """Ciclo 28, Sol 1 su b4b03636 (riprodotto E2E): lettura coerente 100, settlement con P&L -15 applicato, rilettura
+    del conto ancora in volo. Prima l'ingresso in coda partiva nella finestra (1 ordine) e l'hard-stop (cap 10) scattava
+    solo dopo la rilettura 85. Ora nella finestra 0 tentativi; dopo la rilettura 85 decidono i gate: cap 10 => hard-stop
+    (0), senza cap => 15% sotto la soglia del desk, l'ordine parte."""
+    import time
+    cfg = {"cap_10": {"max_drawdown_abs": 10.0}, "senza_cap": {}}[limite]
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, **cfg)
+    try:
+        rc._apply_funds_reading(_fondi(100.0), source="t", read_at=time.monotonic())
+        rc._apply_realized_pnl_without_mutating_bankroll(-15.0)
+        assert app.trading_engine.submit_quick_bet(cmd).get("status") != "ACCEPTED_FOR_PROCESSING"
+        _m65_ordini_broker(app)
+        assert spia.tentativi == []
+        rc._apply_funds_reading(_fondi(85.0), source="settlement", read_at=time.monotonic())
+        motivo = rc.drawdown_entry_block_reason(cmd)
+        if limite == "cap_10":
+            assert rc._hard_stop().breached and motivo, motivo
+        else:
+            assert motivo == "", motivo
     finally:
         _m65_chiudi(app)

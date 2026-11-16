@@ -123,6 +123,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   con una lettura concorrente dello stesso tick (anche dello stesso valore); lettura fuori ordine valutata anche contro i cap
   dell'hard-stop. Ciclo 28 (PF-OWNER-PR631-C28-SETTLEMENT-FUNDS-FAILOPEN-20261116): l'esito della verifica dell'ultima
   lettura del conto e' conservato a parte; un settlement non riapre un ingresso bloccato da una lettura incoerente.
+  Barriera di freschezza: dopo un settlement senza lettura gli ingressi (anche in coda) restano negati finche' una
+  lettura iniziata dopo la barriera non rifissa la cassa.
   F2: test di regressione deterministico sulla race SIM/LIVE. Review su e98e84c7 (Sol): un marker superato con picco piu'
   alto si salva nel DB prima di essere rimosso; una scrittura rifiutata dal fencing non scrive il marker. Review su dc2f5f25 (Sol, Grok, Codex, Claude D): con
   disponibile 0 l'hard-stop valuta la cassa verificata (impegnato, oppure 0 = perdita totale) e il superamento

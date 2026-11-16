@@ -11473,6 +11473,32 @@
       "rationale": "Ciclo 28: FUNDS_VERIFIED con cassa del desk invalidata dalla verifica (riserva incoerente) non e' una lettura coerente."
     },
     {
+      "id": "c28_settlement_freshness_barrier_ignored",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if desk is not None and desk_reason == \"CASH_NOT_READ\":\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py",
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "Ciclo 28, Sol 1 (PF-OWNER-PR631-C28-SETTLEMENT-FRESHNESS-20261116): senza la barriera di freschezza un ingresso in coda partirebbe nella finestra fra il P&L del settlement e la rilettura del conto (1 ordine con perdita 15 oltre il cap 10)."
+    },
+    {
+      "id": "c28_settlement_freshness_barrier_lifted_without_reading",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                if cash_now is None and cash_read_at is not None:\n",
+      "mutated": "                if cash_now is None and cash_read_at is None:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py",
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "Ciclo 28, Sol 1: la barriera si toglie solo con una lettura che rifissa la cassa, non da sola."
+    },
+    {
       "id": "m65_send_point_ignores_admission_session",
       "module": "core.runtime_controller",
       "area": "money_management",

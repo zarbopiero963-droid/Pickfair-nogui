@@ -677,8 +677,15 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   del desk verificata, altrimenti il motivo). Il punto d'invio lo controlla: un aggiornamento contabile senza lettura
   (settlement `apply_closed_pnl`, snapshot dell'esposizione: `CASH_NOT_READ`) non lo cancella e non riapre un ingresso
   bloccato da una lettura incoerente o non verificabile. Solo una nuova lettura coerente lo toglie (poi decidono tutti
-  gli altri gate); una nuova lettura fallita lo mantiene. Dopo un riavvio la lettura d'avvio lo ricalcola. Un
-  settlement dopo una lettura coerente non blocca nulla.
+  gli altri gate); una nuova lettura fallita lo mantiene. Dopo un riavvio la lettura d'avvio lo ricalcola.
+  Barriera di freschezza (Sol 1, PF-OWNER-PR631-C28-SETTLEMENT-FRESHNESS-20261116): `CASH_NOT_READ` non e'
+  un'esenzione. Dopo una lettura del conto, un aggiornamento contabile senza lettura (settlement con P&L chiuso,
+  snapshot dell'esposizione, ripristino) invalida la cassa e sposta la soglia di `read_at` del RiskDesk: fondi da
+  rileggere (`fondi_da_rileggere:CASH_NOT_READ`), ingressi negati anche gia' in coda. Una lettura iniziata prima della
+  barriera e completata dopo e' scartata dal RiskDesk e non la toglie; la toglie solo una lettura iniziata dopo, che
+  rifissa la cassa (poi decidono tutti gli altri gate). Prima un ingresso in coda partiva nella finestra fra il P&L del
+  settlement e la rilettura (P&L -15 con cap 10: 1 ordine, hard-stop solo dopo). Nessun LOCKDOWN persistente, nessun
+  cap; settlement, cashout, cancellazioni e riconciliazione non passano da questo controllo.
 
 - **Picco e superamento in un'unica scrittura (ciclo 22, PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112).** Il
   picco che dimostra un superamento (un massimo osservato o confermato dall'owner, anche da una lettura tardiva) sale nello
