@@ -1478,9 +1478,10 @@ class RuntimeController:
         if declared and financial_scope.is_verified(declared):
             return {"scope": declared, "kind": "scoped"}
         if not declared and (hint is not None or "financial_scope" in (effect or {})):
-            # riserva della scommessa nota ma senza ambito: nessuna supposizione sull'ambito corrente
-            target = RuntimeController._current_financial_scope(self)
-            return {"scope": target, "kind": "unscoped_profit" if float(pnl) >= 0.0 else "unattributed_loss"}
+            # riserva della scommessa nota ma senza ambito: nessuna supposizione sull'ambito corrente; origine non
+            # verificabile => ambito non verificabile (escalation globale, Sol su 8a6c4cbb)
+            return {"scope": financial_scope.UNVERIFIED_SCOPE,
+                    "kind": "unscoped_profit" if float(pnl) >= 0.0 else "unattributed_loss"}
         target = declared or RuntimeController._current_financial_scope(self)
         if float(pnl) >= 0.0:
             return {"scope": target, "kind": "unscoped_profit"}
@@ -3136,6 +3137,34 @@ class RuntimeController:
         persist_error = self._persist_emergency_state()
         self.bus.publish("EMERGENCY_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
         return {"emergency_reset": True, "persist_error": persist_error}
+
+    def _settlement_projections(self, pnl: float, attribution: dict) -> list:
+        """Proiezioni del settlement: ambito attribuito e, per una perdita non attribuibile, ogni ambito esistente
+        (Codex su d86404ef; stesso calcolo nel ramo recovery fail-closed, Sol su 8a6c4cbb)."""
+        projections = [self._projected_daily_loss_breach(pnl, attribution)]
+        if attribution.get("kind") == "unattributed_loss":
+            for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
+                if other != str(attribution["scope"]):
+                    projections.append(self._projected_daily_loss_breach(
+                        pnl, {"scope": other, "kind": "unattributed_loss"}))
+        return projections
+
+    def _escalate_stopped_live_breach(self, states: list) -> None:
+        """PR-04a (Codex su 8a6c4cbb): un settlement che fa superare il limite a un ambito LIVE (o non verificabile)
+        mentre il runtime e' fermo (STOPPED/LOCKDOWN: l'enforce non scatta) arma comunque l'Emergency Stop globale
+        DUREVOLE, come il ramo recovery fail-closed: un avvio successivo in SIM o con un altro conto non riapre gli
+        ingressi. Un superamento SIM resta locale. Solo dal percorso del settlement (mai da una lettura di stato)."""
+        if self._emergency_stopped or self.mode in (RuntimeMode.ACTIVE, RuntimeMode.PAUSED):
+            return
+        for state in states:
+            if state.get("breached") and financial_scope.escalates_globally(str(state.get("financial_scope") or "")):
+                amount = float(state.get("daily_loss_amount", 0.0) or 0.0)
+                with self._daily_loss_stop_lock:
+                    if not self._emergency_stopped:
+                        logger.critical("DAILY_LOSS_BREACH (runtime fermo) -> emergency_stop (%s, %s)",
+                                        state.get("financial_scope"), amount)
+                        self.emergency_stop(reason=f"DAILY_LOSS_BREACH_STOPPED:{amount}")
+                return
 
     def _enforce_daily_loss_hard_stop(self, breach_state: dict) -> bool:
         """Kill-switch SINCRONO da perdita giornaliera. Ritorna True se lo stop
@@ -8833,8 +8862,15 @@ class RuntimeController:
             # sfonderebbe comunque il limite giornaliero si hard-stoppa lo stesso
             # (proiezione read-only). Un eventuale falso positivo da duplicato e'
             # piu' sicuro di un kill-switch mancato.
-            projected_recovery = self._projected_daily_loss_breach(
-                pnl, RuntimeController._settlement_attribution(self, pnl, effect, payload, scope_hint))
+            recovery_projections = RuntimeController._settlement_projections(
+                self, pnl, RuntimeController._settlement_attribution(self, pnl, effect, payload, scope_hint))
+            breached_projections = [pr for pr in recovery_projections if pr.get("breached")]
+            # prima un superamento che sale al globale, se c'e' (Sol su 8a6c4cbb: anche negli altri ambiti)
+            breached_projections.sort(key=lambda pr: not financial_scope.escalates_globally(
+                str(pr.get("financial_scope") or "")))
+            projected_recovery = breached_projections[0] if breached_projections else recovery_projections[0]
+            for other_projection in breached_projections[1:]:
+                self._record_pending_daily_loss_breach(other_projection)
             stopped = self._enforce_daily_loss_hard_stop(projected_recovery)
             if projected_recovery.get("breached"):
                 # Persisti il breach nello stato del monitor (in-memory) cosi' un
@@ -8886,15 +8922,10 @@ class RuntimeController:
         # chiudendo la finestra tra apply-PnL e emergency_stop in cui altrimenti
         # vedrebbe _emergency_stopped ancora False e piazzerebbe un ordine.
         attribution = RuntimeController._settlement_attribution(self, pnl, effect, payload, scope_hint)
-        projected_close = self._projected_daily_loss_breach(pnl, attribution)
-        projections = [projected_close]
-        if attribution.get("kind") == "unattributed_loss":
-            # Codex su d86404ef: la perdita non attribuibile conta per ogni ambito esistente: si proietta su tutti, cosi'
-            # le barriere (globale o locale SIM) sono armate prima dell'I/O del sync anche per gli altri ambiti.
-            for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
-                if other != str(attribution["scope"]):
-                    projections.append(self._projected_daily_loss_breach(
-                        pnl, {"scope": other, "kind": "unattributed_loss"}))
+        # Codex su d86404ef: la perdita non attribuibile conta per ogni ambito esistente: si proietta su tutti, cosi'
+        # le barriere (globale o locale SIM) sono armate prima dell'I/O del sync anche per gli altri ambiti.
+        projections = RuntimeController._settlement_projections(self, pnl, attribution)
+        projected_close = projections[0]
         # PR-04a: il pending-stop (globale) si arma solo se il superamento sale all'Emergency Stop globale
         arm_pending = any(bool(pr.get("breached")) and financial_scope.escalates_globally(
             str(pr.get("financial_scope") or "")) for pr in projections) and self.mode in (
@@ -8979,6 +9010,8 @@ class RuntimeController:
             self._enforce_daily_loss_hard_stop(daily_loss_state)
             for state in other_states:
                 self._enforce_daily_loss_hard_stop(state)
+            if realized_now:
+                RuntimeController._escalate_stopped_live_breach(self, [daily_loss_state, *other_states])
             for key in touched:   # Sol su d86404ef: perdita di sessione in ogni ambito interessato
                 self._publish_session_loss_breach(scope=key)
         finally:

@@ -780,8 +780,10 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   (`meta.financial_scope`, modalita' del runtime all'invio) per ogni percorso d'ingresso: segnale, auto-next, Dutching e
   puntata manuale (`DutchingController._allocate_table`). L'ambito e' persistito con la request in `orders` e
   ricostruito da F018 dopo un riavvio; il settlement lo ritrova dalla riserva (tavolo+evento, evento o lotto) letta
-  PRIMA del rilascio. Riserva trovata ma senza ambito (ordine precedente a PR-04a) => perdita non attribuibile (conta
-  per ogni ambito, LIVE compreso), profitto non accreditato: mai l'ambito corrente per supposizione. Totale del desk e
+  PRIMA del rilascio. Riserva trovata ma senza ambito (ordine precedente a PR-04a) => perdita non attribuibile
+  sull'ambito `betfair|UNVERIFIED||EUR` (origine non verificabile: escalation globale; conta anche per ogni ambito
+  esistente, LIVE compreso), profitto non accreditato: mai l'ambito corrente per supposizione. Anche il ramo recovery
+  fail-closed proietta la perdita non attribuibile su ogni ambito. Totale del desk e
   attribuzione si aggiornano insieme sotto il lock dello stato giornaliero (nessun monitor concorrente li vede a meta'). Senza identita' dimostrata: una PERDITA va all'ambito
   corrente se verificato, altrimenti e' **non attribuibile** (quarantena: conta per ogni ambito fino al cambio di
   giorno; ogni stato d'ambito gia' esistente la registra e la persiste subito, PRIMA della marcatura del settlement,
@@ -793,7 +795,9 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
 - **Superamento del limite giornaliero.** SIM verificata: bloccati solo i nuovi ingressi di quell'ambito
   (`daily_loss_breached:SIM`); nessun Emergency Stop, nessuna cancellazione di ordini LIVE, LIVE non disattivato,
   nessun LOCKDOWN globale, nessun pending-stop globale. LIVE o ambito non verificabile: Emergency Stop globale come
-  prima (SIM e LIVE bloccati; passare a SIM non lo scioglie). Emergency Stop manuale: sempre globale, invariato.
+  prima (SIM e LIVE bloccati; passare a SIM non lo scioglie), armato e persistito anche quando il superamento arriva da
+  un settlement a runtime fermo (STOPPED/LOCKDOWN), cosi' un avvio successivo in SIM o con un altro conto non riapre gli
+  ingressi. Emergency Stop manuale: sempre globale, invariato.
 - **Perdita di sessione e RISK_STOP.** La perdita di sessione si misura nell'ambito corrente. Un RISK_STOP nato da una
   SIM verificata resta locale (motivo con suffisso `@ambito=<ambito SIM>`): blocca solo quell'ambito, il CASHOUT_ALL
   parte solo mentre il runtime e' in quell'ambito (mai instradato al LIVE), il reset si fa da quell'ambito

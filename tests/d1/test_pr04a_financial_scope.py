@@ -761,3 +761,60 @@ def test_perdita_non_attribuibile_arma_la_barriera_sim_prima_del_sync(tmp_path):
     c.rc.betfair_service.settings_service = None
     _settle(c, -15.0, event_key="cleared:1.956:9")       # LIVE senza conto identificabile
     assert visti == ["daily_loss_breached:SIM"]
+
+
+# ============================================================================ Codex su 8a6c4cbb
+def test_superamento_live_a_runtime_fermo_arma_l_emergency_stop_globale(tmp_path):
+    """Settlement LIVE tardivo che supera il limite mentre il runtime e' STOPPED: Emergency Stop globale durevole,
+    quindi un avvio successivo in SIM (o con un altro conto) non riapre gli ingressi."""
+    c = _banco(tmp_path, "st.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.STOPPED
+    c.rc._on_close_position(_canonical_close_payload(event_key="cleared:1.960:1", batch_id="b-st", correlation_id="c-st",
+                                                     gross_pnl=-40.0, commission_amount=0.0, net_pnl=-40.0, pnl=-40.0))
+    assert c.rc._emergency_stopped, "superamento LIVE: Emergency Stop globale anche a runtime fermo"
+    r = _banco(tmp_path, "st.db", max_daily_loss=30.0)
+    assert r.rc._emergency_stopped, "emergenza durevole dopo il riavvio"
+
+
+def test_superamento_sim_a_runtime_fermo_resta_locale(tmp_path):
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.STOPPED
+    c.rc._on_close_position(_canonical_close_payload(event_key="sim:1.961:1", batch_id="b-st2", correlation_id="c-st2",
+                                                     gross_pnl=-40.0, commission_amount=0.0, net_pnl=-40.0, pnl=-40.0))
+    assert not c.rc._emergency_stopped
+    assert c.rc._daily_loss_scopes[_sim()]["breached"] is True
+
+
+# ============================================================================ Sol su 8a6c4cbb
+def test_riserva_legacy_con_solo_sim_registrata_sale_all_emergenza_globale(tmp_path):
+    """Origine non verificabile (riserva senza ambito) con runtime e registro solo SIM: -40 su limite 30 deve salire
+    all'Emergency Stop globale, non restare un blocco SIM locale."""
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    tavolo = _riserva(c, "1.970")
+    meta = dict(tavolo.meta)
+    meta.pop("financial_scope")
+    c.rc.table_manager.force_unlock(tavolo.table_id)
+    c.rc.table_manager.activate(table_id=tavolo.table_id, event_key=tavolo.current_event_key, exposure=2.0,
+                                market_id=tavolo.market_id, selection_id=tavolo.selection_id, meta=meta)
+    for chiave in [k for k in c.rc._daily_loss_scopes if k != _sim()]:   # registro con la sola SIM
+        del c.rc._daily_loss_scopes[chiave]
+    _settle(c, -40.0, table_id=tavolo.table_id, customer_ref=meta["customer_ref"],
+            event_key=tavolo.current_event_key, market_id=tavolo.market_id)
+    assert c.rc._emergency_stopped, "perdita di origine non verificabile: escalation globale"
+
+
+def test_recovery_fail_closed_proietta_la_perdita_non_attribuibile_su_ogni_ambito(tmp_path):
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "LIVE")
+    _settle(c, -20.0)
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+    c.rc._read_cycle_recovery_state = lambda _k: {"status": "RECOVERY_STATE_AMBIGUOUS"}
+    c.rc.mode = RuntimeMode.STOPPED
+    c.rc._on_close_position(_canonical_close_payload(event_key="cleared:1.971:1", batch_id="b-rc", correlation_id="c-rc",
+                                                     gross_pnl=-15.0, commission_amount=0.0, net_pnl=-15.0, pnl=-15.0))
+    assert c.rc._emergency_stopped, "LIVE A 20 + 15 non attribuibile = 35 >= 30: Emergency Stop"

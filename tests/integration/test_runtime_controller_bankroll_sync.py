@@ -796,11 +796,17 @@ def test_runtime_controller_daily_loss_breach_state_is_persistent_until_day_roll
         }
     )
 
-    status = rc.get_status()
-    assert status["daily_loss_monitor"]["breached"] is True
-    assert status["daily_loss_monitor"]["reason"] == "daily_loss_breach_persistent_until_day_rollover"
-    assert status["daily_loss_monitor"]["alert_count"] == 1
-    assert status["daily_loss_monitor"]["last_alert_event"] == "DAILY_LOSS_BREACH_TRIGGERED"
+    # PR-04a (Codex su 8a6c4cbb): un superamento LIVE a runtime fermo arma l'Emergency Stop globale durevole, che
+    # riporta il runtime in SIM; lo stato persistente del breach e' quello dell'ambito LIVE.
+    assert rc._emergency_stopped is True
+    live = rc._monitor_daily_loss_breach(source="TEST", scope=rc._financial_scope_for(False))
+    assert live["breached"] is True
+    assert live["reason"] == "daily_loss_breach_persistent_until_day_rollover"
+    # lo snapshot di stato dell'emergency_stop riemette il breach come ACTIVE: un solo TRIGGERED, poi ACTIVE
+    assert live["alert_count"] == 2
+    assert live["last_alert_event"] == "DAILY_LOSS_BREACH_ACTIVE"
+    assert len([t for t, _p in bus.events if t == "DAILY_LOSS_BREACH_TRIGGERED"]) == 1
+    assert rc.get_status()["daily_loss_scopes"][rc._financial_scope_for(False)]["breached"] is True
 
 
 @pytest.mark.integration

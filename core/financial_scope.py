@@ -50,6 +50,10 @@ def escalates_globally(key: str) -> bool:
     return not is_sim(key)
 
 
+# Ambito delle perdite di origine non verificabile (riserva legacy senza ambito): mai isolabile => escalation globale.
+UNVERIFIED_SCOPE = "betfair|UNVERIFIED||EUR"
+
+
 def runtime_scope(*, simulated: bool, live_account: str) -> str:
     if simulated:
         return scope_key(PROVIDER_BETFAIR, ENV_SIM, "sim", CAPITAL_EUR)
