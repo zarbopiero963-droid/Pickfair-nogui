@@ -11594,6 +11594,139 @@
         "tests/d1/test_d1_drawdown_hard_stop.py"
       ],
       "rationale": "D-631-15: START prosegue senza sessione durevole: un picco perso col doppio guasto non lascia traccia."
+    },
+    {
+      "id": "pr03b1_history_ignored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                    if history is not False:\n                        self.baseline_verified = False",
+      "mutated": "                    if False:\n                        self.baseline_verified = False",
+      "tests": [
+        "tests/d1/test_pr03b1_four_findings.py"
+      ],
+      "rationale": "PR-03b-1 P1: storico ignorato: picco dalla prima cassa (100 storico, 80 letto => picco 80, perdita del 20 % sparita)."
+    },
+    {
+      "id": "pr03b1_unreadable_history_as_fresh",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "                    if history is not False:\n                        self.baseline_verified = False",
+      "mutated": "                    if history:\n                        self.baseline_verified = False",
+      "tests": [
+        "tests/d1/test_pr03b1_four_findings.py"
+      ],
+      "rationale": "PR-03b-1 P1: storico non leggibile trattato come installazione nuova (fail-open)."
+    },
+    {
+      "id": "pr03b1_settings_history_ignored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if settings.get(key) not in (None, \"\"):\n            return True",
+      "mutated": "        if settings.get(key) not in (None, \"\") and False:\n            return True",
+      "tests": [
+        "tests/d1/test_pr03b1_four_findings.py"
+      ],
+      "rationale": "PR-03b-1 P1: lo stato Roserpina persistito non conta come storico."
+    },
+    {
+      "id": "pr03b1_order_tables_ignored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if execute(f\"SELECT 1 FROM {table} LIMIT 1\", fetchone=True, commit=False) is not None:\n                return True",
+      "mutated": "            if execute(f\"SELECT 1 FROM {table} LIMIT 1\", fetchone=True, commit=False) is not None:\n                continue",
+      "tests": [
+        "tests/d1/test_pr03b1_four_findings.py"
+      ],
+      "rationale": "PR-03b-1 P1: gli ordini nel DB non contano come storico."
+    },
+    {
+      "id": "pr03b1_no_query_db_as_fresh",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "    if not callable(execute):\n        return None",
+      "mutated": "    if not callable(execute):\n        return False",
+      "tests": [
+        "tests/d1/test_pr03b1_four_findings.py"
+      ],
+      "rationale": "PR-03b-1 P1: un DB che non puo' dimostrare l'assenza di storico vale come installazione nuova (fail-open)."
+    },
+    {
+      "id": "pr03b1_history_error_as_fresh",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        logger.error(\"D-1: storico di trading non leggibile: baseline del drawdown non verificata\", exc_info=True)\n        return None",
+      "mutated": "        logger.error(\"D-1: storico di trading non leggibile: baseline del drawdown non verificata\", exc_info=True)\n        return False",
+      "tests": [
+        "tests/d1/test_pr03b1_four_findings.py"
+      ],
+      "rationale": "PR-03b-1 P1: errore di lettura dello storico trattato come assenza di storico (fail-open)."
+    },
+    {
+      "id": "pr03b1_declared_peak_ignored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            candidates = [v for v in (self.peak, declared, cash) if v is not None]\n            self.peak = max(candidates)",
+      "mutated": "            candidates = [v for v in (self.peak, cash) if v is not None]\n            self.peak = max(candidates)",
+      "tests": [
+        "tests/d1/test_pr03b1_four_findings.py"
+      ],
+      "rationale": "PR-03b-1 P1: la conferma owner ignora il picco dichiarato: 100 storico confermato diventa 80."
+    },
+    {
+      "id": "pr03b1_confirmed_peak_is_current_cash",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            candidates = [v for v in (self.peak, declared, cash) if v is not None]\n            self.peak = max(candidates)",
+      "mutated": "            candidates = [v for v in (self.peak, declared, cash) if v is not None]\n            self.peak = cash",
+      "tests": [
+        "tests/d1/test_pr03b1_four_findings.py"
+      ],
+      "rationale": "PR-03b-1 P1: picco = cassa corrente dopo la conferma (picco inventato verso il basso)."
+    },
+    {
+      "id": "pr03b1_pct_invalid_as_no_limit",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if pct is None or pct <= 0 or pct > 100:\n                return REASON_PCT_INVALID",
+      "mutated": "            if pct is None or pct <= 0 or pct > 100:\n                pct_cap_raw = None",
+      "tests": [
+        "tests/d1/test_pr03b1_four_findings.py"
+      ],
+      "rationale": "PR-03b-1: limite % non valido trattato come nessun limite (sopravvissuto alla suite su main, #628 M98)."
+    },
+    {
+      "id": "pr03b1_recovery_reject_keeps_key",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                if self.config.anti_duplication_enabled:\n                    self.duplication_guard.release(event_key)\n                self._reject_signal(signal, f\"max_recovery_tables_reached",
+      "mutated": "                if False:\n                    self.duplication_guard.release(event_key)\n                self._reject_signal(signal, f\"max_recovery_tables_reached",
+      "tests": [
+        "tests/d1/test_pr03b1_four_findings.py"
+      ],
+      "rationale": "PR-03b-1 P2 (F-12b): il rifiuto per tavoli di recupero occupati trattiene la chiave fino al TTL."
+    },
+    {
+      "id": "pr03b1_auto_next_drawdown_skipped",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    risk_reason = RuntimeController._drawdown_hard_stop_reason(self) or \"risk_approved\"",
+      "mutated": "                    risk_reason = \"risk_approved\"",
+      "tests": [
+        "tests/d1/test_pr03b1_four_findings.py",
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "PR-03b-1: auto-next senza il gate di drawdown (% e limite non valido)."
     }
   ]
 }

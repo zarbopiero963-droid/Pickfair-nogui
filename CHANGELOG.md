@@ -9,6 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **PR-03b-1 — quattro rilievi verificati da Claude B e Claude D (`PF-OWNER-PR03B1-FOUR-FINDINGS-GO-20261116`).**
+  - **P1 (F-11 / AUD-GA-008):** un'installazione che ha gia' operato ma senza stato del drawdown persistito non prende
+    piu' la prima cassa letta come massimo storico (picco storico 100, cassa 80, limite 10 %: prima picco 80 e
+    ingresso ammesso). Baseline non verificata, nessun nuovo ingresso fino alla conferma owner del picco
+    (`owner_confirm_drawdown_baseline`, `declared_peak`); storico non leggibile ⇒ stesso blocco. Nessuno schema nuovo.
+  - **P2 (F-12b):** il rifiuto `max_recovery_tables_reached` rilascia la chiave anti-duplicato del tentativo rifiutato
+    (prima trattenuta fino al TTL); le chiavi degli ordini gia' ammessi restano.
+  - **Test avversariali:** limite % non valido (NaN, inf, ≤ 0, > 100, testo, bool) su segnale, manuale/Dutching e
+    auto-next; blocco dell'auto-next oltre il drawdown % (livello runtime: l'E2E auto-next fino al broker resta
+    NOT_VERIFIED). 11 mutazioni `pr03b1_*`. Test `tests/d1/test_pr03b1_four_findings.py`.
 - **P0 AUD-BF-016 — l'arresto d'emergenza cancellava zero ordini e si dichiarava riuscito**
   (`PF-OWNER-P0-EMERGENCY-STOP-20261110`). Leggeva solo `order_saga`, mai scritta in produzione; ora usa la tabella
   `orders` (e `order_saga`), fotografa l'exchange prima e dopo, cancella per `betId` i soli ordini aperti del bot (anche
