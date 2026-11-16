@@ -890,7 +890,26 @@ class DrawdownHardStop:
             return self._mark_history_insufficient(
                 "letture_con_lo_stesso_istante_soglia_lockdown" if not later else "lettura_fuori_ordine_soglia_lockdown",
                 at, cash, epoch, reference=max(gate_group))
+        # Ciclo 27-C (PF-OWNER-PR631-C27-M89-THREE-FAILOPEN-20261116, Sol su baf9b2ed): la stessa lettura fuori ordine si
+        # valuta SEPARATAMENTE contro i cap dell'hard-stop (assoluto e %): se, come cassa corrente, la sua perdita dal
+        # picco li supera, la perdita e' possibile ma non dimostrata => storia insufficiente, mai un hard-stop.
+        if later and any(cash < peer for peer in gate_group):
+            with self._lock:
+                peak = self.peak
+            if peak is not None and self._limit_exceeded(cap_raw, pct_cap_raw, cash, peak):
+                return self._mark_history_insufficient("lettura_fuori_ordine_limite_hard_stop", at, cash, epoch,
+                                                       reference=peak)
         return ""
+
+    def readings_since(self, at: Any) -> int:
+        """Ciclo 27-B: quante letture conservate sono iniziate nello stesso istante di ``at`` o dopo (recenti e
+        riepilogo, senza doppioni). Usato dallo sblocco owner: la rilettura deve essere l'unica."""
+        try:
+            at = float(at)
+        except (TypeError, ValueError):
+            return -1
+        with self._lock:
+            return len({(t, c) for t, c in (*self._history, *self._ladder, *self._valleys) if t >= at})
 
     def _lockdown_possible(self, lockdown_pct_raw: Any, cash: Decimal) -> bool:
         """Ciclo 25-B: perdita % di ``cash`` dal picco persistente >= soglia LOCKDOWN del desk (soglia non valida o

@@ -11358,6 +11358,66 @@
       "rationale": "Ciclo 26-B: il confronto e' con la cassa del gate (lettura con l'inizio piu' recente), non con qualunque lettura successiva."
     },
     {
+      "id": "c27a_incoherent_reading_cash_ignored",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    and desk_reason and desk_reason != \"CASH_NOT_READ\"):\n",
+      "mutated": "                    and False):\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 27-A (PF-OWNER-PR631-C27-M89-THREE-FAILOPEN-20261116, Codex): una lettura con disponibile positivo ma riserva incoerente lascerebbe partire l'ingresso in coda (1 ordine)."
+    },
+    {
+      "id": "c27a_barrier_reason_treated_as_incoherent",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    and desk_reason and desk_reason != \"CASH_NOT_READ\"):\n",
+      "mutated": "                    and desk_reason):\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 27-A: la barriera CASH_NOT_READ dopo un P&L/settlement non e' una lettura incoerente: negarla bloccherebbe ingressi legittimi."
+    },
+    {
+      "id": "c27b_concurrent_same_tick_reading_ignored",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    or stop.readings_since(started) != 1\n",
+      "mutated": "                    or False\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 27-B (Sol 1): una lettura concorrente dello stesso tick arrivata dopo la rilettura renderebbe lo sblocco owner valido su un ordine non dimostrato (1 ordine)."
+    },
+    {
+      "id": "c27c_out_of_order_hard_stop_cap_ignored",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "            if peak is not None and self._limit_exceeded(cap_raw, pct_cap_raw, cash, peak):\n",
+      "mutated": "            if False:\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 27-C (Sol 2): una lettura fuori ordine con calo possibile oltre il cap dell'hard-stop ma sotto la soglia del desk lascerebbe partire l'ingresso in coda (1 ordine)."
+    },
+    {
+      "id": "c27c_out_of_order_check_on_peers_only",
+      "module": "core.drawdown_hard_stop",
+      "area": "money_management",
+      "file": "core/drawdown_hard_stop.py",
+      "original": "        if later and any(cash < peer for peer in gate_group):\n",
+      "mutated": "        if later and any(cash > peer for peer in gate_group):\n",
+      "tests": [
+        "tests/d1/test_d1_drawdown_hard_stop.py"
+      ],
+      "rationale": "Ciclo 27-C: solo una lettura piu' bassa della cassa del gate nasconde un calo; una piu' alta non e' un'ambiguita' di perdita."
+    },
+    {
       "id": "m65_send_point_ignores_admission_session",
       "module": "core.runtime_controller",
       "area": "money_management",

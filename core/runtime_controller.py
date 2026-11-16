@@ -3448,6 +3448,15 @@ class RuntimeController:
             if account_state in (RuntimeController.ACCOUNT_UNVERIFIABLE, RuntimeController.ACCOUNT_EMPTY_VERIFIED,
                                  RuntimeController.ACCOUNT_ZERO_COMMITTED):
                 return "cassa_non_verificata:" + account_state
+            # Ciclo 27-A (PF-OWNER-PR631-C27-M89-THREE-FAILOPEN-20261116, Codex su baf9b2ed): con disponibile positivo la
+            # lettura puo' essere incoerente (riserva unmatched, totale SIM): conto FUNDS_VERIFIED ma cassa del desk
+            # invalidata DA QUELLA LETTURA (motivo `CASH_*` della verifica). Stato finanziario incoerente => ingresso
+            # negato. `CASH_NOT_READ` (barriera dopo un P&L/settlement, nessuna lettura incoerente) resta com'era.
+            desk = getattr(self, "risk_desk", None)
+            desk_reason = str(getattr(desk, "cash_equity_reason", "") or "")
+            if (validators.finite_number(getattr(desk, "cash_equity_current", None)) is None
+                    and desk_reason and desk_reason != "CASH_NOT_READ"):
+                return "cassa_non_verificata:" + desk_reason
             return ""
 
     def assert_runtime_authority(self, context: str = "") -> None:
@@ -7894,7 +7903,11 @@ class RuntimeController:
             # la cassa del gate (valutata come lettura ordinata, con la sua cassa). Altrimenti nessuno sblocco: la
             # storia insufficiente resta (fail-closed), l'owner riprova con una lettura successiva.
             started = validators.finite_number(fresh.get("read_at"))
+            # Ciclo 27-B (Sol su baf9b2ed): oltre alla rilettura non deve esistere un'altra lettura iniziata nello stesso
+            # istante o dopo (arrivata prima o dopo di lei): l'ordine degli snapshot fra le due non e' dimostrato e
+            # una nuova ambiguita' resterebbe assorbita dallo stato gia' attivo.
             if (started is None or (ordered_before is not None and started <= ordered_before)
+                    or stop.readings_since(started) != 1
                     or getattr(self, "_drawdown_read_at", None) != started
                     or validators.finite_number(getattr(self, "_drawdown_last_cash", None))
                     != validators.finite_number(fresh_cash.get("cash"))):

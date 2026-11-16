@@ -2780,7 +2780,16 @@ def test_random_arrival_orders_match_the_in_order_result_or_declare_insufficient
         assert not (stop.breached and not oracolo), (arrivo, limiti)
         assert not (oracolo and not stop.breached and not incerta), (arrivo, limiti)
         if limiti == (256, 256):
-            assert stop.breached == oracolo and not incerta, arrivo
+            # Ciclo 27-C (PF-OWNER-PR631-C27-M89-THREE-FAILOPEN-20261116): l'istante d'inizio non prova l'ordine degli
+            # snapshot. Una lettura arrivata dopo una iniziata piu' tardi e piu' bassa di lei puo' essere la cassa
+            # corrente: storia insufficiente ammessa SOLO in quel caso; il superamento coincide sempre con l'oracolo.
+            visti, fuori_ordine = [], False
+            for t, cassa in arrivo:
+                if any(t2 > t and cassa < c2 for t2, c2 in visti):
+                    fuori_ordine = True
+                visti.append((t, cassa))
+            assert stop.breached == oracolo, arrivo
+            assert not incerta or fuori_ordine, arrivo
 
 
 @pytest.mark.parametrize("tardiva", [(130.0, 3), (131.0, 1.5), (100.0, 3)])
@@ -5231,6 +5240,147 @@ def test_c26_desk_lockdown_threshold_with_readings_completed_out_of_start_order(
             assert motivo == "desk_lockdown" and stop.history_block_reason() == "", motivo
         else:
             assert motivo == "" and stop.history_block_reason() == "", motivo
+        stato = app.trading_engine.submit_quick_bet(cmd).get("status")
+        _m65_ordini_broker(app)
+        if atteso:
+            assert stato != "ACCEPTED_FOR_PROCESSING" and spia.tentativi == [], (stato, spia.tentativi)
+        else:
+            assert stato == "ACCEPTED_FOR_PROCESSING" and [t["token"] for t in spia.tentativi] == ["in_coda"]
+    finally:
+        _m65_chiudi(app)
+
+
+# ------------------------------------- ciclo 27 (PF-OWNER-PR631-C27-M89-THREE-FAILOPEN-20261116, #628 M89)
+_C27_LIMITI = {"cap_1000": {"max_drawdown_abs": 1000.0}, "senza_cap": {}, "cap_10": {"max_drawdown_abs": 10.0}}
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("limite", sorted(_C27_LIMITI))
+@pytest.mark.parametrize("riserva", [5.0, -1.0])
+def test_c27_incoherent_reserve_with_positive_available_never_releases_the_queued_entry(
+        tmp_path, monkeypatch, limite, riserva):
+    """Ciclo 27-A (Codex su baf9b2ed, M89): una lettura con disponibile positivo (100) e riserva unmatched incoerente
+    (5 senza impegnato, o negativa) e' classificata FUNDS_VERIFIED ma la cassa del desk non e' verificata
+    (CASH_RESERVE_INCOHERENT). Il ricontrollo del ciclo 26 guardava solo lo stato del conto: l'ingresso in coda partiva
+    (1 ordine). Ora la cassa invalidata da una lettura nega l'ingresso: 0 tentativi al broker."""
+    import time
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, **_C27_LIMITI[limite])
+    try:
+        rc._apply_funds_reading({"available": 100.0, "exposure": 0.0, "reserved_unmatched": riserva, "ok": True},
+                                source="t", read_at=time.monotonic())
+        assert rc.risk_desk.cash_equity_current is None
+        assert rc.drawdown_entry_block_reason(cmd).startswith("cassa_non_verificata")
+        stato = app.trading_engine.submit_quick_bet(cmd).get("status")
+        _m65_ordini_broker(app)
+        assert stato != "ACCEPTED_FOR_PROCESSING" and spia.tentativi == [], (stato, spia.tentativi)
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("limite", sorted(_C27_LIMITI))
+def test_c27_coherent_reserve_reading_still_releases_the_queued_entry(tmp_path, monkeypatch, limite):
+    """Ciclo 27-A, caso coerente: disponibile 95, impegnato 5, riserva unmatched 5 (dentro l'impegnato): cassa
+    verificata 100, l'ingresso in coda parte (1 ordine)."""
+    import time
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, **_C27_LIMITI[limite])
+    try:
+        rc._apply_funds_reading({"available": 95.0, "exposure": -5.0, "reserved_unmatched": 5.0, "ok": True},
+                                source="t", read_at=time.monotonic())
+        assert rc.risk_desk.cash_equity_current == 100.0
+        assert rc.drawdown_entry_block_reason(cmd) == ""
+        assert app.trading_engine.submit_quick_bet(cmd).get("status") == "ACCEPTED_FOR_PROCESSING"
+        _m65_ordini_broker(app)
+        assert [t["token"] for t in spia.tentativi] == ["in_coda"]
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("concorrente", [115.0, 130.0])
+def test_c27_owner_clearance_with_a_concurrent_same_tick_reading_after_the_fresh_one_is_refused(
+        tmp_path, monkeypatch, concorrente):
+    """Ciclo 27-B (Sol su baf9b2ed, M89), concorrenza deterministica con barriera: storia insufficiente da 112/101 dello
+    stesso istante (cap 10). Lo sblocco rilegge il conto (130, tick T, ordinata); mentre lo sblocco e' fermo alla
+    barriera, fra la rilettura e la sezione critica, una lettura concorrente del desk dello STESSO tick T arriva con 115:
+    nuova ambiguita' 130/115 assorbita dallo stato gia' attivo. L'istante d'inizio non prova l'ordine degli snapshot:
+    lo sblocco e' rifiutato (`cassa_fresca_non_ordinata`), storia insufficiente intatta, l'ingresso in coda non parte.
+    Prima lo sblocco riusciva e partiva 1 ordine. Con 130 (stesso valore) nessuna ambiguita' di valore: sblocco valido."""
+    import threading
+    import core.runtime_controller as rcmod
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=10.0)
+    try:
+        istante = _c25_stesso_istante(rc, (112.0, 101.0))
+        assert rc._hard_stop().history_block_reason() == REASON_HISTORY_INSUFFICIENT
+        tick = istante + 0.5
+        rc.betfair_service.get_account_funds = lambda: _fondi(130.0)
+        rilettura_fatta, concorrente_arrivata = threading.Event(), threading.Event()
+        reale = rc._read_funds_for_entry
+
+        def rilettura():
+            esito = reale()
+            rilettura_fatta.set()
+            assert concorrente_arrivata.wait(10)             # barriera: lo sblocco aspetta la lettura concorrente
+            return esito
+
+        monkeypatch.setattr(rc, "_read_funds_for_entry", rilettura)
+        esiti = []
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(rcmod.time, "monotonic", lambda: tick)
+            sblocco = threading.Thread(target=lambda: esiti.append(rc.owner_clear_drawdown_history_insufficient(
+                authorization="#631 decisione owner", reason="v", operation_id="PF-C27-B", confirm=True)))
+            sblocco.start()
+            assert rilettura_fatta.wait(10)
+            rc._apply_funds_reading(_fondi(concorrente), source="desk", read_at=tick)
+            concorrente_arrivata.set()
+            sblocco.join(10)
+        if concorrente == 130.0:
+            # stesso valore: qualunque ordine, la cassa corrente e' 130 (nessuna ambiguita' di valore) => sblocco valido
+            assert esiti and esiti[0]["cleared"] is True, esiti
+            assert app.trading_engine.submit_quick_bet(cmd).get("status") == "ACCEPTED_FOR_PROCESSING"
+            _m65_ordini_broker(app)
+            assert [t["token"] for t in spia.tentativi] == ["in_coda"]
+            return
+        assert esiti and esiti[0]["cleared"] is False and esiti[0]["reason"] == "cassa_fresca_non_ordinata", esiti
+        assert rc._hard_stop().history_block_reason() == REASON_HISTORY_INSUFFICIENT
+        assert app.trading_engine.submit_quick_bet(cmd).get("status") != "ACCEPTED_FOR_PROCESSING"
+        _m65_ordini_broker(app)
+        assert spia.tentativi == []
+    finally:
+        _m65_chiudi(app)
+
+
+@pytest.mark.real_blackbox
+@pytest.mark.parametrize("scenario,atteso", [
+    ("115_avviata_prima_arriva_dopo_cap_10", "storia_insufficiente"),   # calo possibile 15 > 10, 11,5% < 20%
+    ("125_avviata_prima_arriva_dopo_cap_10", ""),                       # calo possibile 5 < 10 e < 20%: nessun blocco
+    ("130_precedente_poi_fuori_ordine_cap_10", "hard_stop"),            # 130 prima di t1: calo dimostrato
+])
+def test_c27_out_of_order_reading_is_checked_against_the_hard_stop_cap_and_the_desk_threshold_separately(
+        tmp_path, monkeypatch, scenario, atteso):
+    """Ciclo 27-C (Sol su baf9b2ed, M89): cap assoluto 10, soglia LOCKDOWN del desk 20%. La 115 iniziata a t1 arriva
+    dopo la 130 iniziata a t2 > t1: puo' essere la cassa corrente, calo possibile 15 oltre il cap (11,5%, sotto la soglia
+    del desk). La 26-B guardava solo la soglia del desk: nessun blocco, 1 ordine. Ora le due protezioni si valutano
+    separatamente: storia insufficiente, nessun hard-stop (perdita non dimostrata), 0 tentativi. Calo possibile sotto
+    entrambe => nessun blocco; calo dimostrato (130 gia' letto prima di t1) => hard-stop come prima."""
+    import time
+    app, rc, cmd, spia = _c25_ingresso_in_coda(tmp_path, monkeypatch, max_drawdown_abs=10.0)
+    try:
+        t1 = time.monotonic()
+        t2 = t1 + 0.001
+        tardiva = 125.0 if scenario.startswith("125") else 115.0
+        if scenario.startswith("130_precedente"):
+            rc._apply_funds_reading(_fondi(130.0), source="t", read_at=t1 - 0.001)
+        rc._apply_funds_reading(_fondi(130.0), source="t", read_at=t2)
+        rc._apply_funds_reading(_fondi(tardiva), source="t", read_at=t1)
+        stop = rc._hard_stop()
+        motivo = rc.drawdown_entry_block_reason(cmd)
+        if atteso == "storia_insufficiente":
+            assert not stop.breached and stop.history_block_reason() == REASON_HISTORY_INSUFFICIENT and motivo
+        elif atteso == "hard_stop":
+            assert stop.breached and motivo
+        else:
+            assert not stop.breached and stop.history_block_reason() == "" and motivo == "", motivo
         stato = app.trading_engine.submit_quick_bet(cmd).get("status")
         _m65_ordini_broker(app)
         if atteso:

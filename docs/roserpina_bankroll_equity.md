@@ -657,6 +657,19 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   hard-stop; nessun hard-stop. Cassa del gate gia' bassa => LOCKDOWN del desk; calo possibile sotto soglia => nessun
   blocco. Prima la 100 iniziata prima della 130 e arrivata dopo lasciava il gate a 130 e l'ingresso in coda partiva.
 
+- **Ciclo 27 (PF-OWNER-PR631-C27-M89-THREE-FAILOPEN-20261116, #628 M89).** Tre varianti dei fail-open dei cicli 25-26,
+  riprodotte end-to-end in SIM (1 ordine al broker ciascuna).
+  (A, Codex) Lettura con disponibile positivo ma incoerente (riserva unmatched oltre l'impegnato o negativa): conto
+  `FUNDS_VERIFIED` ma cassa del desk invalidata da quella lettura (`CASH_*`) => `cassa_non_verificata:<motivo>`,
+  ingresso in coda negato. La barriera `CASH_NOT_READ` (P&L/settlement applicato senza lettura) resta com'era.
+  (B, Sol 1) Sblocco owner della storia insufficiente: oltre alla rilettura non deve esistere un'altra lettura iniziata
+  nello stesso istante o dopo con un valore diverso (`DrawdownHardStop.readings_since`); una lettura concorrente dello
+  stesso tick arrivata dopo la rilettura (nuova ambiguita' assorbita dallo stato gia' attivo) => sblocco rifiutato
+  (`cassa_fresca_non_ordinata`). Stesso valore => nessuna ambiguita' di valore, sblocco valido.
+  (C, Sol 2) La lettura fuori ordine piu' bassa della cassa del gate si valuta SEPARATAMENTE contro la soglia LOCKDOWN
+  del desk e contro i cap dell'hard-stop (assoluto e %): perdita dal picco oltre il cap => storia insufficiente
+  (`lettura_fuori_ordine_limite_hard_stop`), mai un hard-stop; calo dimostrato => hard-stop come prima.
+
 - **Picco e superamento in un'unica scrittura (ciclo 22, PF-OWNER-PR631-C22-CRASH-PEAK-ATOMICITY-20261112).** Il
   picco che dimostra un superamento (un massimo osservato o confermato dall'owner, anche da una lettura tardiva) sale nello
   STESSO record persistito del superamento: un crash non puo' piu' lasciare su disco picco 115 con superamento da 130.
