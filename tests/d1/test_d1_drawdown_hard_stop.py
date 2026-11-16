@@ -2510,12 +2510,18 @@ def test_two_maxima_out_of_memory_and_a_late_reading_between_them(tmp_path):
 
 @pytest.mark.parametrize("cassa", [115.0, 111.0])
 def test_late_reading_between_two_evicted_maxima_is_never_compared_with_the_later_one(tmp_path, cassa):
-    """Nessun confronto con un picco successivo: a t5 il massimo valido e' 120 (non 160) => 115 o 111 non superano 10."""
+    """Nessun confronto con un picco successivo per l'hard-stop: a t5 il massimo valido e' 120 (non 160) => 115 o 111 non
+    superano 10, nessun superamento.
+    Ciclo 26-B (PF-OWNER-PR631-C26-DESK-OUT-OF-ORDER-20261116): la lettura di t5 arriva dopo le letture iniziate piu'
+    tardi (cassa del gate 160) e l'istante d'inizio non dimostra l'ordine degli snapshot: puo' essere la cassa corrente.
+    Perdita possibile dal picco 160 (28% / 31%) oltre la soglia LOCKDOWN del desk (20%) => storia insufficiente (ingressi
+    negati), mai un hard-stop. Prima il test si aspettava nessun blocco: valeva solo per i cap dell'hard-stop."""
     c, base = _letture_dal_conto(tmp_path, [(120.0, 2), (160.0, 10)])
     _molte_letture(c, base, 11, 700)
     c.rc._apply_funds_reading(_fondi(cassa), source="test", read_at=base + 5)
     stop = c.rc._hard_stop()
-    assert not stop.breached and not stop.history_insufficient.get("active")
+    assert not stop.breached
+    assert stop.history_insufficient.get("reason") == "lettura_fuori_ordine_soglia_lockdown"
 
 
 def test_breach_stays_after_700_readings_and_after_a_crash(tmp_path):
