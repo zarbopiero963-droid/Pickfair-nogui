@@ -9,6 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **PR-04a — perdita giornaliera per identita' finanziaria (`PF-OWNER-PR04A-SCOPE-MM029-GO-20261116`, decisione
+  `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116`).** Prima un solo realizzato per processo: SIM +50 nascondeva LIVE -40
+  (limite 30, nessun blocco) e una perdita SIM fermava il LIVE con un Emergency Stop globale. Ora perdita giornaliera,
+  perdita di sessione e RISK_STOP sono per ambito `provider|ambiente|conto|valuta` (`core/financial_scope.py`); il P&L
+  va all'ambito della scommessa (riserva, chiavi `sim:`/`cleared:`), un profitto senza identita' non si accredita a
+  nessuno, una perdita non attribuibile conta per tutti. SIM oltre il limite: bloccati solo gli ingressi SIM, nessuna
+  emergenza ne' cancellazione LIVE. LIVE (o ambito non verificabile) oltre il limite: Emergency Stop globale come
+  prima. Stato persistito v2 per ambito, record v1 in quarantena per ogni ambito; baseline EXPANSION valida solo nel
+  suo ambito. **Cambiamento di comportamento:** una perdita SIM non attiva piu' l'Emergency Stop (test esistenti
+  aggiornati alla decisione owner). Test `tests/d1/test_pr04a_financial_scope.py`.
 - **PR-03b-1 — quattro rilievi verificati da Claude B e Claude D (`PF-OWNER-PR03B1-FOUR-FINDINGS-GO-20261116`).**
   - **P1 (F-11 / AUD-GA-008):** un'installazione che ha gia' operato ma senza stato del drawdown persistito non prende
     piu' la prima cassa letta come massimo storico (picco storico 100, cassa 80, limite 10 %: prima picco 80 e

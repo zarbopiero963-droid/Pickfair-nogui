@@ -15,7 +15,7 @@ import weakref
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from core import liquidity, loss_limits, validators
+from core import financial_scope, liquidity, loss_limits, validators
 from core import risk_stop as stop_rules
 from core.duplication_guard import DuplicationGuard
 from core.hedge_ref import is_hedge_order_ref
@@ -328,7 +328,14 @@ class RuntimeController:
             "reason": "cycle_executor_not_triggered",
             "recovery_status": "RECOVERY_NO_STATE",
         }
-        self._daily_loss_monitor_state: dict[str, Any] = {
+        # PR-04a (PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116): stati della perdita giornaliera PER AMBITO
+        # finanziario (`core/financial_scope.py`); `_daily_loss_monitor_state` e' la vista dell'ambito corrente.
+        self._daily_loss_scopes: dict[str, dict] = {}
+        self._scope_pnl: dict[str, float] = {}       # P&L regolato attribuito a ciascun ambito verificato
+        self._unscoped_profit = 0.0                  # profitti senza ambito verificato: mai accreditati a nessuno
+        self._daily_loss_unattributed: Optional[dict] = None   # quarantena: perdite non attribuibili, per ogni ambito
+        self._session_pnl_vector: Optional[tuple] = None
+        self._daily_loss_monitor_state = {
             "day_utc": datetime.utcnow().date().isoformat(),
             "threshold": self._safe_daily_loss_threshold(),
             "realized_pnl_day_baseline": float(self.risk_desk.realized_pnl),
@@ -347,9 +354,8 @@ class RuntimeController:
         self._session_loss_alerted = False
         self._risk_stop_lock = threading.RLock()  # P38: transizione + persistenza atomiche
         self._risk_stop_reason = stop_rules.restore_risk_stop(self.db)
-        self._daily_loss_monitor_state.update(loss_limits.restore_daily_loss(  # F4
-            self.db, today_utc=self._daily_loss_monitor_state["day_utc"], realized_pnl=float(self.risk_desk.realized_pnl)))
-        self._daily_loss_persisted = loss_limits.persist_daily_loss(self.db, self._daily_loss_monitor_state, None)
+        self._daily_loss_persisted = None
+        RuntimeController._restore_daily_loss_book(self)  # F4, PR-04a: per ambito, legacy in quarantena
         # D-1 (P0): picco di cassa dell'hard-stop `max_drawdown_abs`, persistente e mai ribasato
         self._drawdown_hard_stop = DrawdownHardStop(self.db)
         self._drawdown_hard_stop.restore(reconcile=False)   # sola lettura: riconciliazione allo START, sotto lock
@@ -1189,7 +1195,7 @@ class RuntimeController:
             return None
         return parsed
 
-    def _projected_daily_loss_breach(self, additional_pnl: float = 0.0) -> dict:
+    def _projected_daily_loss_breach(self, additional_pnl: float = 0.0, attribution: Optional[dict] = None) -> dict:
         """Stato di breach PROIETTATO includendo additional_pnl nel realized,
         READ-ONLY (non muta lo stato ne' pubblica eventi). Serve ai rami di
         early-return (es. recovery fail-closed) che ritornano PRIMA di applicare
@@ -1204,23 +1210,28 @@ class RuntimeController:
         produrrebbe un falso breach/emergency-stop al primo settlement del
         nuovo giorno."""
         threshold = self._safe_daily_loss_threshold()
+        # PR-04a: proiezione nell'ambito del settlement; un profitto senza ambito non si accredita a nessuno.
+        key = str((attribution or {}).get("scope") or RuntimeController._current_financial_scope(self))
+        if (attribution or {}).get("kind") == "unscoped_profit":
+            additional_pnl = 0.0
         if threshold is None:
-            return {"breached": False, "daily_loss_amount": 0.0}
+            return {"breached": False, "daily_loss_amount": 0.0, "financial_scope": key}
         today_utc = datetime.utcnow().date().isoformat()
-        state = self._daily_loss_monitor_state or {}
+        state = RuntimeController._daily_loss_state_for(self, key) or {}
         previous_day = str(state.get("day_utc") or "")
         day_rollover = bool(previous_day and previous_day != today_utc)
-        realized = float(self.risk_desk.realized_pnl) + float(additional_pnl or 0.0)
+        current_realized = RuntimeController._realized_for_scope(self, key)
+        realized = current_realized + float(additional_pnl or 0.0)
         if day_rollover:
             prev_realized_raw = state.get("realized_pnl")
             baseline = float(
-                self.risk_desk.realized_pnl if prev_realized_raw is None else prev_realized_raw
+                current_realized if prev_realized_raw is None else prev_realized_raw
             )
         else:
             baseline_raw = state.get("realized_pnl_day_baseline")
             baseline = float(realized if baseline_raw is None else baseline_raw)
         daily_loss = max(0.0, -(realized - baseline))
-        return {"breached": daily_loss >= threshold, "daily_loss_amount": daily_loss}
+        return {"breached": daily_loss >= threshold, "daily_loss_amount": daily_loss, "financial_scope": key}
 
     def _record_pending_daily_loss_breach(self, projected: dict) -> None:
         """Persiste IN-MEMORY un breach PROIETTATO in `_daily_loss_monitor_state`
@@ -1241,9 +1252,10 @@ class RuntimeController:
         now_iso = datetime.utcnow().isoformat()
         today_utc = datetime.utcnow().date().isoformat()
         amount = float(projected.get("daily_loss_amount", 0.0) or 0.0)
+        key = str(projected.get("financial_scope") or RuntimeController._current_financial_scope(self))
         alert_payload: Optional[dict] = None
         with self._daily_loss_state_lock:
-            prev = dict(self._daily_loss_monitor_state or {})
+            prev = dict(RuntimeController._daily_loss_state_for(self, key) or {})
             already_breached_today = bool(prev.get("breached")) and str(prev.get("day_utc") or "") == today_utc
             prev_amount = float(prev.get("daily_loss_amount", 0.0) or 0.0)
             effective_amount = max(amount, prev_amount)
@@ -1261,9 +1273,10 @@ class RuntimeController:
                 "last_alert_event": "DAILY_LOSS_BREACH_TRIGGERED",
                 "alert_count": alert_count,
                 "last_checked_at": now_iso,
+                "financial_scope": key,
             })
-            self._daily_loss_persisted = loss_limits.persist_daily_loss(self.db, state, self._daily_loss_persisted)
-            self._daily_loss_monitor_state = state
+            self.__dict__.setdefault("_daily_loss_scopes", {})[key] = state
+            RuntimeController._persist_daily_loss_book(self)
             if not already_breached_today:
                 alert_payload = {
                     "source": "RUNTIME_RECOVERY_FAILCLOSED",
@@ -1301,27 +1314,191 @@ class RuntimeController:
 
     # F4/P37 (#461 PR28-b): logica in core/loss_limits.py.
     def _reset_recovery_cycle_keeping_losses(self) -> None:
-        with self._daily_loss_state_lock:  # il reset non cancella le perdite
+        with self._daily_loss_state_lock:  # il reset non cancella le perdite (di nessun ambito)
+            before = RuntimeController._pnl_vector(self)
             shift = float(self.risk_desk.realized_pnl)
+            scopes = self.__dict__.setdefault("_daily_loss_scopes", {})
+            for key, state in scopes.items():
+                loss_limits.shift_day_baseline(state, RuntimeController._realized_for_scope(self, key, before))
             self.risk_desk.reset_recovery_cycle()
-            loss_limits.shift_day_baseline(self._daily_loss_monitor_state, shift)
+            self._scope_pnl = {}
+            self._unscoped_profit = 0.0
             if getattr(self, "_session_pnl_baseline", None) is not None:
                 self._session_pnl_baseline -= shift
+            session = getattr(self, "_session_pnl_vector", None)
+            if session is not None:
+                self._session_pnl_vector = RuntimeController._vector_minus(session, before)
+
+    # ------------------------------------------------------------------ PR-04a: identita' finanziaria
+    def _financial_scope_for(self, simulated: bool) -> str:
+        account = "" if simulated else RuntimeController._live_account_identity(self)
+        return financial_scope.runtime_scope(simulated=bool(simulated), live_account=account)
+
+    def _current_financial_scope(self) -> str:
+        """Ambito della modalita' corrente del runtime (SIM, oppure LIVE col conto Betfair connesso)."""
+        return RuntimeController._financial_scope_for(self, bool(getattr(self, "simulation_mode", False)))
+
+    def _financial_scope_of_funds(self, funds: Any) -> str:
+        """Ambito di una lettura del conto: il marcatore ``simulated`` della lettura prevale; senza marcatore vale la
+        modalita' corrente del runtime."""
+        flag = funds.get("simulated") if isinstance(funds, dict) else None
+        if flag is True or flag is False:
+            return RuntimeController._financial_scope_for(self, flag)
+        return RuntimeController._current_financial_scope(self)
+
+    def _pnl_vector(self) -> tuple:
+        return (float(self.risk_desk.realized_pnl), dict(getattr(self, "_scope_pnl", None) or {}),
+                float(getattr(self, "_unscoped_profit", 0.0) or 0.0))
+
+    @staticmethod
+    def _vector_minus(a: tuple, b: tuple) -> tuple:
+        keys = set(a[1]) | set(b[1])
+        return (a[0] - b[0], {k: a[1].get(k, 0.0) - b[1].get(k, 0.0) for k in keys}, a[2] - b[2])
+
+    def _realized_for_scope(self, key: str, vector: Optional[tuple] = None) -> float:
+        """P&L regolato dell'ambito: totale del processo meno cio' che appartiene ad ALTRI ambiti verificati e meno i
+        profitti senza ambito (mai accreditati). Le perdite non attribuibili restano nel totale: contano per tutti."""
+        desk, scoped, unscoped = vector if vector is not None else RuntimeController._pnl_vector(self)
+        others = sum(v for k, v in scoped.items() if k != key)
+        return float(desk) - float(others) - float(unscoped)
+
+    def _new_daily_loss_scope_state(self, key: str) -> dict:
+        today = datetime.utcnow().date().isoformat()
+        unattributed = getattr(self, "_daily_loss_unattributed", None)
+        if unattributed and str(unattributed.get("day_utc") or "") != today:
+            unattributed = None
+        legacy = None if not unattributed else (float(unattributed.get("intraday_realized_pnl") or 0.0),
+                                                unattributed.get("breached") is True,
+                                                str(unattributed.get("breached_at") or ""))
+        state = {"day_utc": today, "threshold": RuntimeController._safe_daily_loss_threshold(self),
+                 "last_status": "DAILY_LOSS_NOT_CONFIGURED", "reason": "max_daily_loss_not_configured",
+                 "alert_count": 0, "last_alert_event": "", "last_checked_at": datetime.utcnow().isoformat()}
+        fields = loss_limits.scope_fields(None, legacy, RuntimeController._realized_for_scope(self, key), None)
+        fields.pop(loss_limits.SEQ_KEY, None)
+        state.update(fields)
+        state["financial_scope"] = key
+        return state
+
+    def _daily_loss_state_for(self, key: str) -> dict:
+        scopes = self.__dict__.setdefault("_daily_loss_scopes", {})
+        state = scopes.get(key)
+        if state is None:
+            state = RuntimeController._new_daily_loss_scope_state(self, key)
+            scopes[key] = state
+        return state
+
+    @property
+    def _daily_loss_monitor_state(self) -> dict:
+        """Vista compatibile: lo stato della perdita giornaliera dell'ambito CORRENTE."""
+        return RuntimeController._daily_loss_state_for(self, RuntimeController._current_financial_scope(self))
+
+    @_daily_loss_monitor_state.setter
+    def _daily_loss_monitor_state(self, value: dict) -> None:
+        key = RuntimeController._current_financial_scope(self)
+        state = dict(value or {})
+        state["financial_scope"] = key
+        self.__dict__.setdefault("_daily_loss_scopes", {})[key] = state
+
+    def _persist_daily_loss_book(self) -> None:
+        unattributed = getattr(self, "_daily_loss_unattributed", None)
+        self._daily_loss_persisted = loss_limits.persist_daily_loss_book(
+            self.db, self.__dict__.setdefault("_daily_loss_scopes", {}), unattributed,
+            getattr(self, "_daily_loss_persisted", None), getattr(self, "_daily_loss_restored_seq", None))
+
+    def _restore_daily_loss_book(self) -> None:
+        today = datetime.utcnow().date().isoformat()
+        book = loss_limits.restore_daily_loss_book(self.db, today_utc=today)
+        self._daily_loss_restored_seq = book.get("seq")
+        legacy = book.get("legacy")
+        self._daily_loss_unattributed = None if legacy is None else {
+            "day_utc": today, "intraday_realized_pnl": float(min(0.0, legacy[0])), "breached": bool(legacy[1]),
+            "breached_at": str(legacy[2] or "")}
+        scopes = self.__dict__.setdefault("_daily_loss_scopes", {})
+        scopes.clear()
+        for key, fields in (book.get("scopes") or {}).items():
+            state = RuntimeController._new_daily_loss_scope_state(self, key)
+            state.update(loss_limits.scope_fields(fields, legacy, RuntimeController._realized_for_scope(self, key),
+                                                  book.get("seq")))
+            scopes[key] = state
+        current = RuntimeController._daily_loss_monitor_state.fget(self)
+        if book.get("reason"):
+            current["reason"] = book["reason"]
+        if book.get("seq") is not None:
+            current[loss_limits.SEQ_KEY] = book["seq"]
+        RuntimeController._persist_daily_loss_book(self)
+
+    def _settlement_attribution(self, pnl: float, effect: Optional[dict], payload: Optional[dict] = None) -> dict:
+        """Ambito del P&L di un settlement. Identita' della scommessa (ambito registrato alla riserva) => quell'ambito.
+        Senza identita' verificata: una PERDITA va all'ambito corrente se verificato, altrimenti e' non attribuibile
+        (conta per ogni ambito, in quarantena); un PROFITTO non si accredita a nessun ambito (prudenza)."""
+        declared = str((effect or {}).get("financial_scope") or "")
+        event_key = str((payload or {}).get("event_key") or "")
+        if not declared and event_key.startswith("sim:"):
+            # regolamento del broker simulato (chiave `sim:` di PnLEngine): appartiene alla SIM per costruzione
+            declared = financial_scope.runtime_scope(simulated=True, live_account="")
+        elif not declared and event_key.startswith("cleared:"):
+            # ordini regolati letti dall'exchange (poller `cleared:`): conto LIVE del client Betfair connesso;
+            # conto non identificabile => ambito non verificabile (perdite in quarantena, profitti non accreditati)
+            declared = RuntimeController._financial_scope_for(self, False)
+        if declared and financial_scope.is_verified(declared):
+            return {"scope": declared, "kind": "scoped"}
+        target = declared or RuntimeController._current_financial_scope(self)
+        if float(pnl) >= 0.0:
+            return {"scope": target, "kind": "unscoped_profit"}
+        if not declared and financial_scope.is_verified(target):
+            return {"scope": target, "kind": "scoped"}
+        return {"scope": target, "kind": "unattributed_loss"}
+
+    def _attribute_realized_pnl(self, pnl: float, attribution: dict) -> None:
+        """Registra l'ambito del P&L appena applicato al desk (sotto il lock dello stato giornaliero)."""
+        with self._daily_loss_state_lock:
+            kind = attribution.get("kind")
+            if kind == "scoped":
+                key = str(attribution["scope"])
+                self._scope_pnl[key] = float(self._scope_pnl.get(key, 0.0)) + float(pnl)
+            elif kind == "unscoped_profit":
+                self._unscoped_profit = float(self._unscoped_profit) + float(pnl)
+            else:
+                today = datetime.utcnow().date().isoformat()
+                current = self._daily_loss_unattributed
+                if not current or str(current.get("day_utc") or "") != today:
+                    current = {"day_utc": today, "intraday_realized_pnl": 0.0, "breached": False, "breached_at": ""}
+                current = dict(current)
+                current["intraday_realized_pnl"] = float(current["intraday_realized_pnl"]) + float(pnl)
+                threshold = self._safe_daily_loss_threshold()
+                if (not current["breached"] and threshold is not None
+                        and validators.reaches_limit(-current["intraday_realized_pnl"], threshold)):
+                    current.update(breached=True, breached_at=datetime.utcnow().isoformat())
+                self._daily_loss_unattributed = current
 
     def _session_loss_block_reason(self) -> str:
         limit = getattr(getattr(self, "config", None), "max_session_loss", None)
         if limit is None:
             return ""
+        baseline = getattr(self, "_session_pnl_baseline", None)
+        if baseline is None:
+            return loss_limits.session_loss_reason(limit, None, float(self.risk_desk.realized_pnl))
+        # PR-04a: perdita di sessione dell'ambito corrente; base senza vettore (impostata a mano) = nessun P&L
+        # d'ambito alla base
+        vector = getattr(self, "_session_pnl_vector", None) or (float(baseline), {}, 0.0)
+        key = RuntimeController._current_financial_scope(self)
         return loss_limits.session_loss_reason(
-            limit, getattr(self, "_session_pnl_baseline", None), float(self.risk_desk.realized_pnl))
+            limit, RuntimeController._realized_for_scope(self, key, vector),
+            RuntimeController._realized_for_scope(self, key))
 
     def _limits_block_reason(self) -> str:
         if loss_limits.persist_failed(getattr(self, "_daily_loss_persisted", None)):
             return "daily_loss_state_non_persistito"
+        state = RuntimeController._daily_loss_monitor_state.fget(self)
+        if state.get("breached") and str(state.get("day_utc") or "") == datetime.utcnow().date().isoformat():
+            # PR-04a: superamento dell'ambito corrente => nessun nuovo ingresso in QUESTO ambito (SIM: blocco locale)
+            return f"daily_loss_breached:{financial_scope.parts(state.get('financial_scope', ''))[1] or 'ambito'}"
         return self._session_loss_block_reason()
 
     def _loss_block_reason(self) -> str:
         stopped = getattr(self, "_risk_stop_reason", "")
+        if stopped and not RuntimeController._risk_stop_applies(self):
+            stopped = ""                     # PR-04a: RISK_STOP di un altro ambito SIM, non di quello corrente
         return (self._limits_block_reason() or (f"risk_stop_active:{stopped}" if stopped else "")
                 or self._recovery_persist_block_reason()
                 or RuntimeController._drawdown_persist_block_reason(self))
@@ -1373,16 +1550,41 @@ class RuntimeController:
             self._session_loss_alerted = True
             logger.critical("SESSION LOSS BREACH: %s", reason)
             self.bus.publish("SESSION_LOSS_BREACH_TRIGGERED", {"reason": reason})
-            self.risk_stop(reason)  # P38
+            self.risk_stop(reason, scope=RuntimeController._current_financial_scope(self))  # P38, PR-04a
 
-    def risk_stop(self, reason: str) -> dict:
-        """P38: blocca entrate; cancel unmatched + cashout (CASHOUT_ALL)."""
+    _RISK_STOP_SCOPE_SEP = "@ambito="
+
+    @staticmethod
+    def _risk_stop_scope(reason: str) -> str:
+        """Ambito SIM di un RISK_STOP locale (PR-04a), '' se globale."""
+        text = str(reason or "")
+        if RuntimeController._RISK_STOP_SCOPE_SEP not in text:
+            return ""
+        scope = text.rsplit(RuntimeController._RISK_STOP_SCOPE_SEP, 1)[1]
+        return scope if financial_scope.is_sim(scope) else ""
+
+    def _risk_stop_applies(self) -> bool:
+        """RISK_STOP globale: vale sempre. Locale (SIM): vale solo nel suo ambito. Motivo con un ambito non
+        riconoscibile => globale (fail-closed)."""
+        scope = RuntimeController._risk_stop_scope(getattr(self, "_risk_stop_reason", ""))
+        return not scope or scope == RuntimeController._current_financial_scope(self)
+
+    def risk_stop(self, reason: str, scope: Optional[str] = None) -> dict:
+        """P38: blocca entrate; cancel unmatched + cashout (CASHOUT_ALL).
+
+        PR-04a (PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116): uno stop nato in un ambito SIM verificato resta
+        LOCALE (blocca solo gli ingressi di quell'ambito; il CASHOUT_ALL, che segue la modalita' del servizio, parte
+        solo mentre il runtime e' in quell'ambito: mai verso il LIVE). LIVE, ambito non verificabile o senza ambito
+        (es. esposizione) => globale come prima."""
         with self._risk_stop_lock:
             if self._risk_stop_reason:
                 return {"risk_stopped": True, "reason": self._risk_stop_reason}
-            self._risk_stop_reason = reason = str(reason or "risk_stop")
+            reason = str(reason or "risk_stop")
+            if scope and financial_scope.is_sim(str(scope)):
+                reason = f"{reason}{RuntimeController._RISK_STOP_SCOPE_SEP}{scope}"
+            self._risk_stop_reason = reason
             persisted = stop_rules.persist_risk_stop(self.db, reason)
-        cashout = not self._daily_loss_entry_blocked()  # EMERGENCY ha cancel-all
+        cashout = not self._daily_loss_entry_blocked() and RuntimeController._risk_stop_applies(self)
         result = {"risk_stopped": True, "reason": reason, "cashout_attempted": cashout, "persisted": persisted}
         if cashout:
             self._route_cashout_signal(stop_rules.cashout_all_signal(reason))
@@ -1395,7 +1597,9 @@ class RuntimeController:
         if not getattr(self, "_risk_stop_reason", ""):
             return {"risk_stop_reset": True, "reason": ""}
         with self._risk_stop_lock:
-            blocker = stop_rules.reset_blocker(self, at_start)
+            # PR-04a: uno stop SIM locale si ricontrolla e si riapre solo dal suo ambito
+            blocker = ("" if RuntimeController._risk_stop_applies(self) or at_start
+                       else "risk_stop_di_altro_ambito") or stop_rules.reset_blocker(self, at_start)
             if blocker:
                 return {"risk_stop_reset": False, "reason": blocker}
             if not self._risk_stop_reason:
@@ -1431,7 +1635,10 @@ class RuntimeController:
             return real_reason
         return "exposure_stop_candidate_rejected:" + reason.split(":", 1)[1]
 
-    def _monitor_daily_loss_breach(self, *, source: str, payload: Optional[dict] = None) -> dict[str, Any]:
+    def _monitor_daily_loss_breach(self, *, source: str, payload: Optional[dict] = None,
+                                   scope: Optional[str] = None) -> dict[str, Any]:
+        """Perdita giornaliera dell'ambito ``scope`` (default: l'ambito corrente), PR-04a."""
+        key = str(scope or RuntimeController._current_financial_scope(self))
         now = datetime.utcnow()
         today_utc = now.date().isoformat()
         threshold = self._safe_daily_loss_threshold()
@@ -1441,12 +1648,12 @@ class RuntimeController:
         pending_publish: Optional[tuple[str, dict]] = None
         pending_log: Optional[tuple[str, dict]] = None
         with self._daily_loss_state_lock:
-            previous = dict(self._daily_loss_monitor_state or {})
+            previous = dict(RuntimeController._daily_loss_state_for(self, key) or {})
             previous_day = str(previous.get("day_utc") or "")
             previous_breached = bool(previous.get("breached", False))
             day_rollover = bool(previous_day and previous_day != today_utc)
 
-            realized_pnl = float(self.risk_desk.realized_pnl)
+            realized_pnl = RuntimeController._realized_for_scope(self, key)
             previous_realized_raw = previous.get("realized_pnl", realized_pnl)
             previous_realized = float(realized_pnl if previous_realized_raw is None else previous_realized_raw)
             if day_rollover:
@@ -1480,6 +1687,7 @@ class RuntimeController:
                 "alert_count": int(previous.get("alert_count", 0) or 0),
                 "last_alert_event": str(previous.get("last_alert_event") or ""),
                 "last_checked_at": now.isoformat(),
+                "financial_scope": key,
             }
 
             if breached:
@@ -1497,6 +1705,8 @@ class RuntimeController:
                     "runtime_mode": str(self.mode.value),
                     "execution_mode": str(self.execution_mode),
                     "payload_correlation_id": str((payload or {}).get("correlation_id") or (payload or {}).get("event_key") or ""),
+                    "financial_scope": key,
+                    "global_escalation": financial_scope.escalates_globally(key),
                 }
                 if not previous_breached or day_rollover:
                     state["last_alert_event"] = "DAILY_LOSS_BREACH_TRIGGERED"
@@ -1516,8 +1726,11 @@ class RuntimeController:
                 state["alert_count"] = int(previous.get("alert_count", 0) or 0)
                 state["last_alert_event"] = str(previous.get("last_alert_event") or "DAILY_LOSS_BREACH_TRIGGERED")
 
-            self._daily_loss_persisted = loss_limits.persist_daily_loss(self.db, state, self._daily_loss_persisted)
-            self._daily_loss_monitor_state = state
+            unattributed = getattr(self, "_daily_loss_unattributed", None)
+            if unattributed and str(unattributed.get("day_utc") or "") != today_utc:
+                self._daily_loss_unattributed = None             # quarantena del giorno precedente: scaduta
+            self.__dict__.setdefault("_daily_loss_scopes", {})[key] = state
+            RuntimeController._persist_daily_loss_book(self)
             result = dict(state)
 
         if pending_log is not None:
@@ -2881,6 +3094,11 @@ class RuntimeController:
           atomico)."""
         if not breach_state.get("breached"):
             return False
+        # PR-04a (PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116): il superamento di una SIM verificata resta locale
+        # (blocco dei soli ingressi di quell'ambito, `_limits_block_reason`): nessuna emergenza, nessuna cancellazione
+        # di ordini LIVE, nessun LOCKDOWN globale. LIVE o ambito non verificabile => Emergency Stop globale.
+        if not financial_scope.escalates_globally(str(breach_state.get("financial_scope") or "")):
+            return False
         # Ferma se il runtime GESTISCE posizioni live (ACTIVE o PAUSED): un
         # settlement che sfonda il limite mentre si e' in pausa e' un evento
         # reale e deve hard-stoppare (impedendo anche un resume() successivo).
@@ -2997,6 +3215,7 @@ class RuntimeController:
     ) -> dict:
         self.reload_config(reset_session=True)
         self._session_pnl_baseline = float(self.risk_desk.realized_pnl)
+        self._session_pnl_vector = RuntimeController._pnl_vector(self)   # PR-04a: base di sessione per ambito
         self._session_loss_alerted = False
         self.reset_risk_stop(at_start=True)  # P38: mai riapertura implicita
 
@@ -3030,7 +3249,8 @@ class RuntimeController:
         # impedisce che un start() successivo riprenda a fare trading live nello
         # stesso giorno. Il day-rollover del monitor azzera al nuovo giorno.
         if requested_execution_mode == "LIVE":
-            daily_loss_start = self._monitor_daily_loss_breach(source="RUNTIME_START")
+            daily_loss_start = self._monitor_daily_loss_breach(
+                source="RUNTIME_START", scope=RuntimeController._financial_scope_for(self, False))
             if daily_loss_start.get("breached"):
                 # Sincronizza lo stato a SIMULATION: stop() flippa solo `mode`,
                 # quindi senza questo il controller resterebbe live-capable
@@ -3254,7 +3474,8 @@ class RuntimeController:
 
         status = self.get_status()
         self.bus.publish("RUNTIME_STARTED", status)
-        if getattr(self, "_risk_stop_reason", "") and not self._daily_loss_entry_blocked():  # P38: ritenta dopo riavvio
+        if (getattr(self, "_risk_stop_reason", "") and not self._daily_loss_entry_blocked()
+                and RuntimeController._risk_stop_applies(self)):  # P38: ritenta dopo riavvio; PR-04a: solo nel suo ambito
             self._route_cashout_signal(stop_rules.cashout_all_signal(self._risk_stop_reason))
 
         return {
@@ -5453,6 +5674,9 @@ class RuntimeController:
                 "price": payload["price"],
                 "simulation_mode": payload["simulation_mode"],
                 "customer_ref": payload["customer_ref"],          # #461 PR28-e: correlazione esito-riserva
+                # PR-04a: ambito finanziario della scommessa, per attribuirle il P&L del suo settlement
+                # (modalita' del runtime: e' quella del servizio Betfair che esegue l'ordine)
+                "financial_scope": RuntimeController._current_financial_scope(self),
             },
         )
         # #461 PR29-c: l'identita' della riserva viaggia con la request (persistita in `orders`): dopo un riavvio
@@ -6197,6 +6421,8 @@ class RuntimeController:
         record.update(owner)
         tm = self.table_manager
         tid, ev, ref = int(owner["table_id"]), owner["event_key"], owner["customer_ref"]
+        held_table = tm.get_table(tid)
+        bet_scope = str(((held_table.meta if held_table else None) or {}).get("financial_scope") or "")
         with tm.locked():
             snapshot = tm.snapshot_table(tid)
             try:
@@ -6250,8 +6476,8 @@ class RuntimeController:
                     " (riconciliato da held)" if upgrade else "")
         if upgrade:
             return {"outcome": outcome, "applied": True, "replayed": True,
-                    "realized_already": bool(existing.get("realized_applied"))}
-        return {"outcome": outcome, "applied": True, "realized_already": False}
+                    "realized_already": bool(existing.get("realized_applied")), "financial_scope": bet_scope}
+        return {"outcome": outcome, "applied": True, "realized_already": False, "financial_scope": bet_scope}
 
     def _reconcile_held_after_rebuild(self, rebuild: dict) -> dict:
         """#461 PR29-c, all'avvio e alla ripresa: tavoli ricostruiti (F018 riuscito) => i settlement trattenuti si
@@ -7386,6 +7612,7 @@ class RuntimeController:
         monotonic d'inizio della lettura (#461 PR28-e: le riserve confermate a mercato dopo restano pendenti)."""
         account = self._account_from_funds(funds)
         account["source"] = source
+        account["financial_scope"] = RuntimeController._financial_scope_of_funds(self, funds)   # PR-04a
         if isinstance(funds, dict) and funds.get("error"):
             # #461 PR28-e: errore del servizio (lettura fallita, campo mancante): lo snapshot lo conserva e il gate
             # dei fondi dell'auto-next lo tratta come fondi non verificabili.
@@ -7416,7 +7643,9 @@ class RuntimeController:
         account = self._account_from_funds(funds)
         baseline = float(account["cash_equity"]) if account["ok"] and account["cash_equity"] > 0.0 else None
         return {"baseline": baseline, "reason": str(reason), "set_at": datetime.utcnow().isoformat(),
-                "set_at_ts": float(set_at_ts) if set_at_ts is not None else time.time()}
+                "set_at_ts": float(set_at_ts) if set_at_ts is not None else time.time(),
+                # PR-04a: la baseline vale solo nell'ambito finanziario del conto su cui e' stata letta
+                "financial_scope": RuntimeController._financial_scope_of_funds(self, funds)}
 
     def _start_expansion_cycle(self, reason: str, funds: Any = None, *, set_at_ts: Optional[float] = None) -> bool:
         """F032 (decisione owner): baseline del ciclo = equita' di cassa REGOLATA (disponibile + impegnato,
@@ -7433,12 +7662,14 @@ class RuntimeController:
             logger.error("F032: baseline del ciclo non persistita (%s): nessuna espansione", exc)
             baseline = None
         self._expansion_baseline = baseline
+        self._expansion_baseline_scope = state.get("financial_scope")
         return baseline is not None
 
     def _load_expansion_baseline(self) -> bool:
         """F032: la baseline persistita sopravvive al riavvio. Assente => False (il chiamante apre il ciclo);
         illeggibile => nessuna baseline (nessuna espansione) finche' una transizione esplicita non la fissa."""
         self._expansion_baseline = None
+        self._expansion_baseline_scope = None
         try:
             raw = (self.db.get_settings() or {}).get(self._EXPANSION_KEY)
         except Exception as exc:
@@ -7468,6 +7699,8 @@ class RuntimeController:
             self._expansion_baseline = None
             return True
         self._expansion_baseline = value if value is not None and value > 0.0 else None
+        # PR-04a: baseline senza ambito (legacy) => ambito ignoto => nessuna espansione finche' un nuovo ciclo non la fissa
+        self._expansion_baseline_scope = parsed.get("financial_scope") if isinstance(parsed, dict) else None
         return True
 
     _CYCLE_RESET_KEY = "roserpina.cycle_reset_state"
@@ -7496,6 +7729,11 @@ class RuntimeController:
         baseline = getattr(self, "_expansion_baseline", None)
         account = getattr(self, "_account_snapshot", None) or {}
         if baseline is None or baseline <= 0.0 or not account.get("ok"):
+            return None
+        # PR-04a: crescita solo nello STESSO ambito finanziario verificato della baseline (mai la baseline SIM per il
+        # LIVE, mai quella di un altro conto); senza baseline verificabile dell'ambito, nessun aumento di stake.
+        base_scope = str(getattr(self, "_expansion_baseline_scope", None) or "")
+        if not financial_scope.is_verified(base_scope) or str(account.get("financial_scope") or "") != base_scope:
             return None
         if self._uncertain_reservations_map():
             return None
@@ -7676,6 +7914,7 @@ class RuntimeController:
         self._pending_cycle_reset = None                                    # reset (se c'era) ora durevole
         if context.get("expansion_state") is not None:
             self._expansion_baseline = context["expansion_state"].get("baseline")
+            self._expansion_baseline_scope = context["expansion_state"].get("financial_scope")
 
     def _recovery_persist_aborted(self, context: dict, exc: Exception) -> None:
         logger.error("RSR-12: stato dei tavoli di recovery non persistito (%s)", exc)
@@ -8526,14 +8765,17 @@ class RuntimeController:
             # sfonderebbe comunque il limite giornaliero si hard-stoppa lo stesso
             # (proiezione read-only). Un eventuale falso positivo da duplicato e'
             # piu' sicuro di un kill-switch mancato.
-            projected_recovery = self._projected_daily_loss_breach(pnl)
+            projected_recovery = self._projected_daily_loss_breach(
+                pnl, RuntimeController._settlement_attribution(self, pnl, effect, payload))
             stopped = self._enforce_daily_loss_hard_stop(projected_recovery)
             if projected_recovery.get("breached"):
                 # Persisti il breach nello stato del monitor (in-memory) cosi' un
                 # successivo start()/resume() in LIVE lo rifiuta ed emette il
                 # primo TRIGGERED.
                 self._record_pending_daily_loss_breach(projected_recovery)
-                if not stopped and not self._emergency_stopped:
+                if (not stopped and not self._emergency_stopped
+                        and financial_scope.escalates_globally(str(projected_recovery.get("financial_scope") or ""))):
+                    # PR-04a: solo LIVE / ambito non verificabile (una SIM resta locale).
                     # Se il runtime e' STOPPED l'enforce non ferma (gate
                     # ACTIVE/PAUSED) e il solo stato monitor in-memory andrebbe
                     # perso a un riavvio prima di start()/resume(), riaprendo il
@@ -8575,8 +8817,11 @@ class RuntimeController:
         # ogni SIGNAL_RECEIVED concorrente (dispatch multi-worker) e' rifiutato,
         # chiudendo la finestra tra apply-PnL e emergency_stop in cui altrimenti
         # vedrebbe _emergency_stopped ancora False e piazzerebbe un ordine.
-        projected_close = self._projected_daily_loss_breach(pnl)
-        arm_pending = bool(projected_close.get("breached")) and self.mode in (
+        attribution = RuntimeController._settlement_attribution(self, pnl, effect, payload)
+        projected_close = self._projected_daily_loss_breach(pnl, attribution)
+        # PR-04a: il pending-stop (globale) si arma solo se il superamento sale all'Emergency Stop globale
+        arm_pending = bool(projected_close.get("breached")) and financial_scope.escalates_globally(
+            str(projected_close.get("financial_scope") or "")) and self.mode in (
             RuntimeMode.ACTIVE,
             RuntimeMode.PAUSED,
         )
@@ -8603,6 +8848,7 @@ class RuntimeController:
             if (settlement_key and settlement_key not in self._processed_realized_pnl_keys
                     and not effect.get("realized_already") and not unproven):
                 self._apply_realized_pnl_without_mutating_bankroll(pnl)
+                RuntimeController._attribute_realized_pnl(self, pnl, attribution)
                 self._processed_realized_pnl_keys.add(settlement_key)
                 realized_now = True
             # Bankroll sync PRIMA dell'enforce: emergency_stop flippa il service a
@@ -8627,7 +8873,8 @@ class RuntimeController:
             # Daily-loss hard stop SINCRONO (persist + cancel-all + lockdown) dopo
             # il sync ma PRIMA dell'auto-trade: l'auto-trade sotto e' bloccato da
             # _risk_allows_auto_trade e nessun ordine parte dopo il breach.
-            daily_loss_state = self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload)
+            daily_loss_state = self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload,
+                                                               scope=str(attribution["scope"]))
             if realized_now:
                 # Dopo il monitor della perdita giornaliera: un crash fra le due scritture puo' solo far contare
                 # la perdita di piu' dopo il riavvio (fail-closed), mai perderla.
@@ -9824,6 +10071,12 @@ class RuntimeController:
         data["auto_trade_mm"] = dict(self._last_auto_trade_result or {})
         data["cycle_executor"] = dict(self._last_cycle_executor_result or {})
         data["daily_loss_monitor"] = self._monitor_daily_loss_breach(source="RUNTIME_STATUS_SNAPSHOT")
+        # PR-04a: stato per ambito finanziario (sola lettura), oltre alla vista dell'ambito corrente
+        data["daily_loss_scopes"] = {
+            str(k): {"day_utc": v.get("day_utc"), "daily_loss_amount": v.get("daily_loss_amount"),
+                     "breached": bool(v.get("breached")),
+                     "global_escalation": financial_scope.escalates_globally(str(k))}
+            for k, v in dict(self.__dict__.get("_daily_loss_scopes") or {}).items()}
         if self.streaming_feed is not None:
             try:
                 data["streaming_feed"] = self.streaming_feed.status()

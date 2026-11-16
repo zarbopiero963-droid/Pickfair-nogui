@@ -4,6 +4,7 @@ import threading
 from datetime import datetime, timedelta
 
 import pytest
+from types import SimpleNamespace
 
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode
@@ -484,7 +485,8 @@ def test_recovery_failclosed_breach_while_stopped_persists_and_refuses_start():
 
     # round-8: emergency_stop DUREVOLE (oltre allo stato monitor in-memory)
     assert rc._emergency_stopped is True
-    assert rc._daily_loss_monitor_state.get("breached") is True
+    # PR-04a: lo stato e' per ambito; l'emergenza ha riportato il runtime in SIM, il breach e' dell'ambito LIVE
+    assert rc._daily_loss_state_for(rc._financial_scope_for(False)).get("breached") is True
     # Codex round-7 P2: il ramo recovery EMETTE il primo TRIGGERED (monitor saltato),
     # cosi' i subscriber di monitoraggio non lo perdono.
     triggered = [p for t, p in bus.events if t == "DAILY_LOSS_BREACH_TRIGGERED"]
@@ -759,10 +761,13 @@ def test_runtime_controller_daily_loss_breach_state_is_persistent_until_day_roll
     rc.mode = RuntimeMode.STOPPED
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.sync_bankroll(100.0)
+    # PR-04a: settlement letti dall'exchange (`cleared:`) di un conto LIVE identificato, cosi' la vincita e' dello
+    # stesso ambito della perdita (una vincita senza identita' non si accrediterebbe a nessun ambito)
+    rc.betfair_service.client = SimpleNamespace(username="conto-persist@example.invalid")
 
     rc._on_close_position(
         {
-            "event_key": "evt-daily-loss-persist-1",
+            "event_key": "cleared:1.persist:1",
             "table_id": 1,
             "batch_id": "batch-daily-loss-persist-1",
             "correlation_id": "corr-daily-loss-persist-1",
@@ -777,7 +782,7 @@ def test_runtime_controller_daily_loss_breach_state_is_persistent_until_day_roll
     )
     rc._on_close_position(
         {
-            "event_key": "evt-daily-loss-persist-2",
+            "event_key": "cleared:1.persist:2",
             "table_id": 2,
             "batch_id": "batch-daily-loss-persist-2",
             "correlation_id": "corr-daily-loss-persist-2",

@@ -462,7 +462,11 @@ def test_parita_sim_live_stesso_portafoglio_stesso_netto(app):
 # --------------------------------------------------------------------------
 def test_perdita_sim_arriva_al_kill_switch_giornaliero(tmp_path, monkeypatch):
     """Limite owner: perdita giornaliera 10 EUR. Calcolo indipendente:
-    BACK 15 @ 2.0 perdente = -15 >= 10 => hard-stop."""
+    BACK 15 @ 2.0 perdente = -15 >= 10 => stop della SIM.
+
+    PR-04a (PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116): il superamento SIM
+    blocca solo gli ingressi SIM; NON e' piu' un Emergency Stop globale (che
+    disattiverebbe il LIVE e ne cancellerebbe gli ordini)."""
     monkeypatch.chdir(tmp_path)
     istanza = _App(tmp_path, monkeypatch, {"roserpina.max_daily_loss": 10.0})
     try:
@@ -475,7 +479,9 @@ def test_perdita_sim_arriva_al_kill_switch_giornaliero(tmp_path, monkeypatch):
         assert len(istanza.chiusure) == 1
         assert istanza.rt._daily_loss_monitor_state["daily_loss_amount"] == pytest.approx(15.0)
         assert istanza.rt._daily_loss_monitor_state["breached"] is True
-        assert istanza.rt._emergency_stopped is True
+        assert istanza.rt._emergency_stopped is False
+        assert istanza.rt._limits_block_reason() == "daily_loss_breached:SIM"
+        assert istanza.rt._risk_allows_auto_trade() == (False, "daily_loss_breached:SIM")
     finally:
         istanza.ferma()
 

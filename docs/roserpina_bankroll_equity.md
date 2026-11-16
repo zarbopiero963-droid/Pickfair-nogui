@@ -765,3 +765,40 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   sessione, che non lo attribuiscono mai d'ufficio, nemmeno con l'ambito gia' dichiarato da una lettura (Grok su 559b39ca). L'unica uscita e' la procedura owner `owner_assign_drawdown_scope` (tracciata, stesse verifiche degli
   sblocchi, nessun ordine AMBIGUOUS): attribuisce lo stato all'ambito corrente senza reset (picco, superamento e storia
   insufficiente restano) e rimette la baseline da confermare. Emergency Stop, STOP BOT e LOCKDOWN restano globali.
+
+## PR-04a — perdita giornaliera e risk-stop per identita' finanziaria (PF-OWNER-PR04A-SCOPE-MM029-GO-20261116)
+
+Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE globale / SIM locale). Codice:
+`core/financial_scope.py`, `core/daily_loss_store.py` (formato v2), `core/runtime_controller.py`; test
+`tests/d1/test_pr04a_financial_scope.py`.
+
+- **Identita' finanziaria.** `provider_id|environment_id|account_id|capital_scope`: `betfair|SIM|sim|EUR` per la SIM,
+  `betfair|LIVE|betfair:<hash dello username>|EUR` per il LIVE (mai lo username in chiaro). EUR e USDC non condividono
+  mai un ambito; nessun adapter SX Bet. Ambito LIVE senza conto identificato, ambiente sconosciuto o campo mancante =
+  **non verificabile**.
+- **P&L per ambito.** Il P&L di un settlement va all'ambito della scommessa, registrato nella riserva del tavolo
+  (`meta.financial_scope`, modalita' del runtime all'invio). Senza identita' dimostrata: una PERDITA va all'ambito
+  corrente se verificato, altrimenti e' **non attribuibile** (quarantena: conta per ogni ambito fino al cambio di
+  giorno); un PROFITTO non si accredita a nessun ambito. Nessuna compensazione SIM/LIVE ne' fra conti LIVE.
+- **Superamento del limite giornaliero.** SIM verificata: bloccati solo i nuovi ingressi di quell'ambito
+  (`daily_loss_breached:SIM`); nessun Emergency Stop, nessuna cancellazione di ordini LIVE, LIVE non disattivato,
+  nessun LOCKDOWN globale, nessun pending-stop globale. LIVE o ambito non verificabile: Emergency Stop globale come
+  prima (SIM e LIVE bloccati; passare a SIM non lo scioglie). Emergency Stop manuale: sempre globale, invariato.
+- **Perdita di sessione e RISK_STOP.** La perdita di sessione si misura nell'ambito corrente. Un RISK_STOP nato da una
+  SIM verificata resta locale (motivo con suffisso `@ambito=<ambito SIM>`): blocca solo quell'ambito, il CASHOUT_ALL
+  parte solo mentre il runtime e' in quell'ambito (mai instradato al LIVE), il reset si fa da quell'ambito
+  (`risk_stop_di_altro_ambito` altrimenti). LIVE, ambito non verificabile o stop senza ambito (esposizione): globale.
+- **Persistenza (v2).** `daily_loss_state = {"version": 2, "scopes": {ambito: {day_utc, intraday_realized_pnl,
+  breached, breached_at}}, "legacy": {...}|null, "seq": n}`; gli ambiti senza perdite ne' breach non si scrivono.
+  Record v1 (senza ambito) = quarantena `legacy`, applicata a ogni ambito solo come perdita (mai come profitto) e col
+  suo breach, mai attribuita in automatico a un conto. Db e marker si riconciliano per ambito (seq piu' alta,
+  altrimenti perdita maggiore; breach se uno dei due); la `seq` riparte sopra quella ripristinata. Stato illeggibile
+  => breach per ogni ambito fino al nuovo giorno. Un crash durante la prima scrittura v2 lascia il marker v2, che al
+  riavvio si riconcilia con il record v1 senza perdere ne' la quarantena ne' le perdite d'ambito.
+- **EXPANSION.** La baseline del ciclo porta l'ambito del conto su cui e' stata letta; la crescita si calcola solo se
+  lo snapshot del conto e' dello STESSO ambito verificato. Baseline legacy senza ambito, di un altro ambito o di un
+  conto LIVE non identificato => nessuna crescita (nessun aumento di stake).
+- **Fuori da PR-04a (dichiarati).** Picco del drawdown per ambito (resta la protezione fail-closed S18-1:
+  `drawdown_stato_di_altro_ambito`); stop di esposizione complessiva (globale, somma dei tavoli SIM e LIVE); N3
+  (DEFENSE/AUTO-RESET/EXPANSION, PR-03b-3); PR-04b. La prova LIVE e' a livello di decisione del runtime (LIVE emulato),
+  mai un'esecuzione LIVE end-to-end.
