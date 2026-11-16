@@ -30,8 +30,13 @@ anche se la cassa risale, finche' l'owner non lo sblocca con la procedura esplic
 ``owner_clear_breach`` (nessun percorso automatico la chiama). Lo stesso vale per il ribasamento del picco
 (``owner_rebase_peak``): mai conseguenza automatica di una perdita.
 
-Limite dichiarato: senza stato persistito (prima esecuzione dopo l'aggiornamento) il picco parte dalla prima cassa
-verificata osservata. Non e' una ricostruzione dello storico (quella resta il metodo owner del 13/10, opzione A).
+Senza stato persistito (PR-03b-1 P1, mandato owner PF-OWNER-PR03B1-FOUR-FINDINGS-GO-20261116):
+- installazione nuova (nessuno storico di trading dimostrato) => il picco parte dalla prima cassa verificata osservata;
+- installazione che ha gia' operato (ordini o stato Roserpina nel DB) o storico non verificabile => la prima cassa NON
+  e' il massimo storico: baseline non verificata (``REASON_BASELINE_UNVERIFIED``) e nessun nuovo ingresso finche'
+  l'owner non conferma il picco con ``owner_confirm_baseline`` (``declared_peak``). Nessun picco inventato, nessuna
+  ricostruzione automatica (lo strumento di ricostruzione dallo storico Betfair resta il metodo owner del 13/10,
+  opzione A, fuori da questo modulo).
 """
 from __future__ import annotations
 
@@ -85,6 +90,42 @@ KIND_PCT = "max_drawdown_hard_stop_pct"
 RECENT_READINGS_LIMIT = 256
 SUMMARY_LIMIT = 256
 READING_HISTORY_LIMIT = RECENT_READINGS_LIMIT + SUMMARY_LIMIT
+# PR-03b-1 P1 (F-11 / AUD-GA-008, mandato owner PF-OWNER-PR03B1-FOUR-FINDINGS-GO-20261116): un'installazione che ha gia'
+# operato ma non ha lo stato del drawdown persistito (installazione precedente all'hard-stop, chiave cancellata) non puo'
+# assumere che la prima cassa letta sia il massimo storico (picco 100, cassa 80: il picco diventerebbe 80 e una perdita
+# del 20 % sparirebbe). Baseline NON verificata => nessun nuovo ingresso finche' l'owner non conferma il picco con la
+# procedura esistente (`owner_confirm_baseline`, con `declared_peak`). Nessun picco inventato ne' ricostruito qui.
+# Storico = stato Roserpina persistito oppure righe nelle tabelle del ciclo ordine; storico non leggibile => come presente.
+HISTORY_SETTINGS_KEYS = ("roserpina.expansion_baseline_state", "roserpina.recovery_tables_state",
+                         "roserpina.cycle_reset_state")
+HISTORY_TABLES = ("orders", "order_saga", "settlement_effects", "dutching_batches", "simulation_bets")
+BASELINE_MISSING_WITH_HISTORY = "stato_assente_con_storico"
+BASELINE_MISSING_HISTORY_UNREADABLE = "stato_assente_storico_illeggibile"
+
+
+def _trading_history(db: Any, settings: dict) -> Optional[bool]:
+    """True se l'installazione ha gia' operato, False se dimostrabilmente nuova, None se non verificabile.
+
+    Solo letture: nessuna scrittura, nessuna transazione aperta. Un DB senza interrogazioni (``_execute``) non puo'
+    dimostrare l'assenza di storico => None (fail-closed)."""
+    for key in HISTORY_SETTINGS_KEYS:
+        if settings.get(key) not in (None, ""):
+            return True
+    execute = getattr(db, "_execute", None)
+    if not callable(execute):
+        return None
+    try:
+        for table in HISTORY_TABLES:
+            exists = execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,),
+                             fetchone=True, commit=False)
+            if exists is None:
+                continue                                  # schema precedente senza la tabella: nessuna riga da contare
+            if execute(f"SELECT 1 FROM {table} LIMIT 1", fetchone=True, commit=False) is not None:
+                return True
+    except Exception:
+        logger.error("D-1: storico di trading non leggibile: baseline del drawdown non verificata", exc_info=True)
+        return None
+    return False
 
 
 def _marker_path(db: Any) -> str:
@@ -221,6 +262,8 @@ class DrawdownHardStop:
         self.session_open = False
         self.baseline_verified = True
         self.baseline: dict = {}
+        # PR-03b-1 P1: perche' la baseline non e' verificata senza un record persistito ("" = nessun motivo di questo tipo)
+        self.baseline_missing = ""
         # S18-1: ambito corrente dichiarato dal runtime (None = non dichiarato: nessun controllo, uso diretto senza runtime)
         # e provenienza dello stato persistito (None = nessuno stato ancora attribuito). `scope_legacy`: record letto
         # senza provenienza (scritto prima della protezione) => quarantena fino all'attribuzione owner.
@@ -239,9 +282,11 @@ class DrawdownHardStop:
         with self._lock:
             self.unreadable = False
             records = []
+            settings: dict = {}
             try:
                 getter = getattr(self._db, "get_settings", None)
-                raw = (getter() or {}).get(STATE_KEY) if callable(getter) else None
+                settings = (getter() or {}) if callable(getter) else {}
+                raw = settings.get(STATE_KEY)
                 if raw not in (None, ""):
                     records.append(_parse_record(raw))
                 marker = _marker_path(self._db)
@@ -254,7 +299,21 @@ class DrawdownHardStop:
                 self.unreadable = True
                 return
             if not records:
-                return                                   # nessuno stato: nuovo perimetro, picco dalla prima cassa verificata
+                # Nessuno stato persistito. Installazione nuova (nessuno storico dimostrato) => picco dalla prima cassa
+                # verificata. Installazione che ha gia' operato, o storico non verificabile => PR-03b-1 P1: la prima
+                # cassa non e' il massimo storico, baseline non verificata fino alla conferma owner. Senza DB (uso
+                # diretto del modulo) non c'e' storico da proteggere.
+                if self._db is not None and self.baseline_verified:
+                    history = _trading_history(self._db, settings)
+                    if history is not False:
+                        self.baseline_verified = False
+                        self.baseline_missing = (BASELINE_MISSING_WITH_HISTORY if history
+                                                 else BASELINE_MISSING_HISTORY_UNREADABLE)
+                        logger.critical("D-1: stato del drawdown assente su un'installazione con storico (%s): baseline "
+                                        "NON verificata, nuovi ingressi negati fino alla conferma owner del picco",
+                                        self.baseline_missing)
+                return
+            self.baseline_missing = ""
             # Codex/Grok/Claude D su dc2f5f25: sessione, baseline e superamento li decide il record piu' recente
             # (`seq`). Un marker rimasto da un guasto ormai rientrato (rimozione fallita, file bloccato su Windows) ha
             # un `seq` inferiore al DB e non annulla uno sblocco o una conferma owner salvati dopo; a pari `seq` vale
@@ -559,6 +618,7 @@ class DrawdownHardStop:
                 self.peak, self.baseline = old
                 self.baseline_verified = False
                 return False
+            self.baseline_missing = ""                   # PR-03b-1 P1: il record confermato ora esiste su disco
             # D-631-17 (Codex su 9c9121f0): il picco confermato e' il massimo noto da adesso: un calo letto dopo la
             # conferma, anche arrivato fuori ordine, si misura da questo picco. G17-1 (Grok su bcd19a32): il picco
             # dichiarato non ha un istante noto, quindi per una lettura iniziata PRIMA della conferma (che il runtime
@@ -1145,4 +1205,5 @@ class DrawdownHardStop:
                     "unreadable": self.unreadable, "persist_failed": self.persist_failed,
                     "breached": self.breached, "breach": dict(self.breach), "session_open": self.session_open,
                     "baseline_verified": self.baseline_verified, "baseline": dict(self.baseline),
+                    "baseline_missing": self.baseline_missing,
                     "history_insufficient": dict(self.history_insufficient)}

@@ -45,6 +45,16 @@ Test: `tests/f09/test_f09_recover_gating.py` (HeadlessApp reale in SIM tramite l
 - Test: `tests/f08/test_f08_startup_orders_real_db.py` (DB SQLite reale, migrazione di un DB senza tabelle senza
   perdita di ordini); mutazioni `f08_*` in `guardrails/mutation_catalog.json`.
 
+## Drawdown: installazione con storico senza stato persistito (PR-03b-1 P1)
+
+**Nota di migrazione.** Nessuna modifica allo schema: solo letture (`sqlite_master` e `SELECT 1 ... LIMIT 1` sulle
+tabelle del ciclo ordine). Un'installazione aggiornata che ha gia' operato ma non ha ancora la chiave
+`roserpina.drawdown_hard_stop_state` (installazione precedente all'hard-stop D-1, o chiave rimossa) **non apre nuovi
+ingressi** dopo l'aggiornamento: baseline del drawdown non verificata finche' l'owner non conferma il picco con
+`owner_confirm_drawdown_baseline(..., declared_peak=...)`. Vale anche per le installazioni SIM di prova con storico:
+nessun bypass; un DB SIM nuovo riparte senza blocco. Dettaglio in `docs/roserpina_bankroll_equity.md`
+(«Stato assente su un'installazione che ha gia' operato»).
+
 ## AMBIGUOUS gia' regolato: nessuna riserva fantasma al riavvio (G7-R06, #586)
 
 Scenario riprodotto su main `911562a` (`tests/f026/test_g7_r06_settled_ambiguous.py`, HeadlessApp in SIM con SQLite

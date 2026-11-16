@@ -561,9 +561,23 @@ PF-ROSERPINA-FINANCIAL-CONTRACT-FINAL, PF-ROSERPINA-D2-LOCKDOWN-UNLOCK-FINAL (#5
   declared_peak=None)`: doppia conferma, `operation_id` monouso, verifica di cassa verificata, esposizione leggibile e
   assenza di ordini AMBIGUOUS, registrazione durevole. La baseline diventa il massimo fra picco salvato, picco
   dichiarato dall'owner e cassa corrente, ed e' registrata come conferma owner, **non** come prova del massimo storico.
-  Nessun endpoint Control API/MCP. Un primo avvio senza alcuno stato e' un nuovo perimetro contabile (per le
-  installazioni esistenti vale la decisione owner del 13/10, opzione A). Soluzione definitiva prevista in BB-3:
-  ricostruzione del picco da un registro finanziario indipendente.
+  Nessun endpoint Control API/MCP. Un primo avvio senza alcuno stato e' un nuovo perimetro contabile **solo** per
+  un'installazione nuova. Soluzione definitiva prevista in BB-3: ricostruzione del picco da un registro finanziario
+  indipendente.
+- **Stato assente su un'installazione che ha gia' operato (PR-03b-1 P1, F-11 / AUD-GA-008, mandato owner
+  PF-OWNER-PR03B1-FOUR-FINDINGS-GO-20261116).** Senza record persistito, `DrawdownHardStop.restore` verifica in sola
+  lettura se l'installazione ha uno storico: stato Roserpina persistito (`roserpina.expansion_baseline_state`,
+  `roserpina.recovery_tables_state`, `roserpina.cycle_reset_state`) oppure righe in `orders`, `order_saga`,
+  `settlement_effects`, `dutching_batches`, `simulation_bets`. Con storico, o con storico non leggibile (anche un DB
+  che non permette di interrogarlo), la prima cassa letta **non** e' il massimo storico: baseline non verificata
+  (`drawdown_baseline_non_verificata`, `snapshot()["baseline_missing"]` = `stato_assente_con_storico` /
+  `stato_assente_storico_illeggibile`), nessun nuovo ingresso su ogni percorso, in SIM e LIVE, anche dopo crash e
+  riavvii (il primo record salvato porta `baseline_verified: false`). Esempio owner: picco storico 100 EUR, cassa 80,
+  limite 10 %: su main 5daa6a51 il picco diventava 80 e l'ingresso partiva; ora nessun ingresso, e dopo la conferma
+  owner con `declared_peak=100` la perdita del 20 % e' un hard-stop. Sblocco solo con
+  `owner_confirm_drawdown_baseline`, invariata. Il rilevamento non scrive nulla e non ricostruisce alcun picco.
+  Installazione nuova (nessuno storico): invariato, picco dalla prima cassa verificata. Test:
+  `tests/d1/test_pr03b1_four_findings.py`; mutazioni `pr03b1_*`.
 - **Limiti dichiarati.** Un `seq` regressivo al riavvio non e' rilevabile. Il marker sta sullo stesso filesystem del DB
   (stesso dominio di guasto): la sua perdita insieme al DB e' coperta dal blocco della baseline non verificata, non
   da una ricostruzione. Grandezze

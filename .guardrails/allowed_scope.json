@@ -3637,6 +3637,20 @@
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
       ],
       "max_files": 28
+    },
+    "pr03b1_four_findings": {
+      "description": "PR-03b-1 (PF-OWNER-PR03B1-FOUR-FINDINGS-GO-20261116, preflight #628 c.6919799700, controprova D #628 M98): P1 installazione con storico e senza stato del drawdown => baseline non verificata fino alla conferma owner (F-11/AUD-GA-008); P2 rilascio della chiave anti-duplicato sul rifiuto max_recovery_tables_reached (F-12b); test avversariali del limite % non valido; test del blocco auto-next oltre il drawdown % (livello runtime, E2E NOT_VERIFIED). Nessuna modifica N3, nessuna correzione #632/#636.",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/drawdown_hard_stop.py",
+        "core/runtime_controller.py",
+        "docs/roserpina_bankroll_equity.md",
+        "docs/startup_recovery.md",
+        "guardrails/mutation_catalog.json",
+        "tests/d1/test_pr03b1_four_findings.py"
+      ],
+      "max_files": 8
     }
   }
 }

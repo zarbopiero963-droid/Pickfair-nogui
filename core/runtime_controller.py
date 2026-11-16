@@ -5264,6 +5264,13 @@ class RuntimeController:
         if allow_recovery and active_recovery_count >= max_recovery:
             free_exists = any(t.status == "FREE" for t in self.table_manager._tables.values())
             if not free_exists:
+                # PR-03b-1 P2 (F-12b, PF-OWNER-PR03B1-FOUR-FINDINGS-GO-20261116): la chiave e' stata acquisita da
+                # QUESTO tentativo (sopra: `acquire` nega se gia' attiva o fissata), quindi si rilascia come negli altri
+                # rifiuti d'ammissione; trattenuta fino al TTL bloccava un nuovo segnale legittimo. Nessun ordine e'
+                # partito: il rilascio non puo' duplicare un ordine gia' ammesso, inviato o incerto (le loro chiavi
+                # non passano di qui).
+                if self.config.anti_duplication_enabled:
+                    self.duplication_guard.release(event_key)
                 self._reject_signal(signal, f"max_recovery_tables_reached:{active_recovery_count}")
                 return
             else:
