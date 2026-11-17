@@ -1819,3 +1819,131 @@ def test_c3_comando_gia_in_coda_non_parte_nella_finestra_del_sync(tmp_path):
     c.rc._sync_bankroll_post_settlement = _sync
     _settle_cleared(c, 6, -40.0)
     assert durante == [0], durante
+
+
+# ============================================================================ ciclo straordinario 12 (owner: sicurezza ordini LIVE)
+def _segna_riga_live(c, customer_ref):
+    """Il LIVE del banco e' emulato sul SimulationBroker (request salvata con simulation_mode=True): la riga si registra
+    come LIVE, come la salverebbe un ordine LIVE reale."""
+    for riga in c.rc.db._execute("SELECT id, payload_json FROM orders WHERE customer_ref = ?", (customer_ref,),
+                                 fetch=True, commit=False):
+        dati = json.loads(dict(riga)["payload_json"])
+        dati["simulation_mode"] = False
+        c.rc.db._execute("UPDATE orders SET payload_json = ? WHERE id = ?", (json.dumps(dati), dict(riga)["id"]))
+
+
+def test_c12_riavvio_in_emergenza_riconcilia_gli_ordini_live_del_bot(tmp_path, monkeypatch):
+    """Ciclo 12 (M117): superamento LIVE del conto A col runtime in SIM, errore prima dell'enforce (nessuna cancellazione
+    nel processo), crash, riavvio. Dopo il riavvio l'emergenza resta e gli ordini LIVE del bot vengono cancellati con
+    verifica sul conto LIVE; quelli estranei sono segnalati come esposizione irrisolta (mai cancellati alla cieca)."""
+    import core.runtime_controller as rcm
+    c = _banco(tmp_path, "c12.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    c.rc.mode = RuntimeMode.ACTIVE
+    tavolo_a = _riserva(c, "1.981")
+    _segna_riga_live(c, tavolo_a.meta["customer_ref"])
+    _ambiente(c, "SIM")
+    c.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+    c.rc.mode = RuntimeMode.ACTIVE
+
+    def _boom(self, *a, **k):
+        raise RuntimeError("errore dopo il salvataggio")
+
+    monkeypatch.setattr(rcm.RuntimeController, "_mark_settlement_realized", _boom)
+    with pytest.raises(RuntimeError):
+        _settle_tavolo(c, tavolo_a, -40.0)
+    monkeypatch.undo()
+    _fotografa_al_crash(tmp_path, "c12.db", "c12_crash.db")
+
+    r = _banco(tmp_path, "c12_crash.db", max_daily_loss=30.0)
+    assert r.rc._emergency_stopped is True
+    live = _LiveSpia([
+        {"betId": "A-1", "customerOrderRef": tavolo_a.meta["customer_ref"], "marketId": "1.981",
+         "status": "EXECUTABLE", "sizeRemaining": 2.0},
+        {"betId": "X-9", "customerOrderRef": "", "marketId": "1.999", "status": "EXECUTABLE", "sizeRemaining": 5.0}])
+    r.rc.betfair_service.get_live_client = lambda: live
+    _ambiente(r, "SIM")
+    assert _ingresso(r, "1.982")[0] == 0, "ordine partito dopo il riavvio in emergenza"
+    assert ("1.981", ["A-1"]) in live.cancellazioni, (live.letture, live.cancellazioni)
+    assert all(m != "1.999" for m, _ in live.cancellazioni), "ordine estraneo cancellato alla cieca"
+    esiti = _eventi(r, "EMERGENCY_STOP_RECONCILED")
+    assert esiti and esiti[-1]["manual_action_required"] is True, "esposizione estranea non segnalata"
+    assert any(o.get("bet_id") == "X-9" for o in esiti[-1].get("unattributed_open_orders") or [])
+    assert r.rc._emergency_stopped is True
+
+
+def test_c12_riavvio_in_emergenza_senza_conto_live_resta_irrisolto(tmp_path):
+    """Ciclo 12: conto LIVE irraggiungibile alla riconciliazione dopo il riavvio => emergenza mantenuta, esposizione
+    dichiarata irrisolta (intervento manuale), nessuna verifica dichiarata riuscita; si ritenta all'evento successivo."""
+    c = _banco(tmp_path, "c12b.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc.betfair_service.get_live_client = lambda: _LiveSpia()
+    _settle_cleared(c, 8, -40.0)
+    assert c.rc._emergency_stopped is True
+    r = _banco(tmp_path, "c12b.db", max_daily_loss=30.0)
+
+    def _irraggiungibile():
+        raise ConnectionError("LIVE non raggiungibile")
+
+    r.rc.betfair_service.get_live_client = _irraggiungibile
+    _ambiente(r, "SIM")
+    _ingresso(r, "1.983")
+    esiti = _eventi(r, "EMERGENCY_STOP_RECONCILED")
+    assert esiti and esiti[-1]["manual_action_required"] is True and esiti[-1].get("verification") != "VERIFIED"
+    assert r.rc._emergency_stopped is True
+    spia = _LiveSpia()
+    r.rc.betfair_service.get_live_client = lambda: spia
+    _ingresso(r, "1.984")
+    assert spia.letture >= 1, "riconciliazione non ritentata"
+
+
+def test_c12_stop_di_sessione_live_col_runtime_in_sim_protegge_il_conto_live(tmp_path):
+    """Ciclo 12 (N2, Codex+Grok): perdita di sessione LIVE regolata col runtime in SIM: lo stop globale protegge il conto
+    LIVE (ordine del bot cancellato con verifica; ordine estraneo segnalato), non solo la sede SIM."""
+    c = _banco(tmp_path, max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.ACTIVE
+    tavolo = _riserva(c, "1.985")
+    _segna_riga_live(c, tavolo.meta["customer_ref"])
+    _ambiente(c, "SIM")
+    c.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+    c.rc._route_cashout_signal = lambda segnale: None
+    live = _LiveSpia([
+        {"betId": "L-1", "customerOrderRef": tavolo.meta["customer_ref"], "marketId": "1.985",
+         "status": "EXECUTABLE", "sizeRemaining": 2.0},
+        {"betId": "X-8", "customerOrderRef": "", "marketId": "1.998", "status": "EXECUTABLE", "sizeRemaining": 5.0}])
+    c.rc.betfair_service.get_live_client = lambda: live
+    c.rc.mode = RuntimeMode.ACTIVE
+    _settle_tavolo(c, tavolo, -40.0)
+    assert c.rc._risk_stop_reason.startswith("session_loss_breached") and "@ambito=" not in c.rc._risk_stop_reason
+    assert ("1.985", ["L-1"]) in live.cancellazioni, (live.letture, live.cancellazioni)
+    assert all(m != "1.998" for m, _ in live.cancellazioni)
+    esiti = _eventi(c, "RISK_STOP_LIVE_PROTECTION")
+    assert esiti and esiti[-1]["manual_action_required"] is True
+
+
+def test_c12_perdita_non_attribuibile_arma_la_barriera_di_sessione_cumulativa(tmp_path):
+    """Ciclo 12 (N1, Codex): LIVE -20, passaggio a SIM, perdita NON attribuibile -15 (sessione LIVE cumulativa 35,
+    limite 30): durante il sync la barriera globale e' armata e l'ammissione e' chiusa."""
+    c = _banco(tmp_path, max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    _ambiente(c, "LIVE")
+    _settle(c, -20.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+    vero_sync = c.rc._sync_bankroll_post_settlement
+    durante = []
+
+    def _sync(p):
+        durante.append(c.rc._limits_block_reason())
+        return vero_sync(p)
+
+    c.rc._sync_bankroll_post_settlement = _sync
+    c.rc._on_close_position(_canonical_close_payload(
+        event_key="cleared:1.986:1", batch_id="b-c12n1", correlation_id="c-c12n1", gross_pnl=-15.0,
+        commission_amount=0.0, net_pnl=-15.0, pnl=-15.0))
+    assert durante == ["session_loss_breached:in_attesa_dello_stop_globale"], durante

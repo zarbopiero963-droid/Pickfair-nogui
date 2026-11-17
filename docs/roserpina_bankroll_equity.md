@@ -863,6 +863,21 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   - *Doppio guasto (S2).* Se fallisce anche il completamento del libro, la chiave resta in attesa e il salvataggio
     successivo completa il libro (tutti gli ambiti + quarantena + chiave insieme); fino ad allora salvataggi rinviati e
     gate `daily_loss_state_non_persistito`.
+- **Ciclo straordinario 12 (owner, sicurezza degli ordini LIVE).**
+  - *Riavvio in emergenza.* Un Emergency Stop di provenienza LIVE (o ignota) ripristinato al riavvio riconcilia gli
+    ordini LIVE del bot: cancellazione verificata sul conto LIVE, ordini estranei mai cancellati e sempre elencati. Si
+    tenta alla costruzione e si ritenta al primo settlement o segnale finche' la verifica riesce; esito non verificato,
+    conto irraggiungibile o esposizione residua => emergenza mantenuta, evento `EMERGENCY_STOP_MANUAL_ACTION_REQUIRED`
+    ed esposizione irrisolta salvata (`emergency_unresolved_exposure`). Evento d'esito: `EMERGENCY_STOP_RECONCILED`.
+  - *Marker LIVE col runtime in SIM.* Il marker durevole di un superamento LIVE (o non verificabile) registra la sede
+    LIVE anche col runtime in SIM: prima registrava SIM e al riavvio la riconciliazione sarebbe andata sulla sede
+    sbagliata.
+  - *Stop di sessione LIVE col runtime in SIM.* Oltre al CASHOUT_ALL della sede corrente, sweep verificato sulla sede
+    LIVE (`RISK_STOP_LIVE_PROTECTION`): cancellati solo gli ordini del bot non abbinati; posizioni abbinate, ordini
+    estranei o verifica fallita => esposizione irrisolta segnalata, mai dichiarata chiusa. L'hedge di posizioni LIVE
+    abbinate da un runtime in SIM non e' automatico (limite dichiarato: intervento manuale).
+  - *Perdita non attribuibile e sessione.* La barriera globale di sessione si valuta su ogni ambito interessato
+    (anche cumulativamente), non solo su quello attribuito.
 - **EXPANSION.** La baseline del ciclo porta l'ambito del conto su cui e' stata letta; la crescita si calcola solo se
   lo snapshot del conto e' dello STESSO ambito verificato. Baseline legacy senza ambito, di un altro ambito o di un
   conto LIVE non identificato => nessuna crescita (nessun aumento di stake).

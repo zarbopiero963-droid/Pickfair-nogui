@@ -515,7 +515,7 @@ def test_durable_breach_marker_persisted_before_bankroll_sync():
     orig_marker = rc._persist_db_emergency_marker
     orig_sync = rc._sync_bankroll_post_settlement
 
-    def _marker_spy(*, active, reason=""):
+    def _marker_spy(*, active, reason="", **_kw):          # ciclo 12: anche live_exposure
         order.append(("marker", active))
         return orig_marker(active=active, reason=reason)
 

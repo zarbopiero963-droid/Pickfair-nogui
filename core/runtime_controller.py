@@ -369,6 +369,7 @@ class RuntimeController:
         # incluso), non solo il flag.
         self._reload_persisted_emergency_state()
         self._load_hedged_markets()
+        RuntimeController._reconcile_restored_emergency(self, trigger="startup")
 
     @property
     def catalog_sync(self) -> CatalogSyncService:
@@ -1715,6 +1716,12 @@ class RuntimeController:
         result = {"risk_stopped": True, "reason": reason, "cashout_attempted": cashout, "persisted": persisted}
         if cashout:
             self._route_cashout_signal(stop_rules.cashout_all_signal(reason))
+        if scope and financial_scope.escalates_globally(str(scope)) and bool(getattr(self, "simulation_mode", False)):
+            # Ciclo 12 (N2, Codex+Grok): stop globale nato da un ambito LIVE (o non verificabile) col runtime in SIM:
+            # il CASHOUT_ALL segue la sede corrente (SIM). Sulla sede LIVE: cancellazione VERIFICATA dei soli ordini del
+            # bot; posizioni gia' abbinate, ordini estranei o verifica fallita => esposizione irrisolta segnalata
+            # (`manual_action_required`), mai dichiarata chiusa.
+            result["live_protection"] = RuntimeController._protect_live_venue(self, reason)
         logger.critical("RISK STOP: %s", result)
         self.bus.publish("RISK_STOP_TRIGGERED", dict(result))
         return result
@@ -2537,6 +2544,9 @@ class RuntimeController:
             # non valida => UNKNOWN, trattata come LIVE (registro SIM mai usato per posizioni di origine ignota).
             source = str(settings.get("emergency_settlement_source") or "").strip().upper()
             self._settlement_source_before_emergency = source if source in {"SIM", "LIVE"} else "UNKNOWN"
+            # Ciclo 12 (M117): un'emergenza di provenienza LIVE (o ignota) ripristinata al riavvio ha ancora da
+            # riconciliare gli ordini LIVE del bot: la postura da sola non legge, non cancella e non segnala nulla.
+            self._emergency_reconcile_pending = self._settlement_source_before_emergency != "SIM"
         except Exception:
             # Fail-closed: se NON si riesce a leggere lo stato persistito non
             # si puo' PROVARE che non ci fosse un'emergenza in corso => si
@@ -2550,6 +2560,7 @@ class RuntimeController:
             self._emergency_stopped_at = datetime.utcnow().isoformat()
             self._emergency_reason = "EMERGENCY_STATE_UNREADABLE"
             self._settlement_source_before_emergency = "UNKNOWN"
+            self._emergency_reconcile_pending = True
 
         # Postura COMPLETA, non solo il flag: senza lockdown/live-gate anche
         # i percorsi che non leggono il flag (es. mode-based) resterebbero
@@ -2574,6 +2585,69 @@ class RuntimeController:
             self._emergency_reason,
         )
 
+    _RECONCILE_SKIP = ("client",)
+
+    def _protect_live_venue(self, reason: str) -> dict:
+        """Ciclo 12 (N2): sweep verificato sulla sede LIVE per uno stop globale nato dal LIVE col runtime in SIM."""
+        try:
+            sweep = self._emergency_cancel_and_verify(was_live=True)
+        except Exception as exc:
+            logger.exception("ciclo 12: protezione della sede LIVE fallita")
+            sweep = {"verification": "UNVERIFIED", "manual_action_required": True, "error": str(exc), "client": None}
+        client = sweep.get("client")
+        result = {k: v for k, v in sweep.items() if k not in RuntimeController._RECONCILE_SKIP}
+        result.update(reason=str(reason), live_client_available=client is not None)
+        self.bus.publish("RISK_STOP_LIVE_PROTECTION", dict(result))
+        if result.get("manual_action_required"):
+            logger.critical("RISK STOP (LIVE da runtime SIM): esposizione LIVE non riconciliata (verifica=%s)",
+                            result.get("verification"))
+            self.bus.publish("EMERGENCY_STOP_MANUAL_ACTION_REQUIRED", dict(result, source="RISK_STOP"))
+        return {k: result.get(k) for k in ("verification", "manual_action_required", "cancelled_count",
+                                           "live_client_available")}
+
+    def _reconcile_restored_emergency(self, trigger: str = "") -> Optional[dict]:
+        """Ciclo 12 (M117): riconciliazione verificata, sulla sede LIVE, di un Emergency Stop ripristinato al riavvio.
+        Cancella solo gli ordini LIVE del bot (mai quelli estranei, che restano elencati) e verifica l'esito sul conto.
+        Esito non verificato, conto irraggiungibile o esposizione estranea/abbinata => emergenza mantenuta, evento
+        `EMERGENCY_STOP_MANUAL_ACTION_REQUIRED` ed esposizione irrisolta salvata; si ritenta all'evento successivo
+        (settlement, segnale) finche' la verifica riesce. Mai raise."""
+        if not self.__dict__.get("_emergency_reconcile_pending") or not self._emergency_stopped:
+            return None
+        if self.__dict__.get("_emergency_reconciling"):
+            return None
+        self._emergency_reconciling = True
+        try:
+            sweep = self._emergency_cancel_and_verify(was_live=True)
+            client = sweep.get("client")
+            result = {k: v for k, v in sweep.items() if k not in RuntimeController._RECONCILE_SKIP}
+            result.update(trigger=str(trigger), live_client_available=client is not None,
+                          reason=self._emergency_reason)
+            resolved = not result.get("manual_action_required")
+            self._emergency_reconcile_pending = not resolved
+            try:
+                if hasattr(self.db, "save_settings"):
+                    self.db.save_settings({"emergency_unresolved_exposure": "" if resolved else json.dumps({
+                        "verification": result.get("verification"),
+                        "open_after_cancel": result.get("open_after_cancel"),
+                        "unattributed_open_orders": result.get("unattributed_open_orders"),
+                        "matched_positions": result.get("matched_positions"),
+                        "at": datetime.utcnow().isoformat()}, default=str)})
+            except Exception:
+                logger.exception("ciclo 12: esposizione irrisolta non salvata")
+            self.bus.publish("EMERGENCY_STOP_RECONCILED", dict(result))
+            if not resolved:
+                logger.critical("EMERGENCY STOP ripristinato: esposizione LIVE NON riconciliata (verifica=%s, aperti=%d, "
+                                "non attribuiti=%d)", result.get("verification"),
+                                len(result.get("open_after_cancel") or []),
+                                len(result.get("unattributed_open_orders") or []))
+                self.bus.publish("EMERGENCY_STOP_MANUAL_ACTION_REQUIRED", dict(result))
+            return result
+        except Exception:
+            logger.exception("ciclo 12: riconciliazione dell'emergenza ripristinata fallita (si ritenta)")
+            return None
+        finally:
+            self._emergency_reconciling = False
+
     def _persist_emergency_state(self) -> str:
         """Persiste lo stato di emergenza; ritorna '' o l'errore (mai raise)."""
         if not hasattr(self.db, "save_settings"):
@@ -2591,7 +2665,7 @@ class RuntimeController:
             logger.exception("emergency_state: persist failed")
             return str(exc)
 
-    def _persist_db_emergency_marker(self, *, active: bool, reason: str = "") -> str:
+    def _persist_db_emergency_marker(self, *, active: bool, reason: str = "", live_exposure: bool = False) -> str:
         """Scrive SOLO su db il marker di emergenza (senza mutare lo stato
         in-memory), cosi' il successivo emergency_stop esegue comunque il
         lockdown completo. Usato per persistere DUREVOLMENTE un breach daily-loss
@@ -2606,9 +2680,11 @@ class RuntimeController:
                 "emergency_stopped": "1" if active else "0",
                 "emergency_stopped_at": datetime.utcnow().isoformat() if active else self._emergency_stopped_at,
                 "emergency_reason": reason if active else self._emergency_reason,
+                # Ciclo 12: il marker di un superamento LIVE (o non verificabile) registra la sede LIVE anche col
+                # runtime in SIM, cosi' al riavvio la riconciliazione riguarda gli ordini LIVE (stessa causa di C1).
                 "emergency_settlement_source": (
-                    (getattr(self, "_settlement_source_before_emergency", "")
-                     or ("SIM" if self.simulation_mode else "LIVE")) if active
+                    ("LIVE" if live_exposure else (getattr(self, "_settlement_source_before_emergency", "")
+                                                   or ("SIM" if self.simulation_mode else "LIVE"))) if active
                     else getattr(self, "_settlement_source_before_emergency", "") or ""),
             })
             return ""
@@ -4793,6 +4869,7 @@ class RuntimeController:
             })
 
     def _on_signal_received(self, signal: dict) -> None:
+        RuntimeController._reconcile_restored_emergency(self, trigger="signal")   # ciclo 12: ritento, no-op se nulla
         signal_type = str((signal or {}).get("signal_type") or "").strip().upper()
         if signal_type in {"CASHOUT", "CASHOUT_ALL"}:
             with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
@@ -8880,6 +8957,7 @@ class RuntimeController:
         economico (tavolo, recovery, chiave, P&L realizzato) si applica una sola volta per ``settlement_key``."""
         if not isinstance(payload, dict):
             return
+        RuntimeController._reconcile_restored_emergency(self, trigger="settlement")   # ciclo 12: ritento
         with self._settlement_consumer_lock():
             self._on_close_position_locked(payload)
 
@@ -9078,7 +9156,8 @@ class RuntimeController:
                 str(pr.get("financial_scope") or "")))
         if stopped_marker:
             self._persist_db_emergency_marker(
-                active=True, reason=f"DAILY_LOSS_BREACH_PENDING:{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}")
+                active=True, reason=f"DAILY_LOSS_BREACH_PENDING:{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}",
+                live_exposure=True)
         # Codex su 1587e3cf: superamento SIM proiettato => barriera d'ingresso LOCALE (solo quell'ambito) prima
         # dell'I/O del sync, senza pending-stop ne' marker globali; si toglie quando lo stato breached e' scritto.
         local_pending = {str(pr["financial_scope"]) for pr in projections
@@ -9103,7 +9182,8 @@ class RuntimeController:
             # fail-closed ricarica l'emergenza invece di perdere l'hard-stop.
             # NON muta _emergency_stopped in-memory, cosi' il sync usa ancora il
             # client live e l'emergency_stop sotto esegue il lockdown completo.
-            self._persist_db_emergency_marker(active=True, reason=f"DAILY_LOSS_BREACH_PENDING:{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}")
+            self._persist_db_emergency_marker(active=True, reason=f"DAILY_LOSS_BREACH_PENDING:{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}",
+                live_exposure=True)
         realized_now = False
         settlement_completed = False
         session_pending = False
@@ -9124,9 +9204,13 @@ class RuntimeController:
                 # C3 (Codex su 60c772fe): una perdita di SESSIONE di un ambito che sale al globale (LIVE, non
                 # verificabile) arma la barriera d'ingresso globale PRIMA del sync, anche col runtime in SIM: lo stop
                 # globale nasce dopo il sync (`_publish_session_loss_breach`) e nella finestra nessun ingresso parte.
-                session_scope = str(attribution.get("scope") or "")
-                if (financial_scope.escalates_globally(session_scope)
-                        and RuntimeController._session_loss_reason_for(self, session_scope)):
+                session_scopes = [str(attribution.get("scope") or "")]
+                if attribution.get("kind") == "unattributed_loss":
+                    # Ciclo 12 (N1, Codex): una perdita non attribuibile conta per OGNI ambito; la barriera si arma se
+                    # uno qualunque degli ambiti globali supera la sessione anche cumulativamente.
+                    session_scopes += list(self.__dict__.get("_daily_loss_scopes") or {})
+                if any(financial_scope.escalates_globally(k) and RuntimeController._session_loss_reason_for(self, k)
+                       for k in session_scopes):
                     with self._daily_loss_stop_lock:
                         # barriera dedicata: blocca i soli NUOVI ingressi, non il CASHOUT_ALL dello stop globale
                         self._session_loss_pending_global = True
@@ -9218,7 +9302,8 @@ class RuntimeController:
                         st.get("breached") and financial_scope.escalates_globally(str(st.get("financial_scope") or ""))
                         for st in completed_states)
                     if keep_global_marker and not (arm_pending or stopped_marker):
-                        self._persist_db_emergency_marker(active=True, reason="DAILY_LOSS_BREACH_PENDING:interrotto")
+                        self._persist_db_emergency_marker(active=True, reason="DAILY_LOSS_BREACH_PENDING:interrotto",
+                                                          live_exposure=True)
                     with self._daily_loss_state_lock:
                         RuntimeController._promote_settled_keys_locked(self, keys=(settlement_key,))
                         RuntimeController._persist_daily_loss_book(self)
