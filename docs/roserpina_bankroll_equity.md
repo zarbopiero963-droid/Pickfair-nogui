@@ -932,6 +932,16 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   - *Riavvio.* Un record durevole dell'esposizione irrisolto (o illeggibile, o legacy risolto ma con posizioni
     abbinate) riarma la riconciliazione e il recovery dedicato all'avvio, anche quando lo stop globale e' un RISK_STOP
     di sessione gia' completato.
+- **M130 (owner): invariante durevole dello stop, N4 e N5.**
+  - *Invariante.* Nessuno stato recuperabile dopo crash con un settlement registrato e lo stop obbligatorio assente.
+    Il marker dello stop di sessione si toglie SOLO se una rilettura dal disco (`_durable_global_stop_confirmed`:
+    `restore_risk_stop` fail-closed o Emergency Stop salvato) conferma uno stop globale durevole; una scrittura che
+    restituisce `False`, un'eccezione o una lettura fallita non lo confermano mai. Vale alla fine del settlement e nel
+    ripristino al riavvio (che non si fida di uno stop solo in memoria). Marker conservato => stop in memoria,
+    riconciliazione LIVE e recovery dedicato nel processo; al riavvio con disco scrivibile lo stop diventa durevole e
+    il marker si toglie (nessun blocco permanente).
+  - *N4 (regressione rispetto a main).* Lo stato giornaliero dell'ambito del settlement nasce PRIMA del P&L, anche
+    senza `max_daily_loss`: un limite attivato a meta' giornata vede la perdita gia' regolata (35, non 15).
 - **M128 (owner): N1 e N2 su `440351a1`.**
   - *N1 (regressione di `440351a1`).* Il ripiego del marker di sessione non salvato passa dallo stesso `risk_stop()` del
     percorso normale: lo stop e' durevole E ne partono le azioni di protezione (CASHOUT_ALL, protezione verificata della

@@ -2810,3 +2810,120 @@ def test_m128_n2_impostazioni_illeggibili_al_ripristino_barriera_globale(tmp_pat
     assert stop.startswith("session_loss_breached") and not RuntimeController._risk_stop_scope(stop)
     c.rc._emergency_reconcile_pending = False
 
+
+
+# ============================================================================ M130: N4 e N5
+def _settle_cleared_n(c, n, importo):
+    _settle_cleared(c, n, importo)
+
+
+@pytest.mark.parametrize("gia_corrente", [False, True])
+def test_m130_n4_limite_attivato_a_meta_giornata_conta_la_perdita_gia_regolata(tmp_path, gia_corrente):
+    """N4 (regressione rispetto a main, D M129): nessun max_daily_loss, runtime in SIM; il primo settlement LIVE A -20
+    introduce l'ambito (mai corrente o gia' corrente); poi limite 30 e A -15. La perdita del giorno e' 35: superamento,
+    Emergency Stop globale. La baseline del nuovo ambito nasce PRIMA del P&L, mai dopo."""
+    c = _banco(tmp_path, "n4.db")
+    c.rc.config.max_daily_loss = None
+    if gia_corrente:
+        _ambiente(c, "LIVE", conto=CONTO_A)
+    _ambiente(c, "SIM")
+    c.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+    conto_a = c.rc._financial_scope_for(False)
+    c.rc.betfair_service.get_live_client = lambda: _LiveSpia()
+    c.rc.mode = RuntimeMode.ACTIVE
+    _settle_cleared(c, 61 if gia_corrente else 71, -20.0)
+    c.rc.config.max_daily_loss = 30.0
+    _settle_cleared(c, 62 if gia_corrente else 72, -15.0)
+    st = c.rc._monitor_daily_loss_breach(source="T", scope=conto_a)
+    assert st["daily_loss_amount"] == pytest.approx(35.0) and st["breached"] is True, st
+    assert c.rc._emergency_stopped is True
+    c.rc._emergency_reconcile_pending = False
+
+
+def test_m130_n4_nessuna_perdita_contata_due_volte_ne_baseline_persa_al_riavvio(tmp_path):
+    """N4: lo stato nato prima del P&L resta coerente dopo il riavvio (nessun doppio conteggio, nessuna perdita persa)."""
+    c = _banco(tmp_path, "n4r.db")
+    c.rc.config.max_daily_loss = None
+    _ambiente(c, "SIM")
+    c.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+    conto_a = c.rc._financial_scope_for(False)
+    c.rc.mode = RuntimeMode.ACTIVE
+    _settle_cleared(c, 81, -20.0)
+    r = _banco(tmp_path, "n4r.db", max_daily_loss=30.0)
+    r.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+    st = r.rc._monitor_daily_loss_breach(source="T", scope=conto_a)
+    assert st["daily_loss_amount"] == pytest.approx(20.0) and st["breached"] is False, st
+
+
+@pytest.mark.parametrize("guasto", ["false", "eccezione"])
+def test_m130_n5_marker_conservato_finche_lo_stop_non_e_durevole(tmp_path, monkeypatch, guasto):
+    """N5 (Codex su b42f5f9c, D M129-bis): marker di sessione scritto, poi la persistenza del RISK_STOP fallisce
+    (`False` senza eccezione, oppure eccezione). Il marker non si cancella senza uno stop riletto durevole: dopo crash e
+    riavvio lo stop globale c'e' e nessun ordine parte. Quando il disco torna scrivibile il ripristino lo rende durevole
+    e toglie il marker (nessun blocco permanente da marker)."""
+    from core import risk_stop as stop_rules
+    c, tavolo = _m115_banco(tmp_path, "n5.db", intervallo=60.0, max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    c.rc.betfair_service.get_live_client = lambda: _LiveSpia()
+
+    def persist_ko(db, reason):
+        if guasto == "false":
+            return False
+        raise OSError("disco non scrivibile")
+
+    with monkeypatch.context() as m:
+        m.setattr(stop_rules, "persist_risk_stop", persist_ko)
+        try:
+            _settle_tavolo(c, tavolo, -40.0)
+        except OSError:
+            pass
+        assert _ingresso(c, "1.976")[0] == 0, "ordine nello stesso processo"
+        marker = (c.rc.db.get_settings() or {}).get(RuntimeController._SESSION_STOP_MARKER)
+        assert marker, "marker cancellato senza uno stop durevole"
+        _fotografa_al_crash(tmp_path, "n5.db", "n5_crash.db")
+    c.rc._emergency_reconcile_pending = False
+    r = _banco(tmp_path, "n5_crash.db", max_session_loss=30.0)     # disco di nuovo scrivibile
+    stop = str(getattr(r.rc, "_risk_stop_reason", "") or "")
+    assert stop.startswith("session_loss_breached") and not RuntimeController._risk_stop_scope(stop)
+    assert stop_rules.restore_risk_stop(r.rc.db).startswith("session_loss_breached"), "stop non reso durevole"
+    assert not (r.rc.db.get_settings() or {}).get(RuntimeController._SESSION_STOP_MARKER), "marker rimasto"
+    _ambiente(r, "SIM")
+    r.rc.mode = RuntimeMode.ACTIVE
+    assert _ingresso(r, "1.977")[0] == 0
+    r.rc._emergency_reconcile_pending = False
+
+
+def test_m130_n5_controllo_sotto_soglia_nessun_blocco_e_nessun_marker(tmp_path):
+    """Proprieta' 7: sotto soglia con persistenza regolare nessuno stop, nessun marker residuo, ordini ammessi. Banco
+    solo SIM: il gate S18 del drawdown (un solo conto LIVE per processo, preesistente e fuori perimetro) non entra."""
+    c = _banco(tmp_path, "n5ok.db", max_session_loss=30.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc._session_pnl_baseline = float(c.rc.risk_desk.realized_pnl)
+    tavolo = _riserva(c, "1.974")
+    _settle_tavolo(c, tavolo, -5.0)
+    assert not (c.rc.db.get_settings() or {}).get(RuntimeController._SESSION_STOP_MARKER)
+    assert not str(c.rc._risk_stop_reason or "")
+    esito = _ingresso(c, "1.975")
+    assert esito[0] == 1, esito
+
+
+def test_m130_n5_ripristino_al_riavvio_con_persistenza_ko_conserva_il_marker(tmp_path, monkeypatch):
+    """Riavvio con marker di sessione presente e RISK_STOP non persistibile (`False`): stop globale in memoria, nessun
+    ordine, marker CONSERVATO (unica decisione durevole). Al riavvio successivo, disco scrivibile: stop durevole e
+    marker tolto (nessun blocco permanente da marker)."""
+    import json as _json
+    from core import risk_stop as stop_rules
+    c = _banco(tmp_path, "n5r.db", max_session_loss=30.0)
+    c.rc.db.save_settings({RuntimeController._SESSION_STOP_MARKER: _json.dumps(
+        {"reason": "session_loss_breached:loss=40.00:limit=30.0", "scope": "x", "at": "2026-11-17T10:00:00"})})
+    with monkeypatch.context() as m:
+        m.setattr(stop_rules, "persist_risk_stop", lambda db, reason: False)
+        r = _banco(tmp_path, "n5r.db", max_session_loss=30.0)
+        assert str(r.rc._risk_stop_reason).startswith("session_loss_breached")
+        assert (r.rc.db.get_settings() or {}).get(RuntimeController._SESSION_STOP_MARKER), "marker tolto senza stop durevole"
+        r.rc._emergency_reconcile_pending = False
+    r2 = _banco(tmp_path, "n5r.db", max_session_loss=30.0)
+    assert stop_rules.restore_risk_stop(r2.rc.db).startswith("session_loss_breached")
+    assert not (r2.rc.db.get_settings() or {}).get(RuntimeController._SESSION_STOP_MARKER)
+    r2.rc._emergency_reconcile_pending = False
