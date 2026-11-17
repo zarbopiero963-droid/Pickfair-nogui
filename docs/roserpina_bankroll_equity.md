@@ -932,6 +932,14 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   - *Riavvio.* Un record durevole dell'esposizione irrisolto (o illeggibile, o legacy risolto ma con posizioni
     abbinate) riarma la riconciliazione e il recovery dedicato all'avvio, anche quando lo stop globale e' un RISK_STOP
     di sessione gia' completato.
+- **M128 (owner): N1 e N2 su `440351a1`.**
+  - *N1 (regressione di `440351a1`).* Il ripiego del marker di sessione non salvato passa dallo stesso `risk_stop()` del
+    percorso normale: lo stop e' durevole E ne partono le azioni di protezione (CASHOUT_ALL, protezione verificata della
+    sede LIVE col runtime in SIM, recovery dedicato se irrisolta). Prima lo stop si salvava ma l'ordine LIVE del bot
+    restava aperto e non letto.
+  - *N2.* Marker dello stop di sessione presente ma illeggibile o non valido (JSON malformato, tipo errato, motivo non
+    di sessione) o impostazioni non leggibili al ripristino => RISK_STOP globale fail-closed
+    (`session_loss_breached:marker_illeggibile`), mai la sola riconciliazione in attesa.
 - **Ciclo 12, tre P1 Codex su `b902eca3`.**
   - *Marker di sessione non salvato.* Se `session_loss_stop_pending` non si scrive, la decisione di stop diventa
     durevole subito come RISK_STOP globale persistito (`_persist_session_stop_now`); se nemmeno questo e'

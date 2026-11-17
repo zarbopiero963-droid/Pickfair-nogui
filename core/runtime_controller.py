@@ -1717,8 +1717,17 @@ class RuntimeController:
             raw = str((settings or {}).get(RuntimeController._SESSION_STOP_MARKER) or "")
             if not raw:
                 return
-            marker = json.loads(raw)
-            reason = str(marker.get("reason") or "session_loss_breached")
+            try:
+                marker = json.loads(raw)
+            except ValueError:
+                marker = None
+            reason = str(marker.get("reason") or "") if isinstance(marker, dict) else ""
+            if not reason.startswith("session_loss_breached"):
+                # M128 N2: marker presente ma illeggibile o non valido: non si puo' provare che lo stop non serva =>
+                # RISK_STOP globale (fail-closed), mai la sola riconciliazione (che senza uno stop globale non parte).
+                logger.critical("S-b: marker dello stop di sessione non valido (%r): RISK_STOP globale fail-closed",
+                                raw[:80])
+                reason = "session_loss_breached:marker_illeggibile"
             with self._risk_stop_lock:
                 current = self._risk_stop_reason
                 if not current or RuntimeController._risk_stop_scope(current):   # vuoto o solo locale SIM
@@ -1732,25 +1741,34 @@ class RuntimeController:
             self.db.save_settings({RuntimeController._SESSION_STOP_MARKER: ""})
             logger.critical("S-b: RISK_STOP di sessione ripristinato dal marker durevole (%s)", reason)
         except Exception:
-            logger.exception("S-b: marker dello stop di sessione non leggibile (fail-closed: riconciliazione in attesa)")
+            # M128 N2: impostazioni o marker non leggibili => stesso fail-closed: barriera globale (in memoria, e durevole
+            # se possibile), mai la sola riconciliazione in attesa
+            logger.exception("S-b: marker dello stop di sessione non leggibile: RISK_STOP globale fail-closed")
+            try:
+                with self._risk_stop_lock:
+                    current = self.__dict__.get("_risk_stop_reason") or ""
+                    if not current or RuntimeController._risk_stop_scope(current):
+                        self._risk_stop_reason = "session_loss_breached:marker_illeggibile"
+                        stop_rules.persist_risk_stop(self.db, self._risk_stop_reason)
+            except Exception:
+                logger.exception("S-b: RISK_STOP fail-closed non persistito (resta in memoria)")
             self._emergency_reconcile_pending = True
 
-    def _persist_session_stop_now(self, reason: str) -> None:
-        """Codex P1 su b902eca3: ripiego del marker di sessione non salvato. Il RISK_STOP globale si persiste subito
-        (riconciliazione LIVE in attesa); se non e' persistibile nemmeno questo il settlement NON prosegue: si solleva
-        prima del P&L e della chiave (la riconsegna lo rielabora), con la barriera d'ingresso globale ancora armata.
-        Mai uno stato durevole con settlement completato e stop obbligatorio assente (M121)."""
+    def _persist_session_stop_now(self, reason: str, scope: str = "") -> None:
+        """Codex P1 su b902eca3 + M128 N1: ripiego del marker di sessione non salvato. Lo stop passa dallo STESSO
+        `risk_stop()` del percorso normale: persistenza, CASHOUT_ALL, protezione verificata della sede LIVE col runtime in
+        SIM (`_protect_live_venue`, recovery dedicato se irrisolta). Uno stop globale gia' attivo si riconferma durevole.
+        Se lo stop non e' persistibile il settlement NON prosegue: si solleva prima del P&L e della chiave (la riconsegna
+        lo rielabora), con la barriera d'ingresso globale ancora armata. Mai uno stato durevole con settlement completato
+        e stop obbligatorio assente (M121), mai uno stop salvato senza le sue azioni di protezione (N1)."""
         durable = False
         try:
-            with self._risk_stop_lock:
-                current = self._risk_stop_reason
-                if current and not RuntimeController._risk_stop_scope(current):
-                    durable = bool(stop_rules.persist_risk_stop(self.db, current))   # gia' globale: riconferma
-                else:
-                    durable = bool(stop_rules.persist_risk_stop(self.db, reason))
-                    if durable:
-                        self._risk_stop_reason = reason
-            self._emergency_reconcile_pending = True
+            current = self._risk_stop_reason
+            if current and not RuntimeController._risk_stop_scope(current):
+                durable = bool(stop_rules.persist_risk_stop(self.db, current))   # gia' globale: riconferma
+            else:
+                result = self.risk_stop(reason, scope=scope or None)
+                durable = bool(result.get("persisted"))
         except Exception:
             logger.exception("S-b: RISK_STOP di sessione non persistito")
             durable = False
@@ -9620,7 +9638,7 @@ class RuntimeController:
                 # Codex P1 su b902eca3: senza marker la decisione di stop deve diventare durevole PRIMA del P&L e della
                 # chiave del settlement, altrimenti un crash lascerebbe il settlement registrato senza stop obbligatorio.
                 logger.exception("S-b: marker dello stop di sessione non salvato: RISK_STOP globale persistito subito")
-                RuntimeController._persist_session_stop_now(self, session_reason)
+                RuntimeController._persist_session_stop_now(self, session_reason, session_scope)
         try:
             # #461 PR29-c: P&L realizzato una sola volta per settlement, nel processo (set in memoria, sotto il lock
             # del consumer) e dopo un riavvio (flag `realized_applied` del registro). Quando la registrazione non e'

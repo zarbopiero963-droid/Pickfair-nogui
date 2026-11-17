@@ -2754,3 +2754,59 @@ def test_codex_b902_nuovo_stop_conserva_un_esito_irrisolto(tmp_path):
     vista = c.rc.get_status()["live_exposure"]
     assert vista["state"] == "NON_RICONCILIATA" and vista["amount_display"] == "3.00", vista
     c.rc._emergency_reconcile_pending = False
+
+
+# ============================================================================ M128: N1/N2 (Codex su 440351a1)
+def test_m128_n1_ripiego_del_marker_esegue_la_protezione_live(tmp_path, monkeypatch):
+    """N1 (regressione di 440351a1): marker di sessione non scrivibile, nessun crash, runtime in SIM, ordine LIVE del bot
+    aperto e conto raggiungibile. Il ripiego rende durevole lo stop E ne esegue le azioni di protezione: ordine LIVE del
+    bot cancellato e verificato (come senza guasto), mai solo lo stop salvato."""
+    c, tavolo = _m115_banco(tmp_path, "n1.db", intervallo=60.0, max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    live = _LiveSpia([_ordine_bot(tavolo)])
+    c.rc.betfair_service.get_live_client = lambda: live
+    vero_save = c.rc.db.save_settings
+
+    def save_marker_ko(valori, *a, **k):
+        if (valori or {}).get(RuntimeController._SESSION_STOP_MARKER):
+            raise OSError("disco momentaneamente non scrivibile")
+        return vero_save(valori, *a, **k)
+
+    monkeypatch.setattr(c.rc.db, "save_settings", save_marker_ko)
+    _settle_tavolo(c, tavolo, -40.0)
+    assert str(c.rc._risk_stop_reason).startswith("session_loss_breached")
+    assert ("1.971", ["A-1"]) in live.cancellazioni, (live.letture, live.cancellazioni)
+    assert c.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    assert _ingresso(c, "1.978")[0] == 0
+    c.rc._emergency_reconcile_pending = False
+
+
+@pytest.mark.parametrize("marker", ["{illeggibile", "[]", "\"testo\"", "{\"reason\": 5}"])
+def test_m128_n2_marker_di_sessione_illeggibile_ripristina_la_barriera_globale(tmp_path, marker):
+    """N2: al riavvio il marker dello stop di sessione e' presente ma illeggibile/non valido. Non si puo' provare che lo
+    stop non serva: RISK_STOP globale ripristinato (fail-closed), nessun ordine SIM ne' LIVE, riconciliazione in attesa."""
+    c = _banco(tmp_path, "n2.db", max_session_loss=30.0)
+    c.rc.db.save_settings({RuntimeController._SESSION_STOP_MARKER: marker})
+    r = _banco(tmp_path, "n2.db", max_session_loss=30.0)
+    stop = str(getattr(r.rc, "_risk_stop_reason", "") or "")
+    assert stop and not RuntimeController._risk_stop_scope(stop), stop
+    _ambiente(r, "SIM")
+    r.rc.mode = RuntimeMode.ACTIVE
+    assert _ingresso(r, "1.969")[0] == 0
+    r.rc._emergency_reconcile_pending = False
+
+
+def test_m128_n2_impostazioni_illeggibili_al_ripristino_barriera_globale(tmp_path, monkeypatch):
+    """N2, ramo `except`: impostazioni non leggibili durante il ripristino del marker => RISK_STOP globale (in memoria e
+    durevole se possibile), mai la sola riconciliazione in attesa."""
+    c = _banco(tmp_path, "n2b.db", max_session_loss=30.0)
+
+    def illeggibili():
+        raise OSError("db illeggibile")
+
+    monkeypatch.setattr(c.rc.db, "get_settings", illeggibili)
+    RuntimeController._restore_session_stop_marker(c.rc)
+    stop = str(c.rc._risk_stop_reason or "")
+    assert stop.startswith("session_loss_breached") and not RuntimeController._risk_stop_scope(stop)
+    c.rc._emergency_reconcile_pending = False
+
