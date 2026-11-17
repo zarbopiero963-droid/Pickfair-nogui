@@ -252,6 +252,17 @@ def parse_risk_session(raw: Any) -> Optional[dict]:
                 entry.update(opened_at=str(item.get("opened_at") or ""),
                              limit=None if limit is None else _finite(limit),
                              accounts=[str(a) for a in (item.get("accounts") or [])])
+            if "late_keys" in item:      # M144 (CX-F1): tardivi gia' compresi nel P&L della sessione chiusa
+                if not isinstance(item["late_keys"], list):
+                    raise ValueError("tardivi della sessione chiusa non validi")
+                entry["late_keys"] = [str(k) for k in item["late_keys"]]
+            if "rev" in item:            # M144: revisione alla chiusura (un ripristino riparte sopra)
+                if type(item["rev"]) is not int:
+                    raise ValueError("revisione della sessione chiusa non valida")
+                entry["rev"] = int(item["rev"])
+            if item.get("retired") is True:   # M144 (G1e): id di un reset annullato, mai riusato ne' riaperto
+                entry["retired"] = True
+                entry["merged_into"] = str(item.get("merged_into") or "")
             closed.append(entry)
         pending = []
         for item in raw.get("archive_pending") or []:      # G2: P&L tardivi da scrivere nell'archivio durevole
@@ -260,8 +271,11 @@ def parse_risk_session(raw: Any) -> Optional[dict]:
                 raise ValueError("P&L tardivo in attesa non valido")
             pending.append({"session_id": str(item["session_id"]), "settlement_key": str(item["settlement_key"]),
                             "delta": _parse_delta(item.get("delta"))})
-        return {"id": str(raw["id"]), "opened_at": str(raw.get("opened_at") or ""), "rev": int(raw["rev"]),
-                "delta": _parse_delta(raw.get("delta")), "closed": closed, "archive_pending": pending}
+        out = {"id": str(raw["id"]), "opened_at": str(raw.get("opened_at") or ""), "rev": int(raw["rev"]),
+               "delta": _parse_delta(raw.get("delta")), "closed": closed, "archive_pending": pending}
+        if raw.get("unverifiable") is True:   # M144: perdita della sessione non verificabile (libro illeggibile)
+            out["unverifiable"] = True
+        return out
     except ValueError:
         raise
     except Exception as exc:
@@ -309,17 +323,46 @@ def reconcile_books(a: Optional[dict], b: Optional[dict]) -> Optional[dict]:
             "legacy": _merge_fields(a.get("legacy"), b.get("legacy"), newer),
             "seq": max(seqs) if seqs else None,
             "settled_keys": set(a.get("settled_keys") or ()) | set(b.get("settled_keys") or ()),
-            "risk_session": _newer_risk_session(a.get("risk_session"), b.get("risk_session"))}
+            "risk_session": _newer_risk_session(a.get("risk_session"), b.get("risk_session"), sa, sb)}
 
 
-def _newer_risk_session(a: Optional[dict], b: Optional[dict]) -> Optional[dict]:
-    """F1: fra db e marker vale la sessione di rischio con la revisione piu' alta (stessa revisione: quella con la
-    perdita di sessione maggiore, fail-closed)."""
+def _newer_risk_session(a: Optional[dict], b: Optional[dict], seq_a: Optional[int] = None,
+                        seq_b: Optional[int] = None) -> Optional[dict]:
+    """F1 + M144 (CX-E1, G-D): sessione di rischio fra db e marker di riserva. La revisione conta SOLO fra copie della
+    STESSA sessione: sessioni diverse si ordinano con la `seq` del libro (monotona per scrittura: un marker rimasto ha
+    sempre la `seq` piu' bassa del salvataggio che l'ha superato) o, senza `seq`, con la catena delle chiusure (la
+    sessione che compare fra le chiuse dell'altra e' la piu' vecchia). Ordine non determinabile => ValueError (libro
+    illeggibile, fail-closed). Le sessioni chiuse e i tardivi in attesa delle due copie si UNISCONO: nessuna sessione
+    chiusa e nessun P&L tardivo spariscono per la scelta della copia."""
     if not a or not b:
         return a or b
-    if a["rev"] != b["rev"]:
-        return a if a["rev"] > b["rev"] else b
-    return a if a["delta"]["desk"] <= b["delta"]["desk"] else b
+    if a["id"] == b["id"]:
+        if a["rev"] != b["rev"]:
+            winner, other = (a, b) if a["rev"] > b["rev"] else (b, a)
+        else:      # stessa revisione: la perdita di sessione maggiore (fail-closed)
+            winner, other = (a, b) if a["delta"]["desk"] <= b["delta"]["desk"] else (b, a)
+    elif seq_a is not None and seq_b is not None and seq_a != seq_b:
+        winner, other = (a, b) if seq_a > seq_b else (b, a)
+    else:
+        closed_a = {str(c.get("id")) for c in a.get("closed") or []}
+        closed_b = {str(c.get("id")) for c in b.get("closed") or []}
+        if a["id"] in closed_b and b["id"] not in closed_a:
+            winner, other = b, a
+        elif b["id"] in closed_a and a["id"] not in closed_b:
+            winner, other = a, b
+        else:
+            raise ValueError("sessione di rischio: copie non ordinabili")
+    out = dict(winner)
+    known = {str(c.get("id")) for c in winner.get("closed") or []} | {str(winner["id"])}
+    # le chiuse note solo all'altra copia sono le piu' vecchie (gia' uscite dalla finestra): in testa, cosi' la finestra
+    # operativa le scarta se sono archiviate (`_trim_closed_window`), senza mai oscurare l'archivio piu' aggiornato
+    out["closed"] = [dict(c) for c in other.get("closed") or [] if str(c.get("id")) not in known] + list(
+        winner.get("closed") or [])
+    seen = {(str(p.get("session_id")), str(p.get("settlement_key"))) for p in winner.get("archive_pending") or []}
+    out["archive_pending"] = list(winner.get("archive_pending") or []) + [
+        dict(p) for p in other.get("archive_pending") or []
+        if (str(p.get("session_id")), str(p.get("settlement_key"))) not in seen]
+    return out
 
 
 def unreadable_book() -> dict:
@@ -337,10 +380,12 @@ def restore_daily_loss_book(db: Any, *, today_utc: str) -> dict:
         if marker and os.path.exists(marker):
             with open(marker, encoding="utf-8") as fh:
                 from_marker = parse_book(fh.read(), today_utc=today_utc)
+        # M144: copie della sessione di rischio non ordinabili => ValueError => libro illeggibile (mai un avvio rotto)
+        merged = reconcile_books(from_db, from_marker)
     except Exception:
         logger.exception("daily-loss: stato persistito illeggibile, fail-closed per ogni ambito")
         return unreadable_book()
-    return reconcile_books(from_db, from_marker) or {"scopes": {}, "legacy": None, "seq": None}
+    return merged or {"scopes": {}, "legacy": None, "seq": None}
 
 
 def _save_verified(db: Any, payload: str) -> None:

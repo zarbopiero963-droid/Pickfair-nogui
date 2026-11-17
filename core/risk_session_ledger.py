@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,13 @@ logger = logging.getLogger(__name__)
 RECORD_TYPE = "PF_RISK_SESSION_LEDGER"
 GENESIS = "0" * 64
 KINDS = ("SESSION_CLOSED", "LATE_SETTLEMENT", "RESET_STARTED", "RESET_COMPLETED", "RESET_FAILED")
+
+
+# M144 (CX-F3): una sola scrittura alla volta. `append` legge la coda della catena, scrive e rilegge sotto questo lock:
+# due scrittori concorrenti non possono mai produrre due record con lo stesso `prev` (catena rotta per sempre). Lock
+# FOGLIA: chi lo tiene non prende nessun altro lock (solo I/O sul database), quindi non entra in nessun ciclo d'attesa.
+# Fra processi diversi la serializzazione la da' l'autorita' del runtime (#536: un solo processo scrive il database).
+LOCK = threading.RLock()
 
 
 class LedgerUnverifiable(Exception):
@@ -69,25 +77,27 @@ def load(db: Any) -> list:
 
 def append(db: Any, kind: str, payload: dict) -> Optional[dict]:
     """Aggiunge un record in coda alla catena e lo RILEGGE: ritorna il record scritto, None se la scrittura o la
-    rilettura falliscono (il chiamante non deve considerare avvenuta l'azione). Mai raise."""
+    rilettura falliscono (il chiamante non deve considerare avvenuta l'azione). Mai raise (eccetto le interruzioni del
+    processo, ``BaseException``). Serializzato da ``LOCK`` (M144, CX-F3)."""
     if kind not in KINDS:
         return None
-    try:
-        chain = load(db)
-        prev = chain[-1]["hash"] if chain else GENESIS
-        body = {"type": RECORD_TYPE, "kind": kind, "seq": len(chain) + 1, "prev": prev, "payload": dict(payload)}
-        event = dict(body, hash=_digest(body))
-        result = db.insert_audit_event(event) if hasattr(db, "insert_audit_event") else None
-        if result is False:
+    with LOCK:
+        try:
+            chain = load(db)
+            prev = chain[-1]["hash"] if chain else GENESIS
+            body = {"type": RECORD_TYPE, "kind": kind, "seq": len(chain) + 1, "prev": prev, "payload": dict(payload)}
+            event = dict(body, hash=_digest(body))
+            result = db.insert_audit_event(event) if hasattr(db, "insert_audit_event") else None
+            if result is False:
+                return None
+            after = load(db)
+            if not after or after[-1].get("hash") != event["hash"]:
+                logger.critical("registro della sessione di rischio: record %s non riletto dopo la scrittura", kind)
+                return None
+            return event
+        except Exception:
+            logger.exception("registro della sessione di rischio: scrittura %s fallita", kind)
             return None
-        after = load(db)
-        if not after or after[-1].get("hash") != event["hash"]:
-            logger.critical("registro della sessione di rischio: record %s non riletto dopo la scrittura", kind)
-            return None
-        return event
-    except Exception:
-        logger.exception("registro della sessione di rischio: scrittura %s fallita", kind)
-        return None
 
 
 def archive_index(chain: list) -> dict:
@@ -99,7 +109,9 @@ def archive_index(chain: list) -> dict:
             sid = str(payload.get("id") or "")
             if sid and sid not in index:
                 delta = payload.get("delta") or {}
-                index[sid] = {"record": dict(payload), "late_keys": set(),
+                # M144 (CX-F1): i tardivi gia' compresi nel P&L della sessione chiusa (entrati mentre era nella finestra)
+                # sono elencati nel record: un LATE_SETTLEMENT con la stessa chiave non si somma una seconda volta
+                index[sid] = {"record": dict(payload), "late_keys": {str(k) for k in (payload.get("late_keys") or [])},
                               "delta": {"desk": float(delta.get("desk") or 0.0),
                                         "scopes": {str(k): float(v) for k, v in (delta.get("scopes") or {}).items()},
                                         "unscoped": float(delta.get("unscoped") or 0.0)}}

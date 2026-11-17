@@ -85,8 +85,11 @@ Flusso: tre richieste di testo con titolo `Reset sessione di rischio` (`Operator
 `Conti LIVE coinvolti:`, `Esposizione LIVE:` e la frase «La perdita resta registrata; gli altri limiti restano
 attivi. Confermi la chiusura?»; poi la SECONDA conferma (`Reset sessione di rischio - seconda conferma`, «Confermi
 DI NUOVO il reset della sessione di rischio superata?»). Annullare in qualunque punto non cambia nulla. Un rifiuto del
-runtime (`Reset non disponibile: …` o `Reset rifiutato: …`) appare come errore. Invariante di sicurezza: senza
-dialoghi reali (fallback senza tkinter) nessuna conferma vale «sì».
+runtime (`Reset non disponibile: …` o `Reset rifiutato: …`) appare come errore. Se il registro contiene già un reset
+confermato e committato il cui stop era rimasto attivo (crash dopo il commit, M144), la richiesta lo completa e la GUI
+non chiede nuove conferme: solo la riga di log `RESET SESSIONE DI RISCHIO: reset gia' confermato nel registro,
+completato (stop tolto)`. Invariante di sicurezza: senza dialoghi reali (fallback senza tkinter) nessuna conferma vale
+«sì».
 
 Colonna destra `System Status` (label sola lettura): `Status:` (`STOPPED`),
 `Broker:` (`SIMULATION`), `Betfair:` (`DISCONNECTED`/`CONNECTED`),

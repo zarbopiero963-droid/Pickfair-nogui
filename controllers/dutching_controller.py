@@ -931,7 +931,18 @@ class DutchingController:
         except Exception:
             logger.exception("C2: ambito finanziario non leggibile per la request")
             scope = ""
-        return {"financial_scope": scope} if scope else {}
+        fields = {"financial_scope": scope} if scope else {}
+        # M144 (CX-E2): la sessione di rischio dell'ingresso viaggia nella request (come per i segnali): il settlement
+        # tardivo di una puntata manuale o Dutching torna alla sessione d'origine anche dopo che e' stata chiusa
+        try:
+            session = getattr(self.runtime, "__dict__", {}).get("_risk_session") or {}
+            session_id = str(session.get("id") or "") if isinstance(session, dict) else ""
+        except Exception:
+            logger.exception("M144: sessione di rischio non leggibile per la request")
+            session_id = ""
+        if session_id:
+            fields["risk_session_id"] = session_id
+        return fields
 
     def _scope_daily_loss_block(self) -> str:
         """PR-04a (M111, PF-OWNER-PR638-M111-SIM-ENTRY-BYPASS-GO-20261116): perdita giornaliera dell'ambito corrente

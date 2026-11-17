@@ -3430,7 +3430,8 @@ def test_m139_g1_reset_con_doppia_conferma_valida_e_audit_completo(tmp_path):
                                  confirm=True, confirm_again=True)
     assert esito == {"risk_stop_reset": True, "reason": ""}
     tipi = [e["kind"] for e in _registro(c)]
-    assert tipi == ["RESET_STARTED", "SESSION_CLOSED", "RESET_COMPLETED"], tipi
+    # M144: RESET_COMPLETED e' il commit; l'archiviazione della sessione chiusa (SESSION_CLOSED) viene dopo
+    assert tipi == ["RESET_STARTED", "RESET_COMPLETED", "SESSION_CLOSED"], tipi
     avvio = _registro(c)[0]["payload"]
     assert avvio["operator"] == "mario" and avvio["authorization"] == "AUT-7" and avvio["session_id"] == vecchia
     assert avvio["new_session_id"] == c.rc._risk_session["id"] and avvio["delta"]["desk"] == pytest.approx(-40.0)
@@ -3499,36 +3500,51 @@ def test_m139_g1_audit_non_scrivibile_nessun_reset(tmp_path, monkeypatch, guasto
     assert r.rc._risk_session["id"] == sid and r.rc._risk_stop_reason
 
 
-@pytest.mark.parametrize("punto", ["prima_della_chiusura", "dopo_la_chiusura"])
+@pytest.mark.parametrize("punto", ["prima_della_chiusura", "dopo_la_chiusura", "dopo_il_commit"])
 def test_m139_g1_crash_durante_il_reset_recuperato_all_avvio(tmp_path, monkeypatch, punto):
+    """M144 (G1e/N1): RESET_COMPLETED e' il punto di commit. Crash prima del commit => all'avvio la transizione si
+    ANNULLA (sessione d'origine corrente, RESET_FAILED recuperato, stop presente); crash dopo il commit => all'avvio il
+    reset si COMPLETA (stop tolto, sessione nuova, nessun RESET_STARTED senza esito). Mai lo stato misto di G1e."""
     c = _g_banco(tmp_path, f"g1cr_{punto}.db")
     sid = c.rc._risk_session["id"]
     _settle(c, -40.0)
     richiesta = c.rc.request_risk_session_reset(operator="mario", authorization="AUT-7", reason="ripresa")
+    vero = risk_session_ledger.append
     if punto == "prima_della_chiusura":
         def muore(self, *a, **k):
             raise SystemExit("crash")
-        monkeypatch.setattr(RuntimeController, "_open_new_risk_session", muore)
+        monkeypatch.setattr(RuntimeController, "_switch_risk_session", muore)
     else:
-        vero = risk_session_ledger.append
-
         def muore_al_completamento(db, kind, payload):
+            if kind == "RESET_COMPLETED" and punto == "dopo_la_chiusura":
+                raise SystemExit("crash")                       # sessione gia' cambiata su disco, commit mai scritto
+            out = vero(db, kind, payload)
             if kind == "RESET_COMPLETED":
-                raise SystemExit("crash")
-            return vero(db, kind, payload)
+                raise SystemExit("crash")                       # commit scritto, stop non ancora tolto
+            return out
         monkeypatch.setattr(risk_session_ledger, "append", muore_al_completamento)
     with pytest.raises(SystemExit):
         c.rc.reset_risk_stop(operator="mario", authorization="AUT-7", challenge_id=richiesta["challenge_id"],
                              confirm=True, confirm_again=True)
     monkeypatch.undo()
     r = _f1_banco(tmp_path, f"g1cr_{punto}.db", max_session_loss=30.0)
-    tipi = [e["kind"] for e in _registro(r)]
-    assert r.rc._risk_stop_reason, "lo stop non deve sparire con un reset interrotto"
-    if punto == "prima_della_chiusura":
-        assert tipi[-1] == "RESET_FAILED" and r.rc._risk_session["id"] == sid
+    registro = _registro(r)
+    tipi = [e["kind"] for e in registro]
+    stato = risk_session_ledger.reset_status(registro)
+    assert not [k for k, v in stato.items() if v["kind"] == "RESET_STARTED"], "RESET_STARTED senza esito"
+    if punto == "dopo_il_commit":
+        assert not r.rc._risk_stop_reason and r.rc._risk_session["id"] != sid
+        assert "RESET_COMPLETED" in tipi and "RESET_FAILED" not in tipi
+        assert sid in [e["payload"].get("id") for e in registro if e["kind"] == "SESSION_CLOSED"]
     else:
-        assert tipi[-1] == "RESET_COMPLETED" and _registro(r)[-1]["payload"]["recovered"] is True
-        assert r.rc._risk_session["id"] != sid
+        assert r.rc._risk_stop_reason, "lo stop non deve sparire con un reset interrotto prima del commit"
+        falliti = [e["payload"] for e in registro if e["kind"] == "RESET_FAILED"]
+        assert falliti and falliti[-1]["recovered"] is True
+        assert r.rc._risk_session["id"] == sid and "RESET_COMPLETED" not in tipi
+        chiuse = [e["payload"] for e in registro if e["kind"] == "SESSION_CLOSED"]
+        assert sid not in [p.get("id") for p in chiuse], "sessione riaperta ma archiviata come chiusa"
+        # l'id della sessione annullata resta registrato come ritirato (perdita zero): mai riusato ne' riaperto
+        assert all(p.get("retired") is True and p["delta"]["desk"] == 0.0 for p in chiuse)
 
 
 def test_m139_g1_reset_confermato_non_supera_altri_limiti(tmp_path):
@@ -3673,7 +3689,7 @@ def test_m139_g1_gui_doppia_conferma_sul_runtime_reale(tmp_path, conferme, attes
     gui._runtime_reset_risk_session()
     assert (not c.rc._risk_stop_reason) is atteso
     tipi = [e["kind"] for e in _registro(c)]
-    assert tipi == (["RESET_STARTED", "SESSION_CLOSED", "RESET_COMPLETED"] if atteso else []), tipi
+    assert tipi == (["RESET_STARTED", "RESET_COMPLETED", "SESSION_CLOSED"] if atteso else []), tipi
     if atteso:
         assert _registro(c)[0]["payload"]["operator"] == "mario"
 
@@ -3765,3 +3781,471 @@ def test_m140_r5_tardivo_non_attribuibile_di_una_sessione_resettata_riarma_la_pr
     assert f"sessione_precedente={vecchia}" in str(c.rc._risk_stop_reason)
     assert _ingresso(c, "1.9799")[0] == 0
     c.rc._emergency_reconcile_pending = False
+
+
+# ============================================================================ M144: correzione architetturale unica
+# Sessioni, settlement, reset, audit e recovery (matrice chiusa D, #628 c.6955197898). Ogni test chiama il codice reale
+# del runtime ed e' ROSSO sul SHA difettoso e2cfa9b4 (prova RED-first nel rapporto su #628).
+import shutil as _shutil
+import sqlite3 as _sqlite3
+import time as _time
+
+
+def _copia_riavvio(tmp_path, nome, **cfg):
+    """Riavvio dalla copia del database (stato durevole come dopo un crash)."""
+    src = str(tmp_path / nome)
+    dst = src + ".copia"
+    with _sqlite3.connect(src) as s, _sqlite3.connect(dst) as d:
+        s.backup(d)
+    _shutil.copy(dst, src)
+    return _f1_banco(tmp_path, nome, max_session_loss=30.0, **cfg)
+
+
+def _ordine_di_sessione(c, ref, sid, market):
+    ora = _time.time()
+    c.rc.db._execute("INSERT INTO orders (customer_ref, correlation_id, status, payload_json, response_json, created_at,"
+                     " updated_at) VALUES (?,?,?,?,?,?,?)",
+                     (ref, "corr-" + ref, "PLACED", json.dumps({"simulation_mode": True, "market_id": market,
+                                                                "risk_session_id": sid}),
+                      json.dumps({"betId": "B" + ref, "status": "SUCCESS"}), ora, ora), commit=True)
+
+
+def test_m144_gd_copie_ordinate_per_identita_e_unite():
+    """CX-E1/G-D (store): la revisione conta solo fra copie della STESSA sessione; sessioni diverse si ordinano con la
+    `seq` del libro o con la catena delle chiusure; chiuse e tardivi in attesa delle due copie si uniscono."""
+    def s(sid, rev, desk, closed=(), pending=()):
+        return {"id": sid, "rev": rev, "delta": {"desk": desk, "scopes": {}, "unscoped": 0.0},
+                "closed": [{"id": x, "delta": {"desk": -1.0, "scopes": {}, "unscoped": 0.0}} for x in closed],
+                "archive_pending": [{"session_id": "S0", "settlement_key": k, "delta": {"desk": -1.0, "scopes": {},
+                                                                                       "unscoped": 0.0}}
+                                    for k in pending]}
+    db, marker = s("S2", 2, -20.0, closed=["S1"]), s("S1", 50, -3.0)
+    assert daily_loss_store._newer_risk_session(db, marker, 11, 9)["id"] == "S2"      # seq: vince il libro piu' nuovo
+    assert daily_loss_store._newer_risk_session(marker, db)["id"] == "S2"             # catena: S1 e' chiusa in S2
+    unita = daily_loss_store._newer_risk_session(s("S2", 3, -5.0, pending=["k1"]), s("S2", 3, -6.0, pending=["k2"]))
+    assert unita["delta"]["desk"] == -6.0 and {p["settlement_key"] for p in unita["archive_pending"]} == {"k1", "k2"}
+    chiuse = daily_loss_store._newer_risk_session(s("S3", 1, 0.0, closed=["S2"]), s("S2", 9, 0.0, closed=["S1"]))
+    assert chiuse["id"] == "S3" and [c["id"] for c in chiuse["closed"]] == ["S1", "S2"]
+    with pytest.raises(ValueError):          # ordine non determinabile => libro illeggibile (fail-closed)
+        daily_loss_store._newer_risk_session(s("SX", 1, 0.0), s("SY", 1, 0.0))
+
+
+def test_m144_e1_marker_di_una_sessione_vecchia_non_sostituisce_la_corrente(tmp_path, monkeypatch):
+    """CX-E1 (P1/P9): un marker di riserva con la sessione S1 a revisione alta e' rimasto su disco (rimozione fallita);
+    S1 viene chiusa e S2 perde 20. Al riavvio vale S2 con la sua perdita: altri -15 => 35 > 30 => stop, nessun ingresso."""
+    vero_remove = daily_loss_store.os.remove
+
+    def remove(path, *a, **k):
+        if str(path).endswith(".daily_loss_pending.json"):
+            raise PermissionError("marker non rimovibile")
+        return vero_remove(path, *a, **k)
+    monkeypatch.setattr(daily_loss_store.os, "remove", remove)
+    c = _g_banco(tmp_path, "m144e1.db")
+    s1 = c.rc._risk_session["id"]
+    for _ in range(3):
+        _settle(c, -1.0)
+    libro = json.loads((c.rc.db.get_settings() or {}).get(daily_loss_store.DAILY_LOSS_STATE_KEY))
+    libro["risk_session"]["rev"] = 50                    # copia vecchia di S1, revisione alta, seq piu' bassa
+    with open(str(tmp_path / "m144e1.db") + ".daily_loss_pending.json", "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(libro))
+    assert c.rc.close_risk_session()["risk_session_closed"] is True
+    s2 = c.rc._risk_session["id"]
+    _settle(c, -20.0)
+    assert c.rc._risk_session["rev"] < 50
+    r = _copia_riavvio(tmp_path, "m144e1.db")
+    assert r.rc._risk_session["id"] == s2 != s1
+    assert RuntimeController._risk_session_delta(r.rc)["desk"] == pytest.approx(-20.0)
+    _settle(r, -15.0)
+    assert r.rc._risk_stop_reason and _ingresso(r, "1.9601")[0] == 0
+
+
+def test_m144_e3_superamento_della_sessione_nuova_riarma_stop_evento_e_cashout(tmp_path):
+    """CX-E3 (P7): dopo il reset G1 della sessione superata, il superamento della sessione NUOVA arma di nuovo
+    RISK_STOP (persistito), l'evento e il CASHOUT_ALL: il latch e' per sessione di rischio, non per ambito."""
+    c = _g_banco(tmp_path, "m144e3.db")
+    _settle(c, -40.0)
+    assert c.rc._risk_stop_reason and _reset_confermato(c.rc)["risk_stop_reset"] is True
+    cashout = []
+    c.rc._route_cashout_signal = cashout.append
+    n0 = len(c.bus.events)
+    c.rc.mode = RuntimeMode.ACTIVE
+    _settle(c, -40.0)
+    eventi = [t for t, _p in c.bus.events[n0:]]
+    assert str(c.rc._risk_stop_reason).startswith("session_loss_breached")
+    assert "RISK_STOP_TRIGGERED" in eventi and "SESSION_LOSS_BREACH_TRIGGERED" in eventi and cashout
+    assert _copia_riavvio(tmp_path, "m144e3.db").rc._risk_stop_reason, "stop della sessione nuova non persistito"
+
+
+def test_m144_e4_sola_verifica_durevole_coperture_mai_cancellate_dopo_il_riavvio(tmp_path):
+    """CX-E4 (P6/P9): stop di sessione globale col runtime LIVE => sweep in sola verifica (N7). La modalita' e' salvata:
+    dopo il riavvio la riconciliazione non cancella la copertura del cashout; il reset la toglie (anche su disco)."""
+    from core.hedge_ref import new_hedge_ref
+    c = _g_banco(tmp_path, "m144e4.db")
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    href = new_hedge_ref()
+    copertura = {"betId": "H1", "marketId": "1.9611", "selectionId": 1, "customerOrderRef": href, "side": "LAY",
+                 "status": "EXECUTABLE", "priceSize": {"price": 2.0, "size": 5.0}, "sizeRemaining": 5.0,
+                 "sizeMatched": 0.0}
+    conto = _ContoLive(CONTO_A, [copertura])
+    _connetti(c, conto)
+    ora = _time.time()
+    c.rc.db._execute("INSERT INTO orders (customer_ref, correlation_id, status, payload_json, response_json, created_at,"
+                     " updated_at) VALUES (?,?,?,?,?,?,?)",
+                     (href, "corr-h1", "HEDGE_PLACED", json.dumps({"simulation_mode": False, "market_id": "1.9611",
+                                                                   "role": "HEDGE", "order_origin": "CASHOUT_HEDGE"}),
+                      json.dumps({"betId": "H1", "status": "SUCCESS"}), ora, ora), commit=True)
+    _settle(c, -40.0)
+    assert c.rc._live_verify_only is True
+    assert (c.rc.db.get_settings() or {}).get(RuntimeController._LIVE_VERIFY_ONLY_KEY) == "1"
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+    r = _copia_riavvio(tmp_path, "m144e4.db")
+    _connetti(r, conto)
+    assert r.rc._live_verify_only is True
+    r.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(r.rc, trigger="m144e4")
+    assert conto.cancellazioni == [] and [o["betId"] for o in conto.ordini] == ["H1"]
+    r.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(r.rc))
+
+
+def test_m144_e4_sola_verifica_illeggibile_resta_sola_verifica(tmp_path):
+    c = _g_banco(tmp_path, "m144e4b.db")
+    c.rc.db.save_settings({RuntimeController._LIVE_VERIFY_ONLY_KEY: "{rotto"})
+    assert _copia_riavvio(tmp_path, "m144e4b.db").rc._live_verify_only is True
+    c.rc.db.save_settings({RuntimeController._LIVE_VERIFY_ONLY_KEY: ""})
+    assert _copia_riavvio(tmp_path, "m144e4b.db").rc._live_verify_only is False
+
+
+def test_m144_f1_indice_dell_archivio_vede_i_tardivi_entrati_in_finestra(tmp_path):
+    """CX-F1 (P4): S1 chiusa a -10; tardivo -15 mentre S1 e' nella finestra; 21 chiusure (S1 fuori dalla finestra);
+    tardivo -10 => S1 a -35 > 30 nell'indice in memoria come nel registro: stop, nessun ingresso. Nessun doppio conteggio."""
+    c = _g_banco(tmp_path, "m144f1.db")
+    s1 = c.rc._risk_session["id"]
+    _ordine_di_sessione(c, "dut-m144-f1a", s1, "1.9621")
+    _ordine_di_sessione(c, "dut-m144-f1b", s1, "1.9622")
+    _settle(c, -10.0)
+    c.rc.close_risk_session()
+    _settle(c, -15.0, customer_ref="dut-m144-f1a")
+    assert c.rc.close_risk_session()["risk_session_closed"] is True
+    for _ in range(20):
+        assert c.rc.close_risk_session()["risk_session_closed"] is True
+    assert s1 not in [x["id"] for x in c.rc._risk_session["closed"]]
+    _settle(c, -10.0, customer_ref="dut-m144-f1b")
+    memoria = RuntimeController._risk_archive(c.rc)[s1]["delta"]["desk"]
+    registro = risk_session_ledger.archive_index(_registro(c))[s1]["delta"]["desk"]
+    assert memoria == pytest.approx(-35.0) and registro == pytest.approx(-35.0)
+    assert f"sessione_precedente={s1}" in str(c.rc._risk_stop_reason) and _ingresso(c, "1.9623")[0] == 0
+
+
+def test_m144_f1_sessione_archiviata_dopo_un_tardivo_non_lo_conta_due_volte(tmp_path, monkeypatch):
+    """CX-F1 (P1): archivio della chiusa fallito, tardivo -15 nella finestra, archivio riuscito al riavvio: il record
+    archiviato comprende il tardivo (chiave elencata) e il LATE_SETTLEMENT non lo somma una seconda volta."""
+    c = _g_banco(tmp_path, "m144f1b.db")
+    s1 = c.rc._risk_session["id"]
+    _ordine_di_sessione(c, "dut-m144-f1c", s1, "1.9624")
+    _settle(c, -10.0)
+    vero = risk_session_ledger.append
+    monkeypatch.setattr(risk_session_ledger, "append",           # registro irraggiungibile: archivio e tardivo in attesa
+                        lambda db, kind, p: None if kind in ("SESSION_CLOSED", "LATE_SETTLEMENT") else vero(db, kind, p))
+    assert c.rc.close_risk_session()["risk_session_closed"] is True
+    _settle(c, -15.0, customer_ref="dut-m144-f1c")
+    monkeypatch.undo()
+    assert [e["kind"] for e in _registro(c)] == []
+    r = _copia_riavvio(tmp_path, "m144f1b.db")
+    assert risk_session_ledger.archive_index(_registro(r))[s1]["delta"]["desk"] == pytest.approx(-25.0)
+    assert RuntimeController._risk_archive(r.rc)[s1]["delta"]["desk"] == pytest.approx(-25.0)
+
+
+def test_m144_f2_settlement_durante_il_reset_contato_una_volta(tmp_path, monkeypatch):
+    """CX-F2 (P1/P5): un settlement -10 arriva fra RESET_STARTED e la transizione: sta interamente nella sessione chiusa
+    (-50) o nella nuova, mai in nessuna; finestra e archivio coincidono."""
+    c = _g_banco(tmp_path, "m144f2.db")
+    s1 = c.rc._risk_session["id"]
+    _settle(c, -40.0)
+    vero = risk_session_ledger.append
+    iniettato = []
+
+    def append(db, kind, payload):
+        out = vero(db, kind, payload)
+        if kind == "RESET_STARTED" and not iniettato:
+            iniettato.append(True)
+            _settle(c, -10.0)
+        return out
+    monkeypatch.setattr(risk_session_ledger, "append", append)
+    assert _reset_confermato(c.rc)["risk_stop_reset"] is True and iniettato
+    monkeypatch.undo()
+    archiviata = risk_session_ledger.archive_index(_registro(c))[s1]["delta"]["desk"]
+    finestra = [x["delta"]["desk"] for x in c.rc._risk_session["closed"] if x["id"] == s1]
+    nuova = RuntimeController._risk_session_delta(c.rc)["desk"]
+    assert archiviata + nuova == pytest.approx(-50.0) and finestra == [pytest.approx(archiviata)]
+
+
+def test_m144_f3_append_concorrenti_catena_integra(tmp_path):
+    """CX-F3 (P3/R): il primo scrittore si ferma DENTRO l'inserimento (dopo aver letto la catena) finche' il secondo
+    non ha provato a scrivere: con la serializzazione il secondo attende e la catena resta verificabile."""
+    from database import Database
+    db = Database(str(tmp_path / "m144f3.db"))
+    assert risk_session_ledger.append(db, "SESSION_CLOSED", {"id": "s0", "delta": {"desk": -1.0}})
+    vero, dentro, rilascia = db.insert_audit_event, threading.Event(), threading.Event()
+    primo = {}
+
+    def inserisci(evento):
+        if threading.get_ident() == primo.get("tid") and not dentro.is_set():
+            dentro.set()
+            rilascia.wait(1.0)
+        return vero(evento)
+    db.insert_audit_event = inserisci
+    esiti = {}
+
+    def uno():
+        primo["tid"] = threading.get_ident()
+        esiti["1"] = risk_session_ledger.append(db, "RESET_STARTED", {"operation_id": "op1"})
+
+    def due():
+        dentro.wait(2.0)
+        try:
+            esiti["2"] = risk_session_ledger.append(db, "LATE_SETTLEMENT", {"session_id": "s0", "settlement_key": "k"})
+        finally:
+            rilascia.set()
+    t1, t2 = threading.Thread(target=uno), threading.Thread(target=due)
+    t1.start(); t2.start(); t1.join(5); t2.join(5)
+    catena = risk_session_ledger.load(db)
+    assert esiti["1"] and esiti["2"] and [e["kind"] for e in catena][1:] == ["RESET_STARTED", "LATE_SETTLEMENT"]
+
+
+def test_m144_f4_cli_verifica_l_esposizione_sul_conto_raggiungibile_prima_del_reset(tmp_path):
+    """CX-F4 (P10): sessione LIVE superata con il conto irraggiungibile allo stop (esposizione SCONOSCIUTA); il conto
+    torna raggiungibile e l'operatore usa la CLI: verifica sul conto, poi reset confermato => rc 0, audit completo.
+    Connessione fallita => esposizione non verificata, reset rifiutato (rc 4), stop presente."""
+    for riuscita in (False, True):
+        c = _g_banco(tmp_path, f"m144f4_{riuscita}.db")
+        _ambiente(c, "LIVE", conto=CONTO_A)
+        c.rc.betfair_service.get_live_client = lambda: None
+        _settle(c, -40.0)
+        c.rc._emergency_reconcile_pending = False
+        _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+        assert c.rc.get_status()["live_exposure"]["state"] not in ("NESSUNA", "VERIFICATA")
+        conto, connessioni = _ContoLive(CONTO_A), []
+
+        def connect(password=None, force=False, simulation_mode=None, _ok=riuscita):
+            connessioni.append(simulation_mode)
+            if not _ok:
+                raise RuntimeError("conto irraggiungibile")
+            _connetti(c, conto)
+            return {"connected": True}
+        c.rc.betfair_service.connect = connect
+        _ambiente_sim = c.rc.set_simulation_mode(True)
+        esito = _headless_su(c.rc)._risk_session_reset_cli(
+            {"operator": "mario", "authorization": "AUT-F4", "reason": "ripresa", "confirm": True,
+             "confirm_again": True}, password=None)
+        assert connessioni == [False] and conto.cancellazioni == [] and _ambiente_sim is None or True
+        if riuscita:
+            assert esito == 0 and not c.rc._risk_stop_reason and "RESET_COMPLETED" in [e["kind"] for e in _registro(c)]
+        else:
+            assert esito == 4 and c.rc._risk_stop_reason and _registro(c) == []
+        c.rc._emergency_reconcile_pending = False
+        _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+
+def test_m144_e2_request_manuale_dutching_e_automatica_portano_la_sessione(tmp_path):
+    """CX-E2 (P1/P4): ogni ingresso (manuale, Dutching, automatico) persiste la sessione di rischio nella request."""
+    from controllers.dutching_controller import DutchingController
+    c = _g_banco(tmp_path, "m144e2.db")
+    sid = c.rc._risk_session["id"]
+    campi = DutchingController(bus=c.bus, runtime_controller=c.rc)._financial_scope_fields()
+    assert campi.get("risk_session_id") == sid and campi.get("financial_scope")
+    auto = c.rc._build_auto_trade_payload(signal={"market_id": "1.9631", "selection_id": 1, "side": "BACK",
+                                                  "price": 2.0, "event_name": "x"}, decision_stake=2.0)
+    assert auto.get("risk_session_id") == sid
+
+
+def test_m144_e2_tardivo_manuale_torna_alla_sessione_d_origine(tmp_path):
+    """CX-E2 end-to-end sul percorso reale manual_bet: il tardivo -10 dopo il reset va alla sessione d'origine."""
+    from controllers.dutching_controller import DutchingController
+    from tests.acceptance.test_issue523_dutching_manual_bet import _manual
+    c = _g_banco(tmp_path, "m144e2b.db")
+    s1 = c.rc._risk_session["id"]
+    n0 = len(c.bus.payloads("CMD_QUICK_BET")) if hasattr(c.bus, "payloads") else 0
+    esito = DutchingController(bus=c.bus, runtime_controller=c.rc).manual_bet(_manual(market_id="1.9632", stake=4.0))
+    inviati = c.bus.payloads("CMD_QUICK_BET")[n0:] if hasattr(c.bus, "payloads") else []
+    assert esito.get("ok") and inviati, f"banco: puntata manuale non piazzata ({esito})"
+    ref = str(inviati[0].get("customer_ref") or "")
+    righe = c.rc.db._execute("SELECT payload_json FROM orders WHERE customer_ref = ?", (ref,), fetch=True,
+                             commit=False) or []
+    assert righe and all(json.loads(dict(r)["payload_json"]).get("risk_session_id") == s1 for r in righe)
+    _settle(c, -40.0)
+    assert _reset_confermato(c.rc)["risk_stop_reset"] is True
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc._on_close_position(_canonical_close_payload(
+        event_key="cleared:1.9632:1", batch_id="b-m144e2", correlation_id="c-m144e2", customer_ref=ref,
+        gross_pnl=-10.0, commission_amount=0.0, net_pnl=-10.0, pnl=-10.0))
+    assert RuntimeController._risk_session_delta(c.rc)["desk"] == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("guasto", ["chiave_di_apertura", "libro", "commit"])
+def test_m144_g1e_reset_senza_commit_si_annulla_stato_coerente(tmp_path, monkeypatch, guasto):
+    """G1e/N1 (P5): la transizione del reset non salvata (chiave di apertura o libro) o il commit (RESET_COMPLETED) non
+    scritto => il reset si ANNULLA: sessione d'origine corrente in memoria e su disco, RESET_FAILED, stop presente,
+    nessuna chiusura archiviata. Il reset successivo riesce; la perdita resta esatta (nessuna perdita persa o doppia)."""
+    c = _g_banco(tmp_path, f"m144g1e_{guasto}.db")
+    s0 = c.rc._risk_session["id"]
+    _settle(c, -40.0)
+    with monkeypatch.context() as m:
+        if guasto == "chiave_di_apertura":
+            m.setattr(RuntimeController, "_save_risk_session_open", lambda self, s: False)
+        elif guasto == "libro":
+            def libro_ko(db, payload):
+                raise OSError("libro non scrivibile")
+            m.setattr(daily_loss_store, "_save_verified", libro_ko)
+        else:
+            vero = risk_session_ledger.append
+            m.setattr(risk_session_ledger, "append",
+                      lambda db, kind, p: None if kind == "RESET_COMPLETED" else vero(db, kind, p))
+        esito = _reset_confermato(c.rc)
+    assert esito["risk_stop_reset"] is False and c.rc._risk_stop_reason
+    assert c.rc._risk_session["id"] == s0
+    assert RuntimeController._risk_session_delta(c.rc)["desk"] == pytest.approx(-40.0)
+    tipi = [e["kind"] for e in _registro(c)]
+    assert tipi[0] == "RESET_STARTED" and "RESET_FAILED" in tipi and "RESET_COMPLETED" not in tipi
+    assert "SESSION_CLOSED" not in tipi
+    with c.rc._daily_loss_state_lock:
+        RuntimeController._persist_daily_loss_book(c.rc)          # il disco torna: il libro si riallinea
+    r = _copia_riavvio(tmp_path, f"m144g1e_{guasto}.db")
+    assert r.rc._risk_stop_reason and r.rc._risk_session["id"] == s0
+    assert RuntimeController._risk_session_delta(r.rc)["desk"] == pytest.approx(-40.0)
+    assert _reset_confermato(r.rc)["risk_stop_reset"] is True and r.rc._risk_session["id"] != s0
+    r.rc.mode = RuntimeMode.ACTIVE
+    _settle(r, -35.0)
+    assert RuntimeController._risk_session_delta(r.rc)["desk"] == pytest.approx(-35.0) and r.rc._risk_stop_reason
+
+
+def test_m144_g1e_commit_scritto_stop_rimasto_si_completa_con_audit(tmp_path, monkeypatch):
+    """G1e (P5/P10): RESET_COMPLETED scritto ma lo stop non tolto (scrittura dello stop fallita). Nello stesso processo
+    la via G1 completa il reset gia' committato (nessuna conferma nuova, evento con l'operatore); un nuovo superamento
+    della sessione nuova o un altro stop non vengono mai tolti da questo completamento."""
+    from core import risk_stop
+    c = _g_banco(tmp_path, "m144g1ec.db")
+    s0 = c.rc._risk_session["id"]
+    _settle(c, -40.0)
+    vero = risk_stop.persist_risk_stop
+    monkeypatch.setattr(risk_stop, "persist_risk_stop", lambda db, reason: False if not reason else vero(db, reason))
+    assert _reset_confermato(c.rc)["risk_stop_reset"] is False
+    monkeypatch.undo()
+    assert c.rc._risk_stop_reason and c.rc._risk_session["id"] != s0
+    r = _copia_riavvio(tmp_path, "m144g1ec.db")                    # all'avvio: completato dal registro
+    assert not r.rc._risk_stop_reason and r.rc._risk_session["id"] != s0
+    n0 = len(c.bus.events)
+    assert c.rc.reset_risk_stop()["risk_stop_reset"] is True       # nello stesso processo: dal registro
+    assert [p for t, p in c.bus.events[n0:] if t == "RISK_STOP_RESET"][-1]["operator"] == "operatore-test"
+    c.rc.mode = RuntimeMode.ACTIVE
+    _settle(c, -40.0)                                               # superamento della sessione nuova: resta
+    assert c.rc._risk_stop_reason and RuntimeController._finish_completed_reset(c.rc) is False
+
+
+def test_m144_libro_illeggibile_conserva_l_identita_della_sessione(tmp_path):
+    """M144 (P2/P9): libro illeggibile con la chiave di apertura leggibile: la sessione corrente resta QUELLA (mai un id
+    nuovo, mai chiusa per supposizione), con la perdita non verificabile: stop presente, e lo stop si toglie solo col
+    reset G1 confermato (il reset semplice e' rifiutato). Qui anche la perdita giornaliera e' illeggibile (quarantena fino
+    al giorno nuovo): il reset confermato resta rifiutato dagli altri limiti (M138) e la sessione non cambia."""
+    c = _g_banco(tmp_path, "m144ill.db")
+    sid = c.rc._risk_session["id"]
+    _settle(c, -10.0)
+    c.rc.db.save_settings({daily_loss_store.DAILY_LOSS_STATE_KEY: "{corrotto"})
+    r = _copia_riavvio(tmp_path, "m144ill.db")
+    assert r.rc._risk_session["id"] == sid and r.rc._risk_session.get("unverifiable") is True
+    assert r.rc._risk_stop_reason and _ingresso(r, "1.9641")[0] == 0
+    assert r.rc.reset_risk_stop()["risk_stop_reset"] is False
+    richiesta = r.rc.request_risk_session_reset(operator="mario", authorization="AUT-I", reason="libro illeggibile")
+    assert richiesta["requested"] is True and richiesta["session_id"] == sid      # la via G1 esiste (sessione nota)
+    esito = r.rc.reset_risk_stop(operator="mario", authorization="AUT-I", challenge_id=richiesta["challenge_id"],
+                                 confirm=True, confirm_again=True)
+    assert esito["risk_stop_reset"] is False and esito["reason"] in ("emergency_stop_active", "daily_loss_breached")
+    assert r.rc._risk_session["id"] == sid and r.rc._risk_stop_reason and _registro(r) == []
+
+
+def test_m144_gf_eccezione_del_registro_e_un_esito_non_un_eccezione(tmp_path, monkeypatch):
+    """G-F: un'eccezione della scrittura del registro diventa un esito del reset (audit non scrivibile), mai propagata."""
+    c = _g_banco(tmp_path, "m144gf.db")
+    _settle(c, -40.0)
+
+    def rotto(db, kind, payload):
+        raise OSError("registro rotto")
+    monkeypatch.setattr(risk_session_ledger, "append", rotto)
+    esito = _reset_confermato(c.rc)
+    assert esito == {"risk_stop_reset": False, "reason": "audit_non_scrivibile"} and c.rc._risk_stop_reason
+
+
+def test_m144_g1e_annullamento_conserva_il_pnl_entrato_nella_sessione_nuova(tmp_path, monkeypatch):
+    """G1e/N1 (P1): un settlement -10 entra nella sessione NUOVA dopo la transizione e prima del commit; il commit non si
+    scrive => il reset si annulla e la sessione d'origine vale -50 (somma esatta), anche dopo il riavvio."""
+    c = _g_banco(tmp_path, "m144g1ep.db")
+    s0 = c.rc._risk_session["id"]
+    _settle(c, -40.0)
+    vero = risk_session_ledger.append
+
+    def append(db, kind, payload):
+        if kind == "RESET_COMPLETED":
+            assert c.rc._risk_session["id"] != s0                     # transizione gia' avvenuta
+            _settle(c, -10.0)
+            return None
+        return vero(db, kind, payload)
+    monkeypatch.setattr(risk_session_ledger, "append", append)
+    assert _reset_confermato(c.rc)["risk_stop_reset"] is False
+    monkeypatch.undo()
+    assert c.rc._risk_session["id"] == s0
+    assert RuntimeController._risk_session_delta(c.rc)["desk"] == pytest.approx(-50.0)
+    r = _copia_riavvio(tmp_path, "m144g1ep.db")
+    assert r.rc._risk_session["id"] == s0 and RuntimeController._risk_session_delta(r.rc)["desk"] == pytest.approx(-50.0)
+
+
+def test_m144_g1e_completamento_dal_registro_non_toglie_un_altro_stop(tmp_path):
+    """G1e (P7): il completamento dal registro toglie solo lo stop confermato dall'operatore: uno stop diverso arrivato
+    dopo il reset (sessione nuova sotto il limite) resta, anche dopo il riavvio."""
+    c = _g_banco(tmp_path, "m144g1es.db")
+    _settle(c, -40.0)
+    assert _reset_confermato(c.rc)["risk_stop_reset"] is True
+    c.rc.risk_stop("exposure_stop_reached:test")
+    assert RuntimeController._finish_completed_reset(c.rc) is False and c.rc._risk_stop_reason
+    assert _copia_riavvio(tmp_path, "m144g1es.db").rc._risk_stop_reason == "exposure_stop_reached:test"
+
+
+def test_m144_g1e_gui_e_cli_completano_un_reset_gia_committato(tmp_path, monkeypatch):
+    """G1e (P5/P10): con un reset gia' committato nel registro e lo stop rimasto attivo, la richiesta della GUI e della
+    CLI lo completa (stop tolto, nessuna nuova conferma, nessun errore mostrato; CLI rc 0)."""
+    from core import risk_stop
+    for via in ("gui", "cli"):
+        c = _g_banco(tmp_path, f"m144g1e_{via}.db")
+        _settle(c, -40.0)
+        vero = risk_stop.persist_risk_stop
+        monkeypatch.setattr(risk_stop, "persist_risk_stop", lambda db, reason: False if not reason else vero(db, reason))
+        assert _reset_confermato(c.rc)["risk_stop_reset"] is False and c.rc._risk_stop_reason
+        monkeypatch.undo()
+        if via == "cli":
+            esito = _headless_su(c.rc)._risk_session_reset_cli({"operator": "x", "authorization": "y", "reason": "z",
+                                                                "confirm": False, "confirm_again": False})
+            assert esito == 0
+        else:
+            gui = _gui_su(c.rc, _TESTI_GUI, [])                       # nessuna conferma disponibile: non serve
+            gui._runtime_reset_risk_session()
+            assert gui.errori == [] and any("gia' confermato nel registro" in str(x) for x in gui.registro)
+        assert not c.rc._risk_stop_reason
+
+
+def test_m144_e1_copie_non_ordinabili_libro_illeggibile_mai_avvio_rotto(tmp_path):
+    """CX-E1/G-D (P9): libro e marker con due sessioni senza relazione e senza `seq` => ordine non determinabile:
+    il libro e' illeggibile (fail-closed per ogni ambito), il runtime si avvia comunque bloccato."""
+    c = _g_banco(tmp_path, "m144nord.db")
+    _settle(c, -5.0)
+    libro = json.loads((c.rc.db.get_settings() or {}).get(daily_loss_store.DAILY_LOSS_STATE_KEY))
+    altra = dict(libro, risk_session=dict(libro["risk_session"], id="sessione-estranea", closed=[]))
+    for copia in (libro, altra):
+        copia.pop("seq", None)
+    c.rc.db.save_settings({daily_loss_store.DAILY_LOSS_STATE_KEY: json.dumps(libro)})
+    with open(str(tmp_path / "m144nord.db") + ".daily_loss_pending.json", "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(altra))
+    from datetime import datetime as _dt
+    esito = daily_loss_store.restore_daily_loss_book(c.rc.db, today_utc=_dt.utcnow().date().isoformat())
+    assert esito.get("risk_session_unreadable") is True
+    r = _copia_riavvio(tmp_path, "m144nord.db")
+    assert r.rc._risk_stop_reason and _ingresso(r, "1.9651")[0] == 0

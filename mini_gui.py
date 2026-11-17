@@ -2420,6 +2420,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             return
         richiesta = self.runtime.request_risk_session_reset(operator=operatore, authorization=autorizzazione,
                                                             reason=motivo)
+        if richiesta.get("risk_stop_reset") is True:
+            # M144 (G1e): reset gia' confermato e committato nel registro, completato ora dal runtime (stop tolto)
+            self._log("RESET SESSIONE DI RISCHIO: reset gia' confermato nel registro, completato (stop tolto)")
+            return
         if not richiesta.get("requested"):
             self._safe_show_error(titolo, f"Reset non disponibile: {richiesta.get('reason')}")
             return

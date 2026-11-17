@@ -975,12 +975,30 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
     `conferma_scaduta`, `conferma_gia_usata` (monouso), `sessione_cambiata`, `registro_non_verificabile`,
     `audit_non_scrivibile`. Protocollo atomico verificabile nel registro append-only (`core/risk_session_ledger.py`,
     tabella `audit_events`, catena di hash): `RESET_STARTED` (operatore, autorizzazione, motivo, sessione, nuova
-    sessione, perdita, limite, conti, esposizione, istante) riletto PRIMA di ogni cambio di stato; sfida consumata;
-    sessione chiusa; `RESET_COMPLETED` riletto; solo allora lo stop si toglie. Un passo fallito lascia lo stop
-    (`RESET_FAILED` dove serve); un `RESET_STARTED` senza esito si chiude all'avvio dallo stato del libro. Stesso
+    sessione, perdita, limite, conti, esposizione, motivo dello stop, istante) riletto PRIMA di ogni cambio di stato;
+    sfida consumata; transizione della sessione; `RESET_COMPLETED` riletto = **punto di commit** (M144); poi lo stop si
+    toglie e infine la sessione chiusa entra nell'archivio (`SESSION_CLOSED`). La transizione (fotografia della
+    sessione che si chiude, passaggio alla nuova, libro e chiave di apertura) avviene tutta sotto il lock che applica
+    ogni P&L (`_switch_risk_session`): un settlement concorrente cade per intero nella sessione chiusa o nella nuova,
+    mai in nessuna (CX-F2). Senza commit il reset si ANNULLA (`_rollback_reset_switch`): la sessione d'origine torna
+    corrente con l'eventuale P&L entrato nel frattempo, l'id nuovo resta registrato come ritirato (mai riusato),
+    `RESET_FAILED`, stop presente. Un crash si risolve all'avvio PRIMA di archiviare: reset senza commit => annullato
+    (`RESET_FAILED` recuperato); reset committato con lo stop ancora attivo => completato dal registro (stop tolto solo
+    se e' ancora quello confermato, se la sessione corrente e' quella aperta da quel reset e non e' a sua volta oltre il
+    limite registrato; evento `RISK_STOP_RESET` con l'operatore). Lo stato durevole e' sempre uno dei due: stop + sessione
+    d'origine corrente + nessun `RESET_COMPLETED`, oppure nessuno stop + sessione chiusa + `RESET_COMPLETED` (G1e/N1).
+    Un errore del registro e' un esito del reset (`audit_non_scrivibile`), mai un'eccezione propagata (G-F). Stesso
     contratto per GUI (`RESET SESSIONE DI RISCHIO`, due conferme), headless (`--risk-session-reset --operator=…
     --authorization=… --reason=… --confirm --confirm-again`, rc 0 solo a reset riuscito, 4 altrimenti; non avvia il
-    trading) e API (i due metodi del runtime, unico ingresso). Il reset non tocca gli altri limiti.
+    trading) e API (i due metodi del runtime, unico ingresso). Il reset non tocca gli altri limiti. Headless (CX-F4):
+    con uno stop globale e l'esposizione LIVE non ancora verificata, la CLI si connette al conto LIVE configurato ed
+    esegue la stessa riconciliazione dell'avvio (solo ordini del bot, sola verifica se lo stop e' nato col runtime
+    LIVE, N6: un conto diverso da quello dello stop non certifica nulla) prima della richiesta; nessun ingresso, nessun
+    avvio del trading; conto irraggiungibile => reset rifiutato (rc 4). Il latch del superamento di sessione e' per
+    sessione di rischio: dopo il reset il superamento della sessione nuova arma di nuovo RISK_STOP, evento e
+    CASHOUT_ALL (CX-E3). La modalita' di sola verifica dello sweep LIVE (N7) e' salvata
+    (`emergency_live_verify_only`): dopo un riavvio la riconciliazione non annulla le coperture del cashout; valore
+    illeggibile => sola verifica (CX-E4).
   - *G2 — archivio delle sessioni chiuse (owner M139).* Le ultime 20 chiuse restano nel libro come finestra operativa;
     l'archivio durevole è il registro append-only (`SESSION_CLOSED`: id, apertura e chiusura, P&L per ambito, conti,
     limite), senza eliminazione automatica, verificato dalla catena di hash a ogni lettura. Una sessione esce dalla
@@ -988,9 +1006,19 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
     una sessione chiusa, anche fuori dalla finestra, vanno all'archivio una volta per chiave di settlement
     (`LATE_SETTLEMENT`): prima in attesa nel libro (`archive_pending`, nella stessa scrittura della chiave), poi nel
     registro; all'avvio le attese si scrivono senza doppioni. Registro manomesso o illeggibile => i tardivi fuori dalla
-    finestra non sono attribuibili e producono un blocco conservativo.
+    finestra non sono attribuibili e producono un blocco conservativo. M144: ogni tardivo di una sessione gia'
+    archiviata aggiorna anche l'indice dell'archivio in memoria, pure mentre e' ancora nella finestra (CX-F1); il record
+    della chiusa elenca i tardivi gia' compresi (`late_keys`), cosi' un `LATE_SETTLEMENT` con la stessa chiave non si
+    somma due volte. Le scritture del registro sono serializzate (`risk_session_ledger.LOCK`, lock foglia): due scrittori
+    concorrenti non producono mai due record con lo stesso `prev` (CX-F3); fra processi la serializzazione la da'
+    l'autorita' del runtime (#536).
+  - *Libro e marker di riserva (CX-E1/G-D).* Fra il libro nel db e il marker di riserva la revisione conta solo fra
+    copie della STESSA sessione; sessioni diverse si ordinano con la `seq` del libro o con la catena delle chiusure;
+    ordine non determinabile => libro illeggibile (fail-closed). Sessioni chiuse e tardivi in attesa delle due copie si
+    uniscono (mai persi). Libro illeggibile ma chiave di apertura leggibile => la sessione corrente resta QUELLA
+    (identita' nota, perdita non verificabile, stop presente, chiusura solo col reset G1 confermato).
   - *Settlement tardivi.* L'ingresso registra la sessione di rischio (`risk_session_id`, con la request e nella
-    riserva). Un settlement di una sessione gia' chiusa va a QUELLA sessione (fra le ultime 20 chiuse, nel libro), una
+    riserva): segnali, puntate manuali e Dutching (CX-E2) e ingressi automatici del ciclo. Un settlement di una sessione gia' chiusa va a QUELLA sessione (fra le ultime 20 chiuse, nel libro), una
     sola volta, e la sessione corrente non lo vede. Se porta la sessione d'origine oltre il limite: protezione
     PERSISTENTE sul conto interessato (`session_loss_breached:sessione_precedente=<id>`; una perdita tardiva non
     attribuibile si valuta su OGNI ambito della sessione d'origine, anche dopo un reset confermato — R5; LIVE: stop globale legato al
