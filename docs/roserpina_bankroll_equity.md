@@ -918,6 +918,20 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
     `reset_emergency()`).
   - *Stato.* `get_status()` espone anche `live_exposure_unresolved` e `live_exposure_manual_action_required` (piatti,
     derivati da `live_exposure`; `SCONOSCIUTA` e' irrisolta).
+- **Ciclo 12, R1 liability LIVE (owner GO) e rilievi Codex su `afbd5c89`.**
+  - *Liability, non stake* (`live_liability`, `Decimal`): BACK = stake; LAY = stake x (quota - 1). La parte non abbinata
+    si calcola su `size_remaining` alla quota limite dell'ordine; la parte abbinata su `size_matched` alla quota media
+    di esecuzione. Un ordine parzialmente abbinato conta residuo e abbinato una volta sola ciascuno; gli ordini
+    estranei portano residuo e abbinato nella stessa voce. Valore = **stima conservativa lorda** (`amount_basis =
+    STIMA_CONSERVATIVA_LORDA`), senza compensazioni fra esiti alternativi dello stesso mercato; arrotondamento per
+    eccesso al centesimo. Lato, quota o stake mancanti o non validi (quota LAY <= 1, NaN/inf, stake negativo) =>
+    importo `SCONOSCIUTO` (`amount` None), mai zero e mai lo stake. `live_exposure["liability"]` riporta `unmatched`,
+    `matched`, `total` e le voci non calcolabili.
+  - *Posizioni abbinate.* La cancellazione non chiude una posizione abbinata: con `matched_positions` lo sweep richiede
+    intervento manuale, l'esposizione e' `NON_RICONCILIATA` (mai `VERIFICATA` ne' zero) e il recovery resta attivo.
+  - *Riavvio.* Un record durevole dell'esposizione irrisolto (o illeggibile, o legacy risolto ma con posizioni
+    abbinate) riarma la riconciliazione e il recovery dedicato all'avvio, anche quando lo stop globale e' un RISK_STOP
+    di sessione gia' completato.
 - **EXPANSION.** La baseline del ciclo porta l'ambito del conto su cui e' stata letta; la crescita si calcola solo se
   lo snapshot del conto e' dello STESSO ambito verificato. Baseline legacy senza ambito, di un altro ambito o di un
   conto LIVE non identificato => nessuna crescita (nessun aumento di stake).

@@ -2065,14 +2065,17 @@ def test_r1_esposizione_live_irrisolta_esplicita_persistente_e_mai_zero_se_scono
             self.cancellazioni.append((market_id, bet_ids))
             return {"ok": True, "instructionReports": []}
 
+    # LAY non abbinato, stake residuo 2 @ 4.0: liability 2 x (4 - 1) = 6.00 (lo stake 2.00 la sottostimerebbe)
     live = _Ostinato([{"betId": "R-1", "customerOrderRef": tavolo.meta["customer_ref"], "marketId": "1.993",
-                       "status": "EXECUTABLE", "sizeRemaining": 2.0}])
+                       "status": "EXECUTABLE", "sizeRemaining": 2.0, "side": "LAY",
+                       "priceSize": {"price": 4.0, "size": 2.0}}])
     c.rc.betfair_service.get_live_client = lambda: live
     _settle_tavolo(c, tavolo, -40.0)
     stato = c.rc.get_status()
     assert "total_exposure" in stato
     vista = stato["live_exposure"]
-    assert vista["state"] == "NON_RICONCILIATA" and vista["amount"] == pytest.approx(2.0), vista
+    assert vista["state"] == "NON_RICONCILIATA" and vista["amount"] == pytest.approx(6.0), vista
+    assert vista["amount_display"] == "6.00" and vista["amount_basis"] == "STIMA_CONSERVATIVA_LORDA"
     assert [o.get("bet_id") for o in vista["open_orders"]] == ["R-1"] and vista["manual_action_required"] is True
     r = _banco(tmp_path, "r1.db", max_daily_loss=30.0)
     r.rc.betfair_service.get_live_client = lambda: (_ for _ in ()).throw(ConnectionError("LIVE non raggiungibile"))
@@ -2088,9 +2091,14 @@ def test_r1_testo_unico_per_gui_e_headless():
     assert format_live_exposure({"state": "NESSUNA"}) == "nessuna"
     testo = format_live_exposure({"state": "SCONOSCIUTA", "amount_display": "SCONOSCIUTO", "reconcile_pending": True})
     assert "SCONOSCIUTO" in testo and "INTERVENTO MANUALE" in testo and "0.00" not in testo
-    testo = format_live_exposure({"state": "NON_RICONCILIATA", "amount_display": "2.00",
+    testo = format_live_exposure({"state": "NON_RICONCILIATA", "amount": 2.0, "amount_display": "2.00",
                                   "open_orders": [{"bet_id": "R-1"}], "unattributed_open_orders": [{"bet_id": "X"}]})
-    assert "NON RICONCILIATA: 2.00" in testo and "1 ordini del bot aperti" in testo and "1 ordini estranei" in testo
+    assert "NON RICONCILIATA: liability 2.00 (stima lorda)" in testo
+    assert "1 ordini del bot aperti" in testo and "1 ordini estranei" in testo
+    testo = format_live_exposure({"state": "NON_RICONCILIATA", "amount": None, "amount_display": "SCONOSCIUTO",
+                                  "matched_positions": [{"bet_id": "M"}]})
+    assert "liability SCONOSCIUTO" in testo and "stima" not in testo and "1 posizioni abbinate" in testo
+    assert "posizione" in format_live_exposure({"state": "VERIFICATA"})
 
 
 def test_r1_preflight_headless_mai_pronto_con_esposizione_live_irrisolta(monkeypatch, capsys):
@@ -2384,3 +2392,175 @@ def test_c12_crash_vero_prima_del_finally_riavvio_riconcilia_sul_live(tmp_path, 
     assert _ingresso(r, "1.976")[0] == 0
     assert ("1.971", ["A-1"]) in live.cancellazioni, (live.letture, live.cancellazioni)
     assert r.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+
+
+def test_codex_posizione_live_abbinata_mai_verificata_ne_zero(tmp_path, monkeypatch):
+    """Codex P1 su afbd5c89: dopo lo sweep resta solo una posizione LIVE ABBINATA (nessun ordine da cancellare). La
+    cancellazione non chiude una posizione abbinata: esposizione NON_RICONCILIATA con intervento manuale, mai
+    VERIFICATA ne' importo 0; il recovery resta attivo finche' la posizione c'e'."""
+    c, tavolo = _m115_banco(tmp_path, "cx_matched.db", max_daily_loss=30.0)
+    abbinata = {"betId": "A-9", "customerOrderRef": tavolo.meta["customer_ref"], "marketId": "1.971",
+                "status": "EXECUTION_COMPLETE", "side": "LAY", "sizeMatched": 4.0, "sizeRemaining": 0.0,
+                "averagePriceMatched": 3.0}
+    live = _LiveSpia([abbinata])
+    c.rc.betfair_service.get_live_client = lambda: live
+    _settle_tavolo(c, tavolo, -40.0)
+    assert c.rc._emergency_stopped is True
+    stato = c.rc.get_status()
+    vista = stato["live_exposure"]
+    assert vista["matched_positions"], vista
+    assert vista["state"] != "VERIFICATA" and vista["amount"] != 0.0, vista
+    assert vista["manual_action_required"] is True and stato["live_exposure_unresolved"] is True
+    assert "nessun ordine LIVE residuo" not in rcmod_format(vista)
+    assert RuntimeController._live_recovery_active(c.rc), "recovery fermato con una posizione abbinata aperta"
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+
+def rcmod_format(vista):
+    from core.runtime_controller import format_live_exposure
+    return format_live_exposure(vista)
+
+
+def test_codex_riavvio_con_esposizione_irrisolta_ripristina_il_recovery(tmp_path, monkeypatch):
+    """Codex P1 su afbd5c89: stop di sessione LIVE completato col runtime in SIM, protezione LIVE con conto
+    irraggiungibile (esposizione irrisolta durevole). Dopo il riavvio la riconciliazione e il recovery dedicato
+    ripartono dal record durevole e cancellano l'ordine del bot appena il conto risponde, senza eventi."""
+    import core.runtime_controller as rcm
+    c, tavolo = _m115_banco(tmp_path, "cx_rst.db", intervallo=60.0, max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+
+    def irraggiungibile():
+        raise ConnectionError("LIVE non raggiungibile")
+
+    c.rc.betfair_service.get_live_client = irraggiungibile
+    _settle_tavolo(c, tavolo, -40.0)
+    assert str(c.rc._risk_stop_reason).startswith("session_loss_breached")
+    assert c.rc.get_status()["live_exposure_unresolved"] is True
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+    monkeypatch.setattr(rcm.RuntimeController, "_LIVE_RECOVERY_INTERVAL_S", 0.05)
+    r = _banco(tmp_path, "cx_rst.db", max_session_loss=30.0)
+    assert str(r.rc._risk_stop_reason).startswith("session_loss_breached")
+    assert r.rc.__dict__.get("_emergency_reconcile_pending") is True, "riconciliazione non ripristinata al riavvio"
+    assert RuntimeController._live_recovery_active(r.rc), "recovery dedicato non ripristinato al riavvio"
+    live = _LiveSpia([_ordine_bot(tavolo)])
+    r.rc.betfair_service.get_live_client = lambda: live
+    assert _attendi(lambda: ("1.971", ["A-1"]) in live.cancellazioni), (live.letture, live.cancellazioni)
+    assert _attendi(lambda: r.rc.get_status()["live_exposure"]["state"] == "VERIFICATA")
+
+
+# ============================================================================ R1 liability LIVE (owner GO)
+from decimal import Decimal as _D
+
+
+def _liab(open_orders=(), foreign=(), matched=()):
+    from core.runtime_controller import live_liability
+    return live_liability(list(open_orders), list(foreign), list(matched))
+
+
+@pytest.mark.parametrize("side,quota,stake,attesa", [
+    ("BACK", 3.0, 10.0, "10.00"), ("LAY", 3.0, 10.0, "20.00"), ("LAY", 1.01, 10.0, "0.10"),
+    ("LAY", 1000.0, 2.0, "1998.00"), ("BACK", 1000.0, 2.0, "2.00"), ("LAY", 2.5, 3.33, "5.00"),
+    ("lay", 3.3, 0.07, "0.17"),                        # 0.161 per eccesso: arrotondamento conservativo
+])
+def test_r1_liability_back_lay_quote_diverse(side, quota, stake, attesa):
+    out = _liab(open_orders=[{"bet_id": "o", "side": side, "price": quota, "size_remaining": stake}])
+    assert out["total"] == attesa and out["unmatched"] == attesa and out["matched"] == "0.00", out
+    assert _D(out["total"]) == _D(attesa)
+    out = _liab(matched=[{"bet_id": "m", "side": side, "average_price_matched": quota, "size_matched": stake}])
+    assert out["total"] == attesa and out["matched"] == attesa and out["unmatched"] == "0.00", out
+
+
+def test_r1_liability_parziale_conta_residuo_e_abbinato_una_volta():
+    """LAY 10 @ 3.0: 4 abbinati a quota media 2.8 (liability 7.20) + 6 residui @ 3.0 (12.00) = 19.20; mai 10 x 2."""
+    out = _liab(open_orders=[{"bet_id": "P", "side": "LAY", "price": 3.0, "size_remaining": 6.0}],
+                matched=[{"bet_id": "P", "side": "LAY", "average_price_matched": 2.8, "size_matched": 4.0}])
+    assert (out["unmatched"], out["matched"], out["total"]) == ("12.00", "7.20", "19.20"), out
+    # estraneo parzialmente abbinato: residuo e abbinato nella stessa voce, entrambi contati
+    out = _liab(foreign=[{"bet_id": "X", "side": "LAY", "price": 3.0, "size_remaining": 6.0, "size_matched": 4.0,
+                          "average_price_matched": 2.8}])
+    assert out["total"] == "19.20", out
+
+
+def test_r1_liability_piu_ordini_stesso_mercato_stima_lorda_senza_compensazioni():
+    """BACK 10 @ 2.0 e LAY 10 @ 2.0 sulla stessa selezione: la posizione netta sarebbe ~0, ma il valore e' dichiarato
+    stima conservativa LORDA (10 + 10 = 20), mai una compensazione non calcolata sugli esiti."""
+    out = _liab(open_orders=[{"bet_id": "B", "market_id": "1.5", "side": "BACK", "price": 2.0, "size_remaining": 10},
+                             {"bet_id": "L", "market_id": "1.5", "side": "LAY", "price": 2.0, "size_remaining": 10}])
+    assert out["total"] == "20.00" and out["basis"] == "STIMA_CONSERVATIVA_LORDA", out
+
+
+@pytest.mark.parametrize("voce", [
+    {"side": None, "price": 3.0, "size_remaining": 2.0}, {"side": "LAY", "price": None, "size_remaining": 2.0},
+    {"side": "LAY", "price": 3.0, "size_remaining": None}, {"side": "LAY", "price": 1.0, "size_remaining": 2.0},
+    {"side": "LAY", "price": "nan", "size_remaining": 2.0}, {"side": "BACK", "price": 3.0, "size_remaining": "inf"},
+    {"side": "BACK", "price": 3.0, "size_remaining": -1}, {"side": "SELL", "price": 3.0, "size_remaining": 2.0},
+    {"side": "LAY", "price": "x", "size_remaining": 2.0},
+])
+def test_r1_liability_dati_incompleti_sconosciuta_mai_zero(voce):
+    ok = {"bet_id": "ok", "side": "BACK", "price": 2.0, "size_remaining": 5.0}
+    out = _liab(open_orders=[ok, dict(voce, bet_id="ko")])
+    assert out["total"] is None and out["unmatched"] is None and "ko" in out["unknown_items"], out
+
+
+def test_r1_liability_abbinata_senza_lato_o_quota_e_sconosciuta_in_get_status(tmp_path):
+    """Posizione LIVE abbinata senza lato/quota di esecuzione (dato reale mancante): esposizione NON_RICONCILIATA con
+    importo SCONOSCIUTO, mai lo stake e mai zero; persistente dopo il riavvio."""
+    c, tavolo = _m115_banco(tmp_path, "liab_ko.db", intervallo=60.0, max_daily_loss=30.0)
+    live = _LiveSpia([{"betId": "A-9", "customerOrderRef": tavolo.meta["customer_ref"], "marketId": "1.971",
+                       "status": "EXECUTION_COMPLETE", "sizeMatched": 4.0, "sizeRemaining": 0.0}])
+    c.rc.betfair_service.get_live_client = lambda: live
+    _settle_tavolo(c, tavolo, -40.0)
+    vista = c.rc.get_status()["live_exposure"]
+    assert vista["state"] == "NON_RICONCILIATA" and vista["amount"] is None and vista["amount_display"] == "SCONOSCIUTO"
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+    r = _banco(tmp_path, "liab_ko.db", max_daily_loss=30.0)
+    vista = r.rc.get_status()["live_exposure"]
+    assert vista["amount"] is None and vista["state"] in ("NON_RICONCILIATA", "SCONOSCIUTA")
+    r.rc._emergency_reconcile_pending = False
+
+
+def test_r1_liability_lay_abbinata_in_get_status_gui_e_dopo_riavvio(tmp_path):
+    """LAY abbinato 4 @ 3.0 (liability 8.00, non lo stake 4.00): get_status, testo GUI/headless e stato persistente
+    concordano; dopo il riavvio lo stesso valore."""
+    from core.runtime_controller import format_live_exposure
+    c, tavolo = _m115_banco(tmp_path, "liab_ok.db", intervallo=60.0, max_daily_loss=30.0)
+    live = _LiveSpia([{"betId": "A-9", "customerOrderRef": tavolo.meta["customer_ref"], "marketId": "1.971",
+                       "status": "EXECUTION_COMPLETE", "side": "LAY", "sizeMatched": 4.0, "sizeRemaining": 0.0,
+                       "averagePriceMatched": 3.0}])
+    c.rc.betfair_service.get_live_client = lambda: live
+    _settle_tavolo(c, tavolo, -40.0)
+    vista = c.rc.get_status()["live_exposure"]
+    assert vista["state"] == "NON_RICONCILIATA" and vista["amount_display"] == "8.00", vista
+    assert vista["liability"]["matched"] == "8.00" and vista["liability"]["unmatched"] == "0.00"
+    assert "liability 8.00 (stima lorda)" in format_live_exposure(vista)
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+    r = _banco(tmp_path, "liab_ok.db", max_daily_loss=30.0)
+    r.rc.betfair_service.get_live_client = lambda: (_ for _ in ()).throw(ConnectionError("giu'"))
+    vista2 = r.rc.get_status()["live_exposure"]
+    assert vista2["amount_display"] in ("8.00", "SCONOSCIUTO") and vista2["state"] != "VERIFICATA", vista2
+    assert r.rc.__dict__.get("_emergency_reconcile_pending") is True
+    r.rc._emergency_reconcile_pending = False
+
+
+def test_codex_record_legacy_risolto_con_abbinate_non_e_verificato_al_riavvio(tmp_path):
+    """Record durevole scritto dal codice di afbd5c89 (bug Codex): `resolved=True`, VERIFIED, ma con una posizione LIVE
+    abbinata. Dopo l'aggiornamento e il riavvio: mai VERIFICATA, liability della posizione, riconciliazione in attesa."""
+    import json as _json
+    c = _banco(tmp_path, "legacy.db", max_daily_loss=30.0)
+    c.rc.db.save_settings({RuntimeController._LIVE_EXPOSURE_KEY: _json.dumps({
+        "source": "EMERGENCY_STOP", "verification": "VERIFIED", "resolved": True, "open_orders": [],
+        "unattributed_open_orders": [], "matched_positions": [
+            {"bet_id": "L-1", "market_id": "1.9", "side": "LAY", "size_matched": 5.0, "average_price_matched": 2.2}],
+        "at": "2026-11-17T10:00:00"})})
+    r = _banco(tmp_path, "legacy.db", max_daily_loss=30.0)
+    assert r.rc.__dict__.get("_emergency_reconcile_pending") is True
+    vista = r.rc.get_status()["live_exposure"]
+    assert vista["state"] == "NON_RICONCILIATA" and vista["amount_display"] == "6.00", vista
+    r.rc._emergency_reconcile_pending = False
+    # difesa in profondita': anche senza riconciliazione in attesa la vista non dichiara chiusa una posizione abbinata
+    assert r.rc.get_status()["live_exposure"]["state"] == "NON_RICONCILIATA"

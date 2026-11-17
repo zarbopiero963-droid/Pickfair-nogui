@@ -85,10 +85,15 @@ Colonna destra `System Status` (label sola lettura): `Status:` (`STOPPED`),
 `Esposizione LIVE:` (PR #638, ciclo 12, R1) è distinta da `Exposure:` (fondi o tavoli della sede corrente) e
 non dipende dalla modalità SIM/LIVE: un Emergency Stop o uno stop di sessione nato dal LIVE può lasciare ordini
 LIVE aperti mentre il runtime è in SIM. Testi verbatim (`core.runtime_controller.format_live_exposure`, uguali
-in headless): `nessuna`; `verificata: nessun ordine LIVE residuo`; `NON RICONCILIATA: <importo>` oppure
-`SCONOSCIUTA: SCONOSCIUTO`, seguiti da `| N ordini del bot aperti`, `| N ordini estranei aperti`,
+in headless): `nessuna`; `verificata: nessun ordine ne' posizione LIVE residui`;
+`NON RICONCILIATA: liability <importo> (stima lorda)`, `NON RICONCILIATA: liability SCONOSCIUTO` oppure
+`SCONOSCIUTA: liability SCONOSCIUTO`, seguiti da `| N ordini del bot aperti`, `| N ordini estranei aperti`,
 `| N posizioni abbinate`, `| riconciliazione in corso` quando presenti e sempre da `| INTERVENTO MANUALE`.
-Invariante di sicurezza: un importo non verificabile si mostra `SCONOSCIUTO`, mai `0.00`. Il valore è in
+L'importo è la liability LIVE (BACK = stake, LAY = stake × (quota − 1); residuo alla quota limite, abbinato alla
+quota media di esecuzione), stima conservativa lorda senza compensazioni fra esiti dello stesso mercato. Con
+posizioni abbinate lo stato non è mai `verificata`.
+Invariante di sicurezza: un importo non verificabile (lato, quota o stake mancanti) si mostra `SCONOSCIUTO`, mai
+`0.00` e mai lo stake. Il valore è in
 arancione (`#ff9f43`, avviso) e va a capo (larghezza 320 px, allineato a destra) invece di sovrapporsi all'etichetta.
 
 Pannello `Live Control Plane`:

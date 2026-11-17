@@ -13,6 +13,7 @@ import time
 import uuid
 import weakref
 from datetime import datetime, timedelta, timezone
+from decimal import ROUND_UP, Decimal, InvalidOperation
 from typing import Any, Optional
 
 from core import financial_scope, liquidity, loss_limits, validators
@@ -86,6 +87,62 @@ _DIRECT_TTL_TERMINAL_EVENTS = frozenset({
 _DIRECT_TTL_CLAIM_LOCK = threading.Lock()
 
 
+def _liability_component(side, price, size):
+    """R1 liability (owner): BACK = stake; LAY = stake x (quota - 1). Decimal; None se lato, quota o stake non
+    verificabili (mai zero per convenienza). Una quota LAY deve essere > 1; uno stake negativo non e' valido."""
+    try:
+        side = str(side or "").strip().upper()
+        stake = Decimal(str(size))
+        if not stake.is_finite() or stake < 0:
+            return None
+        if side == "BACK":
+            return stake
+        if side == "LAY":
+            odds = Decimal(str(price))
+            if not odds.is_finite() or odds <= 1:
+                return None
+            return stake * (odds - 1)
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return None
+
+
+def live_liability(open_orders, foreign_orders, matched_positions) -> dict:
+    """R1 liability LIVE (owner GO, PR #638): STIMA CONSERVATIVA LORDA, senza compensazioni fra esiti alternativi
+    dello stesso mercato (mai una «esposizione netta» non calcolata sugli esiti).
+    - non abbinata: parte ancora eseguibile (`size_remaining`) alla quota limite dell'ordine;
+    - abbinata: `size_matched` alla quota media di esecuzione (`average_price_matched`);
+    - ordine parzialmente abbinato: residuo e abbinato contati separatamente, una volta sola ciascuno
+      (residuo in `open_orders`, abbinato in `matched_positions` per il bot; nella stessa voce per gli estranei).
+    Un qualunque dato mancante => totale None (SCONOSCIUTO). Arrotondamento per eccesso al centesimo."""
+    unmatched, matched_total, unknown = Decimal(0), Decimal(0), []
+    for o in list(open_orders or []) + list(foreign_orders or []):
+        part = _liability_component(o.get("side"), o.get("price"), o.get("size_remaining"))
+        if part is None:
+            unknown.append(str(o.get("bet_id") or "?"))
+        else:
+            unmatched += part
+        if o.get("size_matched") not in (None, "", 0, 0.0, "0"):
+            mpart = _liability_component(o.get("side"), o.get("average_price_matched"), o.get("size_matched"))
+            if mpart is None:
+                unknown.append(str(o.get("bet_id") or "?"))
+            else:
+                matched_total += mpart
+    for m in list(matched_positions or []):
+        part = _liability_component(m.get("side"), m.get("average_price_matched"), m.get("size_matched"))
+        if part is None:
+            unknown.append(str(m.get("bet_id") or "?"))
+        else:
+            matched_total += part
+    cent = Decimal("0.01")
+    q = (lambda d: d.quantize(cent, rounding=ROUND_UP))
+    return {"basis": "STIMA_CONSERVATIVA_LORDA",
+            "unmatched": None if unknown else str(q(unmatched)),
+            "matched": None if unknown else str(q(matched_total)),
+            "total": None if unknown else str(q(unmatched + matched_total)),
+            "unknown_items": unknown}
+
+
 def format_live_exposure(view: Optional[dict]) -> str:
     """R1 (owner, ciclo 12): testo unico dell'esposizione LIVE per GUI e headless (stesso significato ovunque).
     Un importo non verificabile si mostra SCONOSCIUTO, mai zero."""
@@ -94,9 +151,10 @@ def format_live_exposure(view: Optional[dict]) -> str:
     if state == "NESSUNA":
         return "nessuna"
     if state == "VERIFICATA":
-        return "verificata: nessun ordine LIVE residuo"
+        return "verificata: nessun ordine ne' posizione LIVE residui"
     parts = [f"{'NON RICONCILIATA' if state == 'NON_RICONCILIATA' else 'SCONOSCIUTA'}: "
-             f"{view.get('amount_display') or 'SCONOSCIUTO'}"]
+             f"liability {view.get('amount_display') or 'SCONOSCIUTO'}"
+             + (" (stima lorda)" if view.get("amount") is not None else "")]
     if view.get("open_orders"):
         parts.append(f"{len(view['open_orders'])} ordini del bot aperti")
     if view.get("unattributed_open_orders"):
@@ -393,6 +451,7 @@ class RuntimeController:
         self._reload_persisted_emergency_state()
         self._load_hedged_markets()
         RuntimeController._restore_session_stop_marker(self)        # S-b: stop di sessione rimasto in sospeso
+        RuntimeController._restore_live_exposure_pending(self)      # Codex P1 su afbd5c89
         RuntimeController._reconcile_restored_emergency(self, trigger="startup")
 
     @property
@@ -2691,6 +2750,23 @@ class RuntimeController:
             logger.exception("R1: esposizione LIVE non salvata (resta segnalata come SCONOSCIUTA)")
             self._live_exposure_record = {"verification": "UNKNOWN", "resolved": False, "source": str(source)}
 
+    def _restore_live_exposure_pending(self) -> None:
+        """Codex P1 su afbd5c89: un'esposizione LIVE irrisolta registrata in modo durevole (record R1 non risolto o
+        illeggibile) riarma la riconciliazione al riavvio, anche quando lo stop globale e' un RISK_STOP gia' completato
+        (marker di sessione rimosso): la riconciliazione all'avvio e il recovery dedicato ripartono. Mai raise."""
+        try:
+            raw = (self.db.get_settings() or {}).get(RuntimeController._LIVE_EXPOSURE_KEY) \
+                if hasattr(self.db, "get_settings") else ""
+            if not raw:
+                return
+            record = json.loads(raw)
+            # record legacy (scritto prima della correzione Codex) risolto ma con posizioni abbinate: NON risolto
+            if not (isinstance(record, dict) and record.get("resolved") and not record.get("matched_positions")):
+                self._emergency_reconcile_pending = True
+        except Exception:
+            logger.exception("R1: record dell'esposizione LIVE illeggibile al riavvio (riconciliazione in attesa)")
+            self._emergency_reconcile_pending = True
+
     def _live_exposure_status(self) -> dict:
         """R1: stato esplicito dell'esposizione LIVE per `get_status`, la GUI e headless. Stati:
         NESSUNA (nessuno stop globale ne' sweep registrato), VERIFICATA (ultimo sweep verificato, nulla di residuo),
@@ -2715,26 +2791,31 @@ class RuntimeController:
             return {"state": state, "amount": None if state == "SCONOSCIUTA" else 0.0,
                     "amount_display": "SCONOSCIUTO" if state == "SCONOSCIUTA" else "0.00",
                     "reconcile_pending": pending, "manual_action_required": state != "NESSUNA",
+                    "amount_basis": "SCONOSCIUTA" if state == "SCONOSCIUTA" else "NOTA", "liability": None,
                     "open_orders": [], "unattributed_open_orders": [], "matched_positions": [],
                     "verification": None, "source": None, "at": None}
         open_orders = list(record.get("open_orders") or record.get("open_after_cancel") or [])
         foreign = list(record.get("unattributed_open_orders") or [])
         matched = list(record.get("matched_positions") or [])
         verification = record.get("verification")
-        if record.get("resolved") and verification == "VERIFIED" and not pending:
+        liability = None
+        if (record.get("resolved") and verification == "VERIFIED" and not pending
+                and not (open_orders or foreign or matched)):
+            # Codex P1 su afbd5c89: mai VERIFICATA con posizioni abbinate (la cancellazione non le chiude)
             state, amount = "VERIFICATA", 0.0
         elif verification in ("VERIFIED", "OPEN_ORDERS_REMAIN", "CANCEL_INCOMPLETE") and (open_orders or foreign
                                                                                              or matched):
-            state, amount = "NON_RICONCILIATA", None
-            try:
-                amount = round(sum(float(o.get("size_remaining")) for o in open_orders + foreign)
-                               + sum(float(m.get("size_matched")) for m in matched), 2)
-            except (TypeError, ValueError):
-                amount = None                          # un valore non leggibile => importo SCONOSCIUTO
+            state = "NON_RICONCILIATA"
+            liability = live_liability(open_orders, foreign, matched)   # R1: liability, non stake
+            amount = None if liability["total"] is None else float(liability["total"])
         else:
             state, amount = "SCONOSCIUTA", None
         return {"state": state, "amount": amount,
-                "amount_display": "SCONOSCIUTO" if amount is None else f"{amount:.2f}",
+                "amount_display": "SCONOSCIUTO" if amount is None else (
+                    liability["total"] if liability else f"{amount:.2f}"),
+                "amount_basis": ("NOTA" if state == "VERIFICATA" else
+                                 "SCONOSCIUTA" if amount is None else "STIMA_CONSERVATIVA_LORDA"),
+                "liability": liability,
                 "reconcile_pending": pending, "manual_action_required": state != "VERIFICATA",
                 "open_orders": open_orders, "unattributed_open_orders": foreign, "matched_positions": matched,
                 "verification": verification, "source": record.get("source"), "at": record.get("at")}
@@ -3284,6 +3365,14 @@ class RuntimeController:
         return self._emergency_call(client.cancel_orders, **kwargs)
 
     @staticmethod
+    def _order_limit_price(order: dict):
+        """Quota limite di un ordine Betfair (`priceSize.price` o `price`); None se assente."""
+        price = order.get("price")
+        if price is None and isinstance(order.get("priceSize"), dict):
+            price = order["priceSize"].get("price")
+        return price
+
+    @staticmethod
     def _exchange_open(order: dict) -> bool:
         try:
             remaining = float(order.get("sizeRemaining") or 0.0)
@@ -3437,15 +3526,20 @@ class RuntimeController:
             return str(o.get("betId") or "") in known_bets or str(o.get("betId") or "") in bot_remote or \
                 bool(ref and ref in known_refs)
         # Dopo il cancel contano gli ordini del BOT ancora aperti; quelli estranei restano in `unattributed`.
+        # R1 liability (owner): lato e quota limite per la liability della parte ancora eseguibile
         open_after = [{"bet_id": str(o.get("betId") or ""), "market_id": str(o.get("marketId") or ""),
-                       "size_remaining": o.get("sizeRemaining")}
+                       "size_remaining": o.get("sizeRemaining"), "side": o.get("side"),
+                       "price": RuntimeController._order_limit_price(o)}
                       for o in (after or []) if self._exchange_open(o) and _is_bot(o)]
         # Ordini non attribuibili sullo stato FINALE quando c'e' (Sol su d85a62ff): uno comparso dopo la prima
         # fotografia non sfugge all'operatore. Anche a lettura iniziale fallita: non sono stati cancellati
         # (nessun cancel di mercato, Sol su 7094b1a6) e restano all'operatore.
         if after is not None:
             unattributed = [{"bet_id": str(o.get("betId") or ""), "market_id": str(o.get("marketId") or ""),
-                             "size_remaining": o.get("sizeRemaining")}
+                             "size_remaining": o.get("sizeRemaining"), "side": o.get("side"),
+                             "price": RuntimeController._order_limit_price(o),
+                             "size_matched": o.get("sizeMatched"),
+                             "average_price_matched": o.get("averagePriceMatched")}
                             for o in after if self._exchange_open(o) and not _is_bot(o)]
         open_after_ids = {o["bet_id"] for o in open_after}
 
@@ -3531,7 +3625,8 @@ class RuntimeController:
             # Perdita dell'autorita' durante l'arresto: incidente distinto, registrato anche se la lettura finale mostra
             # gli ordini cancellati, e mai compatibile con VERIFIED (direttiva owner PF-OWNER-ESTOP-B5-BATCH-AUDIT).
             "authority_lost": [e for e in cancel_errors if e.get("stage") == "runtime_authority"],
-            "manual_action_required": verification != "VERIFIED" or bool(unattributed),
+            # Codex P1 su afbd5c89: la cancellazione non chiude una posizione abbinata => resta all'operatore
+            "manual_action_required": verification != "VERIFIED" or bool(unattributed) or bool(matched_positions),
         }
 
     def reset_emergency(self) -> dict:
