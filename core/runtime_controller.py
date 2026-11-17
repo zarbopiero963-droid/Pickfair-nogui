@@ -2078,10 +2078,17 @@ class RuntimeController:
             return "", ""
         delta = closed["delta"] if applied else RuntimeController._delta_with(closed["delta"], pnl, attribution)
         vector = (delta["desk"], delta.get("scopes") or {}, delta.get("unscoped") or 0.0)
-        reason = loss_limits.session_loss_reason(limit, 0.0, RuntimeController._realized_for_scope(self, key, vector))
-        if reason.startswith("session_loss_breached"):
-            return reason.replace("session_loss_breached", f"session_loss_breached:sessione_precedente={closed['id']}",
-                                  1), key
+        keys = [key]
+        if attribution.get("kind") == "unattributed_loss":
+            # R5 (regola F1, M134): una perdita non attribuibile conta per OGNI ambito della sessione d'origine (come nel
+            # percorso corrente, `_projected_session_breach`), non solo per l'ambito non verificabile
+            keys += sorted(k for k in (delta.get("scopes") or {}) if k != key)
+        for scope_key in keys:
+            reason = loss_limits.session_loss_reason(
+                limit, 0.0, RuntimeController._realized_for_scope(self, scope_key, vector))
+            if reason.startswith("session_loss_breached"):
+                return reason.replace("session_loss_breached",
+                                      f"session_loss_breached:sessione_precedente={closed['id']}", 1), scope_key
         return "", ""
 
     def _projected_session_breach(self, pnl: float, attribution: dict) -> tuple:

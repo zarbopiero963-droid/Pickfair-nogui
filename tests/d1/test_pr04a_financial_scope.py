@@ -3735,3 +3735,33 @@ def test_m139_g2_indice_archivio_conta_una_chiave_una_volta_e_verifica_la_catena
     assert [e["seq"] for e in catena] == [1, 2, 3] and catena[1]["prev"] == catena[0]["hash"]
     assert risk_session_ledger.archive_index(catena)["S1"]["delta"]["desk"] == pytest.approx(-15.0)
     assert risk_session_ledger.append(db, "TIPO_INVENTATO", {}) is None
+
+
+def test_m140_r5_tardivo_non_attribuibile_di_una_sessione_resettata_riarma_la_protezione(tmp_path):
+    """R5 (regola F1 owner M134, nota M140): sessione LIVE di A superata (-40) e chiusa col reset confermato; un tardivo
+    -10 di una sua scommessa SENZA ambito registrato (perdita non attribuibile) la porta a -50. Va valutato su OGNI ambito
+    della sessione d'origine (come il percorso corrente): protezione persistente, nessun ingresso; la sessione nuova non
+    conta la perdita."""
+    import time as _t
+    c = _g_banco(tmp_path, "r5.db")
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    _connetti(c, _ContoLive(CONTO_A))
+    vecchia = c.rc._risk_session["id"]
+    ora = _t.time()
+    c.rc.db._execute("INSERT INTO orders (customer_ref, correlation_id, status, payload_json, response_json, created_at,"
+                     " updated_at) VALUES (?,?,?,?,?,?,?)",
+                     ("dut-r5-T", "corr-r5", "PLACED", json.dumps({"simulation_mode": False, "market_id": "1.9798",
+                                                                   "risk_session_id": vecchia}),
+                      json.dumps({"betId": "T", "status": "SUCCESS"}), ora, ora), commit=True)
+    _settle(c, -40.0)
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="t")
+    _ambiente(c, "SIM")
+    assert _reset_confermato(c.rc)["risk_stop_reset"] is True
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc._on_close_position(_canonical_close_payload(
+        event_key="cleared:1.9798:1", batch_id="b-r5", correlation_id="c-r5", customer_ref="dut-r5-T",
+        gross_pnl=-10.0, commission_amount=0.0, net_pnl=-10.0, pnl=-10.0))
+    assert RuntimeController._risk_session_delta(c.rc)["desk"] == pytest.approx(0.0)
+    assert f"sessione_precedente={vecchia}" in str(c.rc._risk_stop_reason)
+    assert _ingresso(c, "1.9799")[0] == 0
+    c.rc._emergency_reconcile_pending = False

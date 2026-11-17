@@ -992,7 +992,8 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   - *Settlement tardivi.* L'ingresso registra la sessione di rischio (`risk_session_id`, con la request e nella
     riserva). Un settlement di una sessione gia' chiusa va a QUELLA sessione (fra le ultime 20 chiuse, nel libro), una
     sola volta, e la sessione corrente non lo vede. Se porta la sessione d'origine oltre il limite: protezione
-    PERSISTENTE sul conto interessato (`session_loss_breached:sessione_precedente=<id>`; LIVE: stop globale legato al
+    PERSISTENTE sul conto interessato (`session_loss_breached:sessione_precedente=<id>`; una perdita tardiva non
+    attribuibile si valuta su OGNI ambito della sessione d'origine, anche dopo un reset confermato — R5; LIVE: stop globale legato al
     conto e barriera durevole prima del P&L; SIM: stop locale). Sessione registrata ma non verificabile (ne' corrente
     ne' fra le chiuse) e perdita => blocco conservativo (`sessione_di_rischio_non_verificabile`). Ordini precedenti a
     F1 (senza sessione registrata) => sessione corrente. Libro illeggibile => stop di sessione globale persistente
