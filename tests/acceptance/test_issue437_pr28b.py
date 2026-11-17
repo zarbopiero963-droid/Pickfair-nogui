@@ -450,7 +450,9 @@ def test_pass_p37_start_riprende_la_sessione_di_rischio_e_il_reset_esplicito_la_
     c.rc.betfair_service.get_live_client = lambda: _types.SimpleNamespace(
         get_current_orders=lambda **_k: [], cancel_orders=lambda *_a, **_k: {"ok": True})
     RuntimeController._reconcile_restored_emergency(c.rc, trigger="test")
-    esito = c.rc.reset_risk_stop()
+    richiesta = c.rc.request_risk_session_reset(operator="op", authorization="AUT-1", reason="test")   # G1
+    esito = c.rc.reset_risk_stop(operator="op", authorization="AUT-1", challenge_id=richiesta["challenge_id"],
+                                 confirm=True, confirm_again=True)
     assert esito["risk_stop_reset"] is True, esito
     assert c.rc._session_pnl_baseline == pytest.approx(c.rc.risk_desk.realized_pnl)
     assert c.rc._session_loss_block_reason() == ""

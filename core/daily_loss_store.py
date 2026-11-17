@@ -233,7 +233,8 @@ def _parse_delta(raw: Any) -> dict:
 
 def parse_risk_session(raw: Any) -> Optional[dict]:
     """F1 (owner M134): sessione di rischio salvata nel libro (sopravvive al cambio di giornata e ai riavvii).
-    ``{"id", "opened_at", "rev", "delta": {"desk", "scopes", "unscoped"}, "closed": [{"id", "delta", "closed_at"}]}``.
+    ``{"id", "opened_at", "rev", "delta": {"desk", "scopes", "unscoped"}, "closed": [{"id", "delta", "closed_at"}],
+    "archive_pending": [{"session_id", "settlement_key", "delta"}]}`` (G2: P&L tardivi non ancora nel registro).
     Assente => None; illeggibile => ValueError (libro illeggibile: fail-closed)."""
     if raw is None:
         return None
@@ -244,10 +245,23 @@ def parse_risk_session(raw: Any) -> Optional[dict]:
         for item in raw.get("closed") or []:
             if not isinstance(item, dict) or not str(item.get("id") or ""):
                 raise ValueError("sessione di rischio chiusa non valida")
-            closed.append({"id": str(item["id"]), "delta": _parse_delta(item.get("delta")),
-                           "closed_at": str(item.get("closed_at") or "")})
+            limit = item.get("limit")
+            entry = {"id": str(item["id"]), "delta": _parse_delta(item.get("delta")),
+                     "closed_at": str(item.get("closed_at") or "")}
+            if "opened_at" in item or "limit" in item or "accounts" in item:   # G2: conto, limiti, istanti
+                entry.update(opened_at=str(item.get("opened_at") or ""),
+                             limit=None if limit is None else _finite(limit),
+                             accounts=[str(a) for a in (item.get("accounts") or [])])
+            closed.append(entry)
+        pending = []
+        for item in raw.get("archive_pending") or []:      # G2: P&L tardivi da scrivere nell'archivio durevole
+            if not isinstance(item, dict) or not str(item.get("session_id") or "") or not str(
+                    item.get("settlement_key") or ""):
+                raise ValueError("P&L tardivo in attesa non valido")
+            pending.append({"session_id": str(item["session_id"]), "settlement_key": str(item["settlement_key"]),
+                            "delta": _parse_delta(item.get("delta"))})
         return {"id": str(raw["id"]), "opened_at": str(raw.get("opened_at") or ""), "rev": int(raw["rev"]),
-                "delta": _parse_delta(raw.get("delta")), "closed": closed}
+                "delta": _parse_delta(raw.get("delta")), "closed": closed, "archive_pending": pending}
     except ValueError:
         raise
     except Exception as exc:

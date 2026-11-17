@@ -966,6 +966,29 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
     senza stop, senza superamento e senza esposizione LIVE irrisolta. La sessione nuova (perdita zero) si salva PRIMA
     di togliere lo stop; se il libro non e' verificato il reset e' rifiutato (`sessione_di_rischio_non_salvata`) e tutto
     resta com'era.
+  - *G1 — reset confermato e tracciato (owner M138/M139).* Il reset che CHIUDE una sessione superata richiede la
+    doppia conferma dell'operatore: `request_risk_session_reset(operator, authorization, reason)` (prima conferma:
+    sfida monouso legata a operatore, autorizzazione e sessione, scadenza `_RESET_CHALLENGE_TTL_S` = 120 s, con
+    riepilogo di sessione, perdita, conti LIVE ed esposizione) e poi `reset_risk_stop(operator=…, authorization=…,
+    challenge_id=…, confirm=True, confirm_again=True)`. Rifiuti espliciti: `conferma_operatore_richiesta`,
+    `doppia_conferma_richiesta`, `conferma_non_richiesta_o_diversa`, `operatore_o_autorizzazione_diversi`,
+    `conferma_scaduta`, `conferma_gia_usata` (monouso), `sessione_cambiata`, `registro_non_verificabile`,
+    `audit_non_scrivibile`. Protocollo atomico verificabile nel registro append-only (`core/risk_session_ledger.py`,
+    tabella `audit_events`, catena di hash): `RESET_STARTED` (operatore, autorizzazione, motivo, sessione, nuova
+    sessione, perdita, limite, conti, esposizione, istante) riletto PRIMA di ogni cambio di stato; sfida consumata;
+    sessione chiusa; `RESET_COMPLETED` riletto; solo allora lo stop si toglie. Un passo fallito lascia lo stop
+    (`RESET_FAILED` dove serve); un `RESET_STARTED` senza esito si chiude all'avvio dallo stato del libro. Stesso
+    contratto per GUI (`RESET SESSIONE DI RISCHIO`, due conferme), headless (`--risk-session-reset --operator=…
+    --authorization=… --reason=… --confirm --confirm-again`, rc 0 solo a reset riuscito, 4 altrimenti; non avvia il
+    trading) e API (i due metodi del runtime, unico ingresso). Il reset non tocca gli altri limiti.
+  - *G2 — archivio delle sessioni chiuse (owner M139).* Le ultime 20 chiuse restano nel libro come finestra operativa;
+    l'archivio durevole è il registro append-only (`SESSION_CLOSED`: id, apertura e chiusura, P&L per ambito, conti,
+    limite), senza eliminazione automatica, verificato dalla catena di hash a ogni lettura. Una sessione esce dalla
+    finestra solo se già archiviata; un archivio non scrivibile la trattiene e all'avvio si ripara. I P&L tardivi di
+    una sessione chiusa, anche fuori dalla finestra, vanno all'archivio una volta per chiave di settlement
+    (`LATE_SETTLEMENT`): prima in attesa nel libro (`archive_pending`, nella stessa scrittura della chiave), poi nel
+    registro; all'avvio le attese si scrivono senza doppioni. Registro manomesso o illeggibile => i tardivi fuori dalla
+    finestra non sono attribuibili e producono un blocco conservativo.
   - *Settlement tardivi.* L'ingresso registra la sessione di rischio (`risk_session_id`, con la request e nella
     riserva). Un settlement di una sessione gia' chiusa va a QUELLA sessione (fra le ultime 20 chiuse, nel libro), una
     sola volta, e la sessione corrente non lo vede. Se porta la sessione d'origine oltre il limite: protezione

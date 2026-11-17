@@ -17,7 +17,7 @@
   non viene mai riapplicato in automatico — fail-closed).
 - `headless_main.py` non importa la GUI: è un runtime CLI separato con flag
   propri (`--live`, `--simulation`, `--live-enabled`, `--kill-switch-on/off`,
-  `--emergency-stop`, `--preflight`, `--telegram-login`, ...).
+  `--emergency-stop`, `--preflight`, `--telegram-login`, `--risk-session-reset`, ...).
 - Senza display X11 la GUI non parte (errore Tk «no display»): su host
   headless si usa `--headless`.
 
@@ -72,10 +72,21 @@ Colonna sinistra `Runtime Controls`:
 | `PAUSA` | `_runtime_pause` | default |
 | `RIPRENDI` | `_runtime_resume` | default |
 | `RESET CICLO` | `_runtime_reset` | default |
+| `RESET SESSIONE DI RISCHIO` | `_runtime_reset_risk_session` | ambra `#8a5a00` (hover `#6b4600`), h40 |
 | `EMERGENCY STOP` | `_runtime_emergency_stop` | nero, testo rosso, h50 |
 
-⚠ Nessuno di questi bottoni ha un dialogo di conferma (l'unico `askyesno`
-di tutta la GUI è l'eliminazione di una regola parser).
+⚠ Questi bottoni non hanno un dialogo di conferma, salvo `RESET SESSIONE DI RISCHIO` (sotto); l'altro `askyesno`
+della GUI è l'eliminazione di una regola parser.
+
+`RESET SESSIONE DI RISCHIO` (PR #638, owner M139, G1): chiusura di una sessione di rischio oltre `max_session_loss`.
+Flusso: tre richieste di testo con titolo `Reset sessione di rischio` (`Operatore autorizzato:`,
+`Riferimento dell'autorizzazione:`, `Motivo del reset:`; un campo vuoto annulla); poi la PRIMA conferma
+(`Reset sessione di rischio - prima conferma`) con il riepilogo `Sessione:`, `Perdita di sessione:`,
+`Conti LIVE coinvolti:`, `Esposizione LIVE:` e la frase «La perdita resta registrata; gli altri limiti restano
+attivi. Confermi la chiusura?»; poi la SECONDA conferma (`Reset sessione di rischio - seconda conferma`, «Confermi
+DI NUOVO il reset della sessione di rischio superata?»). Annullare in qualunque punto non cambia nulla. Un rifiuto del
+runtime (`Reset non disponibile: …` o `Reset rifiutato: …`) appare come errore. Invariante di sicurezza: senza
+dialoghi reali (fallback senza tkinter) nessuna conferma vale «sì».
 
 Colonna destra `System Status` (label sola lettura): `Status:` (`STOPPED`),
 `Broker:` (`SIMULATION`), `Betfair:` (`DISCONNECTED`/`CONNECTED`),

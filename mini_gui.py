@@ -8,8 +8,11 @@ import types
 _LOGGER = logging.getLogger(__name__)
 try:
     import tkinter as tk
-    from tkinter import ttk, messagebox, filedialog
+    from tkinter import ttk, messagebox, filedialog, simpledialog
+    _REAL_DIALOGS = True
 except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
+    _REAL_DIALOGS = False       # G1: senza dialoghi reali nessuna conferma e' mai data per buona
+    simpledialog = types.SimpleNamespace(askstring=lambda *_a, **_k: None)
     class _DummyWidget:
         @staticmethod
         def __init__(*args, **kwargs):
@@ -1041,6 +1044,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         self.btn_reset = ctk.CTkButton(left, text="RESET CICLO", command=self._runtime_reset, height=40)
         self.btn_reset.pack(fill=tk.X, padx=20, pady=8)
+
+        # G1 (owner M139): chiusura confermata di una sessione di rischio oltre il limite (doppia conferma + audit)
+        self.btn_risk_session_reset = ctk.CTkButton(left, text="RESET SESSIONE DI RISCHIO",
+                                                    command=self._runtime_reset_risk_session, height=40,
+                                                    fg_color="#8a5a00", hover_color="#6b4600")
+        self.btn_risk_session_reset.pack(fill=tk.X, padx=20, pady=8)
 
         self.btn_emergency = ctk.CTkButton(
             left,
@@ -2372,6 +2381,70 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
     def _runtime_reset(self):
         self._run_runtime_command_async("RESET", self.runtime.reset_cycle)
+
+    def _ask_text(self, title: str, prompt: str):
+        """Testo dall'operatore; in test dalle risposte preparate; senza dialoghi reali: None (mai inventato)."""
+        if self._test_mode:
+            return (self.__dict__.get("_test_text_answers") or {}).get(prompt)
+        if not _REAL_DIALOGS:
+            return None
+        try:
+            return simpledialog.askstring(title, prompt, parent=getattr(self, "root", None))
+        except Exception:
+            return None
+
+    def _ask_confirm(self, title: str, msg: str) -> bool:
+        """Conferma esplicita dell'operatore: True solo da un "Si'" reale (o dalla risposta preparata in test). Il
+        fallback senza tkinter, che risponderebbe sempre si', non vale mai come conferma."""
+        if self._test_mode:
+            answers = self.__dict__.setdefault("_test_confirm_answers", [])
+            return bool(answers.pop(0)) if answers else False
+        if not _REAL_DIALOGS:
+            return False
+        try:
+            return messagebox.askyesno(title, msg) is True
+        except Exception:
+            return False
+
+    def _runtime_reset_risk_session(self):
+        """G1 (owner M139): reset di una sessione di rischio oltre il limite. Operatore, autorizzazione e motivo;
+        richiesta al runtime (prima conferma con riepilogo: sessione, perdita, conti LIVE, esposizione); seconda
+        conferma esplicita; poi il reset confermato, registrato dal runtime nel registro append-only (senza registro
+        non avviene). Annullare in qualunque punto non cambia nulla."""
+        titolo = "Reset sessione di rischio"
+        operatore = (self._ask_text(titolo, "Operatore autorizzato:") or "").strip()
+        autorizzazione = (self._ask_text(titolo, "Riferimento dell'autorizzazione:") or "").strip()
+        motivo = (self._ask_text(titolo, "Motivo del reset:") or "").strip()
+        if not (operatore and autorizzazione and motivo):
+            self._log("RESET SESSIONE DI RISCHIO annullato: operatore, autorizzazione e motivo sono obbligatori")
+            return
+        richiesta = self.runtime.request_risk_session_reset(operator=operatore, authorization=autorizzazione,
+                                                            reason=motivo)
+        if not richiesta.get("requested"):
+            self._safe_show_error(titolo, f"Reset non disponibile: {richiesta.get('reason')}")
+            return
+        riepilogo = (f"Sessione: {richiesta.get('session_id')}\n"
+                     f"Perdita di sessione: {richiesta.get('session_loss')}\n"
+                     f"Conti LIVE coinvolti: {', '.join(richiesta.get('accounts') or []) or 'nessuno'}\n"
+                     f"Esposizione LIVE: {richiesta.get('exposure_state')}\n\n"
+                     "La perdita resta registrata; gli altri limiti restano attivi. Confermi la chiusura?")
+        if not self._ask_confirm(f"{titolo} - prima conferma", riepilogo):
+            self._log("RESET SESSIONE DI RISCHIO annullato alla prima conferma")
+            return
+        if not self._ask_confirm(f"{titolo} - seconda conferma",
+                                 "Confermi DI NUOVO il reset della sessione di rischio superata?"):
+            self._log("RESET SESSIONE DI RISCHIO annullato alla seconda conferma")
+            return
+
+        def _reset():
+            esito = self.runtime.reset_risk_stop(operator=operatore, authorization=autorizzazione,
+                                                 challenge_id=richiesta["challenge_id"], confirm=True,
+                                                 confirm_again=True)
+            if not esito.get("risk_stop_reset"):
+                self.uiq.post(lambda: self._safe_show_error(titolo, f"Reset rifiutato: {esito.get('reason')}"))
+            return esito
+
+        self._run_runtime_command_async("RESET SESSIONE DI RISCHIO", _reset)
 
     def _runtime_emergency_stop(self):
         def _stop_and_check():

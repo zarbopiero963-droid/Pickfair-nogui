@@ -2994,6 +2994,14 @@ def test_m130_superamento_live_nel_libro_ricostruisce_l_emergenza_al_riavvio(tmp
     assert book, "libro non salvato"
 
 
+def _reset_confermato(rc, operatore="operatore-test", autorizzazione="AUT-TEST-1"):
+    """G1: doppia conferma dell'operatore (richiesta con sfida, poi reset con confirm e confirm_again)."""
+    richiesta = rc.request_risk_session_reset(operator=operatore, authorization=autorizzazione, reason="test")
+    assert richiesta["requested"] is True, richiesta
+    return rc.reset_risk_stop(operator=operatore, authorization=autorizzazione,
+                              challenge_id=richiesta["challenge_id"], confirm=True, confirm_again=True)
+
+
 # ============================================================================ M134/M136: N6, N3, N7, F1
 class _ContoLive:
     """Conto LIVE emulato con identita' (username): ordini per conto, letture e cancellazioni registrate."""
@@ -3275,7 +3283,7 @@ def test_m134_f1_reset_esplicito_chiude_la_sessione_superata_e_ne_apre_una_nuova
     RuntimeController._open_or_resume_risk_session(c.rc)
     vecchia = c.rc._risk_session["id"]
     _settle(c, -40.0)
-    esito = c.rc.reset_risk_stop()
+    esito = _reset_confermato(c.rc)
     assert esito["risk_stop_reset"] is True, esito
     assert c.rc._risk_session["id"] != vecchia and [s["id"] for s in c.rc._risk_session["closed"]] == [vecchia]
     assert c.rc._session_loss_block_reason() == ""
@@ -3337,7 +3345,7 @@ def test_m134_f1_salvataggio_fallito_alla_chiusura_lo_stop_resta(tmp_path, monke
     vero = c.rc.db.save_settings
     monkeypatch.setattr(c.rc.db, "save_settings", lambda valori, *a, **k: False
                         if daily_loss_store.DAILY_LOSS_STATE_KEY in (valori or {}) else vero(valori, *a, **k))
-    esito = c.rc.reset_risk_stop()
+    esito = _reset_confermato(c.rc)
     assert esito == {"risk_stop_reset": False, "reason": "sessione_di_rischio_non_salvata"}
     assert c.rc._risk_session["id"] == sid and c.rc._risk_stop_reason
     monkeypatch.undo()
@@ -3396,3 +3404,334 @@ def test_m134_f1_cambio_sim_live_e_conto_non_azzera_la_sessione(tmp_path):
         assert r.rc._session_loss_reason_for(_live(r, CONTO_A)).startswith("session_loss_breached:loss=40.00")
         r.rc._emergency_reconcile_pending = False
     c.rc._emergency_reconcile_pending = False
+
+
+# ============================================================================ M139: G1 reset confermato, G2 archivio
+from core import risk_session_ledger
+
+
+def _g_banco(tmp_path, nome, **cfg):
+    c = _f1_banco(tmp_path, nome, max_session_loss=30.0, **cfg)
+    RuntimeController._open_or_resume_risk_session(c.rc)
+    return c
+
+
+def _registro(c):
+    return risk_session_ledger.load(c.rc.db)
+
+
+def test_m139_g1_reset_con_doppia_conferma_valida_e_audit_completo(tmp_path):
+    c = _g_banco(tmp_path, "g1ok.db")
+    vecchia = c.rc._risk_session["id"]
+    _settle(c, -40.0)
+    richiesta = c.rc.request_risk_session_reset(operator="mario", authorization="AUT-7", reason="ripresa")
+    assert richiesta["requested"] and richiesta["session_id"] == vecchia and richiesta["exposure_state"]
+    esito = c.rc.reset_risk_stop(operator="mario", authorization="AUT-7", challenge_id=richiesta["challenge_id"],
+                                 confirm=True, confirm_again=True)
+    assert esito == {"risk_stop_reset": True, "reason": ""}
+    tipi = [e["kind"] for e in _registro(c)]
+    assert tipi == ["RESET_STARTED", "SESSION_CLOSED", "RESET_COMPLETED"], tipi
+    avvio = _registro(c)[0]["payload"]
+    assert avvio["operator"] == "mario" and avvio["authorization"] == "AUT-7" and avvio["session_id"] == vecchia
+    assert avvio["new_session_id"] == c.rc._risk_session["id"] and avvio["delta"]["desk"] == pytest.approx(-40.0)
+    assert avvio["session_loss"].startswith("session_loss_breached") and avvio["at"] and avvio["exposure_state"]
+    assert not c.rc._risk_stop_reason
+
+
+@pytest.mark.parametrize("caso", ["senza_richiesta", "senza_seconda_conferma", "operatore_diverso", "scaduta"])
+def test_m139_g1_conferma_mancante_errata_o_scaduta_rifiuta(tmp_path, monkeypatch, caso):
+    c = _g_banco(tmp_path, f"g1no_{caso}.db")
+    sid = c.rc._risk_session["id"]
+    _settle(c, -40.0)
+    richiesta = c.rc.request_risk_session_reset(operator="mario", authorization="AUT-7", reason="ripresa")
+    args = dict(operator="mario", authorization="AUT-7", challenge_id=richiesta["challenge_id"], confirm=True,
+                confirm_again=True)
+    if caso == "senza_richiesta":
+        args["challenge_id"] = "inventata"
+    elif caso == "senza_seconda_conferma":
+        args["confirm_again"] = False
+    elif caso == "operatore_diverso":
+        args["operator"] = "altro"
+    else:
+        monkeypatch.setattr(RuntimeController, "_RESET_CHALLENGE_TTL_S", -1.0)
+        richiesta = c.rc.request_risk_session_reset(operator="mario", authorization="AUT-7", reason="ripresa")
+        args["challenge_id"] = richiesta["challenge_id"]
+    esito = c.rc.reset_risk_stop(**args)
+    attesi = {"senza_richiesta": "conferma_non_richiesta_o_diversa", "senza_seconda_conferma": "doppia_conferma_richiesta",
+              "operatore_diverso": "operatore_o_autorizzazione_diversi", "scaduta": "conferma_scaduta"}
+    assert esito == {"risk_stop_reset": False, "reason": attesi[caso]}
+    assert c.rc._risk_session["id"] == sid and c.rc._risk_stop_reason and _registro(c) == []
+    assert c.rc.reset_risk_stop()["reason"] == "conferma_operatore_richiesta"     # senza nulla: mai
+
+
+def test_m139_g1_conferma_monouso_non_riutilizzabile(tmp_path):
+    c = _g_banco(tmp_path, "g1dup.db")
+    _settle(c, -40.0)
+    richiesta = c.rc.request_risk_session_reset(operator="mario", authorization="AUT-7", reason="ripresa")
+    args = dict(operator="mario", authorization="AUT-7", challenge_id=richiesta["challenge_id"], confirm=True,
+                confirm_again=True)
+    assert c.rc.reset_risk_stop(**args)["risk_stop_reset"] is True
+    _settle(c, -40.0)                                      # nuova sessione superata
+    c.rc.risk_stop("session_loss_breached:test", scope=_sim())
+    assert c.rc.reset_risk_stop(**args)["reason"] == "conferma_gia_usata"
+    assert c.rc._risk_stop_reason
+
+
+@pytest.mark.parametrize("guasto", ["eccezione", "falso"])
+def test_m139_g1_audit_non_scrivibile_nessun_reset(tmp_path, monkeypatch, guasto):
+    c = _g_banco(tmp_path, f"g1au_{guasto}.db")
+    sid = c.rc._risk_session["id"]
+    _settle(c, -40.0)
+    richiesta = c.rc.request_risk_session_reset(operator="mario", authorization="AUT-7", reason="ripresa")
+
+    def rotto(evento):
+        if guasto == "eccezione":
+            raise OSError("audit giu'")
+        return False
+
+    monkeypatch.setattr(c.rc.db, "insert_audit_event", rotto)
+    esito = c.rc.reset_risk_stop(operator="mario", authorization="AUT-7", challenge_id=richiesta["challenge_id"],
+                                 confirm=True, confirm_again=True)
+    assert esito == {"risk_stop_reset": False, "reason": "audit_non_scrivibile"}
+    assert c.rc._risk_session["id"] == sid and c.rc._risk_stop_reason
+    monkeypatch.undo()
+    r = _f1_banco(tmp_path, f"g1au_{guasto}.db", max_session_loss=30.0)
+    assert r.rc._risk_session["id"] == sid and r.rc._risk_stop_reason
+
+
+@pytest.mark.parametrize("punto", ["prima_della_chiusura", "dopo_la_chiusura"])
+def test_m139_g1_crash_durante_il_reset_recuperato_all_avvio(tmp_path, monkeypatch, punto):
+    c = _g_banco(tmp_path, f"g1cr_{punto}.db")
+    sid = c.rc._risk_session["id"]
+    _settle(c, -40.0)
+    richiesta = c.rc.request_risk_session_reset(operator="mario", authorization="AUT-7", reason="ripresa")
+    if punto == "prima_della_chiusura":
+        def muore(self, *a, **k):
+            raise SystemExit("crash")
+        monkeypatch.setattr(RuntimeController, "_open_new_risk_session", muore)
+    else:
+        vero = risk_session_ledger.append
+
+        def muore_al_completamento(db, kind, payload):
+            if kind == "RESET_COMPLETED":
+                raise SystemExit("crash")
+            return vero(db, kind, payload)
+        monkeypatch.setattr(risk_session_ledger, "append", muore_al_completamento)
+    with pytest.raises(SystemExit):
+        c.rc.reset_risk_stop(operator="mario", authorization="AUT-7", challenge_id=richiesta["challenge_id"],
+                             confirm=True, confirm_again=True)
+    monkeypatch.undo()
+    r = _f1_banco(tmp_path, f"g1cr_{punto}.db", max_session_loss=30.0)
+    tipi = [e["kind"] for e in _registro(r)]
+    assert r.rc._risk_stop_reason, "lo stop non deve sparire con un reset interrotto"
+    if punto == "prima_della_chiusura":
+        assert tipi[-1] == "RESET_FAILED" and r.rc._risk_session["id"] == sid
+    else:
+        assert tipi[-1] == "RESET_COMPLETED" and _registro(r)[-1]["payload"]["recovered"] is True
+        assert r.rc._risk_session["id"] != sid
+
+
+def test_m139_g1_reset_confermato_non_supera_altri_limiti(tmp_path):
+    c = _g_banco(tmp_path, "g1lim.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    _connetti(c, _ContoLive(CONTO_A))
+    _settle(c, -40.0)                                      # sessione e giornaliero LIVE superati: Emergency Stop
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="t")
+    richiesta = c.rc.request_risk_session_reset(operator="mario", authorization="AUT-7", reason="ripresa")
+    esito = c.rc.reset_risk_stop(operator="mario", authorization="AUT-7", challenge_id=richiesta.get("challenge_id"),
+                                 confirm=True, confirm_again=True)
+    assert esito["risk_stop_reset"] is False and c.rc._emergency_stopped is True
+    _ambiente(c, "SIM")
+    assert _ingresso(c, "1.9701")[0] == 0
+    c.rc._emergency_reconcile_pending = False
+
+
+def _chiudi_sessioni(c, n):
+    for _ in range(n):
+        esito = c.rc.close_risk_session()
+        assert esito["risk_session_closed"] is True, esito
+
+
+def test_m139_g2_oltre_venti_sessioni_archivio_completo_e_ricostruito(tmp_path):
+    c = _g_banco(tmp_path, "g2arch.db")
+    ids = []
+    for _ in range(25):
+        _settle(c, -1.0)
+        ids.append(c.rc._risk_session["id"])
+        _chiudi_sessioni(c, 1)
+    archiviate = [e["payload"]["id"] for e in _registro(c) if e["kind"] == "SESSION_CLOSED"]
+    assert archiviate == ids and len(c.rc._risk_session["closed"]) == RuntimeController._RISK_SESSION_CLOSED_CAP
+    assert all(e["payload"]["delta"]["desk"] == pytest.approx(-1.0) and "accounts" in e["payload"]
+               and "limit" in e["payload"] and e["payload"]["opened_at"] for e in _registro(c))
+    r = _f1_banco(tmp_path, "g2arch.db", max_session_loss=30.0)
+    indice = RuntimeController._risk_archive(r.rc)
+    assert set(ids) <= set(indice) and indice[ids[0]]["delta"]["desk"] == pytest.approx(-1.0)
+
+
+def test_m139_g2_tardivo_di_una_sessione_oltre_le_venti_attribuito_e_protetto(tmp_path):
+    c = _g_banco(tmp_path, "g2late.db")
+    vecchia = c.rc._risk_session["id"]
+    tavolo = _riserva(c, "1.9702")
+    _settle(c, -20.0)
+    _chiudi_sessioni(c, 22)
+    assert vecchia not in {s["id"] for s in c.rc._risk_session["closed"]}, "deve essere fuori dalla finestra"
+    tardivo = _canonical_close_payload(event_key=tavolo.current_event_key, batch_id="b-g2", correlation_id="c-g2",
+                                       table_id=tavolo.table_id, customer_ref=tavolo.meta["customer_ref"],
+                                       market_id=tavolo.market_id, gross_pnl=-15.0, commission_amount=0.0,
+                                       net_pnl=-15.0, pnl=-15.0)
+    c.rc._on_close_position(dict(tardivo))
+    assert c.rc._session_loss_block_reason() == "", "tardivo contato nella sessione corrente"
+    assert f"sessione_precedente={vecchia}" in str(c.rc._risk_stop_reason)
+    tardivi = [e["payload"] for e in _registro(c) if e["kind"] == "LATE_SETTLEMENT"]
+    assert [t["session_id"] for t in tardivi] == [vecchia] and not c.rc._risk_session["archive_pending"]
+    r = _f1_banco(tmp_path, "g2late.db", max_session_loss=30.0)
+    assert RuntimeController._risk_archive(r.rc)[vecchia]["delta"]["desk"] == pytest.approx(-35.0)
+    r.rc._on_close_position(dict(tardivo))                 # riconsegna identica dopo il riavvio
+    assert RuntimeController._risk_archive(r.rc)[vecchia]["delta"]["desk"] == pytest.approx(-35.0)
+    assert len([e for e in _registro(r) if e["kind"] == "LATE_SETTLEMENT"]) == 1
+
+
+def test_m139_g2_archivio_non_scrivibile_la_sessione_resta_nella_finestra_e_si_ripara(tmp_path, monkeypatch):
+    c = _g_banco(tmp_path, "g2fail.db")
+    prima = c.rc._risk_session["id"]
+    monkeypatch.setattr(c.rc.db, "insert_audit_event", lambda evento: False)
+    _chiudi_sessioni(c, 1)
+    _chiudi_sessioni(c, RuntimeController._RISK_SESSION_CLOSED_CAP + 2)
+    assert prima in {s["id"] for s in c.rc._risk_session["closed"]}, "sessione non archiviata uscita dalla finestra"
+    monkeypatch.undo()
+    r = _f1_banco(tmp_path, "g2fail.db", max_session_loss=30.0)
+    assert prima in {e["payload"]["id"] for e in _registro(r) if e["kind"] == "SESSION_CLOSED"}
+
+
+def test_m139_g2_tardivo_in_attesa_scritto_al_riavvio_senza_doppioni(tmp_path, monkeypatch):
+    c = _g_banco(tmp_path, "g2pend.db")
+    vecchia = c.rc._risk_session["id"]
+    tavolo = _riserva(c, "1.9703")
+    _chiudi_sessioni(c, 1)
+    vero = c.rc.db.insert_audit_event
+    monkeypatch.setattr(c.rc.db, "insert_audit_event", lambda evento: False)
+    c.rc._on_close_position(_canonical_close_payload(
+        event_key=tavolo.current_event_key, batch_id="b-g2p", correlation_id="c-g2p", table_id=tavolo.table_id,
+        customer_ref=tavolo.meta["customer_ref"], market_id=tavolo.market_id, gross_pnl=-5.0, commission_amount=0.0,
+        net_pnl=-5.0, pnl=-5.0))
+    assert [p["session_id"] for p in c.rc._risk_session["archive_pending"]] == [vecchia]
+    monkeypatch.setattr(c.rc.db, "insert_audit_event", vero)
+    r = _f1_banco(tmp_path, "g2pend.db", max_session_loss=30.0)
+    assert not r.rc._risk_session["archive_pending"]
+    assert len([e for e in _registro(r) if e["kind"] == "LATE_SETTLEMENT"]) == 1
+    s = _f1_banco(tmp_path, "g2pend.db", max_session_loss=30.0)
+    assert len([e for e in _registro(s) if e["kind"] == "LATE_SETTLEMENT"]) == 1
+
+
+def test_m139_g2_registro_manomesso_non_verificabile_blocco_conservativo(tmp_path):
+    c = _g_banco(tmp_path, "g2tamper.db")
+    vecchia = c.rc._risk_session["id"]
+    tavolo = _riserva(c, "1.9704")
+    _chiudi_sessioni(c, RuntimeController._RISK_SESSION_CLOSED_CAP + 2)
+    riga = dict(c.rc.db._execute("SELECT id, event_json FROM audit_events WHERE event_json LIKE ? ORDER BY id ASC "
+                                 "LIMIT 1", ("%SESSION_CLOSED%",), fetchone=True))
+    evento = json.loads(riga["event_json"])
+    evento["payload"]["delta"]["desk"] = 5.0                  # manomissione del P&L archiviato (hash non piu' valido)
+    c.rc.db._execute("UPDATE audit_events SET event_json = ? WHERE id = ?", (json.dumps(evento), riga["id"]),
+                     commit=True)
+    with pytest.raises(risk_session_ledger.LedgerUnverifiable):
+        risk_session_ledger.load(c.rc.db)
+    r = _f1_banco(tmp_path, "g2tamper.db", max_session_loss=30.0)
+    r.rc._on_close_position(_canonical_close_payload(
+        event_key=tavolo.current_event_key, batch_id="b-g2t", correlation_id="c-g2t", table_id=tavolo.table_id,
+        customer_ref=tavolo.meta["customer_ref"], market_id=tavolo.market_id, gross_pnl=-1.0, commission_amount=0.0,
+        net_pnl=-1.0, pnl=-1.0))
+    assert "sessione_di_rischio_non_verificabile" in str(r.rc._risk_stop_reason)
+    assert vecchia
+
+
+def _gui_su(rc, testi, conferme):
+    import mini_gui
+    gui = object.__new__(mini_gui.MiniPickfairGUI)
+    gui._test_mode = True
+    gui._test_text_answers = dict(testi)
+    gui._test_confirm_answers = list(conferme)
+    gui.runtime = rc
+    gui.uiq = type("Q", (), {"post": staticmethod(lambda fn, *a: fn(*a))})()
+    gui.errori, gui.registro = [], []
+    gui._safe_show_error = lambda titolo, testo: gui.errori.append((titolo, testo))
+    gui._log = lambda testo: gui.registro.append(testo)
+    gui._run_runtime_command_async = lambda nome, fn: gui.registro.append((nome, fn()))
+    return gui
+
+
+_TESTI_GUI = {"Operatore autorizzato:": "mario", "Riferimento dell'autorizzazione:": "AUT-GUI",
+              "Motivo del reset:": "ripresa"}
+
+
+@pytest.mark.parametrize("conferme,atteso", [([True, True], True), ([True, False], False), ([False], False),
+                                             ([], False)])
+def test_m139_g1_gui_doppia_conferma_sul_runtime_reale(tmp_path, conferme, atteso):
+    c = _g_banco(tmp_path, f"g1gui_{len(conferme)}_{atteso}.db")
+    _settle(c, -40.0)
+    gui = _gui_su(c.rc, _TESTI_GUI, conferme)
+    gui._runtime_reset_risk_session()
+    assert (not c.rc._risk_stop_reason) is atteso
+    tipi = [e["kind"] for e in _registro(c)]
+    assert tipi == (["RESET_STARTED", "SESSION_CLOSED", "RESET_COMPLETED"] if atteso else []), tipi
+    if atteso:
+        assert _registro(c)[0]["payload"]["operator"] == "mario"
+
+
+def test_m139_g1_gui_senza_operatore_o_senza_dialoghi_reali_non_conferma_mai(tmp_path, monkeypatch):
+    import mini_gui
+    c = _g_banco(tmp_path, "g1gui_vuoto.db")
+    _settle(c, -40.0)
+    gui = _gui_su(c.rc, {"Operatore autorizzato:": "mario"}, [True, True])
+    gui._runtime_reset_risk_session()
+    assert c.rc._risk_stop_reason and _registro(c) == []
+    gui = _gui_su(c.rc, _TESTI_GUI, [])
+    gui._test_mode = False
+    monkeypatch.setattr(mini_gui, "_REAL_DIALOGS", False)       # fallback senza tkinter: risponderebbe sempre si'
+    assert gui._ask_confirm("x", "y") is False and gui._ask_text("x", "y") is None
+    gui._runtime_reset_risk_session()
+    assert c.rc._risk_stop_reason and _registro(c) == []
+
+
+def _headless_su(rc):
+    from headless_main import HeadlessApp
+    app = HeadlessApp.__new__(HeadlessApp)
+    app.runtime = rc
+    return app
+
+
+@pytest.mark.parametrize("conferme,rc_atteso", [((True, True), 0), ((True, False), 4), ((False, False), 4)])
+def test_m139_g1_headless_stesso_contratto(tmp_path, conferme, rc_atteso):
+    c = _g_banco(tmp_path, f"g1cli_{conferme[0]}_{conferme[1]}.db")
+    _settle(c, -40.0)
+    app = _headless_su(c.rc)
+    rc = app._risk_session_reset_cli({"operator": "mario", "authorization": "AUT-CLI", "reason": "ripresa",
+                                      "confirm": conferme[0], "confirm_again": conferme[1]})
+    assert rc == rc_atteso and bool(c.rc._risk_stop_reason) is (rc_atteso != 0)
+    assert [e["kind"] for e in _registro(c)][:1] == (["RESET_STARTED"] if rc_atteso == 0 else [])
+
+
+def test_m139_g1_headless_opzioni_dalla_riga_di_comando(monkeypatch):
+    from headless_main import HeadlessApp
+    app = HeadlessApp.__new__(HeadlessApp)
+    monkeypatch.setattr("sys.argv", ["headless_main.py", "--risk-session-reset", "--operator=Mario",
+                                     "--authorization=AUT-9", "--reason=Ripresa", "--confirm"])
+    letti = app._parse_args()["risk_session_reset"]
+    assert letti == {"operator": "Mario", "authorization": "AUT-9", "reason": "Ripresa", "confirm": True,
+                     "confirm_again": False}
+    monkeypatch.setattr("sys.argv", ["headless_main.py"])
+    assert app._parse_args()["risk_session_reset"] is None
+
+
+def test_m139_g2_indice_archivio_conta_una_chiave_una_volta_e_verifica_la_catena(tmp_path):
+    c = _g_banco(tmp_path, "g2idx.db")
+    db = c.rc.db
+    assert risk_session_ledger.append(db, "SESSION_CLOSED", {"id": "S1", "delta": {"desk": -10.0, "scopes": {},
+                                                                                   "unscoped": 0.0}})
+    tardivo = {"session_id": "S1", "settlement_key": "k1", "delta": {"desk": -5.0, "scopes": {}, "unscoped": 0.0}}
+    assert risk_session_ledger.append(db, "LATE_SETTLEMENT", tardivo)
+    assert risk_session_ledger.append(db, "LATE_SETTLEMENT", tardivo)          # doppione (difesa in profondita')
+    catena = risk_session_ledger.load(db)
+    assert [e["seq"] for e in catena] == [1, 2, 3] and catena[1]["prev"] == catena[0]["hash"]
+    assert risk_session_ledger.archive_index(catena)["S1"]["delta"]["desk"] == pytest.approx(-15.0)
+    assert risk_session_ledger.append(db, "TIPO_INVENTATO", {}) is None

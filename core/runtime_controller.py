@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from core import financial_scope, liquidity, loss_limits, validators
 from core import risk_stop as stop_rules
+from core import risk_session_ledger
 from core.duplication_guard import DuplicationGuard
 from core.hedge_ref import is_hedge_order_ref
 from core.dutching_batch_manager import DutchingBatchManager
@@ -1547,7 +1548,8 @@ class RuntimeController:
             session["rev"] = int(session.get("rev") or 0) + 1
             session["last"] = delta
         return {"id": session["id"], "opened_at": session.get("opened_at") or "", "rev": int(session["rev"]),
-                "delta": delta, "closed": list(session.get("closed") or [])}
+                "delta": delta, "closed": list(session.get("closed") or []),
+                "archive_pending": list(session.get("archive_pending") or [])}
 
     def _restore_risk_session(self, book: dict) -> None:
         """Riavvio: la sessione di rischio salvata riprende con la sua perdita (il desk riparte da zero, quindi la base
@@ -1574,8 +1576,8 @@ class RuntimeController:
                 closed.append({"id": session["id"], "delta": session["delta"], "closed_at": str(opened.get(
                     "opened_at") or "")})
             session = {"id": str(opened["id"]), "opened_at": str(opened.get("opened_at") or ""), "rev": 0,
-                       "delta": {"desk": 0.0, "scopes": {}, "unscoped": 0.0},
-                       "closed": closed[-RuntimeController._RISK_SESSION_CLOSED_CAP:]}
+                       "delta": {"desk": 0.0, "scopes": {}, "unscoped": 0.0}, "closed": closed,
+                       "archive_pending": list((session or {}).get("archive_pending") or [])}
         if session:
             now = RuntimeController._pnl_vector(self)
             delta = session["delta"]
@@ -1585,8 +1587,10 @@ class RuntimeController:
                                         now[2] - delta["unscoped"])
             self._session_pnl_baseline = float(self._session_pnl_vector[0])
             self._risk_session = {"id": session["id"], "opened_at": session["opened_at"], "rev": session["rev"],
-                                  "closed": list(session.get("closed") or []), "last": dict(delta)}
+                                  "closed": list(session.get("closed") or []), "last": dict(delta),
+                                  "archive_pending": list(session.get("archive_pending") or [])}
             logger.info("F1: sessione di rischio %s ripristinata (P&L di sessione %.2f)", session["id"], delta["desk"])
+        RuntimeController._risk_ledger_startup(self)              # G1 + G2 (owner M139)
         if book.get("risk_session_unreadable"):
             reason = "session_loss_breached:sessione_di_rischio_illeggibile"
             with self._risk_stop_lock:
@@ -1618,7 +1622,7 @@ class RuntimeController:
             logger.exception("F1: apertura della sessione di rischio non salvata")
             return False
 
-    def _open_new_risk_session(self, closing: Optional[dict] = None) -> bool:
+    def _open_new_risk_session(self, closing: Optional[dict] = None, new_id: Optional[str] = None) -> bool:
         """Apre una nuova sessione di rischio (perdita zero) e la salva: chiave di apertura, poi libro. Con `closing` la
         sessione precedente passa fra le chiuse; se il salvataggio fallisce lo stato in memoria torna com'era (la
         sessione superata non si chiude senza prova su disco). True solo se entrambe le scritture sono verificate."""
@@ -1630,8 +1634,9 @@ class RuntimeController:
                 closed.append(closing)
             self._session_pnl_baseline = float(self.risk_desk.realized_pnl)
             self._session_pnl_vector = RuntimeController._pnl_vector(self)
-            self._risk_session = {"id": uuid.uuid4().hex, "opened_at": datetime.utcnow().isoformat(), "rev": 0,
-                                  "closed": closed[-RuntimeController._RISK_SESSION_CLOSED_CAP:]}
+            self._risk_session = {"id": str(new_id or uuid.uuid4().hex), "opened_at": datetime.utcnow().isoformat(),
+                                  "rev": 0, "closed": RuntimeController._trim_closed_window(self, closed),
+                                  "archive_pending": list((previous[2] or {}).get("archive_pending") or [])}
             # prima il libro (sessione nuova + chiusa), poi la chiave di apertura: se il libro non e' verificato la
             # chiave resta quella vecchia e lo stato in memoria torna com'era (riscritto, anche nel marker di riserva)
             RuntimeController._persist_daily_loss_book(self)
@@ -1640,7 +1645,12 @@ class RuntimeController:
                 self._session_pnl_baseline, self._session_pnl_vector, self._risk_session = previous
                 RuntimeController._persist_daily_loss_book(self)
                 return False
-            return RuntimeController._save_risk_session_open(self, self._risk_session) and saved
+            opened_ok = RuntimeController._save_risk_session_open(self, self._risk_session) and saved
+        if closing and saved:
+            # G2: la sessione chiusa entra nell'archivio durevole (append-only); se la scrittura fallisce resta nella
+            # finestra del libro (mai tolta finche' non e' archiviata) e si ritenta alla prossima chiusura o all'avvio
+            RuntimeController._archive_closed_sessions(self)
+        return opened_ok
 
     def _ensure_risk_session_durable(self) -> None:
         """Una base di sessione senza sessione di rischio (impostata fuori da start()) riceve un'identita' salvata nella
@@ -1657,10 +1667,111 @@ class RuntimeController:
     def _close_risk_session_locked(self) -> bool:
         """Chiude la sessione di rischio corrente (la conserva fra le chiuse, per i settlement tardivi) e ne apre una
         nuova, salvata. True solo se il libro e' stato salvato."""
+        return RuntimeController._open_new_risk_session(self, RuntimeController._closing_record(self))
+
+    def _closing_record(self) -> Optional[dict]:
+        """Record della sessione che si chiude: P&L di sessione per ambito, conti LIVE coinvolti e limite (G2)."""
         current = RuntimeController._risk_session_record(self)
-        closing = None if not current else {"id": current["id"], "delta": current["delta"],
-                                            "closed_at": datetime.utcnow().isoformat()}
-        return RuntimeController._open_new_risk_session(self, closing)
+        if not current:
+            return None
+        return {"id": current["id"], "delta": current["delta"], "closed_at": datetime.utcnow().isoformat(),
+                "opened_at": current.get("opened_at") or "",
+                "limit": getattr(getattr(self, "config", None), "max_session_loss", None),
+                "accounts": sorted(RuntimeController._live_bound_accounts(self) or {})}
+
+    # ------------------------------------------------------------------ G2 (owner M139): archivio delle sessioni chiuse
+    # Le ultime `_RISK_SESSION_CLOSED_CAP` sessioni chiuse restano nel libro come finestra operativa; l'archivio durevole
+    # e' il registro append-only `core.risk_session_ledger` (tabella `audit_events`), senza eliminazione automatica. Una
+    # sessione esce dalla finestra solo se e' gia' archiviata. I P&L tardivi entrano nell'archivio una volta per chiave
+    # di settlement (in attesa nel libro con la chiave, poi nel registro). Registro non verificabile => i tardivi di
+    # sessioni fuori dalla finestra restano non attribuibili (blocco conservativo).
+
+    def _risk_archive(self) -> Optional[dict]:
+        """Indice dell'archivio {id: {"record", "delta", "late_keys"}}, caricato una volta; None se non verificabile."""
+        index = self.__dict__.get("_risk_archive_index")
+        if isinstance(index, dict):
+            return index
+        try:
+            index = risk_session_ledger.archive_index(risk_session_ledger.load(self.db))
+        except risk_session_ledger.LedgerUnverifiable:
+            logger.critical("G2: archivio delle sessioni di rischio non verificabile (attribuzione conservativa)")
+            return None
+        self._risk_archive_index = index
+        return index
+
+    def _trim_closed_window(self, closed: list) -> list:
+        """Finestra operativa: le ultime N chiuse, piu' ogni chiusa non ancora archiviata (mai persa)."""
+        archive = RuntimeController._risk_archive(self) or {}
+        cap = RuntimeController._RISK_SESSION_CLOSED_CAP
+        keep = []
+        for i, item in enumerate(closed):
+            recent = i >= len(closed) - cap
+            if recent or str(item.get("id")) not in archive:
+                keep.append(item)
+        return keep
+
+    def _archive_closed_sessions(self) -> bool:
+        """Archivia (append-only, riletto) ogni sessione chiusa della finestra non ancora nell'archivio. Mai raise."""
+        archive = RuntimeController._risk_archive(self)
+        if archive is None:
+            return False
+        ok = True
+        for item in list((self.__dict__.get("_risk_session") or {}).get("closed") or []):
+            sid = str(item.get("id") or "")
+            if not sid or sid in archive:
+                continue
+            written = risk_session_ledger.append(self.db, "SESSION_CLOSED", dict(item))
+            if written is None:
+                ok = False
+                continue
+            delta = item.get("delta") or {}
+            archive[sid] = {"record": dict(item), "late_keys": set(),
+                            "delta": {"desk": float(delta.get("desk") or 0.0),
+                                      "scopes": {str(k): float(v) for k, v in (delta.get("scopes") or {}).items()},
+                                      "unscoped": float(delta.get("unscoped") or 0.0)}}
+        return ok
+
+    def _flush_archive_pending(self) -> None:
+        """Scrive nel registro i P&L tardivi in attesa (idempotente per chiave) e li toglie dal libro. Mai raise."""
+        try:
+            session = self.__dict__.get("_risk_session") or {}
+            pending = list(session.get("archive_pending") or [])
+            if not pending:
+                return
+            chain = risk_session_ledger.load(self.db)
+            done = {(str((e.get("payload") or {}).get("session_id")), str((e.get("payload") or {}).get("settlement_key")))
+                    for e in chain if e.get("kind") == "LATE_SETTLEMENT"}
+            remaining = []
+            for item in pending:
+                key = (str(item.get("session_id")), str(item.get("settlement_key")))
+                if key in done:
+                    continue
+                if risk_session_ledger.append(self.db, "LATE_SETTLEMENT", dict(item)) is None:
+                    remaining.append(item)
+                else:
+                    done.add(key)
+            if len(remaining) != len(pending):
+                with self._daily_loss_state_lock:
+                    session["archive_pending"] = remaining
+                    RuntimeController._persist_daily_loss_book(self)
+        except risk_session_ledger.LedgerUnverifiable:
+            logger.critical("G2: registro non verificabile: P&L tardivi restano in attesa nel libro")
+        except Exception:
+            logger.exception("G2: P&L tardivi non archiviati (restano in attesa nel libro)")
+
+    def _risk_ledger_startup(self) -> None:
+        """Avvio: archivio verificato, riparazione delle chiuse non archiviate, P&L tardivi in attesa scritti e recupero
+        dei reset iniziati e mai conclusi (G1). Mai raise."""
+        try:
+            self._risk_archive_index = None
+            if RuntimeController._risk_archive(self) is None:
+                return
+            if self.__dict__.get("_risk_session"):
+                RuntimeController._archive_closed_sessions(self)
+                RuntimeController._flush_archive_pending(self)
+            RuntimeController._recover_interrupted_resets(self)
+        except Exception:
+            logger.exception("G1/G2: recupero del registro della sessione di rischio non completato")
 
     def close_risk_session(self) -> dict:
         """F1: chiusura ESPLICITA della sessione di rischio (nuova sessione con perdita zero). Ammessa solo senza stop
@@ -1794,10 +1905,24 @@ class RuntimeController:
             self._apply_realized_pnl_without_mutating_bankroll(pnl)
             RuntimeController._attribute_realized_pnl_locked(self, pnl, attribution)
             late, closed = RuntimeController._late_risk_session(self, attribution)
-            if late == "closed":
+            if late in ("closed", "archived"):
+                # G2: ogni P&L tardivo entra anche nell'archivio durevole: in attesa nel libro (stessa scrittura della
+                # chiave del settlement), poi scritto nel registro append-only (idempotente per chiave)
+                add = RuntimeController._delta_with({"desk": 0.0, "scopes": {}, "unscoped": 0.0}, pnl, attribution)
+                session = self.__dict__.get("_risk_session")
+                if session is not None and settlement_key:
+                    session.setdefault("archive_pending", []).append(
+                        {"session_id": str(closed["id"]), "settlement_key": str(settlement_key), "delta": add})
+                if late == "archived":
+                    entry = (RuntimeController._risk_archive(self) or {}).get(str(closed["id"]))
+                    if entry is not None:
+                        entry["delta"] = RuntimeController._delta_with(entry["delta"], pnl, attribution)
+                        entry["late_keys"].add(str(settlement_key))
+            if late in ("closed", "archived"):
                 # F1: il P&L va alla sessione di rischio d'origine (chiusa), una volta sola (salvato con la chiave del
                 # settlement nello stesso libro); la sessione corrente non lo vede (la sua base si sposta uguale)
-                closed["delta"] = RuntimeController._delta_with(closed["delta"], pnl, attribution)
+                if late == "closed":
+                    closed["delta"] = RuntimeController._delta_with(closed["delta"], pnl, attribution)
                 vector = self.__dict__.get("_session_pnl_vector")
                 if vector is not None:
                     shift = RuntimeController._delta_with({"desk": 0.0, "scopes": {}, "unscoped": 0.0}, pnl, attribution)
@@ -1921,6 +2046,10 @@ class RuntimeController:
         for closed in session.get("closed") or []:
             if str(closed.get("id")) == sid:
                 return "closed", closed
+        archive = RuntimeController._risk_archive(self)          # G2: sessioni fuori dalla finestra operativa
+        entry = (archive or {}).get(sid)
+        if entry is not None:
+            return "archived", dict(entry, id=sid)
         return "unknown", None
 
     @staticmethod
@@ -2225,8 +2354,14 @@ class RuntimeController:
         self.bus.publish("RISK_STOP_TRIGGERED", dict(result))
         return result
 
-    def reset_risk_stop(self, at_start=False) -> dict:
-        """RESUME solo se il ricontrollo completo (stop_rules.reset_blocker) e' pulito."""
+    def reset_risk_stop(self, at_start=False, *, operator: Optional[str] = None, authorization: Optional[str] = None,
+                        challenge_id: Optional[str] = None, confirm: bool = False, confirm_again: bool = False) -> dict:
+        """RESUME solo se il ricontrollo completo (stop_rules.reset_blocker) e' pulito.
+
+        G1 (owner M138/M139): se il reset CHIUDE una sessione di rischio oltre il limite serve la doppia conferma
+        dell'operatore: `request_risk_session_reset()` (prima conferma, sfida monouso con scadenza) e poi questo metodo
+        con lo stesso operatore, autorizzazione, `challenge_id`, `confirm` e `confirm_again`. Senza registro durevole
+        dell'azione (append-only, riletto) il reset non avviene. Vale per GUI, headless e API: e' l'unico ingresso."""
         if not getattr(self, "_risk_stop_reason", ""):
             return {"risk_stop_reset": True, "reason": ""}
         with self._risk_stop_lock:
@@ -2249,16 +2384,135 @@ class RuntimeController:
                 return {"risk_stop_reset": False, "reason": blocker}
             if not self._risk_stop_reason:
                 return {"risk_stop_reset": True, "reason": ""}
-            if session_breached and not RuntimeController._close_risk_session_locked(self):
-                return {"risk_stop_reset": False, "reason": "sessione_di_rischio_non_salvata"}
+            audit = {}
+            if session_breached:
+                audit = {"operator": str(operator or ""), "operation_id": str(challenge_id or ""), "confirmed": True,
+                         "closed_risk_session": str((self.__dict__.get("_risk_session") or {}).get("id") or "")}
+                outcome = RuntimeController._confirmed_risk_session_close(
+                    self, operator=operator, authorization=authorization, challenge_id=challenge_id, confirm=confirm,
+                    confirm_again=confirm_again)
+                if outcome:
+                    return {"risk_stop_reset": False, "reason": outcome}
             self._session_loss_pending_global = False    # C3: la barriera di sessione segue lo stop che anticipa
             if not stop_rules.persist_risk_stop(self.db, ""):  # nuova versione PRIMA di riaprire
                 return {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
             self._risk_stop_reason = ""
             self._live_verify_only = False
         RuntimeController._clear_resolved_live_exposure(self)
-        self.bus.publish("RISK_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
+        self.bus.publish("RISK_STOP_RESET", dict(audit, reset_at=datetime.utcnow().isoformat()))   # G1: chi e quale
         return {"risk_stop_reset": True, "reason": ""}
+
+    # ------------------------------------------------------------------ G1 (owner M139): reset confermato e tracciato
+    _RESET_CHALLENGE_KEY = "risk_session_reset_challenge"
+    _RESET_CHALLENGE_TTL_S = 120.0
+
+    def request_risk_session_reset(self, *, operator: str, authorization: str, reason: str) -> dict:
+        """G1, PRIMA conferma dell'operatore: con uno stop attivo e una sessione di rischio oltre il limite emette una
+        sfida monouso (scadenza `_RESET_CHALLENGE_TTL_S`), legata a operatore e sessione, e ne mostra il riepilogo
+        (sessione, perdita, conti LIVE, stato dell'esposizione). Non cambia nessuno stato di rischio."""
+        op, ref, why = (str(v or "").strip() for v in (operator, authorization, reason))
+        if not (op and ref and why):
+            return {"requested": False, "reason": "operatore_autorizzazione_motivo_richiesti"}
+        with self._risk_stop_lock:
+            breach = RuntimeController._any_session_loss_breach(self)
+            if not (self._risk_stop_reason and breach and self.__dict__.get("_risk_session")):
+                return {"requested": False, "reason": "nessuna_sessione_superata_da_chiudere"}
+            current = RuntimeController._risk_session_record(self) or {}
+            challenge = {"challenge_id": uuid.uuid4().hex, "operator": op, "authorization": ref, "reason": why,
+                         "session_id": str(current.get("id") or ""), "issued_at": time.time(),
+                         "expires_at": time.time() + float(RuntimeController._RESET_CHALLENGE_TTL_S)}
+            try:
+                payload = json.dumps(challenge)
+                self.db.save_settings({RuntimeController._RESET_CHALLENGE_KEY: payload})
+                readback = (self.db.get_settings() or {}).get(RuntimeController._RESET_CHALLENGE_KEY)
+                if readback != payload:
+                    raise OSError("sfida non riletta")
+            except Exception:
+                logger.exception("G1: sfida di reset non salvata")
+                return {"requested": False, "reason": "conferma_non_registrabile"}
+            exposure = RuntimeController._live_exposure_status(self)
+        return {"requested": True, "challenge_id": challenge["challenge_id"], "expires_at": challenge["expires_at"],
+                "session_id": challenge["session_id"], "session_loss": breach, "delta": current.get("delta"),
+                "accounts": sorted(RuntimeController._live_bound_accounts(self) or {}),
+                "exposure_state": exposure.get("state"), "manual_action_required": exposure.get("manual_action_required")}
+
+    def _reset_confirmation_block(self, *, operator, authorization, challenge_id, confirm, confirm_again) -> tuple:
+        """Validazione della doppia conferma: ("", sfida) se valida, altrimenti (motivo, None)."""
+        op, ref, cid = (str(v or "").strip() for v in (operator, authorization, challenge_id))
+        if not (op and ref and cid):
+            return "conferma_operatore_richiesta", None
+        if confirm is not True or confirm_again is not True:
+            return "doppia_conferma_richiesta", None
+        try:
+            raw = (self.db.get_settings() or {}).get(RuntimeController._RESET_CHALLENGE_KEY) or ""
+            challenge = json.loads(raw) if raw else None
+            status = risk_session_ledger.reset_status(risk_session_ledger.load(self.db))
+        except risk_session_ledger.LedgerUnverifiable:
+            return "registro_non_verificabile", None
+        except Exception:
+            return "conferma_non_leggibile", None
+        if cid in status:
+            return "conferma_gia_usata", None
+        if not isinstance(challenge, dict) or str(challenge.get("challenge_id") or "") != cid:
+            return "conferma_non_richiesta_o_diversa", None
+        if str(challenge.get("operator") or "") != op or str(challenge.get("authorization") or "") != ref:
+            return "operatore_o_autorizzazione_diversi", None
+        if time.time() > float(challenge.get("expires_at") or 0.0):
+            return "conferma_scaduta", None
+        current = RuntimeController._risk_session_record(self) or {}
+        if str(challenge.get("session_id") or "") != str(current.get("id") or ""):
+            return "sessione_cambiata", None
+        return "", challenge
+
+    def _confirmed_risk_session_close(self, *, operator, authorization, challenge_id, confirm, confirm_again) -> str:
+        """G1 (sotto `_risk_stop_lock`): chiusura confermata della sessione superata con audit durevole. Protocollo:
+        RESET_STARTED (riletto) -> sfida consumata -> sessione chiusa (libro verificato, id gia' fissato nel registro) ->
+        RESET_COMPLETED (riletto). Qualunque passo fallito => "" non ritornato: lo stop resta e, dove serve, si registra
+        RESET_FAILED; un RESET_STARTED rimasto senza esito si risolve all'avvio dallo stato del libro. "" = riuscito."""
+        block, challenge = RuntimeController._reset_confirmation_block(
+            self, operator=operator, authorization=authorization, challenge_id=challenge_id, confirm=confirm,
+            confirm_again=confirm_again)
+        if block:
+            return block
+        closing = RuntimeController._closing_record(self) or {}
+        exposure = RuntimeController._live_exposure_status(self)
+        new_id = uuid.uuid4().hex
+        entry = {"operation_id": str(challenge["challenge_id"]), "operator": str(challenge["operator"]),
+                 "authorization": str(challenge["authorization"]), "reason": str(challenge["reason"]),
+                 "session_id": str(closing.get("id") or ""), "new_session_id": new_id,
+                 "session_loss": RuntimeController._any_session_loss_breach(self), "delta": closing.get("delta"),
+                 "limit": closing.get("limit"), "accounts": closing.get("accounts"),
+                 "exposure_state": exposure.get("state"), "exposure_verification": exposure.get("verification"),
+                 "risk_stop_reason": str(self._risk_stop_reason or ""), "confirm": True, "confirm_again": True,
+                 "at": datetime.utcnow().isoformat()}
+        if risk_session_ledger.append(self.db, "RESET_STARTED", entry) is None:
+            return "audit_non_scrivibile"
+        try:
+            self.db.save_settings({RuntimeController._RESET_CHALLENGE_KEY: ""})     # sfida consumata (monouso)
+        except Exception:
+            logger.exception("G1: sfida non rimossa (resta inutilizzabile: gia' nel registro)")
+        if not RuntimeController._open_new_risk_session(self, closing, new_id=new_id):
+            risk_session_ledger.append(self.db, "RESET_FAILED", dict(entry, outcome="sessione_di_rischio_non_salvata"))
+            return "sessione_di_rischio_non_salvata"
+        if risk_session_ledger.append(self.db, "RESET_COMPLETED", dict(entry, outcome="sessione_chiusa")) is None:
+            return "audit_non_scrivibile"
+        return ""
+
+    def _recover_interrupted_resets(self) -> None:
+        """G1, avvio: un RESET_STARTED senza esito (crash nel mezzo) si chiude dallo stato del libro: sessione nuova
+        presente => RESET_COMPLETED (recuperato), altrimenti RESET_FAILED (recuperato). Lo stop resta finche' non lo
+        toglie un reset completo."""
+        try:
+            status = risk_session_ledger.reset_status(risk_session_ledger.load(self.db))
+        except risk_session_ledger.LedgerUnverifiable:
+            return
+        current = str((self.__dict__.get("_risk_session") or {}).get("id") or "")
+        for op, item in status.items():
+            if item["kind"] != "RESET_STARTED":
+                continue
+            payload = dict(item["payload"], recovered=True)
+            kind = "RESET_COMPLETED" if current and current == str(payload.get("new_session_id") or "") else "RESET_FAILED"
+            risk_session_ledger.append(self.db, kind, dict(payload, outcome="recuperato_all_avvio"))
 
     def _exposure_stop(self, trigger=True, candidate_exposure: float = 0.0) -> str:
         """Stop di esposizione complessiva (P38), con la distinzione decisa dall'owner (CLOSURE-03).
@@ -10280,6 +10534,7 @@ class RuntimeController:
                     # al conto; SIM: locale), senza attribuirla alla sessione nuova
                     logger.critical("F1: %s (ambito %s)", late_reason, late_scope)
                     self.risk_stop(late_reason, scope=late_scope or None)
+                RuntimeController._flush_archive_pending(self)     # G2: tardivi nell'archivio durevole
             settlement_completed = True
         finally:
             # Disarma il bridge se NON e' subentrato l'emergency_stop definitivo

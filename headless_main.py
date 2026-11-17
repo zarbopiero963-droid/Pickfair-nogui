@@ -757,6 +757,18 @@ class HeadlessApp:
 
         emergency_stop = "--emergency-stop" in args
 
+        # G1 (owner M139): reset di una sessione di rischio superata, solo con operatore, autorizzazione, motivo e
+        # doppia conferma esplicita (`--confirm` e `--confirm-again`); i valori conservano maiuscole e minuscole
+        risk_session_reset = None
+        if "--risk-session-reset" in args:
+            values = {}
+            for item in sys.argv[1:]:
+                raw = str(item)
+                for key in ("--operator=", "--authorization=", "--reason="):
+                    if raw.startswith(key):
+                        values[key[2:-1]] = raw.split("=", 1)[1]
+            risk_session_reset = dict(values, confirm="--confirm" in args, confirm_again="--confirm-again" in args)
+
         return {
             "simulation_mode": execution_mode != "LIVE",
             "execution_mode": execution_mode,
@@ -765,6 +777,7 @@ class HeadlessApp:
             "live_readiness_ok": live_readiness_ok,
             "password": password,
             "emergency_stop": emergency_stop,
+            "risk_session_reset": risk_session_reset,
         }
 
     # =========================================================
@@ -1377,6 +1390,8 @@ class HeadlessApp:
         # trigger; it is fail-closed: partial cancel failures do not resume trading.
         if emergency_stop_requested:
             return self._emergency_stop_with_audit()
+        if args.get("risk_session_reset") is not None:
+            return self._risk_session_reset_cli(args["risk_session_reset"])
 
         try:
             if execution_mode == "LIVE":
@@ -1497,6 +1512,28 @@ class HeadlessApp:
             pass
 
         self._signal_handlers_installed = True
+
+    def _risk_session_reset_cli(self, request: dict) -> int:
+        """`--risk-session-reset` (G1, owner M139): stesso contratto della GUI, senza scorciatoie. Prima conferma: la
+        richiesta al runtime (sfida monouso, riepilogo); seconda: i flag espliciti `--confirm` e `--confirm-again`. Il
+        reset passa dal runtime, che lo registra nel registro append-only; senza registro non avviene. Non avvia il
+        trading. rc 0 solo a reset riuscito, 4 altrimenti."""
+        op = str(request.get("operator") or "").strip()
+        ref = str(request.get("authorization") or "").strip()
+        why = str(request.get("reason") or "").strip()
+        richiesta = self.runtime.request_risk_session_reset(operator=op, authorization=ref, reason=why)
+        logger.warning("RESET SESSIONE DI RISCHIO richiesto via CLI: %s", richiesta)
+        if not richiesta.get("requested"):
+            logger.error("Reset della sessione di rischio non avviabile: %s", richiesta.get("reason"))
+            return 4
+        if not (request.get("confirm") is True and request.get("confirm_again") is True):
+            logger.error("Reset della sessione di rischio: servono --confirm e --confirm-again (doppia conferma)")
+            return 4
+        esito = self.runtime.reset_risk_stop(operator=op, authorization=ref, challenge_id=richiesta["challenge_id"],
+                                             confirm=True, confirm_again=True)
+        # l'audit autorevole e' il registro append-only della sessione di rischio, scritto dal runtime
+        logger.warning("RESET SESSIONE DI RISCHIO esito: %s", esito)
+        return 0 if esito.get("risk_stop_reset") else 4
 
     def _emergency_stop_with_audit(self) -> int:
         """`--emergency-stop`: PRIMA la cancellazione, POI la registrazione (rilievo Codex #617, P1). Una scrittura sul
