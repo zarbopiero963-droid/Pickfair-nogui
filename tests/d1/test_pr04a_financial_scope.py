@@ -4366,7 +4366,7 @@ def test_cxg1_marker_di_sessione_resta_finche_il_vincolo_non_e_durevole(tmp_path
     assert not impost.get(RuntimeController._LIVE_ACCOUNTS_KEY)
     RuntimeController._restore_session_stop_marker(c.rc)
     impost = c.rc.db.get_settings() or {}
-    assert _live(c) in json.loads(impost[RuntimeController._LIVE_ACCOUNTS_KEY])
+    assert _live(c) in json.loads(impost[RuntimeController._LIVE_ACCOUNTS_KEY])["accounts"]     # registro v2 (M147)
     assert not impost.get(RuntimeController._SESSION_STOP_MARKER)
     c.rc._emergency_reconcile_pending = False
 
@@ -4620,3 +4620,149 @@ def test_m146_h1_ripristino_dal_marker_conserva_il_marker_se_la_modalita_non_si_
     impost = c.rc.db.get_settings() or {}
     assert impost.get(RuntimeController._LIVE_VERIFY_ONLY_KEY) == "0" and not impost.get(RuntimeController._SESSION_STOP_MARKER)
     c.rc._emergency_reconcile_pending = False
+
+
+# ============================================================================ M147: registro unico dei superamenti LIVE
+def _m147_banco(tmp_path, nome):
+    c = _f1_banco(tmp_path, nome, max_daily_loss=30.0)
+    RuntimeController._open_or_resume_risk_session(c.rc)
+    return c
+
+
+def _ordine_b():
+    return {"betId": "GB", "marketId": "1.9741", "selectionId": 1, "customerOrderRef": "sig-m147-b", "side": "BACK",
+            "status": "EXECUTABLE", "priceSize": {"price": 2.0, "size": 2.0}, "sizeRemaining": 2.0,
+            "sizeMatched": 0.0}
+
+
+def test_m147_superamento_di_b_registrato_con_emergency_stop_di_a_gia_attivo(tmp_path):
+    """CX-I1 (P1, M147): ES giornaliero di A attivo e verificato; B supera il limite giornaliero. B entra nel registro
+    (PENDING, con la storia del superamento) e l'esito verificato di A non vale per B: esposizione non VERIFICATA,
+    intervento manuale, reset dell'Emergency Stop rifiutato con B in sospeso."""
+    c = _m147_banco(tmp_path, "m147i1.db")
+    conto_a, conto_b = _ContoLive(CONTO_A), _ContoLive(CONTO_B, [_ordine_b()], cancella=False)
+    _connetti(c, conto_a)
+    _settle(c, -40.0, event_key="cleared:1.9740:1")
+    assert c.rc._emergency_stopped
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="m147a")
+    assert c.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    _connetti(c, conto_b)
+    _settle(c, -40.0, event_key="cleared:1.9742:1")
+    scope_b = _live(c, CONTO_B)
+    _connetti(c, conto_b)
+    stato = c.rc.get_status()["live_exposure"]
+    # subito, prima di ogni sweep: l'esito verificato di A non vale piu' e la riconciliazione e' ripartita
+    assert stato["state"] != "VERIFICATA" and c.rc._emergency_reconcile_pending is True
+    assert stato["accounts"][scope_b]["state"] == "PENDING"
+    assert [b["kind"] for b in stato["accounts"][scope_b]["breaches"]] == ["daily"]
+    assert stato["accounts"][scope_b]["breaches"][0]["loss"] == pytest.approx(40.0)
+    _connetti(c, conto_a)
+    c.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="m147a2")
+    assert c.rc.get_status()["live_exposure"]["state"] != "VERIFICATA"
+    esito = c.rc.reset_emergency()
+    assert esito["emergency_reset"] is False and scope_b in esito["accounts_pending"] and c.rc._emergency_stopped
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+
+def test_m147_reset_emergency_ammesso_solo_con_tutti_i_conti_verificati(tmp_path):
+    """M147 R6/R10: con A e B riconciliati (ordine di B chiuso) il reset dell'Emergency Stop passa: nessun blocco
+    permanente; prima, con B irrisolto, e' rifiutato."""
+    c = _m147_banco(tmp_path, "m147r6.db")
+    conto_a, conto_b = _ContoLive(CONTO_A), _ContoLive(CONTO_B, [_ordine_b()], cancella=False)
+    _connetti(c, conto_a)
+    _settle(c, -40.0, event_key="cleared:1.9750:1")
+    _connetti(c, conto_b)
+    _settle(c, -40.0, event_key="cleared:1.9751:1")
+    assert c.rc.reset_emergency()["emergency_reset"] is False
+    conto_b.ordini, conto_b.cancella = [], True
+    for conto in (conto_b, conto_a):
+        _connetti(c, conto)
+        c.rc._emergency_reconcile_pending = True
+        RuntimeController._reconcile_restored_emergency(c.rc, trigger="m147r6")
+    assert c.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    assert c.rc.reset_emergency()["emergency_reset"] is True and not c.rc._emergency_stopped
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+
+def test_m147_d1_reset_dell_es_non_cancella_le_verifiche_dello_stop_di_sessione(tmp_path):
+    """M147-D1 (R10): ES attivo e RISK_STOP di sessione attivo, conti verificati. Il reset dell'ES non cancella le
+    verifiche ne' l'esito LIVE (servono al RISK_STOP): il G1 successivo passa, nessuno stallo."""
+    c = _g_banco(tmp_path, "m147d1.db")
+    conto_a = _ContoLive(CONTO_A)
+    _connetti(c, conto_a)
+    c.rc.emergency_stop(reason="test_m147d1", live_exposure=True, scope=_live(c))
+    _settle(c, -40.0, event_key="cleared:1.9760:1")
+    assert c.rc._emergency_stopped and c.rc._risk_stop_reason
+    c.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="m147d1")
+    assert c.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    assert c.rc.reset_emergency()["emergency_reset"] is True
+    assert c.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"         # verifiche conservate per il RISK_STOP
+    assert _reset_confermato(c.rc)["risk_stop_reset"] is True and not c.rc._risk_stop_reason
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+
+def test_m147_superamento_registrato_al_riavvio_anche_con_es_attivo(tmp_path, monkeypatch):
+    """M147 R9: il libro dice che OGGI B ha superato il limite ma il registro non lo contiene (scrittura persa) e l'ES
+    di A e' durevole: al riavvio B entra nel registro (PENDING) prima di ogni riconciliazione."""
+    c = _m147_banco(tmp_path, "m147avvio.db")
+    _connetti(c, _ContoLive(CONTO_A))
+    _settle(c, -40.0, event_key="cleared:1.9770:1")
+    _connetti(c, _ContoLive(CONTO_B))
+    vero = c.rc.db.save_settings
+    with monkeypatch.context() as m:
+        m.setattr(c.rc.db, "save_settings", lambda data, *a, **k: None if isinstance(data, dict) and str(
+            data.get(RuntimeController._LIVE_ACCOUNTS_KEY) or "") else vero(data, *a, **k))
+        _settle(c, -40.0, event_key="cleared:1.9771:1")
+    scope_b = _live(c, CONTO_B)
+    assert scope_b not in RuntimeController._parse_live_registry(
+        (c.rc.db.get_settings() or {}).get(RuntimeController._LIVE_ACCOUNTS_KEY))[0]
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+    r = _copia_riavvio(tmp_path, "m147avvio.db", max_daily_loss=30.0)
+    assert r.rc._emergency_stopped and r.rc.get_status()["live_exposure"]["accounts"][scope_b]["state"] == "PENDING"
+    r.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(r.rc))
+
+
+def test_m147_registro_v2_compatibile_idempotente_e_illeggibile_mai_sovrascritto(tmp_path):
+    """M147: il registro v1 (N6) si legge; lo stesso superamento registrato due volte su un conto VERIFICATO non lo
+    riapre; un superamento nuovo si'; un registro illeggibile non viene mai sovrascritto da una registrazione."""
+    assert RuntimeController._parse_live_registry('{"x": "PENDING"}') == ({"x": "PENDING"}, {})
+    with pytest.raises(ValueError):
+        RuntimeController._parse_live_registry('{"version": 2, "accounts": {"x": {"state": "BOH"}}}')
+    c = _g_banco(tmp_path, "m147v2.db")
+    _connetti(c, _ContoLive(CONTO_A))
+    scope = _live(c)
+    sup = {"key": "daily|a|oggi", "kind": "daily", "limit": 30.0, "loss": 40.0, "risk_session_id": "s", "source": "t"}
+    RuntimeController._bind_live_account(c.rc, scope, breach=sup)
+    RuntimeController._save_live_bound_accounts(c.rc, {scope: "VERIFIED"})
+    RuntimeController._bind_live_account(c.rc, scope, breach=sup)                          # stesso superamento
+    assert RuntimeController._live_bound_accounts(c.rc)[scope] == "VERIFIED"
+    RuntimeController._bind_live_account(c.rc, scope, breach=dict(sup, key="daily|a|domani"))  # superamento nuovo
+    assert RuntimeController._live_bound_accounts(c.rc)[scope] == "PENDING"
+    assert len(c.rc.get_status()["live_exposure"]["accounts"][scope]["breaches"]) == 2
+    c.rc.db.save_settings({RuntimeController._LIVE_ACCOUNTS_KEY: "{corrotto"})
+    c.rc._emergency_live_accounts = None
+    RuntimeController._bind_live_account(c.rc, scope, breach=dict(sup, key="altro"))
+    assert (c.rc.db.get_settings() or {}).get(RuntimeController._LIVE_ACCOUNTS_KEY) == "{corrotto"
+    assert RuntimeController._live_account_mismatch(c.rc) is not None
+
+
+def test_m147_reset_emergency_rifiutato_con_un_conto_pending_anche_se_l_esito_dice_verificata(tmp_path):
+    """M147 R6: il registro prevale sull'ultimo esito: con un conto PENDING il reset dell'ES e' rifiutato anche se
+    l'ultimo sweep (su un altro conto) dice VERIFICATA."""
+    c = _m147_banco(tmp_path, "m147r6b.db")
+    _connetti(c, _ContoLive(CONTO_A))
+    _settle(c, -40.0, event_key="cleared:1.9780:1")
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="m147r6b")
+    assert c.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    scope_b = _live(c, CONTO_B)
+    RuntimeController._bind_live_account(c.rc, scope_b)
+    c.rc._emergency_reconcile_pending = False
+    esito = c.rc.reset_emergency()
+    assert esito["emergency_reset"] is False and esito["accounts_pending"] == [scope_b] and c.rc._emergency_stopped

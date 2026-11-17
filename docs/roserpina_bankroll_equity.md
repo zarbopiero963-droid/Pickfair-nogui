@@ -1022,6 +1022,23 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
     - **I4 (CX-H4).** La sessione corrente contiene solo P&L di origine verificata: il PROFITTO di una sessione
       registrata ma non verificabile resta nel desk e nel giornaliero, fuori dalla sessione corrente; la PERDITA non
       verificabile resta conservativa (stop `sessione_di_rischio_non_verificabile`).
+  - *M147 (owner): registro unico dei superamenti LIVE.* La chiave `emergency_live_accounts` (formato v2:
+    `{"version": 2, "accounts": {ambito: {"state": PENDING|VERIFIED, "breaches": [...]}}}`; il v1 `{ambito: stato}` si
+    legge ancora) registra per ogni conto LIVE i suoi superamenti (chiave idempotente, tipo, limite, perdita, sessione di
+    rischio, fonte, istante). Ogni superamento LIVE giornaliero entra nel registro dal settlement e dal libro all'avvio
+    QUALUNQUE sia lo stato degli stop (CX-I1: un Emergency Stop gia' attivo per il conto A non nasconde il superamento
+    del conto B); un superamento nuovo rimette il conto PENDING, invalida l'esito LIVE e fa ripartire la riconciliazione.
+    Lo stesso superamento gia' registrato su un conto VERIFICATO non lo riapre; un registro illeggibile non viene mai
+    sovrascritto (nessun conto certifica). Ogni conto si riconcilia separatamente; l'esposizione e' VERIFICATA solo con
+    tutti i conti verificati. `get_status()["live_exposure"]["accounts"]` mostra lo stato per conto.
+    **Cambio di contratto (R6):** `reset_emergency()` e' rifiutato (`emergency_reset: False`,
+    `reason: esposizione_live_irrisolta`, `accounts_pending`) finche' un conto del registro e' PENDING o il registro e'
+    illeggibile; prima toglieva l'Emergency Stop senza verifiche (solo API, nessuna GUI/CLI lo chiama). Un Emergency Stop
+    senza conti registrati (manuale, SIM) si toglie come prima. Impostazioni non leggibili (es. lock SQLite, anche
+    l'emergenza `EMERGENCY_STATE_UNREADABLE` all'avvio) => registro non leggibile => reset rifiutato; riapre quando le
+    impostazioni tornano leggibili e nessun conto e' PENDING (`tests/safety/test_emergency_stop.py`).
+    **M147-D1:** il reset di uno stop non cancella verifiche ed esito LIVE se resta attivo l'altro stop globale (ES o
+    RISK_STOP): ES + stop di sessione si sciolgono senza stallo quando tutti i conti sono verificati.
   - *G2 — archivio delle sessioni chiuse (owner M139).* Le ultime 20 chiuse restano nel libro come finestra operativa;
     l'archivio durevole è il registro append-only (`SESSION_CLOSED`: id, apertura e chiusura, P&L per ambito, conti,
     limite), senza eliminazione automatica, verificato dalla catena di hash a ogni lettura. Una sessione esce dalla

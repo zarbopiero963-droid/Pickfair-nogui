@@ -2571,7 +2571,9 @@ class RuntimeController:
                 # G2, DOPO il commit (RESET_COMPLETED) e lo stop tolto: la sessione chiusa entra nell'archivio; se non si
                 # scrive resta nella finestra e si ritenta (all'avvio o alla prossima chiusura)
                 RuntimeController._archive_closed_sessions(self)
-        RuntimeController._clear_resolved_live_exposure(self)
+        if not self.__dict__.get("_emergency_stopped"):
+            # M147-D1: con l'Emergency Stop ancora attivo verifiche ed esito LIVE restano (servono al suo reset)
+            RuntimeController._clear_resolved_live_exposure(self)
         self.bus.publish("RISK_STOP_RESET", dict(audit, reset_at=datetime.utcnow().isoformat()))   # G1: chi e quale
         return {"risk_stop_reset": True, "reason": ""}
 
@@ -3615,22 +3617,50 @@ class RuntimeController:
             logger.exception("N6: conti LIVE dello stop non leggibili (nessuna certificazione finche' non si leggono)")
             return None
         try:
-            data = json.loads(raw) if raw else {}
-            if not isinstance(data, dict) or any(
-                    not isinstance(k, str) or v not in RuntimeController._LIVE_ACCOUNT_STATES for k, v in data.items()):
-                raise ValueError("vincolo dei conti non valido")
-            accounts = dict(data)
+            accounts, breaches = RuntimeController._parse_live_registry(raw)
         except Exception:
             logger.critical("N6: vincolo dei conti LIVE illeggibile: nessun conto puo' certificare l'esposizione")
-            accounts = {RuntimeController._LIVE_ACCOUNTS_UNREADABLE: "PENDING"}
+            accounts, breaches = {RuntimeController._LIVE_ACCOUNTS_UNREADABLE: "PENDING"}, {}
         self._emergency_live_accounts = accounts
+        self._live_breaches = breaches
         return accounts
+
+    @staticmethod
+    def _parse_live_registry(raw: Any) -> tuple:
+        """M147: registro unico dei superamenti LIVE. v2 = {"version": 2, "accounts": {ambito: {"state", "breaches"}}};
+        v1 (N6) = {ambito: stato}, letto come registro senza storia. Ritorna ({ambito: stato}, {ambito: [superamenti]}).
+        ValueError se illeggibile (il chiamante e' fail-closed)."""
+        data = json.loads(raw) if raw else {}
+        if not isinstance(data, dict):
+            raise ValueError("registro dei conti non valido")
+        if data.get("version") == 2:
+            entries = data.get("accounts")
+            if not isinstance(entries, dict):
+                raise ValueError("registro dei conti v2 non valido")
+            accounts, breaches = {}, {}
+            for scope, entry in entries.items():
+                if not isinstance(scope, str) or not isinstance(entry, dict) \
+                        or entry.get("state") not in RuntimeController._LIVE_ACCOUNT_STATES \
+                        or not isinstance(entry.get("breaches") or [], list):
+                    raise ValueError("voce del registro dei conti non valida")
+                accounts[scope] = entry["state"]
+                breaches[scope] = [dict(b) for b in (entry.get("breaches") or []) if isinstance(b, dict)]
+            return accounts, breaches
+        if any(not isinstance(k, str) or v not in RuntimeController._LIVE_ACCOUNT_STATES for k, v in data.items()):
+            raise ValueError("vincolo dei conti non valido")
+        return dict(data), {}
 
     def _save_live_bound_accounts(self, accounts: dict) -> bool:
         """N6 + CX-G1: vincolo dei conti salvato e RILETTO. False (e `_live_binding_failed`) se non e' durevole: resta
         in memoria e il marker dello stop di sessione non si toglie (al riavvio il vincolo si ricrea). Mai raise."""
         self._emergency_live_accounts = dict(accounts)
-        payload = json.dumps(dict(accounts), sort_keys=True) if accounts else ""
+        history = self.__dict__.setdefault("_live_breaches", {})
+        for scope in list(history):
+            if scope not in accounts:
+                history.pop(scope, None)                     # conto uscito dal registro (reset riuscito)
+        payload = json.dumps({"version": 2, "accounts": {
+            scope: {"state": state, "breaches": list(history.get(scope) or [])}
+            for scope, state in sorted(accounts.items())}}, sort_keys=True) if accounts else ""
         try:
             if hasattr(self.db, "save_settings"):
                 self.db.save_settings({RuntimeController._LIVE_ACCOUNTS_KEY: payload})
@@ -3644,11 +3674,13 @@ class RuntimeController:
             self._live_binding_failed = True
             return False
 
-    def _bind_live_account(self, scope: Optional[str] = None) -> str:
-        """N6 (owner M134): lega lo stop globale al conto LIVE che lo ha generato. Ambito LIVE verificato del
-        superamento => quel conto; altrimenti (stop manuale, ambito non verificabile) => il conto LIVE configurato
-        ora. Il conto torna PENDING finche' uno sweep SU QUEL CONTO non lo verifica. Mai raise; '' se non
-        identificabile (nessun conto LIVE configurato: nessun vincolo possibile)."""
+    def _bind_live_account(self, scope: Optional[str] = None, breach: Optional[dict] = None) -> str:
+        """N6 (owner M134) + M147 (registro unico dei superamenti LIVE): lega lo stop globale al conto LIVE che lo ha
+        generato. Ambito LIVE verificato del superamento => quel conto; altrimenti (stop manuale, ambito non
+        verificabile) => il conto LIVE configurato ora. Il conto torna PENDING finche' uno sweep SU QUEL CONTO non lo
+        verifica. Con `breach` (chiave idempotente, tipo, limite, perdita, sessione di rischio, fonte) il superamento
+        entra nella storia del conto; lo stesso superamento gia' registrato su un conto VERIFICATO non lo riapre.
+        Mai raise; '' se non identificabile (nessun conto LIVE configurato: nessun vincolo possibile)."""
         try:
             target = str(scope or "")
             if not (financial_scope.is_verified(target) and not financial_scope.is_sim(target)):
@@ -3658,6 +3690,17 @@ class RuntimeController:
                 return ""
             with self.__dict__.setdefault("_live_accounts_lock", threading.RLock()):
                 accounts = dict(RuntimeController._live_bound_accounts(self) or {})
+                if RuntimeController._LIVE_ACCOUNTS_UNREADABLE in accounts:
+                    # registro illeggibile: resta tale (nessun conto certifica), mai sovrascritto da una registrazione
+                    logger.critical("M147: registro dei conti illeggibile: superamento di %s non registrabile", target)
+                    return target
+                history = self.__dict__.setdefault("_live_breaches", {})
+                known = list(history.get(target) or [])
+                if breach and str(breach.get("key") or ""):
+                    if any(str(b.get("key")) == str(breach["key"]) for b in known) and target in accounts:
+                        return target                       # stesso superamento gia' registrato: idempotente
+                    known.append(dict(breach, at=datetime.utcnow().isoformat()))
+                    history[target] = known
                 accounts[target] = "PENDING"
                 RuntimeController._save_live_bound_accounts(self, accounts)
             return target
@@ -3788,6 +3831,9 @@ class RuntimeController:
         riconsegna: Emergency Stop con la stessa postura del ripristino persistito e riconciliazione LIVE in attesa. Il
         superamento finisce col rollover di giornata (nessun blocco permanente). Mai raise."""
         try:
+            # M147: ogni ambito LIVE superato oggi entra nel registro anche se l'Emergency Stop e' gia' attivo
+            RuntimeController._register_live_breaches(
+                self, list((self.__dict__.get("_daily_loss_scopes") or {}).values()), source="avvio")
             if self._emergency_stopped:
                 return
             today = datetime.utcnow().date().isoformat()
@@ -4819,7 +4865,21 @@ class RuntimeController:
         """
         Clear the emergency-stopped flag so the runtime can be restarted.
         Does NOT restart the runtime — call start() after this.
+
+        M147 (owner, R6): rifiutato finche' un conto LIVE del registro e' PENDING o il registro e' illeggibile
+        (`esposizione_live_irrisolta`, con i conti in sospeso). M147-D1: se resta un RISK_STOP globale, le
+        verifiche dei conti e l'esito LIVE verificato NON si cancellano (servono a quello stop).
         """
+        accounts = RuntimeController._live_bound_accounts(self)
+        pending = sorted(k for k, v in (accounts or {}).items() if v != "VERIFIED") if accounts is not None else ["?"]
+        state = RuntimeController._live_exposure_status(self).get("state")
+        # obbligo LIVE dei CONTI INTERESSATI (R6): un conto del registro ancora PENDING, o il registro illeggibile
+        # (sentinella PENDING / lettura fallita). Un Emergency Stop senza conti registrati si toglie come prima (R10)
+        if self._emergency_stopped and pending:
+            logger.critical("M147: reset dell'Emergency Stop rifiutato: esposizione LIVE irrisolta (%s, %s)",
+                            state, pending)
+            return {"emergency_reset": False, "reason": "esposizione_live_irrisolta", "accounts_pending": pending,
+                    "exposure_state": state}
         self._emergency_stopped = False
         self._emergency_stopped_at = ""
         self._emergency_reason = ""
@@ -4828,7 +4888,9 @@ class RuntimeController:
         with self._daily_loss_stop_lock:
             self._daily_loss_pending_stop = False
         persist_error = self._persist_emergency_state()
-        RuntimeController._clear_resolved_live_exposure(self)     # Codex P1 su b902eca3
+        risk_reason = str(self.__dict__.get("_risk_stop_reason") or "")
+        if not (risk_reason and not RuntimeController._risk_stop_scope(risk_reason)):
+            RuntimeController._clear_resolved_live_exposure(self)     # Codex P1 su b902eca3
         self.bus.publish("EMERGENCY_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
         return {"emergency_reset": True, "persist_error": persist_error}
 
@@ -4850,6 +4912,36 @@ class RuntimeController:
                     projections.append(self._projected_daily_loss_breach(
                         pnl, {"scope": other, "kind": "unattributed_loss"}))
         return projections
+
+    def _register_live_breaches(self, states: list, pnl: float = 0.0, source: str = "settlement") -> None:
+        """M147 (owner, registro unico dei superamenti LIVE): ogni ambito LIVE (o non verificabile) che OGGI ha superato
+        il limite giornaliero entra nel registro dei conti, QUALUNQUE sia lo stato degli stop (Emergency Stop o
+        RISK_STOP gia' attivi compresi): un superamento non e' mai nascosto da uno stop preesistente di un altro conto.
+        Superamento nuovo (chiave idempotente per giorno e ambito) => conto PENDING, esito LIVE precedente invalidato,
+        riconciliazione in attesa: la verifica di un conto non certifica mai un altro. Mai raise."""
+        try:
+            today = datetime.utcnow().date().isoformat()
+            nuovi = False
+            for state in states or []:
+                scope = str((state or {}).get("financial_scope") or "")
+                if not ((state or {}).get("breached") is True and str(state.get("day_utc") or "") == today
+                        and financial_scope.escalates_globally(scope)):
+                    continue
+                before = dict(RuntimeController._live_bound_accounts(self) or {})
+                bound = RuntimeController._bind_live_account(self, scope, breach={
+                    "key": f"daily|{scope}|{today}", "kind": "daily",
+                    "limit": self._safe_daily_loss_threshold(),
+                    "loss": float(state.get("daily_loss_amount", 0.0) or 0.0),
+                    "risk_session_id": str((self.__dict__.get("_risk_session") or {}).get("id") or ""),
+                    "source": source})
+                if bound and (bound not in before or before.get(bound) != "PENDING"):
+                    nuovi = True
+            if nuovi:
+                RuntimeController._invalidate_live_exposure(self, source="SUPERAMENTO_LIVE_REGISTRATO")
+                self._emergency_reconcile_pending = True
+                RuntimeController._ensure_live_recovery(self)
+        except Exception:
+            logger.exception("M147: superamento LIVE non registrato (fail-closed: il blocco resta)")
 
     def _escalate_stopped_live_breach(self, states: list) -> None:
         """PR-04a (Codex su 8a6c4cbb): un settlement che fa superare il limite a un ambito LIVE (o non verificabile)
@@ -10824,6 +10916,8 @@ class RuntimeController:
             if realized_now:
                 # Sol su 38979e59: l'escalation a runtime fermo (Emergency Stop durevole) PRIMA della marcatura: un
                 # crash fra le due puo' solo far riapplicare la perdita al riavvio (fail-closed), mai perdere lo stop.
+                # M147: superamenti LIVE nel registro unico PRIMA di ogni decisione condizionata dallo stato degli stop
+                RuntimeController._register_live_breaches(self, [daily_loss_state, *other_states], pnl)
                 RuntimeController._escalate_stopped_live_breach(self, [daily_loss_state, *other_states])
                 # Dopo il monitor della perdita giornaliera: un crash fra le due scritture puo' solo far contare
                 # la perdita di piu' dopo il riavvio (fail-closed), mai perderla.
@@ -12127,6 +12221,18 @@ class RuntimeController:
         data["daily_loss_monitor"] = self._monitor_daily_loss_breach(source="RUNTIME_STATUS_SNAPSHOT")
         # R1 (owner, ciclo 12): esposizione LIVE esplicita e persistente, distinta da `total_exposure` (tavoli locali)
         data["live_exposure"] = RuntimeController._live_exposure_status(self)
+        try:
+            # M147: stato per conto del registro unico dei superamenti LIVE (osservabile pubblico)
+            accounts = RuntimeController._live_bound_accounts(self)
+            history = self.__dict__.get("_live_breaches") or {}
+            data["live_exposure"]["accounts"] = {
+                scope: {"state": state, "breaches": [dict(b) for b in history.get(scope) or []]}
+                for scope, state in sorted((accounts or {}).items())}
+            data["live_exposure"]["registry_not_durable"] = bool(self.__dict__.get("_live_binding_failed"))
+            if accounts is None:
+                data["live_exposure"]["registry_unreadable"] = True
+        except Exception:
+            logger.exception("M147: stato del registro dei conti non leggibile per get_status")
         # R1: indicatori piatti per i consumatori che leggono solo il primo livello (headless, Control API, oracoli):
         # vero finche' l'esposizione LIVE non e' NESSUNA/VERIFICATA (SCONOSCIUTA compresa, mai «nessun rischio»)
         data["live_exposure_unresolved"] = data["live_exposure"]["state"] not in ("NESSUNA", "VERIFICATA")

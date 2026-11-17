@@ -658,13 +658,18 @@ def test_unreadable_settings_at_startup_fails_closed_into_emergency():
     puo' provare che non ci fosse un'emergenza persistita => si riparte
     IN emergenza (fail-closed), e la riapre solo reset_emergency()."""
     class _UnreadableDb(_Db):
+        readable = False
+
         def get_settings(self):
-            raise RuntimeError("database is locked")
+            if not self.readable:
+                raise RuntimeError("database is locked")
+            return {}
 
         def save_settings(self, _data):
             return None
 
-    rc, bus = _make_rc(db=_UnreadableDb())
+    db = _UnreadableDb()
+    rc, bus = _make_rc(db=db)
 
     assert rc.is_emergency_stopped is True
     assert rc.mode.name == "LOCKDOWN"
@@ -673,7 +678,14 @@ def test_unreadable_settings_at_startup_fails_closed_into_emergency():
     assert any(
         "emergency_stop_active" in r["reason"] for r in _signal_rejections(bus)
     )
-    # Uscita esplicita: reset_emergency() riapre.
+    # M147 R6: finche' le impostazioni restano illeggibili non si puo' provare
+    # che nessun conto LIVE abbia un'esposizione irrisolta => reset rifiutato.
+    esito = rc.reset_emergency()
+    assert esito.get("emergency_reset") is False
+    assert esito.get("reason") == "esposizione_live_irrisolta"
+    assert rc.is_emergency_stopped is True
+    # Uscita esplicita: tornate leggibili (registro vuoto), reset_emergency() riapre.
+    db.readable = True
     rc.reset_emergency()
     assert rc.is_emergency_stopped is False
 
