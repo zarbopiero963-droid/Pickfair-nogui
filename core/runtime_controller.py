@@ -2252,6 +2252,10 @@ class RuntimeController:
                 logger.critical("S-b: marker dello stop di sessione non valido (%r): RISK_STOP globale fail-closed",
                                 raw[:80])
                 reason = "session_loss_breached:marker_illeggibile"
+            # CX-G1 (owner M145): lo stop ripristinato resta legato al conto LIVE che lo ha generato (ambito del marker),
+            # vincolo salvato PRIMA dello stop e della rimozione del marker: B non certifica mai A
+            scope = str(marker.get("scope") or "") if isinstance(marker, dict) else ""
+            RuntimeController._bind_live_account(self, scope if financial_scope.escalates_globally(scope) else None)
             with self._risk_stop_lock:
                 current = self._risk_stop_reason
                 if not current or RuntimeController._risk_stop_scope(current):   # vuoto o solo locale SIM
@@ -2261,9 +2265,11 @@ class RuntimeController:
                 if not RuntimeController._durable_global_stop_confirmed(self):
                     stop_rules.persist_risk_stop(self.db, reason)
             self._emergency_reconcile_pending = True
-            if not RuntimeController._durable_global_stop_confirmed(self):
-                # M130 (invariante): il marker si toglie SOLO con uno stop globale riletto come durevole
-                logger.critical("S-b: RISK_STOP di sessione non durevole: marker conservato (%s)", reason)
+            if not RuntimeController._durable_global_stop_confirmed(self) or self.__dict__.get("_live_binding_failed"):
+                # M130 (invariante): il marker si toglie SOLO con uno stop globale riletto come durevole; CX-G1: e col
+                # vincolo del conto riletto come durevole (al riavvio il marker lo ricrea)
+                logger.critical("S-b: RISK_STOP di sessione o vincolo del conto non durevoli: marker conservato (%s)",
+                                reason)
                 return
             self.db.save_settings({RuntimeController._SESSION_STOP_MARKER: ""})
             logger.critical("S-b: RISK_STOP di sessione ripristinato dal marker durevole (%s)", reason)
@@ -2437,16 +2443,24 @@ class RuntimeController:
             reason = str(reason or "risk_stop")
             if local:
                 reason = f"{reason}{RuntimeController._RISK_STOP_SCOPE_SEP}{scope}"
+            if not local and (not bool(getattr(self, "simulation_mode", False)) or (
+                    scope and financial_scope.escalates_globally(str(scope)))):
+                # CX-G1 (owner M145): stop globale che coinvolge il LIVE. Il conto che lo ha generato (N6) e
+                # l'invalidazione dell'esito LIVE di uno stop precedente (Codex P1 su b902eca3) si salvano PRIMA dello
+                # stop durevole: un crash in qualunque punto non lascia mai uno stop su disco senza il suo conto (che un
+                # altro conto potrebbe certificare). Crash prima dello stop => il marker di sessione lo ripristina col
+                # suo conto al riavvio; vincolo non salvato => il marker resta (`_live_binding_failed`).
+                RuntimeController._bind_live_account(
+                    self, str(scope) if scope and financial_scope.escalates_globally(str(scope)) else None)
+                RuntimeController._invalidate_live_exposure(self, source="RISK_STOP")
             self._risk_stop_reason = reason
             persisted = stop_rules.persist_risk_stop(self.db, reason)
-        if not local and (not bool(getattr(self, "simulation_mode", False)) or (
-                scope and financial_scope.escalates_globally(str(scope)))):
-            # Codex P1 su b902eca3: stop globale che coinvolge il LIVE: la verifica di uno stop precedente non vale
-            RuntimeController._bind_live_account(              # N6: conto LIVE dello stop
-                self, str(scope) if scope and financial_scope.escalates_globally(str(scope)) else None)
-            RuntimeController._invalidate_live_exposure(self, source="RISK_STOP")
         cashout = not self._daily_loss_entry_blocked() and RuntimeController._risk_stop_applies(self)
         result = {"risk_stopped": True, "reason": reason, "cashout_attempted": cashout, "persisted": persisted}
+        if not local and not bool(getattr(self, "simulation_mode", False)):
+            # Codex P1 su f8feabac: la sola verifica (N7) e' durevole PRIMA che il CASHOUT_ALL possa piazzare una
+            # copertura: un crash dopo la copertura non deve mai riavviare con lo sweep che la cancella
+            RuntimeController._set_live_verify_only(self, True)
         if cashout:
             self._route_cashout_signal(stop_rules.cashout_all_signal(reason))
         if not local and not bool(getattr(self, "simulation_mode", False)):
@@ -2454,8 +2468,7 @@ class RuntimeController:
             # (invalidata sopra) deve essere VERIFICATA sul conto: riconciliazione in attesa e recovery dedicato
             # (ritenta a intervalli, conto irraggiungibile compreso), in sola lettura per non annullare le coperture del
             # cashout. Il blocco resta finche' il reset ammesso dal ricontrollo completo non lo toglie.
-            RuntimeController._set_live_verify_only(self, True)     # M144 (CX-E4): durevole, vale anche dopo un riavvio
-            self._emergency_reconcile_pending = True
+            self._emergency_reconcile_pending = True                 # sola verifica gia' salvata (sopra)
             RuntimeController._ensure_live_recovery(self)
         if scope and financial_scope.escalates_globally(str(scope)) and bool(getattr(self, "simulation_mode", False)):
             # Ciclo 12 (N2, Codex+Grok): stop globale nato da un ambito LIVE (o non verificabile) col runtime in SIM:
@@ -3573,14 +3586,23 @@ class RuntimeController:
         self._emergency_live_accounts = accounts
         return accounts
 
-    def _save_live_bound_accounts(self, accounts: dict) -> None:
+    def _save_live_bound_accounts(self, accounts: dict) -> bool:
+        """N6 + CX-G1: vincolo dei conti salvato e RILETTO. False (e `_live_binding_failed`) se non e' durevole: resta
+        in memoria e il marker dello stop di sessione non si toglie (al riavvio il vincolo si ricrea). Mai raise."""
         self._emergency_live_accounts = dict(accounts)
+        payload = json.dumps(dict(accounts), sort_keys=True) if accounts else ""
         try:
             if hasattr(self.db, "save_settings"):
-                self.db.save_settings({RuntimeController._LIVE_ACCOUNTS_KEY:
-                                       json.dumps(dict(accounts), sort_keys=True) if accounts else ""})
+                self.db.save_settings({RuntimeController._LIVE_ACCOUNTS_KEY: payload})
+                readback = self.db.get_settings() if hasattr(self.db, "get_settings") else None
+                if not isinstance(readback, dict) or str(readback.get(RuntimeController._LIVE_ACCOUNTS_KEY) or "") != payload:
+                    raise OSError("vincolo dei conti non riletto")
+            self._live_binding_failed = False
+            return True
         except Exception:
-            logger.exception("N6: vincolo dei conti LIVE non salvato (resta in memoria)")
+            logger.exception("N6: vincolo dei conti LIVE non salvato (resta in memoria; marker di sessione conservato)")
+            self._live_binding_failed = True
+            return False
 
     def _bind_live_account(self, scope: Optional[str] = None) -> str:
         """N6 (owner M134): lega lo stop globale al conto LIVE che lo ha generato. Ambito LIVE verificato del
@@ -10765,7 +10787,8 @@ class RuntimeController:
                 # l'Emergency Stop si ripristina dal marker anche se la chiave salvata fa saltare la riconsegna).
                 keep_global_marker = True
             if session_pending:
-                if settlement_completed and RuntimeController._durable_global_stop_confirmed(self):
+                if (settlement_completed and RuntimeController._durable_global_stop_confirmed(self)
+                        and not self.__dict__.get("_live_binding_failed")):       # CX-G1: anche il conto, durevole
                     try:                              # S-b: lo stop globale, RILETTO dal disco, e' durevole
                         self.db.save_settings({RuntimeController._SESSION_STOP_MARKER: ""})
                     except Exception:

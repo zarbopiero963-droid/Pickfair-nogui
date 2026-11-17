@@ -997,8 +997,15 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
     avvio del trading; conto irraggiungibile => reset rifiutato (rc 4). Il latch del superamento di sessione e' per
     sessione di rischio: dopo il reset il superamento della sessione nuova arma di nuovo RISK_STOP, evento e
     CASHOUT_ALL (CX-E3). La modalita' di sola verifica dello sweep LIVE (N7) e' salvata
-    (`emergency_live_verify_only`): dopo un riavvio la riconciliazione non annulla le coperture del cashout; valore
-    illeggibile => sola verifica (CX-E4).
+    (`emergency_live_verify_only`) PRIMA che il CASHOUT_ALL possa piazzare una copertura: dopo un riavvio, anche se il
+    processo muore dentro il cashout, la riconciliazione non annulla le coperture; valore illeggibile => sola verifica
+    (CX-E4, Codex su f8feabac).
+  - *Conto dello stop durevole (CX-G1, owner M145).* In `risk_stop()` il conto LIVE che genera uno stop globale (N6) e
+    l'invalidazione dell'esito LIVE precedente si salvano PRIMA dello stop durevole; il vincolo vale solo se riletto. Il
+    marker dello stop di sessione, al ripristino, lega il conto del suo ambito e si toglie solo con stop E vincolo
+    durevoli (altrimenti resta e il riavvio ricrea il vincolo). Nessun crash lascia uno stop su disco senza il suo conto:
+    il conto B non certifica mai l'esposizione del conto A; quando A torna raggiungibile la riconciliazione su A procede
+    e il reset diventa possibile.
   - *G2 — archivio delle sessioni chiuse (owner M139).* Le ultime 20 chiuse restano nel libro come finestra operativa;
     l'archivio durevole è il registro append-only (`SESSION_CLOSED`: id, apertura e chiusura, P&L per ambito, conti,
     limite), senza eliminazione automatica, verificato dalla catena di hash a ogni lettura. Una sessione esce dalla

@@ -4249,3 +4249,123 @@ def test_m144_e1_copie_non_ordinabili_libro_illeggibile_mai_avvio_rotto(tmp_path
     assert esito.get("risk_session_unreadable") is True
     r = _copia_riavvio(tmp_path, "m144nord.db")
     assert r.rc._risk_stop_reason and _ingresso(r, "1.9651")[0] == 0
+
+
+# ============================================================================ CX-G1 (owner M145): conto dello stop durevole
+class _CrashG1(BaseException):
+    pass
+
+
+def _cxg1_banco(tmp_path, nome):
+    c = _g_banco(tmp_path, nome)
+    ordine_a = {"betId": "GA", "marketId": "1.9661", "selectionId": 1, "customerOrderRef": "sig-cxg1",
+                "side": "BACK", "status": "EXECUTABLE", "priceSize": {"price": 2.0, "size": 2.0},
+                "sizeRemaining": 2.0, "sizeMatched": 0.0}
+    conto_a = _ContoLive(CONTO_A, [ordine_a], cancella=False)
+    _connetti(c, conto_a)
+    return c, conto_a
+
+
+def _cxg1_su_b(tmp_path, nome):
+    r = _copia_riavvio(tmp_path, nome)
+    conto_b = _ContoLive(CONTO_B)
+    _connetti(r, conto_b)
+    r.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(r.rc, trigger="cxg1")
+    return r
+
+
+@pytest.mark.parametrize("guasto", ["crash_nel_vincolo", "crash_nel_salvataggio_del_vincolo", "vincolo_non_salvato"])
+def test_cxg1_lo_stop_resta_legato_al_conto_a_e_b_non_certifica(tmp_path, monkeypatch, guasto):
+    """CX-G1 (P9, N6): settlement LIVE A -40 (runtime SIM, ordine del bot di A non cancellabile). Il processo muore nel
+    vincolo del conto, o durante il suo salvataggio, oppure il salvataggio non e' durevole. Al riavvio su B: lo stop e'
+    legato ad A, B non certifica (mismatch), il reset confermato e' rifiutato. Quando A torna raggiungibile e il suo ordine
+    e' chiuso, la riconciliazione su A procede e il reset diventa possibile."""
+    nome = f"cxg1_{guasto}.db"
+    c, conto_a = _cxg1_banco(tmp_path, nome)
+    vero_save = c.rc.db.save_settings
+    with monkeypatch.context() as m:
+        if guasto == "crash_nel_vincolo":
+            def bind(self, scope=None):
+                raise _CrashG1("crash")
+            m.setattr(RuntimeController, "_bind_live_account", bind)
+        else:
+            def save(data, *a, **k):
+                if isinstance(data, dict) and str(data.get(RuntimeController._LIVE_ACCOUNTS_KEY) or ""):
+                    if guasto == "crash_nel_salvataggio_del_vincolo":
+                        raise _CrashG1("crash")
+                    return None                                    # scrittura persa: nulla su disco
+                return vero_save(data, *a, **k)
+            m.setattr(c.rc.db, "save_settings", save)
+        try:
+            _settle(c, -40.0, event_key="cleared:1.9662:1")
+        except (_CrashG1, AssertionError):
+            pass
+    r = _cxg1_su_b(tmp_path, nome)
+    assert str(r.rc._risk_stop_reason).startswith("session_loss_breached")
+    assert RuntimeController._live_account_mismatch(r.rc) is not None, "B puo' certificare lo stop nato su A"
+    assert r.rc.get_status()["live_exposure"]["state"] != "VERIFICATA"
+    assert _reset_confermato(r.rc)["risk_stop_reset"] is False and r.rc._risk_stop_reason
+    # A torna raggiungibile, l'ordine del bot si chiude: la riconciliazione su A procede, il reset diventa possibile
+    conto_a.ordini, conto_a.cancella = [], True
+    _connetti(r, conto_a)
+    r.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(r.rc, trigger="cxg1_a")
+    assert r.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    assert _reset_confermato(r.rc)["risk_stop_reset"] is True
+    r.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(r.rc))
+
+
+def test_cxg1_vincolo_salvato_prima_dello_stop(tmp_path, monkeypatch):
+    """CX-G1: in risk_stop() il conto dello stop e' su disco PRIMA dello stop durevole (ordine delle scritture)."""
+    c, _conto = _cxg1_banco(tmp_path, "cxg1_ordine.db")
+    ordine = []
+    vero = c.rc.db.save_settings
+
+    def save(data, *a, **k):
+        for chiave in (RuntimeController._LIVE_ACCOUNTS_KEY, "risk_stop_state"):
+            if isinstance(data, dict) and chiave in data and data[chiave]:
+                ordine.append(chiave)
+        return vero(data, *a, **k)
+    monkeypatch.setattr(c.rc.db, "save_settings", save)
+    c.rc.risk_stop("session_loss_breached:test", scope=_live(c))
+    assert ordine.index(RuntimeController._LIVE_ACCOUNTS_KEY) < ordine.index("risk_stop_state"), ordine
+    c.rc._emergency_reconcile_pending = False
+
+
+def test_codex_sola_verifica_salvata_prima_del_cashout(tmp_path, monkeypatch):
+    """Codex P1 su f8feabac: stop globale col runtime LIVE; il processo muore DENTRO il CASHOUT_ALL (copertura gia'
+    piazzata). Al riavvio la sola verifica e' attiva: la riconciliazione non cancella la copertura."""
+    c = _g_banco(tmp_path, "codex_vo.db")
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    _connetti(c, _ContoLive(CONTO_A))
+
+    def cashout(segnale):
+        raise _CrashG1("crash nel cashout")
+    c.rc._route_cashout_signal = cashout
+    with pytest.raises(_CrashG1):
+        c.rc.risk_stop("session_loss_breached:test", scope=_live(c))
+    r = _copia_riavvio(tmp_path, "codex_vo.db")
+    assert r.rc._live_verify_only is True
+
+
+def test_cxg1_marker_di_sessione_resta_finche_il_vincolo_non_e_durevole(tmp_path, monkeypatch):
+    """CX-G1: al ripristino dal marker dello stop di sessione il conto del suo ambito si lega PRIMA della rimozione del
+    marker; vincolo non salvato => marker conservato (il ripristino successivo ricrea il vincolo e solo allora lo toglie)."""
+    c, _conto = _cxg1_banco(tmp_path, "cxg1_marker.db")
+    marker = json.dumps({"reason": "session_loss_breached:test", "scope": _live(c), "at": "x"})
+    c.rc.db.save_settings({RuntimeController._SESSION_STOP_MARKER: marker})
+    vero = c.rc.db.save_settings
+    with monkeypatch.context() as m:
+        m.setattr(c.rc.db, "save_settings", lambda data, *a, **k: None if isinstance(data, dict) and str(
+            data.get(RuntimeController._LIVE_ACCOUNTS_KEY) or "") else vero(data, *a, **k))
+        RuntimeController._restore_session_stop_marker(c.rc)
+    impost = c.rc.db.get_settings() or {}
+    assert c.rc._risk_stop_reason and impost.get(RuntimeController._SESSION_STOP_MARKER) == marker
+    assert not impost.get(RuntimeController._LIVE_ACCOUNTS_KEY)
+    RuntimeController._restore_session_stop_marker(c.rc)
+    impost = c.rc.db.get_settings() or {}
+    assert _live(c) in json.loads(impost[RuntimeController._LIVE_ACCOUNTS_KEY])
+    assert not impost.get(RuntimeController._SESSION_STOP_MARKER)
+    c.rc._emergency_reconcile_pending = False
