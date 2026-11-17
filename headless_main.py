@@ -22,7 +22,7 @@ from services.telegram_service import TelegramService
 
 from core.trading_engine import TradingEngine
 from core.risk_gate import RiskGate, RoserpinaRiskLimits
-from core.runtime_controller import RuntimeController
+from core.runtime_controller import RuntimeController, format_live_exposure
 from core.risk_middleware import RiskMiddleware
 from controllers.dutching_controller import DutchingController
 from core.order_router import OrderRouter
@@ -297,6 +297,7 @@ class HeadlessApp:
             )
             self.trading_engine.runtime_controller = self.runtime
             self.trading_engine.simulation_broker = getattr(self, "simulation_broker", None)
+            self._report_live_exposure("avvio")      # R1: esposizione LIVE irrisolta visibile anche in headless
             # NIENTE assegnazione di betfair_client qui: al build la
             # connessione non esiste ancora e congelarlo a None farebbe
             # scavalcare breaker e gestione sessione nel ramo LIVE. Il
@@ -1210,6 +1211,12 @@ class HeadlessApp:
         report, exit_code = self._format_preflight_report(
             status, execution_mode, live_enabled, live_readiness_ok
         )
+        view = self._live_exposure_view()
+        report += f"\nesposizione LIVE         : {format_live_exposure(view)}"
+        if str(view.get("state")) not in ("NESSUNA", "VERIFICATA") and exit_code == 0:
+            # R1: mai PRONTO PER LIVE con esposizione LIVE irrisolta o sconosciuta
+            report += "\nNON PRONTO: esposizione LIVE irrisolta o sconosciuta (intervento manuale)."
+            exit_code = 2
         print(report)
         logger.info("GO-LIVE PREFLIGHT\n%s", report)
         return exit_code
@@ -1218,6 +1225,24 @@ class HeadlessApp:
         lines.append(f"  [X] {code}")
         lines.append(f"        cosa   : {desc}")
         lines.append(f"        rimedio: {remedy}")
+
+    def _live_exposure_view(self) -> dict:
+        """R1 (owner, ciclo 12): stato dell'esposizione LIVE dal runtime; illeggibile => SCONOSCIUTA (mai nessuna)."""
+        try:
+            return dict(self.runtime._live_exposure_status())
+        except Exception:
+            logger.exception("R1: esposizione LIVE non leggibile")
+            return {"state": "SCONOSCIUTA", "amount_display": "SCONOSCIUTO", "manual_action_required": True}
+
+    def _report_live_exposure(self, when: str) -> dict:
+        """R1: in headless l'esposizione LIVE irrisolta si stampa e si registra CRITICAL (all'avvio e nel preflight),
+        indipendentemente dalla modalita' SIM/LIVE corrente."""
+        view = self._live_exposure_view()
+        if str(view.get("state")) not in ("NESSUNA", "VERIFICATA"):
+            msg = f"⚠️  [{when}] ESPOSIZIONE LIVE: {format_live_exposure(view)}"
+            print(msg)
+            logger.critical(msg)
+        return view
 
     def _format_preflight_report(self, status, execution_mode, live_enabled, live_readiness_ok):
         """Costruisce (report_testuale, exit_code) dal deploy-gate status. Il

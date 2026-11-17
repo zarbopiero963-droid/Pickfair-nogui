@@ -878,6 +878,25 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
     abbinate da un runtime in SIM non e' automatico (limite dichiarato: intervento manuale).
   - *Perdita non attribuibile e sessione.* La barriera globale di sessione si valuta su ogni ambito interessato
     (anche cumulativamente), non solo su quello attribuito.
+- **Ciclo 12, estensione (owner: S-a, S-b, R1, R2).**
+  - *Atomicita' della barriera di sessione (S-a).* La perdita di sessione si proietta PRIMA di applicare il P&L, su
+    ogni ambito interessato; se un ambito che sale al globale supera il limite, la barriera
+    `_session_loss_pending_global` si arma sotto `_daily_loss_stop_lock` prima che il settlement sia visibile (letta
+    da ammissione e controllo finale d'invio), solo per un settlement che verra' davvero realizzato.
+  - *Persistenza dello stop di sessione (S-b).* Prima dell'applicazione si salva il marker durevole
+    `session_loss_stop_pending`; si toglie solo dopo che lo stop globale e' durevole e pubblicato. Settlement interrotto
+    (anche con il solo `max_session_loss`): RISK_STOP globale ripristinato subito dal marker; crash: ripristinato al
+    riavvio. In entrambi i casi la riconciliazione LIVE resta in attesa (cancellazione verificata o esposizione
+    segnalata). Stesse garanzie della perdita giornaliera, anche quando e' configurato un solo limite.
+  - *Esposizione LIVE esplicita (R1).* `get_status()["live_exposure"]`: `state` (`NESSUNA`, `VERIFICATA`,
+    `NON_RICONCILIATA`, `SCONOSCIUTA`), `amount` (None = sconosciuto, mai 0), ordini del bot aperti, ordini estranei,
+    posizioni abbinate, verifica, riconciliazione in attesa, intervento manuale; persistito in
+    `emergency_unresolved_exposure` (anche dopo il riavvio e con il runtime in SIM). `total_exposure` resta
+    l'esposizione dei tavoli locali (significato invariato). Mostrato nella mini GUI (`Esposizione LIVE:`), in headless
+    all'avvio (CRITICAL) e nel preflight LIVE, che non e' mai PRONTO con esposizione irrisolta o sconosciuta.
+  - *Idempotenza del motivo (R2).* Il pending-stop globale e il suo marker (che scrive il motivo dell'emergenza) nascono
+    solo per un settlement che verra' realizzato: una riconsegna gia' contabilizzata non riscrive il motivo (prima 35
+    diventava 50) ne' arma barriere.
 - **EXPANSION.** La baseline del ciclo porta l'ambito del conto su cui e' stata letta; la crescita si calcola solo se
   lo snapshot del conto e' dello STESSO ambito verificato. Baseline legacy senza ambito, di un altro ambito o di un
   conto LIVE non identificato => nessuna crescita (nessun aumento di stake).

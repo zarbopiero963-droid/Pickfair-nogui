@@ -1947,3 +1947,187 @@ def test_c12_perdita_non_attribuibile_arma_la_barriera_di_sessione_cumulativa(tm
         event_key="cleared:1.986:1", batch_id="b-c12n1", correlation_id="c-c12n1", gross_pnl=-15.0,
         commission_amount=0.0, net_pnl=-15.0, pnl=-15.0))
     assert durante == ["session_loss_breached:in_attesa_dello_stop_globale"], durante
+
+
+# ============================================================================ ciclo 12, estensione (S-a, S-b, R1, R2)
+@pytest.mark.parametrize("variante", ["sim_corrente", "conto_live_b_corrente"])
+def test_s_a_barriera_di_sessione_armata_prima_che_il_pnl_sia_visibile(tmp_path, variante):
+    """S-a (Sol su b643d348): nell'istante in cui il P&L di una perdita di sessione LIVE (limite 30, -40) diventa visibile,
+    l'ammissione e il controllo finale d'invio sono gia' chiusi (barriera armata PRIMA dell'applicazione)."""
+    import core.runtime_controller as rcm
+    c = _banco(tmp_path, max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    if variante == "sim_corrente":
+        _ambiente(c, "SIM")
+        c.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+    else:
+        _ambiente(c, "LIVE", conto=CONTO_B)
+    c.rc.mode = RuntimeMode.ACTIVE
+    vista = []
+    vero = rcm.RuntimeController._apply_and_attribute_realized_pnl
+
+    def _spia(self, *a, **k):
+        esito = vero(self, *a, **k)
+        vista.append((self._limits_block_reason(), self.drawdown_entry_block_reason()))
+        return esito
+
+    rcm.RuntimeController._apply_and_attribute_realized_pnl = _spia
+    try:
+        if variante == "sim_corrente":
+            _settle_cleared(c, 9, -40.0)
+        else:
+            conto_a = c.rc._financial_scope_for(False).replace(
+                financial_scope.parts(c.rc._financial_scope_for(False))[2],
+                financial_scope.parts(financial_scope.runtime_scope(simulated=False, live_account=CONTO_A))[2])
+            tavolo = c.rc.table_manager.allocate(event_key="evt-sa")
+            c.rc.table_manager.activate(table_id=tavolo.table_id, event_key="evt-sa", exposure=2.0, market_id="1.991",
+                                        selection_id=1, meta={"financial_scope": conto_a, "customer_ref": "ref-sa"})
+            _settle_tavolo(c, c.rc.table_manager.get_table(tavolo.table_id), -40.0)
+    finally:
+        rcm.RuntimeController._apply_and_attribute_realized_pnl = vero
+    assert vista and vista[0][0] and vista[0][1], vista
+
+
+@pytest.mark.parametrize("punto", ["_sync_bankroll_post_settlement", "_mark_settlement_realized",
+                                   "_publish_session_loss_breach"])
+@pytest.mark.parametrize("limiti", ["solo_sessione", "combinati"])
+def test_s_b_crash_prima_dello_stop_di_sessione_lo_ripristina_al_riavvio(tmp_path, punto, limiti):
+    """S-b (Sol su b643d348): perdita di sessione LIVE (-40, limite 30) col runtime in SIM; il processo muore nel punto
+    indicato (copia del DB, nessun `finally`). Al riavvio e alla riconsegna: RISK_STOP globale di sessione presente,
+    riconciliazione LIVE eseguita o in attesa, nessun doppio conteggio della perdita."""
+    import core.runtime_controller as rcm
+    cfg = {"max_session_loss": 30.0}
+    if limiti == "combinati":
+        cfg["max_daily_loss"] = 100.0
+    c = _banco(tmp_path, "sb.db", **cfg)
+    c.rc._session_pnl_baseline = 0.0
+    _ambiente(c, "SIM")
+    c.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+    c.rc.mode = RuntimeMode.ACTIVE
+    vero = getattr(rcm.RuntimeController, punto)
+
+    def _muore(self, *a, **k):
+        _fotografa_al_crash(tmp_path, "sb.db", "sb_crash.db")
+        raise SystemExit("crash")
+
+    setattr(rcm.RuntimeController, punto, _muore)
+    try:
+        with pytest.raises(SystemExit):
+            _settle_cleared(c, 10, -40.0)
+    finally:
+        setattr(rcm.RuntimeController, punto, vero)
+    r = _banco(tmp_path, "sb_crash.db", **cfg)
+    r.rc._session_pnl_baseline = 0.0
+    spia = _LiveSpia()
+    r.rc.betfair_service.get_live_client = lambda: spia
+    _ambiente(r, "SIM")
+    r.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+    _settle_cleared(r, 10, -40.0)                               # riconsegna
+    assert r.rc._risk_stop_reason.startswith("session_loss_breached"), r.rc._risk_stop_reason
+    assert "@ambito=" not in r.rc._risk_stop_reason, "stop di sessione LIVE non globale"
+    assert spia.letture >= 1 or r.rc.get_status()["live_exposure"]["reconcile_pending"], "nessuna riconciliazione LIVE"
+    assert _ingresso(r, "1.992")[0] == 0
+    assert r.rc.risk_desk.realized_pnl >= -40.0 - 1e-6, "perdita contata due volte"
+
+
+def test_r2_riconsegna_di_un_settlement_gia_contabilizzato_non_riscrive_il_motivo(tmp_path):
+    """R2 (owner, D M119): un settlement gia' contabilizzato e riconsegnato non si somma di nuovo alla perdita proiettata:
+    nessuna barriera globale nuova e il motivo durevole dell'emergenza non diventa 50 (35+15)."""
+    c = _banco(tmp_path, "r2.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc.betfair_service.get_live_client = lambda: _LiveSpia()
+    _settle_cleared(c, 11, -20.0)
+    _settle_cleared(c, 12, -15.0)                              # 35 >= 30: Emergency Stop
+    assert c.rc._emergency_stopped is True
+    motivo = (c.db.get_settings() or {}).get("emergency_reason")
+    c.rc.reset_emergency()
+    c.rc.mode = RuntimeMode.ACTIVE
+    _settle_cleared(c, 12, -15.0)                              # riconsegna della stessa chiave
+    assert c.rc._daily_loss_pending_stop is False, "barriera globale armata da un duplicato"
+    durevole = str((c.db.get_settings() or {}).get("emergency_reason") or "")
+    assert "50" not in durevole, (motivo, durevole)
+
+
+def test_r1_esposizione_live_irrisolta_esplicita_persistente_e_mai_zero_se_sconosciuta(tmp_path):
+    """R1 (owner, D M119): dopo un'emergenza con cancellazione inefficace, `get_status` espone l'esposizione LIVE
+    NON_RICONCILIATA con gli ordini e l'importo; resta dopo un riavvio e con il runtime in SIM; conto irraggiungibile =>
+    SCONOSCIUTA con importo None (mai 0). `total_exposure` invariato nel significato."""
+    c = _banco(tmp_path, "r1.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.ACTIVE
+    tavolo = _riserva(c, "1.993")
+    _segna_riga_live(c, tavolo.meta["customer_ref"])
+
+    class _Ostinato(_LiveSpia):
+        def cancel_orders(self, market_id, bet_ids=None, **kw):     # cancellazione accettata ma inefficace
+            self.cancellazioni.append((market_id, bet_ids))
+            return {"ok": True, "instructionReports": []}
+
+    live = _Ostinato([{"betId": "R-1", "customerOrderRef": tavolo.meta["customer_ref"], "marketId": "1.993",
+                       "status": "EXECUTABLE", "sizeRemaining": 2.0}])
+    c.rc.betfair_service.get_live_client = lambda: live
+    _settle_tavolo(c, tavolo, -40.0)
+    stato = c.rc.get_status()
+    assert "total_exposure" in stato
+    vista = stato["live_exposure"]
+    assert vista["state"] == "NON_RICONCILIATA" and vista["amount"] == pytest.approx(2.0), vista
+    assert [o.get("bet_id") for o in vista["open_orders"]] == ["R-1"] and vista["manual_action_required"] is True
+    r = _banco(tmp_path, "r1.db", max_daily_loss=30.0)
+    r.rc.betfair_service.get_live_client = lambda: (_ for _ in ()).throw(ConnectionError("LIVE non raggiungibile"))
+    _ambiente(r, "SIM")
+    _ingresso(r, "1.994")                                       # ritenta la riconciliazione: conto irraggiungibile
+    vista = r.rc.get_status()["live_exposure"]
+    assert vista["state"] == "SCONOSCIUTA" and vista["amount"] is None and vista["amount_display"] == "SCONOSCIUTO"
+    assert vista["manual_action_required"] is True
+
+
+def test_r1_testo_unico_per_gui_e_headless():
+    from core.runtime_controller import format_live_exposure
+    assert format_live_exposure({"state": "NESSUNA"}) == "nessuna"
+    testo = format_live_exposure({"state": "SCONOSCIUTA", "amount_display": "SCONOSCIUTO", "reconcile_pending": True})
+    assert "SCONOSCIUTO" in testo and "INTERVENTO MANUALE" in testo and "0.00" not in testo
+    testo = format_live_exposure({"state": "NON_RICONCILIATA", "amount_display": "2.00",
+                                  "open_orders": [{"bet_id": "R-1"}], "unattributed_open_orders": [{"bet_id": "X"}]})
+    assert "NON RICONCILIATA: 2.00" in testo and "1 ordini del bot aperti" in testo and "1 ordini estranei" in testo
+
+
+def test_r1_preflight_headless_mai_pronto_con_esposizione_live_irrisolta(monkeypatch, capsys):
+    import headless_main
+    app = headless_main.HeadlessApp.__new__(headless_main.HeadlessApp)
+    app.runtime = types.SimpleNamespace(
+        get_deploy_gate_status=lambda **k: {"allowed": True, "details": {"readiness_payload": {"level": "READY"}}},
+        _live_exposure_status=lambda: {"state": "SCONOSCIUTA", "amount_display": "SCONOSCIUTO"})
+    monkeypatch.setattr(app, "_parse_args", lambda: {"execution_mode": "LIVE", "live_enabled": True,
+                                                     "live_readiness_ok": True}, raising=False)
+    codice = app._run_preflight()
+    uscita = capsys.readouterr().out
+    assert codice == 2 and "SCONOSCIUTO" in uscita and "NON PRONTO" in uscita
+    # Runtime che non espone lo stato dell'esposizione LIVE (illeggibile): SCONOSCIUTA, mai "nessuna", mai pronto.
+    app.runtime = types.SimpleNamespace(
+        get_deploy_gate_status=lambda **k: {"allowed": True, "details": {"readiness_payload": {"level": "READY"}}})
+    codice = app._run_preflight()
+    uscita = capsys.readouterr().out
+    assert codice == 2 and "SCONOSCIUTO" in uscita and "NON PRONTO" in uscita
+
+
+def test_s_b_interruzione_nel_processo_ripristina_subito_lo_stop_globale(tmp_path, monkeypatch):
+    """S-b: errore (non crash) prima della pubblicazione dello stop di sessione LIVE: il processo continua con il
+    RISK_STOP globale gia' ripristinato e durevole (nessuna finestra in cui la sola barriera in memoria lo sostituisce)."""
+    import core.runtime_controller as rcm
+    from core import risk_stop as stop_rules
+    c = _banco(tmp_path, "sbi.db", max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    _ambiente(c, "SIM")
+    c.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+    c.rc.mode = RuntimeMode.ACTIVE
+
+    def _errore(self, *a, **k):
+        raise RuntimeError("pubblicazione fallita")
+
+    monkeypatch.setattr(rcm.RuntimeController, "_publish_session_loss_breach", _errore)
+    with pytest.raises(RuntimeError):
+        _settle_cleared(c, 13, -40.0)
+    assert c.rc._risk_stop_reason.startswith("session_loss_breached") and "@ambito=" not in c.rc._risk_stop_reason
+    assert stop_rules.restore_risk_stop(c.db) == c.rc._risk_stop_reason, "stop non durevole"
+    assert c.rc.__dict__.get("_session_loss_pending_global") is False

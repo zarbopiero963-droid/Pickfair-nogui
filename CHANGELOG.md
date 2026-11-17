@@ -25,7 +25,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   durante il sync (C3), prenotazioni legacy in quarantena (G1), ambito nella request di manuale e Dutching (C2),
   libro completato dopo un doppio guasto (S2). Ciclo straordinario 12: riconciliazione verificata degli ordini LIVE
   dopo un riavvio in emergenza, marker con sede LIVE, protezione della sede LIVE per lo stop di sessione col runtime
-  in SIM, barriera di sessione su ogni ambito interessato da una perdita non attribuibile. Test `tests/d1/test_pr04a_financial_scope.py`.
+  in SIM, barriera di sessione su ogni ambito interessato da una perdita non attribuibile. Estensione: barriera di
+  sessione proiettata prima del P&L (S-a), marker durevole dello stop di sessione (S-b), esposizione LIVE esplicita in
+  `get_status`, mini GUI e headless (R1), motivo dell'emergenza idempotente sulle riconsegne (R2). Test `tests/d1/test_pr04a_financial_scope.py`.
 - **PR-03b-1 — quattro rilievi verificati da Claude B e Claude D (`PF-OWNER-PR03B1-FOUR-FINDINGS-GO-20261116`).**
   - **P1 (F-11 / AUD-GA-008):** un'installazione che ha gia' operato ma senza stato del drawdown persistito non prende
     piu' la prima cassa letta come massimo storico (picco storico 100, cassa 80, limite 10 %: prima picco 80 e
