@@ -897,6 +897,27 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   - *Idempotenza del motivo (R2).* Il pending-stop globale e il suo marker (che scrive il motivo dell'emergenza) nascono
     solo per un settlement che verra' realizzato: una riconsegna gia' contabilizzata non riscrive il motivo (prima 35
     diventava 50) ne' arma barriere.
+- **Ciclo 12, M115 (owner GO): recovery LIVE senza riavvio.** Pickfair non dipende dal riavvio per gestire gli ordini
+  LIVE residui.
+  - *Settlement interrotto, processo vivo.* Errore (anche `SystemExit`) dopo l'applicazione del P&L con superamento
+    globale proiettato e marker durevole gia' scritto: nel `finally` si applica SUBITO lo stop che il riavvio
+    ripristinerebbe dal marker, cioe' l'Emergency Stop sulla sede LIVE (`_recover_interrupted_global_stop`). Per la
+    perdita di sessione, dopo il ripristino del RISK_STOP dal marker parte subito la riconciliazione LIVE.
+  - *Recovery dedicato* (`_ensure_live_recovery`). Finche' `_emergency_reconcile_pending` resta vero, un thread daemon
+    (`pickfair-live-recovery`, uno per runtime, riferimento debole) ritenta la riconciliazione verificata ogni
+    `_LIVE_RECOVERY_INTERVAL_S` secondi (30), senza attendere segnali o settlement. Si avvia quando uno sweep LIVE
+    (Emergency Stop, protezione LIVE del RISK_STOP, riconciliazione al riavvio) resta irrisolto e si ferma da solo
+    quando la verifica riesce o non c'e' piu' uno stop globale. Lo stato da riconciliare e' durevole (marker
+    d'emergenza di provenienza LIVE, marker di sessione, `emergency_unresolved_exposure`): al riavvio, anche durante una
+    riconciliazione interrotta, il recovery riparte.
+  - *Mai in parallelo.* Gli sweep LIVE passano da un lock dedicato: una riconciliazione concorrente a uno sweep in corso
+    non legge e non cancella (nessuna cancellazione duplicata).
+  - *Esiti.* Si cancellano solo gli ordini del bot, con verifica sul conto LIVE; estranei, posizioni abbinate,
+    cancellazioni fallite o conto irraggiungibile restano `NON_RICONCILIATA`/`SCONOSCIUTA` con intervento manuale,
+    mai dichiarati chiusi senza conferma dell'exchange. La verifica riuscita non riapre gli ingressi (solo
+    `reset_emergency()`).
+  - *Stato.* `get_status()` espone anche `live_exposure_unresolved` e `live_exposure_manual_action_required` (piatti,
+    derivati da `live_exposure`; `SCONOSCIUTA` e' irrisolta).
 - **EXPANSION.** La baseline del ciclo porta l'ambito del conto su cui e' stata letta; la crescita si calcola solo se
   lo snapshot del conto e' dello STESSO ambito verificato. Baseline legacy senza ambito, di un altro ambito o di un
   conto LIVE non identificato => nessuna crescita (nessun aumento di stake).

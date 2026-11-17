@@ -22,6 +22,7 @@ from decimal import Decimal
 import pytest
 
 from core import daily_loss_store, financial_scope
+from core.runtime_controller import RuntimeController
 from core.system_state import RuntimeMode
 from tests.acceptance.test_issue437_pr27 import _rifiuti
 from tests.d1.test_d1_drawdown_hard_stop import _catena_su, _ordini
@@ -2131,3 +2132,255 @@ def test_s_b_interruzione_nel_processo_ripristina_subito_lo_stop_globale(tmp_pat
     assert c.rc._risk_stop_reason.startswith("session_loss_breached") and "@ambito=" not in c.rc._risk_stop_reason
     assert stop_rules.restore_risk_stop(c.db) == c.rc._risk_stop_reason, "stop non durevole"
     assert c.rc.__dict__.get("_session_loss_pending_global") is False
+
+
+# ============================================================================ M115 (owner GO): recovery senza riavvio
+def _m115_banco(tmp_path, nome, intervallo=0.05, **cfg):
+    """Ordine LIVE del bot sul conto A (riga LIVE), runtime poi in SIM; recovery dedicato con intervallo breve."""
+    c = _banco(tmp_path, nome, **cfg)
+    c.rc._live_recovery_interval_s = intervallo
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    c.rc.mode = RuntimeMode.ACTIVE
+    tavolo = _riserva(c, "1.971")
+    _segna_riga_live(c, tavolo.meta["customer_ref"])
+    _ambiente(c, "SIM")
+    c.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+    c.rc._route_cashout_signal = lambda segnale: None
+    c.rc.mode = RuntimeMode.ACTIVE
+    return c, tavolo
+
+
+def _ordine_bot(tavolo, bet="A-1"):
+    return {"betId": bet, "customerOrderRef": tavolo.meta["customer_ref"], "marketId": "1.971",
+            "status": "EXECUTABLE", "sizeRemaining": 2.0}
+
+
+def _attendi(condizione, secondi=3.0):
+    import time as _t
+    fine = _t.monotonic() + secondi
+    while _t.monotonic() < fine:
+        if condizione():
+            return True
+        _t.sleep(0.01)
+    return condizione()
+
+
+def _errore_nel_settlement(monkeypatch, punto, eccezione):
+    import core.runtime_controller as rcm
+    orig = getattr(rcm.RuntimeController, punto)
+
+    def rotto(self, *a, **k):
+        if punto == "_mark_settlement_realized":
+            orig(self, *a, **k)
+        raise eccezione("errore nel settlement, il processo continua")
+
+    monkeypatch.setattr(rcm.RuntimeController, punto, rotto)
+
+
+@pytest.mark.parametrize("punto", ["_mark_settlement_realized", "_escalate_stopped_live_breach",
+                                   "_sync_bankroll_post_settlement"])
+@pytest.mark.parametrize("eccezione", [RuntimeError, SystemExit])
+def test_m115_errore_nel_settlement_gestisce_il_live_senza_riavvio_ne_eventi(tmp_path, monkeypatch, punto, eccezione):
+    """M115: superamento giornaliero LIVE con errore nel settlement dopo l'applicazione del P&L; il processo continua e
+    NON arriva alcun evento successivo. Ingressi bloccati, ordine LIVE del bot cancellato e verificato sul conto LIVE,
+    ordine estraneo segnalato (intervento manuale), mai cancellato."""
+    c, tavolo = _m115_banco(tmp_path, f"m115_{punto}_{eccezione.__name__}.db", max_daily_loss=30.0)
+    live = _LiveSpia([_ordine_bot(tavolo),
+                      {"betId": "X-7", "customerOrderRef": "", "marketId": "1.997", "status": "EXECUTABLE",
+                       "sizeRemaining": 4.0}])
+    c.rc.betfair_service.get_live_client = lambda: live
+    with monkeypatch.context() as m:
+        _errore_nel_settlement(m, punto, eccezione)
+        with pytest.raises(eccezione):
+            _settle_tavolo(c, tavolo, -40.0)
+    # nessun nuovo evento: lo stato si osserva subito
+    assert c.rc._emergency_stopped is True, "stop globale non attivo nello stesso processo"
+    assert ("1.971", ["A-1"]) in live.cancellazioni, (live.letture, live.cancellazioni)
+    assert all(mk != "1.997" for mk, _ in live.cancellazioni), "ordine estraneo cancellato alla cieca"
+    stato = c.rc.get_status()
+    vista = stato["live_exposure"]
+    assert vista["state"] == "NON_RICONCILIATA" and vista["manual_action_required"] is True
+    assert stato["live_exposure_unresolved"] is True and stato["live_exposure_manual_action_required"] is True
+    assert _eventi(c, "EMERGENCY_STOP_MANUAL_ACTION_REQUIRED"), "esposizione estranea non segnalata"
+    assert _ingresso(c, "1.972")[0] == 0
+
+
+def test_m115_conto_live_irraggiungibile_recovery_dedicato_senza_eventi(tmp_path, monkeypatch):
+    """M115: Betfair non raggiungibile al momento dell'errore => esposizione SCONOSCIUTA (mai zero), intervento manuale;
+    il recovery dedicato ritenta da solo (nessun segnale ne' settlement) e, appena il conto risponde, cancella e
+    verifica. Poi si ferma (idempotente: una sola cancellazione)."""
+    c, tavolo = _m115_banco(tmp_path, "m115_irr.db", max_daily_loss=30.0)
+    stato = {"raggiungibile": False}
+    live = _LiveSpia([_ordine_bot(tavolo)])
+
+    def cliente():
+        if not stato["raggiungibile"]:
+            raise ConnectionError("LIVE non raggiungibile")
+        return live
+
+    c.rc.betfair_service.get_live_client = cliente
+    with monkeypatch.context() as m:
+        _errore_nel_settlement(m, "_mark_settlement_realized", RuntimeError)
+        with pytest.raises(RuntimeError):
+            _settle_tavolo(c, tavolo, -40.0)
+    assert c.rc._emergency_stopped is True
+    vista = c.rc.get_status()["live_exposure"]
+    assert vista["state"] == "SCONOSCIUTA" and vista["amount"] is None and vista["reconcile_pending"] is True
+    assert c.rc.get_status()["live_exposure_unresolved"] is True, "esposizione sconosciuta presentata come risolta"
+    assert live.cancellazioni == []
+    stato["raggiungibile"] = True
+    assert _attendi(lambda: ("1.971", ["A-1"]) in live.cancellazioni), "recovery dedicato non ritentato senza eventi"
+    assert _attendi(lambda: c.rc.get_status()["live_exposure"]["state"] == "VERIFICATA")
+    assert c.rc.get_status()["live_exposure_unresolved"] is False
+    assert _attendi(lambda: not RuntimeController._live_recovery_active(c.rc)), "recovery non fermato dopo la verifica"
+    assert live.cancellazioni.count(("1.971", ["A-1"])) == 1, live.cancellazioni
+    assert c.rc._emergency_stopped is True, "la verifica non riapre gli ingressi (solo reset_emergency)"
+
+
+def test_m115_cancellazione_fallita_resta_irrisolta_e_ritentata(tmp_path, monkeypatch):
+    """M115: la cancellazione non chiude l'ordine (l'exchange lo mostra ancora aperto) => mai chiusura dichiarata:
+    esposizione NON RICONCILIATA, intervento manuale, recovery ancora attivo che ritenta."""
+    c, tavolo = _m115_banco(tmp_path, "m115_cf.db", max_daily_loss=30.0)
+
+    class _Ostinato(_LiveSpia):
+        def cancel_orders(self, market_id, bet_ids=None, **kw):
+            self.cancellazioni.append((market_id, bet_ids))
+            return {"ok": False, "status": "FAILURE"}
+
+    live = _Ostinato([_ordine_bot(tavolo)])
+    c.rc.betfair_service.get_live_client = lambda: live
+    with monkeypatch.context() as m:
+        _errore_nel_settlement(m, "_sync_bankroll_post_settlement", RuntimeError)
+        with pytest.raises(RuntimeError):
+            _settle_tavolo(c, tavolo, -40.0)
+    vista = c.rc.get_status()["live_exposure"]
+    assert vista["state"] == "NON_RICONCILIATA" and vista["verification"] != "VERIFIED"
+    assert vista["manual_action_required"] is True
+    n = len(live.cancellazioni)
+    assert _attendi(lambda: len(live.cancellazioni) > n), "nessun nuovo tentativo del recovery dedicato"
+    assert RuntimeController._live_recovery_active(c.rc)
+    assert c.rc.get_status()["live_exposure"]["state"] == "NON_RICONCILIATA"
+    c.rc._emergency_reconcile_pending = False                    # chiusura del banco: ferma il recovery
+    assert _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+
+def test_m115_riavvio_durante_la_riconciliazione_riprende_e_verifica(tmp_path, monkeypatch):
+    """M115: crash DURANTE la riconciliazione nello stesso processo (cancellazione interrotta). Al riavvio emergenza ed
+    esposizione irrisolta sono ancora durevoli; il conto e' irraggiungibile all'avvio, poi il recovery dedicato
+    cancella e verifica senza alcun evento."""
+    c, tavolo = _m115_banco(tmp_path, "m115_rr.db", max_daily_loss=30.0)
+
+    class _Crash(_LiveSpia):
+        def cancel_orders(self, market_id, bet_ids=None, **kw):
+            raise SystemExit("crash durante la cancellazione")
+
+    c.rc.betfair_service.get_live_client = lambda: _Crash([_ordine_bot(tavolo)])
+    with monkeypatch.context() as m:
+        _errore_nel_settlement(m, "_mark_settlement_realized", RuntimeError)
+        with pytest.raises(BaseException):
+            _settle_tavolo(c, tavolo, -40.0)
+    _fotografa_al_crash(tmp_path, "m115_rr.db", "m115_rr_crash.db")
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+    import core.runtime_controller as rcm
+    monkeypatch.setattr(rcm.RuntimeController, "_LIVE_RECOVERY_INTERVAL_S", 0.05)
+    stato = {"raggiungibile": False}
+    live = _LiveSpia([_ordine_bot(tavolo)])
+
+    def cliente():
+        if not stato["raggiungibile"]:
+            raise ConnectionError("LIVE non raggiungibile all'avvio")
+        return live
+
+    r = _banco(tmp_path, "m115_rr_crash.db", max_daily_loss=30.0)
+    r.rc.betfair_service.get_live_client = cliente
+    assert r.rc._emergency_stopped is True
+    assert r.rc.get_status()["live_exposure"]["state"] in ("SCONOSCIUTA", "NON_RICONCILIATA")
+    assert RuntimeController._live_recovery_active(r.rc), "recovery dedicato non avviato dopo il riavvio"
+    stato["raggiungibile"] = True
+    assert _attendi(lambda: ("1.971", ["A-1"]) in live.cancellazioni)
+    assert _attendi(lambda: r.rc.get_status()["live_exposure"]["state"] == "VERIFICATA")
+    assert _ingresso(r, "1.973")[0] == 0
+
+
+def test_m115_stop_di_sessione_interrotto_protegge_il_live_senza_eventi(tmp_path, monkeypatch):
+    """M115 + S-b: perdita di sessione LIVE (solo max_session_loss), errore nella pubblicazione dello stop: lo stop
+    globale si ripristina dal marker E l'ordine LIVE del bot viene cancellato nello stesso processo, senza eventi."""
+    import core.runtime_controller as rcm
+    c, tavolo = _m115_banco(tmp_path, "m115_sess.db", max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    live = _LiveSpia([_ordine_bot(tavolo)])
+    c.rc.betfair_service.get_live_client = lambda: live
+
+    def pubblica(self, *a, **k):
+        raise RuntimeError("errore nella pubblicazione dello stop di sessione")
+
+    with monkeypatch.context() as m:
+        m.setattr(rcm.RuntimeController, "_publish_session_loss_breach", pubblica)
+        with pytest.raises(RuntimeError):
+            _settle_tavolo(c, tavolo, -40.0)
+    assert str(c.rc._risk_stop_reason).startswith("session_loss_breached")
+    assert ("1.971", ["A-1"]) in live.cancellazioni, (live.letture, live.cancellazioni)
+    assert c.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    assert _ingresso(c, "1.974")[0] == 0
+
+
+def test_m115_sweep_live_mai_in_parallelo(tmp_path):
+    """M115: mentre uno sweep LIVE e' in corso (bloccato a meta' lettura), una riconciliazione concorrente (recovery
+    dedicato, segnale, settlement) non avvia un secondo sweep: nessuna lettura ne' cancellazione duplicata."""
+    c, tavolo = _m115_banco(tmp_path, "m115_conc.db", intervallo=60.0, max_daily_loss=30.0)
+    entrato, libera = threading.Event(), threading.Event()
+
+    class _Lento(_LiveSpia):
+        def get_current_orders(self, market_ids=None):
+            if self.letture == 0:
+                self.letture += 1
+                entrato.set()
+                libera.wait(5)
+                return list(self.ordini)
+            return super().get_current_orders(market_ids)
+
+    live = _Lento([_ordine_bot(tavolo)])
+    c.rc.betfair_service.get_live_client = lambda: live
+    c.rc._emergency_stopped = True
+    c.rc._emergency_reconcile_pending = True
+    primo = threading.Thread(target=RuntimeController._reconcile_restored_emergency, args=(c.rc,),
+                             kwargs={"trigger": "primo"})
+    primo.start()
+    assert entrato.wait(5)
+    assert RuntimeController._reconcile_restored_emergency(c.rc, trigger="concorrente") is None
+    assert live.letture == 1 and live.cancellazioni == [], (live.letture, live.cancellazioni)
+    libera.set()
+    primo.join(5)
+    assert live.cancellazioni == [("1.971", ["A-1"])], live.cancellazioni
+
+
+def test_c12_crash_vero_prima_del_finally_riavvio_riconcilia_sul_live(tmp_path, monkeypatch):
+    """Ciclo 12 + M115: il processo MUORE dopo la marcatura del settlement, prima del `finally` (nessun Emergency Stop
+    nel processo). Al riavvio il solo marker durevole (sede LIVE anche col runtime in SIM) ripristina l'emergenza e la
+    riconciliazione cancella l'ordine LIVE del bot sul conto LIVE."""
+    import core.runtime_controller as rcm
+    c, tavolo = _m115_banco(tmp_path, "c12v.db", max_daily_loss=30.0)
+    c.rc.betfair_service.get_live_client = lambda: _LiveSpia()
+    orig = rcm.RuntimeController._mark_settlement_realized
+
+    def muore(self, *a, **k):
+        orig(self, *a, **k)
+        _fotografa_al_crash(tmp_path, "c12v.db", "c12v_crash.db")
+        raise SystemExit("morte del processo")
+
+    with monkeypatch.context() as m:
+        m.setattr(rcm.RuntimeController, "_mark_settlement_realized", muore)
+        with pytest.raises(SystemExit):
+            _settle_tavolo(c, tavolo, -40.0)
+    c.rc._emergency_reconcile_pending = False
+    live = _LiveSpia([_ordine_bot(tavolo)])
+    monkeypatch.setattr(rcm.RuntimeController, "_LIVE_RECOVERY_INTERVAL_S", 60.0)
+    r = _banco(tmp_path, "c12v_crash.db", max_daily_loss=30.0)
+    assert r.rc._emergency_stopped is True
+    r.rc.betfair_service.get_live_client = lambda: live
+    _ambiente(r, "SIM")
+    assert _ingresso(r, "1.976")[0] == 0
+    assert ("1.971", ["A-1"]) in live.cancellazioni, (live.letture, live.cancellazioni)
+    assert r.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"

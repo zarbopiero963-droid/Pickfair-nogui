@@ -2742,7 +2742,8 @@ class RuntimeController:
     def _protect_live_venue(self, reason: str) -> dict:
         """Ciclo 12 (N2): sweep verificato sulla sede LIVE per uno stop globale nato dal LIVE col runtime in SIM."""
         try:
-            sweep = self._emergency_cancel_and_verify(was_live=True)
+            with RuntimeController._live_sweep_lock(self):
+                sweep = self._emergency_cancel_and_verify(was_live=True)
         except Exception as exc:
             logger.exception("ciclo 12: protezione della sede LIVE fallita")
             sweep = {"verification": "UNVERIFIED", "manual_action_required": True, "error": str(exc), "client": None}
@@ -2755,6 +2756,8 @@ class RuntimeController:
             logger.critical("RISK STOP (LIVE da runtime SIM): esposizione LIVE non riconciliata (verifica=%s)",
                             result.get("verification"))
             self.bus.publish("EMERGENCY_STOP_MANUAL_ACTION_REQUIRED", dict(result, source="RISK_STOP"))
+            self._emergency_reconcile_pending = True          # M115: ritentata dal recovery dedicato
+            RuntimeController._ensure_live_recovery(self)
         return {k: result.get(k) for k in ("verification", "manual_action_required", "cancelled_count",
                                            "live_client_available")}
 
@@ -2771,9 +2774,9 @@ class RuntimeController:
             risk_reason and not RuntimeController._risk_stop_scope(risk_reason))
         if not global_stop:
             return None
-        if self.__dict__.get("_emergency_reconciling"):
+        sweep_lock = RuntimeController._live_sweep_lock(self)
+        if not sweep_lock.acquire(blocking=False):       # M115: uno sweep LIVE alla volta (ES, settlement, recovery)
             return None
-        self._emergency_reconciling = True
         try:
             sweep = self._emergency_cancel_and_verify(was_live=True)
             client = sweep.get("client")
@@ -2795,7 +2798,90 @@ class RuntimeController:
             logger.exception("ciclo 12: riconciliazione dell'emergenza ripristinata fallita (si ritenta)")
             return None
         finally:
-            self._emergency_reconciling = False
+            sweep_lock.release()
+            # M115: finche' la verifica non riesce il recovery dedicato ritenta da solo, senza attendere eventi
+            RuntimeController._ensure_live_recovery(self)
+
+    # ------------------------------------------------------------------ M115: recovery LIVE senza riavvio ne' eventi
+    _LIVE_RECOVERY_INTERVAL_S = 30.0
+
+    def _live_sweep_lock(self):
+        """Lock (rientrante) degli sweep verificati sulla sede LIVE: Emergency Stop, riconciliazione e recovery dedicato
+        non cancellano mai in parallelo. `setdefault` del dict e' atomico: niente doppio lock su istanze `__new__`."""
+        return self.__dict__.setdefault("_live_sweep_rlock", threading.RLock())
+
+    def _live_recovery_active(self) -> bool:
+        thread = self.__dict__.get("_live_recovery_thread")
+        return bool(thread is not None and thread.is_alive())
+
+    def _ensure_live_recovery(self) -> bool:
+        """M115 (owner): esposizione LIVE da riconciliare (`_emergency_reconcile_pending`, stato durevole ricostruito anche
+        al riavvio) => thread daemon dedicato che ritenta la riconciliazione verificata a intervalli, indipendente da
+        segnali e settlement. Idempotente (un solo thread per runtime); riferimento debole al runtime; si ferma da solo
+        quando la verifica riesce o non resta uno stop globale. Mai raise."""
+        try:
+            if not self.__dict__.get("_emergency_reconcile_pending"):
+                return False
+            guard = self.__dict__.setdefault("_live_recovery_guard", threading.Lock())
+            with guard:
+                if RuntimeController._live_recovery_active(self):
+                    return True
+                interval = float(self.__dict__.get("_live_recovery_interval_s")
+                                 or RuntimeController._LIVE_RECOVERY_INTERVAL_S)
+                thread = threading.Thread(target=RuntimeController._live_recovery_loop,
+                                          args=(weakref.ref(self), max(0.01, interval)),
+                                          name="pickfair-live-recovery", daemon=True)
+                self._live_recovery_thread = thread
+                thread.start()
+            logger.critical("M115: recovery LIVE dedicato avviato (esposizione LIVE da riconciliare)")
+            return True
+        except Exception:
+            logger.exception("M115: recovery LIVE dedicato non avviato (si ritenta al prossimo evento)")
+            return False
+
+    @staticmethod
+    def _live_recovery_loop(ref, interval: float) -> None:
+        stop = threading.Event()
+        while not stop.wait(interval):
+            rc = ref()
+            if rc is None:
+                return
+            try:
+                guard = rc.__dict__.setdefault("_live_recovery_guard", threading.Lock())
+                risk_reason = rc.__dict__.get("_risk_stop_reason") or ""
+                global_stop = bool(rc.__dict__.get("_emergency_stopped")) or bool(
+                    risk_reason and not RuntimeController._risk_stop_scope(risk_reason))
+                if not rc.__dict__.get("_emergency_reconcile_pending") or not global_stop:
+                    with guard:          # ricontrollo sotto guard: una nuova richiesta non resta mai senza thread
+                        risk_reason = rc.__dict__.get("_risk_stop_reason") or ""
+                        global_stop = bool(rc.__dict__.get("_emergency_stopped")) or bool(
+                            risk_reason and not RuntimeController._risk_stop_scope(risk_reason))
+                        if not rc.__dict__.get("_emergency_reconcile_pending") or not global_stop:
+                            rc._live_recovery_thread = None
+                            return
+                    continue
+                RuntimeController._reconcile_restored_emergency(rc, trigger="recovery_dedicato")
+            except Exception:
+                logger.exception("M115: tentativo del recovery LIVE dedicato fallito (si ritenta)")
+            finally:
+                rc = None
+
+    def _recover_interrupted_global_stop(self, reason: str) -> None:
+        """M115 (owner): settlement interrotto DOPO l'applicazione del P&L con superamento globale (LIVE o non
+        verificabile) proiettato e marker durevole gia' scritto. Nello stesso processo si fa subito cio' che il riavvio
+        farebbe dal marker: Emergency Stop sulla sede LIVE (cancellazione verificata dei soli ordini del bot; estranei,
+        abbinati ed esiti non verificati registrati e segnalati), poi recovery dedicato se resta irrisolto. Mai raise."""
+        try:
+            if self._emergency_stopped:
+                self._emergency_reconcile_pending = True
+                RuntimeController._reconcile_restored_emergency(self, trigger="settlement_interrotto")
+                return
+            self.emergency_stop(reason, live_exposure=True)
+        except BaseException:
+            logger.exception("M115: Emergency Stop dopo il settlement interrotto non completato (recovery dedicato)")
+            self._emergency_stopped = True
+            self._emergency_reconcile_pending = True
+            RuntimeController._ensure_live_recovery(self)
 
     def _persist_emergency_state(self) -> str:
         """Persiste lo stato di emergenza; ritorna '' o l'errore (mai raise)."""
@@ -2904,7 +2990,8 @@ class RuntimeController:
         # Provenienza ignota (UNKNOWN, marker legacy ripristinato) = LIVE: fail-closed (Codex su c8338ef3).
         was_live = (getattr(self, "_settlement_source_before_emergency", "") or
                     ("SIM" if self.simulation_mode else "LIVE")) != "SIM"
-        sweep = self._emergency_cancel_and_verify(was_live=was_live)
+        with RuntimeController._live_sweep_lock(self):     # M115: mai in parallelo a riconciliazione/recovery
+            sweep = self._emergency_cancel_and_verify(was_live=was_live)
         cancel_errors.extend(sweep.pop("cancel_errors"))
         pending = sweep.pop("candidates")
         by_market = sweep.pop("markets")
@@ -2933,6 +3020,11 @@ class RuntimeController:
             result["manual_action_required"] = True
         if was_live:
             RuntimeController._record_live_exposure(self, result, source="EMERGENCY_STOP")   # R1
+            if result.get("manual_action_required"):
+                # M115: esito LIVE non verificato o esposizione residua => riconciliazione ritentata nello stesso
+                # processo dal recovery dedicato (mai solo al riavvio o al prossimo evento)
+                self._emergency_reconcile_pending = True
+                RuntimeController._ensure_live_recovery(self)
         if result.get("manual_action_required"):
             logger.critical("EMERGENCY STOP: INTERVENTO MANUALE RICHIESTO (verifica=%s, ordini ancora aperti=%d, "
                             "non attribuiti=%d, errori=%d)", result.get("verification"),
@@ -9432,6 +9524,7 @@ class RuntimeController:
             # appiccicato che bloccherebbe i segnali leciti fino al reset, e
             # ripulisci il marker durevole speculativo scritto prima del sync.
             keep_global_marker = False
+            global_breach_marker = bool(arm_pending or stopped_marker)   # M115: marker scritto per un superamento
             if not settlement_completed and realized_now and arm_pending:
                 # S1 (Sol su 60c772fe): superamento globale proiettato ed effetto gia' applicato e salvato, ma il
                 # settlement si e' interrotto prima dell'enforce: marker durevole e pending-stop RESTANO (al riavvio
@@ -9446,6 +9539,8 @@ class RuntimeController:
                 else:
                     # interruzione: lo stop globale si ripristina SUBITO dal marker (persistito), con riconciliazione LIVE
                     RuntimeController._restore_session_stop_marker(self)
+                    # M115: la riconciliazione LIVE parte ora, nello stesso processo (poi recovery dedicato se irrisolta)
+                    RuntimeController._reconcile_restored_emergency(self, trigger="settlement_interrotto")
                 with self._daily_loss_stop_lock:
                     self._session_loss_pending_global = False
             if (not settlement_completed and realized_now and attribution.get("kind") == "unattributed_loss"
@@ -9466,6 +9561,7 @@ class RuntimeController:
                     if keep_global_marker and not (arm_pending or stopped_marker):
                         self._persist_db_emergency_marker(active=True, reason="DAILY_LOSS_BREACH_PENDING:interrotto",
                                                           live_exposure=True)
+                    global_breach_marker = global_breach_marker or keep_global_marker
                     with self._daily_loss_state_lock:
                         RuntimeController._promote_settled_keys_locked(self, keys=(settlement_key,))
                         RuntimeController._persist_daily_loss_book(self)
@@ -9493,6 +9589,12 @@ class RuntimeController:
             elif stopped_marker and settlement_completed and not self._emergency_stopped:
                 # solo a settlement completato: un'interruzione a meta' lascia l'emergenza durevole (fail-closed)
                 self._persist_db_emergency_marker(active=False)
+            if not settlement_completed and realized_now and keep_global_marker and global_breach_marker:
+                # M115 (owner): il processo continua dopo l'errore. Si applica SUBITO lo stop che il riavvio ripristinerebbe
+                # dal marker, con la cancellazione verificata sulla sede LIVE; mai dipendere dal riavvio o da un evento.
+                RuntimeController._recover_interrupted_global_stop(
+                    self, "DAILY_LOSS_BREACH_INTERRUPTED:"
+                          f"{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}")
         if unrecorded:
             # nessun ordine successivo su un settlement il cui effetto non e' registrato (fail-closed)
             auto_trade_result = {"auto_trade_status": "AUTO_TRADE_SKIPPED_EFFECT_UNRECORDED",
@@ -10678,6 +10780,10 @@ class RuntimeController:
         data["daily_loss_monitor"] = self._monitor_daily_loss_breach(source="RUNTIME_STATUS_SNAPSHOT")
         # R1 (owner, ciclo 12): esposizione LIVE esplicita e persistente, distinta da `total_exposure` (tavoli locali)
         data["live_exposure"] = RuntimeController._live_exposure_status(self)
+        # R1: indicatori piatti per i consumatori che leggono solo il primo livello (headless, Control API, oracoli):
+        # vero finche' l'esposizione LIVE non e' NESSUNA/VERIFICATA (SCONOSCIUTA compresa, mai «nessun rischio»)
+        data["live_exposure_unresolved"] = data["live_exposure"]["state"] not in ("NESSUNA", "VERIFICATA")
+        data["live_exposure_manual_action_required"] = bool(data["live_exposure"]["manual_action_required"])
         # PR-04a: stato per ambito finanziario (sola lettura), oltre alla vista dell'ambito corrente
         data["daily_loss_scopes"] = {
             str(k): {"day_utc": v.get("day_utc"), "daily_loss_amount": v.get("daily_loss_amount"),
