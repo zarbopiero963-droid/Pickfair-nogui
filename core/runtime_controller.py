@@ -452,6 +452,7 @@ class RuntimeController:
         self._load_hedged_markets()
         RuntimeController._restore_session_stop_marker(self)        # S-b: stop di sessione rimasto in sospeso
         RuntimeController._restore_live_exposure_pending(self)      # Codex P1 su afbd5c89
+        RuntimeController._restore_breached_live_scope_stop(self)   # M130 (matrice D): blocco dal libro superato
         RuntimeController._reconcile_restored_emergency(self, trigger="startup")
 
     @property
@@ -2849,6 +2850,50 @@ class RuntimeController:
             raw = (self.db.get_settings() or {}).get(RuntimeController._LIVE_EXPOSURE_KEY) or ""
             record = json.loads(raw) if raw else None
         return record if isinstance(record, dict) else None
+
+    def _restore_breached_live_scope_stop(self) -> None:
+        """M130 (matrice D, «es» eccezione/False/corrotto): il libro giornaliero salvato dice che OGGI un ambito che sale
+        al globale (LIVE o non verificabile, anche la quarantena) ha superato il limite, ma l'Emergency Stop non e'
+        durevole (scrittura fallita). Al riavvio il blocco globale si ricostruisce dal libro, senza attendere la
+        riconsegna: Emergency Stop con la stessa postura del ripristino persistito e riconciliazione LIVE in attesa. Il
+        superamento finisce col rollover di giornata (nessun blocco permanente). Mai raise."""
+        try:
+            if self._emergency_stopped:
+                return
+            today = datetime.utcnow().date().isoformat()
+            breached = sorted(str(k) for k, st in (self.__dict__.get("_daily_loss_scopes") or {}).items()
+                              if isinstance(st, dict) and st.get("breached") is True
+                              and str(st.get("day_utc") or "") == today and financial_scope.escalates_globally(str(k)))
+            legacy = self.__dict__.get("_daily_loss_unattributed") or {}
+            if legacy.get("breached") is True and str(legacy.get("day_utc") or "") == today:
+                breached.append(financial_scope.UNVERIFIED_SCOPE)
+            if not breached:
+                return
+            reason = "DAILY_LOSS_BREACH_RESTORED_FROM_BOOK"
+            self._emergency_stopped = True
+            self._emergency_stopped_at = datetime.utcnow().isoformat()
+            self._emergency_reason = reason
+            self._settlement_source_before_emergency = "LIVE"
+            self._emergency_reconcile_pending = True
+            persist_error = self._persist_emergency_state()
+            if persist_error:
+                logger.critical("M130: Emergency Stop dal libro non persistito (%s): resta in memoria", persist_error)
+            self.live_enabled = False
+            self.execution_mode = "SIMULATION"
+            try:
+                self.set_simulation_mode(True)
+            except Exception:
+                logger.exception("M130: set_simulation_mode fallito nel ripristino dal libro")
+            try:
+                self.force_lockdown(reason)
+            except Exception:
+                logger.exception("M130: force_lockdown fallito nel ripristino dal libro")
+                self.mode = RuntimeMode.LOCKDOWN
+                self.last_error = reason
+            logger.critical("M130: superamento giornaliero LIVE nel libro (%s) senza Emergency Stop durevole: "
+                            "Emergency Stop ripristinato al riavvio", ", ".join(breached))
+        except Exception:
+            logger.exception("M130: libro giornaliero non verificabile per il blocco globale")
 
     def _restore_live_exposure_pending(self) -> None:
         """Codex P1 su afbd5c89: un'esposizione LIVE irrisolta registrata in modo durevole (record R1 non risolto o

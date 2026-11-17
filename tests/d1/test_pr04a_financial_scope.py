@@ -2927,3 +2927,55 @@ def test_m130_n5_ripristino_al_riavvio_con_persistenza_ko_conserva_il_marker(tmp
     assert stop_rules.restore_risk_stop(r2.rc.db).startswith("session_loss_breached")
     assert not (r2.rc.db.get_settings() or {}).get(RuntimeController._SESSION_STOP_MARKER)
     r2.rc._emergency_reconcile_pending = False
+
+
+def test_m130_libro_giornaliero_scrittura_non_riletta_e_un_fallimento(tmp_path, monkeypatch):
+    """Matrice D, ledger «falso»: `save_settings` del libro ritorna senza scrivere. Il salvataggio non vale (rilettura):
+    marker di riserva scritto e stato «non salvato» (cancello d'ingresso). Dopo il riavvio la perdita c'e' (dal marker)."""
+    from core import daily_loss_store
+    c = _banco(tmp_path, "lb.db", max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    sim = _sim()
+    vero = c.rc.db.save_settings
+
+    def perso(valori, *a, **k):
+        if daily_loss_store.DAILY_LOSS_STATE_KEY in (valori or {}):
+            return False                                          # scrittura persa senza eccezione
+        return vero(valori, *a, **k)
+
+    with monkeypatch.context() as m:
+        m.setattr(c.rc.db, "save_settings", perso)
+        _settle(c, -12.0)
+        assert daily_loss_store.persist_failed(c.rc._daily_loss_persisted), "scrittura persa creduta salvata"
+    r = _banco(tmp_path, "lb.db", max_daily_loss=30.0)
+    assert r.rc._monitor_daily_loss_breach(source="T", scope=sim)["daily_loss_amount"] == pytest.approx(12.0)
+
+
+def test_m130_superamento_live_nel_libro_ricostruisce_l_emergenza_al_riavvio(tmp_path):
+    """Matrice D, «es» eccezione/False/corrotto: il libro salvato dice LIVE superato oggi ma l'Emergency Stop non e'
+    durevole. Al riavvio, senza riconsegna, Emergency Stop ripristinato con riconciliazione LIVE in attesa; un libro con
+    superamento solo SIM non lo fa (nessun blocco globale per un ambito locale)."""
+    import json as _json
+    from core import daily_loss_store
+    c = _banco(tmp_path, "rb.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc.betfair_service.get_live_client = lambda: _LiveSpia()
+    _settle(c, -40.0)
+    assert c.rc._emergency_stopped is True
+    c.rc.db.save_settings({"emergency_stopped": "0"})             # Emergency Stop non durevole, libro superato
+    c.rc._emergency_reconcile_pending = False
+    r = _banco(tmp_path, "rb.db", max_daily_loss=30.0)
+    assert r.rc._emergency_stopped is True and r.rc._emergency_reason == "DAILY_LOSS_BREACH_RESTORED_FROM_BOOK"
+    assert r.rc.__dict__.get("_emergency_reconcile_pending") is True
+    r.rc._emergency_reconcile_pending = False
+    s = _banco(tmp_path, "rs.db", max_daily_loss=30.0)
+    _ambiente(s, "SIM")
+    s.rc.mode = RuntimeMode.ACTIVE
+    _settle(s, -40.0)
+    assert s.rc._emergency_stopped is False
+    t = _banco(tmp_path, "rs.db", max_daily_loss=30.0)
+    assert t.rc._emergency_stopped is False, "superamento solo SIM promosso a blocco globale"
+    book = _json.loads((t.rc.db.get_settings() or {}).get(daily_loss_store.DAILY_LOSS_STATE_KEY) or "{}")
+    assert book, "libro non salvato"

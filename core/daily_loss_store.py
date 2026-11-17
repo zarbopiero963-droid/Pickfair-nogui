@@ -130,7 +130,7 @@ def persist_daily_loss(db: Any, state: dict, last: Optional[dict]) -> Optional[d
     payload = json.dumps(dict(record, seq=seq))
     marker = _marker_path(db)
     try:
-        db.save_settings({DAILY_LOSS_STATE_KEY: payload})
+        _save_verified(db, payload)
     except Exception:
         logger.exception("daily-loss: persist failed")
         try:
@@ -279,6 +279,15 @@ def restore_daily_loss_book(db: Any, *, today_utc: str) -> dict:
     return reconcile_books(from_db, from_marker) or {"scopes": {}, "legacy": None, "seq": None}
 
 
+def _save_verified(db: Any, payload: str) -> None:
+    """M130 (matrice D, ledger «falso»): `save_settings` non ha un contratto di ritorno. Il salvataggio vale solo se il
+    libro RILETTO coincide con quello scritto; altrimenti solleva (=> ripiego sul marker, stato non salvato)."""
+    db.save_settings({DAILY_LOSS_STATE_KEY: payload})
+    readback = db.get_settings() if hasattr(db, "get_settings") else None
+    if not isinstance(readback, dict) or readback.get(DAILY_LOSS_STATE_KEY) != payload:
+        raise OSError("libro giornaliero non riletto dopo il salvataggio")
+
+
 def book_record(scopes: dict, legacy: Optional[dict], settled: Optional[dict] = None) -> dict:
     # Ogni ambito si scrive, anche a zero (Codex su 38979e59): omettere uno zero farebbe risorgere, alla
     # riconciliazione con un marker rimasto, un profitto piu' vecchio dello stesso ambito.
@@ -307,7 +316,7 @@ def persist_daily_loss_book(db: Any, scopes: dict, legacy: Optional[dict], last:
     payload = json.dumps(dict(record, seq=seq))
     marker = _marker_path(db)
     try:
-        db.save_settings({DAILY_LOSS_STATE_KEY: payload})
+        _save_verified(db, payload)
     except Exception:
         logger.exception("daily-loss: persist failed")
         try:

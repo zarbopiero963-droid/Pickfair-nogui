@@ -940,6 +940,16 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
     ripristino al riavvio (che non si fida di uno stop solo in memoria). Marker conservato => stop in memoria,
     riconciliazione LIVE e recovery dedicato nel processo; al riavvio con disco scrivibile lo stop diventa durevole e
     il marker si toglie (nessun blocco permanente).
+  - *Libro giornaliero verificato.* `save_settings` non ha un contratto di ritorno: il libro vale salvato solo se
+    RILETTO identico (`daily_loss_store._save_verified`); altrimenti marker di riserva e stato «non salvato» (cancello
+    d'ingresso). Una scrittura persa senza eccezione non fa piu' sparire la perdita al riavvio.
+  - *Blocco globale dal libro.* Al riavvio, un ambito LIVE (o non verificabile, compresa la quarantena) superato OGGI
+    nel libro salvato ricostruisce l'Emergency Stop anche se la sua scrittura era fallita, senza attendere la
+    riconsegna (`_restore_breached_live_scope_stop`); un superamento solo SIM resta locale.
+  - *Limite residuo (decisione owner).* Crash prima di qualunque scrittura del settlement (marker non scritto, P&L non
+    applicato) e riconsegna dopo il riavvio ma prima del nuovo `start()`: la perdita di sessione non ha una sessione in
+    cui contare (P37: «perdita dall'ultimo start()», e il realized del desk non sopravvive al riavvio). Il limite
+    giornaliero la conta.
   - *N4 (regressione rispetto a main).* Lo stato giornaliero dell'ambito del settlement nasce PRIMA del P&L, anche
     senza `max_daily_loss`: un limite attivato a meta' giornata vede la perdita gia' regolata (35, non 15).
 - **M128 (owner): N1 e N2 su `440351a1`.**
