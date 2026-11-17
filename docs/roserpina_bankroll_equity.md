@@ -932,6 +932,18 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   - *Riavvio.* Un record durevole dell'esposizione irrisolto (o illeggibile, o legacy risolto ma con posizioni
     abbinate) riarma la riconciliazione e il recovery dedicato all'avvio, anche quando lo stop globale e' un RISK_STOP
     di sessione gia' completato.
+- **Ciclo 12, tre P1 Codex su `b902eca3`.**
+  - *Marker di sessione non salvato.* Se `session_loss_stop_pending` non si scrive, la decisione di stop diventa
+    durevole subito come RISK_STOP globale persistito (`_persist_session_stop_now`); se nemmeno questo e'
+    persistibile il settlement NON si applica (errore prima del P&L e della chiave: la riconsegna lo rielabora) e la
+    barriera d'ingresso globale resta armata. Mai un settlement registrato senza lo stop obbligatorio (M121).
+  - *Riconsegna dopo il rilascio.* Rilascio della riserva gia' registrato ma P&L non applicato (crash fra i due): la
+    riconsegna `duplicate` recupera l'ambito dall'identita' registrata nell'effetto (`customer_ref` => request
+    persistita in `orders`); identita' non recuperabile => quarantena, mai l'ambito corrente.
+  - *Verifica LIVE di uno stop precedente.* All'inizio di un nuovo stop globale che coinvolge il LIVE (Emergency Stop
+    di provenienza LIVE, RISK_STOP globale col runtime in LIVE o nato da un ambito LIVE) un esito VERIFICATO si
+    invalida (`IN_ATTESA_DI_VERIFICA`, stato `SCONOSCIUTA` con intervento manuale) finche' uno sweep di quello stop non
+    lo conferma; un esito irrisolto resta. Al reset dello stop un esito verificato si toglie (vista `NESSUNA`).
 - **EXPANSION.** La baseline del ciclo porta l'ambito del conto su cui e' stata letta; la crescita si calcola solo se
   lo snapshot del conto e' dello STESSO ambito verificato. Baseline legacy senza ambito, di un altro ambito o di un
   conto LIVE non identificato => nessuna crescita (nessun aumento di stake).

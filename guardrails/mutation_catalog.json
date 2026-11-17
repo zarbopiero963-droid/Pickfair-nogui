@@ -1795,8 +1795,8 @@
       "module": "core.runtime_controller",
       "area": "dedupe",
       "file": "core/runtime_controller.py",
-      "original": "        if existing is not None and not upgrade:\n            return {\"outcome\": \"duplicate\", \"applied\": False,\n                    \"realized_already\": bool(existing.get(\"realized_applied\"))}",
-      "mutated": "        if existing is not None and not upgrade:\n            return {\"outcome\": \"duplicate\", \"applied\": False,\n                    \"realized_already\": False}",
+      "original": "        if existing is not None and not upgrade:\n            out = {\"outcome\": \"duplicate\", \"applied\": False,\n                   \"realized_already\": bool(existing.get(\"realized_applied\"))}",
+      "mutated": "        if existing is not None and not upgrade:\n            out = {\"outcome\": \"duplicate\", \"applied\": False,\n                   \"realized_already\": False}",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],

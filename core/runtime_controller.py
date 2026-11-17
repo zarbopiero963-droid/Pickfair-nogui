@@ -1735,6 +1735,28 @@ class RuntimeController:
             logger.exception("S-b: marker dello stop di sessione non leggibile (fail-closed: riconciliazione in attesa)")
             self._emergency_reconcile_pending = True
 
+    def _persist_session_stop_now(self, reason: str) -> None:
+        """Codex P1 su b902eca3: ripiego del marker di sessione non salvato. Il RISK_STOP globale si persiste subito
+        (riconciliazione LIVE in attesa); se non e' persistibile nemmeno questo il settlement NON prosegue: si solleva
+        prima del P&L e della chiave (la riconsegna lo rielabora), con la barriera d'ingresso globale ancora armata.
+        Mai uno stato durevole con settlement completato e stop obbligatorio assente (M121)."""
+        durable = False
+        try:
+            with self._risk_stop_lock:
+                current = self._risk_stop_reason
+                if current and not RuntimeController._risk_stop_scope(current):
+                    durable = bool(stop_rules.persist_risk_stop(self.db, current))   # gia' globale: riconferma
+                else:
+                    durable = bool(stop_rules.persist_risk_stop(self.db, reason))
+                    if durable:
+                        self._risk_stop_reason = reason
+            self._emergency_reconcile_pending = True
+        except Exception:
+            logger.exception("S-b: RISK_STOP di sessione non persistito")
+            durable = False
+        if not durable:
+            raise RuntimeError("S-b: decisione di stop di sessione non durevole: settlement non applicato (ritentare)")
+
     def _limits_block_reason(self) -> str:
         if self.__dict__.get("_session_loss_pending_global"):
             # C3 (D M116-bis): perdita di sessione di un ambito LIVE (anche di un altro conto) in attesa dello stop
@@ -1855,6 +1877,10 @@ class RuntimeController:
                 reason = f"{reason}{RuntimeController._RISK_STOP_SCOPE_SEP}{scope}"
             self._risk_stop_reason = reason
             persisted = stop_rules.persist_risk_stop(self.db, reason)
+        if not local and (not bool(getattr(self, "simulation_mode", False)) or (
+                scope and financial_scope.escalates_globally(str(scope)))):
+            # Codex P1 su b902eca3: stop globale che coinvolge il LIVE: la verifica di uno stop precedente non vale
+            RuntimeController._invalidate_live_exposure(self, source="RISK_STOP")
         cashout = not self._daily_loss_entry_blocked() and RuntimeController._risk_stop_applies(self)
         result = {"risk_stopped": True, "reason": reason, "cashout_attempted": cashout, "persisted": persisted}
         if cashout:
@@ -1885,6 +1911,7 @@ class RuntimeController:
             if not stop_rules.persist_risk_stop(self.db, ""):  # nuova versione PRIMA di riaprire
                 return {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
             self._risk_stop_reason = ""
+        RuntimeController._clear_resolved_live_exposure(self)
         self.bus.publish("RISK_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
         return {"risk_stop_reset": True, "reason": ""}
 
@@ -2750,6 +2777,39 @@ class RuntimeController:
             logger.exception("R1: esposizione LIVE non salvata (resta segnalata come SCONOSCIUTA)")
             self._live_exposure_record = {"verification": "UNKNOWN", "resolved": False, "source": str(source)}
 
+    def _invalidate_live_exposure(self, source: str) -> None:
+        """Codex P1 su b902eca3: all'inizio di un nuovo stop globale l'esito LIVE precedente non vale piu'. Se era
+        VERIFICATO lo si sostituisce con «in attesa di verifica» (stato SCONOSCIUTA, intervento manuale) finche' uno
+        sweep di questo stop non lo conferma; un esito irrisolto resta (l'esposizione e' ancora quella). Mai raise."""
+        try:
+            current = RuntimeController._live_exposure_record_now(self)
+            if current and not current.get("resolved"):
+                return
+            RuntimeController._record_live_exposure(
+                self, {"verification": "IN_ATTESA_DI_VERIFICA", "manual_action_required": True}, source=source)
+        except Exception:
+            logger.exception("R1: esposizione LIVE non invalidata")
+            self._live_exposure_record = {"verification": "UNKNOWN", "resolved": False, "source": str(source)}
+
+    def _clear_resolved_live_exposure(self) -> None:
+        """Reset di uno stop: un esito LIVE VERIFICATO appartiene allo stop chiuso e si toglie (la vista torna NESSUNA);
+        un esito irrisolto resta visibile, perche' l'esposizione non e' chiusa dal reset. Mai raise."""
+        try:
+            current = RuntimeController._live_exposure_record_now(self)
+            if current and current.get("resolved") and not current.get("matched_positions"):
+                if hasattr(self.db, "save_settings"):
+                    self.db.save_settings({RuntimeController._LIVE_EXPOSURE_KEY: ""})
+                self._live_exposure_record = None
+        except Exception:
+            logger.exception("R1: esito LIVE verificato non rimosso al reset (resta mostrato)")
+
+    def _live_exposure_record_now(self) -> Optional[dict]:
+        record = self.__dict__.get("_live_exposure_record")
+        if record is None and hasattr(self.db, "get_settings"):
+            raw = (self.db.get_settings() or {}).get(RuntimeController._LIVE_EXPOSURE_KEY) or ""
+            record = json.loads(raw) if raw else None
+        return record if isinstance(record, dict) else None
+
     def _restore_live_exposure_pending(self) -> None:
         """Codex P1 su afbd5c89: un'esposizione LIVE irrisolta registrata in modo durevole (record R1 non risolto o
         illeggibile) riarma la riconciliazione al riavvio, anche quando lo stop globale e' un RISK_STOP gia' completato
@@ -3071,6 +3131,9 @@ class RuntimeController:
         # Provenienza ignota (UNKNOWN, marker legacy ripristinato) = LIVE: fail-closed (Codex su c8338ef3).
         was_live = (getattr(self, "_settlement_source_before_emergency", "") or
                     ("SIM" if self.simulation_mode else "LIVE")) != "SIM"
+        if was_live:
+            # Codex P1 su b902eca3: nessuna verifica LIVE precedente vale per questo stop (lo sweep sotto la riscrive)
+            RuntimeController._invalidate_live_exposure(self, source="EMERGENCY_STOP")
         with RuntimeController._live_sweep_lock(self):     # M115: mai in parallelo a riconciliazione/recovery
             sweep = self._emergency_cancel_and_verify(was_live=was_live)
         cancel_errors.extend(sweep.pop("cancel_errors"))
@@ -3642,6 +3705,7 @@ class RuntimeController:
         with self._daily_loss_stop_lock:
             self._daily_loss_pending_stop = False
         persist_error = self._persist_emergency_state()
+        RuntimeController._clear_resolved_live_exposure(self)     # Codex P1 su b902eca3
         self.bus.publish("EMERGENCY_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
         return {"emergency_reset": True, "persist_error": persist_error}
 
@@ -7018,8 +7082,20 @@ class RuntimeController:
             return {"outcome": "unverifiable", "applied": False, "realized_already": False}
         upgrade = existing is not None and str(existing.get("outcome") or "") == "held"
         if existing is not None and not upgrade:
-            return {"outcome": "duplicate", "applied": False,
-                    "realized_already": bool(existing.get("realized_applied"))}
+            out = {"outcome": "duplicate", "applied": False,
+                   "realized_already": bool(existing.get("realized_applied"))}
+            if not out["realized_already"] and str(existing.get("customer_ref") or ""):
+                # Codex P1 su b902eca3: rilascio gia' registrato ma P&L non applicato (crash fra i due). La riserva non
+                # c'e' piu' (F018 la esclude, nessun hint): l'ambito si recupera dall'identita' registrata nell'effetto
+                # (request persistita in `orders`), '' => quarantena; mai l'ambito corrente per supposizione.
+                try:
+                    out["financial_scope"] = RuntimeController._settled_bet_scope(
+                        self, int(existing.get("table_id") or 0), str(existing.get("event_key") or ""),
+                        str(existing.get("customer_ref") or ""))
+                except Exception:
+                    logger.exception("Settlement %s: ambito della scommessa non recuperabile (quarantena)", key)
+                    out["financial_scope"] = ""
+            return out
         why: list = []
         owner = self._resolve_settlement_reservation(payload, table_id=table_id, why=why)
         if upgrade:
@@ -9541,7 +9617,10 @@ class RuntimeController:
                 self.db.save_settings({RuntimeController._SESSION_STOP_MARKER: json.dumps(
                     {"reason": session_reason, "scope": session_scope, "at": datetime.utcnow().isoformat()})})
             except Exception:
-                logger.exception("S-b: marker dello stop di sessione non salvato (barriera in memoria mantenuta)")
+                # Codex P1 su b902eca3: senza marker la decisione di stop deve diventare durevole PRIMA del P&L e della
+                # chiave del settlement, altrimenti un crash lascerebbe il settlement registrato senza stop obbligatorio.
+                logger.exception("S-b: marker dello stop di sessione non salvato: RISK_STOP globale persistito subito")
+                RuntimeController._persist_session_stop_now(self, session_reason)
         try:
             # #461 PR29-c: P&L realizzato una sola volta per settlement, nel processo (set in memoria, sotto il lock
             # del consumer) e dopo un riavvio (flag `realized_applied` del registro). Quando la registrazione non e'

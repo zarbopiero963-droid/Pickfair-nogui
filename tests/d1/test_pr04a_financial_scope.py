@@ -1695,6 +1695,16 @@ def test_scenario_integrato_due_conti_live_piu_tavoli_sim_emergenza_errore_crash
     c.rc.table_manager.activate(table_id=tavolo_sim.table_id, event_key="evt-int-sim", exposure=2.0, market_id="1.883",
                                 selection_id=1, meta={"financial_scope": _sim(), "customer_ref": "ref-int-sim"})
     tavolo_sim = c.rc.table_manager.get_table(tavolo_sim.table_id)
+    # Come una prenotazione reale (e come la ricostruisce F018), l'ordine SIM ha la sua riga in `orders` con l'ambito
+    # registrato (C2): senza, una riconsegna dopo il rilascio non ne recupera l'identita' e va in quarantena
+    # (Codex P1 su b902eca3: mai l'ambito corrente per supposizione).
+    import time as _time
+    _ora = _time.time()
+    c.rc.db._execute("INSERT INTO orders (customer_ref, correlation_id, status, payload_json, response_json, created_at,"
+                     " updated_at) VALUES (?,?,?,?,?,?,?)",
+                     ("ref-int-sim", "corr-ref-int-sim", "PLACED",
+                      json.dumps({"simulation_mode": True, "market_id": "1.883", "financial_scope": _sim()}),
+                      json.dumps({"betId": "S-1", "status": "SUCCESS"}), _ora, _ora), commit=True)
     _ambiente(c, "SIM")
     _settle_tavolo(c, tavolo_b, 12.0)                       # profitto del conto B, dalla sua prenotazione
     # processo in SIM, conto LIVE A connesso; sull'exchange: un ordine aperto del bot e uno estraneo
@@ -2564,3 +2574,183 @@ def test_codex_record_legacy_risolto_con_abbinate_non_e_verificato_al_riavvio(tm
     r.rc._emergency_reconcile_pending = False
     # difesa in profondita': anche senza riconciliazione in attesa la vista non dichiara chiusa una posizione abbinata
     assert r.rc.get_status()["live_exposure"]["state"] == "NON_RICONCILIATA"
+
+
+# ============================================================================ Codex P1 su b902eca3
+def test_codex_b902_marker_di_sessione_non_salvato_non_lascia_settlement_senza_stop(tmp_path, monkeypatch):
+    """Codex P1 su b902eca3: la scrittura del marker `session_loss_stop_pending` fallisce (errore transitorio), poi
+    il processo muore dopo la marcatura del settlement. Al riavvio la chiave e' salvata: la riconsegna non rifa' nulla.
+    Mai uno stato persistente con settlement completato e stop obbligatorio assente (M121)."""
+    import core.runtime_controller as rcm
+    c, tavolo = _m115_banco(tmp_path, "cx_mk.db", intervallo=60.0, max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    c.rc.betfair_service.get_live_client = lambda: _LiveSpia()
+    vero_save = c.rc.db.save_settings
+
+    def save_fallisce_solo_il_marker(valori, *a, **k):
+        if RuntimeController._SESSION_STOP_MARKER in (valori or {}) and (valori or {}).get(
+                RuntimeController._SESSION_STOP_MARKER):
+            raise OSError("disco momentaneamente non scrivibile")
+        return vero_save(valori, *a, **k)
+
+    orig = rcm.RuntimeController._mark_settlement_realized
+
+    def muore(self, *a, **k):
+        orig(self, *a, **k)
+        _fotografa_al_crash(tmp_path, "cx_mk.db", "cx_mk_crash.db")
+        raise SystemExit("morte del processo")
+
+    monkeypatch.setattr(c.rc.db, "save_settings", save_fallisce_solo_il_marker)
+    with monkeypatch.context() as m:
+        m.setattr(rcm.RuntimeController, "_mark_settlement_realized", muore)
+        with pytest.raises(BaseException):
+            _settle_tavolo(c, tavolo, -40.0)
+    c.rc._emergency_reconcile_pending = False
+    r = _banco(tmp_path, "cx_mk_crash.db", max_session_loss=30.0)
+    stop = str(getattr(r.rc, "_risk_stop_reason", "") or "")
+    assert r.rc._emergency_stopped or (stop and not RuntimeController._risk_stop_scope(stop)), \
+        "settlement durevole senza stop globale obbligatorio"
+    r.rc._emergency_reconcile_pending = False
+
+
+def test_codex_b902_doppio_guasto_settlement_non_applicato_e_ritentabile(tmp_path, monkeypatch):
+    """Marker di sessione E RISK_STOP non persistibili: il settlement NON si applica (nessun P&L, nessuna chiave), la
+    barriera d'ingresso globale resta armata; la riconsegna, a disco di nuovo scrivibile, applica lo stop una volta."""
+    from core import risk_stop as stop_rules
+    c, tavolo = _m115_banco(tmp_path, "cx_mk2.db", intervallo=60.0, max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    c.rc.betfair_service.get_live_client = lambda: _LiveSpia()
+    vero_save = c.rc.db.save_settings
+    prima = float(c.rc.risk_desk.realized_pnl)
+
+    def save_marker_ko(valori, *a, **k):
+        if (valori or {}).get(RuntimeController._SESSION_STOP_MARKER):
+            raise OSError("disco non scrivibile")
+        return vero_save(valori, *a, **k)
+
+    with monkeypatch.context() as m:
+        m.setattr(c.rc.db, "save_settings", save_marker_ko)
+        m.setattr(stop_rules, "persist_risk_stop", lambda db, reason: False)
+        with pytest.raises(RuntimeError, match="non durevole"):
+            _settle_tavolo(c, tavolo, -40.0)
+    assert float(c.rc.risk_desk.realized_pnl) == prima, "P&L applicato senza stop durevole"
+    assert c.rc._limits_block_reason(), "barriera d'ingresso globale tolta"
+    assert _ingresso(c, "1.979")[0] == 0
+    _settle_tavolo(c, tavolo, -40.0)                              # riconsegna, disco tornato scrivibile
+    assert float(c.rc.risk_desk.realized_pnl) == pytest.approx(prima - 40.0)
+    assert str(c.rc._risk_stop_reason).startswith("session_loss_breached")
+    c.rc._emergency_reconcile_pending = False
+
+
+def test_codex_b902_verifica_live_precedente_non_vale_per_un_nuovo_stop(tmp_path):
+    """Codex P1 su b902eca3: sweep LIVE verificato (nessun ordine), reset dell'emergenza, nuovo ordine LIVE, poi stop di
+    sessione globale col runtime in LIVE e cashout non eseguito. La verifica dello stop precedente non vale per il nuovo:
+    esposizione mai VERIFICATA/zero senza una nuova conferma dell'exchange."""
+    c = _banco(tmp_path, "cx_stale.db", max_session_loss=30.0)
+    c.rc._live_recovery_interval_s = 60.0
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc.betfair_service.get_live_client = lambda: _LiveSpia()
+    c.rc.emergency_stop("prova", live_exposure=True)
+    assert c.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    c.rc.reset_emergency()
+    assert c.rc.get_status()["live_exposure"]["state"] == "NESSUNA", "verifica di uno stop chiuso ancora mostrata"
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc._session_pnl_baseline = float(c.rc.risk_desk.realized_pnl)
+    tavolo = _riserva(c, "1.961")
+    _segna_riga_live(c, tavolo.meta["customer_ref"])
+    c.rc._route_cashout_signal = lambda segnale: None             # cashout non eseguito
+    _settle_tavolo(c, tavolo, -40.0)
+    assert str(c.rc._risk_stop_reason).startswith("session_loss_breached")
+    vista = c.rc.get_status()["live_exposure"]
+    assert vista["state"] != "VERIFICATA" and vista["amount"] != 0.0 and vista["manual_action_required"] is True, vista
+    c.rc._emergency_reconcile_pending = False
+
+
+def test_codex_b902_riconsegna_dopo_rilascio_recupera_l_ambito_della_scommessa(tmp_path, monkeypatch):
+    """Codex P1 su b902eca3: il rilascio della riserva LIVE e' gia' registrato (effetto con customer_ref,
+    realized_applied=0), poi il processo muore prima del P&L. Al riavvio (runtime in SIM) la riconsegna e' un
+    `duplicate` senza ambito: la perdita va al conto LIVE della scommessa (dalla request persistita), mai alla SIM."""
+    import core.runtime_controller as rcm
+    c = _banco(tmp_path, "cx_rel.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    c.rc.mode = RuntimeMode.ACTIVE
+    conto_a = c.rc._current_financial_scope()
+    tavolo = _riserva(c, "1.951")
+    _segna_riga_live(c, tavolo.meta["customer_ref"])
+    payload = _canonical_close_payload(
+        pnl=-40.0, net_pnl=-40.0, gross_pnl=-40.0, commission_amount=0.0, event_key=tavolo.current_event_key,
+        batch_id="b-cx-rel", correlation_id="c-cx-rel", table_id=tavolo.table_id,
+        customer_ref=tavolo.meta["customer_ref"], market_id=tavolo.market_id)
+
+    def muore(self, *a, **k):
+        _fotografa_al_crash(tmp_path, "cx_rel.db", "cx_rel_crash.db")
+        raise SystemExit("morte prima del P&L")
+
+    with monkeypatch.context() as m:
+        m.setattr(rcm.RuntimeController, "_apply_and_attribute_realized_pnl", muore)
+        with pytest.raises(SystemExit):
+            c.rc._on_close_position(dict(payload))
+    r = _banco(tmp_path, "cx_rel_crash.db", max_daily_loss=30.0)
+    _ambiente(r, "SIM")
+    r.rc.betfair_service.get_live_client = lambda: _LiveSpia()
+    r.rc.mode = RuntimeMode.ACTIVE
+    r.rc._on_close_position(dict(payload))
+    sim = financial_scope.runtime_scope(simulated=True, live_account="")
+    scopes = r.rc.__dict__.get("_daily_loss_scopes") or {}
+    assert float((scopes.get(sim) or {}).get("daily_loss_amount") or 0.0) == 0.0, "perdita LIVE attribuita alla SIM"
+    assert float((scopes.get(conto_a) or {}).get("daily_loss_amount") or 0.0) == pytest.approx(40.0), scopes.keys()
+    assert r.rc._emergency_stopped is True, "superamento LIVE senza Emergency Stop globale"
+    r.rc._emergency_reconcile_pending = False
+
+
+def _registra_esito(c, **campi):
+    import json as _json
+    rec = {"source": "TEST", "verification": "VERIFIED", "resolved": True, "open_orders": [],
+           "unattributed_open_orders": [], "matched_positions": [], "at": "2026-11-17T09:00:00"}
+    rec.update(campi)
+    c.rc.db.save_settings({RuntimeController._LIVE_EXPOSURE_KEY: _json.dumps(rec)})
+    c.rc._live_exposure_record = None
+
+
+def test_codex_b902_esito_verificato_rimasto_non_vale_per_nuovo_stop_live(tmp_path, monkeypatch):
+    """Esito VERIFICATO rimasto su disco (pulizia al reset non riuscita o processo precedente): un nuovo stop globale
+    LIVE (RISK_STOP col runtime in LIVE; Emergency Stop con sweep non completato) non lo eredita."""
+    c = _banco(tmp_path, "cx_rest.db", max_session_loss=30.0)
+    c.rc._live_recovery_interval_s = 60.0
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.ACTIVE
+    _registra_esito(c)
+    c.rc._route_cashout_signal = lambda segnale: None
+    c.rc.risk_stop("session_loss_breached:prova", scope=c.rc._current_financial_scope())
+    assert c.rc.get_status()["live_exposure"]["state"] == "SCONOSCIUTA"
+    c2 = _banco(tmp_path, "cx_rest2.db", max_daily_loss=30.0)
+    c2.rc._live_recovery_interval_s = 60.0
+    _ambiente(c2, "LIVE")
+    _registra_esito(c2)
+
+    def sweep_rotto(self, **k):
+        raise RuntimeError("sweep interrotto")
+
+    monkeypatch.setattr(RuntimeController, "_emergency_cancel_and_verify", sweep_rotto)
+    with pytest.raises(RuntimeError):
+        c2.rc.emergency_stop("prova", live_exposure=True)
+    assert c2.rc.get_status()["live_exposure"]["state"] == "SCONOSCIUTA"
+    c.rc._emergency_reconcile_pending = c2.rc._emergency_reconcile_pending = False
+
+
+def test_codex_b902_nuovo_stop_conserva_un_esito_irrisolto(tmp_path):
+    """Un esito LIVE IRRISOLTO (ordini e importo noti) resta com'e' all'inizio di un nuovo stop: l'esposizione e' ancora
+    quella e non diventa una generica «in attesa»."""
+    c = _banco(tmp_path, "cx_keep.db", max_session_loss=30.0)
+    c.rc._live_recovery_interval_s = 60.0
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.ACTIVE
+    _registra_esito(c, verification="OPEN_ORDERS_REMAIN", resolved=False,
+                    open_orders=[{"bet_id": "K-1", "side": "BACK", "price": 2.0, "size_remaining": 3.0}])
+    c.rc._route_cashout_signal = lambda segnale: None
+    c.rc.risk_stop("session_loss_breached:prova", scope=c.rc._current_financial_scope())
+    vista = c.rc.get_status()["live_exposure"]
+    assert vista["state"] == "NON_RICONCILIATA" and vista["amount_display"] == "3.00", vista
+    c.rc._emergency_reconcile_pending = False
