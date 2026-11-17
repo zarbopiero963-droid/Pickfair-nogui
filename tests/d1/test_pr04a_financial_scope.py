@@ -464,7 +464,10 @@ def test_risk_stop_da_perdita_di_sessione_sim_resta_locale(tmp_path):
     assert c.rc.reset_risk_stop()["reason"] == "risk_stop_di_altro_ambito"
     r = _banco(tmp_path, "rs.db", max_session_loss=30.0)                 # riavvio: lo stop SIM resta, locale
     _ambiente(r, "SIM")
-    assert r.rc._loss_block_reason().startswith("risk_stop_active")
+    # F1 (owner M134): dopo il riavvio la sessione di rischio SIM riprende con la sua perdita: la SIM resta bloccata
+    # (dal superamento di sessione ripristinato e dal RISK_STOP locale)
+    assert r.rc._loss_block_reason().startswith(("session_loss_breached", "risk_stop_active"))
+    assert r.rc._risk_stop_reason.endswith("@ambito=" + _sim())
     _ambiente(r, "LIVE")
     assert r.rc._risk_stop_applies() is False
     assert not r.rc._loss_block_reason().startswith("risk_stop_active")
@@ -553,7 +556,9 @@ def test_risk_stop_sim_poi_superamento_live_sale_al_globale(tmp_path):
     r = _banco(tmp_path, "esc.db", max_session_loss=30.0)
     assert "@ambito=" not in r.rc._risk_stop_reason, "globale anche dopo il riavvio"
     _ambiente(r, "SIM")
-    assert r.rc._loss_block_reason().startswith("risk_stop_active")
+    # F1: la sessione di rischio riprende al riavvio (perdita SIM 40 ancora contata) e lo stop globale resta
+    assert r.rc._loss_block_reason().startswith(("session_loss_breached", "risk_stop_active"))
+    assert r.rc._risk_stop_reason.startswith("session_loss_breached") and r.rc._risk_stop_applies()
 
 
 def test_stop_di_esposizione_dopo_uno_stop_sim_e_globale(tmp_path):
@@ -2278,8 +2283,9 @@ def test_m115_cancellazione_fallita_resta_irrisolta_e_ritentata(tmp_path, monkey
     assert _attendi(lambda: len(live.cancellazioni) > n), "nessun nuovo tentativo del recovery dedicato"
     assert RuntimeController._live_recovery_active(c.rc)
     assert c.rc.get_status()["live_exposure"]["state"] == "NON_RICONCILIATA"
-    c.rc._emergency_reconcile_pending = False                    # chiusura del banco: ferma il recovery
-    assert _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+    # chiusura del banco: ferma il recovery (un tentativo gia' in corso puo' riarmare l'attesa: si ripete)
+    assert _attendi(lambda: c.rc.__dict__.__setitem__("_emergency_reconcile_pending", False)
+                    or not RuntimeController._live_recovery_active(c.rc))
 
 
 def test_m115_riavvio_durante_la_riconciliazione_riprende_e_verifica(tmp_path, monkeypatch):
@@ -2312,6 +2318,7 @@ def test_m115_riavvio_durante_la_riconciliazione_riprende_e_verifica(tmp_path, m
         return live
 
     r = _banco(tmp_path, "m115_rr_crash.db", max_daily_loss=30.0)
+    r.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)   # N6: riavvio sul conto dello stop
     r.rc.betfair_service.get_live_client = cliente
     assert r.rc._emergency_stopped is True
     assert r.rc.get_status()["live_exposure"]["state"] in ("SCONOSCIUTA", "NON_RICONCILIATA")
@@ -2452,6 +2459,7 @@ def test_codex_riavvio_con_esposizione_irrisolta_ripristina_il_recovery(tmp_path
 
     monkeypatch.setattr(rcm.RuntimeController, "_LIVE_RECOVERY_INTERVAL_S", 0.05)
     r = _banco(tmp_path, "cx_rst.db", max_session_loss=30.0)
+    r.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)   # N6: riavvio sul conto dello stop
     assert str(r.rc._risk_stop_reason).startswith("session_loss_breached")
     assert r.rc.__dict__.get("_emergency_reconcile_pending") is True, "riconciliazione non ripristinata al riavvio"
     assert RuntimeController._live_recovery_active(r.rc), "recovery dedicato non ripristinato al riavvio"
@@ -2725,6 +2733,11 @@ def test_codex_b902_esito_verificato_rimasto_non_vale_per_nuovo_stop_live(tmp_pa
     c.rc._route_cashout_signal = lambda segnale: None
     c.rc.risk_stop("session_loss_breached:prova", scope=c.rc._current_financial_scope())
     assert c.rc.get_status()["live_exposure"]["state"] == "SCONOSCIUTA"
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+    r = _banco(tmp_path, "cx_rest.db", max_session_loss=30.0)     # riavvio: l'esito vecchio resta invalidato su disco
+    assert r.rc._risk_stop_reason and r.rc.get_status()["live_exposure"]["state"] != "VERIFICATA"
+    r.rc._emergency_reconcile_pending = False
     c2 = _banco(tmp_path, "cx_rest2.db", max_daily_loss=30.0)
     c2.rc._live_recovery_interval_s = 60.0
     _ambiente(c2, "LIVE")
@@ -2979,3 +2992,407 @@ def test_m130_superamento_live_nel_libro_ricostruisce_l_emergenza_al_riavvio(tmp
     assert t.rc._emergency_stopped is False, "superamento solo SIM promosso a blocco globale"
     book = _json.loads((t.rc.db.get_settings() or {}).get(daily_loss_store.DAILY_LOSS_STATE_KEY) or "{}")
     assert book, "libro non salvato"
+
+
+# ============================================================================ M134/M136: N6, N3, N7, F1
+class _ContoLive:
+    """Conto LIVE emulato con identita' (username): ordini per conto, letture e cancellazioni registrate."""
+
+    def __init__(self, nome, ordini=None, cancella=True):
+        self.username, self.ordini, self.cancella = nome, list(ordini or []), cancella
+        self.letture, self.cancellazioni = 0, []
+
+    def get_current_orders(self, market_ids=None):
+        self.letture += 1
+        return [dict(o) for o in self.ordini]
+
+    def cancel_orders(self, market_id, bet_ids=None, **kw):
+        self.cancellazioni.append((market_id, bet_ids))
+        if self.cancella:
+            self.ordini = [o for o in self.ordini if o.get("marketId") != market_id]
+            return {"ok": True, "instructionReports": [{"betId": b} for b in (bet_ids or [])]}
+        return {"ok": False, "status": "FAILURE"}
+
+
+def _connetti(c, conto):
+    c.rc.betfair_service.client = conto
+    c.rc.betfair_service.get_live_client = lambda: conto
+
+
+def _n6_stop_su_a(tmp_path, nome):
+    """ES da superamento giornaliero del conto LIVE A con un ordine del bot ancora aperto (cancellazione rifiutata)."""
+    c, tavolo = _m115_banco(tmp_path, nome, intervallo=60.0, max_daily_loss=30.0)
+    conto_a = _ContoLive(CONTO_A, [_ordine_bot(tavolo)], cancella=False)
+    _connetti(c, conto_a)
+    _settle_tavolo(c, tavolo, -40.0)
+    assert c.rc._emergency_stopped is True
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+    return c, tavolo, conto_a
+
+
+def test_m134_n6_il_conto_b_non_certifica_il_conto_a(tmp_path):
+    """N6 (owner M134, P1): l'Emergency Stop nato dal conto A e' legato ad A. Dopo il riavvio con il client del conto B
+    nessuna lettura ne' cancellazione su B, mai VERIFICATA: esposizione irrisolta, intervento manuale, riconciliazione
+    in attesa. Tornato A, la riconciliazione riprende su A e verifica."""
+    c, tavolo, conto_a = _n6_stop_su_a(tmp_path, "n6b.db")
+    assert c.rc.get_status()["live_exposure"]["state"] == "NON_RICONCILIATA"
+    r = _banco(tmp_path, "n6b.db", max_daily_loss=30.0)
+    conto_b = _ContoLive(CONTO_B)
+    _connetti(r, conto_b)
+    esito = RuntimeController._reconcile_restored_emergency(r.rc, trigger="test")
+    vista = r.rc.get_status()["live_exposure"]
+    assert esito["verification"] == "ACCOUNT_MISMATCH" and conto_b.letture == 0 and conto_b.cancellazioni == []
+    assert vista["state"] != "VERIFICATA" and vista["manual_action_required"] is True
+    assert vista["account_mismatch"]["required_accounts"] == [_live(c, CONTO_A)]
+    assert vista["state"] == "NON_RICONCILIATA" and [o["bet_id"] for o in vista["open_orders"]] == ["A-1"],         "l'esposizione nota del conto A non resta visibile"
+    assert r.rc.__dict__.get("_emergency_reconcile_pending") is True and r.rc._emergency_stopped is True
+    conto_a.cancella = True
+    _connetti(r, conto_a)
+    RuntimeController._reconcile_restored_emergency(r.rc, trigger="test")
+    assert conto_a.ordini == [] and r.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    r.rc._emergency_reconcile_pending = False
+
+
+def test_m134_n6_cambi_di_conto_ripetuti_a_b_a_b_con_riavvii(tmp_path):
+    """N6 (owner M134): riavvii alternati A -> B -> A -> B: con B mai VERIFICATA ne' letture su B; con A (cancellazione
+    ancora rifiutata) NON_RICONCILIATA; lo stop e il vincolo restano a ogni riavvio; con A finalmente efficace, VERIFICATA."""
+    c, tavolo, conto_a = _n6_stop_su_a(tmp_path, "n6x.db")
+    conto_b = _ContoLive(CONTO_B)
+    for conto in (conto_b, conto_a, conto_b, conto_a, conto_b):
+        r = _banco(tmp_path, "n6x.db", max_daily_loss=30.0)
+        _connetti(r, conto)
+        RuntimeController._reconcile_restored_emergency(r.rc, trigger="test")
+        vista = r.rc.get_status()["live_exposure"]
+        assert r.rc._emergency_stopped is True and vista["manual_action_required"] is True
+        assert vista["state"] in ("NON_RICONCILIATA", "SCONOSCIUTA") and conto_a.ordini, vista
+        r.rc._emergency_reconcile_pending = False
+    assert conto_b.letture == 0 and conto_b.cancellazioni == [], "il conto B e' stato interrogato o toccato"
+    conto_a.cancella = True
+    r = _banco(tmp_path, "n6x.db", max_daily_loss=30.0)
+    _connetti(r, conto_a)
+    RuntimeController._reconcile_restored_emergency(r.rc, trigger="test")
+    assert conto_a.ordini == [] and r.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    r.rc._emergency_reconcile_pending = False
+
+
+def test_m134_n6_vincolo_del_conto_illeggibile_nessuna_certificazione(tmp_path):
+    c, tavolo, conto_a = _n6_stop_su_a(tmp_path, "n6i.db")
+    c.rc.db.save_settings({RuntimeController._LIVE_ACCOUNTS_KEY: "{corrotto"})
+    conto_a.cancella, conto_a.letture = True, 0
+    r = _banco(tmp_path, "n6i.db", max_daily_loss=30.0)
+    _connetti(r, conto_a)
+    esito = RuntimeController._reconcile_restored_emergency(r.rc, trigger="test")
+    assert esito["verification"] == "ACCOUNT_MISMATCH" and conto_a.letture == 0
+    assert r.rc.get_status()["live_exposure"]["manual_action_required"] is True
+    r.rc._emergency_reconcile_pending = False
+
+
+def test_m134_n6_superamento_di_a_regolato_con_b_connesso_non_tocca_b(tmp_path):
+    """Settlement del conto A (ambito della riserva) mentre il client e' connesso a B: l'Emergency Stop si lega ad A,
+    non legge ne' cancella su B e resta irrisolto."""
+    c, tavolo = _m115_banco(tmp_path, "n6c.db", intervallo=60.0, max_daily_loss=30.0)
+    conto_b = _ContoLive(CONTO_B, [{"betId": "B-9", "marketId": "1.999", "status": "EXECUTABLE",
+                                    "sizeRemaining": 1.0, "customerOrderRef": "manuale"}])
+    _connetti(c, conto_b)
+    _settle_tavolo(c, tavolo, -40.0)
+    vista = c.rc.get_status()["live_exposure"]
+    assert c.rc._emergency_stopped is True and conto_b.letture == 0 and conto_b.cancellazioni == []
+    assert vista["state"] != "VERIFICATA" and vista["manual_action_required"] is True
+    assert RuntimeController._live_bound_accounts(c.rc) == {_live(c, CONTO_A): "PENDING"}
+    c.rc._emergency_reconcile_pending = False
+
+
+def _n3_estranea(**campi):
+    base = {"betId": "EXT1", "marketId": "1.873", "selectionId": 1, "customerOrderRef": "altro-sistema",
+            "side": "LAY", "status": "EXECUTION_COMPLETE", "priceSize": {"price": 3.0, "size": 10.0},
+            "sizeRemaining": 0.0, "sizeMatched": 10.0, "averagePriceMatched": 3.0}
+    base.update(campi)
+    return base
+
+
+def _n3_stop(tmp_path, nome, ordini):
+    c, tavolo = _m115_banco(tmp_path, nome, intervallo=60.0, max_daily_loss=30.0)
+    conto = _ContoLive(CONTO_A, ordini)
+    _connetti(c, conto)
+    _settle_tavolo(c, tavolo, -40.0)
+    realized = float(c.rc.risk_desk.realized_pnl)
+    vista = c.rc.get_status()["live_exposure"]
+    c.rc._emergency_reconcile_pending = False
+    return c, conto, vista, realized
+
+
+def test_m136_n3_posizione_estranea_lay_abbinata_liability_20_mai_verificata(tmp_path):
+    """N3 (owner M136, P1): LAY estraneo 10 @ 3.00 interamente abbinato => NON_RICONCILIATA, liability 20.00 (Decimal),
+    origine ESTRANEA distinta dal bot; non cancellata ne' coperta; il P&L del bot non cambia (solo visibilita')."""
+    c, conto, vista, realized = _n3_stop(tmp_path, "n3l.db", [_n3_estranea()])
+    assert vista["state"] == "NON_RICONCILIATA" and vista["manual_action_required"] is True
+    assert vista["liability"]["matched"] == "20.00" and Decimal(vista["liability"]["total"]) >= Decimal("20.00")
+    assert [(m["bet_id"], m["origin"]) for m in vista["matched_positions"]] == [("EXT1", "ESTRANEA")]
+    assert all(cancel[1] != ["EXT1"] for cancel in conto.cancellazioni), "posizione estranea cancellata"
+    assert float(c.rc.risk_desk.realized_pnl) == realized == pytest.approx(-40.0)
+    from core.runtime_controller import format_live_exposure
+    assert "1 posizioni abbinate estranee" in format_live_exposure(vista)
+
+
+def test_m136_n3_estranea_back_abbinata_e_dati_mancanti(tmp_path):
+    _c, _conto, vista, _r = _n3_stop(tmp_path, "n3b.db", [_n3_estranea(side="BACK", sizeMatched=5.0,
+                                                                         averagePriceMatched=2.0)])
+    assert vista["state"] == "NON_RICONCILIATA" and vista["liability"]["matched"] == "5.00"
+    _c, _conto, vista, _r = _n3_stop(tmp_path, "n3m.db", [_n3_estranea(averagePriceMatched=None)])
+    assert vista["state"] == "NON_RICONCILIATA" and vista["amount"] is None and vista["amount_display"] == "SCONOSCIUTO"
+    _c, _conto, vista, _r = _n3_stop(tmp_path, "n3x.db", [_n3_estranea(sizeMatched="illeggibile")])
+    assert vista["amount"] is None and vista["manual_action_required"] is True
+
+
+def test_m136_n3_estranea_parziale_contata_una_volta_e_chiusa_senza_abbinato_ignorata(tmp_path):
+    parziale = _n3_estranea(betId="EXT2", status="EXECUTABLE", sizeRemaining=2.0, sizeMatched=3.0,
+                            priceSize={"price": 3.0, "size": 5.0})
+    vuota = _n3_estranea(betId="EXT3", sizeMatched=0.0)
+    _c, _conto, vista, _r = _n3_stop(tmp_path, "n3p.db", [parziale, vuota])
+    assert [o["bet_id"] for o in vista["unattributed_open_orders"]] == ["EXT2"]
+    assert all(m["bet_id"] not in ("EXT2", "EXT3") for m in vista["matched_positions"]), "doppio conteggio"
+    # residuo LAY 2 @ 3 = 4, abbinato LAY 3 @ 3 = 6
+    assert vista["liability"]["unmatched"] == "4.00" and vista["liability"]["matched"] == "6.00"
+
+
+def test_m134_n6_emergency_stop_manuale_legato_al_conto_connesso(tmp_path):
+    """N6: Emergency Stop manuale col runtime LIVE sul conto A (nessun superamento, nessun marker): resta legato ad A.
+    Dopo il riavvio con il conto B nessuna verifica su B, l'ordine del bot su A resta irrisolto e visibile."""
+    c, tavolo = _m115_banco(tmp_path, "n6m.db", intervallo=60.0)
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    conto_a = _ContoLive(CONTO_A, [_ordine_bot(tavolo)], cancella=False)
+    _connetti(c, conto_a)
+    c.rc.emergency_stop("manuale")
+    assert RuntimeController._live_bound_accounts(c.rc) == {_live(c, CONTO_A): "PENDING"}
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+    r = _banco(tmp_path, "n6m.db")
+    conto_b = _ContoLive(CONTO_B)
+    _connetti(r, conto_b)
+    esito = RuntimeController._reconcile_restored_emergency(r.rc, trigger="test")
+    assert esito["verification"] == "ACCOUNT_MISMATCH" and conto_b.letture == 0
+    assert r.rc.get_status()["live_exposure"]["state"] != "VERIFICATA"
+    r.rc._emergency_reconcile_pending = False
+
+
+def test_m134_n6_tutti_i_conti_vincolati_devono_essere_verificati(tmp_path):
+    """N6: con due conti LIVE vincolati (A e B), la verifica del solo A non chiude l'esposizione: resta B in attesa."""
+    c, tavolo = _m115_banco(tmp_path, "n6ab.db", intervallo=60.0, max_daily_loss=30.0)
+    conto_a = _ContoLive(CONTO_A)
+    _connetti(c, conto_a)
+    RuntimeController._bind_live_account(c.rc, _live(c, CONTO_B))
+    _connetti(c, conto_a)
+    _settle_tavolo(c, tavolo, -40.0)
+    vista = c.rc.get_status()["live_exposure"]
+    assert vista["state"] != "VERIFICATA" and vista["accounts_pending"] == [_live(c, CONTO_B)]
+    assert vista["manual_action_required"] is True
+    c.rc._emergency_reconcile_pending = False
+
+
+def test_m136_n7_verifica_in_sola_lettura_non_cancella_l_ordine_del_bot(tmp_path):
+    """N7: col runtime LIVE la verifica programmata dopo lo stop di sessione e' in sola lettura: l'ordine del bot resta
+    (lo chiude il CASHOUT_ALL), elencato come esposizione irrisolta; nessuna cancellazione dalla verifica."""
+    c, tavolo = _m115_banco(tmp_path, "n7b.db", intervallo=60.0, max_session_loss=30.0)
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    conto = _ContoLive(CONTO_A, [_ordine_bot(tavolo)])
+    _connetti(c, conto)
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc._session_pnl_baseline = 0.0
+    _settle(c, -40.0)
+    assert str(c.rc._risk_stop_reason).startswith("session_loss_breached")
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="test")
+    vista = c.rc.get_status()["live_exposure"]
+    assert conto.cancellazioni == [] and conto.letture > 0
+    assert vista["state"] == "NON_RICONCILIATA" and [o["bet_id"] for o in vista["open_orders"]] == ["A-1"]
+    c.rc._emergency_reconcile_pending = False
+
+
+def test_m136_n7_stop_di_sessione_col_runtime_live_programma_la_verifica_in_sola_lettura(tmp_path):
+    """N7 (owner M136): stop di sessione globale col runtime gia' LIVE => verifica programmata (recovery dedicato), in
+    sola lettura (il CASHOUT_ALL lavora sul LIVE: nessuna cancellazione delle sue coperture); conto irraggiungibile =>
+    ritenta; tornato raggiungibile => verificata. Il reset resta rifiutato col superamento attivo."""
+    c = _banco(tmp_path, "n7.db", max_session_loss=30.0)
+    c.rc._live_recovery_interval_s = 0.05
+    c.rc._route_cashout_signal = lambda segnale: None
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    stato = {"raggiungibile": False}
+    conto = _ContoLive(CONTO_A, [{"betId": "H-1", "marketId": "1.977", "status": "EXECUTABLE", "sizeRemaining": 1.0,
+                                  "customerOrderRef": "hedge-del-bot", "side": "BACK", "priceSize": {"price": 2.0}}])
+
+    def cliente():
+        if not stato["raggiungibile"]:
+            raise ConnectionError("LIVE non raggiungibile")
+        return conto
+
+    c.rc.betfair_service.get_live_client = cliente
+    c.rc.mode = RuntimeMode.ACTIVE
+    c.rc._session_pnl_baseline = 0.0
+    _settle(c, -40.0)
+    assert str(c.rc._risk_stop_reason).startswith("session_loss_breached")
+    assert c.rc.__dict__.get("_emergency_reconcile_pending") is True
+    assert RuntimeController._live_recovery_active(c.rc), "nessuna verifica programmata"
+    stato["raggiungibile"] = True
+    assert _attendi(lambda: c.rc.get_status()["live_exposure"]["state"] != "SCONOSCIUTA")
+    assert conto.cancellazioni == [], "la verifica dello stop di sessione LIVE ha cancellato ordini"
+    assert c.rc.reset_risk_stop()["risk_stop_reset"] is False or c.rc.get_status()["live_exposure"]["state"] in (
+        "NESSUNA", "VERIFICATA")
+    assert _attendi(lambda: c.rc.__dict__.__setitem__("_emergency_reconcile_pending", False)
+                    or not RuntimeController._live_recovery_active(c.rc))
+
+
+def _f1_banco(tmp_path, nome, **cfg):
+    c = _banco(tmp_path, nome, **cfg)
+    c.rc._route_cashout_signal = lambda segnale: None
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    return c
+
+
+def test_m134_f1_dieci_riavvii_con_start_non_azzerano_la_sessione_ne_lo_stop(tmp_path):
+    """F1 (owner M134): sessione di rischio aperta con start(), perdita SIM -40 (limite 30) => stop. Dieci riavvii, ogni
+    volta con start(): perdita di sessione sempre 40, stop presente, nessun ingresso; la sessione ha sempre lo stesso id."""
+    c = _f1_banco(tmp_path, "f1.db", max_session_loss=30.0)
+    RuntimeController._open_or_resume_risk_session(c.rc)
+    sid = c.rc._risk_session["id"]
+    _settle(c, -40.0)
+    assert str(c.rc._risk_stop_reason).startswith("session_loss_breached")
+    for _ in range(10):
+        r = _f1_banco(tmp_path, "f1.db", max_session_loss=30.0)
+        RuntimeController._open_or_resume_risk_session(r.rc)          # come start(): riprende, mai azzera
+        assert r.rc._risk_session["id"] == sid
+        assert r.rc._session_loss_block_reason().startswith("session_loss_breached:loss=40.00")
+        assert r.rc._risk_stop_reason and r.rc._loss_block_reason()
+        assert r.rc.reset_risk_stop(at_start=True)["risk_stop_reset"] is False
+        nuovi, _motivo = _ingresso(r, "1.9%02d" % (10 + _))
+        assert nuovi == 0
+
+
+def test_m134_f1_reset_esplicito_chiude_la_sessione_superata_e_ne_apre_una_nuova(tmp_path):
+    """F1: il reset esplicito (ricontrollo completo pulito) chiude la sessione superata, salvata fra le chiuse, e ne apre
+    una nuova a zero; dopo un riavvio la nuova sessione resta quella aperta. Sessioni consecutive con profitti."""
+    c = _f1_banco(tmp_path, "f1r.db", max_session_loss=30.0)
+    RuntimeController._open_or_resume_risk_session(c.rc)
+    vecchia = c.rc._risk_session["id"]
+    _settle(c, -40.0)
+    esito = c.rc.reset_risk_stop()
+    assert esito["risk_stop_reset"] is True, esito
+    assert c.rc._risk_session["id"] != vecchia and [s["id"] for s in c.rc._risk_session["closed"]] == [vecchia]
+    assert c.rc._session_loss_block_reason() == ""
+    _settle(c, 10.0)
+    _settle(c, -20.0)                                    # sessione 2: +9.55 -20 => perdita 10.45, sotto il limite
+    assert c.rc._session_loss_block_reason() == "" and not c.rc._risk_stop_reason
+    r = _f1_banco(tmp_path, "f1r.db", max_session_loss=30.0)
+    assert r.rc._risk_session["id"] == c.rc._risk_session["id"]
+    assert r.rc._session_loss_block_reason() == ""
+    _settle(r, -25.0)                                    # 10.45 + 25 > 30: la sessione 2 continua dopo il riavvio
+    assert str(r.rc._risk_stop_reason).startswith("session_loss_breached")
+
+
+def test_m134_f1_settlement_tardivo_attribuito_alla_sessione_d_origine(tmp_path):
+    """F1: una scommessa della sessione 1 regolata dopo la sua chiusura va alla sessione 1 (mai alla 2); se porta la
+    sessione 1 oltre il limite scatta uno stop persistente (locale SIM), senza toccare la perdita della sessione 2.
+    La riconsegna dello stesso settlement non conta due volte."""
+    c = _f1_banco(tmp_path, "f1t.db", max_session_loss=30.0)
+    RuntimeController._open_or_resume_risk_session(c.rc)
+    vecchia = c.rc._risk_session["id"]
+    tavolo = _riserva(c, "1.931")
+    assert tavolo.meta["risk_session_id"] == vecchia
+    _settle(c, -20.0)
+    assert RuntimeController._close_risk_session_locked(c.rc) is True      # chiusura (sotto il limite)
+    nuova = c.rc._risk_session["id"]
+    tardivo = _canonical_close_payload(event_key=tavolo.current_event_key, batch_id="b-f1-tardivo",
+                                       correlation_id="c-f1-tardivo", table_id=tavolo.table_id,
+                                       customer_ref=tavolo.meta["customer_ref"], market_id=tavolo.market_id,
+                                       gross_pnl=-15.0, commission_amount=0.0, net_pnl=-15.0, pnl=-15.0)
+    c.rc._on_close_position(dict(tardivo))              # tardivo della sessione 1: 20 + 15 > 30
+    assert c.rc._session_loss_block_reason() == "", "perdita tardiva attribuita alla sessione nuova"
+    assert f"sessione_precedente={vecchia}" in str(c.rc._risk_stop_reason)
+    chiusa = next(s for s in c.rc._risk_session["closed"] if s["id"] == vecchia)
+    assert chiusa["delta"]["desk"] == pytest.approx(-35.0)
+    r = _f1_banco(tmp_path, "f1t.db", max_session_loss=30.0)
+    assert r.rc._risk_session["id"] == nuova and f"sessione_precedente={vecchia}" in str(r.rc._risk_stop_reason)
+    assert next(s for s in r.rc._risk_session["closed"] if s["id"] == vecchia)["delta"]["desk"] == pytest.approx(-35.0)
+    r.rc._on_close_position(dict(tardivo))              # riconsegna IDENTICA dopo il riavvio: nessun doppio conteggio
+    assert next(s for s in r.rc._risk_session["closed"] if s["id"] == vecchia)["delta"]["desk"] == pytest.approx(-35.0)
+    assert r.rc._session_loss_block_reason() == ""
+
+
+def test_m134_f1_sessione_non_verificabile_blocco_conservativo(tmp_path):
+    c = _f1_banco(tmp_path, "f1u.db", max_session_loss=30.0)
+    RuntimeController._open_or_resume_risk_session(c.rc)
+    tavolo = _riserva(c, "1.932")
+    c.rc._risk_session["id"] = "sessione-diversa"       # la sessione della scommessa non e' ne' corrente ne' chiusa
+    _settle_tavolo(c, tavolo, -1.0)
+    assert "sessione_di_rischio_non_verificabile" in str(c.rc._risk_stop_reason)
+
+
+def test_m134_f1_salvataggio_fallito_alla_chiusura_lo_stop_resta(tmp_path, monkeypatch):
+    """F1: la sessione superata non si chiude senza prova su disco: libro non scrivibile (False) => reset rifiutato,
+    stop e sessione invariati; dopo il riavvio la perdita e' ancora quella."""
+    c = _f1_banco(tmp_path, "f1p.db", max_session_loss=30.0)
+    RuntimeController._open_or_resume_risk_session(c.rc)
+    sid = c.rc._risk_session["id"]
+    _settle(c, -40.0)
+    vero = c.rc.db.save_settings
+    monkeypatch.setattr(c.rc.db, "save_settings", lambda valori, *a, **k: False
+                        if daily_loss_store.DAILY_LOSS_STATE_KEY in (valori or {}) else vero(valori, *a, **k))
+    esito = c.rc.reset_risk_stop()
+    assert esito == {"risk_stop_reset": False, "reason": "sessione_di_rischio_non_salvata"}
+    assert c.rc._risk_session["id"] == sid and c.rc._risk_stop_reason
+    monkeypatch.undo()
+    r = _f1_banco(tmp_path, "f1p.db", max_session_loss=30.0)
+    assert r.rc._risk_stop_reason and r.rc._session_loss_block_reason().startswith("session_loss_breached:loss=40.00")
+
+
+def test_m134_f1_libro_illeggibile_stop_di_sessione_persistente(tmp_path):
+    c = _f1_banco(tmp_path, "f1c.db", max_session_loss=30.0)
+    RuntimeController._open_or_resume_risk_session(c.rc)
+    c.rc.db.save_settings({daily_loss_store.DAILY_LOSS_STATE_KEY: "{corrotto"})
+    r = _f1_banco(tmp_path, "f1c.db", max_session_loss=30.0)
+    assert r.rc._risk_stop_reason == "session_loss_breached:sessione_di_rischio_illeggibile"
+
+
+def test_m134_f1_chiusura_esplicita_ammessa_solo_senza_superamento(tmp_path):
+    c = _f1_banco(tmp_path, "f1e.db", max_session_loss=30.0)
+    RuntimeController._open_or_resume_risk_session(c.rc)
+    _settle(c, -10.0)
+    assert c.rc.close_risk_session()["risk_session_closed"] is True
+    assert c.rc._session_loss_block_reason() == ""
+    _settle(c, -40.0)
+    assert c.rc.close_risk_session() == {"risk_session_closed": False, "reason": "risk_stop_attivo"}
+    c.rc._risk_stop_reason = ""                          # anche senza stop, una sessione superata non si chiude
+    assert c.rc.close_risk_session()["reason"].startswith("session_loss_breached")
+
+
+def test_m134_f1_fra_db_e_marker_vale_la_sessione_con_revisione_piu_alta():
+    def libro(rev, desk, seq):
+        return json.dumps({"version": 2, "scopes": {}, "legacy": None, "seq": seq, "settled": None,
+                           "risk_session": {"id": "s1", "opened_at": "", "rev": rev, "closed": [],
+                                            "delta": {"desk": desk, "scopes": {}, "unscoped": 0.0}}})
+    oggi = "2026-11-17"
+    a = daily_loss_store.parse_book(libro(5, -40.0, 1), today_utc=oggi)
+    b = daily_loss_store.parse_book(libro(4, -10.0, 2), today_utc=oggi)
+    assert daily_loss_store.reconcile_books(a, b)["risk_session"]["delta"]["desk"] == -40.0
+    assert daily_loss_store.reconcile_books(b, a)["risk_session"]["delta"]["desk"] == -40.0
+    pari = daily_loss_store.parse_book(libro(5, -10.0, 2), today_utc=oggi)
+    assert daily_loss_store.reconcile_books(pari, a)["risk_session"]["delta"]["desk"] == -40.0
+    with pytest.raises(ValueError):
+        daily_loss_store.parse_book(libro("x", -1.0, 1), today_utc=oggi)
+
+
+def test_m134_f1_cambio_sim_live_e_conto_non_azzera_la_sessione(tmp_path):
+    c = _f1_banco(tmp_path, "f1m.db", max_session_loss=30.0)
+    RuntimeController._open_or_resume_risk_session(c.rc)
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    c.rc.betfair_service.get_live_client = lambda: _ContoLive(CONTO_A)
+    _settle(c, -40.0)
+    assert str(c.rc._risk_stop_reason).startswith("session_loss_breached")
+    for env, conto in (("SIM", CONTO_A), ("LIVE", CONTO_B), ("LIVE", CONTO_A)):
+        r = _f1_banco(tmp_path, "f1m.db", max_session_loss=30.0)
+        _ambiente(r, env, conto=conto)
+        RuntimeController._open_or_resume_risk_session(r.rc)
+        assert r.rc._risk_stop_reason and r.rc._loss_block_reason()
+        assert r.rc._session_loss_reason_for(_live(r, CONTO_A)).startswith("session_loss_breached:loss=40.00")
+        r.rc._emergency_reconcile_pending = False
+    c.rc._emergency_reconcile_pending = False

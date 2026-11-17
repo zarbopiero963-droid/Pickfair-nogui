@@ -430,7 +430,10 @@ def test_block_p37_reset_ciclo_non_azzera_la_sessione(tmp_path):
     assert _rifiuti(c)[-1].startswith("session_loss_breached")
 
 
-def test_pass_p37_start_apre_una_nuova_sessione(tmp_path):
+def test_pass_p37_start_riprende_la_sessione_di_rischio_e_il_reset_esplicito_la_chiude(tmp_path):
+    """F1 (owner M134, sostituisce «start apre una nuova sessione»): start() e' la sessione OPERATIVA; la sessione di
+    RISCHIO superata riprende con la sua perdita (start/stop o un riavvio non la azzerano). La chiude solo il reset
+    esplicito riuscito, che ne apre una nuova a zero."""
     c = _sessione(tmp_path, max_session_loss=10.0)
     _perdi(c.rc, 10.0)
     assert c.rc._session_loss_block_reason().startswith("session_loss_breached")
@@ -438,7 +441,17 @@ def test_pass_p37_start_apre_una_nuova_sessione(tmp_path):
     c.rc.betfair_service.connect = lambda **_k: {"session": "sim"}
     c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0}
     c.rc.start(execution_mode="SIMULATION")
+    c.rc.config.max_session_loss = 10.0      # il banco non salva il limite nel DB: start() ricarica la config
 
+    assert c.rc._session_loss_block_reason().startswith("session_loss_breached"), "start() ha azzerato la sessione"
+    # chiusura solo a rischio verificato: conto LIVE leggibile e vuoto => esposizione VERIFICATA, poi reset esplicito
+    import types as _types
+    from core.runtime_controller import RuntimeController
+    c.rc.betfair_service.get_live_client = lambda: _types.SimpleNamespace(
+        get_current_orders=lambda **_k: [], cancel_orders=lambda *_a, **_k: {"ok": True})
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="test")
+    esito = c.rc.reset_risk_stop()
+    assert esito["risk_stop_reset"] is True, esito
     assert c.rc._session_pnl_baseline == pytest.approx(c.rc.risk_desk.realized_pnl)
     assert c.rc._session_loss_block_reason() == ""
 

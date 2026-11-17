@@ -88,10 +88,12 @@ LIVE aperti mentre il runtime è in SIM. Testi verbatim (`core.runtime_controlle
 in headless): `nessuna`; `verificata: nessun ordine ne' posizione LIVE residui`;
 `NON RICONCILIATA: liability <importo> (stima lorda)`, `NON RICONCILIATA: liability SCONOSCIUTO` oppure
 `SCONOSCIUTA: liability SCONOSCIUTO`, seguiti da `| N ordini del bot aperti`, `| N ordini estranei aperti`,
-`| N posizioni abbinate`, `| riconciliazione in corso` quando presenti e sempre da `| INTERVENTO MANUALE`.
+`| N posizioni abbinate del bot`, `| N posizioni abbinate estranee (non chiuse dal bot)` (M136, N3),
+`| riconciliazione in corso` quando presenti e sempre da `| INTERVENTO MANUALE`.
 L'importo è la liability LIVE (BACK = stake, LAY = stake × (quota − 1); residuo alla quota limite, abbinato alla
 quota media di esecuzione), stima conservativa lorda senza compensazioni fra esiti dello stesso mercato. Con
-posizioni abbinate lo stato non è mai `verificata`.
+posizioni abbinate (anche estranee al bot) lo stato non è mai `verificata`; uno stop nato dal conto LIVE A non è
+mai `verificata` con un altro conto connesso (M134, N6).
 Invariante di sicurezza: un importo non verificabile (lato, quota o stake mancanti) si mostra `SCONOSCIUTO`, mai
 `0.00` e mai lo stake. Il valore è in
 arancione (`#ff9f43`, avviso) e va a capo (larghezza 320 px, allineato a destra) invece di sovrapporsi all'etichetta.

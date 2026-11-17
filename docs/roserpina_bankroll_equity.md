@@ -946,12 +946,52 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   - *Blocco globale dal libro.* Al riavvio, un ambito LIVE (o non verificabile, compresa la quarantena) superato OGGI
     nel libro salvato ricostruisce l'Emergency Stop anche se la sua scrittura era fallita, senza attendere la
     riconsegna (`_restore_breached_live_scope_stop`); un superamento solo SIM resta locale.
-  - *Limite residuo (decisione owner).* Crash prima di qualunque scrittura del settlement (marker non scritto, P&L non
-    applicato) e riconsegna dopo il riavvio ma prima del nuovo `start()`: la perdita di sessione non ha una sessione in
-    cui contare (P37: «perdita dall'ultimo start()», e il realized del desk non sopravvive al riavvio). Il limite
-    giornaliero la conta.
+  - *Ex limite residuo F1.* Chiuso da M134 (sessione di rischio persistente, sotto): la riconsegna dopo un crash prima
+    di qualunque scrittura conta nella sessione di rischio ripristinata.
   - *N4 (regressione rispetto a main).* Lo stato giornaliero dell'ambito del settlement nasce PRIMA del P&L, anche
     senza `max_daily_loss`: un limite attivato a meta' giornata vede la perdita gia' regolata (35, non 15).
+- **M134/M136 (owner): F1 sessione di rischio persistente, N6 conto dello stop, N3 posizioni estranee, N7 verifica.**
+  - *F1 — sessione operativa e sessione di rischio.* La sessione OPERATIVA e' il ciclo `start()`/`stop()`; la sessione
+    di RISCHIO e' quella su cui si misura `max_session_loss` (sostituisce P37 «perdita dall'ultimo start()»). Ha un id,
+    l'istante di apertura e il P&L di sessione per ambito, salvati nel libro giornaliero verificato
+    (`risk_session`, nella STESSA scrittura delle chiavi dei settlement: ogni P&L contato una volta sola) e
+    sopravvive al cambio di giornata. L'apertura e' salvata anche in una chiave propria (`risk_session_open`) PRIMA
+    di ogni effetto del settlement, cosi' un crash prima del libro non la perde. Al riavvio la sessione riprende con la
+    sua perdita (base = «adesso meno il P&L di sessione salvato»), e lo stop resta: un riavvio, uno `stop()`/`start()`,
+    un cambio SIM/LIVE o di conto non azzerano la perdita ne' tolgono lo stop.
+  - *Quando si apre e quando si chiude.* Si apre al primo `start()` senza sessione aperta (o alla prima base di
+    sessione). Si chiude SOLO (1) con un `reset_risk_stop()` esplicito riuscito — mai all'avvio — che chiude la
+    sessione superata se il ricontrollo completo (limite giornaliero, Emergency Stop, esposizione, altri limiti) e'
+    pulito e l'esposizione LIVE e' `NESSUNA` o `VERIFICATA`; (2) con `close_risk_session()` esplicito, ammesso solo
+    senza stop, senza superamento e senza esposizione LIVE irrisolta. La sessione nuova (perdita zero) si salva PRIMA
+    di togliere lo stop; se il libro non e' verificato il reset e' rifiutato (`sessione_di_rischio_non_salvata`) e tutto
+    resta com'era.
+  - *Settlement tardivi.* L'ingresso registra la sessione di rischio (`risk_session_id`, con la request e nella
+    riserva). Un settlement di una sessione gia' chiusa va a QUELLA sessione (fra le ultime 20 chiuse, nel libro), una
+    sola volta, e la sessione corrente non lo vede. Se porta la sessione d'origine oltre il limite: protezione
+    PERSISTENTE sul conto interessato (`session_loss_breached:sessione_precedente=<id>`; LIVE: stop globale legato al
+    conto e barriera durevole prima del P&L; SIM: stop locale). Sessione registrata ma non verificabile (ne' corrente
+    ne' fra le chiuse) e perdita => blocco conservativo (`sessione_di_rischio_non_verificabile`). Ordini precedenti a
+    F1 (senza sessione registrata) => sessione corrente. Libro illeggibile => stop di sessione globale persistente
+    (`sessione_di_rischio_illeggibile`) fino al reset esplicito.
+  - *N6 — conto dello stop.* Ogni stop globale che coinvolge il LIVE (Emergency Stop LIVE, marker durevole, RISK_STOP
+    globale, ricostruzione dal libro) e' legato al conto che lo ha generato (`emergency_live_accounts`: ambito LIVE
+    del superamento, altrimenti il conto LIVE configurato), salvato prima del flag. Lo sweep verifica SOLO su un conto
+    vincolato: con un altro conto connesso nessuna lettura ne' cancellazione (`ACCOUNT_MISMATCH`), l'esposizione nota
+    del conto originario resta visibile, intervento manuale e riconciliazione in attesa; il recovery riprende appena il
+    conto originario torna connesso. Con piu' conti vincolati l'esposizione e' chiusa solo quando tutti sono
+    verificati (`accounts_pending`). Vincolo illeggibile => nessun conto certifica (intervento manuale). Mai
+    cancellazioni di ordini estranei.
+  - *N3 — posizioni estranee abbinate.* Una posizione estranea al bot gia' interamente abbinata (non piu' eseguibile)
+    resta esposizione LIVE: elencata fra le posizioni abbinate con `origin: "ESTRANEA"` (quelle del bot senza
+    origine), contata nella liability (LAY 10 @ 3.00 = 20.00), mai `VERIFICATA`, mai cancellata o coperta dal bot,
+    mai nel P&L o nel bankroll del bot (solo visibilita'). Un estraneo ancora eseguibile e' fra gli ordini estranei
+    aperti (residuo e abbinato nella stessa voce: nessun doppio conteggio); abbinato o prezzo illeggibile =>
+    `SCONOSCIUTO`.
+  - *N7 — verifica programmata col runtime LIVE.* Uno stop globale scattato col runtime gia' LIVE arma la
+    riconciliazione e il recovery dedicato (ritenta a intervalli, conto irraggiungibile compreso) in SOLA LETTURA: il
+    CASHOUT_ALL lavora sul LIVE e uno sweep che cancellasse ne annullerebbe le coperture. Un Emergency Stop successivo
+    torna a cancellare. Il reset resta rifiutato finche' il superamento e' attivo.
 - **M128 (owner): N1 e N2 su `440351a1`.**
   - *N1 (regressione di `440351a1`).* Il ripiego del marker di sessione non salvato passa dallo stesso `risk_stop()` del
     percorso normale: lo stop e' durevole E ne partono le azioni di protezione (CASHOUT_ALL, protezione verificata della

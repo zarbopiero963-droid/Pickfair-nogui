@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from datetime import date, datetime
 from typing import Any, Optional
@@ -212,7 +213,45 @@ def parse_book(raw: Any, *, today_utc: str) -> Optional[dict]:
             scopes[str(key)] = fields
     legacy_raw = record.get("legacy")
     legacy = None if legacy_raw is None else _parse_fields(legacy_raw, today=today)
-    return {"scopes": scopes, "legacy": legacy, "seq": seq, "settled_keys": _parse_settled(record, today=today)}
+    return {"scopes": scopes, "legacy": legacy, "seq": seq, "settled_keys": _parse_settled(record, today=today),
+            "risk_session": parse_risk_session(record.get("risk_session"))}
+
+
+def _finite(value: Any) -> float:
+    number = float(value)
+    if type(value) is bool or not math.isfinite(number):
+        raise ValueError("valore non finito")
+    return number
+
+
+def _parse_delta(raw: Any) -> dict:
+    if not isinstance(raw, dict) or not isinstance(raw.get("scopes"), dict):
+        raise ValueError("delta della sessione di rischio non valido")
+    return {"desk": _finite(raw.get("desk")), "unscoped": _finite(raw.get("unscoped")),
+            "scopes": {str(k): _finite(v) for k, v in raw["scopes"].items()}}
+
+
+def parse_risk_session(raw: Any) -> Optional[dict]:
+    """F1 (owner M134): sessione di rischio salvata nel libro (sopravvive al cambio di giornata e ai riavvii).
+    ``{"id", "opened_at", "rev", "delta": {"desk", "scopes", "unscoped"}, "closed": [{"id", "delta", "closed_at"}]}``.
+    Assente => None; illeggibile => ValueError (libro illeggibile: fail-closed)."""
+    if raw is None:
+        return None
+    try:
+        if not isinstance(raw, dict) or not str(raw.get("id") or "") or type(raw.get("rev")) is not int:
+            raise ValueError("sessione di rischio non valida")
+        closed = []
+        for item in raw.get("closed") or []:
+            if not isinstance(item, dict) or not str(item.get("id") or ""):
+                raise ValueError("sessione di rischio chiusa non valida")
+            closed.append({"id": str(item["id"]), "delta": _parse_delta(item.get("delta")),
+                           "closed_at": str(item.get("closed_at") or "")})
+        return {"id": str(raw["id"]), "opened_at": str(raw.get("opened_at") or ""), "rev": int(raw["rev"]),
+                "delta": _parse_delta(raw.get("delta")), "closed": closed}
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("sessione di rischio illeggibile") from exc
 
 
 def _parse_settled(record: dict, *, today: date) -> set:
@@ -255,13 +294,24 @@ def reconcile_books(a: Optional[dict], b: Optional[dict]) -> Optional[dict]:
     return {"scopes": {k: _merge_fields(a["scopes"].get(k), b["scopes"].get(k), newer) for k in keys},
             "legacy": _merge_fields(a.get("legacy"), b.get("legacy"), newer),
             "seq": max(seqs) if seqs else None,
-            "settled_keys": set(a.get("settled_keys") or ()) | set(b.get("settled_keys") or ())}
+            "settled_keys": set(a.get("settled_keys") or ()) | set(b.get("settled_keys") or ()),
+            "risk_session": _newer_risk_session(a.get("risk_session"), b.get("risk_session"))}
+
+
+def _newer_risk_session(a: Optional[dict], b: Optional[dict]) -> Optional[dict]:
+    """F1: fra db e marker vale la sessione di rischio con la revisione piu' alta (stessa revisione: quella con la
+    perdita di sessione maggiore, fail-closed)."""
+    if not a or not b:
+        return a or b
+    if a["rev"] != b["rev"]:
+        return a if a["rev"] > b["rev"] else b
+    return a if a["delta"]["desk"] <= b["delta"]["desk"] else b
 
 
 def unreadable_book() -> dict:
     """Stato illeggibile: quarantena in breach per ogni ambito fino al nuovo giorno (fail-closed)."""
     return {"scopes": {}, "legacy": (0.0, True, datetime.utcnow().isoformat()), "seq": None,
-            "reason": "daily_loss_state_unreadable"}
+            "reason": "daily_loss_state_unreadable", "risk_session_unreadable": True}
 
 
 def restore_daily_loss_book(db: Any, *, today_utc: str) -> dict:
@@ -288,7 +338,8 @@ def _save_verified(db: Any, payload: str) -> None:
         raise OSError("libro giornaliero non riletto dopo il salvataggio")
 
 
-def book_record(scopes: dict, legacy: Optional[dict], settled: Optional[dict] = None) -> dict:
+def book_record(scopes: dict, legacy: Optional[dict], settled: Optional[dict] = None,
+                risk_session: Optional[dict] = None) -> dict:
     # Ogni ambito si scrive, anche a zero (Codex su 38979e59): omettere uno zero farebbe risorgere, alla
     # riconciliazione con un marker rimasto, un profitto piu' vecchio dello stesso ambito.
     return {"version": BOOK_VERSION,
@@ -296,7 +347,9 @@ def book_record(scopes: dict, legacy: Optional[dict], settled: Optional[dict] = 
             "legacy": daily_loss_record(legacy) if legacy else None,
             # mandato owner P2 (PF-OWNER-PR638-BETFAIR-SIM-E2E-GATE-20261116): chiavi dei settlement realizzati oggi,
             # nella STESSA scrittura dello stato: un crash prima della marcatura non fa contare due volte il P&L
-            "settled": ({"day_utc": settled["day_utc"], "keys": sorted(settled["keys"])} if settled else None)}
+            "settled": ({"day_utc": settled["day_utc"], "keys": sorted(settled["keys"])} if settled else None),
+            # F1 (owner M134): sessione di rischio nella STESSA scrittura delle chiavi dei settlement (exactly-once)
+            "risk_session": risk_session}
 
 
 def _strip_seq(record: Any) -> Any:
@@ -304,10 +357,11 @@ def _strip_seq(record: Any) -> Any:
 
 
 def persist_daily_loss_book(db: Any, scopes: dict, legacy: Optional[dict], last: Optional[dict],
-                            restored_seq: Optional[int] = None, settled: Optional[dict] = None) -> Optional[dict]:
+                            restored_seq: Optional[int] = None, settled: Optional[dict] = None,
+                            risk_session: Optional[dict] = None) -> Optional[dict]:
     """Come `persist_daily_loss`, per il libro v2 di tutti gli ambiti; la `seq` riparte sopra quella ripristinata
     (un marker rimasto non puo' mai superare un salvataggio successivo). Mai raise."""
-    record = book_record(scopes, legacy, settled)
+    record = book_record(scopes, legacy, settled, risk_session)
     last_seq = _seq((last or {}).get("seq"))
     if not hasattr(db, "save_settings") or (
             not persist_failed(last) and last is not None and _strip_seq(last) == record):
