@@ -457,9 +457,9 @@ class RuntimeController:
         # incluso), non solo il flag.
         self._reload_persisted_emergency_state()
         self._load_hedged_markets()
+        RuntimeController._restore_live_verify_only(self)           # M144/M146: modalita' prima del marker di sessione
         RuntimeController._restore_session_stop_marker(self)        # S-b: stop di sessione rimasto in sospeso
         RuntimeController._restore_live_exposure_pending(self)      # Codex P1 su afbd5c89
-        RuntimeController._restore_live_verify_only(self)           # M144 (CX-E4): coperture protette dopo un riavvio
         RuntimeController._restore_breached_live_scope_stop(self)   # M130 (matrice D): blocco dal libro superato
         RuntimeController._reconcile_restored_emergency(self, trigger="startup")
 
@@ -1815,15 +1815,25 @@ class RuntimeController:
             sid = str(item.get("id") or "")
             if not sid or sid in archive:
                 continue
-            written = RuntimeController._ledger_append(self.db, "SESSION_CLOSED", dict(item))
+            with self._daily_loss_state_lock:
+                # M146 (CX-H3): fotografia COERENTE (copia profonda sotto il lock che applica i tardivi): P&L e chiavi gia'
+                # comprese sono della stessa istante; un tardivo successivo entra come LATE_SETTLEMENT, prima o dopo
+                # questa chiusura nel registro (l'indice lo somma una volta sola in entrambi i casi)
+                snapshot = copy.deepcopy(item)
+            written = RuntimeController._ledger_append(self.db, "SESSION_CLOSED", snapshot)
             if written is None:
                 ok = False
                 continue
-            delta = item.get("delta") or {}
-            archive[sid] = {"record": dict(item), "late_keys": {str(k) for k in (item.get("late_keys") or [])},
-                            "delta": {"desk": float(delta.get("desk") or 0.0),
-                                      "scopes": {str(k): float(v) for k, v in (delta.get("scopes") or {}).items()},
-                                      "unscoped": float(delta.get("unscoped") or 0.0)}}
+            with self._daily_loss_state_lock:
+                # indice in memoria = record della finestra ADESSO (comprende i tardivi entrati durante la scrittura;
+                # il registro li ricostruisce dai loro LATE_SETTLEMENT, una volta per chiave)
+                current = copy.deepcopy(item)
+                delta = current.get("delta") or {}
+                archive[sid] = {"record": dict(snapshot),
+                                "late_keys": {str(k) for k in (current.get("late_keys") or [])},
+                                "delta": {"desk": float(delta.get("desk") or 0.0),
+                                          "scopes": {str(k): float(v) for k, v in (delta.get("scopes") or {}).items()},
+                                          "unscoped": float(delta.get("unscoped") or 0.0)}}
         return ok
 
     def _flush_archive_pending(self) -> None:
@@ -2017,9 +2027,12 @@ class RuntimeController:
                     entry["delta"] = RuntimeController._delta_with(entry["delta"], pnl, attribution)
                     if settlement_key:
                         entry["late_keys"].add(str(settlement_key))
-            if late in ("closed", "archived"):
+            if late in ("closed", "archived") or (late == "unknown" and float(pnl) > 0.0):
                 # F1: il P&L va alla sessione di rischio d'origine (chiusa), una volta sola (salvato con la chiave del
-                # settlement nello stesso libro); la sessione corrente non lo vede (la sua base si sposta uguale)
+                # settlement nello stesso libro); la sessione corrente non lo vede (la sua base si sposta uguale).
+                # M146 (CX-H4): un PROFITTO di una sessione registrata ma non verificabile resta nel desk e nel
+                # giornaliero, mai nella sessione corrente (non compensa le sue perdite); una PERDITA non verificabile
+                # resta conservativa (sessione corrente e stop `sessione_di_rischio_non_verificabile`)
                 if late == "closed":
                     closed["delta"] = RuntimeController._delta_with(closed["delta"], pnl, attribution)
                     if settlement_key:          # M144: tardivo compreso nel record (archiviato dopo: mai contato due volte)
@@ -2256,6 +2269,11 @@ class RuntimeController:
             # vincolo salvato PRIMA dello stop e della rimozione del marker: B non certifica mai A
             scope = str(marker.get("scope") or "") if isinstance(marker, dict) else ""
             RuntimeController._bind_live_account(self, scope if financial_scope.escalates_globally(scope) else None)
+            if isinstance(marker, dict) and isinstance(marker.get("runtime_live"), bool):
+                # M146 (CX-H1): modalita' dello sweep dal marker (mai declassata: una sola verifica gia' attiva resta)
+                if (marker["runtime_live"] or not self.__dict__.get("_live_verify_only")
+                        or self.__dict__.get("_live_verify_only_inferred")):
+                    RuntimeController._set_live_verify_only(self, marker["runtime_live"], explicit=True)
             with self._risk_stop_lock:
                 current = self._risk_stop_reason
                 if not current or RuntimeController._risk_stop_scope(current):   # vuoto o solo locale SIM
@@ -2265,7 +2283,8 @@ class RuntimeController:
                 if not RuntimeController._durable_global_stop_confirmed(self):
                     stop_rules.persist_risk_stop(self.db, reason)
             self._emergency_reconcile_pending = True
-            if not RuntimeController._durable_global_stop_confirmed(self) or self.__dict__.get("_live_binding_failed"):
+            if (not RuntimeController._durable_global_stop_confirmed(self) or self.__dict__.get("_live_binding_failed")
+                    or self.__dict__.get("_live_verify_only_failed")):
                 # M130 (invariante): il marker si toglie SOLO con uno stop globale riletto come durevole; CX-G1: e col
                 # vincolo del conto riletto come durevole (al riavvio il marker lo ricrea)
                 logger.critical("S-b: RISK_STOP di sessione o vincolo del conto non durevoli: marker conservato (%s)",
@@ -2439,7 +2458,28 @@ class RuntimeController:
             # Uno stop esistente resta, salvo uno locale (SIM) davanti a uno globale: lo stop sale al globale
             # (Sol su 1587e3cf). Uno locale non sostituisce mai un globale ne' un altro locale.
             if current and (local or not RuntimeController._risk_stop_scope(current)):
-                return {"risk_stopped": True, "reason": current}
+                # M146 (CX-H2): uno stop globale resta, ma un conto LIVE NUOVO che lo supera (o un ambito non
+                # verificabile) entra nel vincolo e invalida l'esito LIVE precedente: la verifica del conto A non
+                # certifica mai il conto B (N6); il reset resta rifiutato finche' B non e' riconciliato
+                new_live = (not local and not RuntimeController._risk_stop_scope(current) and scope
+                            and financial_scope.escalates_globally(str(scope))
+                            and str(scope) not in (RuntimeController._live_bound_accounts(self) or {}))
+                if not new_live:
+                    return {"risk_stopped": True, "reason": current}
+                RuntimeController._bind_live_account(self, str(scope))
+                RuntimeController._invalidate_live_exposure(self, source="RISK_STOP_ALTRO_CONTO")
+                extra_account = True
+            else:
+                extra_account = False
+        if extra_account:
+            self._emergency_reconcile_pending = True
+            RuntimeController._ensure_live_recovery(self)
+            result = {"risk_stopped": True, "reason": current, "bound_account": str(scope)}
+            if bool(getattr(self, "simulation_mode", False)):
+                result["live_protection"] = RuntimeController._protect_live_venue(self, current)
+            logger.critical("RISK STOP (conto aggiunto allo stop globale): %s", result)
+            return result
+        with self._risk_stop_lock:
             reason = str(reason or "risk_stop")
             if local:
                 reason = f"{reason}{RuntimeController._RISK_STOP_SCOPE_SEP}{scope}"
@@ -2453,14 +2493,14 @@ class RuntimeController:
                 RuntimeController._bind_live_account(
                     self, str(scope) if scope and financial_scope.escalates_globally(str(scope)) else None)
                 RuntimeController._invalidate_live_exposure(self, source="RISK_STOP")
+                # M146 (CX-H1) + Codex su f8feabac: la modalita' dello sweep e' su disco PRIMA dello stop e quindi del
+                # CASHOUT_ALL ("1" col runtime LIVE, "0" in SIM); se non si salva, al riavvio vale la sola verifica
+                RuntimeController._set_live_verify_only(
+                    self, not bool(getattr(self, "simulation_mode", False)), explicit=True)
             self._risk_stop_reason = reason
             persisted = stop_rules.persist_risk_stop(self.db, reason)
         cashout = not self._daily_loss_entry_blocked() and RuntimeController._risk_stop_applies(self)
         result = {"risk_stopped": True, "reason": reason, "cashout_attempted": cashout, "persisted": persisted}
-        if not local and not bool(getattr(self, "simulation_mode", False)):
-            # Codex P1 su f8feabac: la sola verifica (N7) e' durevole PRIMA che il CASHOUT_ALL possa piazzare una
-            # copertura: un crash dopo la copertura non deve mai riavviare con lo sweep che la cancella
-            RuntimeController._set_live_verify_only(self, True)
         if cashout:
             self._route_cashout_signal(stop_rules.cashout_all_signal(reason))
         if not local and not bool(getattr(self, "simulation_mode", False)):
@@ -3789,16 +3829,28 @@ class RuntimeController:
 
     _LIVE_VERIFY_ONLY_KEY = "emergency_live_verify_only"
 
-    def _set_live_verify_only(self, value: bool) -> None:
-        """N7 + M144 (CX-E4): modalita' di sola verifica dello sweep LIVE (stop globale col runtime gia' LIVE: il
-        CASHOUT_ALL ha aperto coperture che lo sweep NON deve annullare). Salvata, cosi' la riconciliazione dopo un
-        riavvio non cancella le coperture. Mai raise; salvataggio fallito => resta in memoria (registrato nel log)."""
+    def _set_live_verify_only(self, value: bool, explicit: bool = False) -> bool:
+        """N7 + M144 (CX-E4) + M146 (CX-H1): modalita' dello sweep LIVE dello stop globale, salvata e RILETTA.
+        "1" = sola verifica (runtime gia' LIVE: il CASHOUT_ALL apre coperture che lo sweep NON deve annullare); "0" =
+        cancellazione degli ordini del bot ammessa (stop nato col runtime in SIM, `explicit`); "" = nessuna modalita'
+        (nessuno stop). Al riavvio una modalita' mancante con uno stop globale attivo vale SOLA VERIFICA (opzione A
+        owner M146): un salvataggio fallito non fa mai cancellare una copertura. Ritorna True se riletta. Mai raise."""
         self._live_verify_only = bool(value)
+        payload = "1" if value else ("0" if explicit else "")
         try:
             if hasattr(self.db, "save_settings"):
-                self.db.save_settings({RuntimeController._LIVE_VERIFY_ONLY_KEY: "1" if value else ""})
+                self.db.save_settings({RuntimeController._LIVE_VERIFY_ONLY_KEY: payload})
+                readback = self.db.get_settings() if hasattr(self.db, "get_settings") else None
+                if not isinstance(readback, dict) or str(
+                        readback.get(RuntimeController._LIVE_VERIFY_ONLY_KEY) or "") != payload:
+                    raise OSError("modalita' di sola verifica non riletta")
+            self._live_verify_only_failed = False
+            return True
         except Exception:
-            logger.exception("N7: modalita' di sola verifica non salvata (resta in memoria)")
+            logger.exception("N7: modalita' di sola verifica non salvata (resta in memoria; al riavvio sola verifica)")
+            # modalita' esplicita non durevole ("1" o "0"): il marker dello stop di sessione resta e al riavvio la ricrea
+            self._live_verify_only_failed = bool(value) or bool(explicit)
+            return False
 
     def _restore_live_verify_only(self) -> None:
         """M144 (CX-E4), avvio: modalita' di sola verifica ripristinata. Valore illeggibile o non riconosciuto => sola
@@ -3807,8 +3859,22 @@ class RuntimeController:
             raw = (self.db.get_settings() or {}).get(RuntimeController._LIVE_VERIFY_ONLY_KEY) \
                 if hasattr(self.db, "get_settings") else ""
             raw = "" if raw is None else str(raw)
-            self._live_verify_only = raw != ""
-            if raw not in ("", "1"):
+            if raw == "1":
+                self._live_verify_only = True
+            elif raw == "0":
+                self._live_verify_only = False
+            elif raw == "":
+                # M146 (CX-H1, opzione A): stop globale attivo ma modalita' non salvata (doppio guasto) => la
+                # riconciliazione riparte in SOLA LETTURA: nessuna cancellazione ne' cashout alla cieca; esposizione
+                # irrisolta e intervento manuale finche' il riscontro dell'exchange non la chiude
+                reason = str(self.__dict__.get("_risk_stop_reason") or "")
+                self._live_verify_only = bool(reason and not RuntimeController._risk_stop_scope(reason)
+                                              and not self.__dict__.get("_emergency_stopped"))
+                self._live_verify_only_inferred = self._live_verify_only     # dedotta, non salvata
+                if self._live_verify_only:
+                    logger.critical("N7/M146: stop globale senza modalita' salvata: riconciliazione in sola lettura")
+            else:
+                self._live_verify_only = True
                 logger.critical("N7: modalita' di sola verifica illeggibile (%r): sola verifica", raw[:40])
         except Exception:
             logger.exception("N7: modalita' di sola verifica non leggibile all'avvio: sola verifica")
@@ -10688,7 +10754,10 @@ class RuntimeController:
             session_pending = True
             try:
                 self.db.save_settings({RuntimeController._SESSION_STOP_MARKER: json.dumps(
-                    {"reason": session_reason, "scope": session_scope, "at": datetime.utcnow().isoformat()})})
+                    {"reason": session_reason, "scope": session_scope, "at": datetime.utcnow().isoformat(),
+                     # M146 (CX-H1): modalita' dello sweep LIVE dello stop, ricostruibile anche se il processo muore
+                     # prima di salvarla (runtime LIVE => sola verifica)
+                     "runtime_live": not bool(getattr(self, "simulation_mode", False))})})
             except Exception:
                 # Codex P1 su b902eca3: senza marker la decisione di stop deve diventare durevole PRIMA del P&L e della
                 # chiave del settlement, altrimenti un crash lascerebbe il settlement registrato senza stop obbligatorio.
@@ -10788,7 +10857,8 @@ class RuntimeController:
                 keep_global_marker = True
             if session_pending:
                 if (settlement_completed and RuntimeController._durable_global_stop_confirmed(self)
-                        and not self.__dict__.get("_live_binding_failed")):       # CX-G1: anche il conto, durevole
+                        and not self.__dict__.get("_live_binding_failed")         # CX-G1: anche il conto, durevole
+                        and not self.__dict__.get("_live_verify_only_failed")):  # M146: e la sola verifica
                     try:                              # S-b: lo stop globale, RILETTO dal disco, e' durevole
                         self.db.save_settings({RuntimeController._SESSION_STOP_MARKER: ""})
                     except Exception:

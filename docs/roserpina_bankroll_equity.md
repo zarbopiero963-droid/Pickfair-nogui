@@ -1006,6 +1006,22 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
     durevoli (altrimenti resta e il riavvio ricrea il vincolo). Nessun crash lascia uno stop su disco senza il suo conto:
     il conto B non certifica mai l'esposizione del conto A; quando A torna raggiungibile la riconciliazione su A procede
     e il reset diventa possibile.
+  - *M146 (owner, ciclo integrato H1–H4).* Invarianti:
+    - **I1 (CX-H2).** Ogni conto LIVE che supera il limite entra nel vincolo dello stop globale, anche se uno stop
+      esiste gia': il conto B si aggiunge (PENDING), l'esito verificato del conto A non vale piu', riconciliazione e
+      protezione ripartono; il reset resta rifiutato finche' B non e' riconciliato.
+    - **I2 (CX-H1, opzione A).** La modalita' dello sweep LIVE si salva PRIMA dello stop ("1" sola verifica col runtime
+      LIVE, "0" cancellazione dei soli ordini del bot se lo stop nasce in SIM) ed e' anche nel marker dello stop di
+      sessione (`runtime_live`). Al riavvio, con uno stop globale attivo e la modalita' mancante o illeggibile, la
+      riconciliazione riparte in SOLA LETTURA: lo stop resta, nessun ordine nuovo, nessuna cancellazione o cashout alla
+      cieca, nessuna copertura dichiarata chiusa senza riscontro dell'exchange; esposizione irrisolta e intervento
+      manuale. Il marker si toglie solo con stop, vincolo e modalita' durevoli.
+    - **I3 (CX-H3).** L'archivio ricostruito dal registro non dipende dall'ordine delle scritture: un
+      `LATE_SETTLEMENT` scritto prima del `SESSION_CLOSED` della sua sessione si applica quando la chiusura compare,
+      una volta per chiave; la fotografia della chiusa e' una copia coerente presa sotto il lock dei tardivi.
+    - **I4 (CX-H4).** La sessione corrente contiene solo P&L di origine verificata: il PROFITTO di una sessione
+      registrata ma non verificabile resta nel desk e nel giornaliero, fuori dalla sessione corrente; la PERDITA non
+      verificabile resta conservativa (stop `sessione_di_rischio_non_verificabile`).
   - *G2 — archivio delle sessioni chiuse (owner M139).* Le ultime 20 chiuse restano nel libro come finestra operativa;
     l'archivio durevole è il registro append-only (`SESSION_CLOSED`: id, apertura e chiusura, P&L per ambito, conti,
     limite), senza eliminazione automatica, verificato dalla catena di hash a ogni lettura. Una sessione esce dalla

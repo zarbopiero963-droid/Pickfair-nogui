@@ -4369,3 +4369,254 @@ def test_cxg1_marker_di_sessione_resta_finche_il_vincolo_non_e_durevole(tmp_path
     assert _live(c) in json.loads(impost[RuntimeController._LIVE_ACCOUNTS_KEY])
     assert not impost.get(RuntimeController._SESSION_STOP_MARKER)
     c.rc._emergency_reconcile_pending = False
+
+
+# ============================================================================ M146: H1-H4 (ciclo correttivo integrato)
+def test_m146_h1_doppio_guasto_riavvio_in_sola_lettura_copertura_mai_cancellata(tmp_path, monkeypatch):
+    """CX-H1 (opzione A owner M146): runtime LIVE, stop di sessione; la modalita' di sola verifica NON si salva e il
+    processo muore DENTRO il CASHOUT_ALL. Al riavvio lo stop e' presente e la riconciliazione riparte in SOLA LETTURA:
+    la copertura del cashout non viene cancellata, nessun ordine nuovo, esposizione non dichiarata chiusa."""
+    from core.hedge_ref import new_hedge_ref
+    c = _g_banco(tmp_path, "m146h1.db")
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    href = new_hedge_ref()
+    copertura = {"betId": "H1", "marketId": "1.9671", "selectionId": 1, "customerOrderRef": href, "side": "LAY",
+                 "status": "EXECUTABLE", "priceSize": {"price": 2.0, "size": 5.0}, "sizeRemaining": 5.0,
+                 "sizeMatched": 0.0}
+    conto = _ContoLive(CONTO_A, [copertura])
+    _connetti(c, conto)
+    ora = _time.time()
+    c.rc.db._execute("INSERT INTO orders (customer_ref, correlation_id, status, payload_json, response_json, created_at,"
+                     " updated_at) VALUES (?,?,?,?,?,?,?)",
+                     (href, "corr-m146h1", "HEDGE_PLACED", json.dumps({"simulation_mode": False, "market_id": "1.9671",
+                                                                       "role": "HEDGE", "order_origin": "CASHOUT_HEDGE"}),
+                      json.dumps({"betId": "H1", "status": "SUCCESS"}), ora, ora), commit=True)
+    vero = c.rc.db.save_settings
+    with monkeypatch.context() as m:
+        m.setattr(c.rc.db, "save_settings", lambda data, *a, **k: False if isinstance(data, dict) and data.get(
+            RuntimeController._LIVE_VERIFY_ONLY_KEY) == "1" else vero(data, *a, **k))
+
+        def cashout(segnale):
+            raise _CrashG1("crash nel CASHOUT_ALL")
+        c.rc._route_cashout_signal = cashout
+        with pytest.raises(_CrashG1):
+            _settle(c, -40.0)
+    assert not (c.rc.db.get_settings() or {}).get(RuntimeController._LIVE_VERIFY_ONLY_KEY)   # modalita' mai salvata
+    r = _copia_riavvio(tmp_path, "m146h1.db")
+    _connetti(r, conto)
+    assert r.rc._risk_stop_reason and r.rc._live_verify_only is True
+    r.rc._emergency_reconcile_pending = True
+    esito = RuntimeController._reconcile_restored_emergency(r.rc, trigger="m146h1") or {}
+    assert conto.cancellazioni == [] and [o["betId"] for o in conto.ordini] == ["H1"] and esito.get("verify_only")
+    assert r.rc.get_status()["live_exposure"]["state"] != "VERIFICATA" and _ingresso(r, "1.9672")[0] == 0
+    r.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(r.rc))
+
+
+@pytest.mark.parametrize("valore,atteso", [("1", True), ("0", False), ("", True), ("{rotto", True)])
+def test_m146_h1_modalita_al_riavvio_con_stop_globale(tmp_path, valore, atteso):
+    """CX-H1: con uno stop globale attivo, "1" = sola verifica, "0" = cancellazione dei soli ordini del bot ammessa
+    (stop nato in SIM), modalita' mancante o illeggibile = sola verifica (opzione A)."""
+    c = _g_banco(tmp_path, f"m146h1m_{bool(valore)}_{valore[:1]}.db")
+    c.rc.risk_stop("session_loss_breached:test", scope=_live(c))
+    c.rc.db.save_settings({RuntimeController._LIVE_VERIFY_ONLY_KEY: valore})
+    c.rc._emergency_reconcile_pending = False
+    assert _copia_riavvio(tmp_path, f"m146h1m_{bool(valore)}_{valore[:1]}.db").rc._live_verify_only is atteso
+
+
+def test_m146_h1_stop_nato_in_sim_salva_la_modalita_esplicita(tmp_path):
+    """CX-H1: uno stop globale col runtime in SIM salva "0" PRIMA dello stop: dopo un riavvio la riconciliazione puo'
+    ancora cancellare gli ordini del bot sul conto (N2), non e' declassata alla sola lettura."""
+    c = _g_banco(tmp_path, "m146h1sim.db")
+    c.rc.risk_stop("session_loss_breached:test", scope=_live(c))
+    assert (c.rc.db.get_settings() or {}).get(RuntimeController._LIVE_VERIFY_ONLY_KEY) == "0"
+    c.rc._emergency_reconcile_pending = False
+    assert _copia_riavvio(tmp_path, "m146h1sim.db").rc._live_verify_only is False
+
+
+def test_m146_h2_conto_b_aggiunto_allo_stop_di_a_reset_rifiutato_finche_b_non_e_riconciliato(tmp_path):
+    """CX-H2 (N6): stop globale di A verificato; il conto B (ordine del bot non cancellabile) supera la sessione.
+    B entra nel vincolo, l'esito verificato di A non vale piu': il reset confermato e' rifiutato con l'ordine di B
+    aperto; chiuso l'ordine di B e riconciliato B, il reset e' possibile."""
+    c = _g_banco(tmp_path, "m146h2.db")
+    conto_a = _ContoLive(CONTO_A)
+    _connetti(c, conto_a)
+    _settle(c, -40.0, event_key="cleared:1.9681:1")
+    c.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="m146h2a")
+    assert c.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    ordine_b = {"betId": "GB", "marketId": "1.9682", "selectionId": 1, "customerOrderRef": "sig-m146h2",
+                "side": "BACK", "status": "EXECUTABLE", "priceSize": {"price": 2.0, "size": 2.0},
+                "sizeRemaining": 2.0, "sizeMatched": 0.0}
+    conto_b = _ContoLive(CONTO_B, [ordine_b], cancella=False)
+    _connetti(c, conto_b)
+    scope_b = _live(c, CONTO_B)
+    _connetti(c, conto_b)
+    esito = c.rc.risk_stop("session_loss_breached:conto_b", scope=scope_b)
+    assert esito.get("bound_account") == scope_b
+    assert c.rc.get_status()["live_exposure"]["state"] != "VERIFICATA", "esito verificato di A ancora valido per B"
+    assert scope_b in (RuntimeController._live_bound_accounts(c.rc) or {})
+    c.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="m146h2b")
+    assert c.rc.get_status()["live_exposure"]["state"] != "VERIFICATA"
+    assert _reset_confermato(c.rc)["risk_stop_reset"] is False and c.rc._risk_stop_reason
+    conto_b.ordini, conto_b.cancella = [], True
+    c.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="m146h2c")
+    assert c.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    assert _reset_confermato(c.rc)["risk_stop_reset"] is True
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+
+def test_m146_h3_registro_indipendente_dall_ordine_delle_scritture():
+    """CX-H3 (registro): un LATE_SETTLEMENT scritto PRIMA del SESSION_CLOSED della sua sessione conta una volta, come
+    se fosse scritto dopo; una chiave gia' compresa nella chiusura non si somma due volte."""
+    d = lambda x: {"desk": x, "scopes": {}, "unscoped": 0.0}
+    late = {"kind": "LATE_SETTLEMENT", "payload": {"session_id": "S1", "settlement_key": "k1", "delta": d(-15.0)}}
+    chiusa = {"kind": "SESSION_CLOSED", "payload": {"id": "S1", "delta": d(-10.0), "late_keys": []}}
+    compresa = {"kind": "SESSION_CLOSED", "payload": {"id": "S1", "delta": d(-25.0), "late_keys": ["k1"]}}
+    for catena, atteso in (([late, chiusa], -25.0), ([chiusa, late], -25.0), ([late, compresa], -25.0),
+                           ([compresa, late], -25.0), ([late, late, chiusa], -25.0)):
+        assert risk_session_ledger.archive_index(catena)["S1"]["delta"]["desk"] == pytest.approx(atteso), catena
+
+
+def test_m146_h3_tardivo_durante_la_scrittura_della_chiusura(tmp_path, monkeypatch):
+    """CX-H3 (integrato): il tardivo -15 di S1 arriva mentre si scrive SESSION_CLOSED (fotografia gia' presa). Registro,
+    indice in memoria e riavvio valgono -25; con altri -10 dopo l'uscita dalla finestra S1 va a -35 => stop."""
+    c = _g_banco(tmp_path, "m146h3.db")
+    s1 = c.rc._risk_session["id"]
+    _ordine_di_sessione(c, "dut-m146-h3a", s1, "1.9691")
+    _ordine_di_sessione(c, "dut-m146-h3b", s1, "1.9692")
+    _settle(c, -10.0)
+    vero = risk_session_ledger.append
+    fatto = []
+
+    def append(db, kind, payload):
+        if kind == "SESSION_CLOSED" and str(payload.get("id")) == s1 and not fatto:
+            fatto.append(True)
+            _settle(c, -15.0, customer_ref="dut-m146-h3a")
+        return vero(db, kind, payload)
+    monkeypatch.setattr(risk_session_ledger, "append", append)
+    assert c.rc.close_risk_session()["risk_session_closed"] is True and fatto
+    monkeypatch.undo()
+    assert risk_session_ledger.archive_index(_registro(c))[s1]["delta"]["desk"] == pytest.approx(-25.0)
+    assert RuntimeController._risk_archive(c.rc)[s1]["delta"]["desk"] == pytest.approx(-25.0)
+    for _ in range(21):
+        assert c.rc.close_risk_session()["risk_session_closed"] is True
+    r = _copia_riavvio(tmp_path, "m146h3.db")
+    assert RuntimeController._risk_archive(r.rc)[s1]["delta"]["desk"] == pytest.approx(-25.0)
+    _settle(r, -10.0, customer_ref="dut-m146-h3b")
+    assert f"sessione_precedente={s1}" in str(r.rc._risk_stop_reason) and _ingresso(r, "1.9693")[0] == 0
+
+
+def test_m146_h4_profitto_di_sessione_non_verificabile_fuori_dalla_sessione_corrente(tmp_path):
+    """CX-H4 (P2, contabilita'): archivio non verificabile, S1 fuori dalla finestra. Un PROFITTO tardivo di S1 resta nel
+    desk ma non entra nella sessione corrente (non compensa le sue perdite); una PERDITA non verificabile resta
+    conservativa (stop)."""
+    c = _g_banco(tmp_path, "m146h4.db")
+    s1 = c.rc._risk_session["id"]
+    _ordine_di_sessione(c, "dut-m146-h4a", s1, "1.9701")
+    _ordine_di_sessione(c, "dut-m146-h4b", s1, "1.9702")
+    for _ in range(25):
+        assert c.rc.close_risk_session()["risk_session_closed"] is True
+    _settle(c, -25.0)
+    c.rc.db.insert_audit_event({"type": risk_session_ledger.RECORD_TYPE, "kind": "SESSION_CLOSED", "seq": 999,
+                                "prev": "f" * 64, "payload": {"id": "rotto"}, "hash": "0" * 64})
+    c.rc._risk_archive_index = None
+    assert RuntimeController._risk_archive(c.rc) is None
+    desk = float(c.rc.risk_desk.realized_pnl)
+    _settle(c, 20.0, customer_ref="dut-m146-h4a")
+    assert float(c.rc.risk_desk.realized_pnl) == pytest.approx(desk + 20.0 * (1 - 0.045))     # nel desk, una volta
+    assert RuntimeController._risk_session_delta(c.rc)["desk"] == pytest.approx(-25.0)         # non nella sessione
+    _settle(c, -20.0)
+    assert RuntimeController._risk_session_delta(c.rc)["desk"] == pytest.approx(-45.0)
+    assert c.rc._risk_stop_reason and _ingresso(c, "1.9703")[0] == 0
+
+
+@pytest.mark.parametrize("runtime_live,atteso", [(False, False), (True, True)])
+def test_m146_h1_marker_di_sessione_porta_la_modalita(tmp_path, runtime_live, atteso):
+    """CX-H1: crash prima che risk_stop() salvi la modalita': il marker dello stop di sessione la porta. Al riavvio uno
+    stop nato in SIM resta cancellabile (solo ordini del bot), uno nato col runtime LIVE riparte in sola lettura."""
+    nome = f"m146h1mk_{runtime_live}.db"
+    c = _g_banco(tmp_path, nome)
+    marker = json.dumps({"reason": "session_loss_breached:test", "scope": _live(c), "at": "x",
+                         "runtime_live": runtime_live})
+    c.rc.db.save_settings({RuntimeController._SESSION_STOP_MARKER: marker})
+    r = _copia_riavvio(tmp_path, nome)
+    assert r.rc._risk_stop_reason and r.rc._live_verify_only is atteso
+    assert (r.rc.db.get_settings() or {}).get(RuntimeController._LIVE_VERIFY_ONLY_KEY) == ("1" if atteso else "0")
+    r.rc._emergency_reconcile_pending = False
+
+
+def test_m146_h4_perdita_di_sessione_non_verificabile_resta_conservativa(tmp_path):
+    """CX-H4: con l'archivio non verificabile una PERDITA tardiva di una sessione fuori dalla finestra resta nella
+    sessione corrente (conservativa) e arma lo stop `sessione_di_rischio_non_verificabile`."""
+    c = _g_banco(tmp_path, "m146h4p.db")
+    s1 = c.rc._risk_session["id"]
+    _ordine_di_sessione(c, "dut-m146-h4p", s1, "1.9711")
+    for _ in range(25):
+        assert c.rc.close_risk_session()["risk_session_closed"] is True
+    c.rc.db.insert_audit_event({"type": risk_session_ledger.RECORD_TYPE, "kind": "SESSION_CLOSED", "seq": 999,
+                                "prev": "f" * 64, "payload": {"id": "rotto"}, "hash": "0" * 64})
+    c.rc._risk_archive_index = None
+    _settle(c, -10.0, customer_ref="dut-m146-h4p")
+    assert RuntimeController._risk_session_delta(c.rc)["desk"] == pytest.approx(-10.0)
+    assert "sessione_di_rischio_non_verificabile" in str(c.rc._risk_stop_reason)
+
+
+def test_m146_h2_runtime_live_esito_di_a_invalidato_subito_per_b(tmp_path, monkeypatch):
+    """CX-H2 col runtime LIVE (nessuna protezione immediata della sede): l'esito verificato del conto A smette di valere
+    nel momento in cui B entra nel vincolo, prima di qualunque sweep; il reset e' rifiutato."""
+    monkeypatch.setattr(RuntimeController, "_LIVE_RECOVERY_INTERVAL_S", 60.0, raising=False)
+    monkeypatch.setattr(RuntimeController, "_ensure_live_recovery", lambda self: None)
+    c = _g_banco(tmp_path, "m146h2l.db")
+    _connetti(c, _ContoLive(CONTO_A))
+    _settle(c, -40.0, event_key="cleared:1.9721:1")
+    c.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="m146h2la")
+    assert c.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    _ambiente(c, "LIVE", conto=CONTO_B)
+    _connetti(c, _ContoLive(CONTO_B))
+    c.rc.risk_stop("session_loss_breached:conto_b", scope=_live(c, CONTO_B))
+    assert c.rc.get_status()["live_exposure"]["state"] != "VERIFICATA"
+    assert _reset_confermato(c.rc)["risk_stop_reset"] is False
+    c.rc._emergency_reconcile_pending = False
+
+
+def test_m146_h1_modalita_sim_non_salvata_marker_conservato_e_ripristinata(tmp_path, monkeypatch):
+    """CX-H1: stop di sessione nato in SIM, la modalita' "0" non si salva. Il marker dello stop di sessione resta
+    (modalita' non durevole) e al riavvio la ricrea: la riconciliazione puo' cancellare gli ordini del bot (N2) invece di
+    restare per sempre in sola lettura."""
+    c = _g_banco(tmp_path, "m146h1s0.db")
+    _connetti(c, _ContoLive(CONTO_A))
+    vero = c.rc.db.save_settings
+    with monkeypatch.context() as m:
+        m.setattr(c.rc.db, "save_settings", lambda data, *a, **k: False if isinstance(data, dict) and data.get(
+            RuntimeController._LIVE_VERIFY_ONLY_KEY) == "0" else vero(data, *a, **k))
+        _settle(c, -40.0, event_key="cleared:1.9731:1")
+    impost = c.rc.db.get_settings() or {}
+    assert impost.get(RuntimeController._SESSION_STOP_MARKER), "marker tolto con la modalita' non durevole"
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+    r = _copia_riavvio(tmp_path, "m146h1s0.db")
+    assert r.rc._risk_stop_reason and r.rc._live_verify_only is False
+    r.rc._emergency_reconcile_pending = False
+
+
+def test_m146_h1_ripristino_dal_marker_conserva_il_marker_se_la_modalita_non_si_salva(tmp_path, monkeypatch):
+    """CX-H1: al ripristino dal marker la modalita' "0" (stop nato in SIM) non si salva => il marker resta e un ripristino
+    successivo la ricrea (mai declassato a una perdita silenziosa della modalita')."""
+    c = _g_banco(tmp_path, "m146h1rm.db")
+    marker = json.dumps({"reason": "session_loss_breached:test", "scope": _live(c), "at": "x", "runtime_live": False})
+    c.rc.db.save_settings({RuntimeController._SESSION_STOP_MARKER: marker})
+    vero = c.rc.db.save_settings
+    with monkeypatch.context() as m:
+        m.setattr(c.rc.db, "save_settings", lambda data, *a, **k: False if isinstance(data, dict) and data.get(
+            RuntimeController._LIVE_VERIFY_ONLY_KEY) == "0" else vero(data, *a, **k))
+        RuntimeController._restore_session_stop_marker(c.rc)
+    assert (c.rc.db.get_settings() or {}).get(RuntimeController._SESSION_STOP_MARKER) == marker
+    RuntimeController._restore_session_stop_marker(c.rc)
+    impost = c.rc.db.get_settings() or {}
+    assert impost.get(RuntimeController._LIVE_VERIFY_ONLY_KEY) == "0" and not impost.get(RuntimeController._SESSION_STOP_MARKER)
+    c.rc._emergency_reconcile_pending = False

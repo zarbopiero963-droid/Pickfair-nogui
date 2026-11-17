@@ -103,6 +103,7 @@ def append(db: Any, kind: str, payload: dict) -> Optional[dict]:
 def archive_index(chain: list) -> dict:
     """G2: sessioni chiuse archiviate {id: {"record": ..., "delta": P&L aggiornato coi tardivi, "late_keys": set}}."""
     index: dict = {}
+    orphans: dict = {}          # M146 (CX-H3): tardivi scritti PRIMA della chiusura della loro sessione
     for event in chain:
         payload = event.get("payload") or {}
         if event.get("kind") == "SESSION_CLOSED":
@@ -115,18 +116,32 @@ def archive_index(chain: list) -> dict:
                               "delta": {"desk": float(delta.get("desk") or 0.0),
                                         "scopes": {str(k): float(v) for k, v in (delta.get("scopes") or {}).items()},
                                         "unscoped": float(delta.get("unscoped") or 0.0)}}
+                for late in orphans.pop(sid, []):
+                    _apply_late(index[sid], late)
         elif event.get("kind") == "LATE_SETTLEMENT":
             sid, key = str(payload.get("session_id") or ""), str(payload.get("settlement_key") or "")
             entry = index.get(sid)
-            if entry is None or not key or key in entry["late_keys"]:
-                continue                               # idempotenza: una chiave conta una volta sola
-            add = payload.get("delta") or {}
-            entry["late_keys"].add(key)
-            entry["delta"]["desk"] += float(add.get("desk") or 0.0)
-            entry["delta"]["unscoped"] += float(add.get("unscoped") or 0.0)
-            for k, v in (add.get("scopes") or {}).items():
-                entry["delta"]["scopes"][str(k)] = entry["delta"]["scopes"].get(str(k), 0.0) + float(v)
+            if entry is None:
+                # M146 (CX-H3): l'ordine delle scritture non decide il P&L. Un tardivo entrato nel registro prima della
+                # chiusura della sua sessione si applica quando la chiusura compare (escluse le chiavi gia' comprese)
+                if sid and key:
+                    orphans.setdefault(sid, []).append(payload)
+                continue
+            _apply_late(entry, payload)
     return index
+
+
+def _apply_late(entry: dict, payload: dict) -> None:
+    """Somma un tardivo all'archivio della sua sessione, una volta per chiave di settlement (idempotente)."""
+    key = str(payload.get("settlement_key") or "")
+    if not key or key in entry["late_keys"]:
+        return                                         # idempotenza: una chiave conta una volta sola
+    add = payload.get("delta") or {}
+    entry["late_keys"].add(key)
+    entry["delta"]["desk"] += float(add.get("desk") or 0.0)
+    entry["delta"]["unscoped"] += float(add.get("unscoped") or 0.0)
+    for k, v in (add.get("scopes") or {}).items():
+        entry["delta"]["scopes"][str(k)] = entry["delta"]["scopes"].get(str(k), 0.0) + float(v)
 
 
 def reset_status(chain: list) -> dict:
