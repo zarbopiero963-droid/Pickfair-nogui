@@ -1488,10 +1488,13 @@ class RuntimeController:
         if "financial_scope" in (effect or {}):
             hint = None          # Sol su 3c1ff9e4: la riserva identificata dal rilascio prevale sempre, anche vuota
         event_key = str((payload or {}).get("event_key") or "")
+        reservation_known = hint is not None or "financial_scope" in (effect or {})
         if not declared and event_key.startswith("sim:"):
             # regolamento del broker simulato (chiave `sim:` di PnLEngine): appartiene alla SIM per costruzione
             declared = financial_scope.runtime_scope(simulated=True, live_account="")
-        elif not declared and event_key.startswith("cleared:"):
+        elif not declared and event_key.startswith("cleared:") and not reservation_known:
+            # G1 (Grok su 60c772fe): con una prenotazione nota ma senza ambito (legacy) il conto LIVE connesso non
+            # sostituisce mai l'identita' della prenotazione: si va in quarantena (ramo sotto).
             # ordini regolati letti dall'exchange (poller `cleared:`): conto LIVE del client Betfair connesso;
             # conto non identificabile => ambito non verificabile (perdite in quarantena, profitti non accreditati)
             declared = RuntimeController._financial_scope_for(self, False)
@@ -1589,6 +1592,10 @@ class RuntimeController:
             RuntimeController._realized_for_scope(self, key))
 
     def _limits_block_reason(self) -> str:
+        if self.__dict__.get("_session_loss_pending_global"):
+            # C3 (D M116-bis): perdita di sessione di un ambito LIVE (anche di un altro conto) in attesa dello stop
+            # globale, nella finestra del sync: nessuna ammissione, qualunque sia l'ambito corrente
+            return "session_loss_breached:in_attesa_dello_stop_globale"
         return RuntimeController._scope_daily_loss_block_reason(self) or self._session_loss_block_reason()
 
     def _scope_daily_loss_block_reason(self) -> str:
@@ -1724,6 +1731,7 @@ class RuntimeController:
                 return {"risk_stop_reset": False, "reason": blocker}
             if not self._risk_stop_reason:
                 return {"risk_stop_reset": True, "reason": ""}
+            self._session_loss_pending_global = False    # C3: la barriera di sessione segue lo stop che anticipa
             if not stop_rules.persist_risk_stop(self.db, ""):  # nuova versione PRIMA di riaprire
                 return {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
             self._risk_stop_reason = ""
@@ -1755,9 +1763,30 @@ class RuntimeController:
             return real_reason
         return "exposure_stop_candidate_rejected:" + reason.split(":", 1)[1]
 
+    def _complete_pending_unattributed(self) -> None:
+        """S2: completa il libro di una perdita non attribuibile il cui settlement si e' interrotto e il cui
+        completamento e' fallito: ricalcola TUTTI gli ambiti, poi rende salvabile la chiave insieme alla quarantena.
+        Fallisce di nuovo => resta in attesa (salvataggi rinviati, gate `daily_loss_state_non_persistito`)."""
+        key = self.__dict__.get("_daily_loss_full_refresh_key")
+        if not key or self.__dict__.get("_daily_loss_completing"):
+            return
+        self._daily_loss_completing = True
+        try:
+            for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
+                self._monitor_daily_loss_breach(source="DAILY_LOSS_BOOK_COMPLETION", scope=other, persist=False)
+            with self._daily_loss_state_lock:
+                RuntimeController._promote_settled_keys_locked(self, keys=(key,))
+                self._daily_loss_full_refresh_key = None
+        except Exception:
+            logger.exception("S2: completamento del libro giornaliero ancora non riuscito (salvataggi rinviati)")
+        finally:
+            self._daily_loss_completing = False
+
     def _monitor_daily_loss_breach(self, *, source: str, payload: Optional[dict] = None,
                                    scope: Optional[str] = None, persist: bool = True) -> dict[str, Any]:
         """Perdita giornaliera dell'ambito ``scope`` (default: l'ambito corrente), PR-04a."""
+        if persist:
+            RuntimeController._complete_pending_unattributed(self)
         key = str(scope or RuntimeController._current_financial_scope(self))
         now = datetime.utcnow()
         today_utc = now.date().isoformat()
@@ -2587,7 +2616,7 @@ class RuntimeController:
             logger.exception("daily-loss: durable db emergency marker persist failed")
             return str(exc)
 
-    def emergency_stop(self, reason: str = "") -> dict:
+    def emergency_stop(self, reason: str = "", live_exposure: bool = False) -> dict:
         """
         Global emergency stop.
 
@@ -2610,7 +2639,13 @@ class RuntimeController:
         self._emergency_reason = reason or "EMERGENCY_STOP"
         # PF-ALL-F027: da dove arrivano i settlement delle posizioni aperte prima del flip a SIM. Fissata PRIMA
         # del salvataggio, che la persiste col flag (Codex r4311806886: in sola memoria un riavvio la perdeva).
-        if not getattr(self, "_settlement_source_before_emergency", ""):
+        # C1 (Codex su 60c772fe): un'emergenza nata da un'esposizione LIVE (superamento di un ambito LIVE o non
+        # verificabile) agisce sulla sede LIVE QUALUNQUE sia la modalita' corrente del runtime: in SIM leggerebbe e
+        # cancellerebbe solo il broker simulato, lasciando aperti gli ordini LIVE. Conto LIVE irraggiungibile =>
+        # emergenza non risolta (`manual_action_required`), mai una cancellazione dichiarata riuscita.
+        if live_exposure:
+            self._settlement_source_before_emergency = "LIVE"
+        elif not getattr(self, "_settlement_source_before_emergency", ""):
             self._settlement_source_before_emergency = "SIM" if self.simulation_mode else "LIVE"
 
         # Persist SUBITO (prima del cancel): anche se il processo muore
@@ -3189,6 +3224,7 @@ class RuntimeController:
         self._emergency_stopped_at = ""
         self._emergency_reason = ""
         self._settlement_source_before_emergency = ""
+        self._session_loss_pending_global = False
         with self._daily_loss_stop_lock:
             self._daily_loss_pending_stop = False
         persist_error = self._persist_emergency_state()
@@ -3228,7 +3264,7 @@ class RuntimeController:
                     if not self._emergency_stopped:
                         logger.critical("DAILY_LOSS_BREACH (runtime fermo) -> emergency_stop (%s, %s)",
                                         state.get("financial_scope"), amount)
-                        self.emergency_stop(reason=f"DAILY_LOSS_BREACH_STOPPED:{amount}")
+                        self.emergency_stop(reason=f"DAILY_LOSS_BREACH_STOPPED:{amount}", live_exposure=True)
                 return
 
     def _enforce_daily_loss_hard_stop(self, breach_state: dict) -> bool:
@@ -3273,7 +3309,7 @@ class RuntimeController:
                 "DAILY_LOSS_BREACH -> emergency_stop (daily_loss_amount=%s)",
                 amount,
             )
-            self.emergency_stop(reason=f"DAILY_LOSS_BREACH:{amount}")
+            self.emergency_stop(reason=f"DAILY_LOSS_BREACH:{amount}", live_exposure=True)
             return True
 
     # =========================================================
@@ -3819,6 +3855,9 @@ class RuntimeController:
             scope_reason = RuntimeController._scope_daily_loss_block_reason(self)
             if scope_reason:
                 return scope_reason
+            # C3 (Codex su 60c772fe): perdita di sessione globale in attesa dello stop (finestra del sync)
+            if self.__dict__.get("_session_loss_pending_global"):
+                return "session_loss_breached:in_attesa_dello_stop_globale"
             # Ciclo 26 (PF-OWNER-PR631-C26-ZERO-FAILCLOSED-20261116, Sol su 7852e457): l'ultima lettura del conto
             # applicata decide anche per gli ingressi gia' in coda. Contratto Phase 2 (`_apply_funds_reading`): lettura
             # non valida (C), disponibile 0 verificato senza impegnato (B, patrimonio zero) o con impegnato (A) => cassa
@@ -8978,7 +9017,7 @@ class RuntimeController:
                     # breach REALE settlement-driven: emergency_stop DUREVOLE
                     # (persist su db, ricaricato fail-closed al riavvio).
                     amount = float(projected_recovery.get("daily_loss_amount", 0.0) or 0.0)
-                    self.emergency_stop(reason=f"DAILY_LOSS_BREACH_RECOVERY_FAILCLOSED:{amount}")
+                    self.emergency_stop(reason=f"DAILY_LOSS_BREACH_RECOVERY_FAILCLOSED:{amount}", live_exposure=True)
             fail_result = self._build_fail_closed_recovery_result(payload=payload, probe=recovery_probe)
             sync_result = {
                 "correlation_id": str(payload.get("correlation_id") or payload.get("event_key") or ""),
@@ -9067,6 +9106,7 @@ class RuntimeController:
             self._persist_db_emergency_marker(active=True, reason=f"DAILY_LOSS_BREACH_PENDING:{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}")
         realized_now = False
         settlement_completed = False
+        session_pending = False
         try:
             # #461 PR29-c: P&L realizzato una sola volta per settlement, nel processo (set in memoria, sotto il lock
             # del consumer) e dopo un riavvio (flag `realized_applied` del registro). Quando la registrazione non e'
@@ -9081,6 +9121,16 @@ class RuntimeController:
                 RuntimeController._apply_and_attribute_realized_pnl(self, pnl, attribution, settlement_key)
                 self._processed_realized_pnl_keys.add(settlement_key)
                 realized_now = True
+                # C3 (Codex su 60c772fe): una perdita di SESSIONE di un ambito che sale al globale (LIVE, non
+                # verificabile) arma la barriera d'ingresso globale PRIMA del sync, anche col runtime in SIM: lo stop
+                # globale nasce dopo il sync (`_publish_session_loss_breach`) e nella finestra nessun ingresso parte.
+                session_scope = str(attribution.get("scope") or "")
+                if (financial_scope.escalates_globally(session_scope)
+                        and RuntimeController._session_loss_reason_for(self, session_scope)):
+                    with self._daily_loss_stop_lock:
+                        # barriera dedicata: blocca i soli NUOVI ingressi, non il CASHOUT_ALL dello stop globale
+                        self._session_loss_pending_global = True
+                        session_pending = True
             # Bankroll sync PRIMA dell'enforce: emergency_stop flippa il service a
             # SIMULATION e get_account_funds sceglie il client dal mode, quindi
             # sincronizzare dopo lo stop interrogherebbe il client simulato/zero
@@ -9144,6 +9194,14 @@ class RuntimeController:
             # appiccicato che bloccherebbe i segnali leciti fino al reset, e
             # ripulisci il marker durevole speculativo scritto prima del sync.
             keep_global_marker = False
+            if not settlement_completed and realized_now and arm_pending:
+                # S1 (Sol su 60c772fe): superamento globale proiettato ed effetto gia' applicato e salvato, ma il
+                # settlement si e' interrotto prima dell'enforce: marker durevole e pending-stop RESTANO (al riavvio
+                # l'Emergency Stop si ripristina dal marker anche se la chiave salvata fa saltare la riconsegna).
+                keep_global_marker = True
+            if session_pending and settlement_completed:
+                with self._daily_loss_stop_lock:      # C3: lo stop globale di sessione e' ormai registrato
+                    self._session_loss_pending_global = False
             if (not settlement_completed and realized_now and attribution.get("kind") == "unattributed_loss"
                     and settlement_key in (self.__dict__.get("_daily_loss_settle_staged") or {})):
                 # Interruzione dopo l'applicazione: l'effetto e' gia' in memoria; si completa il libro (tutti gli ambiti,
@@ -9170,7 +9228,10 @@ class RuntimeController:
                     # (nessun nuovo ingresso finche' un salvataggio riesce) e il marker globale resta (fail-closed).
                     logger.exception("PR-04a: libro giornaliero non completato dopo l'interruzione del settlement")
                     with self._daily_loss_state_lock:
-                        (self.__dict__.get("_daily_loss_settle_staged") or {}).pop(settlement_key, None)
+                        # S2 (Sol su 60c772fe): la chiave NON esce dall'attesa (un salvataggio successivo scriverebbe un
+                        # libro parziale: sottostima negli ambiti vecchi, doppio conteggio dopo la riconsegna). Il
+                        # prossimo salvataggio completa il libro (`_complete_pending_unattributed`) e solo allora scrive.
+                        self._daily_loss_full_refresh_key = settlement_key
                         last = getattr(self, "_daily_loss_persisted", None)
                         self._daily_loss_persisted = {loss_limits.PERSIST_FAILED_KEY: True,
                                                       "seq": (last or {}).get("seq") if isinstance(last, dict) else None}

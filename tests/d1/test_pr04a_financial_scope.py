@@ -1450,9 +1450,372 @@ def test_completamento_fallito_dopo_interruzione_non_blocca_i_salvataggi_in_sile
             event_key="cleared:1.82:1", batch_id="b-uaf", correlation_id="c-uaf", gross_pnl=-15.0,
             commission_amount=0.0, net_pnl=-15.0, pnl=-15.0, commission_pct=4.5))
     c.rc._monitor_daily_loss_breach = vero_monitor
-    assert not any(kind == "unattributed_loss" for _t, kind in (c.rc._daily_loss_settle_staged or {}).values())
     _ambiente(c, "LIVE")
     assert c.rc._limits_block_reason() == "daily_loss_state_non_persistito"
+    # S2: il salvataggio successivo completa il libro (tutti gli ambiti + quarantena + chiave) e riapre il gate
     c.rc._monitor_daily_loss_breach(source="RUNTIME_STATUS_SNAPSHOT", scope=conto_a)
     salvato = json.loads(c.db.get_settings()["daily_loss_state"])
     assert salvato["scopes"][conto_a]["intraday_realized_pnl"] == pytest.approx(-35.0)
+    assert "cleared:1.82:1" in json.dumps(salvato.get("settled") or {}), "chiave non salvata col libro completo"
+    assert c.rc._limits_block_reason() != "daily_loss_state_non_persistito"
+
+
+# ============================================================================ ciclo straordinario 11 (owner, opzione A poi B)
+class _LiveSpia:
+    """Client LIVE emulato: registra letture e cancellazioni (nessuna rete)."""
+
+    def __init__(self, ordini=None):
+        self.letture, self.cancellazioni, self.ordini = 0, [], list(ordini or [])
+
+    def get_current_orders(self, market_ids=None):
+        self.letture += 1
+        return list(self.ordini)
+
+    def cancel_orders(self, market_id, bet_ids=None, **kw):
+        self.cancellazioni.append((market_id, bet_ids))
+        self.ordini = [o for o in self.ordini if o.get("marketId") != market_id]
+        return {"ok": True, "instructionReports": [{"betId": b} for b in (bet_ids or [])]}
+
+
+def _settle_cleared(c, n, importo):
+    c.rc._on_close_position(_canonical_close_payload(
+        event_key=f"cleared:1.95{n}:{n}", batch_id=f"b-c11-{n}", correlation_id=f"c-c11-{n}",
+        gross_pnl=importo, commission_amount=0.0, net_pnl=importo, pnl=importo))
+
+
+def _eventi(c, nome):
+    return [p for t, p in getattr(c.bus, "events", []) if t == nome]
+
+
+def test_c1_emergenza_da_superamento_live_con_runtime_in_sim_agisce_sul_live(tmp_path):
+    """Codex P1-1 (C1): superamento LIVE regolato mentre il runtime e' in SIM. L'Emergency Stop deve leggere e
+    proteggere gli ordini del conto LIVE, non solo il broker simulato."""
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+    live = _LiveSpia()
+    c.rc.betfair_service.get_live_client = lambda: live
+    c.rc.mode = RuntimeMode.ACTIVE
+    _settle_cleared(c, 1, -40.0)
+    assert c.rc._emergency_stopped is True
+    assert live.letture >= 1, "emergenza da esposizione LIVE eseguita solo sulla sede SIM"
+
+
+def test_c1_conto_live_irraggiungibile_emergenza_non_risolta(tmp_path):
+    """C1: se il conto LIVE non e' raggiungibile l'emergenza resta NON risolta (intervento manuale), mai una
+    cancellazione dichiarata riuscita."""
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "SIM")
+
+    def _irraggiungibile():
+        raise ConnectionError("LIVE non raggiungibile")
+
+    c.rc.betfair_service.get_live_client = _irraggiungibile
+    c.rc.mode = RuntimeMode.ACTIVE
+    _settle_cleared(c, 2, -40.0)
+    esiti = _eventi(c, "EMERGENCY_STOP_TRIGGERED")
+    assert c.rc._emergency_stopped is True and esiti
+    assert esiti[-1].get("manual_action_required") is True
+    assert esiti[-1].get("verification") != "VERIFIED"
+
+
+@pytest.mark.parametrize("punto", ["_mark_settlement_realized", "_escalate_stopped_live_breach"])
+def test_s1_eccezione_dopo_superamento_live_attribuito_conserva_l_emergenza(tmp_path, monkeypatch, punto):
+    """Sol-B1 (S1): superamento LIVE attribuito, eccezione fra il salvataggio e l'enforce; riavvio in SIM SENZA
+    riconsegna: l'Emergency Stop globale e' attivo (il marker durevole non va perso)."""
+    import core.runtime_controller as rcm
+    c = _banco(tmp_path, "s1.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.ACTIVE
+
+    def _boom(self, *a, **k):
+        raise RuntimeError("eccezione intermedia")
+
+    monkeypatch.setattr(rcm.RuntimeController, punto, _boom)
+    with pytest.raises(RuntimeError):
+        _settle_cleared(c, 3, -40.0)
+    monkeypatch.undo()
+    r = _banco(tmp_path, "s1.db", max_daily_loss=30.0)
+    _ambiente(r, "SIM")
+    assert r.rc._emergency_stopped is True
+
+
+def test_c3_perdita_di_sessione_live_blocca_gli_ingressi_sim_durante_il_sync(tmp_path):
+    """Codex P1-3 (C3): perdita di SESSIONE LIVE (limite 30, nessun limite giornaliero) regolata mentre il runtime e'
+    in SIM: durante l'I/O del sync nessun ingresso SIM parte (barriera globale prima del sync)."""
+    c = _banco(tmp_path, max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0                 # sessione avviata (come il test di sessione esistente)
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    vero_sync = c.rc._sync_bankroll_post_settlement
+    durante = []
+
+    def _sync(p):
+        durante.append(_ingresso(c, "1.961")[0])
+        return vero_sync(p)
+
+    c.rc._sync_bankroll_post_settlement = _sync
+    _settle_cleared(c, 4, -40.0)
+    assert durante == [0], durante
+
+
+def test_g1_riserva_legacy_senza_ambito_non_va_al_conto_connesso(tmp_path):
+    """Grok (G1): settlement `cleared:` con riserva nota ma senza ambito (legacy): mai il conto LIVE connesso al posto
+    dell'identita' della prenotazione; perdita in quarantena (conta per tutti), profitto non accreditato."""
+    c = _banco(tmp_path, max_daily_loss=30.0)
+    _ambiente(c, "LIVE", conto=CONTO_B)
+    perdita = c.rc._settlement_attribution(-15.0, {"financial_scope": ""}, {"event_key": "cleared:1.97:1"})
+    profitto = c.rc._settlement_attribution(12.0, {"financial_scope": ""}, {"event_key": "cleared:1.97:2"})
+    assert perdita == {"scope": financial_scope.UNVERIFIED_SCOPE, "kind": "unattributed_loss"}
+    assert profitto == {"scope": financial_scope.UNVERIFIED_SCOPE, "kind": "unscoped_profit"}
+    sim = c.rc._settlement_attribution(-15.0, {"financial_scope": ""}, {"event_key": "sim:1.97:3"})
+    assert sim["scope"] == _sim()
+
+
+def test_s2_doppio_guasto_non_lascia_un_libro_parziale(tmp_path):
+    """Sol-B2 (S2): perdita non attribuibile con sync interrotto E completamento fallito; poi un get_status salva il
+    libro e il processo muore. Dopo riavvio e riconsegna ogni ambito vale il vero: conto A 35 (mai 50, doppio
+    conteggio), SIM 20 (mai sottostimata)."""
+    c = _banco(tmp_path, "s2.db", max_daily_loss=100.0)
+    _ambiente(c, "SIM")
+    _settle(c, -5.0, event_key="sim:1.98:1")
+    _ambiente(c, "LIVE")
+    conto_a = c.rc._current_financial_scope()
+    _settle(c, -20.0)
+    c.rc.betfair_service.client = None
+    c.rc.betfair_service.settings_service = None
+    vero_monitor = c.rc._monitor_daily_loss_breach
+
+    def _monitor(**kw):
+        if kw.get("source") == "RUNTIME_CLOSE_POSITION_UNATTRIBUTED":
+            raise RuntimeError("completamento fallito")
+        return vero_monitor(**kw)
+
+    def _errore(p):
+        raise RuntimeError("sync fallito")
+
+    def _consegna(rc):
+        rc._on_close_position(_canonical_close_payload(
+            event_key="cleared:1.99:1", batch_id="b-s2", correlation_id="c-s2", gross_pnl=-15.0,
+            commission_amount=0.0, net_pnl=-15.0, pnl=-15.0, commission_pct=4.5))
+
+    c.rc._sync_bankroll_post_settlement = _errore
+    c.rc._monitor_daily_loss_breach = _monitor
+    with pytest.raises(RuntimeError):
+        _consegna(c.rc)
+    c.rc._monitor_daily_loss_breach = vero_monitor
+    c.rc._monitor_daily_loss_breach(source="RUNTIME_STATUS_SNAPSHOT", scope=conto_a)
+    _fotografa_al_crash(tmp_path, "s2.db", "s2_crash.db")
+    r = _banco(tmp_path, "s2_crash.db", max_daily_loss=100.0)
+    _ambiente(r, "LIVE")
+    r.rc.betfair_service.client = None
+    r.rc.betfair_service.settings_service = None
+    _consegna(r.rc)
+    assert r.rc._monitor_daily_loss_breach(source="T", scope=conto_a)["daily_loss_amount"] == pytest.approx(35.0)
+    assert r.rc._monitor_daily_loss_breach(source="T", scope=_sim())["daily_loss_amount"] == pytest.approx(20.0)
+
+
+def _app_riavviabile(tmp_path, monkeypatch, tag):
+    from tests.acceptance.test_issue437_pr04 import _App
+    from tests.risk_config_fixtures import legacy_test_config
+    from core import blackbox_runtime
+    a = _App("headless", tmp_path, monkeypatch)
+    if blackbox_runtime.get() is None:
+        blackbox_runtime.install("bb/bb.sqlite", entrypoint=tag)
+    monkeypatch.setattr(a.rt.settings_service, "load_roserpina_config",
+                        lambda: legacy_test_config(liquidity_guard_enabled=False, max_daily_loss=30.0))
+    a.rt.betfair_service.get_account_funds = lambda: {"available": 1000.0, "exposure": 0.0, "ok": True}
+    a.avvia()
+    return a
+
+
+@pytest.mark.parametrize("percorso", ["manuale", "dutching"])
+def test_c2_ingresso_sim_manuale_o_dutching_regolato_dopo_riavvio_resta_sim(tmp_path, monkeypatch, percorso):
+    """Codex P1-2 (C2): puntata manuale / lotto Dutching in SIM, riavvio (F018), passaggio a LIVE, settlement
+    tardivo -40 (limite 30): la perdita resta SIM (blocco locale), mai quarantena ne' Emergency Stop globale."""
+    from tests.acceptance.test_issue523_dutching_manual_bet import _batch, _manual
+    monkeypatch.chdir(tmp_path)
+    a = _app_riavviabile(tmp_path, monkeypatch, "c2a")
+    try:
+        a.rt.mode = RuntimeMode.ACTIVE
+        esito = (a.app.dutching_controller.manual_bet(_manual(stake=2.0)) if percorso == "manuale"
+                 else a.app.dutching_controller.submit_dutching(_batch(total_stake=10.0)))
+        a.svuota_bus()
+        assert esito["ok"] is True, esito
+        tavolo = [t for t in a.rt.table_manager.snapshot() if t.get("current_event_key")][0]
+    finally:
+        a.chiudi()
+    b = _app_riavviabile(tmp_path, monkeypatch, "c2b")
+    try:
+        ricostruiti = [t for t in b.rt.table_manager.snapshot() if t.get("current_event_key")]
+        assert ricostruiti and all((t.get("meta") or {}).get("financial_scope") == _sim() for t in ricostruiti)
+        b.rt.config.max_daily_loss = 30.0
+        b.rt.set_simulation_mode(False)
+        b.rt.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+        b.rt.mode = RuntimeMode.ACTIVE
+        b.rt._on_close_position(_canonical_close_payload(
+            event_key=tavolo.get("current_event_key"), table_id=tavolo.get("table_id"), market_id=tavolo.get("market_id"),
+            batch_id="b-c2", correlation_id="c-c2", gross_pnl=-40.0, commission_amount=0.0, net_pnl=-40.0, pnl=-40.0))
+        assert b.rt._emergency_stopped is False
+        assert b.rt._daily_loss_state_for(_sim())["daily_loss_amount"] == pytest.approx(40.0)
+        assert b.rt._daily_loss_unattributed is None
+    finally:
+        b.chiudi()
+
+
+def test_scenario_integrato_due_conti_live_piu_tavoli_sim_emergenza_errore_crash_riavvio(tmp_path):
+    """Owner (ciclo 11): due conti LIVE, piu' tavoli aperti, processo temporaneamente in SIM, Emergency Stop, errore
+    durante un settlement, crash e riavvio. Oracoli:
+    - l'emergenza nata dal LIVE agisce sulla sede LIVE: l'ordine aperto del bot e' cancellato, quello estraneo e'
+      segnalato come esposizione da gestire (mai cancellato alla cieca, mai dichiarato risolto);
+    - il blocco sopravvive al riavvio: nessun nuovo ordine, ne' LIVE ne' SIM;
+    - P&L e perdite restano sul conto giusto (A: perdita 40; B: profitto, nessuna perdita; SIM: 5)."""
+    c = _banco(tmp_path, "int.db", max_daily_loss=30.0)
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    c.rc.mode = RuntimeMode.ACTIVE
+    tavolo_a = _riserva(c, "1.881")
+    # Il LIVE del banco e' emulato sul SimulationBroker, che salva la request con simulation_mode=True: la riga
+    # dell'ordine del conto A si registra come LIVE, come la salverebbe un ordine LIVE reale (venue dell'emergenza).
+    for riga in c.rc.db._execute("SELECT id, payload_json FROM orders WHERE customer_ref = ?",
+                                 (tavolo_a.meta["customer_ref"],), fetch=True, commit=False):
+        dati = json.loads(dict(riga)["payload_json"])
+        dati["simulation_mode"] = False
+        c.rc.db._execute("UPDATE orders SET payload_json = ? WHERE id = ?", (json.dumps(dati), dict(riga)["id"]))
+    # Conto B: il gate S18 del drawdown (#631, fuori perimetro) tiene un solo conto LIVE per processo e rifiuta gli
+    # ingressi di un secondo conto; la prenotazione di B (ordine gia' in essere) e' quindi creata direttamente nel
+    # gestore dei tavoli, con la sua identita' (ambito B + customer_ref), come la ricostruisce F018.
+    c.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_B)
+    conto_b = c.rc._financial_scope_for(False)
+    c.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+    tavolo_b = c.rc.table_manager.allocate(event_key="evt-int-b")
+    c.rc.table_manager.activate(table_id=tavolo_b.table_id, event_key="evt-int-b", exposure=2.0, market_id="1.882",
+                                selection_id=1, meta={"financial_scope": conto_b, "customer_ref": "ref-int-b"})
+    tavolo_b = c.rc.table_manager.get_table(tavolo_b.table_id)
+    tavolo_sim = c.rc.table_manager.allocate(event_key="evt-int-sim")        # idem per la prenotazione SIM
+    c.rc.table_manager.activate(table_id=tavolo_sim.table_id, event_key="evt-int-sim", exposure=2.0, market_id="1.883",
+                                selection_id=1, meta={"financial_scope": _sim(), "customer_ref": "ref-int-sim"})
+    tavolo_sim = c.rc.table_manager.get_table(tavolo_sim.table_id)
+    _ambiente(c, "SIM")
+    _settle_tavolo(c, tavolo_b, 12.0)                       # profitto del conto B, dalla sua prenotazione
+    # processo in SIM, conto LIVE A connesso; sull'exchange: un ordine aperto del bot e uno estraneo
+    live = _LiveSpia([
+        {"betId": "A-1", "customerOrderRef": tavolo_a.meta["customer_ref"], "marketId": "1.881",
+         "status": "EXECUTABLE", "sizeRemaining": 2.0},
+        {"betId": "X-9", "customerOrderRef": "", "marketId": "1.999", "status": "EXECUTABLE", "sizeRemaining": 5.0}])
+    c.rc.betfair_service.get_live_client = lambda: live
+    c.rc.betfair_service.client = types.SimpleNamespace(username=CONTO_A)
+    conto_a = c.rc._financial_scope_for(False)
+    _settle_tavolo(c, tavolo_a, -40.0)                      # superamento LIVE A (limite 30) col runtime in SIM
+    assert c.rc._emergency_stopped is True
+    assert ("1.881", ["A-1"]) in live.cancellazioni, live.cancellazioni
+    assert all(m != "1.999" for m, _ in live.cancellazioni), "ordine estraneo cancellato alla cieca"
+    esito = _eventi(c, "EMERGENCY_STOP_TRIGGERED")[-1]
+    assert any(o.get("bet_id") == "X-9" for o in esito.get("unattributed_open_orders") or []), esito
+    assert esito.get("manual_action_required") is True, "esposizione estranea dichiarata risolta"
+
+    # errore durante un settlement (SIM -5), poi il processo muore
+    def _errore(p):
+        raise RuntimeError("sync fallito")
+
+    c.rc._sync_bankroll_post_settlement = _errore
+    with pytest.raises(RuntimeError):
+        c.rc._on_close_position(_canonical_close_payload(
+            event_key=tavolo_sim.current_event_key, table_id=tavolo_sim.table_id,
+            customer_ref=tavolo_sim.meta["customer_ref"], market_id=tavolo_sim.market_id,
+            batch_id="b-int-s", correlation_id="c-int-s", gross_pnl=-5.0, commission_amount=0.0,
+            net_pnl=-5.0, pnl=-5.0))
+    _fotografa_al_crash(tmp_path, "int.db", "int_crash.db")
+
+    r = _banco(tmp_path, "int_crash.db", max_daily_loss=30.0)
+    assert r.rc._emergency_stopped is True, "blocco perso al riavvio"
+    _ambiente(r, "LIVE", conto=CONTO_A)
+    assert _ingresso(r, "1.884")[0] == 0, "ordine LIVE partito dopo il riavvio in emergenza"
+    _ambiente(r, "SIM")
+    assert _ingresso(r, "1.885")[0] == 0, "ordine SIM partito dopo il riavvio in emergenza"
+    r.rc._on_close_position(_canonical_close_payload(            # riconsegna del settlement interrotto
+        event_key=tavolo_sim.current_event_key, table_id=tavolo_sim.table_id,
+        customer_ref=tavolo_sim.meta["customer_ref"], market_id=tavolo_sim.market_id,
+        batch_id="b-int-s", correlation_id="c-int-s", gross_pnl=-5.0, commission_amount=0.0, net_pnl=-5.0, pnl=-5.0))
+    stato = lambda k: r.rc._monitor_daily_loss_breach(source="T", scope=k)   # noqa: E731
+    assert stato(conto_a)["daily_loss_amount"] == pytest.approx(40.0) and stato(conto_a)["breached"] is True
+    assert stato(conto_b)["daily_loss_amount"] == pytest.approx(0.0), "il profitto di B non e' sul conto B"
+    assert stato(_sim())["daily_loss_amount"] == pytest.approx(5.0)
+    assert r.rc._daily_loss_unattributed is None, "attribuzione persa: P&L finito in quarantena"
+
+
+def test_c3_perdita_di_sessione_live_blocca_anche_gli_ingressi_live_durante_il_sync(tmp_path):
+    """C3, variante LIVE (owner): perdita di sessione LIVE con il runtime in LIVE; nella finestra del sync nemmeno un
+    ingresso LIVE parte."""
+    c = _banco(tmp_path, max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    _ambiente(c, "LIVE")
+    c.rc.mode = RuntimeMode.ACTIVE
+    vero_sync = c.rc._sync_bankroll_post_settlement
+    durante = []
+
+    def _sync(p):
+        durante.append(_ingresso(c, "1.962")[0])
+        return vero_sync(p)
+
+    c.rc._sync_bankroll_post_settlement = _sync
+    _settle_cleared(c, 5, -40.0)
+    assert durante == [0], durante
+
+
+def test_c3_perdita_di_sessione_del_conto_a_blocca_l_ammissione_del_conto_b_durante_il_sync(tmp_path):
+    """C3 (D M116-bis): runtime LIVE sul conto B, perdita di SESSIONE del conto LIVE A (prenotazione di A, -12 su limite
+    10): nella finestra del sync l'ammissione non e' libera (`_limits_block_reason` non vuoto)."""
+    c = _banco(tmp_path, max_session_loss=10.0)
+    c.rc._session_pnl_baseline = 0.0
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    conto_a = c.rc._financial_scope_for(False)
+    _ambiente(c, "LIVE", conto=CONTO_B)
+    c.rc.mode = RuntimeMode.ACTIVE
+    tavolo = c.rc.table_manager.allocate(event_key="evt-c3-a")
+    c.rc.table_manager.activate(table_id=tavolo.table_id, event_key="evt-c3-a", exposure=2.0, market_id="1.963",
+                                selection_id=1, meta={"financial_scope": conto_a, "customer_ref": "ref-c3-a"})
+    tavolo = c.rc.table_manager.get_table(tavolo.table_id)
+    vero_sync = c.rc._sync_bankroll_post_settlement
+    durante = []
+
+    def _sync(p):
+        durante.append(c.rc._limits_block_reason())
+        return vero_sync(p)
+
+    c.rc._sync_bankroll_post_settlement = _sync
+    _settle_tavolo(c, tavolo, -12.0)
+    assert durante and durante[0], durante
+
+
+def test_c3_comando_gia_in_coda_non_parte_nella_finestra_del_sync(tmp_path):
+    """C3: un ingresso SIM approvato PRIMA del settlement (CMD_QUICK_BET in coda) e consegnato dopo la rilettura del saldo
+    ma prima dello stop globale di una perdita di sessione LIVE non arriva al broker (controllo finale d'invio)."""
+    c = _banco(tmp_path, max_session_loss=30.0)
+    c.rc._session_pnl_baseline = 0.0
+    _ambiente(c, "SIM")
+    c.rc.mode = RuntimeMode.ACTIVE
+    trattenuti, reale = [], c.bus.publish
+
+    def _trattieni(topic, payload=None, *a, **k):
+        if topic == "CMD_QUICK_BET":
+            trattenuti.append(payload)
+            return None
+        return reale(topic, payload, *a, **k)
+
+    c.bus.publish = _trattieni
+    c.rc._on_signal_received(_signal(stake=2.0, bet_type="BACK", market_id="1.964"))
+    c.bus.publish = reale
+    assert trattenuti, "precondizione: ingresso approvato e in coda"
+    vero_sync = c.rc._sync_bankroll_post_settlement
+    durante = []
+
+    def _sync(p):
+        esito = vero_sync(p)              # saldo gia' riletto: resta solo la barriera fino allo stop globale
+        prima = _ordini(c)
+        for comando in trattenuti:
+            reale("CMD_QUICK_BET", comando)
+        durante.append(_ordini(c) - prima)
+        return esito
+
+    c.rc._sync_bankroll_post_settlement = _sync
+    _settle_cleared(c, 6, -40.0)
+    assert durante == [0], durante

@@ -920,6 +920,19 @@ class DutchingController:
         mode = self._mode()
         return bool(mode and str(getattr(mode, "value", mode)) == "ACTIVE")
 
+    def _financial_scope_fields(self) -> Dict[str, Any]:
+        """C2 (Codex su 60c772fe): l'identita' finanziaria viaggia nella request di ogni gamba Dutching e della puntata
+        manuale, quindi nel payload salvato in ``orders``: dopo un riavvio F018 la ricostruisce nella meta del tavolo e il
+        settlement tardivo resta nel suo ambito (una perdita SIM non finisce in quarantena ne' accende l'Emergency Stop
+        globale). Ambito non leggibile => campo assente (prenotazione senza ambito: quarantena, come prima)."""
+        scope_of = getattr(self.runtime, "_current_financial_scope", None)
+        try:
+            scope = str(scope_of() or "") if callable(scope_of) else ""
+        except Exception:
+            logger.exception("C2: ambito finanziario non leggibile per la request")
+            scope = ""
+        return {"financial_scope": scope} if scope else {}
+
     def _scope_daily_loss_block(self) -> str:
         """PR-04a (M111, PF-OWNER-PR638-M111-SIM-ENTRY-BYPASS-GO-20261116): perdita giornaliera dell'ambito corrente
         superata => nessun nuovo ingresso manuale o Dutching, con rifiuto esplicito all'ammissione. Il controllo
@@ -1634,6 +1647,7 @@ class DutchingController:
                     "market_name": payload.get("market_name", ""),
                     "runner_name": item.get("runnerName", ""),
                     "simulation_mode": bool(payload.get("simulation_mode", False)),
+                    **self._financial_scope_fields(),
                     "table_id": table_id,
                     "event_key": event_key,
                     "batch_id": batch_id,
@@ -1987,6 +2001,7 @@ class DutchingController:
                 "market_name": payload.get("market_name", ""),
                 "runner_name": payload.get("runner_name", ""),
                 "simulation_mode": bool(payload.get("simulation_mode", False)),
+                **self._financial_scope_fields(),
                 "table_id": table_id,
                 "event_key": event_key,
                 # PR26-a: ref a monte preservato; altrimenti ogni manual_bet e'

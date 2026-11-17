@@ -20,7 +20,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   suo ambito. **Cambiamento di comportamento:** una perdita SIM non attiva piu' l'Emergency Stop (test esistenti
   aggiornati alla decisione owner). Chiave di settlement salvata solo insieme allo stato aggiornato del suo ambito;
   stop SIM locale applicato anche al punto d'invio degli ingressi in coda e all'ammissione di puntata manuale e
-  Dutching (M111); CASHOUT ALL invariato. Test `tests/d1/test_pr04a_financial_scope.py`.
+  Dutching (M111); CASHOUT ALL invariato. Ciclo straordinario 11: emergenza da esposizione LIVE sulla sede LIVE anche
+  col runtime in SIM (C1), marker conservato dopo un'eccezione (S1), barriera globale della perdita di sessione LIVE
+  durante il sync (C3), prenotazioni legacy in quarantena (G1), ambito nella request di manuale e Dutching (C2),
+  libro completato dopo un doppio guasto (S2). Test `tests/d1/test_pr04a_financial_scope.py`.
 - **PR-03b-1 — quattro rilievi verificati da Claude B e Claude D (`PF-OWNER-PR03B1-FOUR-FINDINGS-GO-20261116`).**
   - **P1 (F-11 / AUD-GA-008):** un'installazione che ha gia' operato ma senza stato del drawdown persistito non prende
     piu' la prima cassa letta come massimo storico (picco storico 100, cassa 80, limite 10 %: prima picco 80 e

@@ -841,6 +841,28 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
   altrimenti perdita maggiore; breach se uno dei due); la `seq` riparte sopra quella ripristinata. Stato illeggibile
   => breach per ogni ambito fino al nuovo giorno. Un crash durante la prima scrittura v2 lascia il marker v2, che al
   riavvio si riconcilia con il record v1 senza perdere ne' la quarantena ne' le perdite d'ambito.
+- **Ciclo straordinario 11 (owner, opzione «A first, then B»; C1, S1, C3, G1, C2, S2).**
+  - *Emergenza da esposizione LIVE (C1).* L'Emergency Stop nato da un superamento LIVE o non verificabile
+    (`emergency_stop(..., live_exposure=True)`) agisce sulla sede LIVE qualunque sia la modalita' corrente del runtime
+    (prima, col runtime in SIM, leggeva e cancellava solo il broker simulato). Blocco dei nuovi ordini, cancellazione e
+    verifica restano distinti; conto LIVE irraggiungibile o ordini estranei aperti => `manual_action_required`, mai una
+    cancellazione dichiarata riuscita.
+  - *Marker dopo un'eccezione (S1).* Superamento globale proiettato ed effetto gia' applicato, ma settlement interrotto
+    prima dell'enforce: il marker durevole e il pending-stop restano, quindi al riavvio l'Emergency Stop si ripristina
+    anche se la chiave salvata fa saltare la riconsegna.
+  - *Perdita di sessione LIVE durante il sync (C3).* Dopo l'applicazione e prima del sync, una perdita di sessione di un
+    ambito che sale al globale arma una barriera dedicata (`_session_loss_pending_global`) letta sia dall'ammissione
+    (`_limits_block_reason`, qualunque sia l'ambito corrente, anche un altro conto LIVE) sia dal controllo finale
+    d'invio (comandi gia' in coda): nessun nuovo ingresso nella finestra, ma il CASHOUT_ALL dello stop globale non viene
+    bloccato. Tolta quando
+    lo stop e' registrato, da `reset_risk_stop` o `reset_emergency`.
+  - *Prenotazione legacy (G1).* Settlement `cleared:` con prenotazione nota ma senza ambito: quarantena, mai il conto
+    LIVE connesso al posto dell'identita' della prenotazione (`sim:` resta SIM per costruzione).
+  - *Puntata manuale e Dutching (C2).* L'ambito viaggia nella request di ogni gamba, quindi nel payload in `orders`:
+    dopo un riavvio F018 lo ricostruisce e una perdita SIM tardiva resta SIM (mai quarantena ne' ES globale).
+  - *Doppio guasto (S2).* Se fallisce anche il completamento del libro, la chiave resta in attesa e il salvataggio
+    successivo completa il libro (tutti gli ambiti + quarantena + chiave insieme); fino ad allora salvataggi rinviati e
+    gate `daily_loss_state_non_persistito`.
 - **EXPANSION.** La baseline del ciclo porta l'ambito del conto su cui e' stata letta; la crescita si calcola solo se
   lo snapshot del conto e' dello STESSO ambito verificato. Baseline legacy senza ambito, di un altro ambito o di un
   conto LIVE non identificato => nessuna crescita (nessun aumento di stake).
