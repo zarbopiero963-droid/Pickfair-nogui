@@ -35,6 +35,7 @@ Ognuno di questi è un aggiramento dello stop, non una procedura.
 | Inventare superamenti, perdite, sessioni, settlement o identità di conto | La storia si ricostruisce solo da fonti che la dimostrano |
 | Modificare `daily_loss_state`, lo stato dello stop di rischio o la catena `audit_events` per accorciare il blocco | Il libro illeggibile resta un superamento fino al nuovo giorno UTC, per progetto |
 | Usare l'API `reset_emergency()` prima del passo 8 | |
+| Cancellare o modificare il giornale di sicurezza `<db>.safety_pending.json` (M151) | Contiene un Emergency Stop dichiarato che il db non ha reso durevole: all'avvio prevale sul db. È un'evidenza e un blocco, non un file temporaneo |
 | Modificare `emergency_settlement_source` o `emergency_unresolved_exposure` | Sono l'evidenza dell'obbligo LIVE (M149): cancellarle insieme al registro è l'unico aggiramento che l'app non rileva |
 | Scrivere la data di attribuzione (passo 4.4) senza inventario firmato o con una data futura | La data scioglie i superamenti non identificati: senza prove è un'attribuzione inventata |
 
@@ -56,7 +57,8 @@ L'owner autorizza ogni connessione a Betfair LIVE, anche in sola lettura (passo 
 In una cartella `recovery/M148-<data-ora>/`, in sola lettura dopo la copia:
 
 1. copia byte per byte di `pickfair.db` e, se presenti, `pickfair.db-wal` e `pickfair.db-shm` (un solo insieme);
-2. copia di `pickfair.db.daily_loss_pending.json`, se presente;
+2. copia di `pickfair.db.daily_loss_pending.json` e (M151) del giornale di sicurezza `pickfair.db.safety_pending.json`,
+   se presenti; il giornale resta al suo posto (all'avvio ripristina l'Emergency Stop non durevole sul db);
 3. sha256 di ogni file copiato e dell'originale (Linux `sha256sum <file>`, Windows `certutil -hashfile <file> SHA256`):
    **devono coincidere**;
 4. il valore corrotto della chiave e il suo sha256. Con la CLI `sqlite3`, se installata:

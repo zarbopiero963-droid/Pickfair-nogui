@@ -4934,3 +4934,261 @@ def test_m149_ricostruzione_dal_libro_usa_la_chiave_giornaliera(tmp_path, proced
         assert conti == {scope_a: "PENDING"}, conti
     else:
         assert _SENT in conti, conti
+
+
+# ============================================================ M151 (owner): F1 + F2 integrati (disegno M150 rev. 3)
+def _m151_copertura(c, conto_nome=CONTO_A):
+    """Copertura protettiva del cashout (riga HEDGE_PLACED, ruolo HEDGE) + ingresso del bot, entrambi aperti su A."""
+    from core.hedge_ref import new_hedge_ref
+    href = new_hedge_ref()
+    ora = _time.time()
+    for ref, stato, bet, payload in (
+            (href, "HEDGE_PLACED", "H1", {"role": "HEDGE", "order_origin": "CASHOUT_HEDGE"}),
+            ("sig-m151-g", "PLACED", "G1", {})):
+        c.rc.db._execute("INSERT INTO orders (customer_ref, correlation_id, status, payload_json, response_json,"
+                         " created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                         (ref, "corr-" + bet, stato, json.dumps(dict(payload, simulation_mode=False,
+                                                                     market_id="1.9151")),
+                          json.dumps({"betId": bet, "status": "SUCCESS"}), ora, ora), commit=True)
+    ordini = [{"betId": b, "marketId": "1.9151", "selectionId": 1, "customerOrderRef": r, "side": s,
+               "status": "EXECUTABLE", "priceSize": {"price": 2.0, "size": 5.0}, "sizeRemaining": 5.0,
+               "sizeMatched": 0.0} for b, r, s in (("H1", href, "LAY"), ("G1", "sig-m151-g", "BACK"))]
+    return _ContoLive(conto_nome, ordini)
+
+
+def test_m151_es_manuale_in_sola_verifica_non_cancella_la_copertura(tmp_path):
+    """M151 (owner, decisione 1; CX-J2/H-c'): stop di sessione LIVE => sola verifica. Un Emergency Stop manuale nello
+    stesso processo cancella l'ingresso del bot (G1) ma MAI la copertura protettiva (H1). Prima: H1 cancellata."""
+    c = _g_banco(tmp_path, "m151h.db")
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    conto = _m151_copertura(c)
+    conto.cancella = False                                      # ordini restano visibili: si leggono le richieste
+    _connetti(c, conto)
+    _settle(c, -40.0)
+    assert c.rc._live_verify_only is True and conto.cancellazioni == []
+    c.rc.emergency_stop(reason="M151_MANUALE", live_exposure=True)
+    cancellati = {b for _m, ids in conto.cancellazioni for b in (ids or [])}
+    assert "H1" not in cancellati, f"copertura protettiva cancellata in sola verifica: {conto.cancellazioni}"
+    assert "G1" in cancellati and all(ids for _m, ids in conto.cancellazioni)
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+
+def test_m151_reset_emergency_non_durevole_non_e_un_reset(tmp_path):
+    """M151 (owner, I8; H-d/T-E6): reset dell'ES con un salvataggio che ritorna False senza scrivere => esito False,
+    ES attivo in memoria e dopo il riavvio. Prima: esito True con persist_error e ES ricomparso al riavvio."""
+    c = _m147_banco(tmp_path, "m151r.db")
+    c.rc.emergency_stop(reason="M151_SIM", live_exposure=False)
+    vero = c.rc.db.save_settings
+    c.rc.db.save_settings = lambda data, *a, **k: False
+    try:
+        esito = c.rc.reset_emergency()
+    finally:
+        c.rc.db.save_settings = vero
+    assert esito["emergency_reset"] is False and esito["reason"] == "reset_non_durevole" and c.rc._emergency_stopped
+    assert str((c.rc.db.get_settings() or {}).get("emergency_stopped")) == "1"
+    assert c.rc.reset_emergency()["emergency_reset"] is True and not c.rc._emergency_stopped
+    assert str((c.rc.db.get_settings() or {}).get("emergency_stopped")) == "0"
+
+
+def test_m151_es_non_durevole_sul_db_sopravvive_al_riavvio_dal_giornale(tmp_path):
+    """M151 (owner, I8; OP05 falso/eccezione): ES dichiarato con il db che non salva => giornale di sicurezza; al riavvio
+    l'ES c'e' (prevale sul db), viene riportato sul db e il giornale sparisce. Prima: ES perso al riavvio."""
+    import os
+    c = _m147_banco(tmp_path, "m151j.db")
+    vero = c.rc.db.save_settings
+
+    def guasto(data, *a, **k):
+        if isinstance(data, dict) and "emergency_stopped" in data:
+            raise OSError("M151: disco pieno")
+        return vero(data, *a, **k)
+    c.rc.db.save_settings = guasto
+    try:
+        esito = c.rc.emergency_stop(reason="M151_GIORNALE", live_exposure=False)
+    finally:
+        c.rc.db.save_settings = vero
+    giornale = str(tmp_path / "m151j.db") + RuntimeController._SAFETY_JOURNAL_SUFFIX
+    assert esito["persist_error"] and "giornale=scritto" in esito["persist_error"] and os.path.exists(giornale)
+    assert str((c.rc.db.get_settings() or {}).get("emergency_stopped") or "") != "1"
+    r = _copia_riavvio(tmp_path, "m151j.db")
+    assert r.rc._emergency_stopped is True and r.rc._emergency_reason == "M151_GIORNALE"
+    assert str((r.rc.db.get_settings() or {}).get("emergency_stopped")) == "1" and not os.path.exists(giornale)
+
+
+def test_m151_giornale_illeggibile_all_avvio_e_emergenza(tmp_path):
+    """M151: giornale di sicurezza presente ma corrotto => si riparte in emergenza (fail-closed)."""
+    c = _m147_banco(tmp_path, "m151jc.db")
+    with open(str(tmp_path / "m151jc.db") + RuntimeController._SAFETY_JOURNAL_SUFFIX, "w") as fh:
+        fh.write("{rotto")
+    r = _copia_riavvio(tmp_path, "m151jc.db")
+    assert r.rc._emergency_stopped is True and r.rc._emergency_reason == "EMERGENCY_STATE_UNREADABLE"
+    assert c.rc._emergency_stopped is False
+
+
+def test_m151_risk_stop_salvato_solo_se_riletto_altrimenti_marker(tmp_path):
+    """M151 (I8; T-E6 risk_stop_falso): `persist_risk_stop` con un salvataggio che ritorna False senza scrivere passa al
+    marker (lo stop sopravvive al riavvio). Prima: True dichiarato e nulla su disco."""
+    from core import risk_stop
+
+    class _Db:
+        db_path = str(tmp_path / "m151rs.db")
+
+        def __init__(self):
+            self.settings = {}
+
+        def save_settings(self, data):
+            return False
+
+        def get_settings(self):
+            return dict(self.settings)
+    db = _Db()
+    assert risk_stop.persist_risk_stop(db, "session_loss_breached:m151") is True
+    assert db.settings == {}
+    assert "session_loss_breached:m151" in open(db.db_path + ".risk_stop_pending.json").read()
+
+
+def test_m151_registro_cache_fredda_lettura_fallita_non_cancella_l_altro_conto(tmp_path):
+    """M151 (CX-J1): registro {A: PENDING} su disco, cache fredda, la lettura dentro il binding di B fallisce: A resta
+    sul disco (rilettura o nessuna scrittura). Prima: registro riscritto con il solo B."""
+    c = _m147_banco(tmp_path, "m151j1.db")
+    scope_a, scope_b = _live(c, CONTO_A), _live(c, CONTO_B)
+    _connetti(c, _ContoLive(CONTO_A))
+    RuntimeController._bind_live_account(c.rc, scope_a)
+    c.rc.__dict__.pop("_emergency_live_accounts", None)
+    vero, stato = c.rc.db.get_settings, {"fallite": 0}
+
+    def lettura(*a, **k):
+        if stato["fallite"] == 0:
+            stato["fallite"] += 1
+            raise OSError("database is locked")
+        return vero(*a, **k)
+    c.rc.db.get_settings = lettura
+    try:
+        RuntimeController._bind_live_account(c.rc, scope_b)
+    finally:
+        c.rc.db.get_settings = vero
+    disco = json.loads((c.rc.db.get_settings() or {}).get(RuntimeController._LIVE_ACCOUNTS_KEY) or "{}")
+    assert stato["fallite"] == 1 and scope_a in (disco.get("accounts") or {}), disco
+
+
+def test_m151_registro_scrittura_dell_operatore_non_cancellata_dalla_cache(tmp_path):
+    """M151 (T-E4 operatore || runtime): l'operatore aggiunge B sul disco mentre il processo gira con la cache calda;
+    il runtime registra C. B resta (il registro si rilegge prima di ogni scrittura). Prima: B cancellato."""
+    c = _m147_banco(tmp_path, "m151op.db")
+    scope_a, scope_b, scope_c = _live(c, CONTO_A), _live(c, CONTO_B), _live(c, "conto.c@example.invalid")
+    RuntimeController._bind_live_account(c.rc, scope_a)
+    assert scope_a in RuntimeController._live_bound_accounts(c.rc)              # cache calda
+    disco = json.loads(c.rc.db.get_settings()[RuntimeController._LIVE_ACCOUNTS_KEY])
+    disco["accounts"][scope_b] = {"state": "PENDING", "breaches": []}
+    c.rc.db._execute("UPDATE settings SET value = ? WHERE key = ?",
+                     (json.dumps(disco), RuntimeController._LIVE_ACCOUNTS_KEY), commit=True)
+    RuntimeController._bind_live_account(c.rc, scope_c)
+    finale = json.loads(c.rc.db.get_settings()[RuntimeController._LIVE_ACCOUNTS_KEY])["accounts"]
+    assert {scope_a, scope_b, scope_c} <= set(finale), sorted(finale)
+
+
+def test_m151_tardivi_compresi_restano_dichiarati_dopo_un_reset_annullato(tmp_path):
+    """M151 (CX-J3): i tardivi gia' compresi nel P&L della sessione tornata corrente (reset annullato) restano nel record
+    di chiusura e nel libro (riavvio): l'archivio non li somma una seconda volta. Prima: `late_keys: []`."""
+    from core import daily_loss_store
+    c = _m147_banco(tmp_path, "m151j3.db")
+    c.rc._risk_session["late_keys"] = ["cleared:1.9101:1"]
+    record = RuntimeController._risk_session_record(c.rc)
+    assert record["late_keys"] == ["cleared:1.9101:1"]
+    assert RuntimeController._closing_record(c.rc)["late_keys"] == ["cleared:1.9101:1"]
+    assert daily_loss_store.parse_risk_session(record)["late_keys"] == ["cleared:1.9101:1"]
+    with pytest.raises(ValueError):
+        daily_loss_store.parse_risk_session(dict(record, late_keys="cleared:1.9101:1"))
+
+
+def test_m151_apertura_della_sessione_lettura_transitoria_ritentata(tmp_path):
+    """M151 (K2, H-a): libro illeggibile e PRIMA lettura della chiave di apertura fallita: la lettura si ritenta e
+    l'identita' della sessione aperta resta (sessione non verificabile, stop). Prima: nessuna sessione, perdita persa."""
+    c = _m147_banco(tmp_path, "m151ha.db")
+    sid = c.rc._risk_session["id"]
+    vero, stato = c.rc.db.get_settings, {"fallite": 0}
+
+    def lettura(*a, **k):
+        if stato["fallite"] == 0:
+            stato["fallite"] += 1
+            raise OSError("database is locked")
+        return vero(*a, **k)
+    c.rc._risk_session = None
+    c.rc.db.get_settings = lettura
+    try:
+        RuntimeController._restore_risk_session(c.rc, {"risk_session": None, "risk_session_unreadable": True})
+    finally:
+        c.rc.db.get_settings = vero
+    assert stato["fallite"] == 1
+    assert (c.rc._risk_session or {}).get("id") == sid and c.rc._risk_session.get("unverifiable") is True
+    assert "illeggibile" in str(c.rc._risk_stop_reason)
+
+
+class _ContoIlleggibile(_ContoLive):
+    """Conto LIVE raggiungibile per le cancellazioni ma con gli ordini non leggibili (ramo «exchange illeggibile»)."""
+
+    def get_current_orders(self, market_ids=None):
+        self.letture += 1
+        raise OSError("M151: listCurrentOrders non disponibile")
+
+
+def test_m151_exchange_illeggibile_in_sola_verifica_non_cancella_la_copertura(tmp_path):
+    """M151 (decisione 1, ramo cieco): sola verifica attiva, exchange illeggibile, Emergency Stop manuale: si cancellano
+    per betId i soli ingressi noti del bot (G1), MAI la copertura protettiva (H1). Mutante blind_includes_hedge."""
+    c = _g_banco(tmp_path, "m151cieco.db")
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    _m151_copertura(c)
+    conto = _ContoIlleggibile(CONTO_A)
+    _connetti(c, conto)
+    c.rc._live_verify_only = True
+    c.rc.db.save_settings({RuntimeController._LIVE_VERIFY_ONLY_KEY: "1"})
+    c.rc.emergency_stop(reason="M151_CIECO", live_exposure=True)
+    cancellati = {b for _m, ids in conto.cancellazioni for b in (ids or [])}
+    assert cancellati == {"G1"}, conto.cancellazioni
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+
+def test_m151_protezione_della_sede_in_sola_verifica_non_cancella(tmp_path):
+    """M151 (CX-J2): la protezione della sede LIVE (stop globale nato dal LIVE) in sola verifica legge e verifica ma
+    non cancella nulla, copertura compresa. Mutante protect_venue_ignores_verify."""
+    c = _g_banco(tmp_path, "m151sede.db")
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    conto = _m151_copertura(c)
+    _connetti(c, conto)
+    RuntimeController._bind_live_account(c.rc, _live(c, CONTO_A))
+    c.rc._live_verify_only = True
+    esito = RuntimeController._protect_live_venue(c.rc, "M151_SEDE")
+    assert conto.letture >= 1 and conto.cancellazioni == [], (esito, conto.cancellazioni)
+    assert {o["betId"] for o in conto.ordini} == {"H1", "G1"}
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+
+def test_m151_reset_annullato_conserva_i_tardivi_compresi(tmp_path):
+    """M151 (CX-J3): annullamento del reset G1 (`_rollback_reset_switch`): la sessione d'origine torna corrente con i
+    tardivi gia' compresi nel suo P&L (`late_keys`). Mutante late_keys_rollback_dropped."""
+    c = _m147_banco(tmp_path, "m151rb.db")
+    old_id = c.rc._risk_session["id"]
+    closing = RuntimeController._switch_risk_session(c.rc)
+    assert closing is not None
+    new_id = c.rc._risk_session["id"]
+    origine = [x for x in c.rc._risk_session["closed"] if str(x.get("id")) == old_id][-1]
+    origine["late_keys"] = ["cleared:1.9101:1"]
+    assert RuntimeController._rollback_reset_switch(c.rc, {"session_id": old_id, "new_session_id": new_id,
+                                                            "operation_id": "m151"}) is True
+    assert c.rc._risk_session["id"] == old_id
+    assert c.rc._risk_session.get("late_keys") == ["cleared:1.9101:1"]
+    assert RuntimeController._closing_record(c.rc)["late_keys"] == ["cleared:1.9101:1"]
+
+
+def test_m151_tardivi_compresi_ripristinati_al_riavvio(tmp_path):
+    """M151 (CX-J3, riavvio): i `late_keys` della sessione corrente salvati nel libro tornano in memoria al riavvio.
+    Mutante late_keys_restart_dropped."""
+    c = _m147_banco(tmp_path, "m151rr.db")
+    sid = c.rc._risk_session["id"]
+    sessione = {"id": sid, "opened_at": "", "rev": 1, "delta": {"desk": -20.9, "scopes": {}, "unscoped": 0.0},
+                "closed": [], "archive_pending": [], "late_keys": ["cleared:1.9101:1"]}
+    c.rc._risk_session = None
+    RuntimeController._restore_risk_session(c.rc, {"risk_session": sessione})
+    assert c.rc._risk_session["id"] == sid and c.rc._risk_session.get("late_keys") == ["cleared:1.9101:1"]

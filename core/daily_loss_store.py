@@ -275,6 +275,10 @@ def parse_risk_session(raw: Any) -> Optional[dict]:
                "delta": _parse_delta(raw.get("delta")), "closed": closed, "archive_pending": pending}
         if raw.get("unverifiable") is True:   # M144: perdita della sessione non verificabile (libro illeggibile)
             out["unverifiable"] = True
+        if "late_keys" in raw:               # M151 (CX-J3): tardivi gia' compresi nel P&L della sessione corrente
+            if not isinstance(raw["late_keys"], list):
+                raise ValueError("tardivi della sessione corrente non validi")
+            out["late_keys"] = [str(k) for k in raw["late_keys"]]
         return out
     except ValueError:
         raise

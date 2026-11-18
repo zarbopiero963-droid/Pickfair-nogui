@@ -10,6 +10,8 @@ Verifies:
 - reset_emergency() clears the flag
 """
 
+import json
+
 import pytest
 
 from core.runtime_controller import RuntimeController
@@ -275,7 +277,8 @@ def test_emergency_stop_no_open_orders():
 @pytest.mark.unit
 @pytest.mark.safety
 def test_reset_emergency_clears_flag():
-    rc, bus = _make_rc()
+    # M151 (owner, I8): il reset e' dichiarato solo se lo stato azzerato e' riletto dal db (db con settings reali)
+    rc, bus = _make_rc(db=_PersistentDb())
     rc.emergency_stop()
     assert rc.is_emergency_stopped is True
 
@@ -290,7 +293,7 @@ def test_reset_emergency_clears_flag():
 @pytest.mark.safety
 def test_signal_allowed_after_reset_emergency_and_restart():
     """After reset_emergency(), signals are gated normally (not by emergency stop)."""
-    rc, bus = _make_rc()
+    rc, bus = _make_rc(db=_PersistentDb())
     rc.emergency_stop()
     _riconcilia_conto_live(rc)
     rc.reset_emergency()
@@ -678,14 +681,16 @@ def test_unreadable_settings_at_startup_fails_closed_into_emergency():
     IN emergenza (fail-closed), e la riapre solo reset_emergency()."""
     class _UnreadableDb(_Db):
         readable = False
+        settings: dict = {}
 
         def get_settings(self):
             if not self.readable:
                 raise RuntimeError("database is locked")
-            return {}
+            return dict(self.settings)
 
-        def save_settings(self, _data):
-            return None
+        def save_settings(self, data):
+            # M151 (I8): tornate leggibili, le scritture sono durevoli e rileggibili (come la tabella reale)
+            self.settings = dict(self.settings, **{str(k): str(v) for k, v in (data or {}).items()})
 
     db = _UnreadableDb()
     rc, bus = _make_rc(db=db)
@@ -703,10 +708,21 @@ def test_unreadable_settings_at_startup_fails_closed_into_emergency():
     assert esito.get("emergency_reset") is False
     assert esito.get("reason") == "esposizione_live_irrisolta"
     assert rc.is_emergency_stopped is True
-    # Uscita esplicita: tornate leggibili (registro vuoto), reset_emergency() riapre.
+    # M151: tornate leggibili con un db che PERSISTE davvero, l'esito LIVE dello sweep (provenienza ignota = LIVE) e'
+    # durevole e il registro dei conti e' vuoto: incoerenza M149 (C), mai «nessun vincolo». Il reset resta rifiutato
+    # finche' la procedura M148 non registra il conto con prove (prima la stub non salvava nulla e lo nascondeva).
     db.readable = True
     _riconcilia_conto_live(rc)
-    rc.reset_emergency()
+    esito = rc.reset_emergency()
+    assert esito.get("emergency_reset") is False
+    assert rc.is_emergency_stopped is True
+    # Procedura M148 (passo 4): il conto identificato entra PENDING; poi riconciliazione reale e reset.
+    scope = rc._financial_scope_for(False)
+    db.save_settings({RuntimeController._LIVE_ACCOUNTS_KEY: json.dumps(
+        {"version": 2, "accounts": {scope: {"state": "PENDING", "breaches": []}}})})
+    rc.__dict__.pop("_emergency_live_accounts", None)
+    _riconcilia_conto_live(rc)
+    assert rc.reset_emergency().get("emergency_reset") is True
     assert rc.is_emergency_stopped is False
 
 
@@ -753,8 +769,9 @@ def test_persisted_emergency_flag_values_are_parsed_strictly(persisted_value, ex
 @pytest.mark.unit
 @pytest.mark.safety
 def test_reset_persist_failure_is_reported_and_memory_state_resets():
-    """Simmetrico del persist fallito: anche in reset_emergency() l'errore
-    e' visibile, ma lo stato in memoria viene comunque resettato."""
+    """M151 (owner, invariante 8, H-d): un reset non durevole NON e' un reset. Prima l'errore era visibile ma lo stato
+    in memoria veniva comunque azzerato (memoria e disco divergenti, ES ricomparso al riavvio). Ora: esito False,
+    errore riportato, Emergency Stop ancora attivo e segnali ancora rifiutati (fail-closed)."""
     class _BrokenSettingsDb(_Db):
         def save_settings(self, _data):
             raise RuntimeError("disk full")
@@ -768,10 +785,12 @@ def test_reset_persist_failure_is_reported_and_memory_state_resets():
     _riconcilia_conto_live(rc)
     result = rc.reset_emergency()
 
-    assert rc.is_emergency_stopped is False
+    assert result.get("emergency_reset") is False
+    assert result.get("reason") == "reset_non_durevole"
     assert result.get("persist_error")
+    assert rc.is_emergency_stopped is True
     rc._on_signal_received({"market_type": "NEXT_GOAL"})
-    assert not any(
+    assert any(
         "emergency_stop_active" in r["reason"] for r in _signal_rejections(bus)
     )
 

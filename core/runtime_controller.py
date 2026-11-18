@@ -1553,6 +1553,10 @@ class RuntimeController:
                   "archive_pending": list(session.get("archive_pending") or [])}
         if session.get("unverifiable"):
             record["unverifiable"] = True        # M144: perdita non verificabile, si chiude solo col reset G1
+        if session.get("late_keys"):
+            # M151 (CX-J3): tardivi gia' compresi nel P&L della sessione CORRENTE (riportati da un reset annullato):
+            # alla chiusura entrano nel record, e il LATE_SETTLEMENT gia' nel registro non si somma una seconda volta
+            record["late_keys"] = sorted(str(k) for k in session["late_keys"])
         return record
 
     def _restore_risk_session(self, book: dict) -> None:
@@ -1562,8 +1566,17 @@ class RuntimeController:
         session = book.get("risk_session")
         opened = None
         try:
-            raw = (self.db.get_settings() or {}).get(RuntimeController._RISK_SESSION_OPEN_KEY) \
-                if hasattr(self.db, "get_settings") else ""
+            # M151 (K2, H-a): una lettura FALLITA non e' un'assenza: si ritenta una volta prima di dichiararla
+            # illeggibile (fail-closed), cosi' un errore transitorio non fa perdere l'identita' della sessione aperta
+            for attempt in range(2):
+                try:
+                    raw = (self.db.get_settings() or {}).get(RuntimeController._RISK_SESSION_OPEN_KEY) \
+                        if hasattr(self.db, "get_settings") else ""
+                    break
+                except Exception:
+                    if attempt:
+                        raise
+                    logger.warning("F1: lettura dell'apertura della sessione di rischio fallita: nuovo tentativo")
             opened = json.loads(raw) if raw else None
             if opened is not None and not (isinstance(opened, dict) and str(opened.get("id") or "")):
                 raise ValueError("apertura della sessione di rischio non valida")
@@ -1602,6 +1615,8 @@ class RuntimeController:
                                   "archive_pending": list(session.get("archive_pending") or [])}
             if session.get("unverifiable"):
                 self._risk_session["unverifiable"] = True
+            if session.get("late_keys"):
+                self._risk_session["late_keys"] = list(session["late_keys"])     # M151 (CX-J3)
             logger.info("F1: sessione di rischio %s ripristinata (P&L di sessione %.2f)", session["id"], delta["desk"])
         RuntimeController._risk_ledger_startup(self)              # G1 + G2 (owner M139), recupero M144
         if self.__dict__.get("_risk_session"):
@@ -1726,6 +1741,12 @@ class RuntimeController:
                                   "rev": int(origin.get("rev") or 0) + int(session.get("rev") or 0) + 1,
                                   "closed": closed, "last": merged,
                                   "archive_pending": list(session.get("archive_pending") or [])}
+            # M151 (CX-J3): i tardivi entrati nella sessione d'origine mentre era chiusa (gia' nel suo P&L e nel registro)
+            # restano «compresi» anche da corrente: la chiusura successiva li dichiara, l'archivio non li ri-somma
+            late = sorted({str(k) for k in (origin.get("late_keys") or [])}
+                          | {str(k) for k in (session.get("late_keys") or [])})
+            if late:
+                self._risk_session["late_keys"] = late
             RuntimeController._persist_daily_loss_book(self)
             saved = not loss_limits.persist_failed(getattr(self, "_daily_loss_persisted", None))
             opened = RuntimeController._save_risk_session_open(self, self._risk_session)
@@ -1770,7 +1791,8 @@ class RuntimeController:
         if not current:
             return None
         return {"id": current["id"], "delta": current["delta"], "closed_at": datetime.utcnow().isoformat(),
-                "opened_at": current.get("opened_at") or "", "rev": int(current.get("rev") or 0), "late_keys": [],
+                "opened_at": current.get("opened_at") or "", "rev": int(current.get("rev") or 0),
+                "late_keys": list(current.get("late_keys") or []),
                 "limit": getattr(getattr(self, "config", None), "max_session_loss", None),
                 "accounts": sorted(RuntimeController._live_bound_accounts(self) or {})}
 
@@ -3543,6 +3565,17 @@ class RuntimeController:
         """
         try:
             settings = self.db.get_settings() if hasattr(self.db, "get_settings") else {}
+            # M151 (I8): un'emergenza dichiarata ma non durevole sul db vive nel giornale di sicurezza: prevale sul db
+            # (solo un reset DUREVOLE la toglie) e si riporta sul db appena possibile. Giornale illeggibile => emergenza.
+            journal = RuntimeController._read_safety_journal(self)
+            if journal is None:
+                raise OSError("giornale di sicurezza illeggibile")
+            if str(journal.get("emergency_stopped") or "").strip() == "1":
+                settings = dict(settings or {}, **journal)
+                if not RuntimeController._durable_save_settings(self, {
+                        k: journal.get(k, "") for k in ("emergency_stopped", "emergency_stopped_at",
+                                                         "emergency_reason", "emergency_settlement_source")}):
+                    logger.critical("M151: Emergency Stop del giornale di sicurezza riportato sul db")
             flag = str((settings or {}).get("emergency_stopped", "")).strip().lower()
             if flag not in {"1", "true"}:
                 return
@@ -3629,6 +3662,41 @@ class RuntimeController:
         self._live_breaches = breaches
         return accounts
 
+    def _live_registry_for_update(self) -> Optional[dict]:
+        """M151 (CX-J1, operatore || runtime): base FRESCA di ogni lettura-modifica-scrittura del registro, riletta dal
+        disco (non dalla cache) e unita alla memoria: una voce ancora solo in memoria (salvataggio fallito) resta,
+        PENDING prevale su VERIFIED, la storia dei superamenti si unisce per chiave. Lettura fallita due volte => None:
+        il chiamante NON scrive (mai un registro ricostruito dal nulla che cancelli conti sul disco). Chiamare col
+        lock del registro."""
+        mem_accounts = self.__dict__.get("_emergency_live_accounts")
+        mem_accounts = dict(mem_accounts) if isinstance(mem_accounts, dict) else {}
+        mem_history = {k: list(v or []) for k, v in (self.__dict__.get("_live_breaches") or {}).items()}
+        fresh = None
+        for _ in range(2):
+            self.__dict__.pop("_emergency_live_accounts", None)
+            fresh = RuntimeController._live_bound_accounts(self)
+            if fresh is not None:
+                break
+        if fresh is None:
+            if mem_accounts or "_live_breaches" in self.__dict__:
+                self._emergency_live_accounts = mem_accounts      # cache ripristinata, nessuna scrittura
+            logger.critical("M151: registro dei conti LIVE non rileggibile: nessuna scrittura (fail-closed)")
+            return None
+        merged = dict(fresh)
+        if RuntimeController._LIVE_ACCOUNTS_UNREADABLE in merged:
+            return merged
+        for scope, state in mem_accounts.items():
+            if scope not in merged or state == "PENDING":
+                merged[scope] = state if scope not in merged else "PENDING"
+        history = self.__dict__.setdefault("_live_breaches", {})
+        for scope, items in mem_history.items():
+            known = list(history.get(scope) or [])
+            keys = {str(b.get("key")) for b in known}
+            known.extend(b for b in items if str(b.get("key")) not in keys)
+            history[scope] = known
+        self._emergency_live_accounts = merged
+        return dict(merged)
+
     @staticmethod
     def _parse_live_registry(raw: Any) -> tuple:
         """M147: registro unico dei superamenti LIVE. v2 = {"version": 2, "accounts": {ambito: {"state", "breaches"}}};
@@ -3703,7 +3771,12 @@ class RuntimeController:
                 logger.critical("M149: obbligo LIVE con conto non identificabile: sentinella PENDING (procedura M148)")
                 target = RuntimeController._LIVE_ACCOUNT_UNIDENTIFIED
             with self.__dict__.setdefault("_live_accounts_lock", threading.RLock()):
-                accounts = dict(RuntimeController._live_bound_accounts(self) or {})
+                accounts = RuntimeController._live_registry_for_update(self)
+                if accounts is None:
+                    # M151 (CX-J1): registro non rileggibile => nessuna scrittura; l'obbligo resta (ES attivo) e il
+                    # vincolo si ricrea al prossimo tentativo (`_live_binding_failed`)
+                    self._live_binding_failed = True
+                    return target
                 if RuntimeController._LIVE_ACCOUNTS_UNREADABLE in accounts:
                     # registro illeggibile: resta tale (nessun conto certifica), mai sovrascritto da una registrazione
                     logger.critical("M147: registro dei conti illeggibile: superamento di %s non registrabile", target)
@@ -3769,7 +3842,10 @@ class RuntimeController:
         ancora verificati => esposizione non chiusa (`accounts_pending`), intervento manuale."""
         try:
             with self.__dict__.setdefault("_live_accounts_lock", threading.RLock()):
-                accounts = dict(RuntimeController._live_bound_accounts(self) or {})
+                accounts = RuntimeController._live_registry_for_update(self)
+                if accounts is None:
+                    result["manual_action_required"] = True     # M151: registro non rileggibile, nulla si certifica
+                    return
                 if not accounts:
                     if self.__dict__.get("_emergency_stopped") and RuntimeController._live_obligation_recorded(self):
                         # M149 (C): obbligo LIVE con registro vuoto: lo sweep non chiude mai l'esposizione
@@ -3793,7 +3869,7 @@ class RuntimeController:
         """N6: al reset di uno stop i conti verificati escono dal vincolo; quelli ancora PENDING restano."""
         try:
             with self.__dict__.setdefault("_live_accounts_lock", threading.RLock()):
-                accounts = RuntimeController._live_bound_accounts(self)
+                accounts = RuntimeController._live_registry_for_update(self)
                 if not accounts:
                     return
                 remaining = {k: v for k, v in accounts.items() if v != "VERIFIED"}
@@ -4052,7 +4128,9 @@ class RuntimeController:
         """Ciclo 12 (N2): sweep verificato sulla sede LIVE per uno stop globale nato dal LIVE col runtime in SIM."""
         try:
             with RuntimeController._live_sweep_lock(self):
-                sweep = self._emergency_cancel_and_verify(was_live=True)
+                # M151 (CX-J2): la sola verifica vale anche per la protezione della sede (conto aggiunto allo stop)
+                sweep = self._emergency_cancel_and_verify(
+                    was_live=True, cancel=not bool(self.__dict__.get("_live_verify_only")))
         except Exception as exc:
             logger.exception("ciclo 12: protezione della sede LIVE fallita")
             sweep = {"verification": "UNVERIFIED", "manual_action_required": True, "error": str(exc), "client": None}
@@ -4193,22 +4271,108 @@ class RuntimeController:
             self._emergency_reconcile_pending = True
             RuntimeController._ensure_live_recovery(self)
 
+    def _emergency_state_payload(self) -> dict:
+        return {
+            "emergency_stopped": "1" if self._emergency_stopped else "0",
+            "emergency_stopped_at": self._emergency_stopped_at,
+            "emergency_reason": self._emergency_reason,
+            # PF-ALL-F027 / Codex r4311806886: provenienza dei settlement nello STESSO salvataggio del flag
+            "emergency_settlement_source": getattr(self, "_settlement_source_before_emergency", "") or "",
+        }
+
     def _persist_emergency_state(self) -> str:
-        """Persiste lo stato di emergenza; ritorna '' o l'errore (mai raise)."""
+        """Persiste lo stato di emergenza; ritorna '' o l'errore (mai raise).
+
+        M151 (I8): '' solo se lo stato e' RILETTO identico dal db. Un'emergenza ATTIVA non durevole sul db va nel
+        giornale di sicurezza (`<db>.safety_pending.json`, scrittura atomica) e si ripristina all'avvio: l'Emergency
+        Stop dichiarato non sparisce con un riavvio. Il reset (flag a 0) non usa mai il giornale: o e' durevole sul
+        db, o non avviene (`reset_emergency`)."""
         if not hasattr(self.db, "save_settings"):
             return "db_save_settings_unavailable"
-        try:
-            self.db.save_settings({
-                "emergency_stopped": "1" if self._emergency_stopped else "0",
-                "emergency_stopped_at": self._emergency_stopped_at,
-                "emergency_reason": self._emergency_reason,
-                # PF-ALL-F027 / Codex r4311806886: provenienza dei settlement nello STESSO salvataggio del flag
-                "emergency_settlement_source": getattr(self, "_settlement_source_before_emergency", "") or "",
-            })
+        payload = RuntimeController._emergency_state_payload(self)
+        error = RuntimeController._durable_save_settings(self, payload)
+        if not error:
             return ""
+        logger.error("emergency_state: persist failed (%s)", error)
+        if self._emergency_stopped:
+            journaled = RuntimeController._journal_safety_state(self, payload)
+            return f"{error}; giornale={'scritto' if journaled else 'NON scritto'}"
+        return error
+
+    _SAFETY_JOURNAL_SUFFIX = ".safety_pending.json"
+
+    def _safety_journal_path(self) -> str:
+        try:
+            path = os.fspath(getattr(self.db, "db_path", None))
+        except TypeError:
+            return ""
+        if not isinstance(path, str) or path in ("", ":memory:"):
+            return ""
+        return path + RuntimeController._SAFETY_JOURNAL_SUFFIX
+
+    def _durable_save_settings(self, data: dict) -> str:
+        """M151 (I8): salva e RILEGGE; '' se ogni chiave e' sul db identica, altrimenti l'errore. Mai raise. Una
+        scrittura durevole delle chiavi dell'emergenza ne toglie le copie dal giornale di sicurezza."""
+        try:
+            self.db.save_settings(dict(data))
+            readback = self.db.get_settings() if hasattr(self.db, "get_settings") else None
+            if not isinstance(readback, dict):
+                raise OSError("rilettura non disponibile")
+            diverse = sorted(k for k, v in data.items() if str(readback.get(k) or "") != str(v or ""))
+            if diverse:
+                raise OSError(f"chiavi non rilette: {diverse}")
         except Exception as exc:
-            logger.exception("emergency_state: persist failed")
-            return str(exc)
+            return str(exc) or exc.__class__.__name__
+        return "" if RuntimeController._drop_safety_journal(self, data) else "giornale di sicurezza non ripulito"
+
+    def _read_safety_journal(self) -> Optional[dict]:
+        """{} se assente; None se presente ma illeggibile (fail-closed per il chiamante)."""
+        path = RuntimeController._safety_journal_path(self)
+        if not path or not os.path.exists(path):
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            logger.exception("M151: giornale di sicurezza illeggibile")
+            return None
+
+    def _journal_safety_state(self, payload: dict) -> bool:
+        from core.atomic_io import atomic_write_text
+        path = RuntimeController._safety_journal_path(self)
+        if not path:
+            return False
+        try:
+            current = RuntimeController._read_safety_journal(self) or {}
+            current.update({k: str(v or "") for k, v in payload.items()})
+            atomic_write_text(path, json.dumps(current, sort_keys=True))
+            logger.critical("M151: stato di sicurezza non durevole sul db: scritto nel giornale %s", path)
+            return True
+        except Exception:
+            logger.exception("M151: giornale di sicurezza non scrivibile (stato solo in memoria)")
+            return False
+
+    def _drop_safety_journal(self, keys) -> bool:
+        from core.atomic_io import atomic_write_text
+        path = RuntimeController._safety_journal_path(self)
+        if not path or not os.path.exists(path):
+            return True
+        try:
+            current = RuntimeController._read_safety_journal(self)
+            if current is None:
+                return False                             # illeggibile: resta (fail-closed all'avvio)
+            remaining = {k: v for k, v in current.items() if k not in set(keys)}
+            if remaining == current:
+                return True
+            if remaining:
+                atomic_write_text(path, json.dumps(remaining, sort_keys=True))
+            else:
+                os.remove(path)
+            return True
+        except Exception:
+            logger.exception("M151: giornale di sicurezza non ripulito")
+            return False
 
     def _persist_db_emergency_marker(self, *, active: bool, reason: str = "", live_exposure: bool = False,
                                      scope: Optional[str] = None) -> str:
@@ -4257,6 +4421,13 @@ class RuntimeController:
         To resume trading after an emergency stop you MUST call reset_emergency()
         first, then start() again.
         """
+        with self.__dict__.setdefault("_safety_state_lock", threading.RLock()):
+            persist_error = RuntimeController._declare_emergency_locked(self, reason, live_exposure, scope)
+        return RuntimeController._emergency_stop_after_declare(self, persist_error)
+
+    def _declare_emergency_locked(self, reason: str, live_exposure: bool, scope: Optional[str]) -> str:
+        """M151 (K1): dichiarazione dell'Emergency Stop (flag, provenienza, conto, persistenza durevole) serializzata
+        col reset: memoria e disco non divergono mai per un interleaving ES || reset."""
         triggered_at = datetime.utcnow().isoformat()
         self._emergency_stopped = True
         self._emergency_stopped_at = triggered_at
@@ -4282,8 +4453,10 @@ class RuntimeController:
 
         # Persist SUBITO (prima del cancel): anche se il processo muore
         # durante il cancel-all, il riavvio riparte in emergenza.
-        persist_error = self._persist_emergency_state()
+        return self._persist_emergency_state()
 
+    def _emergency_stop_after_declare(self, persist_error: str) -> dict:
+        triggered_at = self._emergency_stopped_at
         # Hard-close live gate
         self.live_enabled = False
         
@@ -4429,7 +4602,8 @@ class RuntimeController:
                 out.append({"source": "orders", "order_id": str(item.get("id") or ""),
                             "market_id": str(payload.get("market_id") or payload.get("marketId") or "").strip(),
                             "bet_id": self.db._order_bet_id(response) if response else "",
-                            "customer_ref": ms_ref or str(item.get("customer_ref") or ""), "status": status})
+                            "customer_ref": ms_ref or str(item.get("customer_ref") or ""), "status": status,
+                            "protective": RuntimeController._is_protective_order(status, payload)})
         except Exception as exc:
             logger.exception("emergency_stop: lettura della tabella orders fallita")
             cancel_errors.append({"stage": "read_orders", "error": str(exc)})
@@ -4450,6 +4624,27 @@ class RuntimeController:
     # Rifiuto PRE-invio (TradingEngine: risk gate su una riga INFLIGHT mai trasmessa; la macchina a stati ammette DENIED
     # solo da INFLIGHT, mai da SUBMITTED o AMBIGUOUS). Chiuso solo senza alcuna traccia di trasmissione.
     _EMERGENCY_PRE_SEND_STATUSES = frozenset({"DENIED"})
+
+    @staticmethod
+    def _is_protective_order(status: str, payload: dict) -> bool:
+        """M151 (K3): copertura protettiva del cashout (hedge): riga HEDGE_PLACED o richiesta col ruolo HEDGE."""
+        payload = payload if isinstance(payload, dict) else {}
+        return (str(status or "").upper() == "HEDGE_PLACED" or str(payload.get("role") or "").upper() == "HEDGE"
+                or "HEDGE" in str(payload.get("order_origin") or "").upper())
+
+    def _hedge_guard_active(self) -> bool:
+        """M151 (owner, decisione 1): protezione delle coperture attiva se e' attiva la sola verifica LIVE, in memoria o
+        salvata (`emergency_live_verify_only`: l'Emergency Stop azzera solo la copia in memoria, N7, quella salvata
+        resta). Lettura fallita => attiva (fail-closed)."""
+        if self.__dict__.get("_live_verify_only"):
+            return True
+        try:
+            settings = self.db.get_settings() if hasattr(self.db, "get_settings") else {}
+            settings = settings or {}
+            return str(settings.get(RuntimeController._LIVE_VERIFY_ONLY_KEY) or "").strip() == "1"
+        except Exception:
+            logger.exception("M151: protezione delle coperture non verificabile (attiva, fail-closed)")
+            return True
 
     def _emergency_transmission_evidence(self, response) -> bool:
         """Traccia persistente che l'ordine possa essere arrivato all'exchange: betId, esito ignoto o ref Microstake."""
@@ -4695,6 +4890,19 @@ class RuntimeController:
 
         cancel_results, cancelled_count, error_count = [], 0, 0
         blind = before is None           # exchange illeggibile: si cancellano solo i betId noti del bot (Sol su 7094b1a6)
+        # M151 (owner, decisione 1; K3): con la protezione delle coperture attiva (sola verifica LIVE corrente, salvata o
+        # vincolata all'ES) nessuno sweep cancella una COPERTURA PROTETTIVA, di qualunque conto; gli ingressi del bot
+        # si cancellano come prima. Le coperture restano esposizione aperta da riconciliare (intervento manuale).
+        protected_bets: set = set()
+        if was_live and RuntimeController._hedge_guard_active(self):
+            protected_refs = {c["customer_ref"] for c in candidates if c.get("protective") and c["customer_ref"]}
+            protected_bets = {c["bet_id"] for c in candidates if c.get("protective") and c["bet_id"]}
+            for o in before or []:
+                if str(o.get("customerOrderRef") or o.get("customer_ref") or "") in protected_refs:
+                    protected_bets.add(str(o.get("betId") or o.get("bet_id") or ""))
+            protected_bets.discard("")
+            for mid in list(targets):
+                targets[mid] = [b for b in targets[mid] if b not in protected_bets]
         if markets and client is None:
             cancel_errors.append({"stage": "cancel", "venue": venue, "error": "client non disponibile"})
             error_count = sum(max(1, len(v)) for v in markets.values())
@@ -4705,8 +4913,8 @@ class RuntimeController:
                 # Exchange illeggibile: mai il cancel dell'intero mercato, che toccherebbe ordini manuali o di altri
                 # programmi; si cancellano i betId del bot noti nel ledger, il resto (invii senza betId) resta
                 # all'operatore come invio irrisolto, con esito UNVERIFIED (Sol su 7094b1a6).
-                bet_ids = (sorted({o["bet_id"] for o in orders if o["bet_id"]}) if blind
-                           else targets.get(market_id, []))
+                bet_ids = (sorted({o["bet_id"] for o in orders if o["bet_id"] and o["bet_id"] not in protected_bets})
+                           if blind else targets.get(market_id, []))
                 if bet_ids == []:
                     continue             # nessun betId del bot da cancellare su questo mercato: solo verifica
                 market_block = self._authority_definitively_lost()   # Sol su 9a80162: prima di ogni mercato
@@ -4936,6 +5144,21 @@ class RuntimeController:
         (`esposizione_live_irrisolta`, con i conti in sospeso). M147-D1: se resta un RISK_STOP globale, le
         verifiche dei conti e l'esito LIVE verificato NON si cancellano (servono a quello stop).
         """
+        # M151 (K1, I8): serializzato con la dichiarazione dell'Emergency Stop; dichiarato riuscito SOLO se lo stato
+        # azzerato e' riletto dal db. Reset non durevole => l'ES resta (in memoria e su disco), esito False.
+        with self.__dict__.setdefault("_safety_state_lock", threading.RLock()):
+            out = RuntimeController._reset_emergency_locked(self)
+        if not out.get("emergency_reset"):
+            return out
+        with self._daily_loss_stop_lock:
+            self._daily_loss_pending_stop = False
+        risk_reason = str(self.__dict__.get("_risk_stop_reason") or "")
+        if not (risk_reason and not RuntimeController._risk_stop_scope(risk_reason)):
+            RuntimeController._clear_resolved_live_exposure(self)     # Codex P1 su b902eca3
+        self.bus.publish("EMERGENCY_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
+        return out
+
+    def _reset_emergency_locked(self) -> dict:
         accounts = RuntimeController._live_bound_accounts(self)
         pending = sorted(k for k, v in (accounts or {}).items() if v != "VERIFIED") if accounts is not None else ["?"]
         state = RuntimeController._live_exposure_status(self).get("state")
@@ -4954,19 +5177,23 @@ class RuntimeController:
             logger.critical("M149: reset dell'Emergency Stop rifiutato: obbligo LIVE con registro dei conti vuoto")
             return {"emergency_reset": False, "reason": "registro_incoerente_obbligo_live", "accounts_pending": [],
                     "exposure_state": state}
+        cleared = {"emergency_stopped": "0", "emergency_stopped_at": "", "emergency_reason": "",
+                   "emergency_settlement_source": ""}
+        error = RuntimeController._durable_save_settings(self, cleared) if hasattr(self.db, "save_settings") \
+            else "db_save_settings_unavailable"
+        if error:
+            if self._emergency_stopped:
+                # il db potrebbe essere stato scritto a meta': si ri-persiste lo stato attivo (giornale se serve)
+                RuntimeController._persist_emergency_state(self)
+            logger.critical("M151: reset dell'Emergency Stop NON durevole (%s): l'Emergency Stop resta", error)
+            return {"emergency_reset": False, "reason": "reset_non_durevole", "persist_error": error,
+                    "exposure_state": state}
         self._emergency_stopped = False
         self._emergency_stopped_at = ""
         self._emergency_reason = ""
         self._settlement_source_before_emergency = ""
         self._session_loss_pending_global = False
-        with self._daily_loss_stop_lock:
-            self._daily_loss_pending_stop = False
-        persist_error = self._persist_emergency_state()
-        risk_reason = str(self.__dict__.get("_risk_stop_reason") or "")
-        if not (risk_reason and not RuntimeController._risk_stop_scope(risk_reason)):
-            RuntimeController._clear_resolved_live_exposure(self)     # Codex P1 su b902eca3
-        self.bus.publish("EMERGENCY_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
-        return {"emergency_reset": True, "persist_error": persist_error}
+        return {"emergency_reset": True, "persist_error": ""}
 
     @staticmethod
     def _settlement_realization_unproven(effect: Optional[dict], pnl: float) -> bool:

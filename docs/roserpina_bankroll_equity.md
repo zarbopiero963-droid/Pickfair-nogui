@@ -1054,6 +1054,32 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
     reale prima del reset, conto di login nei finti LIVE).
     **M147-D1:** il reset di uno stop non cancella verifiche ed esito LIVE se resta attivo l'altro stop globale (ES o
     RISK_STOP): ES + stop di sessione si sciolgono senza stallo quando tutti i conti sono verificati.
+    **M151 (owner, F1 + F2 integrati, disegno M150 rev. 3):**
+    - *Coperture protettive (decisione 1, K3):* con la sola verifica LIVE attiva (in memoria o salvata in
+      `emergency_live_verify_only`) nessuno sweep dell'Emergency Stop cancella una copertura protettiva del cashout
+      (riga `HEDGE_PLACED`, ruolo `HEDGE` o origine `CASHOUT_HEDGE`, e il betId che ne porta il ref), di qualunque
+      conto, neanche nel ramo «exchange illeggibile»; gli ingressi del bot si cancellano come prima. La protezione
+      della sede LIVE (conto aggiunto allo stop) rispetta la sola verifica (CX-J2). Le coperture restano esposizione
+      aperta da riconciliare: nessun conto e' dichiarato verificato con una copertura aperta.
+    - *Durabilita' (invariante 8):* lo stato dell'Emergency Stop e' dichiarato persistito solo se riletto identico
+      dal db. Se il db non lo rende durevole, un ES ATTIVO va nel giornale di sicurezza `<db>.safety_pending.json`
+      (scrittura atomica): all'avvio il giornale prevale sul db, viene riportato sul db e poi rimosso; giornale
+      illeggibile => si riparte in emergenza. `reset_emergency()` e la dichiarazione dell'ES sono serializzati
+      (`_safety_state_lock`): il reset avviene solo se lo stato azzerato e' riletto dal db, altrimenti esito
+      `reset_non_durevole` e l'ES resta in memoria e su disco (prima: memoria azzerata con `persist_error`, ES
+      ricomparso al riavvio, H-d). Lo stop di rischio (`persist_risk_stop`) e' salvato sul db solo se riletto,
+      altrimenti marker (T-E6).
+    - *Registro dei conti (CX-J1, operatore || runtime):* ogni lettura-modifica-scrittura del registro riparte da una
+      rilettura dal disco (non dalla cache), unita alla memoria (PENDING prevale, storia unita per chiave); due letture
+      fallite => nessuna scrittura (mai un registro ricostruito dal nulla che cancelli un conto sul disco).
+    - *Tardivi e reset annullato (CX-J3):* i tardivi entrati nella sessione d'origine mentre il reset G1 era in corso
+      restano «compresi» (`late_keys` della sessione corrente, salvati nel libro) quando il reset si annulla: alla
+      chiusura il record li dichiara e l'archivio non li somma una seconda volta.
+    - *Letture transitorie all'avvio (K2, H-a):* una lettura fallita della chiave di apertura della sessione di
+      rischio si ritenta prima di dichiararla illeggibile: l'identita' della sessione aperta non si perde.
+    Cambio di contratto dichiarato: un reset non durevole non e' piu' un reset (test esistenti di
+    `tests/safety/test_emergency_stop.py` adeguati: db con impostazioni reali; uscita da impostazioni illeggibili
+    all'avvio tramite la procedura M148 quando il db, tornato leggibile, conserva l'esito LIVE).
   - *G2 — archivio delle sessioni chiuse (owner M139).* Le ultime 20 chiuse restano nel libro come finestra operativa;
     l'archivio durevole è il registro append-only (`SESSION_CLOSED`: id, apertura e chiusura, P&L per ambito, conti,
     limite), senza eliminazione automatica, verificato dalla catena di hash a ogni lettura. Una sessione esce dalla
