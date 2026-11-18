@@ -1037,6 +1037,10 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
     senza conti registrati (manuale, SIM) si toglie come prima. Impostazioni non leggibili (es. lock SQLite, anche
     l'emergenza `EMERGENCY_STATE_UNREADABLE` all'avvio) => registro non leggibile => reset rifiutato; riapre quando le
     impostazioni tornano leggibili e nessun conto e' PENDING (`tests/safety/test_emergency_stop.py`).
+    **M148:** un registro illeggibile non si toglie mai dall'app; l'uscita e' la procedura operatore
+    [`ops/live_registry_recovery.md`](../ops/live_registry_recovery.md) (ricostruzione da fonti verificabili, tutti i
+    conti PENDING, riconciliazione reale di ogni conto, doppia conferma). Svuotare la chiave o scrivere VERIFIED a mano
+    e' un aggiramento vietato.
     **M147-D1:** il reset di uno stop non cancella verifiche ed esito LIVE se resta attivo l'altro stop globale (ES o
     RISK_STOP): ES + stop di sessione si sciolgono senza stallo quando tutti i conti sono verificati.
   - *G2 — archivio delle sessioni chiuse (owner M139).* Le ultime 20 chiuse restano nel libro come finestra operativa;
