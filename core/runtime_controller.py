@@ -2570,9 +2570,11 @@ class RuntimeController:
                            else "risk_stop_di_altro_ambito") or stop_rules.reset_blocker(self, at_start)
             finally:
                 self._risk_session_closing = False
-            if not blocker and session_breached and RuntimeController._live_exposure_status(self).get(
-                    "state") not in ("NESSUNA", "VERIFICATA"):
-                blocker = "esposizione_live_irrisolta"
+            if not blocker and not at_start and (session_breached or not RuntimeController._risk_stop_scope(
+                    str(self._risk_stop_reason or ""))):
+                # M152 (CX-L2): per OGNI reset di uno stop globale (non solo quello che chiude una sessione superata)
+                # un obbligo LIVE irrisolto blocca, PRIMA di spegnere sola verifica e protezione delle coperture
+                blocker = RuntimeController._live_reset_blocker(self)
             if blocker:
                 return {"risk_stop_reset": False, "reason": blocker}
             if not self._risk_stop_reason:
@@ -2734,6 +2736,30 @@ class RuntimeController:
                                                  dict(payload, outcome="annullato_all_avvio", recovered=True))
         RuntimeController._finish_completed_reset(self, status)
 
+    def _live_reset_blocker(self) -> str:
+        """M152 (CX-L2): condizione unica, per ogni percorso di reset di uno stop GLOBALE (completamento da audit e
+        reset normale, superato o no): un obbligo LIVE irrisolto impedisce il reset. Irrisolto = registro dei conti
+        illeggibile o non leggibile, un conto non VERIFIED (sentinella compresa), un obbligo in sospeso (CX-K2), o
+        un'esposizione LIVE diversa da NESSUNA/VERIFICATA con una prova LIVE (record dello sweep, riconciliazione in
+        attesa o obbligo LIVE salvato). '' se nulla blocca. Mai raise (errore => blocca)."""
+        try:
+            accounts = RuntimeController._live_bound_accounts(self)
+            if accounts is None or any(v != "VERIFIED" for v in accounts.values()) \
+                    or self.__dict__.get("_pending_live_bindings"):
+                return "esposizione_live_irrisolta"
+            status = RuntimeController._live_exposure_status(self)
+            if status.get("state") not in ("NESSUNA", "VERIFICATA") and (
+                    status.get("source") or status.get("reconcile_pending")
+                    or RuntimeController._live_obligation_recorded(self)):
+                # esposizione LIVE irrisolta CON una prova LIVE (record dello sweep, riconciliazione in attesa, obbligo
+                # LIVE salvato). Senza nessuna prova LIVE (runtime solo SIM) lo stato SCONOSCIUTA del solo stop globale
+                # non e' un'esposizione: nessun blocco permanente ingiustificato (M152 punto 5)
+                return "esposizione_live_irrisolta"
+            return ""
+        except Exception:
+            logger.exception("M152: obbligo LIVE non verificabile per il reset (bloccato)")
+            return "esposizione_live_irrisolta"
+
     def _finish_completed_reset(self, status: Optional[dict] = None) -> bool:
         """M144 (G1e): completa un reset G1 GIA' COMMITTATO (RESET_COMPLETED nel registro) il cui stop e' rimasto
         attivo (crash o scrittura fallita dopo il commit). Lo stop si toglie solo se e' ancora QUELLO confermato
@@ -2762,6 +2788,11 @@ class RuntimeController:
         delta = RuntimeController._risk_session_delta(self) or {"desk": 0.0, "scopes": {}, "unscoped": 0.0}
         losses = [float(delta.get("desk") or 0.0)] + [float(v) for v in (delta.get("scopes") or {}).values()]
         if limit is not None and any(validators.reaches_limit(-x, float(limit)) for x in losses if x < 0.0):
+            return False
+        if RuntimeController._live_reset_blocker(self):
+            # M152 (CX-L2): un obbligo LIVE nato o rimasto irrisolto dopo il RESET_COMPLETED invalida il completamento:
+            # lo stop, la sola verifica e la protezione delle coperture restano
+            logger.critical("M152: completamento del reset %s rifiutato: obbligo LIVE irrisolto", entry.get("operation_id"))
             return False
         with self._risk_stop_lock:
             if not stop_rules.persist_risk_stop(self.db, ""):
@@ -4425,7 +4456,15 @@ class RuntimeController:
         if not path:
             return False
         try:
-            current = RuntimeController._read_safety_journal(self) or {}
+            current = RuntimeController._read_safety_journal(self)
+            if current is None:
+                current = RuntimeController._read_safety_journal(self)      # una lettura transitoria si ritenta
+            if current is None:
+                # M152 (CX-L1, I8): giornale presente ma illeggibile => MAI riscritto (conterrebbe solo il nuovo stato e
+                # cancellerebbe un Emergency Stop gia' dichiarato). Il file resta: all'avvio un giornale illeggibile vale
+                # emergenza e vincolo LIVE illeggibile (fail-closed). Il nuovo stato resta in memoria, non durevole.
+                logger.critical("M152: giornale di sicurezza illeggibile: nessuna riscrittura (stato solo in memoria)")
+                return False
             current.update({k: str(v or "") for k, v in payload.items()})
             atomic_write_text(path, json.dumps(current, sort_keys=True))
             logger.critical("M151: stato di sicurezza non durevole sul db: scritto nel giornale %s", path)

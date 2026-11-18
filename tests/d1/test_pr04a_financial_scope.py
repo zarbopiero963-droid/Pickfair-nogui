@@ -5374,3 +5374,130 @@ def test_m151bis_k2_obbligo_in_sospeso_tolto_solo_se_scritto(tmp_path):
     c.rc._pending_live_bindings = {scope_b: [], scope_c: []}
     assert RuntimeController._save_live_bound_accounts(c.rc, {scope_b: "PENDING"}) is True
     assert set(c.rc._pending_live_bindings) == {scope_c}
+
+
+# ============================================================ M152 (owner, M151-ter): CX-L1 + CX-L2
+def test_m152_l1_giornale_illeggibile_mai_riscritto(tmp_path):
+    """CX-L1 (I8): con un giornale di sicurezza presente ma illeggibile nessuna scrittura lo sostituisce (cancellerebbe
+    l'ES gia' dichiarato): la scrittura e' rifiutata e il file resta identico. Prima (39705fb0): riscritto da {}."""
+    c = _m147_banco(tmp_path, "m152l1.db")
+    giornale = str(tmp_path / "m152l1.db") + RuntimeController._SAFETY_JOURNAL_SUFFIX
+    with open(giornale, "w") as fh:
+        fh.write('{"emergency_stopped": "1", tronc')
+    prima = open(giornale).read()
+    assert RuntimeController._journal_safety_state(c.rc, {RuntimeController._PENDING_BINDINGS_KEY: "{}"}) is False
+    assert open(giornale).read() == prima
+    RuntimeController._defer_live_binding(c.rc, _live(c, CONTO_B), None)        # binding differito: stesso rifiuto
+    assert open(giornale).read() == prima
+    assert _live(c, CONTO_B) in c.rc._pending_live_bindings                     # l'obbligo resta (in memoria)
+
+
+def test_m152_l1_lettura_transitoria_del_giornale_ritentata(tmp_path):
+    """CX-L1: una sola lettura fallita del giornale si ritenta: lo stato esistente (ES) e il nuovo si uniscono."""
+    c = _m147_banco(tmp_path, "m152l1r.db")
+    assert RuntimeController._journal_safety_state(c.rc, {"emergency_stopped": "1"}) is True
+    vero, stato = RuntimeController._read_safety_journal, {"n": 0}
+
+    def lettura(self):
+        stato["n"] += 1
+        return None if stato["n"] == 1 else vero(self)
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(RuntimeController, "_read_safety_journal", lettura)
+        assert RuntimeController._journal_safety_state(c.rc, {RuntimeController._PENDING_BINDINGS_KEY: "{}"}) is True
+    dati = json.load(open(str(tmp_path / "m152l1r.db") + RuntimeController._SAFETY_JOURNAL_SUFFIX))
+    assert dati["emergency_stopped"] == "1" and RuntimeController._PENDING_BINDINGS_KEY in dati
+
+
+def _m152_stop_globale_con_b_pending(c):
+    c.rc._risk_stop_reason = "session_loss_breached:loss=40.00:limit=30.0"
+    stop_rules_mod = __import__("core.risk_stop", fromlist=["persist_risk_stop"])
+    stop_rules_mod.persist_risk_stop(c.rc.db, c.rc._risk_stop_reason)
+    RuntimeController._set_live_verify_only(c.rc, True)
+    RuntimeController._bind_live_account(c.rc, _live(c, CONTO_B))
+
+
+def test_m152_l2_completamento_da_audit_rifiutato_con_conto_pending(tmp_path):
+    """CX-L2: RESET_COMPLETED per la sessione corrente ma B PENDING nel registro => il completamento da audit non
+    toglie lo stop, ne' la sola verifica, ne' la protezione delle coperture. Prima: tutto tolto."""
+    c = _m147_banco(tmp_path, "m152l2a.db")
+    _m152_stop_globale_con_b_pending(c)
+    reason, sid = c.rc._risk_stop_reason, c.rc._risk_session["id"]
+    status = {"x": {"kind": "RESET_COMPLETED", "payload": {"new_session_id": sid, "risk_stop_reason": reason,
+                                                          "limit": 30.0, "operation_id": "op", "operator": "o"}}}
+    assert RuntimeController._finish_completed_reset(c.rc, status) is False
+    assert c.rc._risk_stop_reason == reason and c.rc._live_verify_only and c.rc._hedge_guard
+
+
+def test_m152_l2_reset_normale_di_stop_globale_rifiutato_con_conto_pending(tmp_path):
+    """CX-L2 (percorso normale, sessione NON superata): stop globale con B PENDING => `reset_risk_stop()` rifiutato
+    (`esposizione_live_irrisolta`) e protezioni intatte. Prima: il controllo valeva solo per la sessione superata."""
+    c = _m147_banco(tmp_path, "m152l2b.db")
+    _m152_stop_globale_con_b_pending(c)
+    esito = c.rc.reset_risk_stop()
+    assert esito == {"risk_stop_reset": False, "reason": "esposizione_live_irrisolta"}, esito
+    assert c.rc._risk_stop_reason and c.rc._live_verify_only and c.rc._hedge_guard
+
+
+def test_m152_l2_nessun_blocco_permanente_dopo_la_riconciliazione_reale(tmp_path):
+    """M152 punto 5: lo stesso stop globale si toglie quando B e' stato riconciliato davvero (VERIFIED, esposizione
+    verificata): nessun blocco permanente; e senza obblighi LIVE il controllo non blocca nulla."""
+    c = _m147_banco(tmp_path, "m152l2c.db")
+    assert RuntimeController._live_reset_blocker(c.rc) == ""                # nessun obbligo LIVE: nessun blocco
+    _m152_stop_globale_con_b_pending(c)
+    assert RuntimeController._live_reset_blocker(c.rc) == "esposizione_live_irrisolta"
+    _connetti(c, _ContoLive(CONTO_B))
+    c.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="m152")
+    assert (RuntimeController._live_bound_accounts(c.rc) or {}).get(_live(c, CONTO_B)) == "VERIFIED"
+    assert RuntimeController._live_reset_blocker(c.rc) == ""
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+
+def test_m152_l2_stop_sim_locale_non_bloccato_da_un_conto_live(tmp_path):
+    """M152 punto 5: uno stop SIM LOCALE (ambito SIM) non richiede la riconciliazione LIVE: il controllo L2 vale solo
+    per gli stop globali."""
+    c = _m147_banco(tmp_path, "m152l2s.db")
+    RuntimeController._bind_live_account(c.rc, _live(c, CONTO_B))
+    sim = "betfair|SIM|sim|EUR"
+    reason = "daily_loss_breached:loss=40.00:limit=30.0" + RuntimeController._RISK_STOP_SCOPE_SEP + sim
+    assert RuntimeController._risk_stop_scope(reason) == sim, "banco: motivo SIM locale non riconosciuto"
+    c.rc._risk_stop_reason = reason
+    esito = c.rc.reset_risk_stop()
+    assert esito.get("reason") != "esposizione_live_irrisolta", esito
+
+
+@pytest.mark.parametrize("condizione", ["registro_pending", "obbligo_in_sospeso", "esposizione_sconosciuta",
+                                        "registro_illeggibile", "errore"])
+def test_m152_l2_ogni_condizione_di_obbligo_live_blocca_da_sola(tmp_path, monkeypatch, condizione):
+    """CX-L2: ciascuna condizione di `_live_reset_blocker` blocca DA SOLA (le altre pulite): conto non VERIFIED,
+    obbligo in sospeso (CX-K2), esposizione non NESSUNA/VERIFICATA, registro illeggibile, errore di lettura."""
+    c = _m147_banco(tmp_path, f"m152c_{condizione}.db")
+    verificata = {"state": "VERIFICATA"}
+    monkeypatch.setattr(RuntimeController, "_live_exposure_status", lambda self: dict(verificata))
+    monkeypatch.setattr(RuntimeController, "_live_bound_accounts", lambda self: {_live(c, CONTO_A): "VERIFIED"})
+    assert RuntimeController._live_reset_blocker(c.rc) == ""                  # tutto pulito: nessun blocco
+    if condizione == "registro_pending":
+        monkeypatch.setattr(RuntimeController, "_live_bound_accounts", lambda self: {_live(c, CONTO_B): "PENDING"})
+    elif condizione == "obbligo_in_sospeso":
+        c.rc._pending_live_bindings = {_live(c, CONTO_B): []}
+    elif condizione == "esposizione_sconosciuta":
+        verificata.update(state="SCONOSCIUTA", source="EMERGENCY_STOP")      # esito LIVE registrato e irrisolto
+    elif condizione == "registro_illeggibile":
+        monkeypatch.setattr(RuntimeController, "_live_bound_accounts", lambda self: None)
+    else:
+        def rotto(self):
+            raise OSError("M152: lettura fallita")
+        monkeypatch.setattr(RuntimeController, "_live_bound_accounts", rotto)
+    assert RuntimeController._live_reset_blocker(c.rc) == "esposizione_live_irrisolta"
+
+
+def test_m152_l2_stop_globale_solo_sim_senza_prove_live_si_resetta(tmp_path):
+    """M152 punto 5: runtime SIM, stop GLOBALE (es. esposizione), nessun conto LIVE ne' prova LIVE: lo stato
+    SCONOSCIUTA del solo stop globale non blocca il reset (nessun blocco permanente ingiustificato)."""
+    c = _m147_banco(tmp_path, "m152sim.db")
+    c.rc.set_simulation_mode(True)
+    c.rc.risk_stop("exposure_stop_reached:m152")
+    assert RuntimeController._live_exposure_status(c.rc).get("state") == "SCONOSCIUTA"
+    assert RuntimeController._live_reset_blocker(c.rc) == ""
+    assert c.rc.reset_risk_stop() == {"risk_stop_reset": True, "reason": ""}

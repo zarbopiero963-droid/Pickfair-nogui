@@ -1086,6 +1086,15 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
       memoria e nel giornale (`emergency_live_pending_bindings`), entra PENDING alla prima rilettura riuscita, e
       finche' e' in sospeso `reset_emergency()` lo elenca fra i conti irrisolti; valore illeggibile all'avvio =>
       vincolo illeggibile (CX-K2).
+    - *M152 (owner, M151-ter: CX-L1 + CX-L2, oracoli D `cx_l1` b5a804de, `cx_l2` e89f1e5c, `cx_l2_protezioni`
+      93adc4cd):* un giornale di sicurezza presente ma illeggibile non viene MAI riscritto (una lettura fallita si
+      ritenta una volta; poi la scrittura e' rifiutata, il file resta e all'avvio vale emergenza e vincolo LIVE
+      illeggibile): un Emergency Stop solo nel giornale non si perde (I8, CX-L1). Ogni reset di uno stop GLOBALE
+      (completamento da audit di un reset G1 gia' committato e reset normale, superato o no) passa da un'unica
+      condizione `_live_reset_blocker`: registro illeggibile, un conto non VERIFIED (sentinella compresa), un obbligo
+      in sospeso o un'esposizione LIVE diversa da NESSUNA/VERIFICATA => `esposizione_live_irrisolta`, e lo stop, la
+      sola verifica e la protezione delle coperture restano (CX-L2). Uno stop SIM locale non ne dipende; dopo la
+      riconciliazione reale (VERIFIED, esposizione verificata) il reset torna possibile: nessun blocco permanente.
     Cambio di contratto dichiarato: un reset non durevole non e' piu' un reset (test esistenti di
     `tests/safety/test_emergency_stop.py` adeguati: db con impostazioni reali; uscita da impostazioni illeggibili
     all'avvio tramite la procedura M148 quando il db, tornato leggibile, conserva l'esito LIVE).

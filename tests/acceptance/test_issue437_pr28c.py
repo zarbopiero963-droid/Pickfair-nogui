@@ -27,11 +27,45 @@ from core.system_state import RuntimeMode
 from database import Database
 from services.setting_service import SettingsService
 from tests.acceptance.test_issue437_pr04 import MERCATO, _aperto, headless  # noqa: F401
-from tests.acceptance.test_issue437_pr27 import _catena, _rifiuti, _tavoli_occupati
-from tests.acceptance.test_issue437_pr28b import _perdi, _sessione
+from tests.acceptance.test_issue437_pr27 import _catena as _catena_pr27, _rifiuti, _tavoli_occupati
+from tests.acceptance.test_issue437_pr28b import _perdi, _sessione as _sessione_pr28b
 from tests.integration.test_issue461_pr26a_customer_ref_provenance import _signal
 
 pytestmark = [pytest.mark.integration, pytest.mark.safety]
+
+
+# M152-bis (owner, opzione (a), condizioni di Claude D): il banco PR27 dichiara execution_mode SIMULATION ma lascia
+# simulation_mode False, che per il runtime e' un LIVE SENZA conto di login (stato di default prima di start()). Da M149
+# uno stop globale vi registra la sentinella <conto_non_identificato> PENDING e da M152 (CX-L2) nessun reset la ignora.
+# I test di questo file verificano la DURABILITA' del RISK_STOP (marker, guard, readback, versioni), non il LIVE: il
+# banco e' reso SIM coerente (execution_mode e simulation_mode entrambi SIM), senza toccare nessuna asserzione. Il
+# comportamento LIVE senza login resta verificato da test dedicati (rifiuto + uscita M148) in fondo al file.
+def _catena(tmp_path, **cfg):
+    c = _catena_pr27(tmp_path, **cfg)
+    c.rc.set_simulation_mode(True)
+    return c
+
+
+def _sessione(tmp_path, **cfg):
+    c = _sessione_pr28b(tmp_path, **cfg)
+    c.rc.set_simulation_mode(True)
+    return c
+
+
+def _innesca_nel_salvataggio_del_reset(monkeypatch):
+    """M152-bis (condizione 4 di D): gli iniettori a conteggio partono SOLO quando il reset entra nel salvataggio dello
+    stop (`risk_stop.persist_risk_stop(db, "")`), cosi' i controlli che precedono il salvataggio (M152 CX-L2) non
+    spostano il conteggio. Ritorna lo stato: `armato` diventa True all'ingresso nel salvataggio del reset."""
+    from core import risk_stop as stop_rules
+    stato = {"armato": False}
+    reale = stop_rules.persist_risk_stop
+
+    def persist(db, reason):
+        if not reason:
+            stato["armato"] = True
+        return reale(db, reason)
+    monkeypatch.setattr(stop_rules, "persist_risk_stop", persist)
+    return stato
 
 
 def _stop_eventi(c):
@@ -382,16 +416,20 @@ def test_block_reset_non_riapre_se_marker_ignoto_non_si_aggiorna(tmp_path, monke
 
 
 
-def test_block_reset_readback_fallito_ripristina_barriera_durevole(tmp_path):
+def test_block_reset_readback_fallito_ripristina_barriera_durevole(tmp_path, monkeypatch):
     """Fix c4 (Sol): write reset riuscite ma readback fallito => reset rifiutato
-    e restart ancora bloccato, mai active=False durevole come unico stato."""
+    e restart ancora bloccato, mai active=False durevole come unico stato.
+    M152-bis: conteggio armato all'ingresso del salvataggio del reset (stessa causa, stesso motivo atteso)."""
     c = _catena(tmp_path, max_exposure_stop=1000.0)
     c.rc.risk_stop("exposure_stop_reached:readback")
     original_get = c.rc.db.get_settings
     calls = 0
+    nel_salvataggio = _innesca_nel_salvataggio_del_reset(monkeypatch)
 
     def _get_flaky():
         nonlocal calls
+        if not nel_salvataggio["armato"]:
+            return original_get()
         calls += 1
         if calls == 1:
             return original_get()
@@ -401,6 +439,7 @@ def test_block_reset_readback_fallito_ripristina_barriera_durevole(tmp_path):
     esito = c.rc.reset_risk_stop()
     c.rc.db.get_settings = original_get
 
+    assert nel_salvataggio["armato"] and calls >= 2, "M152-bis: il guasto non ha colpito il readback del reset"
     assert esito == {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
     assert c.rc._risk_stop_reason == "exposure_stop_reached:readback"
     assert _catena(tmp_path).rc._risk_stop_reason != ""
@@ -427,17 +466,21 @@ def test_block_reset_marker_non_armabile_non_scrive_stato_inattivo(tmp_path, mon
     assert _catena(tmp_path).rc._risk_stop_reason != ""
 
 
-def test_block_reset_readback_e_scritture_successive_fallite_guard_indipendente(tmp_path):
+def test_block_reset_readback_e_scritture_successive_fallite_guard_indipendente(tmp_path, monkeypatch):
     """Fix c5 (Sol): dopo active=False, readback KO e nessuna write successiva
-    non possono perdere lo stop: il reset_guard era gia' durevole e indipendente."""
+    non possono perdere lo stop: il reset_guard era gia' durevole e indipendente.
+    M152-bis: conteggi armati all'ingresso del salvataggio del reset (stessa causa, stesso motivo atteso)."""
     c = _catena(tmp_path, max_exposure_stop=1000.0)
     c.rc.risk_stop("exposure_stop_reached:final")
     original_get, original_save = c.rc.db.get_settings, c.rc.db.save_settings
     get_calls = 0
     save_calls = 0
+    nel_salvataggio = _innesca_nel_salvataggio_del_reset(monkeypatch)
 
     def _get_flaky():
         nonlocal get_calls
+        if not nel_salvataggio["armato"]:
+            return original_get()
         get_calls += 1
         # before + guard lookup sono leggibili; il readback del reset fallisce.
         if get_calls <= 2:
@@ -446,6 +489,8 @@ def test_block_reset_readback_e_scritture_successive_fallite_guard_indipendente(
 
     def _save_flaky(data):
         nonlocal save_calls
+        if not nel_salvataggio["armato"]:
+            return original_save(data)
         save_calls += 1
         # guard DB + active=False DB riescono; qualunque write successiva fallisce.
         if save_calls <= 2:
@@ -457,6 +502,8 @@ def test_block_reset_readback_e_scritture_successive_fallite_guard_indipendente(
     esito = c.rc.reset_risk_stop()
     c.rc.db.get_settings, c.rc.db.save_settings = original_get, original_save
 
+    assert nel_salvataggio["armato"] and get_calls >= 3 and save_calls >= 2, \
+        "M152-bis: i guasti non hanno colpito readback e scritture del reset"
     assert esito == {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
     assert c.rc._risk_stop_reason == "exposure_stop_reached:final"
     assert _catena(tmp_path).rc._risk_stop_reason != ""
@@ -547,19 +594,113 @@ def test_pass_reset_esplicito_nuova_versione_non_risorge(tmp_path):
 
 
 def test_block_reset_non_persistito_resta_bloccato(tmp_path, monkeypatch):
-    """Fix c2 (owner 23:30): a reset that cannot be saved anywhere is refused."""
+    """Fix c2 (owner 23:30): a reset that cannot be saved anywhere is refused.
+    M152-bis, variante SIM (condizione 5 di D): banco SIM coerente; il disco pieno colpisce le scritture dello stato
+    dello stop e il suo marker (in SIM una scrittura del libro giornaliero fallita bloccherebbe prima, con un altro
+    motivo, anche su 39705fb0): stessa causa del test originale, stesso motivo atteso."""
     from core import risk_stop as stop_rules
     c = _catena(tmp_path, max_exposure_stop=1000.0)
     c.rc.risk_stop("exposure_stop_reached:test")
-    c.rc.db.save_settings = lambda _v: (_ for _ in ()).throw(OSError("disk full"))
+    original_save = c.rc.db.save_settings
+    colpite = []
+
+    def _save(data):
+        if any(str(k).startswith("risk_stop") for k in (data or {})):
+            colpite.append(sorted(data))
+            raise OSError("disk full")
+        return original_save(data)
+    c.rc.db.save_settings = _save
     monkeypatch.setattr(stop_rules, "atomic_write_text",
                         lambda *_a, **_k: (_ for _ in ()).throw(OSError("disk full")), raising=False)
 
     esito = c.rc.reset_risk_stop()
 
+    assert colpite, "M152-bis: il disco pieno non ha colpito il salvataggio dello stop"
     assert esito == {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
     assert c.rc._risk_stop_reason == "exposure_stop_reached:test"
     assert _catena(tmp_path).rc._risk_stop_reason == "exposure_stop_reached:test"
+
+
+def _m148_uscita_live_senza_login(c, tmp_path, ricrea, **cfg):
+    """Procedura M148 (passo 4) come P37 di PR28-b: il conto identificato con prove sostituisce la sentinella,
+    PENDING; riavvio; riconciliazione reale di QUEL conto. Ritorna il runtime riavviato."""
+    import types as _types
+    from datetime import datetime as _dt
+    from core.runtime_controller import RuntimeController
+    key = RuntimeController._LIVE_ACCOUNTS_KEY
+    registro = json.loads(c.rc.db.get_settings()[key])
+    sentinella = registro["accounts"].pop(RuntimeController._LIVE_ACCOUNT_UNIDENTIFIED)
+    assert sentinella["state"] == "PENDING"
+    conto = _types.SimpleNamespace(username="conto-pr28c@example.invalid", get_current_orders=lambda **_k: [],
+                                   cancel_orders=lambda *_a, **_k: {"ok": True})
+    c.rc.betfair_service.client = conto
+    registro["accounts"][c.rc._financial_scope_for(False)] = {"state": "PENDING", "breaches": sentinella["breaches"]}
+    c.rc.db.save_settings({key: json.dumps(registro, sort_keys=True),
+                           RuntimeController._UNIDENTIFIED_ATTRIBUTED_KEY: _dt.utcnow().date().isoformat()})
+    r = ricrea(tmp_path, **cfg)
+    r.rc.betfair_service.client = conto
+    r.rc.betfair_service.get_live_client = lambda: conto
+    r.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(r.rc, trigger="pr28c-m148")
+    return r
+
+
+def test_block_reset_non_persistito_live_senza_login_rifiutato_e_uscita_m148(tmp_path, monkeypatch):
+    """M152-bis, variante LIVE senza login (condizioni 3 e 5 di D): banco ORIGINALE di PR27 (runtime LIVE senza conto
+    di login, mai convertito in SIM) e disco pieno ovunque. Il reset e' rifiutato e lo stop resta, anche su disco: la
+    sentinella del conto non identificato blocca prima del salvataggio (M152 CX-L2). Uscita: tornato il disco, la
+    procedura M148 e la riconciliazione reale riaprono il reset."""
+    from core import risk_stop as stop_rules
+    c = _catena_pr27(tmp_path, max_exposure_stop=1000.0)
+    assert c.rc.simulation_mode is False                                   # LIVE senza login: nessuna conversione
+    c.rc.risk_stop("exposure_stop_reached:test")
+    original_save = c.rc.db.save_settings
+    c.rc.db.save_settings = lambda _v: (_ for _ in ()).throw(OSError("disk full"))
+    with monkeypatch.context() as m:
+        m.setattr(stop_rules, "atomic_write_text",
+                  lambda *_a, **_k: (_ for _ in ()).throw(OSError("disk full")), raising=False)
+        esito = c.rc.reset_risk_stop()
+    c.rc.db.save_settings = original_save
+
+    assert esito == {"risk_stop_reset": False, "reason": "esposizione_live_irrisolta"}
+    assert c.rc._risk_stop_reason == "exposure_stop_reached:test"
+    assert _catena_pr27(tmp_path).rc._risk_stop_reason == "exposure_stop_reached:test"
+    r = _m148_uscita_live_senza_login(c, tmp_path, _catena_pr27, max_exposure_stop=1000.0)
+    assert r.rc.reset_risk_stop() == {"risk_stop_reset": True, "reason": ""}
+
+
+def test_block_reset_live_senza_login_rifiutato_finche_non_si_esce_con_m148(tmp_path):
+    """M152-bis (condizione 3 di D): stesso scenario di `test_pass_reset_dopo_ricontrollo_pulito_riapre` sul banco
+    ORIGINALE (LIVE senza login). Il reset e' rifiutato con la sentinella PENDING, senza ingressi; dopo la procedura
+    M148 e la riconciliazione reale del conto identificato il reset riapre."""
+    c = _catena_pr27(tmp_path, max_exposure_stop=1000.0)
+    assert c.rc.simulation_mode is False
+    c.rc.risk_stop("exposure_stop_reached:test")
+
+    assert c.rc.reset_risk_stop() == {"risk_stop_reset": False, "reason": "esposizione_live_irrisolta"}
+    assert c.rc._risk_stop_reason == "exposure_stop_reached:test"
+    r = _m148_uscita_live_senza_login(c, tmp_path, _catena_pr27, max_exposure_stop=1000.0)
+    assert r.rc.reset_risk_stop() == {"risk_stop_reset": True, "reason": ""}
+
+
+def test_block_stop_di_sessione_live_senza_login_dopo_start_uscita_m148(tmp_path):
+    """M152-bis (condizione 3 di D): come `test_block_start_non_riapre_stop_da_perdita_di_sessione` sul banco ORIGINALE
+    di PR28-b (LIVE senza login prima di start()): start() non riapre; il reset esplicito e' rifiutato con la sentinella;
+    si esce con la procedura M148, la riconciliazione reale e il G1 confermato."""
+    c = _sessione_pr28b(tmp_path, max_session_loss=10.0)
+    assert c.rc.simulation_mode is False
+    _perdi(c.rc, 10.0)
+    assert c.rc._risk_stop_reason.startswith("session_loss_breached")
+    _avvia(c)
+    assert c.rc._risk_stop_reason.startswith("session_loss_breached")
+    assert c.rc.reset_risk_stop(at_start=True)["reason"] == "risk_stop_reset_esplicito_richiesto"
+    assert c.rc.reset_risk_stop()["risk_stop_reset"] is False
+    assert c.rc._risk_stop_reason.startswith("session_loss_breached")
+    r = _m148_uscita_live_senza_login(c, tmp_path, _catena_pr27, max_session_loss=10.0)
+    richiesta = r.rc.request_risk_session_reset(operator="op", authorization="AUT-1", reason="pr28c")
+    esito = r.rc.reset_risk_stop(operator="op", authorization="AUT-1", challenge_id=richiesta.get("challenge_id"),
+                                 confirm=True, confirm_again=True)
+    assert esito["risk_stop_reset"] is True, esito
 
 def test_block_start_non_riapre_stop_da_perdita_di_sessione(tmp_path):
     """Fix c1 (Sol + Grok): the new session cannot verify the loss that stopped it."""
