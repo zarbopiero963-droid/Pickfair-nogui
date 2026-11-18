@@ -10,8 +10,14 @@ Valido dalla #638 (`ef2da782`, M147) in avanti. Si appoggia a [db_backup_restore
 
 ## Quando si applica
 
-`get_status()["live_exposure"]` mostra `registry_unreadable`, oppure `reset_emergency()` risponde
-`reason: esposizione_live_irrisolta` con `accounts_pending: ["betfair|LIVE|<vincolo_illeggibile>|EUR"]`.
+`get_status()["live_exposure"]` mostra `registry_unreadable`, oppure `reset_emergency()` risponde:
+
+- `reason: esposizione_live_irrisolta` con `accounts_pending: ["betfair|LIVE|<vincolo_illeggibile>|EUR"]` (registro
+  illeggibile);
+- `reason: esposizione_live_irrisolta` con `accounts_pending: ["betfair|LIVE|<conto_non_identificato>|EUR"]`
+  (M149: obbligo LIVE con conto non identificabile, per esempio sessione LIVE senza login o perdita non attribuibile;
+  **nessuno sweep la certifica** e non viene mai attribuita al conto collegato);
+- `reason: registro_incoerente_obbligo_live` (M149: Emergency Stop LIVE ma registro vuoto o mancante).
 
 Il registro è la chiave `emergency_live_accounts` della tabella `settings` del database (formato v2:
 `{"version": 2, "accounts": {ambito: {"state": "PENDING"|"VERIFIED", "breaches": [...]}}}`).
@@ -29,6 +35,8 @@ Ognuno di questi è un aggiramento dello stop, non una procedura.
 | Inventare superamenti, perdite, sessioni, settlement o identità di conto | La storia si ricostruisce solo da fonti che la dimostrano |
 | Modificare `daily_loss_state`, lo stato dello stop di rischio o la catena `audit_events` per accorciare il blocco | Il libro illeggibile resta un superamento fino al nuovo giorno UTC, per progetto |
 | Usare l'API `reset_emergency()` prima del passo 8 | |
+| Modificare `emergency_settlement_source` o `emergency_unresolved_exposure` | Sono l'evidenza dell'obbligo LIVE (M149): cancellarle insieme al registro è l'unico aggiramento che l'app non rileva |
+| Scrivere la data di attribuzione (passo 4.4) senza inventario firmato o con una data futura | La data scioglie i superamenti non identificati: senza prove è un'attribuzione inventata |
 
 ## Ruoli
 
@@ -107,6 +115,21 @@ se una fonte la dimostra campo per campo. Altrimenti `"breaches": []` e una nota
 **Se un conto non è identificabile** (ambito non verificabile, quarantena legacy, fonte contraddittoria):
 il candidato **non si scrive**, il blocco resta e si apre una richiesta owner.
 
+4. **Sentinella «conto non identificato» (M149).** Se il registro contiene `betfair|LIVE|<conto_non_identificato>|EUR`,
+   oppure il libro giornaliero contiene superamenti LIVE senza conto (`betfair|LIVE||EUR`, `betfair|UNVERIFIED||EUR`),
+   la sentinella si scioglie **solo** così:
+   1. l'inventario firmato da O2 identifica con prove **tutti** i conti a cui quei superamenti possono appartenere
+      (ordini, settlement, estratti conto dell'exchange); nel dubbio entrano tutti i conti dell'inventario;
+   2. il candidato contiene quei conti `PENDING` e **non** contiene la sentinella;
+   3. nella stessa operazione si scrive la **data di attribuzione**, la data UTC di oggi, nella chiave
+      `emergency_live_unidentified_attributed_through` della tabella `settings` (formato `AAAA-MM-GG`, mai futura);
+      va riportata nel dossier e nell'audit del passo 6.
+
+   La data vale **solo** per i superamenti giornalieri non identificati fino a quel giorno: al riavvio Pickfair non
+   ricrea la sentinella per quelli, e resta l'obbligo di riconciliare i conti del candidato (passo 7). Ogni nuovo
+   obbligo senza conto (Emergency Stop manuale, stop LIVE senza login) ricrea **sempre** la sentinella. Data assente,
+   non valida o futura = nessuna attribuzione: la sentinella torna e il blocco resta.
+
 ### 5. Validare e firmare il candidato
 
 1. Il candidato si legge con `RuntimeController._parse_live_registry()` senza errori.
@@ -179,19 +202,20 @@ Errori dell'operatore misurati:
 | Conto B omesso dal candidato | reset rifiutato: Pickfair ri-registra B dal libro giornaliero leggibile dello stesso giorno |
 | `VERIFIED` scritto a mano | reset rifiutato, per la stessa ragione |
 | Chiave svuotata, libro leggibile | reset rifiutato, per la stessa ragione |
-| **Chiave svuotata e libro giornaliero illeggibile** | **reset accettato con un ordine di B aperto: FAIL-OPEN** |
+| **Chiave svuotata e libro giornaliero illeggibile** | su `d1de60eb` **reset accettato con un ordine di B aperto: FAIL-OPEN**; da M149 **rifiutato** (`registro_incoerente_obbligo_live`) |
 
-Le difese automatiche dei primi tre casi valgono **solo** se il superamento è nel libro giornaliero leggibile dello
-stesso giorno. Per un superamento di sessione o di un giorno precedente non c'è difesa automatica: valgono i divieti.
+Su `d1de60eb` le difese automatiche dei primi tre casi valevano **solo** se il superamento era nel libro giornaliero
+leggibile dello stesso giorno. Da M149 il registro vuoto con un obbligo LIVE è sempre fail-closed; `VERIFIED` scritto
+a mano e un conto omesso restano non rilevabili in generale: valgono i divieti.
 
 ## Limiti dichiarati
 
-- **Registro vuoto = nessun vincolo: difetto applicativo aperto, non solo procedurale.** Il progetto M147 prevedeva R7
-  («registro vuoto con uno stop globale LIVE ⇒ obbligo sconosciuto, fail-closed»), ma il codice di `ef2da782` non lo
-  implementa: `reset_emergency()` guarda solo i conti del registro, mai lo stato dell'esposizione. Stessa radice del
-  P1 confermato da Claude D in M148 (esito LIVE irrisolto senza conto identificato: reset accettato **senza** alcuna
-  modifica manuale). Svuotare la chiave a mano è vietato da questa procedura; la correzione nell'app attende una
-  decisione owner (rapporto architetturale #628 c.6973925426).
+- **Registro vuoto con obbligo LIVE (R7) — corretto in M149.** Fino a `d1de60eb` l'app trattava un registro vuoto
+  come «nessun vincolo» (R7 progettato in M147 e non implementato; stessa radice del P1 di Claude D sull'esito LIVE
+  senza conto). Da M149: un obbligo LIVE senza conto registra la sentinella; un Emergency Stop LIVE (sede salvata
+  `emergency_settlement_source = "LIVE"`) o un esito LIVE irrisolto su disco con registro vuoto è un'incoerenza
+  (`registro_incoerente_obbligo_live`): nessun conto certifica, reset rifiutato. Resta non rilevabile solo chi svuota
+  a mano **insieme** il registro, `emergency_settlement_source` ed `emergency_unresolved_exposure`: vietato.
 - **`VERIFIED` scritto a mano** e **conto omesso**: non rilevati dall'app in generale; vietati dalla procedura.
 - **Doppia conferma di `reset_emergency()`**: procedurale (firme nel dossier), non applicata dall'app. Il G1 dello
   stop di rischio la applica.

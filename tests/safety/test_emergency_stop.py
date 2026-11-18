@@ -60,9 +60,14 @@ class _Db:
 
 
 class _LiveClient:
+    # M149 (owner): una sessione LIVE reale ha sempre il conto di login. Senza identita' l'obbligo LIVE dell'Emergency
+    # Stop resta legato alla sentinella «conto non identificato» (uscita solo con la procedura M148).
+    username = "conto-safety@example.invalid"
+
     def __init__(self, raises=False):
         self.cancel_calls = []
         self.raises = raises
+
 
     def cancel_orders(self, *, market_id, bet_ids=None, **_kw):
         if self.raises:
@@ -74,6 +79,7 @@ class _LiveClient:
 class _BetfairService:
     def __init__(self, live_client=None):
         self._client = live_client or _LiveClient()
+        self.client = self._client                   # sessione connessa: identita' del conto LIVE (M149)
 
     def set_simulation_mode(self, *_a, **_kw):
         pass
@@ -133,6 +139,15 @@ def _make_rc(bus=None, db=None, betfair=None, sagas=None):
         betfair_service=betfair,
         telegram_service=_TelegramService(),
     ), bus
+
+
+def _riconcilia_conto_live(rc):
+    """M149 (owner): prima di reset_emergency() il conto LIVE dello stop si riconcilia davvero (R6 di M147): lo sweep
+    legge il conto (qui nessun ordine aperto sull'exchange) e lo verifica. Senza questo passo il reset e' rifiutato."""
+    client = rc.betfair_service.get_live_client()
+    client.get_current_orders = lambda *_a, **_kw: []
+    rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(rc, trigger="test_m149")
 
 
 # ===========================================================================
@@ -264,6 +279,7 @@ def test_reset_emergency_clears_flag():
     rc.emergency_stop()
     assert rc.is_emergency_stopped is True
 
+    _riconcilia_conto_live(rc)
     rc.reset_emergency()
 
     assert rc.is_emergency_stopped is False
@@ -276,6 +292,7 @@ def test_signal_allowed_after_reset_emergency_and_restart():
     """After reset_emergency(), signals are gated normally (not by emergency stop)."""
     rc, bus = _make_rc()
     rc.emergency_stop()
+    _riconcilia_conto_live(rc)
     rc.reset_emergency()
 
     assert rc.is_emergency_stopped is False
@@ -631,6 +648,7 @@ def test_live_gate_blocks_during_emergency_even_if_live_reenabled():
 
     # Dopo il reset esplicito il gate torna a valutare gli altri criteri
     # (non deve restare bloccato per emergenza).
+    _riconcilia_conto_live(rc)
     rc.reset_emergency()
     assert rc.is_emergency_stopped is False
 
@@ -644,6 +662,7 @@ def test_reset_emergency_clears_persisted_state_too():
     db = _PersistentDb()
     rc1, _bus = _make_rc(db=db)
     rc1.emergency_stop(reason="x")
+    _riconcilia_conto_live(rc1)
     rc1.reset_emergency()
 
     rc2, _bus2 = _make_rc(db=db)
@@ -686,6 +705,7 @@ def test_unreadable_settings_at_startup_fails_closed_into_emergency():
     assert rc.is_emergency_stopped is True
     # Uscita esplicita: tornate leggibili (registro vuoto), reset_emergency() riapre.
     db.readable = True
+    _riconcilia_conto_live(rc)
     rc.reset_emergency()
     assert rc.is_emergency_stopped is False
 
@@ -745,6 +765,7 @@ def test_reset_persist_failure_is_reported_and_memory_state_resets():
     rc, bus = _make_rc(db=_BrokenSettingsDb())
     rc.emergency_stop(reason="x")
 
+    _riconcilia_conto_live(rc)
     result = rc.reset_emergency()
 
     assert rc.is_emergency_stopped is False
@@ -769,6 +790,7 @@ def test_get_status_exposes_emergency_state():
     assert status["emergency_stopped_at"] != ""
     assert status["emergency_reason"] == "visibility"
 
+    _riconcilia_conto_live(rc)
     rc.reset_emergency()
     status_after = rc.get_status()
     assert status_after["is_emergency_stopped"] is False
@@ -869,6 +891,7 @@ def test_reset_emergency_then_signals_not_emergency_blocked():
     fermo, ma MAI con reason emergency_stop_active)."""
     rc, bus = _make_rc(db=_PersistentDb())
     rc.emergency_stop(reason="flow_case")
+    _riconcilia_conto_live(rc)
     rc.reset_emergency()
 
     rc._on_signal_received({"market_type": "NEXT_GOAL"})

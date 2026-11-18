@@ -4766,3 +4766,171 @@ def test_m147_reset_emergency_rifiutato_con_un_conto_pending_anche_se_l_esito_di
     c.rc._emergency_reconcile_pending = False
     esito = c.rc.reset_emergency()
     assert esito["emergency_reset"] is False and esito["accounts_pending"] == [scope_b] and c.rc._emergency_stopped
+
+
+# ============================================================================ M149 (owner): conto non identificato / R7
+_SENT = RuntimeController._LIVE_ACCOUNT_UNIDENTIFIED
+
+
+def _anonimo(ordini=None, cancella=True):
+    conto = _ContoLive(None, ordini, cancella=cancella)
+    conto.username = None                                       # sessione LIVE senza identita' di login
+    return conto
+
+
+def _ordine_bot_m149(c):
+    """Ordine LIVE del bot nel ledger (cancellabile per betId) + lo stesso ordine aperto sull'exchange."""
+    now = _time.time()
+    c.rc.db._execute("INSERT INTO orders (customer_ref, correlation_id, status, payload_json, response_json, created_at,"
+                     " updated_at) VALUES (?,?,?,?,?,?,?)",
+                     ("sig-m149", "corr-m149", "PLACED", json.dumps({"simulation_mode": False, "market_id": "1.9491"}),
+                      json.dumps({"betId": "G9", "status": "SUCCESS"}), now, now), commit=True)
+    return {"betId": "G9", "marketId": "1.9491", "selectionId": 1, "customerOrderRef": "sig-m149", "side": "BACK",
+            "status": "EXECUTABLE", "priceSize": {"price": 2.0, "size": 2.0}, "sizeRemaining": 2.0, "sizeMatched": 0.0}
+
+
+def test_m149_a_es_live_senza_conto_registra_la_sentinella_e_il_reset_e_rifiutato(tmp_path):
+    """M149 A (P1 D 98d729e0): ES LIVE con conto non identificabile => sentinella PENDING, mai «nessun vincolo»;
+    il conto collegato dopo (A, identificato) NON eredita l'esposizione e non certifica; reset rifiutato."""
+    c = _m147_banco(tmp_path, "m149a.db")
+    _connetti(c, _anonimo())
+    c.rc.emergency_stop(reason="M149_MANUALE", live_exposure=True)
+    accounts = RuntimeController._live_bound_accounts(c.rc)
+    assert accounts == {_SENT: "PENDING"}, accounts
+    conto_a = _ContoLive(CONTO_A)                               # A vuoto e raggiungibile: non e' il conto dello stop
+    _connetti(c, conto_a)
+    c.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="m149a")
+    assert c.rc.get_status()["live_exposure"]["state"] != "VERIFICATA"
+    assert conto_a.letture == 0 and not conto_a.cancellazioni, "N6: un conto identificato estraneo legge/cancella"
+    assert _SENT in RuntimeController._live_bound_accounts(c.rc)
+    esito = c.rc.reset_emergency()
+    assert esito["emergency_reset"] is False and _SENT in esito["accounts_pending"] and c.rc._emergency_stopped
+
+
+def test_m149_a_la_sessione_senza_identita_cancella_gli_ordini_del_bot_ma_non_certifica(tmp_path):
+    """M149 A: con la sentinella la sessione LIVE senza identita' esegue ancora lo sweep (cancellazione per betId dei
+    soli ordini del bot, come prima) ma la sentinella resta PENDING: nessuna certificazione."""
+    c = _m147_banco(tmp_path, "m149b.db")
+    ordine = _ordine_bot_m149(c)
+    anonimo = _anonimo([ordine])
+    _connetti(c, anonimo)
+    c.rc.emergency_stop(reason="M149_SWEEP", live_exposure=True)
+    assert anonimo.cancellazioni, "l'Emergency Stop non ha cancellato l'ordine del bot"
+    assert all(b for _m, b in anonimo.cancellazioni), "cancellazione senza betId (intero mercato)"
+    assert RuntimeController._live_bound_accounts(c.rc) == {_SENT: "PENDING"}
+    assert c.rc.reset_emergency()["emergency_reset"] is False
+
+
+def test_m149_a_es_solo_sim_resta_resettabile(tmp_path):
+    """M149 (nessun blocco ingiustificato): ES manuale solo SIM, anche col conto A collegato => nessun obbligo LIVE,
+    nessuna sentinella, reset accettato."""
+    for nome, conto in (("m149s1.db", None), ("m149s2.db", _ContoLive(CONTO_A))):
+        c = _m147_banco(tmp_path, nome)
+        if conto is not None:
+            _connetti(c, conto)
+        c.rc.emergency_stop(reason="M149_SIM", live_exposure=False)
+        assert not RuntimeController._live_bound_accounts(c.rc)
+        assert c.rc.reset_emergency()["emergency_reset"] is True and not c.rc._emergency_stopped
+
+
+@pytest.mark.parametrize("collegato", ["A", "anonimo"])
+@pytest.mark.parametrize("modo", ["vuoto", "mancante"])
+def test_m149_c_registro_svuotato_con_es_live_resta_fail_closed(tmp_path, modo, collegato):
+    """M149 C (R7): ES LIVE del conto A (identificato); il registro viene svuotato/cancellato sul disco e il processo
+    riavviato. Un registro vuoto con l'obbligo LIVE salvato col flag dell'ES e' incoerente: nessun conto certifica
+    (A vuoto compreso), reset rifiutato `registro_incoerente_obbligo_live`."""
+    nome = f"m149c_{modo}_{collegato}.db"
+    c = _m147_banco(tmp_path, nome)
+    _connetti(c, _anonimo())
+    c.rc.emergency_stop(reason="M149_C", live_exposure=True)
+    with _sqlite3.connect(str(tmp_path / nome)) as s:
+        if modo == "vuoto":
+            s.execute("UPDATE settings SET value = '' WHERE key = ?", (RuntimeController._LIVE_ACCOUNTS_KEY,))
+        else:
+            s.execute("DELETE FROM settings WHERE key = ?", (RuntimeController._LIVE_ACCOUNTS_KEY,))
+    r = _m147_banco(tmp_path, nome)                             # riavvio sullo stesso db
+    assert r.rc._emergency_stopped and RuntimeController._live_bound_accounts(r.rc) == {}
+    conto = _ContoLive(CONTO_A) if collegato == "A" else _anonimo()
+    _connetti(r, conto)
+    r.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(r.rc, trigger="m149c")
+    assert r.rc.get_status()["live_exposure"]["state"] != "VERIFICATA"
+    if collegato == "A":
+        assert conto.letture == 0 and not conto.cancellazioni, "N6: un conto identificato legge/cancella senza vincolo"
+    esito = r.rc.reset_emergency()
+    assert esito["emergency_reset"] is False and esito["reason"] == "registro_incoerente_obbligo_live"
+    assert r.rc._emergency_stopped
+
+
+def test_m149_procedura_m148_data_di_attribuzione_solo_per_i_superamenti_giornalieri(tmp_path):
+    """Procedura M148, passo 4 (M149): la data di attribuzione dei superamenti non identificati vale solo per le chiavi
+    giornaliere fino a quella data; data futura o non valida => sentinella (fail-closed); uno stop senza chiave
+    giornaliera ricrea sempre la sentinella."""
+    from datetime import datetime as _dt, timedelta as _td
+    c = _m147_banco(tmp_path, "m149m.db")
+    _connetti(c, _anonimo())
+    oggi = _dt.utcnow().date()
+    chiave = {"key": f"daily|{financial_scope.UNVERIFIED_SCOPE}|{oggi.isoformat()}", "kind": "daily"}
+    marcatore = RuntimeController._UNIDENTIFIED_ATTRIBUTED_KEY
+    casi = [("", True), ("non-una-data", True), ((oggi + _td(days=1)).isoformat(), True),
+            ((oggi - _td(days=1)).isoformat(), True), (oggi.isoformat(), False)]
+    for valore, sentinella in casi:
+        c.rc.db.save_settings({marcatore: valore, RuntimeController._LIVE_ACCOUNTS_KEY: ""})
+        c.rc._emergency_live_accounts = None
+        RuntimeController._bind_live_account(c.rc, financial_scope.UNVERIFIED_SCOPE, breach=dict(chiave))
+        assert (_SENT in (RuntimeController._live_bound_accounts(c.rc) or {})) is sentinella, valore
+    c.rc.db.save_settings({marcatore: oggi.isoformat(), RuntimeController._LIVE_ACCOUNTS_KEY: ""})
+    c.rc._emergency_live_accounts = None
+    RuntimeController._bind_live_account(c.rc, None)            # stop manuale, nessuna chiave giornaliera
+    assert RuntimeController._live_bound_accounts(c.rc) == {_SENT: "PENDING"}
+
+
+def test_m149_a_ambito_non_verificabile_mai_attribuito_al_conto_collegato(tmp_path):
+    """M149 A (owner): un superamento di ambito NON verificabile con il conto A collegato non diventa di A (attribuzione
+    arbitraria): sentinella PENDING, A non e' nel registro."""
+    c = _m147_banco(tmp_path, "m149f.db")
+    _connetti(c, _ContoLive(CONTO_A))
+    from datetime import datetime as _dt
+    RuntimeController._bind_live_account(c.rc, financial_scope.UNVERIFIED_SCOPE, breach={
+        "key": f"daily|{financial_scope.UNVERIFIED_SCOPE}|{_dt.utcnow().date().isoformat()}", "kind": "daily"})
+    assert RuntimeController._live_bound_accounts(c.rc) == {_SENT: "PENDING"}
+
+
+def test_m149_a_marker_di_sessione_sim_non_crea_la_sentinella(tmp_path):
+    """M149 (nessun blocco ingiustificato): un marker di stop di sessione con ambito SIM, senza conto LIVE, non crea un
+    obbligo LIVE: nessuna sentinella al ripristino."""
+    c = _m147_banco(tmp_path, "m149k.db")
+    sim = c.rc._financial_scope_for(True)
+    c.rc.db.save_settings({RuntimeController._SESSION_STOP_MARKER: json.dumps(
+        {"reason": "session_loss_breached:loss=40.00:limit=30.0", "scope": sim})})
+    r = _m147_banco(tmp_path, "m149k.db")
+    assert _SENT not in (RuntimeController._live_bound_accounts(r.rc) or {})
+
+
+@pytest.mark.parametrize("procedura", [False, True])
+def test_m149_ricostruzione_dal_libro_usa_la_chiave_giornaliera(tmp_path, procedura):
+    """M149 + M148: ES LIVE senza conto non durevole, ricostruito al riavvio dal libro giornaliero. Senza procedura =>
+    sentinella; con la procedura M148 (conto A identificato PENDING + data di attribuzione di oggi) => nessuna
+    sentinella ricreata, resta solo A da riconciliare."""
+    from datetime import datetime as _dt
+    nome = f"m149l_{procedura}.db"
+    c = _m147_banco(tmp_path, nome)
+    _connetti(c, _anonimo())
+    c.rc.set_simulation_mode(False)
+    _settle(c, -40.0, event_key="cleared:1.9499:1")
+    assert c.rc._emergency_stopped
+    scope_a = _live(c, CONTO_A)
+    voci = {"emergency_stopped": "0", RuntimeController._LIVE_ACCOUNTS_KEY: ""}  # ES non durevole
+    if procedura:
+        voci[RuntimeController._LIVE_ACCOUNTS_KEY] = json.dumps(
+            {"version": 2, "accounts": {scope_a: {"state": "PENDING", "breaches": []}}}, sort_keys=True)
+        voci[RuntimeController._UNIDENTIFIED_ATTRIBUTED_KEY] = _dt.utcnow().date().isoformat()
+    c.rc.db.save_settings(voci)
+    r = _m147_banco(tmp_path, nome)
+    conti = RuntimeController._live_bound_accounts(r.rc) or {}
+    assert r.rc._emergency_stopped, "ES non ricostruito dal libro"
+    if procedura:
+        assert conti == {scope_a: "PENDING"}, conti
+    else:
+        assert _SENT in conti, conti

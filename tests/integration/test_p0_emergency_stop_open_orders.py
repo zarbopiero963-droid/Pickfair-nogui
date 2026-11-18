@@ -91,6 +91,10 @@ class FakeExchange:
     """Exchange LIVE con comportamento controllato (forma `listCurrentOrders` di Betfair). Ogni ordine:
     betId, marketId, status EXECUTABLE/EXECUTION_COMPLETE, sizeMatched, sizeRemaining, customerOrderRef."""
 
+    # M149 (owner): la sessione LIVE ha il suo conto di login. Senza identita' l'obbligo LIVE dell'arresto e' legato
+    # alla sentinella «conto non identificato», che nessuna verifica certifica (uscita solo con la procedura M148).
+    username = "conto-p0@example.invalid"
+
     def __init__(self, orders, *, cancel_mode="ok", read_fail=(), emergency_seen=None, appear_after=()):
         self.orders = [dict(o) for o in orders]
         self.appear_after = [dict(o) for o in appear_after]   # accettati dall'exchange dopo la prima lettura

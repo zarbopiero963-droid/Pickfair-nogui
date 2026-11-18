@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 import weakref
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_UP, Decimal, InvalidOperation
 from typing import Any, Optional
 
@@ -2268,7 +2268,8 @@ class RuntimeController:
             # CX-G1 (owner M145): lo stop ripristinato resta legato al conto LIVE che lo ha generato (ambito del marker),
             # vincolo salvato PRIMA dello stop e della rimozione del marker: B non certifica mai A
             scope = str(marker.get("scope") or "") if isinstance(marker, dict) else ""
-            RuntimeController._bind_live_account(self, scope if financial_scope.escalates_globally(scope) else None)
+            escalates = financial_scope.escalates_globally(scope)
+            RuntimeController._bind_live_account(self, scope if escalates else None, obligation=escalates)
             if isinstance(marker, dict) and isinstance(marker.get("runtime_live"), bool):
                 # M146 (CX-H1): modalita' dello sweep dal marker (mai declassata: una sola verifica gia' attiva resta)
                 if (marker["runtime_live"] or not self.__dict__.get("_live_verify_only")
@@ -3601,6 +3602,9 @@ class RuntimeController:
     # ({ambito: "PENDING"|"VERIFIED"}). Solo il conto che ha generato lo stop puo' certificarne la chiusura.
     _LIVE_ACCOUNTS_KEY = "emergency_live_accounts"
     _LIVE_ACCOUNTS_UNREADABLE = "betfair|LIVE|<vincolo_illeggibile>|EUR"
+    # M149 (owner, A): obbligo LIVE con conto non identificabile. PENDING, mai verificabile da uno sweep (nessun conto
+    # connesso vi corrisponde), mai attribuito al conto collegato: si scioglie solo con la procedura M148
+    _LIVE_ACCOUNT_UNIDENTIFIED = "betfair|LIVE|<conto_non_identificato>|EUR"
     _LIVE_ACCOUNT_STATES = ("PENDING", "VERIFIED")
 
     def _live_bound_accounts(self) -> Optional[dict]:
@@ -3674,20 +3678,30 @@ class RuntimeController:
             self._live_binding_failed = True
             return False
 
-    def _bind_live_account(self, scope: Optional[str] = None, breach: Optional[dict] = None) -> str:
-        """N6 (owner M134) + M147 (registro unico dei superamenti LIVE): lega lo stop globale al conto LIVE che lo ha
-        generato. Ambito LIVE verificato del superamento => quel conto; altrimenti (stop manuale, ambito non
-        verificabile) => il conto LIVE configurato ora. Il conto torna PENDING finche' uno sweep SU QUEL CONTO non lo
-        verifica. Con `breach` (chiave idempotente, tipo, limite, perdita, sessione di rischio, fonte) il superamento
-        entra nella storia del conto; lo stesso superamento gia' registrato su un conto VERIFICATO non lo riapre.
-        Mai raise; '' se non identificabile (nessun conto LIVE configurato: nessun vincolo possibile)."""
+    def _bind_live_account(self, scope: Optional[str] = None, breach: Optional[dict] = None,
+                           obligation: bool = True) -> str:
+        """N6 (owner M134) + M147 (registro unico dei superamenti LIVE) + M149 (owner, A): lega lo stop globale al conto
+        LIVE che lo ha generato. Ambito LIVE verificato del superamento => quel conto; stop senza ambito (manuale) =>
+        il conto LIVE configurato ora; ambito NON verificabile => mai il conto collegato (attribuzione arbitraria).
+        Conto non identificabile con un obbligo LIVE (`obligation`) => sentinella `<conto_non_identificato>` PENDING:
+        la mancanza di identita' non e' mai assenza di rischio. Il conto torna PENDING finche' uno sweep SU QUEL CONTO
+        non lo verifica. Con `breach` (chiave idempotente, tipo, limite, perdita, sessione di rischio, fonte) il
+        superamento entra nella storia del conto; lo stesso superamento gia' registrato (su qualunque voce, anche
+        attribuito a un conto dalla procedura M148) non si riapre. Mai raise; '' solo senza obbligo LIVE."""
         try:
             target = str(scope or "")
             if not (financial_scope.is_verified(target) and not financial_scope.is_sim(target)):
-                target = RuntimeController._financial_scope_for(self, False)
+                target = RuntimeController._financial_scope_for(self, False) if not scope else ""
             if not (financial_scope.is_verified(target) and not financial_scope.is_sim(target)):
-                logger.critical("N6: conto LIVE dello stop non identificabile: nessun vincolo registrato")
-                return ""
+                if not obligation:
+                    logger.critical("N6: conto LIVE dello stop non identificabile: nessun vincolo registrato")
+                    return ""
+                if RuntimeController._unidentified_attributed(self, breach):
+                    logger.warning("M149: superamento non identificato gia' attribuito dalla procedura M148: nessuna "
+                                   "sentinella (%s)", (breach or {}).get("key"))
+                    return ""
+                logger.critical("M149: obbligo LIVE con conto non identificabile: sentinella PENDING (procedura M148)")
+                target = RuntimeController._LIVE_ACCOUNT_UNIDENTIFIED
             with self.__dict__.setdefault("_live_accounts_lock", threading.RLock()):
                 accounts = dict(RuntimeController._live_bound_accounts(self) or {})
                 if RuntimeController._LIVE_ACCOUNTS_UNREADABLE in accounts:
@@ -3708,6 +3722,27 @@ class RuntimeController:
             logger.exception("N6: vincolo del conto LIVE non registrato")
             return ""
 
+    _UNIDENTIFIED_ATTRIBUTED_KEY = "emergency_live_unidentified_attributed_through"
+
+    def _unidentified_attributed(self, breach: Optional[dict]) -> bool:
+        """M149 + procedura M148 (passo 4): l'operatore, dopo aver identificato con prove i conti dell'inventario e
+        averli scritti PENDING nel registro, registra la data UTC fino alla quale i superamenti GIORNALIERI non
+        identificati sono attribuiti a quei conti (chiave `emergency_live_unidentified_attributed_through`, formato
+        AAAA-MM-GG). Vale SOLO per un superamento con chiave giornaliera `daily|<ambito>|<giorno>` di quel giorno o
+        precedente: uno stop manuale o un obbligo senza chiave ricreano sempre la sentinella. Data assente, non valida
+        o futura => nessuna attribuzione (fail-closed). Mai raise."""
+        try:
+            key = str((breach or {}).get("key") or "")
+            if not key.startswith("daily|"):
+                return False
+            day = date.fromisoformat(key.rsplit("|", 1)[1])
+            raw = (self.db.get_settings() or {}).get(RuntimeController._UNIDENTIFIED_ATTRIBUTED_KEY) \
+                if hasattr(self.db, "get_settings") else ""
+            through = date.fromisoformat(str(raw or "").strip())
+            return through <= datetime.utcnow().date() and day <= through
+        except Exception:
+            return False
+
     def _live_account_mismatch(self) -> Optional[dict]:
         """N6: None se il conto LIVE connesso puo' essere verificato per lo stop (e' fra quelli vincolati, o nessun
         vincolo e' registrato); altrimenti il motivo. Un conto B non certifica mai l'assenza di ordini sul conto A."""
@@ -3715,6 +3750,16 @@ class RuntimeController:
         connected = RuntimeController._financial_scope_for(self, False)
         if accounts is None:
             return {"required_accounts": [], "connected_account": connected, "error": "vincolo_non_leggibile"}
+        anonymous = not (financial_scope.is_verified(connected) and not financial_scope.is_sim(connected))
+        if not accounts and self.__dict__.get("_emergency_stopped") \
+                and RuntimeController._live_obligation_recorded(self) and not anonymous:
+            # M149 (C): ES con obbligo LIVE e registro vuoto = incoerenza, mai «nessun vincolo»: un conto identificato
+            # non certifica nulla e non legge ne' cancella (N6)
+            return {"required_accounts": [], "connected_account": connected, "error": "registro_incoerente_obbligo_live"}
+        if anonymous and (not accounts or RuntimeController._LIVE_ACCOUNT_UNIDENTIFIED in accounts):
+            # M149 (A): la sessione LIVE senza identita' cancella gli ordini DEL BOT (per betId) come prima, ma non
+            # certifica: la sentinella resta PENDING (`_settle_live_account`), uscita solo con la procedura M148
+            return None
         if not accounts or connected in accounts:
             return None
         return {"required_accounts": sorted(accounts), "connected_account": connected}
@@ -3726,6 +3771,10 @@ class RuntimeController:
             with self.__dict__.setdefault("_live_accounts_lock", threading.RLock()):
                 accounts = dict(RuntimeController._live_bound_accounts(self) or {})
                 if not accounts:
+                    if self.__dict__.get("_emergency_stopped") and RuntimeController._live_obligation_recorded(self):
+                        # M149 (C): obbligo LIVE con registro vuoto: lo sweep non chiude mai l'esposizione
+                        result["manual_action_required"] = True
+                        result["registry_incoherent"] = True
                     return
                 connected = RuntimeController._financial_scope_for(self, False)
                 if connected in accounts:
@@ -3847,7 +3896,8 @@ class RuntimeController:
                 return
             reason = "DAILY_LOSS_BREACH_RESTORED_FROM_BOOK"
             for scope in breached:                       # N6: conti LIVE superati vincolati allo stop ricostruito
-                RuntimeController._bind_live_account(self, scope)
+                RuntimeController._bind_live_account(self, scope, breach={
+                    "key": f"daily|{scope}|{today}", "kind": "daily", "source": "avvio_libro"})
             self._emergency_stopped = True
             self._emergency_stopped_at = datetime.utcnow().isoformat()
             self._emergency_reason = reason
@@ -4861,6 +4911,22 @@ class RuntimeController:
             RuntimeController._settle_live_account(self, result)     # N6: stato del conto verificato
         return result
 
+    def _live_obligation_recorded(self) -> bool:
+        """M149 (C): evidenza durevole di un obbligo LIVE dell'Emergency Stop, nessuna fonte nuova: la sede salvata nello
+        stesso salvataggio del flag dell'ES (`emergency_settlement_source`, PF-ALL-F027) oppure, per gli ES salvati
+        prima, l'esito LIVE irrisolto su disco. Lettura fallita => obbligo presunto (fail-closed). Mai raise."""
+        try:
+            if str(self.__dict__.get("_settlement_source_before_emergency") or "").upper() == "LIVE":
+                return True
+            settings = self.db.get_settings() if hasattr(self.db, "get_settings") else {}
+            if str((settings or {}).get("emergency_settlement_source") or "").strip().upper() == "LIVE":
+                return True
+            record = RuntimeController._live_exposure_record_now(self)
+            return bool(record) and not record.get("resolved")
+        except Exception:
+            logger.exception("M149: obbligo LIVE dell'Emergency Stop non verificabile (fail-closed)")
+            return True
+
     def reset_emergency(self) -> dict:
         """
         Clear the emergency-stopped flag so the runtime can be restarted.
@@ -4879,6 +4945,14 @@ class RuntimeController:
             logger.critical("M147: reset dell'Emergency Stop rifiutato: esposizione LIVE irrisolta (%s, %s)",
                             state, pending)
             return {"emergency_reset": False, "reason": "esposizione_live_irrisolta", "accounts_pending": pending,
+                    "exposure_state": state}
+        # M149 (owner, C): un obbligo LIVE ha sempre almeno una voce nel registro (conto reale o sentinella). Registro
+        # vuoto con un ES LIVE (fonte durevole salvata col flag dell'ES) o con un esito LIVE irrisolto su disco =
+        # incoerenza => fail-closed, mai «nessun vincolo». Un ES solo SIM non ha obbligo LIVE: si toglie come prima.
+        if self._emergency_stopped and accounts is not None and not accounts \
+                and RuntimeController._live_obligation_recorded(self):
+            logger.critical("M149: reset dell'Emergency Stop rifiutato: obbligo LIVE con registro dei conti vuoto")
+            return {"emergency_reset": False, "reason": "registro_incoerente_obbligo_live", "accounts_pending": [],
                     "exposure_state": state}
         self._emergency_stopped = False
         self._emergency_stopped_at = ""

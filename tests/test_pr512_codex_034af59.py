@@ -1386,8 +1386,10 @@ def test_c12_source_is_persisted_before_the_sim_flip():
     real = db.save_settings
     db.save_settings = lambda data: (writes.append(dict(data)), real(data))[1]
     rc.emergency_stop(reason="c12_order")
-    first = writes[0]
+    # N6/CX-G1: il conto dello stop si salva PRIMA del flag; il marker della sede sta nello STESSO salvataggio del flag
+    first = next(w for w in writes if "emergency_stopped" in w)
     assert first.get("emergency_stopped") == "1" and first.get("emergency_settlement_source") == "LIVE", first
+    assert all("emergency_stopped" not in w for w in writes[:writes.index(first)]), writes
 
 
 def test_c12_sim_emergency_restart_keeps_reading_sim_ledger():
@@ -1425,6 +1427,8 @@ def test_c12_reset_clears_the_persisted_source():
     rc, _ = _c12_rc(db)
     rc.set_simulation_mode(False)
     rc.emergency_stop(reason="c12_reset")
+    from test_emergency_stop import _riconcilia_conto_live
+    _riconcilia_conto_live(rc)                  # M149: reset solo dopo la riconciliazione reale del conto LIVE
     rc.reset_emergency()
     assert db.settings.get("emergency_settlement_source") == ""
     rc2, _ = _c12_rc(db)

@@ -1041,6 +1041,17 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
     [`ops/live_registry_recovery.md`](../ops/live_registry_recovery.md) (ricostruzione da fonti verificabili, tutti i
     conti PENDING, riconciliazione reale di ogni conto, doppia conferma). Svuotare la chiave o scrivere VERIFIED a mano
     e' un aggiramento vietato.
+    **M149 (owner, A + C):** un obbligo LIVE (stop LIVE, `live_exposure`, superamento LIVE o non verificabile) con
+    conto NON identificabile registra la sentinella `betfair|LIVE|<conto_non_identificato>|EUR` PENDING: un ambito non
+    verificabile non e' mai attribuito al conto collegato; nessuno sweep certifica la sentinella (la sessione senza
+    identita' cancella ancora per betId i soli ordini del bot; un conto identificato estraneo non legge ne' cancella,
+    N6). Uscita solo con la procedura M148 (passo 4.4: conti identificati PENDING e data di attribuzione
+    `emergency_live_unidentified_attributed_through`, valida solo per i superamenti giornalieri fino a quel giorno).
+    C: Emergency Stop LIVE (`emergency_settlement_source = "LIVE"`, salvata col flag) o esito LIVE irrisolto su disco
+    con registro vuoto = incoerenza: nessun conto certifica, `reset_emergency()` rifiutato con
+    `registro_incoerente_obbligo_live`. Un Emergency Stop solo SIM resta resettabile. Cambio di contratto: un ES LIVE
+    con sessione senza conto di login non si toglie piu' con il solo reset (test esistenti adeguati: riconciliazione
+    reale prima del reset, conto di login nei finti LIVE).
     **M147-D1:** il reset di uno stop non cancella verifiche ed esito LIVE se resta attivo l'altro stop globale (ES o
     RISK_STOP): ES + stop di sessione si sciolgono senza stallo quando tutti i conti sono verificati.
   - *G2 — archivio delle sessioni chiuse (owner M139).* Le ultime 20 chiuse restano nel libro come finestra operativa;
