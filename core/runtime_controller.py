@@ -456,6 +456,7 @@ class RuntimeController:
         # a costruzione COMPLETATA: ripristina l'intera postura (lockdown
         # incluso), non solo il flag.
         self._reload_persisted_emergency_state()
+        RuntimeController._restore_deferred_live_bindings(self)     # M151-bis (CX-K2): obblighi LIVE in sospeso
         self._load_hedged_markets()
         RuntimeController._restore_live_verify_only(self)           # M144/M146: modalita' prima del marker di sessione
         RuntimeController._restore_session_stop_marker(self)        # S-b: stop di sessione rimasto in sospeso
@@ -3574,7 +3575,8 @@ class RuntimeController:
                 settings = dict(settings or {}, **journal)
                 if not RuntimeController._durable_save_settings(self, {
                         k: journal.get(k, "") for k in ("emergency_stopped", "emergency_stopped_at",
-                                                         "emergency_reason", "emergency_settlement_source")}):
+                                                         "emergency_reason", "emergency_settlement_source",
+                                                         RuntimeController._HEDGE_GUARD_KEY)}):
                     logger.critical("M151: Emergency Stop del giornale di sicurezza riportato sul db")
             flag = str((settings or {}).get("emergency_stopped", "")).strip().lower()
             if flag not in {"1", "true"}:
@@ -3685,6 +3687,13 @@ class RuntimeController:
         merged = dict(fresh)
         if RuntimeController._LIVE_ACCOUNTS_UNREADABLE in merged:
             return merged
+        for scope, items in (self.__dict__.get("_pending_live_bindings") or {}).items():
+            merged[scope] = "PENDING"                    # M151-bis (CX-K2): obbligo in sospeso, mai VERIFIED da qui
+            history = self.__dict__.setdefault("_live_breaches", {})
+            known = list(history.get(scope) or [])
+            keys = {str(b.get("key")) for b in known}
+            known.extend(dict(b) for b in items if str(b.get("key")) not in keys)
+            history[scope] = known
         for scope, state in mem_accounts.items():
             if scope not in merged or state == "PENDING":
                 merged[scope] = state if scope not in merged else "PENDING"
@@ -3740,6 +3749,7 @@ class RuntimeController:
                 if not isinstance(readback, dict) or str(readback.get(RuntimeController._LIVE_ACCOUNTS_KEY) or "") != payload:
                     raise OSError("vincolo dei conti non riletto")
             self._live_binding_failed = False
+            RuntimeController._settle_deferred_live_bindings(self, accounts)
             return True
         except Exception:
             logger.exception("N6: vincolo dei conti LIVE non salvato (resta in memoria; marker di sessione conservato)")
@@ -3773,9 +3783,11 @@ class RuntimeController:
             with self.__dict__.setdefault("_live_accounts_lock", threading.RLock()):
                 accounts = RuntimeController._live_registry_for_update(self)
                 if accounts is None:
-                    # M151 (CX-J1): registro non rileggibile => nessuna scrittura; l'obbligo resta (ES attivo) e il
-                    # vincolo si ricrea al prossimo tentativo (`_live_binding_failed`)
+                    # M151 (CX-J1): registro non rileggibile => nessuna scrittura (mai un registro dal nulla).
+                    # M151-bis (CX-K2): l'obbligo NON si perde: resta in sospeso (memoria + giornale di sicurezza), si
+                    # unisce a ogni rilettura riuscita del registro e, finche' non e' scritto, blocca certificazione e reset
                     self._live_binding_failed = True
+                    RuntimeController._defer_live_binding(self, target, breach)
                     return target
                 if RuntimeController._LIVE_ACCOUNTS_UNREADABLE in accounts:
                     # registro illeggibile: resta tale (nessun conto certifica), mai sovrascritto da una registrazione
@@ -3794,6 +3806,52 @@ class RuntimeController:
         except Exception:
             logger.exception("N6: vincolo del conto LIVE non registrato")
             return ""
+
+    _PENDING_BINDINGS_KEY = "emergency_live_pending_bindings"
+
+    def _defer_live_binding(self, target: str, breach: Optional[dict]) -> None:
+        """M151-bis (CX-K2): obbligo LIVE non scrivibile nel registro (rilettura fallita) => in sospeso in memoria e nel
+        giornale di sicurezza (sopravvive al riavvio). Mai raise."""
+        pending = self.__dict__.setdefault("_pending_live_bindings", {})
+        items = pending.setdefault(str(target), [])
+        if breach and str(breach.get("key") or "") and not any(
+                str(b.get("key")) == str(breach["key"]) for b in items):
+            items.append(dict(breach, at=datetime.utcnow().isoformat()))
+        logger.critical("M151-bis: obbligo LIVE di %s in sospeso (registro non rileggibile): certificazione e reset "
+                        "bloccati finche' non e' scritto", target)
+        RuntimeController._journal_safety_state(self, {
+            RuntimeController._PENDING_BINDINGS_KEY: json.dumps(pending, sort_keys=True)})
+
+    def _settle_deferred_live_bindings(self, saved_accounts: dict) -> None:
+        """M151-bis (CX-K2): obblighi in sospeso scritti (registro salvato e riletto con quel conto) => tolti dalla
+        memoria e dal giornale. Mai raise."""
+        pending = self.__dict__.get("_pending_live_bindings") or {}
+        if not pending:
+            return
+        for scope in [k for k in pending if k in saved_accounts]:
+            pending.pop(scope, None)
+        if pending:
+            RuntimeController._journal_safety_state(self, {
+                RuntimeController._PENDING_BINDINGS_KEY: json.dumps(pending, sort_keys=True)})
+        else:
+            RuntimeController._drop_safety_journal(self, [RuntimeController._PENDING_BINDINGS_KEY])
+
+    def _restore_deferred_live_bindings(self) -> None:
+        """M151-bis (CX-K2), avvio: obblighi in sospeso dal giornale di sicurezza. Giornale o valore illeggibile =>
+        obbligo sul registro illeggibile (nessun conto certifica, procedura M148). Mai raise."""
+        try:
+            journal = RuntimeController._read_safety_journal(self)
+            raw = None if journal is None else journal.get(RuntimeController._PENDING_BINDINGS_KEY)
+            if journal is not None and not raw:
+                return
+            data = json.loads(raw) if raw else None
+            if not isinstance(data, dict) or any(not isinstance(v, list) for v in data.values()):
+                raise ValueError("obblighi in sospeso illeggibili")
+            self._pending_live_bindings = {str(k): [dict(b) for b in v if isinstance(b, dict)]
+                                           for k, v in data.items()}
+        except Exception:
+            logger.critical("M151-bis: obblighi LIVE in sospeso illeggibili: vincolo illeggibile (fail-closed)")
+            self._pending_live_bindings = {RuntimeController._LIVE_ACCOUNTS_UNREADABLE: []}
 
     _UNIDENTIFIED_ATTRIBUTED_KEY = "emergency_live_unidentified_attributed_through"
 
@@ -4008,10 +4066,14 @@ class RuntimeController:
         (nessuno stop). Al riavvio una modalita' mancante con uno stop globale attivo vale SOLA VERIFICA (opzione A
         owner M146): un salvataggio fallito non fa mai cancellare una copertura. Ritorna True se riletta. Mai raise."""
         self._live_verify_only = bool(value)
+        # M151-bis (CX-K1): la protezione delle coperture segue la sola verifica ma e' uno stato proprio, che l'Emergency
+        # Stop non azzera (N7 azzera solo `_live_verify_only`) e che viaggia anche nel salvataggio dell'ES
+        self._hedge_guard = bool(value)
         payload = "1" if value else ("0" if explicit else "")
         try:
             if hasattr(self.db, "save_settings"):
-                self.db.save_settings({RuntimeController._LIVE_VERIFY_ONLY_KEY: payload})
+                self.db.save_settings({RuntimeController._LIVE_VERIFY_ONLY_KEY: payload,
+                                       RuntimeController._HEDGE_GUARD_KEY: "1" if value else ""})
                 readback = self.db.get_settings() if hasattr(self.db, "get_settings") else None
                 if not isinstance(readback, dict) or str(
                         readback.get(RuntimeController._LIVE_VERIFY_ONLY_KEY) or "") != payload:
@@ -4051,6 +4113,23 @@ class RuntimeController:
         except Exception:
             logger.exception("N7: modalita' di sola verifica non leggibile all'avvio: sola verifica")
             self._live_verify_only = True
+        RuntimeController._restore_hedge_guard(self)
+
+    _HEDGE_GUARD_KEY = "emergency_hedge_guard"
+
+    def _restore_hedge_guard(self) -> None:
+        """M151-bis (CX-K1), avvio: protezione delle coperture attiva se la sola verifica e' attiva o se la chiave della
+        protezione (salvata con la sola verifica o con l'Emergency Stop) e' "1". Illeggibile => attiva. Mai raise."""
+        try:
+            raw = (self.db.get_settings() or {}).get(RuntimeController._HEDGE_GUARD_KEY) \
+                if hasattr(self.db, "get_settings") else ""
+            journal = RuntimeController._read_safety_journal(self)
+            journaled = journal is None or str((journal or {}).get(RuntimeController._HEDGE_GUARD_KEY) or "") == "1"
+            self._hedge_guard = bool(self.__dict__.get("_live_verify_only")) or str(raw or "").strip() == "1" \
+                or journaled
+        except Exception:
+            logger.exception("M151-bis: protezione delle coperture non leggibile all'avvio: attiva (fail-closed)")
+            self._hedge_guard = True
 
     def _restore_live_exposure_pending(self) -> None:
         """Codex P1 su afbd5c89: un'esposizione LIVE irrisolta registrata in modo durevole (record R1 non risolto o
@@ -4278,6 +4357,8 @@ class RuntimeController:
             "emergency_reason": self._emergency_reason,
             # PF-ALL-F027 / Codex r4311806886: provenienza dei settlement nello STESSO salvataggio del flag
             "emergency_settlement_source": getattr(self, "_settlement_source_before_emergency", "") or "",
+            # M151-bis (CX-K1): la protezione delle coperture attiva in memoria e' salvata con l'ES (durevole o giornale)
+            RuntimeController._HEDGE_GUARD_KEY: "1" if self.__dict__.get("_hedge_guard") else "",
         }
 
     def _persist_emergency_state(self) -> str:
@@ -4633,15 +4714,17 @@ class RuntimeController:
                 or "HEDGE" in str(payload.get("order_origin") or "").upper())
 
     def _hedge_guard_active(self) -> bool:
-        """M151 (owner, decisione 1): protezione delle coperture attiva se e' attiva la sola verifica LIVE, in memoria o
-        salvata (`emergency_live_verify_only`: l'Emergency Stop azzera solo la copia in memoria, N7, quella salvata
-        resta). Lettura fallita => attiva (fail-closed)."""
-        if self.__dict__.get("_live_verify_only"):
+        """M151 (owner, decisione 1) + M151-bis (CX-K1): protezione delle coperture attiva se e' attiva la sola verifica
+        LIVE (in memoria o salvata) o la protezione propria `_hedge_guard` (armata con la sola verifica, mai azzerata
+        dall'Emergency Stop, salvata con la sola verifica e con l'ES: una sola verifica non durevole non rende mai
+        cancellabile una copertura). Lettura fallita => attiva (fail-closed)."""
+        if self.__dict__.get("_live_verify_only") or self.__dict__.get("_hedge_guard"):
             return True
         try:
             settings = self.db.get_settings() if hasattr(self.db, "get_settings") else {}
             settings = settings or {}
-            return str(settings.get(RuntimeController._LIVE_VERIFY_ONLY_KEY) or "").strip() == "1"
+            return str(settings.get(RuntimeController._LIVE_VERIFY_ONLY_KEY) or "").strip() == "1" \
+                or str(settings.get(RuntimeController._HEDGE_GUARD_KEY) or "").strip() == "1"
         except Exception:
             logger.exception("M151: protezione delle coperture non verificabile (attiva, fail-closed)")
             return True
@@ -5161,6 +5244,8 @@ class RuntimeController:
     def _reset_emergency_locked(self) -> dict:
         accounts = RuntimeController._live_bound_accounts(self)
         pending = sorted(k for k, v in (accounts or {}).items() if v != "VERIFIED") if accounts is not None else ["?"]
+        # M151-bis (CX-K2): un obbligo LIVE in sospeso (non ancora scritto nel registro) e' sempre irrisolto
+        pending = sorted(set(pending) | set(self.__dict__.get("_pending_live_bindings") or {}))
         state = RuntimeController._live_exposure_status(self).get("state")
         # obbligo LIVE dei CONTI INTERESSATI (R6): un conto del registro ancora PENDING, o il registro illeggibile
         # (sentinella PENDING / lettura fallita). Un Emergency Stop senza conti registrati si toglie come prima (R10)

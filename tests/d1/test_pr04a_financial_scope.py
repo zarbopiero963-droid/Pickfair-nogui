@@ -5192,3 +5192,185 @@ def test_m151_tardivi_compresi_ripristinati_al_riavvio(tmp_path):
     c.rc._risk_session = None
     RuntimeController._restore_risk_session(c.rc, {"risk_session": sessione})
     assert c.rc._risk_session["id"] == sid and c.rc._risk_session.get("late_keys") == ["cleared:1.9101:1"]
+
+
+# ============================================================ M151-bis (owner): CX-K1 + CX-K2
+def _m151bis_sola_verifica_non_salvata(c, conto):
+    """Stop di sessione LIVE con la chiave della sola verifica NON salvabile: sola verifica solo in memoria."""
+    vero = c.rc.db.save_settings
+
+    def guasto(data, *a, **k):
+        if isinstance(data, dict) and data.get(RuntimeController._LIVE_VERIFY_ONLY_KEY) == "1":
+            raise OSError("M151-bis: sola verifica non salvata")
+        return vero(data, *a, **k)
+    c.rc.db.save_settings = guasto
+    try:
+        _settle(c, -40.0)
+    finally:
+        c.rc.db.save_settings = vero
+    assert c.rc._live_verify_only is True
+    assert (c.rc.db.get_settings() or {}).get(RuntimeController._LIVE_VERIFY_ONLY_KEY) != "1"
+
+
+def test_m151bis_k1_sola_verifica_non_durevole_es_manuale_non_cancella_la_copertura(tmp_path):
+    """CX-K1: sola verifica non salvata + ES manuale nello stesso processo => H1 mai cancellata, G1 si'. La protezione
+    e' salvata con l'ES e sopravvive al riavvio. Prima (bb46d723): H1 cancellata con G1."""
+    c = _g_banco(tmp_path, "m151k1.db")
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    conto = _m151_copertura(c)
+    conto.cancella = False
+    _connetti(c, conto)
+    _m151bis_sola_verifica_non_salvata(c, conto)
+    c.rc.emergency_stop(reason="M151BIS_K1", live_exposure=True)
+    cancellati = {b for _m, ids in conto.cancellazioni for b in (ids or [])}
+    assert "H1" not in cancellati and "G1" in cancellati, conto.cancellazioni
+    assert (c.rc.db.get_settings() or {}).get(RuntimeController._HEDGE_GUARD_KEY) == "1"
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+    r = _copia_riavvio(tmp_path, "m151k1.db")
+    assert r.rc._emergency_stopped and RuntimeController._hedge_guard_active(r.rc) is True
+    r.rc._emergency_reconcile_pending = False
+
+
+def test_m151bis_k1_protezione_nel_giornale_se_anche_l_es_non_e_durevole(tmp_path):
+    """CX-K1 (doppio guasto): sola verifica e ES entrambi non durevoli sul db => la protezione va nel giornale di
+    sicurezza con l'ES; al riavvio e' attiva."""
+    import os
+    c = _g_banco(tmp_path, "m151k1j.db")
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    conto = _m151_copertura(c)
+    conto.cancella = False
+    _connetti(c, conto)
+    _m151bis_sola_verifica_non_salvata(c, conto)
+    vero = c.rc.db.save_settings
+
+    def guasto(data, *a, **k):
+        if isinstance(data, dict) and "emergency_stopped" in data:
+            return False
+        return vero(data, *a, **k)
+    c.rc.db.save_settings = guasto
+    try:
+        c.rc.emergency_stop(reason="M151BIS_K1J", live_exposure=True)
+    finally:
+        c.rc.db.save_settings = vero
+    assert "H1" not in {b for _m, ids in conto.cancellazioni for b in (ids or [])}
+    giornale = str(tmp_path / "m151k1j.db") + RuntimeController._SAFETY_JOURNAL_SUFFIX
+    assert json.load(open(giornale)).get(RuntimeController._HEDGE_GUARD_KEY) == "1"
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+    r = _copia_riavvio(tmp_path, "m151k1j.db")
+    assert r.rc._emergency_stopped and RuntimeController._hedge_guard_active(r.rc) is True
+    assert not os.path.exists(giornale)                        # riportato sul db, poi rimosso
+    assert (r.rc.db.get_settings() or {}).get(RuntimeController._HEDGE_GUARD_KEY) == "1"
+    r.rc._emergency_reconcile_pending = False
+
+
+def _m151bis_binding_b_fallito(c, scope_b):
+    vero = c.rc.db.get_settings
+
+    def lettura(*a, **k):
+        raise OSError("M151-bis: registro non leggibile")
+    c.rc.db.get_settings = lettura
+    try:
+        RuntimeController._bind_live_account(c.rc, scope_b, breach={"key": f"daily|{scope_b}|2026-11-18",
+                                                                     "kind": "daily"})
+    finally:
+        c.rc.db.get_settings = vero
+
+
+def test_m151bis_k2_obbligo_di_b_in_sospeso_blocca_il_reset_e_poi_entra_nel_registro(tmp_path):
+    """CX-K2: ES di A verificato; binding di B con ogni lettura del registro fallita => B in sospeso (memoria e giornale),
+    reset rifiutato con B fra i conti in sospeso; la riconciliazione successiva scrive B PENDING nel registro e toglie
+    il sospeso; reset ancora rifiutato finche' B non e' riconciliato. Prima (bb46d723): reset accettato, B perso."""
+    import os
+    c = _m147_banco(tmp_path, "m151k2.db")
+    conto_a, conto_b = _ContoLive(CONTO_A), _ContoLive(CONTO_B, [_ordine_b()], cancella=False)
+    _connetti(c, conto_a)
+    _settle(c, -40.0, event_key="cleared:1.9780:1")
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="k2a")
+    assert c.rc.get_status()["live_exposure"]["state"] == "VERIFICATA"
+    scope_b = _live(c, CONTO_B)
+    _connetti(c, conto_a)
+    _m151bis_binding_b_fallito(c, scope_b)
+    giornale = str(tmp_path / "m151k2.db") + RuntimeController._SAFETY_JOURNAL_SUFFIX
+    assert scope_b in json.loads(json.load(open(giornale))[RuntimeController._PENDING_BINDINGS_KEY])
+    esito = c.rc.reset_emergency()
+    assert esito["emergency_reset"] is False and scope_b in esito["accounts_pending"] and c.rc._emergency_stopped
+    c.rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="k2a2")      # A riconciliato: rilettura riuscita
+    disco = json.loads(c.rc.db.get_settings()[RuntimeController._LIVE_ACCOUNTS_KEY])["accounts"]
+    assert disco[scope_b]["state"] == "PENDING" and [b["kind"] for b in disco[scope_b]["breaches"]] == ["daily"]
+    assert not c.rc.__dict__.get("_pending_live_bindings") and not os.path.exists(giornale)
+    assert c.rc.reset_emergency()["emergency_reset"] is False
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+
+
+def test_m151bis_k2_obbligo_in_sospeso_sopravvive_al_riavvio(tmp_path):
+    """CX-K2 (riavvio): obbligo di B in sospeso solo nel giornale => al riavvio torna in sospeso e blocca il reset."""
+    c = _m147_banco(tmp_path, "m151k2r.db")
+    _connetti(c, _ContoLive(CONTO_A))
+    _settle(c, -40.0, event_key="cleared:1.9790:1")
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="k2r")
+    scope_b = _live(c, CONTO_B)
+    _connetti(c, _ContoLive(CONTO_A))
+    _m151bis_binding_b_fallito(c, scope_b)
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+    r = _copia_riavvio(tmp_path, "m151k2r.db")
+    r.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(r.rc))
+    assert scope_b in (r.rc.__dict__.get("_pending_live_bindings") or {}) or scope_b in (
+        RuntimeController._live_bound_accounts(r.rc) or {})
+    esito = r.rc.reset_emergency()
+    assert esito["emergency_reset"] is False and scope_b in esito["accounts_pending"]
+
+
+def test_m151bis_k2_obblighi_in_sospeso_illeggibili_al_riavvio_sono_fail_closed(tmp_path):
+    """CX-K2: valore degli obblighi in sospeso corrotto nel giornale => vincolo illeggibile, reset rifiutato."""
+    c = _m147_banco(tmp_path, "m151k2c.db")
+    c.rc.emergency_stop(reason="M151BIS_K2C", live_exposure=False)
+    with open(str(tmp_path / "m151k2c.db") + RuntimeController._SAFETY_JOURNAL_SUFFIX, "w") as fh:
+        json.dump({RuntimeController._PENDING_BINDINGS_KEY: "{rotto"}, fh)
+    r = _copia_riavvio(tmp_path, "m151k2c.db")
+    assert RuntimeController._LIVE_ACCOUNTS_UNREADABLE in (r.rc.__dict__.get("_pending_live_bindings") or {})
+    assert r.rc.reset_emergency()["emergency_reset"] is False
+
+
+def test_m151bis_k1_protezione_dal_giornale_anche_se_al_riavvio_il_db_non_salva(tmp_path, monkeypatch):
+    """CX-K1 (triplo guasto): protezione solo nel giornale e, al riavvio, il db non accetta la riscrittura => la
+    protezione si legge dal giornale (resta attiva), il giornale resta."""
+    import os
+    import database as dbmod
+    c = _g_banco(tmp_path, "m151k1t.db")
+    _ambiente(c, "LIVE", conto=CONTO_A)
+    conto = _m151_copertura(c)
+    conto.cancella = False
+    _connetti(c, conto)
+    _m151bis_sola_verifica_non_salvata(c, conto)
+    vero = c.rc.db.save_settings
+    c.rc.db.save_settings = lambda data, *a, **k: (False if isinstance(data, dict) and "emergency_stopped" in data
+                                                   else vero(data, *a, **k))
+    try:
+        c.rc.emergency_stop(reason="M151BIS_K1T", live_exposure=True)
+    finally:
+        c.rc.db.save_settings = vero
+    c.rc._emergency_reconcile_pending = False
+    _attendi(lambda: not RuntimeController._live_recovery_active(c.rc))
+    reale = dbmod.Database.save_settings
+    monkeypatch.setattr(dbmod.Database, "save_settings", lambda self, data, *a, **k: (
+        False if isinstance(data, dict) and "emergency_stopped" in data else reale(self, data, *a, **k)))
+    r = _copia_riavvio(tmp_path, "m151k1t.db")
+    giornale = str(tmp_path / "m151k1t.db") + RuntimeController._SAFETY_JOURNAL_SUFFIX
+    assert os.path.exists(giornale) and r.rc._emergency_stopped
+    assert r.rc.__dict__.get("_hedge_guard") is True and RuntimeController._hedge_guard_active(r.rc) is True
+    r.rc._emergency_reconcile_pending = False
+
+
+def test_m151bis_k2_obbligo_in_sospeso_tolto_solo_se_scritto(tmp_path):
+    """CX-K2: un salvataggio del registro che NON contiene un conto in sospeso non lo toglie dal sospeso."""
+    c = _m147_banco(tmp_path, "m151k2s.db")
+    scope_b, scope_c = _live(c, CONTO_B), _live(c, "conto.c@example.invalid")
+    c.rc._pending_live_bindings = {scope_b: [], scope_c: []}
+    assert RuntimeController._save_live_bound_accounts(c.rc, {scope_b: "PENDING"}) is True
+    assert set(c.rc._pending_live_bindings) == {scope_c}

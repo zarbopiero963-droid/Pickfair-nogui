@@ -1077,6 +1077,15 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
       chiusura il record li dichiara e l'archivio non li somma una seconda volta.
     - *Letture transitorie all'avvio (K2, H-a):* una lettura fallita della chiave di apertura della sessione di
       rischio si ritenta prima di dichiararla illeggibile: l'identita' della sessione aperta non si perde.
+    - *M151-bis (owner, CX-K1 + CX-K2, oracolo D `tests/d1/test_d_pr638_m151_k.py` 8f0eb6ba):* la protezione delle
+      coperture e' uno stato proprio (`_hedge_guard`, chiave `emergency_hedge_guard`), armato insieme alla sola
+      verifica, MAI azzerato dall'Emergency Stop (N7 azzera solo la sola verifica in memoria) e salvato sia con la sola
+      verifica sia con lo stato dell'ES (durevole o giornale di sicurezza): una sola verifica non salvata seguita da un
+      ES manuale nello stesso processo non rende cancellabile una copertura (CX-K1). Si toglie solo quando si spegne la
+      sola verifica. Un binding di conto LIVE con il registro non rileggibile non perde l'obbligo: resta in sospeso in
+      memoria e nel giornale (`emergency_live_pending_bindings`), entra PENDING alla prima rilettura riuscita, e
+      finche' e' in sospeso `reset_emergency()` lo elenca fra i conti irrisolti; valore illeggibile all'avvio =>
+      vincolo illeggibile (CX-K2).
     Cambio di contratto dichiarato: un reset non durevole non e' piu' un reset (test esistenti di
     `tests/safety/test_emergency_stop.py` adeguati: db con impostazioni reali; uscita da impostazioni illeggibili
     all'avvio tramite la procedura M148 quando il db, tornato leggibile, conserva l'esito LIVE).
