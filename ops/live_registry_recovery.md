@@ -49,11 +49,23 @@ In una cartella `recovery/M148-<data-ora>/`, in sola lettura dopo la copia:
 
 1. copia byte per byte di `pickfair.db` e, se presenti, `pickfair.db-wal` e `pickfair.db-shm` (un solo insieme);
 2. copia di `pickfair.db.daily_loss_pending.json`, se presente;
-3. `sha256sum` di ogni file copiato e dell'originale: **devono coincidere**;
-4. il valore corrotto della chiave e il suo sha256:
+3. sha256 di ogni file copiato e dell'originale (Linux `sha256sum <file>`, Windows `certutil -hashfile <file> SHA256`):
+   **devono coincidere**;
+4. il valore corrotto della chiave e il suo sha256. Con la CLI `sqlite3`, se installata:
    ```bash
    sqlite3 pickfair.db "SELECT value FROM settings WHERE key='emergency_live_accounts'" > registro_corrotto.txt
    sha256sum registro_corrotto.txt
+   ```
+   La CLI non è garantita (es. Windows). Alternativa identica su Windows e Linux: salvare queste righe come
+   `leggi_registro.py` ed eseguire `python leggi_registro.py pickfair.db` (apertura in sola lettura):
+   ```python
+   import hashlib, sqlite3, sys
+   db = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+   riga = db.execute("SELECT value FROM settings WHERE key = 'emergency_live_accounts'").fetchone()
+   valore = (riga[0] if riga else "") or ""
+   with open("registro_corrotto.txt", "w", encoding="utf-8", newline="") as f:
+       f.write(valore)
+   print(hashlib.sha256(valore.encode("utf-8")).hexdigest())
    ```
 5. versione di Pickfair (SHA del commit), log del runtime, `get_status()` dell'ultimo avvio.
 
@@ -84,8 +96,10 @@ Fonti, in quest'ordine:
    - ambiti nelle sessioni del registro della sessione di rischio (`delta.scopes`), solo se la catena è verificabile;
    - `financial_scope` nei `payload_json` di `orders` e `settlement_effects`;
    - `required_accounts` in `emergency_unresolved_exposure`.
-3. **Inventario dei conti**: ogni conto Betfair LIVE mai configurato su questa installazione (credenziali,
-   configurazione, log). Nel dubbio il conto **entra**.
+3. **Inventario dei conti — OBBLIGATORIO**, sempre, anche quando le fonti 1 e 2 sembrano complete: ogni conto
+   Betfair LIVE mai configurato su questa installazione (credenziali, configurazione, log). Con `daily_loss_state` ed
+   `emergency_unresolved_exposure` illeggibili un conto coinvolto può comparire **solo** qui (verificato da Claude D).
+   Nel dubbio il conto **entra**. Senza inventario firmato da O2 il candidato non si scrive.
 
 La storia di un superamento (`key`, `kind`, `limit`, `loss`, `risk_session_id`, `source`, giorno) si scrive **solo**
 se una fonte la dimostra campo per campo. Altrimenti `"breaches": []` e una nota nel dossier.
@@ -154,6 +168,10 @@ Banco della matrice M147 di Claude D, py3.11, offline, 3 esecuzioni su 3, nelle 
 | Dopo la riconciliazione reale di A e B | ES tolto, entrambi i conti `VERIFIED` |
 | Stop di rischio residuo | `daily_loss_breached` lo stesso giorno; G1 accettato il giorno UTC successivo |
 
+Nota di banco (verifica di Claude D): rieseguita da D la prova dà 7/8; la cella GIORNALIERO/SIM può non raggiungere
+la precondizione dello stallo (l'ES si toglie già prima e resta solo lo stop di rischio). È un limite del banco, non
+della procedura. L'oracolo indipendente di D sulla procedura (`6b3bee37`) dà 4/4, 3 esecuzioni su 3.
+
 Errori dell'operatore misurati:
 
 | Errore | Esito |
@@ -168,9 +186,12 @@ stesso giorno. Per un superamento di sessione o di un giorno precedente non c'è
 
 ## Limiti dichiarati
 
-- **Registro vuoto.** L'app tratta un registro vuoto come «nessun vincolo» (R7 di M147, non implementato come blocco
-  generale): svuotare la chiave è un aggiramento non rilevato. È vietato da questa procedura; chiuderlo nell'app
-  richiede una decisione owner (correzione applicativa non autorizzata in M148).
+- **Registro vuoto = nessun vincolo: difetto applicativo aperto, non solo procedurale.** Il progetto M147 prevedeva R7
+  («registro vuoto con uno stop globale LIVE ⇒ obbligo sconosciuto, fail-closed»), ma il codice di `ef2da782` non lo
+  implementa: `reset_emergency()` guarda solo i conti del registro, mai lo stato dell'esposizione. Stessa radice del
+  P1 confermato da Claude D in M148 (esito LIVE irrisolto senza conto identificato: reset accettato **senza** alcuna
+  modifica manuale). Svuotare la chiave a mano è vietato da questa procedura; la correzione nell'app attende una
+  decisione owner (rapporto architetturale #628 c.6973925426).
 - **`VERIFIED` scritto a mano** e **conto omesso**: non rilevati dall'app in generale; vietati dalla procedura.
 - **Doppia conferma di `reset_emergency()`**: procedurale (firme nel dossier), non applicata dall'app. Il G1 dello
   stop di rischio la applica.
