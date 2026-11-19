@@ -8,6 +8,7 @@ import json
 import logging
 import math
 import os
+import re
 import threading
 import time
 import uuid
@@ -1425,7 +1426,12 @@ class RuntimeController:
 
     # ------------------------------------------------------------------ PR-04a: identita' finanziaria
     def _financial_scope_for(self, simulated: bool) -> str:
+        """Ambito contabile. LIVE: identita' attestata del client connesso; senza attestazione (sessione scaduta o in
+        riconnessione) l'identita' AUTORIZZATA dell'installazione (M154-bis: un solo conto, gia' provato da un login),
+        mai lo username di configurazione o del client; nessuna delle due => conto non identificabile."""
         account = "" if simulated else RuntimeController._live_account_identity(self)
+        if not simulated and not account:
+            account, _error = RuntimeController._authorized_live_identity(self)
         return financial_scope.runtime_scope(simulated=bool(simulated), live_account=account)
 
     def _current_financial_scope(self) -> str:
@@ -2391,6 +2397,7 @@ class RuntimeController:
         if stopped and not RuntimeController._risk_stop_applies(self):
             stopped = ""                     # PR-04a: RISK_STOP di un altro ambito SIM, non di quello corrente
         return (self._limits_block_reason() or (f"risk_stop_active:{stopped}" if stopped else "")
+                or RuntimeController._live_identity_block_reason(self)
                 or self._recovery_persist_block_reason()
                 or RuntimeController._drawdown_persist_block_reason(self))
 
@@ -2755,10 +2762,20 @@ class RuntimeController:
                 # LIVE salvato). Senza nessuna prova LIVE (runtime solo SIM) lo stato SCONOSCIUTA del solo stop globale
                 # non e' un'esposizione: nessun blocco permanente ingiustificato (M152 punto 5)
                 return "esposizione_live_irrisolta"
-            return ""
+            return RuntimeController._live_reset_identity_blocker(self, accounts)
         except Exception:
             logger.exception("M152: obbligo LIVE non verificabile per il reset (bloccato)")
             return "esposizione_live_irrisolta"
+
+    def _live_reset_identity_blocker(self, accounts: Optional[dict]) -> str:
+        """M154-bis: uno stop con obblighi LIVE registrati (tutti VERIFIED) si toglie solo con il client LIVE connesso
+        che attesta l'identita' autorizzata: un client senza login provato, o di un altro conto, non toglie uno stop che
+        dipende dalla verifica di quel conto. Nessun obbligo LIVE registrato => nessun requisito d'identita' (stop solo
+        SIM). '' se nulla blocca. Mai raise (errore => blocca)."""
+        if not accounts:
+            return ""
+        _scope, error = RuntimeController._live_identity_check(self, associate=False)
+        return f"identita_live_non_verificata:{error}" if error else ""
 
     def _finish_completed_reset(self, status: Optional[dict] = None) -> bool:
         """M144 (G1e): completa un reset G1 GIA' COMMITTATO (RESET_COMPLETED nel registro) il cui stop e' rimasto
@@ -3905,11 +3922,13 @@ class RuntimeController:
         except Exception:
             return False
 
-    def _live_account_mismatch(self) -> Optional[dict]:
-        """N6: None se il conto LIVE connesso puo' essere verificato per lo stop (e' fra quelli vincolati, o nessun
-        vincolo e' registrato); altrimenti il motivo. Un conto B non certifica mai l'assenza di ordini sul conto A."""
+    def _live_account_mismatch(self, connected: Optional[str] = None) -> Optional[dict]:
+        """N6: None se il conto LIVE che legge (`connected`, l'ambito attestato dal client dello sweep) puo' essere
+        verificato per lo stop (e' fra quelli vincolati, o nessun vincolo e' registrato); altrimenti il motivo. Un
+        conto B non certifica mai l'assenza di ordini sul conto A."""
         accounts = RuntimeController._live_bound_accounts(self)
-        connected = RuntimeController._financial_scope_for(self, False)
+        if connected is None:
+            connected = RuntimeController._financial_scope_for(self, False)
         if accounts is None:
             return {"required_accounts": [], "connected_account": connected, "error": "vincolo_non_leggibile"}
         anonymous = not (financial_scope.is_verified(connected) and not financial_scope.is_sim(connected))
@@ -3941,7 +3960,13 @@ class RuntimeController:
                         result["manual_action_required"] = True
                         result["registry_incoherent"] = True
                     return
-                connected = RuntimeController._financial_scope_for(self, False)
+                # CX-N1 (M154-bis): si certifica SOLO l'ambito attestato dal client che ha letto e cancellato, e solo se
+                # l'identita' non e' cambiata fino a qui (ricontrollo sotto il lock del registro)
+                connected = str(result.get("read_scope") or "")
+                if not connected or result.get("identity_changed") or not RuntimeController._read_identity_unchanged(
+                        self, result.get("client"), connected):
+                    result["manual_action_required"] = True
+                    result["identity_changed"] = bool(connected)
                 if connected in accounts:
                     accounts[connected] = "PENDING" if result.get("manual_action_required") else "VERIFIED"
                     RuntimeController._save_live_bound_accounts(self, accounts)
@@ -3953,6 +3978,25 @@ class RuntimeController:
         except Exception:
             logger.exception("N6: stato del conto LIVE non aggiornato (esposizione non chiusa)")
             result["manual_action_required"] = True
+
+    def _read_identity_unchanged(self, client: Any, read_scope: str) -> bool:
+        """CX-N1: True se il client dello sweep e il client connesso ADESSO attestano ancora l'ambito della lettura (e
+        quell'ambito e' l'identita' autorizzata). Mai raise."""
+        try:
+            if client is None:
+                return False
+            if RuntimeController._financial_scope_for_identity(
+                    RuntimeController._live_account_identity(self, client)) != read_scope:
+                return False
+            scope, error = RuntimeController._live_identity_check(self, associate=False)
+            return not error and scope == read_scope
+        except Exception:
+            logger.exception("M154: identita' della lettura non ricontrollabile (esito non attribuito)")
+            return False
+
+    @staticmethod
+    def _financial_scope_for_identity(identity: str) -> str:
+        return financial_scope.runtime_scope(simulated=False, live_account=identity) if identity else ""
 
     def _clear_verified_live_accounts(self) -> None:
         """N6: al reset di uno stop i conti verificati escono dal vincolo; quelli ancora PENDING restano."""
@@ -4955,7 +4999,25 @@ class RuntimeController:
         venue = "LIVE" if was_live else "SIM"
         exposure_bets: set = set()
         candidates = self._emergency_candidates(cancel_errors, venue=venue, exposure_bets=exposure_bets)
-        mismatch = RuntimeController._live_account_mismatch(self) if was_live else None
+        client = None
+        try:
+            client = (self.betfair_service.get_live_client() if was_live
+                      else self.betfair_service.get_simulation_broker())
+        except Exception as exc:
+            logger.warning("emergency_stop: client %s non disponibile: %s", venue, exc)
+            cancel_errors.append({"stage": "get_client", "venue": venue, "error": str(exc)})
+        read_scope, mismatch = "", None
+        if was_live:
+            # M154-bis + CX-N1 (P2): l'identita' della verifica e' quella ATTESTATA dallo STESSO client che legge e
+            # cancella, presa qui prima di ogni lettura e ricontrollata dopo; mai quella connessa alla fine. Client
+            # senza identita' attestata o diversa dall'autorizzata => nessuna lettura ne' cancellazione (fail-closed).
+            read_scope, identity_error = RuntimeController._live_identity_check(self, client)
+            if identity_error:
+                authorized, _err = RuntimeController._authorized_live_identity(self)
+                mismatch = {"required_accounts": [financial_scope.runtime_scope(simulated=False, live_account=authorized)]
+                            if authorized else [], "connected_account": read_scope, "error": identity_error}
+            else:
+                mismatch = RuntimeController._live_account_mismatch(self, read_scope)
         if mismatch is not None:
             # N6 (owner M134): il conto connesso non e' quello che ha generato lo stop. Nessuna lettura ne'
             # cancellazione qui (B non certifica A, e non si toccano ordini di un altro conto alla cieca): esposizione
@@ -4967,14 +5029,7 @@ class RuntimeController:
                     "verification": "ACCOUNT_MISMATCH", "verification_errors": [dict(mismatch)],
                     "order_outcomes": [], "open_after_cancel": [], "unattributed_open_orders": [],
                     "matched_positions": [], "unresolved_submissions": [], "authority_lost": [],
-                    "account_mismatch": dict(mismatch), "manual_action_required": True}
-        client = None
-        try:
-            client = (self.betfair_service.get_live_client() if was_live
-                      else self.betfair_service.get_simulation_broker())
-        except Exception as exc:
-            logger.warning("emergency_stop: client %s non disponibile: %s", venue, exc)
-            cancel_errors.append({"stage": "get_client", "venue": venue, "error": str(exc)})
+                    "account_mismatch": dict(mismatch), "manual_action_required": True, "read_scope": read_scope}
 
         candidate_bets = {c["bet_id"] for c in candidates if c["bet_id"]}
         known_bets = candidate_bets | exposure_bets   # identita' del bot; gli esiti per ordine restano sui candidati
@@ -5224,6 +5279,12 @@ class RuntimeController:
             verification = "SUBMISSIONS_UNRESOLVED"
         else:
             verification = "VERIFIED"
+        identity_changed = was_live and not RuntimeController._read_identity_unchanged(self, client, read_scope)
+        if identity_changed:
+            # CX-N1: l'identita' del client che ha letto, o quella connessa, e' cambiata durante lo sweep: l'esito non
+            # e' attribuibile a nessun conto (nessuna certificazione), intervento manuale
+            logger.critical("M154: identita' LIVE cambiata durante lo sweep: esito non attribuito")
+            verification = "IDENTITY_CHANGED"
         result = {
             "client": client, "candidates": candidates, "markets": markets, "cancel_results": cancel_results,
             "cancelled_count": cancelled_count, "error_count": error_count, "cancel_errors": cancel_errors,
@@ -5236,6 +5297,7 @@ class RuntimeController:
             "authority_lost": [e for e in cancel_errors if e.get("stage") == "runtime_authority"],
             # Codex P1 su afbd5c89: la cancellazione non chiude una posizione abbinata => resta all'operatore
             "manual_action_required": verification != "VERIFIED" or bool(unattributed) or bool(matched_positions),
+            "read_scope": read_scope, "identity_changed": bool(identity_changed),
         }
         if was_live:
             RuntimeController._settle_live_account(self, result)     # N6: stato del conto verificato
@@ -5300,6 +5362,12 @@ class RuntimeController:
                 and RuntimeController._live_obligation_recorded(self):
             logger.critical("M149: reset dell'Emergency Stop rifiutato: obbligo LIVE con registro dei conti vuoto")
             return {"emergency_reset": False, "reason": "registro_incoerente_obbligo_live", "accounts_pending": [],
+                    "exposure_state": state}
+        identity_block = RuntimeController._live_reset_identity_blocker(self, accounts) \
+            if self._emergency_stopped else ""
+        if identity_block:
+            logger.critical("M154: reset dell'Emergency Stop rifiutato: %s", identity_block)
+            return {"emergency_reset": False, "reason": identity_block, "accounts_pending": [],
                     "exposure_state": state}
         cleared = {"emergency_stopped": "0", "emergency_stopped_at": "", "emergency_reason": "",
                    "emergency_settlement_source": ""}
@@ -5975,6 +6043,11 @@ class RuntimeController:
             scope_reason = RuntimeController._scope_daily_loss_block_reason(self)
             if scope_reason:
                 return scope_reason
+            # M154-bis: nessun ingresso LIVE parte se il client connesso non e' l'identita' attestata autorizzata (solo
+            # confronto qui: l'associazione avviene all'ammissione o nello sweep, mai sotto `_drawdown_eval_lock`)
+            identity_reason = RuntimeController._live_identity_block_reason(self, associate=False)
+            if identity_reason:
+                return identity_reason
             # C3 (Codex su 60c772fe): perdita di sessione globale in attesa dello stop (finestra del sync)
             if self.__dict__.get("_session_loss_pending_global"):
                 return "session_loss_breached:in_attesa_dello_stop_globale"
@@ -9526,20 +9599,131 @@ class RuntimeController:
             return {"env": "LIVE", "account": RuntimeController._live_account_identity(self)}
         return {"env": "UNTAGGED", "account": "untagged"}
 
-    def _live_account_identity(self) -> str:
-        """Identita' stabile del conto Betfair LIVE: hash dello username di login del client connesso (o della
-        configurazione Betfair). '' se non determinabile con certezza (fail-closed a valle)."""
-        service = getattr(self, "betfair_service", None)
-        username = getattr(getattr(service, "client", None), "username", None)
-        if not (isinstance(username, str) and username.strip()):
-            try:
-                username = getattr(service.settings_service.load_betfair_config(), "username", None)
-            except Exception:
-                username = None
+    _NO_CLIENT = object()
+
+    @staticmethod
+    def _identity_hash(username: Any) -> str:
+        """Identita' stabile di uno username Betfair: `betfair:<sha256(username normalizzato)[:24]>`, mai il nome in
+        chiaro. '' se lo username non e' una stringa non vuota."""
         if not (isinstance(username, str) and username.strip()):
             return ""
         digest = hashlib.sha256(username.strip().lower().encode("utf-8")).hexdigest()
         return f"betfair:{digest[:24]}"
+
+    def _live_account_identity(self, client: Any = _NO_CLIENT) -> str:
+        """M154-bis (owner, single-account): identita' ATTESTATA del client LIVE (di default quello connesso), letta
+        SOLO da `client.authenticated_identity()` (username del login Betfair riuscito di quella sessione). Nessun
+        ripiego su `client.username` (input di configurazione) ne' sulla configurazione: senza una sessione provata
+        l'identita' e' '' (non verificabile, fail-closed a valle). Mai raise."""
+        if client is RuntimeController._NO_CLIENT:
+            client = getattr(getattr(self, "betfair_service", None), "client", None)
+        attest = getattr(client, "authenticated_identity", None)
+        if not callable(attest):
+            return ""
+        try:
+            return RuntimeController._identity_hash(attest())
+        except Exception:
+            logger.exception("M154: identita' attestata del client LIVE non leggibile (fail-closed)")
+            return ""
+
+    # M154-bis (owner, single-account): UN solo conto Betfair per installazione. Identita' autorizzata = hash dello
+    # username configurato, associato UNA volta all'identita' attestata dal primo login LIVE riuscito; mai riscritta.
+    _AUTHORIZED_IDENTITY_KEY = "betfair_authorized_identity"
+    _IDENTITY_FORMAT = re.compile(r"^betfair:[0-9a-f]{24}$")
+
+    def _configured_betfair_username(self) -> str:
+        """Username Betfair CONFIGURATO (servizio Betfair, poi impostazioni del runtime). '' se non leggibile."""
+        for owner in (getattr(getattr(self, "betfair_service", None), "settings_service", None),
+                      getattr(self, "settings_service", None)):
+            loader = getattr(owner, "load_betfair_config", None)
+            if not callable(loader):
+                continue
+            try:
+                cfg = loader()
+            except Exception:
+                logger.exception("M154: configurazione Betfair non leggibile")
+                continue
+            username = cfg.get("username") if isinstance(cfg, dict) else getattr(cfg, "username", None)
+            if isinstance(username, str) and username.strip():
+                return username
+        return ""
+
+    def _authorized_live_identity(self) -> tuple:
+        """M154-bis: (identita' autorizzata, errore). ('', '') = nessuna associazione ancora; valore presente ma non
+        valido o db illeggibile => errore (fail-closed, mai riscritto). Mai raise."""
+        try:
+            settings = self.db.get_settings() if hasattr(self.db, "get_settings") else None
+            if not isinstance(settings, dict):
+                raise OSError("impostazioni non leggibili")
+        except Exception:
+            logger.exception("M154: identita' autorizzata non leggibile (fail-closed)")
+            return "", "identita_autorizzata_illeggibile"
+        raw = settings.get(RuntimeController._AUTHORIZED_IDENTITY_KEY)
+        value = str(raw or "").strip()
+        if not value:
+            return "", ""
+        if not RuntimeController._IDENTITY_FORMAT.match(value):
+            logger.critical("M154: identita' autorizzata corrotta: LIVE bloccato (procedura dell'operatore)")
+            return "", "identita_autorizzata_illeggibile"
+        return value, ""
+
+    def _associate_live_identity(self, attested: str) -> tuple:
+        """M154-bis, prima connessione LIVE verificata: associa l'identita' attestata come autorizzata SOLO se
+        coincide con lo username configurato e il registro dei conti LIVE non contiene un conto reale diverso; salvata
+        e riletta. Mai sovrascritta (rilettura sotto il lock del registro). (identita', errore). Mai raise."""
+        try:
+            with self.__dict__.setdefault("_live_accounts_lock", threading.RLock()):
+                current, error = RuntimeController._authorized_live_identity(self)
+                if error or current:
+                    return current, error
+                configured = RuntimeController._identity_hash(RuntimeController._configured_betfair_username(self))
+                if not configured:
+                    return "", "username_configurato_assente"
+                if configured != attested:
+                    return "", "identita_diversa_dalla_configurata"
+                accounts = RuntimeController._live_bound_accounts(self)
+                if accounts is None or RuntimeController._LIVE_ACCOUNTS_UNREADABLE in accounts:
+                    return "", "registro_conti_illeggibile"
+                own = financial_scope.runtime_scope(simulated=False, live_account=attested)
+                others = sorted(k for k in accounts if k != own and "<" not in financial_scope.parts(k)[2])
+                if others:
+                    logger.critical("M154: il registro contiene conti LIVE diversi: nessuna associazione automatica "
+                                    "(procedura dell'operatore)")
+                    return "", "registro_con_altri_conti"
+                self.db.save_settings({RuntimeController._AUTHORIZED_IDENTITY_KEY: attested})
+                saved, error = RuntimeController._authorized_live_identity(self)
+                if error or saved != attested:
+                    return "", error or "identita_autorizzata_non_salvata"
+                logger.warning("M154: conto Betfair autorizzato associato alla prima connessione LIVE verificata")
+                return saved, ""
+        except Exception:
+            logger.exception("M154: associazione dell'identita' autorizzata fallita (fail-closed)")
+            return "", "identita_autorizzata_non_salvata"
+
+    def _live_identity_check(self, client: Any = _NO_CLIENT, associate: bool = True) -> tuple:
+        """M154-bis: (ambito LIVE attestato del client, errore). Errore se il client non ha un'identita' attestata o se
+        l'identita' attestata non e' quella autorizzata (o non associabile). Mai raise."""
+        attested = RuntimeController._live_account_identity(self, client)
+        scope = financial_scope.runtime_scope(simulated=False, live_account=attested) if attested else ""
+        if not attested:
+            return scope, "identita_non_attestata"
+        authorized, error = RuntimeController._authorized_live_identity(self)
+        if not error and not authorized and associate:
+            authorized, error = RuntimeController._associate_live_identity(self, attested)
+        if error:
+            return scope, error
+        if not authorized:
+            return scope, "identita_non_associata"
+        if authorized != attested:
+            return scope, "identita_non_autorizzata"
+        return scope, ""
+
+    def _live_identity_block_reason(self, associate: bool = True) -> str:
+        """M154-bis: gate d'ingresso LIVE. '' in SIM o con l'identita' attestata = autorizzata; altrimenti il motivo."""
+        if bool(getattr(self, "simulation_mode", False)):
+            return ""
+        _scope, error = RuntimeController._live_identity_check(self, associate=associate)
+        return f"live_identity:{error}" if error else ""
 
     def _declare_drawdown_scope(self, funds: Any) -> Optional[dict]:
         """S18-1: dichiara all'hard-stop l'ambito della lettura appena fatta (per i gate d'ingresso); lo restituisce per

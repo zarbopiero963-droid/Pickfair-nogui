@@ -180,6 +180,34 @@ A processo fermo, sulla copia candidata già validata:
 Dossier completo (evidenze, hash, fonti, firme, esiti di ogni passo) allegato all'incidente. Se un passo non è
 dimostrabile: il blocco resta e la procedura si ferma lì.
 
+## M154 — identità Betfair autorizzata (single-account)
+
+Pickfair accetta **un solo conto Betfair per installazione** (decisione owner M154/M154-bis). L'identità autorizzata è
+la chiave `betfair_authorized_identity` del db (`betfair:<sha256(username)[:24]>`, mai lo username in chiaro). Si
+associa da sola **una volta**, alla prima connessione LIVE, solo se il login Betfair è riuscito con lo username
+configurato e il registro dei superamenti non contiene un conto reale diverso. Non viene mai riscritta dal programma.
+
+Il LIVE resta bloccato (nessun ingresso, nessuna lettura o cancellazione di riconciliazione, nessun reset di uno stop
+con obblighi LIVE); il motivo compare nel rifiuto dell'ingresso (`live_identity:<motivo>`), nell'esito dello sweep
+(`account_mismatch.error`), nel rifiuto del reset (`identita_live_non_verificata:<motivo>`) e nei log:
+
+| Motivo | Significato | Cosa fa l'operatore |
+|---|---|---|
+| `identita_non_attestata` | nessun login riuscito nella sessione corrente (mai collegato, login fallito, sessione scaduta, keep-alive fallito) | ricollegarsi a Betfair; nessun intervento sul db |
+| `username_configurato_assente` | nessuno username Betfair nella configurazione | configurare lo username del conto dell'installazione |
+| `identita_diversa_dalla_configurata` | il login è riuscito con un conto diverso da quello configurato | ricollegarsi con il conto configurato |
+| `identita_non_autorizzata` | il conto collegato non è quello autorizzato dell'installazione | ricollegarsi con il conto autorizzato. **Il cambio di conto è vietato** (owner M154-bis) |
+| `registro_con_altri_conti` | prima associazione rifiutata: il registro contiene un conto reale diverso | procedura sotto |
+| `identita_autorizzata_illeggibile` | chiave corrotta o db illeggibile | procedura sotto |
+
+**Procedura (chiave illeggibile o registro con altri conti).** Solo l'operatore, con il programma fermo, con gli stessi
+passi 1 e 2 di questa procedura (fermare, copia e hash del db e dei file accanto). Si verifica con evidenze Betfair
+(estratto conto, ordini correnti) quale è il conto dell'installazione e lo si riconcilia come al passo 7. Solo allora,
+con doppia conferma e una voce di audit, si scrive nella copia del db la chiave `betfair_authorized_identity` con
+l'hash di quel conto, si valida e si applica come ai passi 5 e 6. Un registro con più conti reali resta a carico della
+procedura M148 (ogni conto riconciliato prima di qualsiasi reset). Nessuna scorciatoia: cancellare la chiave per
+«far ripartire» il LIVE equivale a cambiare conto ed è vietato.
+
 ## Prova offline (M148, FATTO)
 
 Banco della matrice M147 di Claude D, py3.11, offline, 3 esecuzioni su 3, nelle 4 celle `illeggibile`

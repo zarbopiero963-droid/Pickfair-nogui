@@ -1098,6 +1098,24 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
     Cambio di contratto dichiarato: un reset non durevole non e' piu' un reset (test esistenti di
     `tests/safety/test_emergency_stop.py` adeguati: db con impostazioni reali; uscita da impostazioni illeggibili
     all'avvio tramite la procedura M148 quando il db, tornato leggibile, conserva l'esito LIVE).
+    - *M154/M154-bis (owner M155, commit 1, SINGLE-ACCOUNT, F1-F4 di Claude D):* un solo conto Betfair per
+      installazione. Identita' LIVE = SOLO `client.authenticated_identity()`: username INVIATO nell'ultimo login riuscito
+      (`loginStatus` SUCCESS), None senza login, dopo un login fallito o in errore, logout, sessione invalida o scaduta,
+      keep-alive fallito, token o `connected` azzerati dal servizio; `client.username` e la configurazione non sono mai
+      identita'. Identita' autorizzata `betfair_authorized_identity` (`betfair:<sha256(username)[:24]>`): associata una
+      sola volta, alla prima connessione LIVE, solo se l'identita' attestata coincide con lo username configurato e il
+      registro dei conti non contiene un conto reale diverso; salvata e riletta; mai riscritta (F4: un altro conto resta
+      bloccato anche dopo riavvii); valore non valido o db illeggibile => `identita_autorizzata_illeggibile`. Gate:
+      ammissione e punto d'invio LIVE (`live_identity:<motivo>`), sweep (nessuna lettura, cancellazione o
+      certificazione: `ACCOUNT_MISMATCH` con `error` = motivo), reset di uno stop con obblighi LIVE registrati
+      (`identita_live_non_verificata:<motivo>`; uno stop solo SIM non ne dipende). CX-N1 (P2): l'identita' della verifica
+      e' quella attestata dallo STESSO client che legge e cancella, presa prima della lettura e ricontrollata dopo e alla
+      certificazione; un cambio (altro client connesso o nuovo login dello stesso client) => `IDENTITY_CHANGED`, nessuna
+      certificazione. Ambito contabile LIVE senza attestazione (sessione in riconnessione) = identita' autorizzata, mai
+      la configurazione. Il registro degli obblighi non e' filtrato per identita' (un obbligo di un conto diverso entra
+      PENDING: direzione fail-closed). Regressione d'uso dichiarata: un keep-alive fallito, anche per un timeout
+      transitorio, blocca il LIVE finche' un nuovo login non riesce. Procedura dell'operatore per chiave illeggibile o
+      registro con altri conti: `ops/live_registry_recovery.md` (sezione M154).
   - *G2 — archivio delle sessioni chiuse (owner M139).* Le ultime 20 chiuse restano nel libro come finestra operativa;
     l'archivio durevole è il registro append-only (`SESSION_CLOSED`: id, apertura e chiusura, P&L per ambito, conti,
     limite), senza eliminazione automatica, verificato dalla catena di hash a ogni lettura. Una sessione esce dalla
