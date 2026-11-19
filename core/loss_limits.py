@@ -18,11 +18,16 @@ from typing import Any, Optional
 from core import validators
 from core.daily_loss_store import (  # noqa: F401  (API usata dal runtime)
     DAILY_LOSS_STATE_KEY,
+    PERSIST_FAILED_KEY,
+    SEQ_KEY,
     daily_loss_record,
     persist_daily_loss,
+    persist_daily_loss_book,
     persist_failed,
     restore_daily_loss,
+    restore_daily_loss_book,
     restored_daily_loss,
+    scope_fields,
 )
 
 

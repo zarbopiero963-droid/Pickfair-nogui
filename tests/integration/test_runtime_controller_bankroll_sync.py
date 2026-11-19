@@ -4,6 +4,7 @@ import threading
 from datetime import datetime, timedelta
 
 import pytest
+from types import SimpleNamespace
 
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode
@@ -430,8 +431,10 @@ def test_pending_stop_blocks_concurrent_signal_during_sync_window():
     # a fine ciclo l'emergency stop definitivo e' scattato
     assert rc._emergency_stopped is True
     assert rc.mode == RuntimeMode.LOCKDOWN
-    # pending-stop resta coperto da _emergency_stopped (entrambi bloccano l'entry)
-    assert rc._daily_loss_pending_stop is True
+    # M153 P6 (owner M155): il pending-stop e' il ponte fino all'Emergency Stop e si toglie nel settlement che l'ha
+    # armato appena l'ES e' attivo (non piu' da reset_emergency(), C12); l'entry resta bloccata dall'ES stesso
+    assert rc._daily_loss_pending_stop is False
+    assert rc._daily_loss_entry_blocked() is True
 
 
 @pytest.mark.integration
@@ -484,7 +487,8 @@ def test_recovery_failclosed_breach_while_stopped_persists_and_refuses_start():
 
     # round-8: emergency_stop DUREVOLE (oltre allo stato monitor in-memory)
     assert rc._emergency_stopped is True
-    assert rc._daily_loss_monitor_state.get("breached") is True
+    # PR-04a: lo stato e' per ambito; l'emergenza ha riportato il runtime in SIM, il breach e' dell'ambito LIVE
+    assert rc._daily_loss_state_for(rc._financial_scope_for(False)).get("breached") is True
     # Codex round-7 P2: il ramo recovery EMETTE il primo TRIGGERED (monitor saltato),
     # cosi' i subscriber di monitoraggio non lo perdono.
     triggered = [p for t, p in bus.events if t == "DAILY_LOSS_BREACH_TRIGGERED"]
@@ -513,7 +517,7 @@ def test_durable_breach_marker_persisted_before_bankroll_sync():
     orig_marker = rc._persist_db_emergency_marker
     orig_sync = rc._sync_bankroll_post_settlement
 
-    def _marker_spy(*, active, reason=""):
+    def _marker_spy(*, active, reason="", **_kw):          # ciclo 12: anche live_exposure
         order.append(("marker", active))
         return orig_marker(active=active, reason=reason)
 
@@ -759,10 +763,13 @@ def test_runtime_controller_daily_loss_breach_state_is_persistent_until_day_roll
     rc.mode = RuntimeMode.STOPPED
     rc.config.max_daily_loss = 10.0
     rc.risk_desk.sync_bankroll(100.0)
+    # PR-04a: settlement letti dall'exchange (`cleared:`) di un conto LIVE identificato, cosi' la vincita e' dello
+    # stesso ambito della perdita (una vincita senza identita' non si accrediterebbe a nessun ambito)
+    rc.betfair_service.client = SimpleNamespace(username="conto-persist@example.invalid")
 
     rc._on_close_position(
         {
-            "event_key": "evt-daily-loss-persist-1",
+            "event_key": "cleared:1.persist:1",
             "table_id": 1,
             "batch_id": "batch-daily-loss-persist-1",
             "correlation_id": "corr-daily-loss-persist-1",
@@ -777,7 +784,7 @@ def test_runtime_controller_daily_loss_breach_state_is_persistent_until_day_roll
     )
     rc._on_close_position(
         {
-            "event_key": "evt-daily-loss-persist-2",
+            "event_key": "cleared:1.persist:2",
             "table_id": 2,
             "batch_id": "batch-daily-loss-persist-2",
             "correlation_id": "corr-daily-loss-persist-2",
@@ -791,11 +798,17 @@ def test_runtime_controller_daily_loss_breach_state_is_persistent_until_day_roll
         }
     )
 
-    status = rc.get_status()
-    assert status["daily_loss_monitor"]["breached"] is True
-    assert status["daily_loss_monitor"]["reason"] == "daily_loss_breach_persistent_until_day_rollover"
-    assert status["daily_loss_monitor"]["alert_count"] == 1
-    assert status["daily_loss_monitor"]["last_alert_event"] == "DAILY_LOSS_BREACH_TRIGGERED"
+    # PR-04a (Codex su 8a6c4cbb): un superamento LIVE a runtime fermo arma l'Emergency Stop globale durevole, che
+    # riporta il runtime in SIM; lo stato persistente del breach e' quello dell'ambito LIVE.
+    assert rc._emergency_stopped is True
+    live = rc._monitor_daily_loss_breach(source="TEST", scope=rc._financial_scope_for(False))
+    assert live["breached"] is True
+    assert live["reason"] == "daily_loss_breach_persistent_until_day_rollover"
+    # lo snapshot di stato dell'emergency_stop riemette il breach come ACTIVE: un solo TRIGGERED, poi ACTIVE
+    assert live["alert_count"] == 2
+    assert live["last_alert_event"] == "DAILY_LOSS_BREACH_ACTIVE"
+    assert len([t for t, _p in bus.events if t == "DAILY_LOSS_BREACH_TRIGGERED"]) == 1
+    assert rc.get_status()["daily_loss_scopes"][rc._financial_scope_for(False)]["breached"] is True
 
 
 @pytest.mark.integration

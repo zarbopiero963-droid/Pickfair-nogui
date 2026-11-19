@@ -31,6 +31,9 @@ class _Bus:
 
 
 class _Funds:
+    # PR-04a: conto LIVE identificato (ambito verificabile), altrimenti nessuna espansione per costruzione
+    client = SimpleNamespace(username="conto-f032@example.invalid")
+
     def __init__(self, funds):
         self.funds = dict(funds)
 

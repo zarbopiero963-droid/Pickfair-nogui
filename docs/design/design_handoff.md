@@ -17,7 +17,7 @@
   non viene mai riapplicato in automatico — fail-closed).
 - `headless_main.py` non importa la GUI: è un runtime CLI separato con flag
   propri (`--live`, `--simulation`, `--live-enabled`, `--kill-switch-on/off`,
-  `--emergency-stop`, `--preflight`, `--telegram-login`, ...).
+  `--emergency-stop`, `--preflight`, `--telegram-login`, `--risk-session-reset`, ...).
 - Senza display X11 la GUI non parte (errore Tk «no display»): su host
   headless si usa `--headless`.
 
@@ -72,15 +72,45 @@ Colonna sinistra `Runtime Controls`:
 | `PAUSA` | `_runtime_pause` | default |
 | `RIPRENDI` | `_runtime_resume` | default |
 | `RESET CICLO` | `_runtime_reset` | default |
+| `RESET SESSIONE DI RISCHIO` | `_runtime_reset_risk_session` | ambra `#8a5a00` (hover `#6b4600`), h40 |
 | `EMERGENCY STOP` | `_runtime_emergency_stop` | nero, testo rosso, h50 |
 
-⚠ Nessuno di questi bottoni ha un dialogo di conferma (l'unico `askyesno`
-di tutta la GUI è l'eliminazione di una regola parser).
+⚠ Questi bottoni non hanno un dialogo di conferma, salvo `RESET SESSIONE DI RISCHIO` (sotto); l'altro `askyesno`
+della GUI è l'eliminazione di una regola parser.
+
+`RESET SESSIONE DI RISCHIO` (PR #638, owner M139, G1): chiusura di una sessione di rischio oltre `max_session_loss`.
+Flusso: tre richieste di testo con titolo `Reset sessione di rischio` (`Operatore autorizzato:`,
+`Riferimento dell'autorizzazione:`, `Motivo del reset:`; un campo vuoto annulla); poi la PRIMA conferma
+(`Reset sessione di rischio - prima conferma`) con il riepilogo `Sessione:`, `Perdita di sessione:`,
+`Conti LIVE coinvolti:`, `Esposizione LIVE:` e la frase «La perdita resta registrata; gli altri limiti restano
+attivi. Confermi la chiusura?»; poi la SECONDA conferma (`Reset sessione di rischio - seconda conferma`, «Confermi
+DI NUOVO il reset della sessione di rischio superata?»). Annullare in qualunque punto non cambia nulla. Un rifiuto del
+runtime (`Reset non disponibile: …` o `Reset rifiutato: …`) appare come errore. Se il registro contiene già un reset
+confermato e committato il cui stop era rimasto attivo (crash dopo il commit, M144), la richiesta lo completa e la GUI
+non chiede nuove conferme: solo la riga di log `RESET SESSIONE DI RISCHIO: reset gia' confermato nel registro,
+completato (stop tolto)`. Invariante di sicurezza: senza dialoghi reali (fallback senza tkinter) nessuna conferma vale
+«sì».
 
 Colonna destra `System Status` (label sola lettura): `Status:` (`STOPPED`),
 `Broker:` (`SIMULATION`), `Betfair:` (`DISCONNECTED`/`CONNECTED`),
 `Telegram:` (`STOPPED`/`LISTENING`), `Bankroll:`, `Drawdown:`, `Exposure:`,
-`Active Tables:`, `Last Signal:`.
+`Esposizione LIVE:`, `Active Tables:`, `Last Signal:`.
+
+`Esposizione LIVE:` (PR #638, ciclo 12, R1) è distinta da `Exposure:` (fondi o tavoli della sede corrente) e
+non dipende dalla modalità SIM/LIVE: un Emergency Stop o uno stop di sessione nato dal LIVE può lasciare ordini
+LIVE aperti mentre il runtime è in SIM. Testi verbatim (`core.runtime_controller.format_live_exposure`, uguali
+in headless): `nessuna`; `verificata: nessun ordine ne' posizione LIVE residui`;
+`NON RICONCILIATA: liability <importo> (stima lorda)`, `NON RICONCILIATA: liability SCONOSCIUTO` oppure
+`SCONOSCIUTA: liability SCONOSCIUTO`, seguiti da `| N ordini del bot aperti`, `| N ordini estranei aperti`,
+`| N posizioni abbinate del bot`, `| N posizioni abbinate estranee (non chiuse dal bot)` (M136, N3),
+`| riconciliazione in corso` quando presenti e sempre da `| INTERVENTO MANUALE`.
+L'importo è la liability LIVE (BACK = stake, LAY = stake × (quota − 1); residuo alla quota limite, abbinato alla
+quota media di esecuzione), stima conservativa lorda senza compensazioni fra esiti dello stesso mercato. Con
+posizioni abbinate (anche estranee al bot) lo stato non è mai `verificata`; uno stop nato dal conto LIVE A non è
+mai `verificata` con un altro conto connesso (M134, N6).
+Invariante di sicurezza: un importo non verificabile (lato, quota o stake mancanti) si mostra `SCONOSCIUTO`, mai
+`0.00` e mai lo stake. Il valore è in
+arancione (`#ff9f43`, avviso) e va a capo (larghezza 320 px, allineato a destra) invece di sovrapporsi all'etichetta.
 
 Pannello `Live Control Plane`:
 

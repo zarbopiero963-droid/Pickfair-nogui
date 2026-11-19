@@ -988,6 +988,11 @@ class BetfairClient:
         self.session_token = ""
         self.session_expiry = ""
         self.connected = False
+        # M154-bis (owner, single-account): identita' ATTESTATA dalla sessione Betfair. La scrive SOLO `login()` dopo
+        # loginStatus SUCCESS, con lo username effettivamente inviato in quella richiesta; si azzera a logout, sessione
+        # scaduta/invalida, keep-alive fallito o nuovo login. `username` resta l'input di configurazione: non e' mai
+        # identita' (il runtime legge solo `authenticated_identity()`).
+        self._authenticated_identity = ""
         self._session_state_lock = threading.RLock()
 
         # Circuit breaker guards all JSON-RPC calls to Betfair API.
@@ -1137,6 +1142,7 @@ class BetfairClient:
         session_token: Optional[str] = None,
         session_expiry: Optional[str] = None,
         connected: Optional[bool] = None,
+        authenticated_identity: Optional[str] = None,
     ) -> None:
         with self._session_state_lock:
             if session_token is not None:
@@ -1145,9 +1151,37 @@ class BetfairClient:
                 self.session_expiry = str(session_expiry)
             if connected is not None:
                 self.connected = bool(connected)
+            if authenticated_identity is not None:
+                self._authenticated_identity = str(authenticated_identity)
 
     def _clear_session_state(self) -> None:
-        self._set_session_state(session_token="", session_expiry="", connected=False)
+        self._set_session_state(session_token="", session_expiry="", connected=False, authenticated_identity="")
+
+    def _invalidate_authenticated_identity(self) -> None:
+        """M154-bis: la sessione non e' piu' provata (keep-alive fallito, nuovo login in corso): nessuna identita'
+        attestata finche' un nuovo login non riesce. Il token non si tocca (lo gestisce il re-auth del servizio)."""
+        self._set_session_state(authenticated_identity="")
+
+    def authenticated_identity(self) -> Optional[str]:
+        """M154-bis (confine fissato da Claude D): username ATTESTATO dall'ultimo login riuscito di questa sessione,
+        oppure None se non c'e' una sessione provata (mai loggato, login fallito, logout, sessione scaduta o invalida,
+        keep-alive fallito, `connected` o token azzerati dal servizio, scadenza dichiarata da Betfair gia' passata).
+        Modificare `username` dopo il login non la cambia."""
+        with self._session_state_lock:
+            identity = str(self._authenticated_identity or "")
+            if not (identity and self.session_token and self.connected):
+                return None
+            expiry = str(self.session_expiry or "").strip()
+        if expiry:
+            try:
+                when = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                if when <= datetime.now(timezone.utc):
+                    return None
+            except ValueError:
+                pass                     # formato non riconosciuto: la scadenza la segnala l'API (SESSION_EXPIRED)
+        return identity
 
     def _session_token_value(self) -> str:
         with self._session_state_lock:
@@ -1298,6 +1332,10 @@ class BetfairClient:
         # anche un token ruotato/azzerato da un altro thread prima della
         # gestione dell'eccezione (stessa difesa di _post_jsonrpc).
         token_snapshot = self._session_token_value()
+        # M154-bis: un nuovo login invalida l'attestazione precedente finche' non riesce; l'identita' attestata e' lo
+        # username INVIATO in questa richiesta (catturato qui), non l'attributo letto dopo.
+        sent_username = str(self.username or "").strip()
+        self._invalidate_authenticated_identity()
         try:
             response = self.session.post(
                 self.IDENTITY_URL,
@@ -1305,7 +1343,7 @@ class BetfairClient:
                     "X-Application": self.app_key,
                     "Content-Type": "application/x-www-form-urlencoded",
                 },
-                data={"username": self.username, "password": password},
+                data={"username": sent_username, "password": password},
                 cert=self._cert_tuple(),
                 timeout=self.timeout,
             )
@@ -1327,6 +1365,7 @@ class BetfairClient:
                 session_token=session_token,
                 session_expiry=session_expiry,
                 connected=connected,
+                authenticated_identity=sent_username if connected else "",
             )
             elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
             status = "SLOW" if elapsed_ms >= max(2000.0, self.timeout * 1000.0 * 0.8) else "SUCCESS"
@@ -1409,7 +1448,17 @@ class BetfairClient:
         started_at = time.monotonic()
         token_snapshot = self._session_token_value()
         if not token_snapshot:
+            self._invalidate_authenticated_identity()
             raise RuntimeError("SESSION_EXPIRED")
+        try:
+            return self._keep_alive_call(started_at, token_snapshot)
+        except BaseException:
+            # M154-bis: keep-alive fallito (qualunque causa) => sessione non piu' provata, nessuna identita' attestata
+            # finche' un nuovo login non riesce
+            self._invalidate_authenticated_identity()
+            raise
+
+    def _keep_alive_call(self, started_at: float, token_snapshot: str) -> Dict[str, Any]:
         try:
             response = self.session.post(
                 self.KEEPALIVE_URL,

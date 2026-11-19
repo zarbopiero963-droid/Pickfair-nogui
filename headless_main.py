@@ -22,7 +22,7 @@ from services.telegram_service import TelegramService
 
 from core.trading_engine import TradingEngine
 from core.risk_gate import RiskGate, RoserpinaRiskLimits
-from core.runtime_controller import RuntimeController
+from core.runtime_controller import RuntimeController, format_live_exposure
 from core.risk_middleware import RiskMiddleware
 from controllers.dutching_controller import DutchingController
 from core.order_router import OrderRouter
@@ -297,6 +297,7 @@ class HeadlessApp:
             )
             self.trading_engine.runtime_controller = self.runtime
             self.trading_engine.simulation_broker = getattr(self, "simulation_broker", None)
+            self._report_live_exposure("avvio")      # R1: esposizione LIVE irrisolta visibile anche in headless
             # NIENTE assegnazione di betfair_client qui: al build la
             # connessione non esiste ancora e congelarlo a None farebbe
             # scavalcare breaker e gestione sessione nel ramo LIVE. Il
@@ -756,6 +757,18 @@ class HeadlessApp:
 
         emergency_stop = "--emergency-stop" in args
 
+        # G1 (owner M139): reset di una sessione di rischio superata, solo con operatore, autorizzazione, motivo e
+        # doppia conferma esplicita (`--confirm` e `--confirm-again`); i valori conservano maiuscole e minuscole
+        risk_session_reset = None
+        if "--risk-session-reset" in args:
+            values = {}
+            for item in sys.argv[1:]:
+                raw = str(item)
+                for key in ("--operator=", "--authorization=", "--reason="):
+                    if raw.startswith(key):
+                        values[key[2:-1]] = raw.split("=", 1)[1]
+            risk_session_reset = dict(values, confirm="--confirm" in args, confirm_again="--confirm-again" in args)
+
         return {
             "simulation_mode": execution_mode != "LIVE",
             "execution_mode": execution_mode,
@@ -764,6 +777,7 @@ class HeadlessApp:
             "live_readiness_ok": live_readiness_ok,
             "password": password,
             "emergency_stop": emergency_stop,
+            "risk_session_reset": risk_session_reset,
         }
 
     # =========================================================
@@ -1210,6 +1224,12 @@ class HeadlessApp:
         report, exit_code = self._format_preflight_report(
             status, execution_mode, live_enabled, live_readiness_ok
         )
+        view = self._live_exposure_view()
+        report += f"\nesposizione LIVE         : {format_live_exposure(view)}"
+        if str(view.get("state")) not in ("NESSUNA", "VERIFICATA") and exit_code == 0:
+            # R1: mai PRONTO PER LIVE con esposizione LIVE irrisolta o sconosciuta
+            report += "\nNON PRONTO: esposizione LIVE irrisolta o sconosciuta (intervento manuale)."
+            exit_code = 2
         print(report)
         logger.info("GO-LIVE PREFLIGHT\n%s", report)
         return exit_code
@@ -1218,6 +1238,24 @@ class HeadlessApp:
         lines.append(f"  [X] {code}")
         lines.append(f"        cosa   : {desc}")
         lines.append(f"        rimedio: {remedy}")
+
+    def _live_exposure_view(self) -> dict:
+        """R1 (owner, ciclo 12): stato dell'esposizione LIVE dal runtime; illeggibile => SCONOSCIUTA (mai nessuna)."""
+        try:
+            return dict(self.runtime._live_exposure_status())
+        except Exception:
+            logger.exception("R1: esposizione LIVE non leggibile")
+            return {"state": "SCONOSCIUTA", "amount_display": "SCONOSCIUTO", "manual_action_required": True}
+
+    def _report_live_exposure(self, when: str) -> dict:
+        """R1: in headless l'esposizione LIVE irrisolta si stampa e si registra CRITICAL (all'avvio e nel preflight),
+        indipendentemente dalla modalita' SIM/LIVE corrente."""
+        view = self._live_exposure_view()
+        if str(view.get("state")) not in ("NESSUNA", "VERIFICATA"):
+            msg = f"⚠️  [{when}] ESPOSIZIONE LIVE: {format_live_exposure(view)}"
+            print(msg)
+            logger.critical(msg)
+        return view
 
     def _format_preflight_report(self, status, execution_mode, live_enabled, live_readiness_ok):
         """Costruisce (report_testuale, exit_code) dal deploy-gate status. Il
@@ -1352,6 +1390,8 @@ class HeadlessApp:
         # trigger; it is fail-closed: partial cancel failures do not resume trading.
         if emergency_stop_requested:
             return self._emergency_stop_with_audit()
+        if args.get("risk_session_reset") is not None:
+            return self._risk_session_reset_cli(args["risk_session_reset"], password=password)
 
         try:
             if execution_mode == "LIVE":
@@ -1472,6 +1512,65 @@ class HeadlessApp:
             pass
 
         self._signal_handlers_installed = True
+
+    def _risk_session_reset_cli(self, request: dict, password: Optional[str] = None) -> int:
+        """`--risk-session-reset` (G1, owner M139): stesso contratto della GUI, senza scorciatoie. Prima conferma: la
+        richiesta al runtime (sfida monouso, riepilogo); seconda: i flag espliciti `--confirm` e `--confirm-again`. Il
+        reset passa dal runtime, che lo registra nel registro append-only; senza registro non avviene. Non avvia il
+        trading. rc 0 solo a reset riuscito, 4 altrimenti.
+
+        M144 (CX-F4): con uno stop globale e l'esposizione LIVE non ancora verificata, prima della richiesta la CLI
+        verifica l'esposizione sul conto (`_verify_live_exposure_for_reset`): stessa riconciliazione dell'avvio, sul
+        conto vincolato allo stop (N6), mai un ingresso. Conto irraggiungibile o esposizione residua => il runtime
+        rifiuta il reset (esposizione irrisolta), come prima."""
+        self._verify_live_exposure_for_reset(password)
+        op = str(request.get("operator") or "").strip()
+        ref = str(request.get("authorization") or "").strip()
+        why = str(request.get("reason") or "").strip()
+        richiesta = self.runtime.request_risk_session_reset(operator=op, authorization=ref, reason=why)
+        logger.warning("RESET SESSIONE DI RISCHIO richiesto via CLI: %s", richiesta)
+        if richiesta.get("risk_stop_reset") is True:
+            # M144 (G1e): reset gia' confermato e committato nel registro, completato ora dal runtime
+            logger.warning("RESET SESSIONE DI RISCHIO: reset gia' confermato nel registro, completato (stop tolto)")
+            return 0
+        if not richiesta.get("requested"):
+            logger.error("Reset della sessione di rischio non avviabile: %s", richiesta.get("reason"))
+            return 4
+        if not (request.get("confirm") is True and request.get("confirm_again") is True):
+            logger.error("Reset della sessione di rischio: servono --confirm e --confirm-again (doppia conferma)")
+            return 4
+        esito = self.runtime.reset_risk_stop(operator=op, authorization=ref, challenge_id=richiesta["challenge_id"],
+                                             confirm=True, confirm_again=True)
+        # l'audit autorevole e' il registro append-only della sessione di rischio, scritto dal runtime
+        logger.warning("RESET SESSIONE DI RISCHIO esito: %s", esito)
+        return 0 if esito.get("risk_stop_reset") else 4
+
+    def _verify_live_exposure_for_reset(self, password: Optional[str] = None) -> None:
+        """M144 (CX-F4): la CLI gira dopo `build()` e prima di qualunque `connect()`: senza connessione l'esposizione
+        LIVE di uno stop globale resta SCONOSCIUTA e il reset sarebbe sempre rifiutato. Qui, solo se uno stop globale
+        e' attivo e l'esposizione non e' gia' verificata: connessione al conto LIVE configurato e la riconciliazione
+        gia' usata all'avvio (`_reconcile_restored_emergency`: solo ordini del bot, sola verifica se lo stop e' nato col
+        runtime LIVE, esito registrato; N6: un conto diverso da quello dello stop non certifica nulla). Nessun ingresso,
+        nessun avvio del trading. Mai raise: un errore lascia l'esposizione non verificata (reset rifiutato)."""
+        from core.runtime_controller import RuntimeController
+        rc = self.runtime
+        try:
+            reason = str(getattr(rc, "_risk_stop_reason", "") or "")
+            global_stop = bool(getattr(rc, "_emergency_stopped", False)) or bool(
+                reason and not RuntimeController._risk_stop_scope(reason))
+            state = RuntimeController._live_exposure_status(rc).get("state")
+            if not global_stop or state in ("NESSUNA", "VERIFICATA"):
+                return
+            rc.betfair_service.connect(password=password, simulation_mode=False)
+            # M153: lo stato di sicurezza si scrive solo tramite il proprietario (transizione dichiarata)
+            RuntimeController._owner(rc).apply(rc, "reconcile_pending", _emergency_reconcile_pending=True)
+            esito = RuntimeController._reconcile_restored_emergency(rc, trigger="cli_risk_session_reset") or {}
+            logger.warning("RESET SESSIONE DI RISCHIO: verifica dell'esposizione LIVE prima del reset: %s",
+                           {k: esito.get(k) for k in ("verification", "manual_action_required", "connected_account",
+                                                       "accounts_pending", "verify_only")})
+        except Exception as exc:      # noqa: BLE001
+            logger.error("RESET SESSIONE DI RISCHIO: esposizione LIVE non verificabile (%s): il reset restera' rifiutato",
+                         exc)
 
     def _emergency_stop_with_audit(self) -> int:
         """`--emergency-stop`: PRIMA la cancellazione, POI la registrazione (rilievo Codex #617, P1). Una scrittura sul

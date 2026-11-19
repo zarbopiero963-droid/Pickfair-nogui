@@ -24,9 +24,24 @@ class _Db:
         self._settings = dict(getattr(self, "_settings", {}), **dict(values))
 
 
+class _LiveAccount:
+    """M149 (owner): sessione LIVE col suo conto di login, riconciliabile (nessun ordine aperto sull'exchange)."""
+    username = "conto-failure@example.invalid"
+
+    def get_current_orders(self, *_a, **_kw):
+        return []
+
+    def cancel_orders(self, *_a, **_kw):
+        return {"status": "SUCCESS"}
+
+
 class _Betfair:
     def __init__(self):
         self.connect_calls = 0
+        self.client = _LiveAccount()
+
+    def get_live_client(self):
+        return self.client
 
     def set_simulation_mode(self, *_args, **_kwargs):
         return None
@@ -173,7 +188,9 @@ def test_lockdown_survives_start_until_reset_emergency():
     assert rc._daily_loss_entry_blocked() is True
     assert rc.is_live_allowed() is False
 
-    # unica via di recovery: reset_emergency esplicito
+    # unica via di recovery: reset_emergency esplicito, dopo la riconciliazione reale del conto LIVE (M147 R6, M149)
+    rc._emergency_reconcile_pending = True
+    RuntimeController._reconcile_restored_emergency(rc, trigger="test_m149")
     rc.reset_emergency()
     assert rc.is_emergency_stopped is False
 

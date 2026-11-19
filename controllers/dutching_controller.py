@@ -783,6 +783,14 @@ class DutchingController:
         if table is None:
             return None
 
+        # PR-04a: ambito finanziario della riserva (SIM/LIVE + conto), per attribuire il P&L del lotto al suo ambito
+        scope_of = getattr(self.runtime, "_current_financial_scope", None)
+        if callable(scope_of) and "financial_scope" not in meta:
+            try:
+                meta = dict(meta, financial_scope=scope_of())
+            except Exception:
+                logger.warning("PR-04a: ambito finanziario non determinabile per la riserva", exc_info=True)
+
         if hasattr(table_manager, "activate"):
             try:
                 table_manager.activate(
@@ -911,6 +919,44 @@ class DutchingController:
     def _runtime_active(self) -> bool:
         mode = self._mode()
         return bool(mode and str(getattr(mode, "value", mode)) == "ACTIVE")
+
+    def _financial_scope_fields(self) -> Dict[str, Any]:
+        """C2 (Codex su 60c772fe): l'identita' finanziaria viaggia nella request di ogni gamba Dutching e della puntata
+        manuale, quindi nel payload salvato in ``orders``: dopo un riavvio F018 la ricostruisce nella meta del tavolo e il
+        settlement tardivo resta nel suo ambito (una perdita SIM non finisce in quarantena ne' accende l'Emergency Stop
+        globale). Ambito non leggibile => campo assente (prenotazione senza ambito: quarantena, come prima)."""
+        scope_of = getattr(self.runtime, "_current_financial_scope", None)
+        try:
+            scope = str(scope_of() or "") if callable(scope_of) else ""
+        except Exception:
+            logger.exception("C2: ambito finanziario non leggibile per la request")
+            scope = ""
+        fields = {"financial_scope": scope} if scope else {}
+        # M144 (CX-E2): la sessione di rischio dell'ingresso viaggia nella request (come per i segnali): il settlement
+        # tardivo di una puntata manuale o Dutching torna alla sessione d'origine anche dopo che e' stata chiusa
+        try:
+            session = getattr(self.runtime, "__dict__", {}).get("_risk_session") or {}
+            session_id = str(session.get("id") or "") if isinstance(session, dict) else ""
+        except Exception:
+            logger.exception("M144: sessione di rischio non leggibile per la request")
+            session_id = ""
+        if session_id:
+            fields["risk_session_id"] = session_id
+        return fields
+
+    def _scope_daily_loss_block(self) -> str:
+        """PR-04a (M111, PF-OWNER-PR638-M111-SIM-ENTRY-BYPASS-GO-20261116): perdita giornaliera dell'ambito corrente
+        superata => nessun nuovo ingresso manuale o Dutching, con rifiuto esplicito all'ammissione. Il controllo
+        decisivo resta quello ripetuto al punto finale d'invio (`drawdown_entry_block_reason` del TradingEngine), che
+        ferma anche le gambe gia' ammesse. Lettura fallita => rifiuto (fail-closed)."""
+        check = getattr(self.runtime, "_scope_daily_loss_block_reason", None)
+        if not callable(check):
+            return ""
+        try:
+            return str(check() or "")
+        except Exception:
+            logger.exception("M111: perdita giornaliera dell'ambito non leggibile: ingresso negato")
+            return "daily_loss_non_verificabile"
 
     def _bus_available(self) -> bool:
         return self.bus is not None and hasattr(self.bus, "publish")
@@ -1187,6 +1233,9 @@ class DutchingController:
 
         if not self._runtime_active():
             return self._fail("Runtime non attivo")
+        scope_block = self._scope_daily_loss_block()
+        if scope_block:
+            return self._fail(f"Limite giornaliero dell'ambito superato: {scope_block}")
 
         try:
             results, avg_profit, book_pct, avg_net_profit = (
@@ -1609,6 +1658,7 @@ class DutchingController:
                     "market_name": payload.get("market_name", ""),
                     "runner_name": item.get("runnerName", ""),
                     "simulation_mode": bool(payload.get("simulation_mode", False)),
+                    **self._financial_scope_fields(),
                     "table_id": table_id,
                     "event_key": event_key,
                     "batch_id": batch_id,
@@ -1797,6 +1847,9 @@ class DutchingController:
 
             if not self._runtime_active():
                 return self._fail("Runtime non attivo")
+            scope_block = self._scope_daily_loss_block()
+            if scope_block:
+                return self._fail(f"Limite giornaliero dell'ambito superato: {scope_block}")
 
             if not self._bus_available():
                 return self._fail("EventBus non disponibile")
@@ -1959,6 +2012,7 @@ class DutchingController:
                 "market_name": payload.get("market_name", ""),
                 "runner_name": payload.get("runner_name", ""),
                 "simulation_mode": bool(payload.get("simulation_mode", False)),
+                **self._financial_scope_fields(),
                 "table_id": table_id,
                 "event_key": event_key,
                 # PR26-a: ref a monte preservato; altrimenti ogni manual_bet e'

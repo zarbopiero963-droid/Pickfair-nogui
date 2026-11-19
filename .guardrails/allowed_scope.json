@@ -3651,6 +3651,46 @@
         "tests/d1/test_pr03b1_four_findings.py"
       ],
       "max_files": 8
+    },
+    "pr04a_financial_scope": {
+      "description": "PR-04a Fase 1 (PF-OWNER-PR04A-SCOPE-MM029-GO-20261116, decisione PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116, #628): perdita giornaliera, perdita di sessione e RISK_STOP per identita' finanziaria provider|ambiente|conto|valuta; SIM oltre limite = blocco solo SIM, LIVE = Emergency Stop globale; nessuna compensazione SIM/LIVE ne' fra conti; quarantena legacy; baseline EXPANSION per ambito. Nessun N3, PR-04b, #632, #636, PR-05, PR-18. Estensione dichiarata (Codex P1 su d86404ef e domanda D): controllers/dutching_controller.py registra l'ambito finanziario nella riserva Dutching/puntata manuale. Estensione dichiarata (owner, ciclo 12 R1, #628 M119): mini_gui.py, headless_main.py e docs/design/design_handoff.md per mostrare l'esposizione LIVE irrisolta; tests/unit/test_headless_preflight.py perche' il suo runtime finto espone ora lo stato R1 (NESSUNA), altrimenti il preflight e' correttamente NON PRONTO. M115 (owner GO, P1 fail-open): recovery LIVE senza riavvio, negli stessi file gia' dichiarati. Estensione dichiarata (Codex P1 su b902eca3): guardrails/mutation_catalog.json, ancoraggio del mutante settlement_duplicate_reapplied riallineato al ramo duplicate che ora recupera l'ambito della scommessa (stessa mutazione). Estensione dichiarata (owner M134, F1): tests/acceptance/test_issue437_pr28b.py, il test P37 «start apre una nuova sessione» codificava la semantica sostituita dalla sessione di rischio persistente; riscritto alla nuova regola (start() riprende la sessione superata, la chiude solo il reset esplicito a esposizione verificata). Estensione dichiarata (owner M139, G1/G2): core/risk_session_ledger.py, registro append-only con catena di hash per l'audit del reset confermato e l'archivio delle sessioni di rischio chiuse (tabella esistente audit_events, nessuna modifica di schema). M144 (owner, matrice chiusa D): correzione architetturale unica di sessioni, settlement, reset, audit e recovery solo nei file gia' dichiarati, nessun file nuovo. CX-G1 (owner M145): conto dello stop durevole prima dello stop, negli stessi file. M146 (owner): ciclo integrato H1-H4 negli stessi file. M147 (owner): registro unico dei superamenti LIVE negli stessi file. ESTENSIONE DICHIARATA (M147 R6): tests/safety/test_emergency_stop.py, il cui test sulle impostazioni illeggibili all'avvio codificava il reset dell'ES senza poter leggere il registro dei conti LIVE; ora il reset e' rifiutato finche' il registro e' illeggibile e riapre quando torna leggibile (controllo rafforzato, non indebolito). M148 (owner): procedura operatore ops/live_registry_recovery.md per il ripristino del registro dei superamenti LIVE illeggibile (solo documentazione, nessuna modifica applicativa). M149 (owner, A + C): sentinella del conto non identificato e coerenza registro/obbligo LIVE negli stessi file. ESTENSIONE DICHIARATA (M149): tests/failure/test_live_switch_fail_closed.py, tests/test_pr512_codex_034af59.py e tests/integration/test_p0_emergency_stop_open_orders.py, i cui Emergency Stop LIVE con sessione senza conto si toglievano col solo reset (fail-open chiuso da M149): conto di login nei finti LIVE e riconciliazione reale prima del reset; il test sull'ordine dei salvataggi cerca il salvataggio del flag (il conto dello stop si salva prima, N6). Anche tests/safety/test_emergency_stop.py (gia' dichiarato in M147) e tests/acceptance/test_issue437_pr28b.py (P37) adeguati allo stesso contratto: sessione LIVE finta col conto di login e riconciliazione reale prima del reset; P37 esce con la procedura M148 (conto identificato + data di attribuzione). Nessuna asserzione rimossa. M151 (owner, F1 + F2 integrati, disegno M150 rev. 3): coperture protettive mai cancellate in sola verifica, stato dell'Emergency Stop durevole con rilettura e giornale di sicurezza, reset serializzato e rifiutato se non durevole, registro dei conti riletto prima di ogni scrittura, tardivi compresi conservati dal reset annullato, lettura dell'apertura ritentata. ESTENSIONE DICHIARATA (M151, I8): core/risk_stop.py, lo stop di rischio si dichiara salvato sul db solo se riletto, altrimenti marker (T-E6). tests/safety/test_emergency_stop.py (gia' dichiarato) adeguato al contratto I8: un reset non durevole non e' un reset (test rinforzati, nessuna asserzione di sicurezza rimossa). guardrails/mutation_catalog.json (gia' dichiarato): ancore dei mutanti p0_estop_market_wide_cancel e p0_estop_microstake_ref_ignored riallineate alle righe modificate (stesse mutazioni). M151-bis (owner): CX-K1 (protezione delle coperture mai azzerata dall'ES) e CX-K2 (binding LIVE non scrivibile = obbligo in sospeso) negli stessi file, nessun file nuovo. M152 (owner, M151-ter): CX-L1 (giornale illeggibile mai riscritto) e CX-L2 (reset di uno stop globale bloccato da un obbligo LIVE irrisolto) negli stessi file, nessun file nuovo. ESTENSIONE DICHIARATA (owner M152-bis, opzione (a) con le sei condizioni di Claude D): tests/acceptance/test_issue437_pr28c.py. Il banco PR27 dichiarava execution_mode SIMULATION con simulation_mode False (LIVE senza login, sentinella M149): i test di durabilita' del RISK_STOP usano un banco SIM coerente; i due iniettori a conteggio sono armati all'ingresso del salvataggio del reset (stesso motivo, prova di raggiungimento); non_persistito_resta_bloccato in variante SIM (disco pieno sulle scritture dello stop) e LIVE senza login (banco originale: rifiuto + uscita M148); due test LIVE senza login aggiunti (rifiuto + uscita M148). Nessuna asserzione rimossa ne' modificata (113/113 identiche), nessun test rimosso. ESTENSIONE DICHIARATA (owner M155, commit 1 M154/M154-bis single-account, F1-F4 di Claude D): betfair_client.py (file nuovo nello scope, area Betfair safety-critical: identita' attestata `authenticated_identity()` scritta solo da login() dopo SUCCESS, azzerata a logout/sessione invalida/keep-alive fallito); tests/unit/test_m154_identita_attestata.py (F1 sul vero BetfairClient con HTTP simulato) e tests/d1/test_m154_single_account.py (gate, prima associazione, F4, CX-N1, sostituti single-account dei quattro successi multi-conto, che restano invariati); tests/conftest.py, adattatore di test dichiarato per i client finti legacy (schema BB-1G, nessuna asserzione cambiata, escluso dai moduli IDENTITA_REALE). ESTENSIONE DICHIARATA (owner M155, commit 2 M153 SafetyStateOwner, P1-P8 di Claude D): core/safety_state.py (file nuovo: proprietario unico, lock foglia, transizioni dichiarate, giornale come istantanea con journal_seq, tracciatore dei lock), tests/safety/test_m153_safety_state_owner.py (guardia AST P4 con mutanti, P1, P7, P8, M1, C02, M2, C12, C04, giornale precedente), ops/rollback_single_account.md (procedura B di rollback con LIVE OFF, nessun ritorno silenzioso); headless_main.py (gia' dichiarato) scrive la riconciliazione in attesa tramite il proprietario; tests/conftest.py (gia' dichiarato) attiva il tracciatore dell'ordine dei lock in tutta la suite.",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "betfair_client.py",
+        "controllers/dutching_controller.py",
+        "core/daily_loss_store.py",
+        "core/financial_scope.py",
+        "core/loss_limits.py",
+        "core/risk_session_ledger.py",
+        "core/risk_stop.py",
+        "core/runtime_controller.py",
+        "core/safety_state.py",
+        "docs/design/design_handoff.md",
+        "docs/roserpina_bankroll_equity.md",
+        "guardrails/mutation_catalog.json",
+        "headless_main.py",
+        "mini_gui.py",
+        "ops/live_registry_recovery.md",
+        "ops/rollback_single_account.md",
+        "tests/acceptance/test_issue437_pr03.py",
+        "tests/acceptance/test_issue437_pr28b.py",
+        "tests/acceptance/test_issue437_pr28c.py",
+        "tests/conftest.py",
+        "tests/core/test_settlement_poller.py",
+        "tests/d1/test_m154_single_account.py",
+        "tests/d1/test_pr04a_financial_scope.py",
+        "tests/f026/test_f032_rsr12_units.py",
+        "tests/failure/test_live_switch_fail_closed.py",
+        "tests/integration/test_p0_emergency_stop_open_orders.py",
+        "tests/integration/test_runtime_controller_bankroll_sync.py",
+        "tests/safety/test_emergency_stop.py",
+        "tests/safety/test_m153_safety_state_owner.py",
+        "tests/test_pr512_codex_034af59.py",
+        "tests/unit/test_headless_preflight.py",
+        "tests/unit/test_m154_identita_attestata.py"
+      ],
+      "max_files": 27
     }
   }
 }

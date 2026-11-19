@@ -430,7 +430,10 @@ def test_block_p37_reset_ciclo_non_azzera_la_sessione(tmp_path):
     assert _rifiuti(c)[-1].startswith("session_loss_breached")
 
 
-def test_pass_p37_start_apre_una_nuova_sessione(tmp_path):
+def test_pass_p37_start_riprende_la_sessione_di_rischio_e_il_reset_esplicito_la_chiude(tmp_path):
+    """F1 (owner M134, sostituisce «start apre una nuova sessione»): start() e' la sessione OPERATIVA; la sessione di
+    RISCHIO superata riprende con la sua perdita (start/stop o un riavvio non la azzerano). La chiude solo il reset
+    esplicito riuscito, che ne apre una nuova a zero."""
     c = _sessione(tmp_path, max_session_loss=10.0)
     _perdi(c.rc, 10.0)
     assert c.rc._session_loss_block_reason().startswith("session_loss_breached")
@@ -438,7 +441,35 @@ def test_pass_p37_start_apre_una_nuova_sessione(tmp_path):
     c.rc.betfair_service.connect = lambda **_k: {"session": "sim"}
     c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0}
     c.rc.start(execution_mode="SIMULATION")
+    c.rc.config.max_session_loss = 10.0      # il banco non salva il limite nel DB: start() ricarica la config
 
+    assert c.rc._session_loss_block_reason().startswith("session_loss_breached"), "start() ha azzerato la sessione"
+    # chiusura solo a rischio verificato. M149 (owner): la perdita LIVE senza conto identificato e' legata alla
+    # sentinella «conto non identificato», che nessuno sweep certifica: si esce con la procedura M148 (passo 4:
+    # l'operatore identifica il conto con prove, lo sostituisce alla sentinella e registra la data fino alla quale i
+    # superamenti non identificati sono attribuiti), poi la riconciliazione reale di QUEL conto e il reset esplicito.
+    from datetime import datetime as _dt
+    import types as _types
+    from core.runtime_controller import RuntimeController
+    key = RuntimeController._LIVE_ACCOUNTS_KEY
+    registro = json.loads(c.rc.db.get_settings()[key])
+    sentinella = registro["accounts"].pop(RuntimeController._LIVE_ACCOUNT_UNIDENTIFIED)
+    conto = _types.SimpleNamespace(username="conto-p37@example.invalid", get_current_orders=lambda **_k: [],
+                                   cancel_orders=lambda *_a, **_k: {"ok": True})
+    c.rc.betfair_service.client = conto
+    registro["accounts"][c.rc._financial_scope_for(False)] = {"state": "PENDING", "breaches": sentinella["breaches"]}
+    assert sentinella["state"] == "PENDING"
+    c.rc.db.save_settings({key: json.dumps(registro, sort_keys=True),
+                           RuntimeController._UNIDENTIFIED_ATTRIBUTED_KEY: _dt.utcnow().date().isoformat()})
+    c = _catena(tmp_path, max_session_loss=10.0)                     # riavvio sul registro ripristinato
+    c.rc.betfair_service.client = conto
+    c.rc.betfair_service.get_live_client = lambda: conto
+    assert c.rc._session_loss_block_reason().startswith("session_loss_breached"), "il riavvio ha azzerato la sessione"
+    RuntimeController._reconcile_restored_emergency(c.rc, trigger="test")
+    richiesta = c.rc.request_risk_session_reset(operator="op", authorization="AUT-1", reason="test")   # G1
+    esito = c.rc.reset_risk_stop(operator="op", authorization="AUT-1", challenge_id=richiesta["challenge_id"],
+                                 confirm=True, confirm_again=True)
+    assert esito["risk_stop_reset"] is True, esito
     assert c.rc._session_pnl_baseline == pytest.approx(c.rc.risk_desk.realized_pnl)
     assert c.rc._session_loss_block_reason() == ""
 

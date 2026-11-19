@@ -1795,8 +1795,8 @@
       "module": "core.runtime_controller",
       "area": "dedupe",
       "file": "core/runtime_controller.py",
-      "original": "        if existing is not None and not upgrade:\n            return {\"outcome\": \"duplicate\", \"applied\": False,\n                    \"realized_already\": bool(existing.get(\"realized_applied\"))}",
-      "mutated": "        if existing is not None and not upgrade:\n            return {\"outcome\": \"duplicate\", \"applied\": False,\n                    \"realized_already\": False}",
+      "original": "        if existing is not None and not upgrade:\n            out = {\"outcome\": \"duplicate\", \"applied\": False,\n                   \"realized_already\": bool(existing.get(\"realized_applied\"))}",
+      "mutated": "        if existing is not None and not upgrade:\n            out = {\"outcome\": \"duplicate\", \"applied\": False,\n                   \"realized_already\": False}",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
@@ -9118,8 +9118,8 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "                bet_ids = (sorted({o[\"bet_id\"] for o in orders if o[\"bet_id\"]}) if blind\n",
-      "mutated": "                bet_ids = (None if blind\n",
+      "original": "                bet_ids = (sorted({o[\"bet_id\"] for o in orders if o[\"bet_id\"] and o[\"bet_id\"] not in protected_bets})\n",
+      "mutated": "                bet_ids = (None\n",
       "tests": [
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],
@@ -9238,8 +9238,8 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "                            \"customer_ref\": ms_ref or str(item.get(\"customer_ref\") or \"\"), \"status\": status})\n",
-      "mutated": "                            \"customer_ref\": str(item.get(\"customer_ref\") or \"\"), \"status\": status})\n",
+      "original": "                            \"customer_ref\": ms_ref or str(item.get(\"customer_ref\") or \"\"), \"status\": status,\n",
+      "mutated": "                            \"customer_ref\": str(item.get(\"customer_ref\") or \"\"), \"status\": status,\n",
       "tests": [
         "tests/integration/test_p0_emergency_stop_open_orders.py"
       ],

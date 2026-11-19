@@ -197,7 +197,12 @@ def persist_risk_stop(db: Any, reason: str) -> bool:
         seq = None if _version_unknown(before) else max(seqs, default=0) + 1
         payload = _state_payload(active=True, reason=str(reason or "risk_stop"), seq=seq)
         try:
+            # M151 (I8, T-E6): lo stop e' durevole sul db solo se riletto identico; un salvataggio che ritorna False
+            # o non scrive nulla non e' mai «persistito»: si passa al marker (fail-closed)
             db.save_settings({RISK_STOP_STATE_KEY: payload})
+            readback = db.get_settings() if hasattr(db, "get_settings") else None
+            if not isinstance(readback, dict) or str(readback.get(RISK_STOP_STATE_KEY) or "") != payload:
+                raise OSError("risk-stop: stato non riletto dal db")
             return True
         except Exception:
             logger.critical("risk-stop: stato non salvato su db, uso il marker", exc_info=True)

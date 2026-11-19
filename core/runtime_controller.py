@@ -8,15 +8,19 @@ import json
 import logging
 import math
 import os
+import re
 import threading
 import time
 import uuid
 import weakref
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import ROUND_UP, Decimal, InvalidOperation
 from typing import Any, Optional
 
-from core import liquidity, loss_limits, validators
+from core import financial_scope, liquidity, loss_limits, validators
 from core import risk_stop as stop_rules
+from core import risk_session_ledger
+from core.safety_state import SafetyStateOwner, TrackedLock, tracked as _tracked_lock
 from core.duplication_guard import DuplicationGuard
 from core.hedge_ref import is_hedge_order_ref
 from core.dutching_batch_manager import DutchingBatchManager
@@ -84,6 +88,92 @@ _DIRECT_TTL_TERMINAL_EVENTS = frozenset({
 # #536 (Sol su 2a5a6c2): la presa in carico di un bet_id dal registry TTL e' una sola operazione anche con piu'
 # riferimenti allo stesso ordine; due giri concorrenti non possono prenderne una voce ciascuno.
 _DIRECT_TTL_CLAIM_LOCK = threading.Lock()
+
+
+def _liability_component(side, price, size):
+    """R1 liability (owner): BACK = stake; LAY = stake x (quota - 1). Decimal; None se lato, quota o stake non
+    verificabili (mai zero per convenienza). Una quota LAY deve essere > 1; uno stake negativo non e' valido."""
+    try:
+        side = str(side or "").strip().upper()
+        stake = Decimal(str(size))
+        if not stake.is_finite() or stake < 0:
+            return None
+        if side == "BACK":
+            return stake
+        if side == "LAY":
+            odds = Decimal(str(price))
+            if not odds.is_finite() or odds <= 1:
+                return None
+            return stake * (odds - 1)
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return None
+
+
+def live_liability(open_orders, foreign_orders, matched_positions) -> dict:
+    """R1 liability LIVE (owner GO, PR #638): STIMA CONSERVATIVA LORDA, senza compensazioni fra esiti alternativi
+    dello stesso mercato (mai una «esposizione netta» non calcolata sugli esiti).
+    - non abbinata: parte ancora eseguibile (`size_remaining`) alla quota limite dell'ordine;
+    - abbinata: `size_matched` alla quota media di esecuzione (`average_price_matched`);
+    - ordine parzialmente abbinato: residuo e abbinato contati separatamente, una volta sola ciascuno
+      (residuo in `open_orders`, abbinato in `matched_positions` per il bot; nella stessa voce per gli estranei).
+    Un qualunque dato mancante => totale None (SCONOSCIUTO). Arrotondamento per eccesso al centesimo."""
+    unmatched, matched_total, unknown = Decimal(0), Decimal(0), []
+    for o in list(open_orders or []) + list(foreign_orders or []):
+        part = _liability_component(o.get("side"), o.get("price"), o.get("size_remaining"))
+        if part is None:
+            unknown.append(str(o.get("bet_id") or "?"))
+        else:
+            unmatched += part
+        if o.get("size_matched") not in (None, "", 0, 0.0, "0"):
+            mpart = _liability_component(o.get("side"), o.get("average_price_matched"), o.get("size_matched"))
+            if mpart is None:
+                unknown.append(str(o.get("bet_id") or "?"))
+            else:
+                matched_total += mpart
+    for m in list(matched_positions or []):
+        part = _liability_component(m.get("side"), m.get("average_price_matched"), m.get("size_matched"))
+        if part is None:
+            unknown.append(str(m.get("bet_id") or "?"))
+        else:
+            matched_total += part
+    cent = Decimal("0.01")
+    q = (lambda d: d.quantize(cent, rounding=ROUND_UP))
+    return {"basis": "STIMA_CONSERVATIVA_LORDA",
+            "unmatched": None if unknown else str(q(unmatched)),
+            "matched": None if unknown else str(q(matched_total)),
+            "total": None if unknown else str(q(unmatched + matched_total)),
+            "unknown_items": unknown}
+
+
+def format_live_exposure(view: Optional[dict]) -> str:
+    """R1 (owner, ciclo 12): testo unico dell'esposizione LIVE per GUI e headless (stesso significato ovunque).
+    Un importo non verificabile si mostra SCONOSCIUTO, mai zero."""
+    view = view or {}
+    state = str(view.get("state") or "SCONOSCIUTA")
+    if state == "NESSUNA":
+        return "nessuna"
+    if state == "VERIFICATA":
+        return "verificata: nessun ordine ne' posizione LIVE residui"
+    parts = [f"{'NON RICONCILIATA' if state == 'NON_RICONCILIATA' else 'SCONOSCIUTA'}: "
+             f"liability {view.get('amount_display') or 'SCONOSCIUTO'}"
+             + (" (stima lorda)" if view.get("amount") is not None else "")]
+    if view.get("open_orders"):
+        parts.append(f"{len(view['open_orders'])} ordini del bot aperti")
+    if view.get("unattributed_open_orders"):
+        parts.append(f"{len(view['unattributed_open_orders'])} ordini estranei aperti")
+    if view.get("matched_positions"):
+        # N3 (owner M136): posizioni del bot e posizioni estranee distinte (le estranee non si chiudono da sole)
+        foreign = sum(1 for m in view["matched_positions"] if isinstance(m, dict) and m.get("origin") == "ESTRANEA")
+        own = len(view["matched_positions"]) - foreign
+        if own:
+            parts.append(f"{own} posizioni abbinate del bot")
+        if foreign:
+            parts.append(f"{foreign} posizioni abbinate estranee (non chiuse dal bot)")
+    if view.get("reconcile_pending"):
+        parts.append("riconciliazione in corso")
+    parts.append("INTERVENTO MANUALE")
+    return " | ".join(parts)
 
 
 class RuntimeController:
@@ -224,17 +314,18 @@ class RuntimeController:
         }
 
         # Emergency stop state — set by emergency_stop(), cleared only by reset_emergency()
-        self._emergency_stopped: bool = False
-        self._emergency_stopped_at: str = ""
-        self._emergency_reason: str = ""
+        # M153 (owner, opzione B): stato di sicurezza posseduto da SafetyStateOwner (core/safety_state.py), che nasce NON
+        # inizializzato (P8: ingressi, reset e sweep rifiutati) finche' la ricostruzione all'avvio non e' completa.
         # PF-ALL-F027: provenienza dei settlement prima del flip a SIM ("", "SIM", "LIVE", "UNKNOWN"); persistita
-        self._settlement_source_before_emergency: str = ""
+        SafetyStateOwner.install(self).apply(
+            self, "init", _emergency_stopped=False, _emergency_stopped_at="", _emergency_reason="",
+            _settlement_source_before_emergency="")
         # Mercati con un comando di cashout/hedge (registro durevole, verifica indipendente r4303297587)
         self._hedged_markets: dict = {}
         self._hedged_markets_unreliable: bool = False
         # Serializza il trigger della kill-switch da daily-loss: rende atomico
         # il check-and-stop dell'handler sotto dispatch EventBus concorrente.
-        self._daily_loss_stop_lock = threading.Lock()
+        self._daily_loss_stop_lock = TrackedLock("daily_loss_stop", threading.Lock())
         # Grace auto-green OPT-IN (G5): mappa chiave-target -> Timer in volo, per
         # sopprimere un secondo grace sullo stesso target (il dedup del bridge e'
         # 2.0s < grace 2.5s => non basta) E poter CANCELLARE i grace pendenti
@@ -253,7 +344,7 @@ class RuntimeController:
         # settlement che sfonderebbe il limite, cosi' un SIGNAL_RECEIVED
         # concorrente (dispatch multi-worker) non piazza un ordine nella finestra
         # tra apply-PnL e emergency_stop. Bridge: superato da _emergency_stopped.
-        self._daily_loss_pending_stop: bool = False
+        RuntimeController._owner(self).apply(self, "init", _daily_loss_pending_stop=False)
         # Serializza il read-modify-write su _daily_loss_monitor_state tra
         # _monitor_daily_loss_breach e _record_pending_daily_loss_breach (chiamati
         # da worker EventBus + status-poll concorrenti): senza, un update
@@ -261,7 +352,7 @@ class RuntimeController:
         # restart LIVE in giornata. Lock SEPARATO da _daily_loss_stop_lock per
         # evitare inversioni d'ordine (l'enforce tiene lo stop-lock e poi, via
         # emergency_stop->get_status, ricalcola il monitor).
-        self._daily_loss_state_lock = threading.Lock()
+        self._daily_loss_state_lock = TrackedLock("daily_loss_state", threading.Lock())
         self._io_observations: dict[str, Any] = {
             "last_operation": "",
             "last_status": "UNKNOWN",
@@ -275,7 +366,7 @@ class RuntimeController:
         self._processed_bankroll_sync_keys: set[str] = set()
         self._processed_realized_pnl_keys: set[str] = set()
         # #461 PR29-c: consumo seriale dei settlement nel processo (vedi `_settlement_consumer_lock`)
-        self._settlement_lock = threading.RLock()
+        self._settlement_lock = TrackedLock("settlement_consumer", threading.RLock())
         self._lifecycle_lock = threading.RLock()   # #461 PR29-c (Sol su e3fe4d7): start/stop serializzati
         self.runtime_authority: Optional[RuntimeAuthority] = None   # #536: lock OS + identita' file + lease/fencing
         self._authority_lost_reason = ""
@@ -328,7 +419,14 @@ class RuntimeController:
             "reason": "cycle_executor_not_triggered",
             "recovery_status": "RECOVERY_NO_STATE",
         }
-        self._daily_loss_monitor_state: dict[str, Any] = {
+        # PR-04a (PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116): stati della perdita giornaliera PER AMBITO
+        # finanziario (`core/financial_scope.py`); `_daily_loss_monitor_state` e' la vista dell'ambito corrente.
+        self._daily_loss_scopes: dict[str, dict] = {}
+        self._scope_pnl: dict[str, float] = {}       # P&L regolato attribuito a ciascun ambito verificato
+        self._unscoped_profit = 0.0                  # profitti senza ambito verificato: mai accreditati a nessuno
+        self._daily_loss_unattributed: Optional[dict] = None   # quarantena: perdite non attribuibili, per ogni ambito
+        self._session_pnl_vector: Optional[tuple] = None
+        self._daily_loss_monitor_state = {
             "day_utc": datetime.utcnow().date().isoformat(),
             "threshold": self._safe_daily_loss_threshold(),
             "realized_pnl_day_baseline": float(self.risk_desk.realized_pnl),
@@ -345,11 +443,10 @@ class RuntimeController:
         }
         self._session_pnl_baseline: Optional[float] = None  # P37, da start()
         self._session_loss_alerted = False
-        self._risk_stop_lock = threading.RLock()  # P38: transizione + persistenza atomiche
-        self._risk_stop_reason = stop_rules.restore_risk_stop(self.db)
-        self._daily_loss_monitor_state.update(loss_limits.restore_daily_loss(  # F4
-            self.db, today_utc=self._daily_loss_monitor_state["day_utc"], realized_pnl=float(self.risk_desk.realized_pnl)))
-        self._daily_loss_persisted = loss_limits.persist_daily_loss(self.db, self._daily_loss_monitor_state, None)
+        self._risk_stop_lock = TrackedLock("risk_stop", threading.RLock())  # P38: transizione + persistenza atomiche
+        RuntimeController._owner(self).apply(self, "init", _risk_stop_reason=stop_rules.restore_risk_stop(self.db))
+        self._daily_loss_persisted = None
+        RuntimeController._restore_daily_loss_book(self)  # F4, PR-04a: per ambito, legacy in quarantena
         # D-1 (P0): picco di cassa dell'hard-stop `max_drawdown_abs`, persistente e mai ribasato
         self._drawdown_hard_stop = DrawdownHardStop(self.db)
         self._drawdown_hard_stop.restore(reconcile=False)   # sola lettura: riconciliazione allo START, sotto lock
@@ -362,7 +459,15 @@ class RuntimeController:
         # a costruzione COMPLETATA: ripristina l'intera postura (lockdown
         # incluso), non solo il flag.
         self._reload_persisted_emergency_state()
+        RuntimeController._restore_deferred_live_bindings(self)     # M151-bis (CX-K2): obblighi LIVE in sospeso
         self._load_hedged_markets()
+        RuntimeController._restore_live_verify_only(self)           # M144/M146: modalita' prima del marker di sessione
+        RuntimeController._restore_session_stop_marker(self)        # S-b: stop di sessione rimasto in sospeso
+        RuntimeController._restore_live_exposure_pending(self)      # Codex P1 su afbd5c89
+        RuntimeController._restore_breached_live_scope_stop(self)   # M130 (matrice D): blocco dal libro superato
+        # M153 P8: ricostruzione completa => il proprietario e' inizializzato; solo ora ingressi, reset, sweep e recovery
+        RuntimeController._owner(self).mark_initialized()
+        RuntimeController._reconcile_restored_emergency(self, trigger="startup")
 
     @property
     def catalog_sync(self) -> CatalogSyncService:
@@ -1189,7 +1294,7 @@ class RuntimeController:
             return None
         return parsed
 
-    def _projected_daily_loss_breach(self, additional_pnl: float = 0.0) -> dict:
+    def _projected_daily_loss_breach(self, additional_pnl: float = 0.0, attribution: Optional[dict] = None) -> dict:
         """Stato di breach PROIETTATO includendo additional_pnl nel realized,
         READ-ONLY (non muta lo stato ne' pubblica eventi). Serve ai rami di
         early-return (es. recovery fail-closed) che ritornano PRIMA di applicare
@@ -1204,23 +1309,28 @@ class RuntimeController:
         produrrebbe un falso breach/emergency-stop al primo settlement del
         nuovo giorno."""
         threshold = self._safe_daily_loss_threshold()
+        # PR-04a: proiezione nell'ambito del settlement; un profitto senza ambito non si accredita a nessuno.
+        key = str((attribution or {}).get("scope") or RuntimeController._current_financial_scope(self))
+        if (attribution or {}).get("kind") == "unscoped_profit":
+            additional_pnl = 0.0
         if threshold is None:
-            return {"breached": False, "daily_loss_amount": 0.0}
+            return {"breached": False, "daily_loss_amount": 0.0, "financial_scope": key}
         today_utc = datetime.utcnow().date().isoformat()
-        state = self._daily_loss_monitor_state or {}
+        state = RuntimeController._daily_loss_state_for(self, key) or {}
         previous_day = str(state.get("day_utc") or "")
         day_rollover = bool(previous_day and previous_day != today_utc)
-        realized = float(self.risk_desk.realized_pnl) + float(additional_pnl or 0.0)
+        current_realized = RuntimeController._realized_for_scope(self, key)
+        realized = current_realized + float(additional_pnl or 0.0)
         if day_rollover:
             prev_realized_raw = state.get("realized_pnl")
             baseline = float(
-                self.risk_desk.realized_pnl if prev_realized_raw is None else prev_realized_raw
+                current_realized if prev_realized_raw is None else prev_realized_raw
             )
         else:
             baseline_raw = state.get("realized_pnl_day_baseline")
             baseline = float(realized if baseline_raw is None else baseline_raw)
         daily_loss = max(0.0, -(realized - baseline))
-        return {"breached": daily_loss >= threshold, "daily_loss_amount": daily_loss}
+        return {"breached": daily_loss >= threshold, "daily_loss_amount": daily_loss, "financial_scope": key}
 
     def _record_pending_daily_loss_breach(self, projected: dict) -> None:
         """Persiste IN-MEMORY un breach PROIETTATO in `_daily_loss_monitor_state`
@@ -1241,9 +1351,10 @@ class RuntimeController:
         now_iso = datetime.utcnow().isoformat()
         today_utc = datetime.utcnow().date().isoformat()
         amount = float(projected.get("daily_loss_amount", 0.0) or 0.0)
+        key = str(projected.get("financial_scope") or RuntimeController._current_financial_scope(self))
         alert_payload: Optional[dict] = None
         with self._daily_loss_state_lock:
-            prev = dict(self._daily_loss_monitor_state or {})
+            prev = dict(RuntimeController._daily_loss_state_for(self, key) or {})
             already_breached_today = bool(prev.get("breached")) and str(prev.get("day_utc") or "") == today_utc
             prev_amount = float(prev.get("daily_loss_amount", 0.0) or 0.0)
             effective_amount = max(amount, prev_amount)
@@ -1261,9 +1372,10 @@ class RuntimeController:
                 "last_alert_event": "DAILY_LOSS_BREACH_TRIGGERED",
                 "alert_count": alert_count,
                 "last_checked_at": now_iso,
+                "financial_scope": key,
             })
-            self._daily_loss_persisted = loss_limits.persist_daily_loss(self.db, state, self._daily_loss_persisted)
-            self._daily_loss_monitor_state = state
+            self.__dict__.setdefault("_daily_loss_scopes", {})[key] = state
+            RuntimeController._persist_daily_loss_book(self)
             if not already_breached_today:
                 alert_payload = {
                     "source": "RUNTIME_RECOVERY_FAILCLOSED",
@@ -1301,28 +1413,996 @@ class RuntimeController:
 
     # F4/P37 (#461 PR28-b): logica in core/loss_limits.py.
     def _reset_recovery_cycle_keeping_losses(self) -> None:
-        with self._daily_loss_state_lock:  # il reset non cancella le perdite
+        with self._daily_loss_state_lock:  # il reset non cancella le perdite (di nessun ambito)
+            before = RuntimeController._pnl_vector(self)
             shift = float(self.risk_desk.realized_pnl)
+            scopes = self.__dict__.setdefault("_daily_loss_scopes", {})
+            for key, state in scopes.items():
+                loss_limits.shift_day_baseline(state, RuntimeController._realized_for_scope(self, key, before))
             self.risk_desk.reset_recovery_cycle()
-            loss_limits.shift_day_baseline(self._daily_loss_monitor_state, shift)
+            self._scope_pnl = {}
+            self._unscoped_profit = 0.0
             if getattr(self, "_session_pnl_baseline", None) is not None:
                 self._session_pnl_baseline -= shift
+            session = getattr(self, "_session_pnl_vector", None)
+            if session is not None:
+                self._session_pnl_vector = RuntimeController._vector_minus(session, before)
+
+    # ------------------------------------------------------------------ PR-04a: identita' finanziaria
+    def _financial_scope_for(self, simulated: bool) -> str:
+        """Ambito contabile. LIVE: identita' attestata del client connesso; senza attestazione (sessione scaduta o in
+        riconnessione) l'identita' AUTORIZZATA dell'installazione (M154-bis: un solo conto, gia' provato da un login),
+        mai lo username di configurazione o del client; nessuna delle due => conto non identificabile."""
+        account = "" if simulated else RuntimeController._live_account_identity(self)
+        if not simulated and not account:
+            account, _error = RuntimeController._authorized_live_identity(self)
+        return financial_scope.runtime_scope(simulated=bool(simulated), live_account=account)
+
+    def _current_financial_scope(self) -> str:
+        """Ambito della modalita' corrente del runtime (SIM, oppure LIVE col conto Betfair connesso)."""
+        return RuntimeController._financial_scope_for(self, bool(getattr(self, "simulation_mode", False)))
+
+    def _financial_scope_of_funds(self, funds: Any) -> str:
+        """Ambito di una lettura del conto: il marcatore ``simulated`` della lettura prevale; senza marcatore vale la
+        modalita' corrente del runtime."""
+        flag = funds.get("simulated") if isinstance(funds, dict) else None
+        if flag is True or flag is False:
+            return RuntimeController._financial_scope_for(self, flag)
+        return RuntimeController._current_financial_scope(self)
+
+    def _pnl_vector(self) -> tuple:
+        return (float(self.risk_desk.realized_pnl), dict(getattr(self, "_scope_pnl", None) or {}),
+                float(getattr(self, "_unscoped_profit", 0.0) or 0.0))
+
+    @staticmethod
+    def _vector_minus(a: tuple, b: tuple) -> tuple:
+        keys = set(a[1]) | set(b[1])
+        return (a[0] - b[0], {k: a[1].get(k, 0.0) - b[1].get(k, 0.0) for k in keys}, a[2] - b[2])
+
+    def _realized_for_scope(self, key: str, vector: Optional[tuple] = None) -> float:
+        """P&L regolato dell'ambito: totale del processo meno cio' che appartiene ad ALTRI ambiti verificati e meno i
+        profitti senza ambito (mai accreditati). Le perdite non attribuibili restano nel totale: contano per tutti."""
+        desk, scoped, unscoped = vector if vector is not None else RuntimeController._pnl_vector(self)
+        others = sum(v for k, v in scoped.items() if k != key)
+        return float(desk) - float(others) - float(unscoped)
+
+    def _new_daily_loss_scope_state(self, key: str) -> dict:
+        today = datetime.utcnow().date().isoformat()
+        unattributed = getattr(self, "_daily_loss_unattributed", None)
+        if unattributed and str(unattributed.get("day_utc") or "") != today:
+            unattributed = None
+        legacy = None if not unattributed else (float(unattributed.get("intraday_realized_pnl") or 0.0),
+                                                unattributed.get("breached") is True,
+                                                str(unattributed.get("breached_at") or ""))
+        state = {"day_utc": today, "threshold": RuntimeController._safe_daily_loss_threshold(self),
+                 "last_status": "DAILY_LOSS_NOT_CONFIGURED", "reason": "max_daily_loss_not_configured",
+                 "alert_count": 0, "last_alert_event": "", "last_checked_at": datetime.utcnow().isoformat()}
+        fields = loss_limits.scope_fields(None, legacy, RuntimeController._realized_for_scope(self, key), None)
+        fields.pop(loss_limits.SEQ_KEY, None)
+        state.update(fields)
+        state["financial_scope"] = key
+        return state
+
+    def _daily_loss_state_for(self, key: str) -> dict:
+        scopes = self.__dict__.setdefault("_daily_loss_scopes", {})
+        state = scopes.get(key)
+        if state is None:
+            state = RuntimeController._new_daily_loss_scope_state(self, key)
+            scopes[key] = state
+        return state
+
+    @property
+    def _daily_loss_monitor_state(self) -> dict:
+        """Vista compatibile: lo stato della perdita giornaliera dell'ambito CORRENTE."""
+        return RuntimeController._daily_loss_state_for(self, RuntimeController._current_financial_scope(self))
+
+    @_daily_loss_monitor_state.setter
+    def _daily_loss_monitor_state(self, value: dict) -> None:
+        key = RuntimeController._current_financial_scope(self)
+        state = dict(value or {})
+        state["financial_scope"] = key
+        self.__dict__.setdefault("_daily_loss_scopes", {})[key] = state
+
+    def _persist_daily_loss_book(self) -> None:
+        if any(kind == "unattributed_loss" for _t, kind in (self.__dict__.get("_daily_loss_settle_staged") or {}).values()):
+            # Sol su 385c7598 / Grok su 3389ace9: una perdita non attribuibile in corso tocca la quarantena e TUTTI gli
+            # ambiti; un salvataggio intermedio (es. get_status durante il sync) sarebbe a meta' (ambiti vecchi accanto
+            # alla quarantena nuova => sottostima; ambito gia' ricalcolato senza la chiave => doppio conteggio dopo la
+            # riconsegna). Si rinvia: il libro si salva una volta, con tutti gli ambiti, quarantena e chiave insieme.
+            return
+        unattributed = getattr(self, "_daily_loss_unattributed", None)
+        settled = getattr(self, "_daily_loss_settled", None)
+        if settled and str(settled.get("day_utc") or "") != datetime.utcnow().date().isoformat():
+            settled = None                                      # chiavi del giorno precedente: scadute
+        self._daily_loss_persisted = loss_limits.persist_daily_loss_book(
+            self.db, self.__dict__.setdefault("_daily_loss_scopes", {}), unattributed,
+            getattr(self, "_daily_loss_persisted", None), getattr(self, "_daily_loss_restored_seq", None),
+            settled if settled and settled.get("keys") else None,
+            risk_session=RuntimeController._risk_session_record(self))
+
+    # ------------------------------------------------------------------ F1 (owner M134): sessione di rischio persistente
+    # La SESSIONE OPERATIVA e' il ciclo start()/stop() del processo; la SESSIONE DI RISCHIO e' quella su cui si misura
+    # `max_session_loss` e sopravvive a crash, riavvii, stop/start, cambi SIM/LIVE e di conto. E' salvata nel libro
+    # giornaliero verificato, nella stessa scrittura delle chiavi dei settlement (ogni P&L contato una volta sola).
+    # Si apre al primo start() senza una sessione aperta (o alla prima base di sessione). Si chiude SOLO:
+    #   - con un reset esplicito riuscito dello stop di perdita di sessione (`reset_risk_stop()` fuori dall'avvio, con
+    #     il ricontrollo completo pulito ed esposizione LIVE non irrisolta): la sessione superata si chiude e se ne apre
+    #     una nuova, salvata PRIMA di togliere lo stop;
+    #   - con `close_risk_session()` esplicito, ammesso solo senza stop attivo, senza superamento e senza esposizione LIVE
+    #     irrisolta.
+    # Mai da un riavvio, da stop()/start(), da un cambio di modalita' o di conto.
+    _RISK_SESSION_CLOSED_CAP = 20
+
+    def _risk_session_delta(self) -> Optional[dict]:
+        vector = self.__dict__.get("_session_pnl_vector")
+        baseline = self.__dict__.get("_session_pnl_baseline")
+        if vector is None and baseline is None:
+            return None
+        if vector is None:
+            vector = (float(baseline), {}, 0.0)
+        diff = RuntimeController._vector_minus(RuntimeController._pnl_vector(self), vector)
+        return {"desk": float(diff[0]), "scopes": {str(k): float(v) for k, v in sorted(diff[1].items()) if v},
+                "unscoped": float(diff[2])}
+
+    def _risk_session_record(self) -> Optional[dict]:
+        """Sessione di rischio da salvare nel libro (None se nessuna sessione e' aperta). Una base di sessione senza
+        identita' (impostata fuori da start()) diventa una sessione di rischio con un id nuovo."""
+        delta = RuntimeController._risk_session_delta(self)
+        session = self.__dict__.get("_risk_session")
+        if delta is None:
+            if not session:
+                return None
+            delta = dict(session.get("last") or {"desk": 0.0, "scopes": {}, "unscoped": 0.0})
+        if not session:
+            session = {"id": uuid.uuid4().hex, "opened_at": datetime.utcnow().isoformat(), "rev": 0, "closed": []}
+            self._risk_session = session
+        if session.get("last") != delta:
+            session["rev"] = int(session.get("rev") or 0) + 1
+            session["last"] = delta
+        record = {"id": session["id"], "opened_at": session.get("opened_at") or "", "rev": int(session["rev"]),
+                  "delta": delta, "closed": list(session.get("closed") or []),
+                  "archive_pending": list(session.get("archive_pending") or [])}
+        if session.get("unverifiable"):
+            record["unverifiable"] = True        # M144: perdita non verificabile, si chiude solo col reset G1
+        if session.get("late_keys"):
+            # M151 (CX-J3): tardivi gia' compresi nel P&L della sessione CORRENTE (riportati da un reset annullato):
+            # alla chiusura entrano nel record, e il LATE_SETTLEMENT gia' nel registro non si somma una seconda volta
+            record["late_keys"] = sorted(str(k) for k in session["late_keys"])
+        return record
+
+    def _restore_risk_session(self, book: dict) -> None:
+        """Riavvio: la sessione di rischio salvata riprende con la sua perdita (il desk riparte da zero, quindi la base
+        si ricostruisce come «adesso meno il delta salvato»). Libro illeggibile => stop di sessione globale persistente
+        (fail-closed): la perdita di sessione non e' verificabile; si toglie solo col reset esplicito."""
+        session = book.get("risk_session")
+        opened = None
+        try:
+            # M151 (K2, H-a): una lettura FALLITA non e' un'assenza: si ritenta una volta prima di dichiararla
+            # illeggibile (fail-closed), cosi' un errore transitorio non fa perdere l'identita' della sessione aperta
+            for attempt in range(2):
+                try:
+                    raw = (self.db.get_settings() or {}).get(RuntimeController._RISK_SESSION_OPEN_KEY) \
+                        if hasattr(self.db, "get_settings") else ""
+                    break
+                except Exception:
+                    if attempt:
+                        raise
+                    logger.warning("F1: lettura dell'apertura della sessione di rischio fallita: nuovo tentativo")
+            opened = json.loads(raw) if raw else None
+            if opened is not None and not (isinstance(opened, dict) and str(opened.get("id") or "")):
+                raise ValueError("apertura della sessione di rischio non valida")
+        except Exception:
+            logger.exception("F1: apertura della sessione di rischio illeggibile (fail-closed)")
+            book = dict(book, risk_session_unreadable=True)
+            opened = None
+        if session is None and book.get("risk_session_unreadable") and opened:
+            # M144 (G1e/N1): libro illeggibile ma apertura leggibile: l'IDENTITA' della sessione corrente e' nota (mai
+            # un id nuovo, mai una sessione chiusa per supposizione), la sua perdita no => sessione non verificabile:
+            # stop di sessione (sotto) e chiusura solo col reset G1 confermato.
+            session = {"id": str(opened["id"]), "opened_at": str(opened.get("opened_at") or ""), "rev": 0,
+                       "delta": {"desk": 0.0, "scopes": {}, "unscoped": 0.0}, "closed": [], "archive_pending": [],
+                       "unverifiable": True}
+        known = {str(c.get("id")) for c in (session or {}).get("closed") or []}
+        if opened and str(opened["id"]) != str((session or {}).get("id") or "") and str(opened["id"]) not in known:
+            # sessione aperta dopo l'ultimo libro salvato (crash prima del libro): riprende da zero perdite; quella del
+            # libro, se c'e', risulta chiusa all'apertura della nuova
+            closed = list((session or {}).get("closed") or [])
+            if session:
+                closed.append({"id": session["id"], "delta": session["delta"], "closed_at": str(opened.get(
+                    "opened_at") or "")})
+            session = {"id": str(opened["id"]), "opened_at": str(opened.get("opened_at") or ""), "rev": 0,
+                       "delta": {"desk": 0.0, "scopes": {}, "unscoped": 0.0}, "closed": closed,
+                       "archive_pending": list((session or {}).get("archive_pending") or [])}
+        if session:
+            now = RuntimeController._pnl_vector(self)
+            delta = session["delta"]
+            keys = set(now[1]) | set(delta["scopes"])
+            self._session_pnl_vector = (now[0] - delta["desk"],
+                                        {k: now[1].get(k, 0.0) - delta["scopes"].get(k, 0.0) for k in keys},
+                                        now[2] - delta["unscoped"])
+            self._session_pnl_baseline = float(self._session_pnl_vector[0])
+            self._risk_session = {"id": session["id"], "opened_at": session["opened_at"], "rev": session["rev"],
+                                  "closed": list(session.get("closed") or []), "last": dict(delta),
+                                  "archive_pending": list(session.get("archive_pending") or [])}
+            if session.get("unverifiable"):
+                self._risk_session["unverifiable"] = True
+            if session.get("late_keys"):
+                self._risk_session["late_keys"] = list(session["late_keys"])     # M151 (CX-J3)
+            logger.info("F1: sessione di rischio %s ripristinata (P&L di sessione %.2f)", session["id"], delta["desk"])
+        RuntimeController._risk_ledger_startup(self)              # G1 + G2 (owner M139), recupero M144
+        if self.__dict__.get("_risk_session"):
+            # finestra operativa: le chiuse gia' archiviate oltre la finestra (anche quelle note solo a una copia vecchia
+            # del libro) escono; l'archivio resta l'unica fonte per loro
+            self._risk_session["closed"] = RuntimeController._trim_closed_window(
+                self, list(self._risk_session.get("closed") or []))
+        if book.get("risk_session_unreadable"):
+            reason = "session_loss_breached:sessione_di_rischio_illeggibile"
+            with self._risk_stop_lock:
+                if not self._risk_stop_reason or RuntimeController._risk_stop_scope(self._risk_stop_reason):
+                    RuntimeController._owner(self).apply(self, "set_risk_stop", _risk_stop_reason=reason)
+                    RuntimeController._owner(self).persist_risk_stop(self, reason)
+            logger.critical("F1: sessione di rischio illeggibile: stop di sessione globale fino al reset esplicito")
+
+    def _open_or_resume_risk_session(self) -> None:
+        """start(): riprende la sessione di rischio aperta (mai azzerata); se non ce n'e' una, la apre e la salva."""
+        if self._session_pnl_vector is not None or self._session_pnl_baseline is not None:
+            RuntimeController._ensure_risk_session_durable(self)       # una base senza identita' la riceve, salvata
+            with self._daily_loss_state_lock:
+                RuntimeController._persist_daily_loss_book(self)
+            return
+        RuntimeController._open_new_risk_session(self)
+
+    _RISK_SESSION_OPEN_KEY = "risk_session_open"
+
+    def _save_risk_session_open(self, session: dict) -> bool:
+        """Apertura della sessione di rischio in una chiave propria (id e istante): esiste su disco anche se il libro
+        non e' ancora stato scritto. Mai raise."""
+        try:
+            payload = json.dumps({"id": session["id"], "opened_at": session.get("opened_at") or ""})
+            self.db.save_settings({RuntimeController._RISK_SESSION_OPEN_KEY: payload})
+            readback = self.db.get_settings() if hasattr(self.db, "get_settings") else None
+            return isinstance(readback, dict) and readback.get(RuntimeController._RISK_SESSION_OPEN_KEY) == payload
+        except Exception:
+            logger.exception("F1: apertura della sessione di rischio non salvata")
+            return False
+
+    def _open_new_risk_session(self) -> bool:
+        """Apre la PRIMA sessione di rischio (perdita zero, nessuna chiusura) e la salva: libro, poi chiave di apertura.
+        True solo se entrambe le scritture sono verificate. Le chiusure passano da `_switch_risk_session`."""
+        with self._daily_loss_state_lock:
+            closed = list((self.__dict__.get("_risk_session") or {}).get("closed") or [])
+            pending = list((self.__dict__.get("_risk_session") or {}).get("archive_pending") or [])
+            self._session_pnl_baseline = float(self.risk_desk.realized_pnl)
+            self._session_pnl_vector = RuntimeController._pnl_vector(self)
+            self._risk_session = {"id": uuid.uuid4().hex, "opened_at": datetime.utcnow().isoformat(), "rev": 0,
+                                  "closed": closed, "archive_pending": pending}
+            RuntimeController._persist_daily_loss_book(self)
+            saved = not loss_limits.persist_failed(getattr(self, "_daily_loss_persisted", None))
+            return RuntimeController._save_risk_session_open(self, self._risk_session) and saved
+
+    def _switch_risk_session(self, new_id: Optional[str] = None) -> Optional[dict]:
+        """M144 (CX-F2, G1e/N1): chiude la sessione corrente e apre la nuova in UNA transizione atomica rispetto ai
+        settlement: la fotografia della sessione che si chiude, il passaggio alla nuova e le due scritture (libro, poi
+        chiave di apertura) avvengono tutte sotto `_daily_loss_state_lock`, lo stesso lock che applica ogni P&L. Un
+        settlement concorrente cade quindi interamente prima (nella sessione chiusa) o dopo (nella nuova): mai in
+        nessuna delle due. Se una delle due scritture non e' verificata, la transizione si annulla: stato in memoria
+        ripristinato e riscritto (libro e chiave della sessione che resta aperta). Ritorna il record della sessione
+        chiusa, None se la transizione non e' avvenuta. Nessun accesso al registro qui (lock foglia, CX-F3)."""
+        with self._daily_loss_state_lock:
+            previous = (self.__dict__.get("_session_pnl_baseline"), self.__dict__.get("_session_pnl_vector"),
+                        copy.deepcopy(self.__dict__.get("_risk_session")))
+            closing = RuntimeController._closing_record(self)
+            if not closing:
+                return None
+            closed = list((self.__dict__.get("_risk_session") or {}).get("closed") or [])
+            closed.append(closing)
+            self._session_pnl_baseline = float(self.risk_desk.realized_pnl)
+            self._session_pnl_vector = RuntimeController._pnl_vector(self)
+            self._risk_session = {"id": str(new_id or uuid.uuid4().hex), "opened_at": datetime.utcnow().isoformat(),
+                                  "rev": 0, "closed": RuntimeController._trim_closed_window(self, closed),
+                                  "archive_pending": list((previous[2] or {}).get("archive_pending") or [])}
+            RuntimeController._persist_daily_loss_book(self)
+            saved = not loss_limits.persist_failed(getattr(self, "_daily_loss_persisted", None))
+            if saved and RuntimeController._save_risk_session_open(self, self._risk_session):
+                return closing
+            logger.critical("F1/M144: nuova sessione di rischio non salvata: transizione annullata (resta %s)",
+                            closing["id"])
+            self._session_pnl_baseline, self._session_pnl_vector, self._risk_session = previous
+            RuntimeController._persist_daily_loss_book(self)
+            if previous[2]:
+                RuntimeController._save_risk_session_open(self, previous[2])
+            return None
+
+    def _rollback_reset_switch(self, op: dict) -> bool:
+        """M144 (G1e/N1): annulla la transizione di un reset G1 NON completato (nessun RESET_COMPLETED nel registro):
+        la sessione chiusa torna corrente, con il P&L entrato nel frattempo nella sessione nuova (somma esatta, nessuna
+        perdita persa o duplicata). L'id della sessione nuova resta registrato come ritirato (mai riusato ne' riaperto da
+        una chiave di apertura rimasta). True se la sessione d'origine e' corrente (annullata ora o gia' prima)."""
+        old_id, new_id = str(op.get("session_id") or ""), str(op.get("new_session_id") or "")
+        with self._daily_loss_state_lock:
+            session = self.__dict__.get("_risk_session") or {}
+            current = str(session.get("id") or "")
+            if current == old_id:
+                return True
+            if not old_id or current != new_id:
+                return False
+            closed = list(session.get("closed") or [])
+            found = [i for i, c in enumerate(closed) if str(c.get("id")) == old_id]
+            if not found:
+                logger.critical("M144: reset %s non annullabile: sessione %s assente dalla finestra",
+                                op.get("operation_id"), old_id)
+                return False
+            origin = closed.pop(found[-1])
+            zero = {"desk": 0.0, "scopes": {}, "unscoped": 0.0}
+            moved = RuntimeController._risk_session_delta(self) or zero
+            base = origin.get("delta") or zero
+            merged = {"desk": float(base["desk"]) + float(moved["desk"]),
+                      "scopes": {k: float(base["scopes"].get(k, 0.0)) + float(moved["scopes"].get(k, 0.0))
+                                 for k in set(base.get("scopes") or {}) | set(moved.get("scopes") or {})},
+                      "unscoped": float(base.get("unscoped") or 0.0) + float(moved.get("unscoped") or 0.0)}
+            closed.append({"id": new_id, "delta": dict(zero, scopes={}), "closed_at": datetime.utcnow().isoformat(),
+                           "retired": True, "merged_into": old_id})
+            now = RuntimeController._pnl_vector(self)
+            keys = set(now[1]) | set(merged["scopes"])
+            self._session_pnl_vector = (now[0] - merged["desk"],
+                                        {k: now[1].get(k, 0.0) - merged["scopes"].get(k, 0.0) for k in keys},
+                                        now[2] - merged["unscoped"])
+            self._session_pnl_baseline = float(self._session_pnl_vector[0])
+            self._risk_session = {"id": old_id, "opened_at": str(origin.get("opened_at") or ""),
+                                  "rev": int(origin.get("rev") or 0) + int(session.get("rev") or 0) + 1,
+                                  "closed": closed, "last": merged,
+                                  "archive_pending": list(session.get("archive_pending") or [])}
+            # M151 (CX-J3): i tardivi entrati nella sessione d'origine mentre era chiusa (gia' nel suo P&L e nel registro)
+            # restano «compresi» anche da corrente: la chiusura successiva li dichiara, l'archivio non li ri-somma
+            late = sorted({str(k) for k in (origin.get("late_keys") or [])}
+                          | {str(k) for k in (session.get("late_keys") or [])})
+            if late:
+                self._risk_session["late_keys"] = late
+            RuntimeController._persist_daily_loss_book(self)
+            saved = not loss_limits.persist_failed(getattr(self, "_daily_loss_persisted", None))
+            opened = RuntimeController._save_risk_session_open(self, self._risk_session)
+        logger.critical("M144: reset %s annullato: sessione di rischio %s di nuovo corrente (salvata=%s)",
+                        op.get("operation_id"), old_id, saved and opened)
+        return True
+
+    @staticmethod
+    def _ledger_append(db: Any, kind: str, payload: dict) -> Optional[dict]:
+        """Scrittura nel registro della sessione di rischio: None su qualunque errore (G-F: un'eccezione non esce mai
+        dal reset come esito). Passa sempre dall'attributo del modulo (`risk_session_ledger.append`)."""
+        try:
+            return risk_session_ledger.append(db, kind, payload)
+        except Exception:
+            logger.exception("registro della sessione di rischio: scrittura %s non riuscita", kind)
+            return None
+
+    def _ensure_risk_session_durable(self) -> None:
+        """Una base di sessione senza sessione di rischio (impostata fuori da start()) riceve un'identita' salvata nella
+        chiave di apertura PRIMA di ogni effetto del settlement: dopo un crash la sessione riprende da li'."""
+        if self.__dict__.get("_risk_session") or (self.__dict__.get("_session_pnl_vector") is None
+                                                  and self.__dict__.get("_session_pnl_baseline") is None):
+            return
+        with self._daily_loss_state_lock:
+            if not self.__dict__.get("_risk_session"):
+                self._risk_session = {"id": uuid.uuid4().hex, "opened_at": datetime.utcnow().isoformat(), "rev": 0,
+                                      "closed": []}
+                RuntimeController._save_risk_session_open(self, self._risk_session)
+
+    def _close_risk_session_locked(self) -> bool:
+        """Chiude la sessione di rischio corrente (la conserva fra le chiuse, per i settlement tardivi) e ne apre una
+        nuova, salvata; poi la chiusa entra nell'archivio. True solo se la transizione e' salvata."""
+        if RuntimeController._switch_risk_session(self) is None:
+            return False
+        RuntimeController._archive_closed_sessions(self)
+        return True
+
+    def _closing_record(self) -> Optional[dict]:
+        """Record della sessione che si chiude: P&L di sessione per ambito, conti LIVE coinvolti e limite (G2), revisione
+        e tardivi gia' compresi (M144). Fotografia presa sotto `_daily_loss_state_lock` dal chiamante."""
+        current = RuntimeController._risk_session_record(self)
+        if not current:
+            return None
+        return {"id": current["id"], "delta": current["delta"], "closed_at": datetime.utcnow().isoformat(),
+                "opened_at": current.get("opened_at") or "", "rev": int(current.get("rev") or 0),
+                "late_keys": list(current.get("late_keys") or []),
+                "limit": getattr(getattr(self, "config", None), "max_session_loss", None),
+                "accounts": sorted(RuntimeController._live_bound_accounts(self) or {})}
+
+    # ------------------------------------------------------------------ G2 (owner M139): archivio delle sessioni chiuse
+    # Le ultime `_RISK_SESSION_CLOSED_CAP` sessioni chiuse restano nel libro come finestra operativa; l'archivio durevole
+    # e' il registro append-only `core.risk_session_ledger` (tabella `audit_events`), senza eliminazione automatica. Una
+    # sessione esce dalla finestra solo se e' gia' archiviata. I P&L tardivi entrano nell'archivio una volta per chiave
+    # di settlement (in attesa nel libro con la chiave, poi nel registro). Registro non verificabile => i tardivi di
+    # sessioni fuori dalla finestra restano non attribuibili (blocco conservativo).
+
+    def _risk_archive(self) -> Optional[dict]:
+        """Indice dell'archivio {id: {"record", "delta", "late_keys"}}, caricato una volta; None se non verificabile."""
+        index = self.__dict__.get("_risk_archive_index")
+        if isinstance(index, dict):
+            return index
+        try:
+            index = risk_session_ledger.archive_index(risk_session_ledger.load(self.db))
+        except risk_session_ledger.LedgerUnverifiable:
+            logger.critical("G2: archivio delle sessioni di rischio non verificabile (attribuzione conservativa)")
+            return None
+        self._risk_archive_index = index
+        return index
+
+    def _trim_closed_window(self, closed: list) -> list:
+        """Finestra operativa: le ultime N chiuse, piu' ogni chiusa non ancora archiviata (mai persa)."""
+        archive = RuntimeController._risk_archive(self) or {}
+        cap = RuntimeController._RISK_SESSION_CLOSED_CAP
+        keep = []
+        for i, item in enumerate(closed):
+            recent = i >= len(closed) - cap
+            if recent or str(item.get("id")) not in archive:
+                keep.append(item)
+        return keep
+
+    def _archive_closed_sessions(self) -> bool:
+        """Archivia (append-only, riletto) ogni sessione chiusa della finestra non ancora nell'archivio. Mai raise."""
+        archive = RuntimeController._risk_archive(self)
+        if archive is None:
+            return False
+        ok = True
+        for item in list((self.__dict__.get("_risk_session") or {}).get("closed") or []):
+            sid = str(item.get("id") or "")
+            if not sid or sid in archive:
+                continue
+            with self._daily_loss_state_lock:
+                # M146 (CX-H3): fotografia COERENTE (copia profonda sotto il lock che applica i tardivi): P&L e chiavi gia'
+                # comprese sono della stessa istante; un tardivo successivo entra come LATE_SETTLEMENT, prima o dopo
+                # questa chiusura nel registro (l'indice lo somma una volta sola in entrambi i casi)
+                snapshot = copy.deepcopy(item)
+            written = RuntimeController._ledger_append(self.db, "SESSION_CLOSED", snapshot)
+            if written is None:
+                ok = False
+                continue
+            with self._daily_loss_state_lock:
+                # indice in memoria = record della finestra ADESSO (comprende i tardivi entrati durante la scrittura;
+                # il registro li ricostruisce dai loro LATE_SETTLEMENT, una volta per chiave)
+                current = copy.deepcopy(item)
+                delta = current.get("delta") or {}
+                archive[sid] = {"record": dict(snapshot),
+                                "late_keys": {str(k) for k in (current.get("late_keys") or [])},
+                                "delta": {"desk": float(delta.get("desk") or 0.0),
+                                          "scopes": {str(k): float(v) for k, v in (delta.get("scopes") or {}).items()},
+                                          "unscoped": float(delta.get("unscoped") or 0.0)}}
+        return ok
+
+    def _flush_archive_pending(self) -> None:
+        """Scrive nel registro i P&L tardivi in attesa (idempotente per chiave) e li toglie dal libro. Mai raise."""
+        try:
+            session = self.__dict__.get("_risk_session") or {}
+            pending = list(session.get("archive_pending") or [])
+            if not pending:
+                return
+            chain = risk_session_ledger.load(self.db)
+            done = {(str((e.get("payload") or {}).get("session_id")), str((e.get("payload") or {}).get("settlement_key")))
+                    for e in chain if e.get("kind") == "LATE_SETTLEMENT"}
+            remaining = []
+            for item in pending:
+                key = (str(item.get("session_id")), str(item.get("settlement_key")))
+                if key in done:
+                    continue
+                if RuntimeController._ledger_append(self.db, "LATE_SETTLEMENT", dict(item)) is None:
+                    remaining.append(item)
+                else:
+                    done.add(key)
+            if len(remaining) != len(pending):
+                with self._daily_loss_state_lock:
+                    session["archive_pending"] = remaining
+                    RuntimeController._persist_daily_loss_book(self)
+        except risk_session_ledger.LedgerUnverifiable:
+            logger.critical("G2: registro non verificabile: P&L tardivi restano in attesa nel libro")
+        except Exception:
+            logger.exception("G2: P&L tardivi non archiviati (restano in attesa nel libro)")
+
+    def _risk_ledger_startup(self) -> None:
+        """Avvio: archivio verificato, riparazione delle chiuse non archiviate, P&L tardivi in attesa scritti e recupero
+        dei reset iniziati e mai conclusi (G1). Mai raise."""
+        try:
+            self._risk_archive_index = None
+            if RuntimeController._risk_archive(self) is None:
+                return
+            # M144: PRIMA il recupero dei reset (annullamento o completamento), poi l'archiviazione: una sessione la cui
+            # chiusura viene annullata non deve mai finire nell'archivio come chiusa
+            RuntimeController._recover_interrupted_resets(self)
+            if self.__dict__.get("_risk_session"):
+                RuntimeController._archive_closed_sessions(self)
+                RuntimeController._flush_archive_pending(self)
+        except Exception:
+            logger.exception("G1/G2: recupero del registro della sessione di rischio non completato")
+
+    def close_risk_session(self) -> dict:
+        """F1: chiusura ESPLICITA della sessione di rischio (nuova sessione con perdita zero). Ammessa solo senza stop
+        attivo, senza perdita di sessione oltre il limite e senza esposizione LIVE irrisolta."""
+        with self._risk_stop_lock:
+            blocker = ("risk_stop_attivo" if self._risk_stop_reason else
+                       "emergency_stop_active" if self._emergency_stopped else
+                       RuntimeController._session_loss_block_reason(self) or
+                       ("esposizione_live_irrisolta" if RuntimeController._live_exposure_status(self).get(
+                           "state") not in ("NESSUNA", "VERIFICATA") else ""))
+            if blocker:
+                return {"risk_session_closed": False, "reason": blocker}
+            if not RuntimeController._close_risk_session_locked(self):
+                return {"risk_session_closed": False, "reason": "sessione_di_rischio_non_salvata"}
+        return {"risk_session_closed": True, "reason": "", "risk_session_id": self._risk_session["id"]}
+
+    def _restore_daily_loss_book(self) -> None:
+        today = datetime.utcnow().date().isoformat()
+        book = loss_limits.restore_daily_loss_book(self.db, today_utc=today)
+        self._daily_loss_restored_seq = book.get("seq")
+        # settlement gia' realizzati oggi (salvati con lo stato): mai riapplicati dopo un riavvio
+        restored_keys = set(book.get("settled_keys") or ())
+        self._daily_loss_settled = {"day_utc": today, "keys": set(restored_keys)}
+        self.__dict__.setdefault("_processed_realized_pnl_keys", set()).update(restored_keys)
+        legacy = book.get("legacy")
+        self._daily_loss_unattributed = None if legacy is None else {
+            "day_utc": today, "intraday_realized_pnl": float(min(0.0, legacy[0])), "breached": bool(legacy[1]),
+            "breached_at": str(legacy[2] or "")}
+        scopes = self.__dict__.setdefault("_daily_loss_scopes", {})
+        scopes.clear()
+        for key, fields in (book.get("scopes") or {}).items():
+            state = RuntimeController._new_daily_loss_scope_state(self, key)
+            state.update(loss_limits.scope_fields(fields, legacy, RuntimeController._realized_for_scope(self, key),
+                                                  book.get("seq")))
+            scopes[key] = state
+        current = RuntimeController._daily_loss_monitor_state.fget(self)
+        if book.get("reason"):
+            current["reason"] = book["reason"]
+        if book.get("seq") is not None:
+            current[loss_limits.SEQ_KEY] = book["seq"]
+        RuntimeController._restore_risk_session(self, book)      # F1
+        RuntimeController._persist_daily_loss_book(self)
+
+    def _reservation_scope_hint(self, payload: Optional[dict]) -> Optional[str]:
+        """Ambito registrato sulla riserva del settlement (tavolo per ``table_id``+evento, per evento o per lotto), letto
+        PRIMA del rilascio. None = nessuna riserva trovata; '' = riserva trovata ma senza ambito (legacy)."""
+        p = payload or {}
+        tm = getattr(self, "table_manager", None)
+        if tm is None:
+            return None
+        event_key = str(p.get("event_key") or "")
+        batch_id = str(p.get("batch_id") or "")
+        ref = str(p.get("customer_ref") or "")
+
+        def _same_bet(table) -> bool:
+            # Sol su 3c1ff9e4: con un customer_ref nel payload la riserva deve essere QUELLA scommessa
+            return not ref or str((table.meta or {}).get("customer_ref") or "") == ref
+
+        try:
+            candidates = []
+            tid = p.get("table_id")
+            if tid is not None:
+                table = tm.get_table(int(tid))
+                if table is not None and event_key and table.current_event_key == event_key and _same_bet(table):
+                    candidates.append(table)
+            if not candidates and event_key:
+                found = tm.find_by_event_key(event_key)
+                if found is not None and _same_bet(found):
+                    candidates.append(found)
+            if not candidates and batch_id:
+                candidates = [t for t in tm.active_tables() if str((t.meta or {}).get("batch_id") or "") == batch_id]
+        except Exception:
+            logger.warning("PR-04a: riserva del settlement non leggibile per l'ambito", exc_info=True)
+            return ""
+        if not candidates:
+            return None
+        scopes = {str((t.meta or {}).get("financial_scope") or "") for t in candidates}
+        return scopes.pop() if len(scopes) == 1 else ""
+
+    def _settlement_attribution(self, pnl: float, effect: Optional[dict], payload: Optional[dict] = None,
+                                hint: Optional[str] = None) -> dict:
+        """Ambito del P&L di un settlement. Identita' della scommessa (ambito registrato alla riserva) => quell'ambito.
+        Riserva trovata ma senza ambito verificabile (legacy, F018 di ordini precedenti) => perdita NON attribuibile
+        (conta per ogni ambito), profitto non accreditato: mai l'ambito corrente per supposizione.
+        Senza alcuna riserva: una PERDITA va all'ambito corrente se verificato, altrimenti e' non attribuibile
+        (conta per ogni ambito, in quarantena); un PROFITTO non si accredita a nessun ambito (prudenza)."""
+        declared = str((effect or {}).get("financial_scope") or "")
+        if "financial_scope" in (effect or {}):
+            hint = None          # Sol su 3c1ff9e4: la riserva identificata dal rilascio prevale sempre, anche vuota
+        event_key = str((payload or {}).get("event_key") or "")
+        reservation_known = hint is not None or "financial_scope" in (effect or {})
+        if not declared and event_key.startswith("sim:"):
+            # regolamento del broker simulato (chiave `sim:` di PnLEngine): appartiene alla SIM per costruzione
+            declared = financial_scope.runtime_scope(simulated=True, live_account="")
+        elif not declared and event_key.startswith("cleared:") and not reservation_known:
+            # G1 (Grok su 60c772fe): con una prenotazione nota ma senza ambito (legacy) il conto LIVE connesso non
+            # sostituisce mai l'identita' della prenotazione: si va in quarantena (ramo sotto).
+            # ordini regolati letti dall'exchange (poller `cleared:`): conto LIVE del client Betfair connesso;
+            # conto non identificabile => ambito non verificabile (perdite in quarantena, profitti non accreditati)
+            declared = RuntimeController._financial_scope_for(self, False)
+        if not declared and hint:
+            declared = str(hint)
+        if declared and financial_scope.is_verified(declared):
+            return {"scope": declared, "kind": "scoped"}
+        if not declared and (hint is not None or "financial_scope" in (effect or {})):
+            # riserva della scommessa nota ma senza ambito: nessuna supposizione sull'ambito corrente; origine non
+            # verificabile => ambito non verificabile (escalation globale, Sol su 8a6c4cbb)
+            return {"scope": financial_scope.UNVERIFIED_SCOPE,
+                    "kind": "unscoped_profit" if float(pnl) >= 0.0 else "unattributed_loss"}
+        target = declared or RuntimeController._current_financial_scope(self)
+        if float(pnl) >= 0.0:
+            return {"scope": target, "kind": "unscoped_profit"}
+        if not declared and financial_scope.is_verified(target):
+            return {"scope": target, "kind": "scoped"}
+        return {"scope": target, "kind": "unattributed_loss"}
+
+    def _apply_and_attribute_realized_pnl(self, pnl: float, attribution: dict, settlement_key: str = "") -> None:
+        """Totale del desk e ambito del P&L aggiornati INSIEME sotto il lock dello stato giornaliero (Codex su
+        d86404ef): un monitor concorrente (es. get_status) non vede mai il totale senza la sua attribuzione.
+
+        Sol/Codex su c5dd0bab: la chiave del settlement resta IN ATTESA (mai salvata) finche' lo stato dell'ambito
+        interessato non e' stato ricalcolato; entra nell'insieme salvato solo nella stessa sezione critica che scrive
+        quello stato (``_promote_settled_keys_locked``). Un salvataggio concorrente non puo' quindi rendere durevole la
+        chiave con lo stato vecchio: dopo un crash la riconsegna riapplica l'effetto invece di saltarlo."""
+        with self._daily_loss_state_lock:
+            # M130 N4 (regressione rispetto a main): lo stato giornaliero dell'ambito interessato nasce PRIMA del P&L,
+            # anche senza max_daily_loss configurato. Creato dopo, la sua baseline includerebbe la perdita appena
+            # applicata e un limite attivato a meta' giornata non la vedrebbe mai (fail-open del limite LIVE).
+            if attribution.get("kind") != "unscoped_profit" and str(attribution.get("scope") or ""):
+                RuntimeController._daily_loss_state_for(self, str(attribution["scope"]))
+            self._apply_realized_pnl_without_mutating_bankroll(pnl)
+            RuntimeController._attribute_realized_pnl_locked(self, pnl, attribution)
+            late, closed = RuntimeController._late_risk_session(self, attribution)
+            if late in ("closed", "archived"):
+                # G2: ogni P&L tardivo entra anche nell'archivio durevole: in attesa nel libro (stessa scrittura della
+                # chiave del settlement), poi scritto nel registro append-only (idempotente per chiave)
+                add = RuntimeController._delta_with({"desk": 0.0, "scopes": {}, "unscoped": 0.0}, pnl, attribution)
+                session = self.__dict__.get("_risk_session")
+                if session is not None and settlement_key:
+                    session.setdefault("archive_pending", []).append(
+                        {"session_id": str(closed["id"]), "settlement_key": str(settlement_key), "delta": add})
+                # M144 (CX-F1): l'indice dell'archivio si aggiorna per OGNI tardivo di una sessione gia' archiviata, anche
+                # se e' ancora nella finestra: quando ne esce, l'archivio vale la sua perdita reale (una volta per chiave)
+                entry = (RuntimeController._risk_archive(self) or {}).get(str(closed["id"]))
+                if entry is not None and (not settlement_key or str(settlement_key) not in entry["late_keys"]):
+                    entry["delta"] = RuntimeController._delta_with(entry["delta"], pnl, attribution)
+                    if settlement_key:
+                        entry["late_keys"].add(str(settlement_key))
+            if late in ("closed", "archived") or (late == "unknown" and float(pnl) > 0.0):
+                # F1: il P&L va alla sessione di rischio d'origine (chiusa), una volta sola (salvato con la chiave del
+                # settlement nello stesso libro); la sessione corrente non lo vede (la sua base si sposta uguale).
+                # M146 (CX-H4): un PROFITTO di una sessione registrata ma non verificabile resta nel desk e nel
+                # giornaliero, mai nella sessione corrente (non compensa le sue perdite); una PERDITA non verificabile
+                # resta conservativa (sessione corrente e stop `sessione_di_rischio_non_verificabile`)
+                if late == "closed":
+                    closed["delta"] = RuntimeController._delta_with(closed["delta"], pnl, attribution)
+                    if settlement_key:          # M144: tardivo compreso nel record (archiviato dopo: mai contato due volte)
+                        closed.setdefault("late_keys", []).append(str(settlement_key))
+                vector = self.__dict__.get("_session_pnl_vector")
+                if vector is not None:
+                    shift = RuntimeController._delta_with({"desk": 0.0, "scopes": {}, "unscoped": 0.0}, pnl, attribution)
+                    scopes = dict(vector[1])
+                    for k, v in shift["scopes"].items():
+                        scopes[k] = float(scopes.get(k, 0.0)) + v
+                    self._session_pnl_vector = (vector[0] + shift["desk"], scopes, vector[2] + shift["unscoped"])
+                if self.__dict__.get("_session_pnl_baseline") is not None:
+                    self._session_pnl_baseline = float(self._session_pnl_baseline) + float(pnl)
+                session = self.__dict__.get("_risk_session")
+                if session:
+                    session["rev"] = int(session.get("rev") or 0) + 1
+            if settlement_key:
+                self.__dict__.setdefault("_daily_loss_settle_staged", {})[str(settlement_key)] = (
+                    str(attribution.get("scope") or ""), str(attribution.get("kind") or ""))
+
+    def _promote_settled_keys_locked(self, scope: Optional[str] = None, keys: tuple = ()) -> None:
+        """Sposta nell'insieme salvato le chiavi in attesa il cui effetto e' riflesso nello stato appena ricalcolato
+        (sotto ``_daily_loss_state_lock``, subito prima del salvataggio del libro): quelle attribuite a ``scope``, i
+        profitti senza ambito (nessuno stato d'ambito li contiene) e le ``keys`` indicate esplicitamente (perdita non
+        attribuibile, dopo il ricalcolo di TUTTI gli ambiti)."""
+        staged = self.__dict__.get("_daily_loss_settle_staged") or {}
+        ready = [k for k, (target, kind) in staged.items()
+                 if k in keys or kind == "unscoped_profit" or (kind == "scoped" and scope is not None and target == scope)]
+        if not ready:
+            return
+        today = datetime.utcnow().date().isoformat()
+        settled = getattr(self, "_daily_loss_settled", None)
+        if not settled or str(settled.get("day_utc") or "") != today:
+            settled = {"day_utc": today, "keys": set()}
+        for k in ready:
+            settled["keys"].add(k)
+            staged.pop(k, None)
+        self._daily_loss_settled = settled
+
+    def _attribute_realized_pnl(self, pnl: float, attribution: dict) -> None:
+        """Registra l'ambito del P&L appena applicato al desk (sotto il lock dello stato giornaliero)."""
+        with self._daily_loss_state_lock:
+            RuntimeController._attribute_realized_pnl_locked(self, pnl, attribution)
+
+    def _attribute_realized_pnl_locked(self, pnl: float, attribution: dict) -> None:
+        if True:
+            kind = attribution.get("kind")
+            if kind == "scoped":
+                key = str(attribution["scope"])
+                self._scope_pnl[key] = float(self._scope_pnl.get(key, 0.0)) + float(pnl)
+            elif kind == "unscoped_profit":
+                self._unscoped_profit = float(self._unscoped_profit) + float(pnl)
+            else:
+                today = datetime.utcnow().date().isoformat()
+                current = self._daily_loss_unattributed
+                if not current or str(current.get("day_utc") or "") != today:
+                    current = {"day_utc": today, "intraday_realized_pnl": 0.0, "breached": False, "breached_at": ""}
+                current = dict(current)
+                current["intraday_realized_pnl"] = float(current["intraday_realized_pnl"]) + float(pnl)
+                threshold = self._safe_daily_loss_threshold()
+                if (not current["breached"] and threshold is not None
+                        and validators.reaches_limit(-current["intraday_realized_pnl"], threshold)):
+                    current.update(breached=True, breached_at=datetime.utcnow().isoformat())
+                self._daily_loss_unattributed = current
 
     def _session_loss_block_reason(self) -> str:
+        return RuntimeController._session_loss_reason_for(self, RuntimeController._current_financial_scope(self))
+
+    def _session_loss_reason_for(self, key: str) -> str:
         limit = getattr(getattr(self, "config", None), "max_session_loss", None)
-        if limit is None:
+        if limit is None or self.__dict__.get("_risk_session_closing"):
             return ""
+        baseline = getattr(self, "_session_pnl_baseline", None)
+        if baseline is None:
+            return loss_limits.session_loss_reason(limit, None, float(self.risk_desk.realized_pnl))
+        # PR-04a: perdita di sessione dell'ambito corrente; base senza vettore (impostata a mano) = nessun P&L
+        # d'ambito alla base
+        vector = getattr(self, "_session_pnl_vector", None) or (float(baseline), {}, 0.0)
         return loss_limits.session_loss_reason(
-            limit, getattr(self, "_session_pnl_baseline", None), float(self.risk_desk.realized_pnl))
+            limit, RuntimeController._realized_for_scope(self, key, vector),
+            RuntimeController._realized_for_scope(self, key))
+
+    def _any_session_loss_breach(self) -> str:
+        """F1: superamento della perdita di sessione in QUALSIASI ambito della sessione di rischio (non solo in quello
+        corrente): un reset esplicito chiude la sessione superata, ovunque sia superata."""
+        if (self.__dict__.get("_risk_session") or {}).get("unverifiable"):
+            return "session_loss_breached:sessione_di_rischio_illeggibile"     # M144: perdita non verificabile
+        keys = set(self.__dict__.get("_daily_loss_scopes") or {}) | set(getattr(self, "_scope_pnl", None) or {})
+        keys.add(RuntimeController._current_financial_scope(self))
+        for key in sorted(keys):
+            reason = RuntimeController._session_loss_reason_for(self, key)
+            if reason:
+                return reason
+        return ""
+
+    _SESSION_STOP_MARKER = "session_loss_stop_pending"
+
+    def _settlement_risk_session(self, effect: Optional[dict], payload: Optional[dict]) -> Optional[str]:
+        """F1: sessione di rischio della scommessa regolata: dall'effetto del settlement (riserva) o dalla request
+        persistita in `orders` (customer_ref). None = non registrata (ordini precedenti a F1: sessione corrente)."""
+        sid = str((effect or {}).get("risk_session_id") or "")
+        if sid:
+            return sid
+        ref = str((payload or {}).get("customer_ref") or (effect or {}).get("customer_ref") or "")
+        if not ref or not hasattr(self.db, "_execute"):
+            return None
+        try:
+            rows = self.db._execute("SELECT payload_json FROM orders WHERE customer_ref = ? ORDER BY id DESC",
+                                    (ref,), fetch=True, commit=False) or []
+            ids = {str((json.loads(dict(r).get("payload_json") or "{}") or {}).get("risk_session_id") or "")
+                   for r in rows}
+        except Exception:
+            logger.warning("F1: sessione di rischio dell'ordine %s non leggibile", ref, exc_info=True)
+            return "<illeggibile>"
+        ids.discard("")
+        if not ids:
+            return None
+        return ids.pop() if len(ids) == 1 else "<ambigua>"
+
+    def _late_risk_session(self, attribution: dict) -> tuple:
+        """F1: ("", None) per la sessione corrente (o non registrata); ("closed", record) per una sessione chiusa nota;
+        ("unknown", None) per una sessione registrata ma non verificabile (ne' corrente ne' fra le chiuse)."""
+        sid = str((attribution or {}).get("risk_session_id") or "")
+        session = self.__dict__.get("_risk_session") or {}
+        if not sid or sid == str(session.get("id") or ""):
+            return "", None
+        for closed in session.get("closed") or []:
+            if str(closed.get("id")) == sid:
+                return "closed", closed
+        archive = RuntimeController._risk_archive(self)          # G2: sessioni fuori dalla finestra operativa
+        entry = (archive or {}).get(sid)
+        if entry is not None:
+            return "archived", dict(entry, id=sid)
+        return "unknown", None
+
+    @staticmethod
+    def _delta_with(delta: dict, pnl: float, attribution: dict) -> dict:
+        out = {"desk": float(delta["desk"]) + float(pnl), "scopes": dict(delta.get("scopes") or {}),
+               "unscoped": float(delta.get("unscoped") or 0.0)}
+        kind = attribution.get("kind")
+        if kind == "scoped":
+            key = str(attribution["scope"])
+            out["scopes"][key] = float(out["scopes"].get(key, 0.0)) + float(pnl)
+        elif kind == "unscoped_profit":
+            out["unscoped"] += float(pnl)
+        return out
+
+    def _late_session_breach(self, pnl: float, attribution: dict, applied: bool) -> tuple:
+        """F1: superamento della sessione di rischio CHIUSA a cui appartiene un settlement tardivo (o attribuzione non
+        verificabile di una perdita). Ritorna (motivo, ambito) o ("", ""). `applied`: il P&L e' gia' nel record."""
+        limit = getattr(getattr(self, "config", None), "max_session_loss", None)
+        kind, closed = RuntimeController._late_risk_session(self, attribution)
+        key = str(attribution.get("scope") or "")
+        if limit is None or not kind:
+            return "", ""
+        if kind == "unknown":
+            if float(pnl) < 0.0:
+                return f"session_loss_breached:sessione_di_rischio_non_verificabile:{attribution.get('risk_session_id')}", key
+            return "", ""
+        delta = closed["delta"] if applied else RuntimeController._delta_with(closed["delta"], pnl, attribution)
+        vector = (delta["desk"], delta.get("scopes") or {}, delta.get("unscoped") or 0.0)
+        keys = [key]
+        if attribution.get("kind") == "unattributed_loss":
+            # R5 (regola F1, M134): una perdita non attribuibile conta per OGNI ambito della sessione d'origine (come nel
+            # percorso corrente, `_projected_session_breach`), non solo per l'ambito non verificabile
+            keys += sorted(k for k in (delta.get("scopes") or {}) if k != key)
+        for scope_key in keys:
+            reason = loss_limits.session_loss_reason(
+                limit, 0.0, RuntimeController._realized_for_scope(self, scope_key, vector))
+            if reason.startswith("session_loss_breached"):
+                return reason.replace("session_loss_breached",
+                                      f"session_loss_breached:sessione_precedente={closed['id']}", 1), scope_key
+        return "", ""
+
+    def _projected_session_breach(self, pnl: float, attribution: dict) -> tuple:
+        """S-a (Sol su b643d348): perdita di SESSIONE proiettata PRIMA di applicare il P&L, su ogni ambito interessato
+        (attribuito; tutti per una perdita non attribuibile). Ritorna (motivo, ambito) del primo ambito che sale al globale
+        oltre il limite, altrimenti ("", "")."""
+        limit = getattr(getattr(self, "config", None), "max_session_loss", None)
+        if limit is None or float(pnl) >= 0.0:
+            return "", ""
+        if RuntimeController._late_risk_session(self, attribution)[0]:
+            # F1: settlement di una sessione di rischio precedente: si valuta sulla SUA sessione (mai sulla corrente);
+            # un ambito che sale al globale arma la stessa barriera durevole (marker) prima del P&L
+            reason, key = RuntimeController._late_session_breach(self, pnl, attribution, applied=False)
+            if reason and financial_scope.escalates_globally(key):
+                return reason, key
+            return "", ""
+        kind = str(attribution.get("kind") or "")
+        target = str(attribution.get("scope") or "")
+        scopes = [target]
+        if kind == "unattributed_loss":
+            scopes += [k for k in (self.__dict__.get("_daily_loss_scopes") or {}) if k != target]
+        baseline = getattr(self, "_session_pnl_baseline", None)
+        vector = getattr(self, "_session_pnl_vector", None) or (
+            (float(baseline), {}, 0.0) if baseline is not None else None)
+        for key in scopes:
+            if not financial_scope.escalates_globally(key):
+                continue
+            delta = float(pnl) if (kind == "unattributed_loss" or (kind == "scoped" and key == target)) else 0.0
+            if delta == 0.0:
+                continue
+            if vector is None:
+                reason = loss_limits.session_loss_reason(limit, None, float(self.risk_desk.realized_pnl) + delta)
+            else:
+                reason = loss_limits.session_loss_reason(
+                    limit, RuntimeController._realized_for_scope(self, key, vector),
+                    RuntimeController._realized_for_scope(self, key) + delta)
+            if reason.startswith("session_loss_breached"):
+                return reason, key
+        return "", ""
+
+    def _restore_session_stop_marker(self) -> None:
+        """S-b: marker durevole dello stop di sessione globale presente (settlement interrotto o crash prima della
+        pubblicazione dello stop) => RISK_STOP globale ripristinato e persistito, riconciliazione LIVE in attesa; il marker
+        si toglie solo quando lo stop e' durevole. Mai raise."""
+        try:
+            settings = self.db.get_settings() if hasattr(self.db, "get_settings") else {}
+            raw = str((settings or {}).get(RuntimeController._SESSION_STOP_MARKER) or "")
+            if not raw:
+                return
+            try:
+                marker = json.loads(raw)
+            except ValueError:
+                marker = None
+            reason = str(marker.get("reason") or "") if isinstance(marker, dict) else ""
+            if not reason.startswith("session_loss_breached"):
+                # M128 N2: marker presente ma illeggibile o non valido: non si puo' provare che lo stop non serva =>
+                # RISK_STOP globale (fail-closed), mai la sola riconciliazione (che senza uno stop globale non parte).
+                logger.critical("S-b: marker dello stop di sessione non valido (%r): RISK_STOP globale fail-closed",
+                                raw[:80])
+                reason = "session_loss_breached:marker_illeggibile"
+            # CX-G1 (owner M145): lo stop ripristinato resta legato al conto LIVE che lo ha generato (ambito del marker),
+            # vincolo salvato PRIMA dello stop e della rimozione del marker: B non certifica mai A
+            scope = str(marker.get("scope") or "") if isinstance(marker, dict) else ""
+            escalates = financial_scope.escalates_globally(scope)
+            RuntimeController._bind_live_account(self, scope if escalates else None, obligation=escalates)
+            if isinstance(marker, dict) and isinstance(marker.get("runtime_live"), bool):
+                # M146 (CX-H1): modalita' dello sweep dal marker (mai declassata: una sola verifica gia' attiva resta)
+                if (marker["runtime_live"] or not self.__dict__.get("_live_verify_only")
+                        or self.__dict__.get("_live_verify_only_inferred")):
+                    RuntimeController._set_live_verify_only(self, marker["runtime_live"], explicit=True)
+            with self._risk_stop_lock:
+                current = self._risk_stop_reason
+                if not current or RuntimeController._risk_stop_scope(current):   # vuoto o solo locale SIM
+                    RuntimeController._owner(self).apply(self, "set_risk_stop", _risk_stop_reason=reason)
+                elif not RuntimeController._durable_global_stop_confirmed(self):
+                    reason = current       # M130: uno stop globale solo IN MEMORIA si rende durevole, non si presume
+                if not RuntimeController._durable_global_stop_confirmed(self):
+                    RuntimeController._owner(self).persist_risk_stop(self, reason)
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
+            if (not RuntimeController._durable_global_stop_confirmed(self) or self.__dict__.get("_live_binding_failed")
+                    or self.__dict__.get("_live_verify_only_failed")):
+                # M130 (invariante): il marker si toglie SOLO con uno stop globale riletto come durevole; CX-G1: e col
+                # vincolo del conto riletto come durevole (al riavvio il marker lo ricrea)
+                logger.critical("S-b: RISK_STOP di sessione o vincolo del conto non durevoli: marker conservato (%s)",
+                                reason)
+                return
+            RuntimeController._owner(self).save(self, {RuntimeController._SESSION_STOP_MARKER: ""})
+            logger.critical("S-b: RISK_STOP di sessione ripristinato dal marker durevole (%s)", reason)
+        except Exception:
+            # M128 N2: impostazioni o marker non leggibili => stesso fail-closed: barriera globale (in memoria, e durevole
+            # se possibile), mai la sola riconciliazione in attesa
+            logger.exception("S-b: marker dello stop di sessione non leggibile: RISK_STOP globale fail-closed")
+            try:
+                with self._risk_stop_lock:
+                    current = self.__dict__.get("_risk_stop_reason") or ""
+                    if not current or RuntimeController._risk_stop_scope(current):
+                        RuntimeController._owner(self).apply(self, "set_risk_stop", _risk_stop_reason="session_loss_breached:marker_illeggibile")
+                        RuntimeController._owner(self).persist_risk_stop(self, self._risk_stop_reason)
+            except Exception:
+                logger.exception("S-b: RISK_STOP fail-closed non persistito (resta in memoria)")
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
+
+    def _durable_global_stop_confirmed(self) -> bool:
+        """M130 (invariante owner): True solo se una RILETTURA dal disco conferma uno stop globale durevole: RISK_STOP
+        globale (anche illeggibile: `restore_risk_stop` e' fail-closed) o Emergency Stop salvato. Una scrittura che ha
+        restituito `False`, un'eccezione o una lettura fallita non lo confermano mai. Mai raise."""
+        try:
+            reason = str(stop_rules.restore_risk_stop(self.db) or "")
+            if reason and not RuntimeController._risk_stop_scope(reason):
+                return True
+            settings = self.db.get_settings() if hasattr(self.db, "get_settings") else {}
+            return str((settings or {}).get("emergency_stopped") or "") == "1"
+        except Exception:
+            logger.exception("M130: stop globale non rileggibile (non confermato durevole)")
+            return False
+
+    def _persist_session_stop_now(self, reason: str, scope: str = "") -> None:
+        """Codex P1 su b902eca3 + M128 N1: ripiego del marker di sessione non salvato. Lo stop passa dallo STESSO
+        `risk_stop()` del percorso normale: persistenza, CASHOUT_ALL, protezione verificata della sede LIVE col runtime in
+        SIM (`_protect_live_venue`, recovery dedicato se irrisolta). Uno stop globale gia' attivo si riconferma durevole.
+        Se lo stop non e' persistibile il settlement NON prosegue: si solleva prima del P&L e della chiave (la riconsegna
+        lo rielabora), con la barriera d'ingresso globale ancora armata. Mai uno stato durevole con settlement completato
+        e stop obbligatorio assente (M121), mai uno stop salvato senza le sue azioni di protezione (N1)."""
+        durable = False
+        try:
+            current = self._risk_stop_reason
+            if current and not RuntimeController._risk_stop_scope(current):
+                durable = bool(RuntimeController._owner(self).persist_risk_stop(self, current))   # gia' globale: riconferma
+            else:
+                result = self.risk_stop(reason, scope=scope or None)
+                durable = bool(result.get("persisted"))
+        except Exception:
+            logger.exception("S-b: RISK_STOP di sessione non persistito")
+            durable = False
+        if not durable:
+            raise RuntimeError("S-b: decisione di stop di sessione non durevole: settlement non applicato (ritentare)")
 
     def _limits_block_reason(self) -> str:
+        if self.__dict__.get("_session_loss_pending_global"):
+            # C3 (D M116-bis): perdita di sessione di un ambito LIVE (anche di un altro conto) in attesa dello stop
+            # globale, nella finestra del sync: nessuna ammissione, qualunque sia l'ambito corrente
+            return "session_loss_breached:in_attesa_dello_stop_globale"
+        return RuntimeController._scope_daily_loss_block_reason(self) or self._session_loss_block_reason()
+
+    def _scope_daily_loss_block_reason(self) -> str:
+        """Perdita giornaliera dell'ambito corrente (stato non salvato, superamento in attesa o registrato oggi).
+        Usato sia dall'ammissione sia dal controllo finale d'invio (Codex su c5dd0bab): un ingresso SIM gia' in coda
+        non parte dopo il superamento SIM, senza nessuna emergenza globale."""
         if loss_limits.persist_failed(getattr(self, "_daily_loss_persisted", None)):
             return "daily_loss_state_non_persistito"
-        return self._session_loss_block_reason()
+        state = RuntimeController._daily_loss_monitor_state.fget(self)
+        if RuntimeController._current_financial_scope(self) in (self.__dict__.get("_daily_loss_scope_pending") or ()):
+            return f"daily_loss_breached:{financial_scope.parts(state.get('financial_scope', ''))[1] or 'ambito'}"
+        if state.get("breached") and str(state.get("day_utc") or "") == datetime.utcnow().date().isoformat():
+            # PR-04a: superamento dell'ambito corrente => nessun nuovo ingresso in QUESTO ambito (SIM: blocco locale)
+            return f"daily_loss_breached:{financial_scope.parts(state.get('financial_scope', ''))[1] or 'ambito'}"
+        return ""
 
     def _loss_block_reason(self) -> str:
         stopped = getattr(self, "_risk_stop_reason", "")
-        return (self._limits_block_reason() or (f"risk_stop_active:{stopped}" if stopped else "")
+        if stopped and not RuntimeController._risk_stop_applies(self):
+            stopped = ""                     # PR-04a: RISK_STOP di un altro ambito SIM, non di quello corrente
+        return (RuntimeController._owner_not_ready(self)
+                or self._limits_block_reason() or (f"risk_stop_active:{stopped}" if stopped else "")
+                or RuntimeController._live_identity_block_reason(self)
                 or self._recovery_persist_block_reason()
                 or RuntimeController._drawdown_persist_block_reason(self))
 
@@ -1367,44 +2447,406 @@ class RuntimeController:
             return "recovery_state_not_persisted"
         return ""
 
-    def _publish_session_loss_breach(self) -> None:
-        reason = self._session_loss_block_reason()
-        if reason.startswith("session_loss_breached") and not getattr(self, "_session_loss_alerted", False):
-            self._session_loss_alerted = True
+    def _publish_session_loss_breach(self, scope: Optional[str] = None) -> None:
+        # PR-04a: valutata nell'ambito del settlement (Codex su 1587e3cf: un `cleared:` LIVE regolato mentre il
+        # runtime e' in SIM e' una perdita di sessione LIVE). Latch PER AMBITO (Sol su 1587e3cf): uno stop SIM non
+        # sopprime il superamento LIVE successivo.
+        key = str(scope or RuntimeController._current_financial_scope(self))
+        reason = RuntimeController._session_loss_reason_for(self, key)
+        # M144 (CX-E3): latch per SESSIONE DI RISCHIO e ambito. Dopo un reset che chiude la sessione superata, il
+        # superamento della sessione nuova arma di nuovo RISK_STOP, evento e CASHOUT_ALL (il latch della vecchia non vale)
+        latch = f"{(self.__dict__.get('_risk_session') or {}).get('id') or ''}|{key}"
+        alerted = getattr(self, "_session_loss_alerted", False)
+        alerted_scopes = alerted if isinstance(alerted, set) else ({latch} if alerted is True else set())
+        if reason.startswith("session_loss_breached") and latch not in alerted_scopes:
+            self._session_loss_alerted = alerted_scopes | {latch}
             logger.critical("SESSION LOSS BREACH: %s", reason)
             self.bus.publish("SESSION_LOSS_BREACH_TRIGGERED", {"reason": reason})
-            self.risk_stop(reason)  # P38
+            self.risk_stop(reason, scope=key)  # P38, PR-04a
 
-    def risk_stop(self, reason: str) -> dict:
-        """P38: blocca entrate; cancel unmatched + cashout (CASHOUT_ALL)."""
+    _RISK_STOP_SCOPE_SEP = "@ambito="
+
+    @staticmethod
+    def _risk_stop_scope(reason: str) -> str:
+        """Ambito SIM di un RISK_STOP locale (PR-04a), '' se globale."""
+        text = str(reason or "")
+        if RuntimeController._RISK_STOP_SCOPE_SEP not in text:
+            return ""
+        scope = text.rsplit(RuntimeController._RISK_STOP_SCOPE_SEP, 1)[1]
+        return scope if financial_scope.is_sim(scope) else ""
+
+    def _risk_stop_applies(self) -> bool:
+        """RISK_STOP globale: vale sempre. Locale (SIM): vale solo nel suo ambito. Motivo con un ambito non
+        riconoscibile => globale (fail-closed)."""
+        scope = RuntimeController._risk_stop_scope(getattr(self, "_risk_stop_reason", ""))
+        return not scope or scope == RuntimeController._current_financial_scope(self)
+
+    def risk_stop(self, reason: str, scope: Optional[str] = None) -> dict:
+        """P38: blocca entrate; cancel unmatched + cashout (CASHOUT_ALL).
+
+        PR-04a (PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116): uno stop nato in un ambito SIM verificato resta
+        LOCALE (blocca solo gli ingressi di quell'ambito; il CASHOUT_ALL, che segue la modalita' del servizio, parte
+        solo mentre il runtime e' in quell'ambito: mai verso il LIVE). LIVE, ambito non verificabile o senza ambito
+        (es. esposizione) => globale come prima."""
         with self._risk_stop_lock:
-            if self._risk_stop_reason:
-                return {"risk_stopped": True, "reason": self._risk_stop_reason}
-            self._risk_stop_reason = reason = str(reason or "risk_stop")
-            persisted = stop_rules.persist_risk_stop(self.db, reason)
-        cashout = not self._daily_loss_entry_blocked()  # EMERGENCY ha cancel-all
+            local = bool(scope and financial_scope.is_sim(str(scope)))
+            current = self._risk_stop_reason
+            # Uno stop esistente resta, salvo uno locale (SIM) davanti a uno globale: lo stop sale al globale
+            # (Sol su 1587e3cf). Uno locale non sostituisce mai un globale ne' un altro locale.
+            if current and (local or not RuntimeController._risk_stop_scope(current)):
+                # M146 (CX-H2): uno stop globale resta, ma un conto LIVE NUOVO che lo supera (o un ambito non
+                # verificabile) entra nel vincolo e invalida l'esito LIVE precedente: la verifica del conto A non
+                # certifica mai il conto B (N6); il reset resta rifiutato finche' B non e' riconciliato
+                new_live = (not local and not RuntimeController._risk_stop_scope(current) and scope
+                            and financial_scope.escalates_globally(str(scope))
+                            and str(scope) not in (RuntimeController._live_bound_accounts(self) or {}))
+                if not new_live:
+                    return {"risk_stopped": True, "reason": current}
+                RuntimeController._bind_live_account(self, str(scope))
+                RuntimeController._invalidate_live_exposure(self, source="RISK_STOP_ALTRO_CONTO")
+                extra_account = True
+            else:
+                extra_account = False
+        if extra_account:
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
+            RuntimeController._ensure_live_recovery(self)
+            result = {"risk_stopped": True, "reason": current, "bound_account": str(scope)}
+            if bool(getattr(self, "simulation_mode", False)):
+                result["live_protection"] = RuntimeController._protect_live_venue(self, current)
+            logger.critical("RISK STOP (conto aggiunto allo stop globale): %s", result)
+            return result
+        with self._risk_stop_lock:
+            reason = str(reason or "risk_stop")
+            if local:
+                reason = f"{reason}{RuntimeController._RISK_STOP_SCOPE_SEP}{scope}"
+            if not local and (not bool(getattr(self, "simulation_mode", False)) or (
+                    scope and financial_scope.escalates_globally(str(scope)))):
+                # CX-G1 (owner M145): stop globale che coinvolge il LIVE. Il conto che lo ha generato (N6) e
+                # l'invalidazione dell'esito LIVE di uno stop precedente (Codex P1 su b902eca3) si salvano PRIMA dello
+                # stop durevole: un crash in qualunque punto non lascia mai uno stop su disco senza il suo conto (che un
+                # altro conto potrebbe certificare). Crash prima dello stop => il marker di sessione lo ripristina col
+                # suo conto al riavvio; vincolo non salvato => il marker resta (`_live_binding_failed`).
+                RuntimeController._bind_live_account(
+                    self, str(scope) if scope and financial_scope.escalates_globally(str(scope)) else None)
+                RuntimeController._invalidate_live_exposure(self, source="RISK_STOP")
+                # M146 (CX-H1) + Codex su f8feabac: la modalita' dello sweep e' su disco PRIMA dello stop e quindi del
+                # CASHOUT_ALL ("1" col runtime LIVE, "0" in SIM); se non si salva, al riavvio vale la sola verifica
+                RuntimeController._set_live_verify_only(
+                    self, not bool(getattr(self, "simulation_mode", False)), explicit=True)
+            RuntimeController._owner(self).apply(self, "set_risk_stop", _risk_stop_reason=reason)
+            persisted = RuntimeController._owner(self).persist_risk_stop(self, reason)
+        cashout = not self._daily_loss_entry_blocked() and RuntimeController._risk_stop_applies(self)
         result = {"risk_stopped": True, "reason": reason, "cashout_attempted": cashout, "persisted": persisted}
         if cashout:
             self._route_cashout_signal(stop_rules.cashout_all_signal(reason))
+        if not local and not bool(getattr(self, "simulation_mode", False)):
+            # N7 (owner M136): stop globale col runtime GIA' LIVE. Il CASHOUT_ALL agisce sul LIVE, ma l'esposizione
+            # (invalidata sopra) deve essere VERIFICATA sul conto: riconciliazione in attesa e recovery dedicato
+            # (ritenta a intervalli, conto irraggiungibile compreso), in sola lettura per non annullare le coperture del
+            # cashout. Il blocco resta finche' il reset ammesso dal ricontrollo completo non lo toglie.
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)                 # sola verifica gia' salvata (sopra)
+            RuntimeController._ensure_live_recovery(self)
+        if scope and financial_scope.escalates_globally(str(scope)) and bool(getattr(self, "simulation_mode", False)):
+            # Ciclo 12 (N2, Codex+Grok): stop globale nato da un ambito LIVE (o non verificabile) col runtime in SIM:
+            # il CASHOUT_ALL segue la sede corrente (SIM). Sulla sede LIVE: cancellazione VERIFICATA dei soli ordini del
+            # bot; posizioni gia' abbinate, ordini estranei o verifica fallita => esposizione irrisolta segnalata
+            # (`manual_action_required`), mai dichiarata chiusa.
+            result["live_protection"] = RuntimeController._protect_live_venue(self, reason)
         logger.critical("RISK STOP: %s", result)
         self.bus.publish("RISK_STOP_TRIGGERED", dict(result))
         return result
 
-    def reset_risk_stop(self, at_start=False) -> dict:
-        """RESUME solo se il ricontrollo completo (stop_rules.reset_blocker) e' pulito."""
+    def reset_risk_stop(self, at_start=False, *, operator: Optional[str] = None, authorization: Optional[str] = None,
+                        challenge_id: Optional[str] = None, confirm: bool = False, confirm_again: bool = False) -> dict:
+        """RESUME solo se il ricontrollo completo (stop_rules.reset_blocker) e' pulito.
+
+        G1 (owner M138/M139): se il reset CHIUDE una sessione di rischio oltre il limite serve la doppia conferma
+        dell'operatore: `request_risk_session_reset()` (prima conferma, sfida monouso con scadenza) e poi questo metodo
+        con lo stesso operatore, autorizzazione, `challenge_id`, `confirm` e `confirm_again`. Senza registro durevole
+        dell'azione (append-only, riletto) il reset non avviene. Vale per GUI, headless e API: e' l'unico ingresso."""
         if not getattr(self, "_risk_stop_reason", ""):
             return {"risk_stop_reset": True, "reason": ""}
+        not_ready = RuntimeController._owner_not_ready(self)
+        if not_ready:
+            return {"risk_stop_reset": False, "reason": not_ready}
         with self._risk_stop_lock:
-            blocker = stop_rules.reset_blocker(self, at_start)
+            if not at_start and RuntimeController._finish_completed_reset(self):
+                # M144 (G1e): reset G1 gia' committato (RESET_COMPLETED) il cui stop non era ancora stato tolto
+                return {"risk_stop_reset": True, "reason": "", "completed_from_audit": True}
+            # F1 (owner M134): il reset ESPLICITO (mai all'avvio) e' l'unico modo di chiudere una sessione di rischio
+            # superata: il ricontrollo completo si fa senza la perdita di quella sessione, che si chiude (e se ne apre
+            # una nuova, salvata) solo se tutto il resto e' pulito e l'esposizione LIVE non e' irrisolta.
+            session_breached = (not at_start and bool(self.__dict__.get("_risk_session"))
+                                and bool(RuntimeController._any_session_loss_breach(self)))
+            self._risk_session_closing = session_breached
+            try:
+                # PR-04a: uno stop SIM locale si ricontrolla e si riapre solo dal suo ambito
+                blocker = ("" if RuntimeController._risk_stop_applies(self) or at_start
+                           else "risk_stop_di_altro_ambito") or stop_rules.reset_blocker(self, at_start)
+            finally:
+                self._risk_session_closing = False
+            if not blocker and not at_start and (session_breached or not RuntimeController._risk_stop_scope(
+                    str(self._risk_stop_reason or ""))):
+                # M152 (CX-L2): per OGNI reset di uno stop globale (non solo quello che chiude una sessione superata)
+                # un obbligo LIVE irrisolto blocca, PRIMA di spegnere sola verifica e protezione delle coperture
+                blocker = RuntimeController._live_reset_blocker(self)
             if blocker:
                 return {"risk_stop_reset": False, "reason": blocker}
             if not self._risk_stop_reason:
                 return {"risk_stop_reset": True, "reason": ""}
-            if not stop_rules.persist_risk_stop(self.db, ""):  # nuova versione PRIMA di riaprire
-                return {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
-            self._risk_stop_reason = ""
-        self.bus.publish("RISK_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
+            audit = {}
+            if session_breached:
+                audit = {"operator": str(operator or ""), "operation_id": str(challenge_id or ""), "confirmed": True,
+                         "closed_risk_session": str((self.__dict__.get("_risk_session") or {}).get("id") or "")}
+                outcome = RuntimeController._confirmed_risk_session_close(
+                    self, operator=operator, authorization=authorization, challenge_id=challenge_id, confirm=confirm,
+                    confirm_again=confirm_again)
+                if outcome:
+                    return {"risk_stop_reset": False, "reason": outcome}
+            owner = RuntimeController._owner(self)
+            with owner.lock:
+                # M153 P1: l'obbligo LIVE si ricontrolla nella STESSA sezione critica della scrittura (un binding entrato
+                # dopo il primo controllo blocca qui)
+                live_blocker = RuntimeController._live_reset_blocker(self) if (
+                    not at_start and (session_breached or not RuntimeController._risk_stop_scope(
+                        str(self._risk_stop_reason or "")))) else ""
+                if live_blocker:
+                    return {"risk_stop_reset": False, "reason": live_blocker}
+                # C3: la barriera di sessione segue lo stop che anticipa
+                owner.apply(self, "session_barrier", _session_loss_pending_global=False)
+                if not owner.persist_risk_stop(self, ""):  # nuova versione PRIMA di riaprire
+                    return {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
+                owner.apply(self, "reset_risk_stop", _risk_stop_reason="")
+                RuntimeController._set_live_verify_only(self, False)
+            if session_breached:
+                # G2, DOPO il commit (RESET_COMPLETED) e lo stop tolto: la sessione chiusa entra nell'archivio; se non si
+                # scrive resta nella finestra e si ritenta (all'avvio o alla prossima chiusura)
+                RuntimeController._archive_closed_sessions(self)
+        if not self.__dict__.get("_emergency_stopped"):
+            # M147-D1: con l'Emergency Stop ancora attivo verifiche ed esito LIVE restano (servono al suo reset)
+            RuntimeController._clear_resolved_live_exposure(self)
+        self.bus.publish("RISK_STOP_RESET", dict(audit, reset_at=datetime.utcnow().isoformat()))   # G1: chi e quale
         return {"risk_stop_reset": True, "reason": ""}
+
+    # ------------------------------------------------------------------ G1 (owner M139): reset confermato e tracciato
+    _RESET_CHALLENGE_KEY = "risk_session_reset_challenge"
+    _RESET_CHALLENGE_TTL_S = 120.0
+
+    def request_risk_session_reset(self, *, operator: str, authorization: str, reason: str) -> dict:
+        """G1, PRIMA conferma dell'operatore: con uno stop attivo e una sessione di rischio oltre il limite emette una
+        sfida monouso (scadenza `_RESET_CHALLENGE_TTL_S`), legata a operatore e sessione, e ne mostra il riepilogo
+        (sessione, perdita, conti LIVE, stato dell'esposizione). Non cambia nessuno stato di rischio."""
+        op, ref, why = (str(v or "").strip() for v in (operator, authorization, reason))
+        if not (op and ref and why):
+            return {"requested": False, "reason": "operatore_autorizzazione_motivo_richiesti"}
+        with self._risk_stop_lock:
+            if RuntimeController._finish_completed_reset(self):
+                return {"requested": False, "reason": "reset_gia_completato", "risk_stop_reset": True}
+            breach = RuntimeController._any_session_loss_breach(self)
+            if not (self._risk_stop_reason and breach and self.__dict__.get("_risk_session")):
+                return {"requested": False, "reason": "nessuna_sessione_superata_da_chiudere"}
+            current = RuntimeController._risk_session_record(self) or {}
+            challenge = {"challenge_id": uuid.uuid4().hex, "operator": op, "authorization": ref, "reason": why,
+                         "session_id": str(current.get("id") or ""), "issued_at": time.time(),
+                         "expires_at": time.time() + float(RuntimeController._RESET_CHALLENGE_TTL_S)}
+            try:
+                payload = json.dumps(challenge)
+                self.db.save_settings({RuntimeController._RESET_CHALLENGE_KEY: payload})
+                readback = (self.db.get_settings() or {}).get(RuntimeController._RESET_CHALLENGE_KEY)
+                if readback != payload:
+                    raise OSError("sfida non riletta")
+            except Exception:
+                logger.exception("G1: sfida di reset non salvata")
+                return {"requested": False, "reason": "conferma_non_registrabile"}
+            exposure = RuntimeController._live_exposure_status(self)
+        return {"requested": True, "challenge_id": challenge["challenge_id"], "expires_at": challenge["expires_at"],
+                "session_id": challenge["session_id"], "session_loss": breach, "delta": current.get("delta"),
+                "accounts": sorted(RuntimeController._live_bound_accounts(self) or {}),
+                "exposure_state": exposure.get("state"), "manual_action_required": exposure.get("manual_action_required")}
+
+    def _reset_confirmation_block(self, *, operator, authorization, challenge_id, confirm, confirm_again) -> tuple:
+        """Validazione della doppia conferma: ("", sfida) se valida, altrimenti (motivo, None)."""
+        op, ref, cid = (str(v or "").strip() for v in (operator, authorization, challenge_id))
+        if not (op and ref and cid):
+            return "conferma_operatore_richiesta", None
+        if confirm is not True or confirm_again is not True:
+            return "doppia_conferma_richiesta", None
+        try:
+            raw = (self.db.get_settings() or {}).get(RuntimeController._RESET_CHALLENGE_KEY) or ""
+            challenge = json.loads(raw) if raw else None
+            status = risk_session_ledger.reset_status(risk_session_ledger.load(self.db))
+        except risk_session_ledger.LedgerUnverifiable:
+            return "registro_non_verificabile", None
+        except Exception:
+            return "conferma_non_leggibile", None
+        if cid in status:
+            return "conferma_gia_usata", None
+        if not isinstance(challenge, dict) or str(challenge.get("challenge_id") or "") != cid:
+            return "conferma_non_richiesta_o_diversa", None
+        if str(challenge.get("operator") or "") != op or str(challenge.get("authorization") or "") != ref:
+            return "operatore_o_autorizzazione_diversi", None
+        if time.time() > float(challenge.get("expires_at") or 0.0):
+            return "conferma_scaduta", None
+        current = RuntimeController._risk_session_record(self) or {}
+        if str(challenge.get("session_id") or "") != str(current.get("id") or ""):
+            return "sessione_cambiata", None
+        return "", challenge
+
+    def _confirmed_risk_session_close(self, *, operator, authorization, challenge_id, confirm, confirm_again) -> str:
+        """G1 (sotto `_risk_stop_lock`) - M144 (G1e/N1): protocollo del reset confermato, con il registro come punto di
+        commit. "" = riuscito.
+          1. RESET_STARTED (intento con l'id della sessione nuova, riletto): non scritto => nulla cambia;
+          2. sfida consumata (monouso);
+          3. transizione atomica della sessione (`_switch_risk_session`): non salvata => annullata, RESET_FAILED;
+          4. RESET_COMPLETED (riletto) = COMMIT: non scritto => transizione annullata (`_rollback_reset_switch`),
+             RESET_FAILED; lo stop resta.
+        Dopo il commit il chiamante toglie lo stop. Un crash in qualunque punto si risolve all'avvio
+        (`_recover_interrupted_resets`): senza commit la transizione si annulla, col commit si completa. Lo stato
+        durevole e' quindi sempre uno dei due: (stop, sessione d'origine corrente, nessun RESET_COMPLETED) oppure
+        (nessuno stop, sessione chiusa, RESET_COMPLETED)."""
+        block, challenge = RuntimeController._reset_confirmation_block(
+            self, operator=operator, authorization=authorization, challenge_id=challenge_id, confirm=confirm,
+            confirm_again=confirm_again)
+        if block:
+            return block
+        current = RuntimeController._risk_session_record(self) or {}
+        exposure = RuntimeController._live_exposure_status(self)
+        new_id = uuid.uuid4().hex
+        entry = {"operation_id": str(challenge["challenge_id"]), "operator": str(challenge["operator"]),
+                 "authorization": str(challenge["authorization"]), "reason": str(challenge["reason"]),
+                 "session_id": str(current.get("id") or ""), "new_session_id": new_id,
+                 "session_loss": RuntimeController._any_session_loss_breach(self), "delta": current.get("delta"),
+                 "limit": getattr(getattr(self, "config", None), "max_session_loss", None),
+                 "accounts": sorted(RuntimeController._live_bound_accounts(self) or {}),
+                 "exposure_state": exposure.get("state"), "exposure_verification": exposure.get("verification"),
+                 "risk_stop_reason": str(self._risk_stop_reason or ""), "confirm": True, "confirm_again": True,
+                 "at": datetime.utcnow().isoformat()}
+        if RuntimeController._ledger_append(self.db, "RESET_STARTED", entry) is None:
+            return "audit_non_scrivibile"
+        try:
+            self.db.save_settings({RuntimeController._RESET_CHALLENGE_KEY: ""})     # sfida consumata (monouso)
+        except Exception:
+            logger.exception("G1: sfida non rimossa (resta inutilizzabile: gia' nel registro)")
+        closing = RuntimeController._switch_risk_session(self, new_id)
+        if closing is None:
+            RuntimeController._ledger_append(self.db, "RESET_FAILED",
+                                             dict(entry, outcome="sessione_di_rischio_non_salvata"))
+            return "sessione_di_rischio_non_salvata"
+        done = dict(entry, outcome="sessione_chiusa", delta=closing.get("delta"), closed_rev=closing.get("rev"))
+        if RuntimeController._ledger_append(self.db, "RESET_COMPLETED", done) is None:
+            RuntimeController._rollback_reset_switch(self, entry)
+            RuntimeController._ledger_append(self.db, "RESET_FAILED",
+                                             dict(entry, outcome="audit_non_scrivibile_transizione_annullata"))
+            return "audit_non_scrivibile"
+        return ""
+
+    def _recover_interrupted_resets(self) -> None:
+        """G1 + M144, avvio (prima dell'archiviazione): ogni reset senza commit si ANNULLA - se la sessione nuova e'
+        corrente la transizione torna indietro (`_rollback_reset_switch`) e il RESET_STARTED riceve il suo esito
+        RESET_FAILED; un reset committato (RESET_COMPLETED) il cui stop non e' stato tolto si COMPLETA
+        (`_finish_completed_reset`). Registro non verificabile => nessuna conclusione (lo stop resta)."""
+        try:
+            status = risk_session_ledger.reset_status(risk_session_ledger.load(self.db))
+        except risk_session_ledger.LedgerUnverifiable:
+            return
+        for _op, item in status.items():
+            if item["kind"] not in ("RESET_STARTED", "RESET_FAILED"):
+                continue
+            payload = dict(item["payload"])
+            current = str((self.__dict__.get("_risk_session") or {}).get("id") or "")
+            if current and current == str(payload.get("new_session_id") or ""):
+                RuntimeController._rollback_reset_switch(self, payload)
+            if item["kind"] == "RESET_STARTED":
+                RuntimeController._ledger_append(self.db, "RESET_FAILED",
+                                                 dict(payload, outcome="annullato_all_avvio", recovered=True))
+        RuntimeController._finish_completed_reset(self, status)
+
+    def _live_reset_blocker(self) -> str:
+        """M152 (CX-L2): condizione unica, per ogni percorso di reset di uno stop GLOBALE (completamento da audit e
+        reset normale, superato o no): un obbligo LIVE irrisolto impedisce il reset. Irrisolto = registro dei conti
+        illeggibile o non leggibile, un conto non VERIFIED (sentinella compresa), un obbligo in sospeso (CX-K2), o
+        un'esposizione LIVE diversa da NESSUNA/VERIFICATA con una prova LIVE (record dello sweep, riconciliazione in
+        attesa o obbligo LIVE salvato). '' se nulla blocca. Mai raise (errore => blocca)."""
+        try:
+            accounts = RuntimeController._live_bound_accounts(self)
+            if accounts is None or any(v != "VERIFIED" for v in accounts.values()) \
+                    or self.__dict__.get("_pending_live_bindings"):
+                return "esposizione_live_irrisolta"
+            status = RuntimeController._live_exposure_status(self)
+            if status.get("state") not in ("NESSUNA", "VERIFICATA") and (
+                    status.get("source") or status.get("reconcile_pending")
+                    or RuntimeController._live_obligation_recorded(self)):
+                # esposizione LIVE irrisolta CON una prova LIVE (record dello sweep, riconciliazione in attesa, obbligo
+                # LIVE salvato). Senza nessuna prova LIVE (runtime solo SIM) lo stato SCONOSCIUTA del solo stop globale
+                # non e' un'esposizione: nessun blocco permanente ingiustificato (M152 punto 5)
+                return "esposizione_live_irrisolta"
+            return RuntimeController._live_reset_identity_blocker(self, accounts)
+        except Exception:
+            logger.exception("M152: obbligo LIVE non verificabile per il reset (bloccato)")
+            return "esposizione_live_irrisolta"
+
+    def _live_reset_identity_blocker(self, accounts: Optional[dict]) -> str:
+        """M154-bis: uno stop con obblighi LIVE registrati (tutti VERIFIED) si toglie solo con il client LIVE connesso
+        che attesta l'identita' autorizzata: un client senza login provato, o di un altro conto, non toglie uno stop che
+        dipende dalla verifica di quel conto. Nessun obbligo LIVE registrato => nessun requisito d'identita' (stop solo
+        SIM). '' se nulla blocca. Mai raise (errore => blocca)."""
+        if not accounts:
+            return ""
+        _scope, error = RuntimeController._live_identity_check(self, associate=False)
+        return f"identita_live_non_verificata:{error}" if error else ""
+
+    def _finish_completed_reset(self, status: Optional[dict] = None) -> bool:
+        """M144 (G1e): completa un reset G1 GIA' COMMITTATO (RESET_COMPLETED nel registro) il cui stop e' rimasto
+        attivo (crash o scrittura fallita dopo il commit). Lo stop si toglie solo se e' ancora QUELLO confermato
+        dall'operatore (stesso motivo registrato), se la sessione corrente e' quella aperta da quel reset e se questa
+        non e' a sua volta oltre il limite registrato: un nuovo superamento, un altro stop o un marker di sessione in
+        sospeso lo lasciano attivo. True se lo stop e' stato tolto (evento RISK_STOP_RESET con l'operatore)."""
+        reason = str(self.__dict__.get("_risk_stop_reason") or "")
+        session = self.__dict__.get("_risk_session") or {}
+        sid = str(session.get("id") or "")
+        if not reason or not sid or session.get("unverifiable"):
+            return False
+        try:
+            if status is None:
+                status = risk_session_ledger.reset_status(risk_session_ledger.load(self.db))
+            pending = str((self.db.get_settings() or {}).get(RuntimeController._SESSION_STOP_MARKER) or "")
+        except Exception:
+            return False
+        if pending:
+            return False
+        done = [i["payload"] for i in status.values()
+                if i["kind"] == "RESET_COMPLETED" and str(i["payload"].get("new_session_id") or "") == sid]
+        if not done or str(done[-1].get("risk_stop_reason") or "") != reason:
+            return False
+        entry = done[-1]
+        limit = entry.get("limit")
+        delta = RuntimeController._risk_session_delta(self) or {"desk": 0.0, "scopes": {}, "unscoped": 0.0}
+        losses = [float(delta.get("desk") or 0.0)] + [float(v) for v in (delta.get("scopes") or {}).values()]
+        if limit is not None and any(validators.reaches_limit(-x, float(limit)) for x in losses if x < 0.0):
+            return False
+        owner = RuntimeController._owner(self)
+        with self._risk_stop_lock, owner.lock:
+            # M153 P1: controllo dell'obbligo LIVE e scrittura nella STESSA sezione critica del proprietario: un binding
+            # concorrente non entra fra il controllo e la riapertura
+            if RuntimeController._live_reset_blocker(self):
+                # M152 (CX-L2): un obbligo LIVE nato o rimasto irrisolto dopo il RESET_COMPLETED invalida il
+                # completamento: lo stop, la sola verifica e la protezione delle coperture restano
+                logger.critical("M152: completamento del reset %s rifiutato: obbligo LIVE irrisolto",
+                                entry.get("operation_id"))
+                return False
+            if not owner.persist_risk_stop(self, ""):
+                return False
+            owner.apply(self, "reset_risk_stop", _risk_stop_reason="", _session_loss_pending_global=False)
+            RuntimeController._set_live_verify_only(self, False)
+        logger.critical("M144: reset %s gia' committato: stop di sessione tolto (operatore %s)",
+                        entry.get("operation_id"), entry.get("operator"))
+        bus = self.__dict__.get("bus")
+        if bus is not None:
+            bus.publish("RISK_STOP_RESET", {"operator": entry.get("operator"), "operation_id": entry.get("operation_id"),
+                                            "confirmed": True, "completed_from_audit": True,
+                                            "closed_risk_session": entry.get("session_id"),
+                                            "reset_at": datetime.utcnow().isoformat()})
+        return True
 
     def _exposure_stop(self, trigger=True, candidate_exposure: float = 0.0) -> str:
         """Stop di esposizione complessiva (P38), con la distinzione decisa dall'owner (CLOSURE-03).
@@ -1431,7 +2873,31 @@ class RuntimeController:
             return real_reason
         return "exposure_stop_candidate_rejected:" + reason.split(":", 1)[1]
 
-    def _monitor_daily_loss_breach(self, *, source: str, payload: Optional[dict] = None) -> dict[str, Any]:
+    def _complete_pending_unattributed(self) -> None:
+        """S2: completa il libro di una perdita non attribuibile il cui settlement si e' interrotto e il cui
+        completamento e' fallito: ricalcola TUTTI gli ambiti, poi rende salvabile la chiave insieme alla quarantena.
+        Fallisce di nuovo => resta in attesa (salvataggi rinviati, gate `daily_loss_state_non_persistito`)."""
+        key = self.__dict__.get("_daily_loss_full_refresh_key")
+        if not key or self.__dict__.get("_daily_loss_completing"):
+            return
+        self._daily_loss_completing = True
+        try:
+            for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
+                self._monitor_daily_loss_breach(source="DAILY_LOSS_BOOK_COMPLETION", scope=other, persist=False)
+            with self._daily_loss_state_lock:
+                RuntimeController._promote_settled_keys_locked(self, keys=(key,))
+                self._daily_loss_full_refresh_key = None
+        except Exception:
+            logger.exception("S2: completamento del libro giornaliero ancora non riuscito (salvataggi rinviati)")
+        finally:
+            self._daily_loss_completing = False
+
+    def _monitor_daily_loss_breach(self, *, source: str, payload: Optional[dict] = None,
+                                   scope: Optional[str] = None, persist: bool = True) -> dict[str, Any]:
+        """Perdita giornaliera dell'ambito ``scope`` (default: l'ambito corrente), PR-04a."""
+        if persist:
+            RuntimeController._complete_pending_unattributed(self)
+        key = str(scope or RuntimeController._current_financial_scope(self))
         now = datetime.utcnow()
         today_utc = now.date().isoformat()
         threshold = self._safe_daily_loss_threshold()
@@ -1441,12 +2907,12 @@ class RuntimeController:
         pending_publish: Optional[tuple[str, dict]] = None
         pending_log: Optional[tuple[str, dict]] = None
         with self._daily_loss_state_lock:
-            previous = dict(self._daily_loss_monitor_state or {})
+            previous = dict(RuntimeController._daily_loss_state_for(self, key) or {})
             previous_day = str(previous.get("day_utc") or "")
             previous_breached = bool(previous.get("breached", False))
             day_rollover = bool(previous_day and previous_day != today_utc)
 
-            realized_pnl = float(self.risk_desk.realized_pnl)
+            realized_pnl = RuntimeController._realized_for_scope(self, key)
             previous_realized_raw = previous.get("realized_pnl", realized_pnl)
             previous_realized = float(realized_pnl if previous_realized_raw is None else previous_realized_raw)
             if day_rollover:
@@ -1480,6 +2946,7 @@ class RuntimeController:
                 "alert_count": int(previous.get("alert_count", 0) or 0),
                 "last_alert_event": str(previous.get("last_alert_event") or ""),
                 "last_checked_at": now.isoformat(),
+                "financial_scope": key,
             }
 
             if breached:
@@ -1497,6 +2964,8 @@ class RuntimeController:
                     "runtime_mode": str(self.mode.value),
                     "execution_mode": str(self.execution_mode),
                     "payload_correlation_id": str((payload or {}).get("correlation_id") or (payload or {}).get("event_key") or ""),
+                    "financial_scope": key,
+                    "global_escalation": financial_scope.escalates_globally(key),
                 }
                 if not previous_breached or day_rollover:
                     state["last_alert_event"] = "DAILY_LOSS_BREACH_TRIGGERED"
@@ -1516,8 +2985,13 @@ class RuntimeController:
                 state["alert_count"] = int(previous.get("alert_count", 0) or 0)
                 state["last_alert_event"] = str(previous.get("last_alert_event") or "DAILY_LOSS_BREACH_TRIGGERED")
 
-            self._daily_loss_persisted = loss_limits.persist_daily_loss(self.db, state, self._daily_loss_persisted)
-            self._daily_loss_monitor_state = state
+            unattributed = getattr(self, "_daily_loss_unattributed", None)
+            if unattributed and str(unattributed.get("day_utc") or "") != today_utc:
+                self._daily_loss_unattributed = None             # quarantena del giorno precedente: scaduta
+            self.__dict__.setdefault("_daily_loss_scopes", {})[key] = state
+            if persist:
+                RuntimeController._promote_settled_keys_locked(self, key)
+                RuntimeController._persist_daily_loss_book(self)
             result = dict(state)
 
         if pending_log is not None:
@@ -2161,18 +3635,32 @@ class RuntimeController:
         """
         try:
             settings = self.db.get_settings() if hasattr(self.db, "get_settings") else {}
+            # M151 (I8): un'emergenza dichiarata ma non durevole sul db vive nel giornale di sicurezza: prevale sul db
+            # (solo un reset DUREVOLE la toglie) e si riporta sul db appena possibile. Giornale illeggibile => emergenza.
+            journal = RuntimeController._read_safety_journal(self)
+            if journal is None:
+                raise OSError("giornale di sicurezza illeggibile")
+            if str(journal.get("emergency_stopped") or "").strip() == "1":
+                settings = dict(settings or {}, **journal)
+                if not RuntimeController._durable_save_settings(self, {
+                        k: journal.get(k, "") for k in ("emergency_stopped", "emergency_stopped_at",
+                                                         "emergency_reason", "emergency_settlement_source",
+                                                         RuntimeController._HEDGE_GUARD_KEY)}):
+                    logger.critical("M151: Emergency Stop del giornale di sicurezza riportato sul db")
             flag = str((settings or {}).get("emergency_stopped", "")).strip().lower()
             if flag not in {"1", "true"}:
                 return
-            self._emergency_stopped = True
-            self._emergency_stopped_at = str(settings.get("emergency_stopped_at") or "")
-            self._emergency_reason = str(
-                settings.get("emergency_reason") or "RESTORED_AFTER_RESTART"
-            )
             # PF-ALL-F027 / Codex r4311806886: provenienza dei settlement ripristinata; assente (stato legacy) o
             # non valida => UNKNOWN, trattata come LIVE (registro SIM mai usato per posizioni di origine ignota).
             source = str(settings.get("emergency_settlement_source") or "").strip().upper()
-            self._settlement_source_before_emergency = source if source in {"SIM", "LIVE"} else "UNKNOWN"
+            source = source if source in {"SIM", "LIVE"} else "UNKNOWN"
+            # Ciclo 12 (M117): un'emergenza di provenienza LIVE (o ignota) ripristinata al riavvio ha ancora da
+            # riconciliare gli ordini LIVE del bot: la postura da sola non legge, non cancella e non segnala nulla.
+            RuntimeController._owner(self).apply(
+                self, "restore_es", _emergency_stopped=True,
+                _emergency_stopped_at=str(settings.get("emergency_stopped_at") or ""),
+                _emergency_reason=str(settings.get("emergency_reason") or "RESTORED_AFTER_RESTART"),
+                _settlement_source_before_emergency=source, _emergency_reconcile_pending=source != "SIM")
         except Exception:
             # Fail-closed: se NON si riesce a leggere lo stato persistito non
             # si puo' PROVARE che non ci fosse un'emergenza in corso => si
@@ -2182,10 +3670,10 @@ class RuntimeController:
                 "emergency_state: reload from settings failed — fail-closed, "
                 "riparto in emergenza"
             )
-            self._emergency_stopped = True
-            self._emergency_stopped_at = datetime.utcnow().isoformat()
-            self._emergency_reason = "EMERGENCY_STATE_UNREADABLE"
-            self._settlement_source_before_emergency = "UNKNOWN"
+            RuntimeController._owner(self).apply(
+                self, "restore_es", _emergency_stopped=True, _emergency_stopped_at=datetime.utcnow().isoformat(),
+                _emergency_reason="EMERGENCY_STATE_UNREADABLE", _settlement_source_before_emergency="UNKNOWN",
+                _emergency_reconcile_pending=True)
 
         # Postura COMPLETA, non solo il flag: senza lockdown/live-gate anche
         # i percorsi che non leggono il flag (es. mode-based) resterebbero
@@ -2210,41 +3698,879 @@ class RuntimeController:
             self._emergency_reason,
         )
 
+    _RECONCILE_SKIP = ("client",)
+    _LIVE_EXPOSURE_KEY = "emergency_unresolved_exposure"
+    # N6 (owner M134): conti LIVE la cui esposizione uno stop globale deve riconciliare, con il loro stato
+    # ({ambito: "PENDING"|"VERIFIED"}). Solo il conto che ha generato lo stop puo' certificarne la chiusura.
+    _LIVE_ACCOUNTS_KEY = "emergency_live_accounts"
+    _LIVE_ACCOUNTS_UNREADABLE = "betfair|LIVE|<vincolo_illeggibile>|EUR"
+    # M149 (owner, A): obbligo LIVE con conto non identificabile. PENDING, mai verificabile da uno sweep (nessun conto
+    # connesso vi corrisponde), mai attribuito al conto collegato: si scioglie solo con la procedura M148
+    _LIVE_ACCOUNT_UNIDENTIFIED = "betfair|LIVE|<conto_non_identificato>|EUR"
+    _LIVE_ACCOUNT_STATES = ("PENDING", "VERIFIED")
+
+    def _live_bound_accounts(self) -> Optional[dict]:
+        """N6: conti LIVE vincolati agli stop globali. Cache in memoria; lettura fallita => None (non in cache: si
+        ritenta, e intanto nessun conto puo' certificare nulla); contenuto illeggibile => vincolo che nessun conto
+        soddisfa (intervento manuale, fail-closed). Vuoto = nessun vincolo registrato (stato precedente a N6).
+        M153: lettura dal disco e aggiornamento della cache nella STESSA sezione critica del proprietario: una lettura
+        fatta prima di una scrittura del registro non si riscrive mai in cache dopo di essa (cache mai vecchia)."""
+        accounts = self.__dict__.get("_emergency_live_accounts")
+        if isinstance(accounts, dict):
+            return accounts
+        with RuntimeController._owner(self).lock:
+            accounts = self.__dict__.get("_emergency_live_accounts")
+            if isinstance(accounts, dict):
+                return accounts
+            try:
+                raw = (self.db.get_settings() or {}).get(RuntimeController._LIVE_ACCOUNTS_KEY) \
+                    if hasattr(self.db, "get_settings") else ""
+            except Exception:
+                logger.exception("N6: conti LIVE dello stop non leggibili (nessuna certificazione finche' non si leggono)")
+                return None
+            try:
+                accounts, breaches = RuntimeController._parse_live_registry(raw)
+            except Exception:
+                logger.critical("N6: vincolo dei conti LIVE illeggibile: nessun conto puo' certificare l'esposizione")
+                accounts, breaches = {RuntimeController._LIVE_ACCOUNTS_UNREADABLE: "PENDING"}, {}
+            RuntimeController._owner(self).apply(self, "registry", _emergency_live_accounts=accounts, _live_breaches=breaches)
+            return accounts
+
+    def _live_registry_for_update(self) -> Optional[dict]:
+        """M151 (CX-J1, operatore || runtime): base FRESCA di ogni lettura-modifica-scrittura del registro, riletta dal
+        disco (non dalla cache) e unita alla memoria: una voce ancora solo in memoria (salvataggio fallito) resta,
+        PENDING prevale su VERIFIED, la storia dei superamenti si unisce per chiave. Lettura fallita due volte => None:
+        il chiamante NON scrive (mai un registro ricostruito dal nulla che cancelli conti sul disco). Chiamare col
+        lock del registro."""
+        owner = RuntimeController._owner(self)
+        mem_accounts = self.__dict__.get("_emergency_live_accounts")
+        mem_accounts = dict(mem_accounts) if isinstance(mem_accounts, dict) else {}
+        mem_history = {k: list(v or []) for k, v in (self.__dict__.get("_live_breaches") or {}).items()}
+        fresh = None
+        for _ in range(2):
+            owner.apply(self, "registry", _emergency_live_accounts=None)       # cache invalidata: rilettura dal disco
+            fresh = RuntimeController._live_bound_accounts(self)
+            if fresh is not None:
+                break
+        if fresh is None:
+            if mem_accounts or "_live_breaches" in self.__dict__:
+                owner.apply(self, "registry", _emergency_live_accounts=mem_accounts)   # cache ripristinata, nessuna scrittura
+            logger.critical("M151: registro dei conti LIVE non rileggibile: nessuna scrittura (fail-closed)")
+            return None
+        merged = dict(fresh)
+        if RuntimeController._LIVE_ACCOUNTS_UNREADABLE in merged:
+            return merged
+        history = {k: list(v or []) for k, v in (self.__dict__.get("_live_breaches") or {}).items()}
+        for scope, items in (self.__dict__.get("_pending_live_bindings") or {}).items():
+            merged[scope] = "PENDING"                    # M151-bis (CX-K2): obbligo in sospeso, mai VERIFIED da qui
+            known = list(history.get(scope) or [])
+            keys = {str(b.get("key")) for b in known}
+            known.extend(dict(b) for b in items if str(b.get("key")) not in keys)
+            history[scope] = known
+        for scope, state in mem_accounts.items():
+            if scope not in merged or state == "PENDING":
+                merged[scope] = state if scope not in merged else "PENDING"
+        for scope, items in mem_history.items():
+            known = list(history.get(scope) or [])
+            keys = {str(b.get("key")) for b in known}
+            known.extend(b for b in items if str(b.get("key")) not in keys)
+            history[scope] = known
+        owner.apply(self, "registry", _emergency_live_accounts=merged, _live_breaches=history)
+        return dict(merged)
+
+    @staticmethod
+    def _parse_live_registry(raw: Any) -> tuple:
+        """M147: registro unico dei superamenti LIVE. v2 = {"version": 2, "accounts": {ambito: {"state", "breaches"}}};
+        v1 (N6) = {ambito: stato}, letto come registro senza storia. Ritorna ({ambito: stato}, {ambito: [superamenti]}).
+        ValueError se illeggibile (il chiamante e' fail-closed)."""
+        data = json.loads(raw) if raw else {}
+        if not isinstance(data, dict):
+            raise ValueError("registro dei conti non valido")
+        if data.get("version") == 2:
+            entries = data.get("accounts")
+            if not isinstance(entries, dict):
+                raise ValueError("registro dei conti v2 non valido")
+            accounts, breaches = {}, {}
+            for scope, entry in entries.items():
+                if not isinstance(scope, str) or not isinstance(entry, dict) \
+                        or entry.get("state") not in RuntimeController._LIVE_ACCOUNT_STATES \
+                        or not isinstance(entry.get("breaches") or [], list):
+                    raise ValueError("voce del registro dei conti non valida")
+                accounts[scope] = entry["state"]
+                breaches[scope] = [dict(b) for b in (entry.get("breaches") or []) if isinstance(b, dict)]
+            return accounts, breaches
+        if any(not isinstance(k, str) or v not in RuntimeController._LIVE_ACCOUNT_STATES for k, v in data.items()):
+            raise ValueError("vincolo dei conti non valido")
+        return dict(data), {}
+
+    def _save_live_bound_accounts(self, accounts: dict) -> bool:
+        """N6 + CX-G1: vincolo dei conti salvato e RILETTO. False (e `_live_binding_failed`) se non e' durevole: resta
+        in memoria e il marker dello stop di sessione non si toglie (al riavvio il vincolo si ricrea). Mai raise."""
+        owner = RuntimeController._owner(self)
+        # conto uscito dal registro (reset riuscito) => la sua storia esce con lui
+        history = {k: list(v or []) for k, v in (self.__dict__.get("_live_breaches") or {}).items() if k in accounts}
+        owner.apply(self, "registry", _emergency_live_accounts=dict(accounts), _live_breaches=history)
+        payload = json.dumps({"version": 2, "accounts": {
+            scope: {"state": state, "breaches": list(history.get(scope) or [])}
+            for scope, state in sorted(accounts.items())}}, sort_keys=True) if accounts else ""
+        try:
+            if hasattr(self.db, "save_settings"):
+                owner.save(self, {RuntimeController._LIVE_ACCOUNTS_KEY: payload})
+                readback = self.db.get_settings() if hasattr(self.db, "get_settings") else None
+                if not isinstance(readback, dict) or str(readback.get(RuntimeController._LIVE_ACCOUNTS_KEY) or "") != payload:
+                    raise OSError("vincolo dei conti non riletto")
+            owner.apply(self, "registry", _live_binding_failed=False)
+            RuntimeController._settle_deferred_live_bindings(self, accounts)
+            return True
+        except Exception:
+            logger.exception("N6: vincolo dei conti LIVE non salvato (resta in memoria; marker di sessione conservato)")
+            owner.apply(self, "registry", _live_binding_failed=True)
+            return False
+
+    def _bind_live_account(self, scope: Optional[str] = None, breach: Optional[dict] = None,
+                           obligation: bool = True) -> str:
+        """N6 (owner M134) + M147 (registro unico dei superamenti LIVE) + M149 (owner, A): lega lo stop globale al conto
+        LIVE che lo ha generato. Ambito LIVE verificato del superamento => quel conto; stop senza ambito (manuale) =>
+        il conto LIVE configurato ora; ambito NON verificabile => mai il conto collegato (attribuzione arbitraria).
+        Conto non identificabile con un obbligo LIVE (`obligation`) => sentinella `<conto_non_identificato>` PENDING:
+        la mancanza di identita' non e' mai assenza di rischio. Il conto torna PENDING finche' uno sweep SU QUEL CONTO
+        non lo verifica. Con `breach` (chiave idempotente, tipo, limite, perdita, sessione di rischio, fonte) il
+        superamento entra nella storia del conto; lo stesso superamento gia' registrato (su qualunque voce, anche
+        attribuito a un conto dalla procedura M148) non si riapre. Mai raise; '' solo senza obbligo LIVE."""
+        try:
+            target = str(scope or "")
+            if not (financial_scope.is_verified(target) and not financial_scope.is_sim(target)):
+                target = RuntimeController._financial_scope_for(self, False) if not scope else ""
+            if not (financial_scope.is_verified(target) and not financial_scope.is_sim(target)):
+                if not obligation:
+                    logger.critical("N6: conto LIVE dello stop non identificabile: nessun vincolo registrato")
+                    return ""
+                if RuntimeController._unidentified_attributed(self, breach):
+                    logger.warning("M149: superamento non identificato gia' attribuito dalla procedura M148: nessuna "
+                                   "sentinella (%s)", (breach or {}).get("key"))
+                    return ""
+                logger.critical("M149: obbligo LIVE con conto non identificabile: sentinella PENDING (procedura M148)")
+                target = RuntimeController._LIVE_ACCOUNT_UNIDENTIFIED
+            with RuntimeController._owner(self).lock:
+                accounts = RuntimeController._live_registry_for_update(self)
+                if accounts is None:
+                    # M151 (CX-J1): registro non rileggibile => nessuna scrittura (mai un registro dal nulla).
+                    # M151-bis (CX-K2): l'obbligo NON si perde: resta in sospeso (memoria + giornale di sicurezza), si
+                    # unisce a ogni rilettura riuscita del registro e, finche' non e' scritto, blocca certificazione e reset
+                    RuntimeController._owner(self).apply(self, "registry", _live_binding_failed=True)
+                    RuntimeController._defer_live_binding(self, target, breach)
+                    return target
+                if RuntimeController._LIVE_ACCOUNTS_UNREADABLE in accounts:
+                    # registro illeggibile: resta tale (nessun conto certifica), mai sovrascritto da una registrazione
+                    logger.critical("M147: registro dei conti illeggibile: superamento di %s non registrabile", target)
+                    return target
+                history = {k: list(v or []) for k, v in (self.__dict__.get("_live_breaches") or {}).items()}
+                known = list(history.get(target) or [])
+                if breach and str(breach.get("key") or ""):
+                    if any(str(b.get("key")) == str(breach["key"]) for b in known) and target in accounts:
+                        return target                       # stesso superamento gia' registrato: idempotente
+                    known.append(dict(breach, at=datetime.utcnow().isoformat()))
+                    history[target] = known
+                    RuntimeController._owner(self).apply(self, "registry", _live_breaches=history)
+                accounts[target] = "PENDING"
+                RuntimeController._save_live_bound_accounts(self, accounts)
+            return target
+        except Exception:
+            logger.exception("N6: vincolo del conto LIVE non registrato")
+            return ""
+
+    _PENDING_BINDINGS_KEY = "emergency_live_pending_bindings"
+
+    def _defer_live_binding(self, target: str, breach: Optional[dict]) -> None:
+        """M151-bis (CX-K2): obbligo LIVE non scrivibile nel registro (rilettura fallita) => in sospeso in memoria e nel
+        giornale di sicurezza (sopravvive al riavvio). Mai raise."""
+        def aggiungi(pending: dict) -> None:
+            items = pending.setdefault(str(target), [])
+            if breach and str(breach.get("key") or "") and not any(
+                    str(b.get("key")) == str(breach["key"]) for b in items):
+                items.append(dict(breach, at=datetime.utcnow().isoformat()))
+        pending = RuntimeController._owner(self).update_dict(self, "defer_binding", "_pending_live_bindings", aggiungi)
+        logger.critical("M151-bis: obbligo LIVE di %s in sospeso (registro non rileggibile): certificazione e reset "
+                        "bloccati finche' non e' scritto", target)
+        RuntimeController._journal_safety_state(self, {
+            RuntimeController._PENDING_BINDINGS_KEY: json.dumps(pending, sort_keys=True)})
+
+    def _settle_deferred_live_bindings(self, saved_accounts: dict) -> None:
+        """M151-bis (CX-K2): obblighi in sospeso scritti (registro salvato e riletto con quel conto) => tolti dalla
+        memoria e dal giornale. Mai raise."""
+        pending = self.__dict__.get("_pending_live_bindings") or {}
+        if not pending:
+            return
+        pending = {k: v for k, v in pending.items() if k not in saved_accounts}
+        RuntimeController._owner(self).apply(self, "defer_binding", _pending_live_bindings=pending)
+        if pending:
+            RuntimeController._journal_safety_state(self, {
+                RuntimeController._PENDING_BINDINGS_KEY: json.dumps(pending, sort_keys=True)})
+        else:
+            RuntimeController._drop_safety_journal(self, [RuntimeController._PENDING_BINDINGS_KEY])
+
+    def _restore_deferred_live_bindings(self) -> None:
+        """M151-bis (CX-K2), avvio: obblighi in sospeso dal giornale di sicurezza. Giornale o valore illeggibile =>
+        obbligo sul registro illeggibile (nessun conto certifica, procedura M148). Mai raise."""
+        try:
+            journal = RuntimeController._read_safety_journal(self)
+            raw = None if journal is None else journal.get(RuntimeController._PENDING_BINDINGS_KEY)
+            if journal is not None and not raw:
+                return
+            data = json.loads(raw) if raw else None
+            if not isinstance(data, dict) or any(not isinstance(v, list) for v in data.values()):
+                raise ValueError("obblighi in sospeso illeggibili")
+            RuntimeController._owner(self).apply(self, "defer_binding", _pending_live_bindings={
+                str(k): [dict(b) for b in v if isinstance(b, dict)] for k, v in data.items()})
+        except Exception:
+            logger.critical("M151-bis: obblighi LIVE in sospeso illeggibili: vincolo illeggibile (fail-closed)")
+            RuntimeController._owner(self).apply(self, "defer_binding",
+                                                 _pending_live_bindings={RuntimeController._LIVE_ACCOUNTS_UNREADABLE: []})
+
+    _UNIDENTIFIED_ATTRIBUTED_KEY = "emergency_live_unidentified_attributed_through"
+
+    def _unidentified_attributed(self, breach: Optional[dict]) -> bool:
+        """M149 + procedura M148 (passo 4): l'operatore, dopo aver identificato con prove i conti dell'inventario e
+        averli scritti PENDING nel registro, registra la data UTC fino alla quale i superamenti GIORNALIERI non
+        identificati sono attribuiti a quei conti (chiave `emergency_live_unidentified_attributed_through`, formato
+        AAAA-MM-GG). Vale SOLO per un superamento con chiave giornaliera `daily|<ambito>|<giorno>` di quel giorno o
+        precedente: uno stop manuale o un obbligo senza chiave ricreano sempre la sentinella. Data assente, non valida
+        o futura => nessuna attribuzione (fail-closed). Mai raise."""
+        try:
+            key = str((breach or {}).get("key") or "")
+            if not key.startswith("daily|"):
+                return False
+            day = date.fromisoformat(key.rsplit("|", 1)[1])
+            raw = (self.db.get_settings() or {}).get(RuntimeController._UNIDENTIFIED_ATTRIBUTED_KEY) \
+                if hasattr(self.db, "get_settings") else ""
+            through = date.fromisoformat(str(raw or "").strip())
+            return through <= datetime.utcnow().date() and day <= through
+        except Exception:
+            return False
+
+    def _live_account_mismatch(self, connected: Optional[str] = None) -> Optional[dict]:
+        """N6: None se il conto LIVE che legge (`connected`, l'ambito attestato dal client dello sweep) puo' essere
+        verificato per lo stop (e' fra quelli vincolati, o nessun vincolo e' registrato); altrimenti il motivo. Un
+        conto B non certifica mai l'assenza di ordini sul conto A."""
+        accounts = RuntimeController._live_bound_accounts(self)
+        if connected is None:
+            connected = RuntimeController._financial_scope_for(self, False)
+        if accounts is None:
+            return {"required_accounts": [], "connected_account": connected, "error": "vincolo_non_leggibile"}
+        anonymous = not (financial_scope.is_verified(connected) and not financial_scope.is_sim(connected))
+        if not accounts and self.__dict__.get("_emergency_stopped") \
+                and RuntimeController._live_obligation_recorded(self) and not anonymous:
+            # M149 (C): ES con obbligo LIVE e registro vuoto = incoerenza, mai «nessun vincolo»: un conto identificato
+            # non certifica nulla e non legge ne' cancella (N6)
+            return {"required_accounts": [], "connected_account": connected, "error": "registro_incoerente_obbligo_live"}
+        if anonymous and (not accounts or RuntimeController._LIVE_ACCOUNT_UNIDENTIFIED in accounts):
+            # M149 (A): la sessione LIVE senza identita' cancella gli ordini DEL BOT (per betId) come prima, ma non
+            # certifica: la sentinella resta PENDING (`_settle_live_account`), uscita solo con la procedura M148
+            return None
+        if not accounts or connected in accounts:
+            return None
+        return {"required_accounts": sorted(accounts), "connected_account": connected}
+
+    def _settle_live_account(self, result: dict) -> None:
+        """N6: esito di uno sweep sul conto connesso (vincolato) => stato di quel conto. Restano conti vincolati non
+        ancora verificati => esposizione non chiusa (`accounts_pending`), intervento manuale."""
+        try:
+            with RuntimeController._owner(self).lock:
+                accounts = RuntimeController._live_registry_for_update(self)
+                if accounts is None:
+                    result["manual_action_required"] = True     # M151: registro non rileggibile, nulla si certifica
+                    return
+                if not accounts:
+                    if self.__dict__.get("_emergency_stopped") and RuntimeController._live_obligation_recorded(self):
+                        # M149 (C): obbligo LIVE con registro vuoto: lo sweep non chiude mai l'esposizione
+                        result["manual_action_required"] = True
+                        result["registry_incoherent"] = True
+                    return
+                # CX-N1 (M154-bis): si certifica SOLO l'ambito attestato dal client che ha letto e cancellato, e solo se
+                # l'identita' non e' cambiata fino a qui (ricontrollo sotto il lock del registro)
+                connected = str(result.get("read_scope") or "")
+                if not connected or result.get("identity_changed") or not RuntimeController._read_identity_unchanged(
+                        self, result.get("client"), connected):
+                    result["manual_action_required"] = True
+                    result["identity_changed"] = bool(connected)
+                if connected in accounts:
+                    accounts[connected] = "PENDING" if result.get("manual_action_required") else "VERIFIED"
+                    RuntimeController._save_live_bound_accounts(self, accounts)
+                pending = sorted(k for k, v in accounts.items() if v != "VERIFIED" and k != connected)
+            result["connected_account"] = connected
+            if pending:
+                result["accounts_pending"] = pending
+                result["manual_action_required"] = True
+        except Exception:
+            logger.exception("N6: stato del conto LIVE non aggiornato (esposizione non chiusa)")
+            result["manual_action_required"] = True
+
+    def _read_identity_unchanged(self, client: Any, read_scope: str) -> bool:
+        """CX-N1: True se il client dello sweep e il client connesso ADESSO attestano ancora l'ambito della lettura (e
+        quell'ambito e' l'identita' autorizzata). Mai raise."""
+        try:
+            if client is None:
+                return False
+            if RuntimeController._financial_scope_for_identity(
+                    RuntimeController._live_account_identity(self, client)) != read_scope:
+                return False
+            scope, error = RuntimeController._live_identity_check(self, associate=False)
+            return not error and scope == read_scope
+        except Exception:
+            logger.exception("M154: identita' della lettura non ricontrollabile (esito non attribuito)")
+            return False
+
+    @staticmethod
+    def _financial_scope_for_identity(identity: str) -> str:
+        return financial_scope.runtime_scope(simulated=False, live_account=identity) if identity else ""
+
+    def _clear_verified_live_accounts(self) -> None:
+        """N6: al reset di uno stop i conti verificati escono dal vincolo; quelli ancora PENDING restano."""
+        try:
+            with RuntimeController._owner(self).lock:
+                accounts = RuntimeController._live_registry_for_update(self)
+                if not accounts:
+                    return
+                remaining = {k: v for k, v in accounts.items() if v != "VERIFIED"}
+                if remaining != accounts:
+                    RuntimeController._save_live_bound_accounts(self, remaining)
+        except Exception:
+            logger.exception("N6: vincolo dei conti LIVE non ripulito al reset")
+
+    def _record_live_exposure(self, result: dict, source: str) -> None:
+        """R1 (owner, ciclo 12): esito di uno sweep sulla sede LIVE salvato in modo DUREVOLE, distinto da
+        `total_exposure` (esposizione dei tavoli locali). Non risolto => record con ordini aperti, non attribuiti,
+        posizioni abbinate e verifica; risolto (VERIFIED senza nulla di residuo) => record VERIFICATO. Mai raise."""
+        try:
+            if result.get("verification") == "ACCOUNT_MISMATCH":
+                # N6: nessuna verifica fatta sul conto dello stop; un esito irrisolto gia' noto per quel conto resta
+                # com'e' (ordini e posizioni noti restano visibili), con la mancata corrispondenza annotata.
+                current = None
+                try:
+                    current = RuntimeController._live_exposure_record_now(self)
+                except Exception:
+                    current = None
+                if current and not current.get("resolved"):
+                    record = dict(current, account_mismatch=result.get("account_mismatch"), resolved=False,
+                                  at=datetime.utcnow().isoformat())
+                    RuntimeController._owner(self).apply(self, "exposure", _live_exposure_record=record)
+                    if hasattr(self.db, "save_settings"):
+                        RuntimeController._owner(self).save(self, {RuntimeController._LIVE_EXPOSURE_KEY: json.dumps(record, default=str)})
+                    return
+            resolved = not result.get("manual_action_required")
+            record = {"source": str(source), "verification": result.get("verification"),
+                      "resolved": resolved, "open_orders": list(result.get("open_after_cancel") or []),
+                      "unattributed_open_orders": list(result.get("unattributed_open_orders") or []),
+                      "matched_positions": list(result.get("matched_positions") or []),
+                      "live_client_available": result.get("live_client_available"),
+                      "accounts_pending": list(result.get("accounts_pending") or []),
+                      "account_mismatch": result.get("account_mismatch"),
+                      "connected_account": result.get("connected_account"),
+                      "at": datetime.utcnow().isoformat()}
+            RuntimeController._owner(self).apply(self, "exposure", _live_exposure_record=record)
+            if hasattr(self.db, "save_settings"):
+                RuntimeController._owner(self).save(self, {RuntimeController._LIVE_EXPOSURE_KEY: json.dumps(record, default=str)})
+        except Exception:
+            logger.exception("R1: esposizione LIVE non salvata (resta segnalata come SCONOSCIUTA)")
+            RuntimeController._owner(self).apply(self, "exposure", _live_exposure_record={"verification": "UNKNOWN", "resolved": False, "source": str(source)})
+
+    def _invalidate_live_exposure(self, source: str) -> None:
+        """Codex P1 su b902eca3: all'inizio di un nuovo stop globale l'esito LIVE precedente non vale piu'. Se era
+        VERIFICATO lo si sostituisce con «in attesa di verifica» (stato SCONOSCIUTA, intervento manuale) finche' uno
+        sweep di questo stop non lo conferma; un esito irrisolto resta (l'esposizione e' ancora quella). Mai raise."""
+        try:
+            current = RuntimeController._live_exposure_record_now(self)
+            if current and not current.get("resolved"):
+                return
+            RuntimeController._record_live_exposure(
+                self, {"verification": "IN_ATTESA_DI_VERIFICA", "manual_action_required": True}, source=source)
+        except Exception:
+            logger.exception("R1: esposizione LIVE non invalidata")
+            RuntimeController._owner(self).apply(self, "exposure", _live_exposure_record={"verification": "UNKNOWN", "resolved": False, "source": str(source)})
+
+    def _clear_resolved_live_exposure(self) -> None:
+        """Reset di uno stop: un esito LIVE VERIFICATO appartiene allo stop chiuso e si toglie (la vista torna NESSUNA);
+        un esito irrisolto resta visibile, perche' l'esposizione non e' chiusa dal reset. Mai raise."""
+        RuntimeController._clear_verified_live_accounts(self)       # N6
+        try:
+            current = RuntimeController._live_exposure_record_now(self)
+            if current and current.get("resolved") and not current.get("matched_positions"):
+                if hasattr(self.db, "save_settings"):
+                    RuntimeController._owner(self).save(self, {RuntimeController._LIVE_EXPOSURE_KEY: ""})
+                RuntimeController._owner(self).apply(self, "exposure", _live_exposure_record=None)
+        except Exception:
+            logger.exception("R1: esito LIVE verificato non rimosso al reset (resta mostrato)")
+
+    def _live_exposure_record_now(self) -> Optional[dict]:
+        record = self.__dict__.get("_live_exposure_record")
+        if record is None and hasattr(self.db, "get_settings"):
+            raw = (self.db.get_settings() or {}).get(RuntimeController._LIVE_EXPOSURE_KEY) or ""
+            record = json.loads(raw) if raw else None
+        return record if isinstance(record, dict) else None
+
+    def _restore_breached_live_scope_stop(self) -> None:
+        """M130 (matrice D, «es» eccezione/False/corrotto): il libro giornaliero salvato dice che OGGI un ambito che sale
+        al globale (LIVE o non verificabile, anche la quarantena) ha superato il limite, ma l'Emergency Stop non e'
+        durevole (scrittura fallita). Al riavvio il blocco globale si ricostruisce dal libro, senza attendere la
+        riconsegna: Emergency Stop con la stessa postura del ripristino persistito e riconciliazione LIVE in attesa. Il
+        superamento finisce col rollover di giornata (nessun blocco permanente). Mai raise."""
+        try:
+            # M147: ogni ambito LIVE superato oggi entra nel registro anche se l'Emergency Stop e' gia' attivo
+            RuntimeController._register_live_breaches(
+                self, list((self.__dict__.get("_daily_loss_scopes") or {}).values()), source="avvio")
+            if self._emergency_stopped:
+                return
+            today = datetime.utcnow().date().isoformat()
+            breached = sorted(str(k) for k, st in (self.__dict__.get("_daily_loss_scopes") or {}).items()
+                              if isinstance(st, dict) and st.get("breached") is True
+                              and str(st.get("day_utc") or "") == today and financial_scope.escalates_globally(str(k)))
+            legacy = self.__dict__.get("_daily_loss_unattributed") or {}
+            if legacy.get("breached") is True and str(legacy.get("day_utc") or "") == today:
+                breached.append(financial_scope.UNVERIFIED_SCOPE)
+            if not breached:
+                return
+            reason = "DAILY_LOSS_BREACH_RESTORED_FROM_BOOK"
+            for scope in breached:                       # N6: conti LIVE superati vincolati allo stop ricostruito
+                RuntimeController._bind_live_account(self, scope, breach={
+                    "key": f"daily|{scope}|{today}", "kind": "daily", "source": "avvio_libro"})
+            RuntimeController._owner(self).apply(
+                self, "restore_es", _emergency_stopped=True, _emergency_stopped_at=datetime.utcnow().isoformat(),
+                _emergency_reason=reason, _settlement_source_before_emergency="LIVE", _emergency_reconcile_pending=True)
+            persist_error = self._persist_emergency_state()
+            if persist_error:
+                logger.critical("M130: Emergency Stop dal libro non persistito (%s): resta in memoria", persist_error)
+            self.live_enabled = False
+            self.execution_mode = "SIMULATION"
+            try:
+                self.set_simulation_mode(True)
+            except Exception:
+                logger.exception("M130: set_simulation_mode fallito nel ripristino dal libro")
+            try:
+                self.force_lockdown(reason)
+            except Exception:
+                logger.exception("M130: force_lockdown fallito nel ripristino dal libro")
+                self.mode = RuntimeMode.LOCKDOWN
+                self.last_error = reason
+            logger.critical("M130: superamento giornaliero LIVE nel libro (%s) senza Emergency Stop durevole: "
+                            "Emergency Stop ripristinato al riavvio", ", ".join(breached))
+        except Exception:
+            logger.exception("M130: libro giornaliero non verificabile per il blocco globale")
+
+    _LIVE_VERIFY_ONLY_KEY = "emergency_live_verify_only"
+
+    def _set_live_verify_only(self, value: bool, explicit: bool = False) -> bool:
+        """N7 + M144 (CX-E4) + M146 (CX-H1): modalita' dello sweep LIVE dello stop globale, salvata e RILETTA.
+        "1" = sola verifica (runtime gia' LIVE: il CASHOUT_ALL apre coperture che lo sweep NON deve annullare); "0" =
+        cancellazione degli ordini del bot ammessa (stop nato col runtime in SIM, `explicit`); "" = nessuna modalita'
+        (nessuno stop). Al riavvio una modalita' mancante con uno stop globale attivo vale SOLA VERIFICA (opzione A
+        owner M146): un salvataggio fallito non fa mai cancellare una copertura. Ritorna True se riletta. Mai raise."""
+        # M151-bis (CX-K1): la protezione delle coperture segue la sola verifica ma e' uno stato proprio, che l'Emergency
+        # Stop non azzera (N7 azzera solo `_live_verify_only`) e che viaggia anche nel salvataggio dell'ES
+        owner = RuntimeController._owner(self)
+        owner.apply(self, "set_verify_only", _live_verify_only=bool(value), _hedge_guard=bool(value))
+        payload = "1" if value else ("0" if explicit else "")
+        try:
+            if hasattr(self.db, "save_settings"):
+                owner.save(self, {RuntimeController._LIVE_VERIFY_ONLY_KEY: payload,
+                                  RuntimeController._HEDGE_GUARD_KEY: "1" if value else ""})
+                readback = self.db.get_settings() if hasattr(self.db, "get_settings") else None
+                if not isinstance(readback, dict) or str(
+                        readback.get(RuntimeController._LIVE_VERIFY_ONLY_KEY) or "") != payload:
+                    raise OSError("modalita' di sola verifica non riletta")
+            self._live_verify_only_failed = False
+            return True
+        except Exception:
+            logger.exception("N7: modalita' di sola verifica non salvata (resta in memoria; al riavvio sola verifica)")
+            # modalita' esplicita non durevole ("1" o "0"): il marker dello stop di sessione resta e al riavvio la ricrea
+            self._live_verify_only_failed = bool(value) or bool(explicit)
+            return False
+
+    def _restore_live_verify_only(self) -> None:
+        """M144 (CX-E4), avvio: modalita' di sola verifica ripristinata. Valore illeggibile o non riconosciuto => sola
+        verifica (fail-closed: mai annullare una copertura; l'esposizione resta da verificare). Mai raise."""
+        try:
+            raw = (self.db.get_settings() or {}).get(RuntimeController._LIVE_VERIFY_ONLY_KEY) \
+                if hasattr(self.db, "get_settings") else ""
+            raw = "" if raw is None else str(raw)
+            if raw == "1":
+                RuntimeController._owner(self).apply(self, "set_verify_only", _live_verify_only=True)
+            elif raw == "0":
+                RuntimeController._owner(self).apply(self, "set_verify_only", _live_verify_only=False)
+            elif raw == "":
+                # M146 (CX-H1, opzione A): stop globale attivo ma modalita' non salvata (doppio guasto) => la
+                # riconciliazione riparte in SOLA LETTURA: nessuna cancellazione ne' cashout alla cieca; esposizione
+                # irrisolta e intervento manuale finche' il riscontro dell'exchange non la chiude
+                reason = str(self.__dict__.get("_risk_stop_reason") or "")
+                RuntimeController._owner(self).apply(self, "set_verify_only", _live_verify_only=bool(
+                    reason and not RuntimeController._risk_stop_scope(reason)
+                    and not self.__dict__.get("_emergency_stopped")))
+                self._live_verify_only_inferred = self._live_verify_only     # dedotta, non salvata
+                if self._live_verify_only:
+                    logger.critical("N7/M146: stop globale senza modalita' salvata: riconciliazione in sola lettura")
+            else:
+                RuntimeController._owner(self).apply(self, "set_verify_only", _live_verify_only=True)
+                logger.critical("N7: modalita' di sola verifica illeggibile (%r): sola verifica", raw[:40])
+        except Exception:
+            logger.exception("N7: modalita' di sola verifica non leggibile all'avvio: sola verifica")
+            RuntimeController._owner(self).apply(self, "set_verify_only", _live_verify_only=True)
+        RuntimeController._restore_hedge_guard(self)
+
+    _HEDGE_GUARD_KEY = "emergency_hedge_guard"
+
+    def _restore_hedge_guard(self) -> None:
+        """M151-bis (CX-K1), avvio: protezione delle coperture attiva se la sola verifica e' attiva o se la chiave della
+        protezione (salvata con la sola verifica o con l'Emergency Stop) e' "1". Illeggibile => attiva. Mai raise."""
+        try:
+            raw = (self.db.get_settings() or {}).get(RuntimeController._HEDGE_GUARD_KEY) \
+                if hasattr(self.db, "get_settings") else ""
+            journal = RuntimeController._read_safety_journal(self)
+            journaled = journal is None or str((journal or {}).get(RuntimeController._HEDGE_GUARD_KEY) or "") == "1"
+            RuntimeController._owner(self).apply(self, "set_verify_only", _hedge_guard=bool(
+                self.__dict__.get("_live_verify_only")) or str(raw or "").strip() == "1" or journaled)
+        except Exception:
+            logger.exception("M151-bis: protezione delle coperture non leggibile all'avvio: attiva (fail-closed)")
+            RuntimeController._owner(self).apply(self, "set_verify_only", _hedge_guard=True)
+
+    def _restore_live_exposure_pending(self) -> None:
+        """Codex P1 su afbd5c89: un'esposizione LIVE irrisolta registrata in modo durevole (record R1 non risolto o
+        illeggibile) riarma la riconciliazione al riavvio, anche quando lo stop globale e' un RISK_STOP gia' completato
+        (marker di sessione rimosso): la riconciliazione all'avvio e il recovery dedicato ripartono. Mai raise."""
+        try:
+            raw = (self.db.get_settings() or {}).get(RuntimeController._LIVE_EXPOSURE_KEY) \
+                if hasattr(self.db, "get_settings") else ""
+            if not raw:
+                return
+            record = json.loads(raw)
+            # record legacy (scritto prima della correzione Codex) risolto ma con posizioni abbinate: NON risolto
+            if not (isinstance(record, dict) and record.get("resolved") and not record.get("matched_positions")):
+                RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
+        except Exception:
+            logger.exception("R1: record dell'esposizione LIVE illeggibile al riavvio (riconciliazione in attesa)")
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
+
+    def _live_exposure_status(self) -> dict:
+        """R1: stato esplicito dell'esposizione LIVE per `get_status`, la GUI e headless. Stati:
+        NESSUNA (nessuno stop globale ne' sweep registrato), VERIFICATA (ultimo sweep verificato, nulla di residuo),
+        NON_RICONCILIATA (ordini o posizioni residui noti), SCONOSCIUTA (exchange non leggibile o verifica non riuscita).
+        L'importo e' None ('SCONOSCIUTO') quando non e' verificabile: mai zero per un valore sconosciuto."""
+        record = self.__dict__.get("_live_exposure_record")
+        if record is None:
+            # M153: lettura dal disco e cache nella STESSA sezione critica del proprietario (mai una lettura vecchia
+            # rimessa in cache dopo uno sweep che ha scritto un esito nuovo)
+            with RuntimeController._owner(self).lock:
+                record = self.__dict__.get("_live_exposure_record")
+                if record is None:
+                    try:
+                        raw = (self.db.get_settings() or {}).get(RuntimeController._LIVE_EXPOSURE_KEY) \
+                            if hasattr(self.db, "get_settings") else ""
+                        record = json.loads(raw) if raw else None
+                    except Exception:
+                        record = {"verification": "UNKNOWN", "resolved": False, "source": "record_illeggibile"}
+                    if isinstance(record, dict) and "resolved" not in record:   # record del ciclo 12 (irrisolto)
+                        record = dict(record, resolved=False)
+                    RuntimeController._owner(self).apply(self, "exposure", _live_exposure_record=record)
+        pending = bool(self.__dict__.get("_emergency_reconcile_pending"))
+        global_stop = bool(self._emergency_stopped or (
+            self._risk_stop_reason and not RuntimeController._risk_stop_scope(self._risk_stop_reason)))
+        if not record:
+            state = "SCONOSCIUTA" if (pending or global_stop) else "NESSUNA"
+            return {"state": state, "amount": None if state == "SCONOSCIUTA" else 0.0,
+                    "amount_display": "SCONOSCIUTO" if state == "SCONOSCIUTA" else "0.00",
+                    "reconcile_pending": pending, "manual_action_required": state != "NESSUNA",
+                    "amount_basis": "SCONOSCIUTA" if state == "SCONOSCIUTA" else "NOTA", "liability": None,
+                    "open_orders": [], "unattributed_open_orders": [], "matched_positions": [],
+                    "verification": None, "source": None, "at": None}
+        open_orders = list(record.get("open_orders") or record.get("open_after_cancel") or [])
+        foreign = list(record.get("unattributed_open_orders") or [])
+        matched = list(record.get("matched_positions") or [])
+        verification = record.get("verification")
+        liability = None
+        if (record.get("resolved") and verification == "VERIFIED" and not pending
+                and not (open_orders or foreign or matched) and not record.get("accounts_pending")):
+            # Codex P1 su afbd5c89: mai VERIFICATA con posizioni abbinate (la cancellazione non le chiude)
+            state, amount = "VERIFICATA", 0.0
+        elif verification in ("VERIFIED", "OPEN_ORDERS_REMAIN", "CANCEL_INCOMPLETE") and (open_orders or foreign
+                                                                                             or matched):
+            state = "NON_RICONCILIATA"
+            liability = live_liability(open_orders, foreign, matched)   # R1: liability, non stake
+            amount = None if liability["total"] is None else float(liability["total"])
+        else:
+            state, amount = "SCONOSCIUTA", None
+        return {"state": state, "amount": amount,
+                "amount_display": "SCONOSCIUTO" if amount is None else (
+                    liability["total"] if liability else f"{amount:.2f}"),
+                "amount_basis": ("NOTA" if state == "VERIFICATA" else
+                                 "SCONOSCIUTA" if amount is None else "STIMA_CONSERVATIVA_LORDA"),
+                "liability": liability,
+                "reconcile_pending": pending, "manual_action_required": state != "VERIFICATA",
+                "open_orders": open_orders, "unattributed_open_orders": foreign, "matched_positions": matched,
+                "verification": verification, "source": record.get("source"), "at": record.get("at"),
+                "accounts_pending": list(record.get("accounts_pending") or []),
+                "account_mismatch": record.get("account_mismatch")}
+
+    def _protect_live_venue(self, reason: str) -> dict:
+        """Ciclo 12 (N2): sweep verificato sulla sede LIVE per uno stop globale nato dal LIVE col runtime in SIM."""
+        try:
+            with RuntimeController._live_sweep_lock(self):
+                # M151 (CX-J2): la sola verifica vale anche per la protezione della sede (conto aggiunto allo stop)
+                sweep = self._emergency_cancel_and_verify(
+                    was_live=True, cancel=not bool(self.__dict__.get("_live_verify_only")))
+        except Exception as exc:
+            logger.exception("ciclo 12: protezione della sede LIVE fallita")
+            sweep = {"verification": "UNVERIFIED", "manual_action_required": True, "error": str(exc), "client": None}
+        client = sweep.get("client")
+        result = {k: v for k, v in sweep.items() if k not in RuntimeController._RECONCILE_SKIP}
+        result.update(reason=str(reason), live_client_available=client is not None)
+        RuntimeController._record_live_exposure(self, result, source="RISK_STOP_LIVE_PROTECTION")
+        self.bus.publish("RISK_STOP_LIVE_PROTECTION", dict(result))
+        if result.get("manual_action_required"):
+            logger.critical("RISK STOP (LIVE da runtime SIM): esposizione LIVE non riconciliata (verifica=%s)",
+                            result.get("verification"))
+            self.bus.publish("EMERGENCY_STOP_MANUAL_ACTION_REQUIRED", dict(result, source="RISK_STOP"))
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)          # M115: ritentata dal recovery dedicato
+            RuntimeController._ensure_live_recovery(self)
+        return {k: result.get(k) for k in ("verification", "manual_action_required", "cancelled_count",
+                                           "live_client_available")}
+
+    def _reconcile_restored_emergency(self, trigger: str = "") -> Optional[dict]:
+        """Ciclo 12 (M117): riconciliazione verificata, sulla sede LIVE, di un Emergency Stop ripristinato al riavvio.
+        Cancella solo gli ordini LIVE del bot (mai quelli estranei, che restano elencati) e verifica l'esito sul conto.
+        Esito non verificato, conto irraggiungibile o esposizione estranea/abbinata => emergenza mantenuta, evento
+        `EMERGENCY_STOP_MANUAL_ACTION_REQUIRED` ed esposizione irrisolta salvata; si ritenta all'evento successivo
+        (settlement, segnale) finche' la verifica riesce. Mai raise."""
+        if not self.__dict__.get("_emergency_reconcile_pending"):
+            return None
+        if RuntimeController._owner_not_ready(self):
+            return None              # M153 P8: nessuno sweep prima della ricostruzione completa (il recovery ritenta)
+        risk_reason = self.__dict__.get("_risk_stop_reason") or ""
+        global_stop = bool(self.__dict__.get("_emergency_stopped")) or bool(
+            risk_reason and not RuntimeController._risk_stop_scope(risk_reason))
+        if not global_stop:
+            return None
+        sweep_lock = RuntimeController._live_sweep_lock(self)
+        if not sweep_lock.acquire(blocking=False):       # M115: uno sweep LIVE alla volta (ES, settlement, recovery)
+            return None
+        try:
+            verify_only = bool(self.__dict__.get("_live_verify_only")) and not self.__dict__.get("_emergency_stopped")
+            sweep = self._emergency_cancel_and_verify(was_live=True, cancel=not verify_only)
+            client = sweep.get("client")
+            result = {k: v for k, v in sweep.items() if k not in RuntimeController._RECONCILE_SKIP}
+            result.update(trigger=str(trigger), live_client_available=client is not None,
+                          reason=self._emergency_reason or risk_reason, verify_only=verify_only)
+            resolved = not result.get("manual_action_required")
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=not resolved)
+            RuntimeController._record_live_exposure(self, result, source="RESTART_RECONCILE")
+            self.bus.publish("EMERGENCY_STOP_RECONCILED", dict(result))
+            if not resolved:
+                logger.critical("EMERGENCY STOP ripristinato: esposizione LIVE NON riconciliata (verifica=%s, aperti=%d, "
+                                "non attribuiti=%d)", result.get("verification"),
+                                len(result.get("open_after_cancel") or []),
+                                len(result.get("unattributed_open_orders") or []))
+                self.bus.publish("EMERGENCY_STOP_MANUAL_ACTION_REQUIRED", dict(result))
+            return result
+        except Exception:
+            logger.exception("ciclo 12: riconciliazione dell'emergenza ripristinata fallita (si ritenta)")
+            return None
+        finally:
+            sweep_lock.release()
+            # M115: finche' la verifica non riesce il recovery dedicato ritenta da solo, senza attendere eventi
+            RuntimeController._ensure_live_recovery(self)
+
+    # ------------------------------------------------------------------ M115: recovery LIVE senza riavvio ne' eventi
+    _LIVE_RECOVERY_INTERVAL_S = 30.0
+
+    def _live_sweep_lock(self):
+        """Lock (rientrante) degli sweep verificati sulla sede LIVE: Emergency Stop, riconciliazione e recovery dedicato
+        non cancellano mai in parallelo. `setdefault` del dict e' atomico: niente doppio lock su istanze `__new__`."""
+        return _tracked_lock(self, "_live_sweep_rlock", threading.RLock, "live_sweep")
+
+    @staticmethod
+    def _owner(rc: Any) -> SafetyStateOwner:
+        """M153: l'unico proprietario dello stato di sicurezza di questo runtime (creato una volta, anche su istanze
+        costruite con `__new__`)."""
+        return SafetyStateOwner.of(rc)
+
+    def _owner_not_ready(self) -> str:
+        """M153 P8: motivo di rifiuto finche' la ricostruzione all'avvio non e' completa; '' se inizializzato."""
+        return "" if RuntimeController._owner(self).initialized else "stato_di_sicurezza_non_inizializzato"
+
+    def _live_recovery_active(self) -> bool:
+        thread = self.__dict__.get("_live_recovery_thread")
+        return bool(thread is not None and thread.is_alive())
+
+    def _ensure_live_recovery(self) -> bool:
+        """M115 (owner): esposizione LIVE da riconciliare (`_emergency_reconcile_pending`, stato durevole ricostruito anche
+        al riavvio) => thread daemon dedicato che ritenta la riconciliazione verificata a intervalli, indipendente da
+        segnali e settlement. Idempotente (un solo thread per runtime); riferimento debole al runtime; si ferma da solo
+        quando la verifica riesce o non resta uno stop globale. Mai raise."""
+        try:
+            if not self.__dict__.get("_emergency_reconcile_pending"):
+                return False
+            guard = self.__dict__.setdefault("_live_recovery_guard", threading.Lock())
+            with guard:
+                if RuntimeController._live_recovery_active(self):
+                    return True
+                interval = float(self.__dict__.get("_live_recovery_interval_s")
+                                 or RuntimeController._LIVE_RECOVERY_INTERVAL_S)
+                thread = threading.Thread(target=RuntimeController._live_recovery_loop,
+                                          args=(weakref.ref(self), max(0.01, interval)),
+                                          name="pickfair-live-recovery", daemon=True)
+                self._live_recovery_thread = thread
+                thread.start()
+            logger.critical("M115: recovery LIVE dedicato avviato (esposizione LIVE da riconciliare)")
+            return True
+        except Exception:
+            logger.exception("M115: recovery LIVE dedicato non avviato (si ritenta al prossimo evento)")
+            return False
+
+    @staticmethod
+    def _live_recovery_loop(ref, interval: float) -> None:
+        stop = threading.Event()
+        while not stop.wait(interval):
+            rc = ref()
+            if rc is None:
+                return
+            try:
+                guard = rc.__dict__.setdefault("_live_recovery_guard", threading.Lock())
+                risk_reason = rc.__dict__.get("_risk_stop_reason") or ""
+                global_stop = bool(rc.__dict__.get("_emergency_stopped")) or bool(
+                    risk_reason and not RuntimeController._risk_stop_scope(risk_reason))
+                if not rc.__dict__.get("_emergency_reconcile_pending") or not global_stop:
+                    with guard:          # ricontrollo sotto guard: una nuova richiesta non resta mai senza thread
+                        risk_reason = rc.__dict__.get("_risk_stop_reason") or ""
+                        global_stop = bool(rc.__dict__.get("_emergency_stopped")) or bool(
+                            risk_reason and not RuntimeController._risk_stop_scope(risk_reason))
+                        if not rc.__dict__.get("_emergency_reconcile_pending") or not global_stop:
+                            rc._live_recovery_thread = None
+                            return
+                    continue
+                RuntimeController._reconcile_restored_emergency(rc, trigger="recovery_dedicato")
+            except Exception:
+                logger.exception("M115: tentativo del recovery LIVE dedicato fallito (si ritenta)")
+            finally:
+                rc = None
+
+    def _recover_interrupted_global_stop(self, reason: str, scope: Optional[str] = None) -> None:
+        """M115 (owner): settlement interrotto DOPO l'applicazione del P&L con superamento globale (LIVE o non
+        verificabile) proiettato e marker durevole gia' scritto. Nello stesso processo si fa subito cio' che il riavvio
+        farebbe dal marker: Emergency Stop sulla sede LIVE (cancellazione verificata dei soli ordini del bot; estranei,
+        abbinati ed esiti non verificati registrati e segnalati), poi recovery dedicato se resta irrisolto. Mai raise."""
+        try:
+            if self._emergency_stopped:
+                RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
+                RuntimeController._reconcile_restored_emergency(self, trigger="settlement_interrotto")
+                return
+            self.emergency_stop(reason, live_exposure=True, scope=scope)
+        except BaseException:
+            logger.exception("M115: Emergency Stop dopo il settlement interrotto non completato (recovery dedicato)")
+            RuntimeController._owner(self).apply(self, "restore_es", _emergency_stopped=True)
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
+            RuntimeController._ensure_live_recovery(self)
+
+    def _emergency_state_payload(self) -> dict:
+        return {
+            "emergency_stopped": "1" if self._emergency_stopped else "0",
+            "emergency_stopped_at": self._emergency_stopped_at,
+            "emergency_reason": self._emergency_reason,
+            # PF-ALL-F027 / Codex r4311806886: provenienza dei settlement nello STESSO salvataggio del flag
+            "emergency_settlement_source": getattr(self, "_settlement_source_before_emergency", "") or "",
+            # M151-bis (CX-K1): la protezione delle coperture attiva in memoria e' salvata con l'ES (durevole o giornale)
+            RuntimeController._HEDGE_GUARD_KEY: "1" if self.__dict__.get("_hedge_guard") else "",
+        }
+
     def _persist_emergency_state(self) -> str:
-        """Persiste lo stato di emergenza; ritorna '' o l'errore (mai raise)."""
+        """Persiste lo stato di emergenza; ritorna '' o l'errore (mai raise).
+
+        M151 (I8): '' solo se lo stato e' RILETTO identico dal db. Un'emergenza ATTIVA non durevole sul db va nel
+        giornale di sicurezza (`<db>.safety_pending.json`, scrittura atomica) e si ripristina all'avvio: l'Emergency
+        Stop dichiarato non sparisce con un riavvio. Il reset (flag a 0) non usa mai il giornale: o e' durevole sul
+        db, o non avviene (`reset_emergency`)."""
         if not hasattr(self.db, "save_settings"):
             return "db_save_settings_unavailable"
-        try:
-            self.db.save_settings({
-                "emergency_stopped": "1" if self._emergency_stopped else "0",
-                "emergency_stopped_at": self._emergency_stopped_at,
-                "emergency_reason": self._emergency_reason,
-                # PF-ALL-F027 / Codex r4311806886: provenienza dei settlement nello STESSO salvataggio del flag
-                "emergency_settlement_source": getattr(self, "_settlement_source_before_emergency", "") or "",
-            })
+        if not self._emergency_stopped:
+            # M153 (C13): lo stato si persiste solo con un ES attivo; lo spegnimento ("0") lo scrive SOLO reset_es
+            # (`_reset_emergency_locked`), mai un persist che troverebbe l'ES gia' spento da un'altra transizione
             return ""
-        except Exception as exc:
-            logger.exception("emergency_state: persist failed")
-            return str(exc)
+        payload = RuntimeController._emergency_state_payload(self)
+        error = RuntimeController._durable_save_settings(self, payload)
+        if not error:
+            return ""
+        logger.error("emergency_state: persist failed (%s)", error)
+        if self._emergency_stopped:
+            journaled = RuntimeController._journal_safety_state(self, payload)
+            return f"{error}; giornale={'scritto' if journaled else 'NON scritto'}"
+        return error
 
-    def _persist_db_emergency_marker(self, *, active: bool, reason: str = "") -> str:
+    _SAFETY_JOURNAL_SUFFIX = ".safety_pending.json"
+
+    def _safety_journal_path(self) -> str:
+        return SafetyStateOwner.journal_path(self)
+
+    def _durable_save_settings(self, data: dict) -> str:
+        """M151 (I8): salva e RILEGGE; '' se ogni chiave e' sul db identica, altrimenti l'errore. Mai raise. Una
+        scrittura durevole delle chiavi dell'emergenza ne toglie le copie dal giornale di sicurezza. M153: dal
+        proprietario, sotto il suo lock."""
+        return RuntimeController._owner(self).durable_save(
+            self, data, drop=lambda keys: RuntimeController._drop_safety_journal(self, keys))
+
+    def _read_safety_journal(self) -> Optional[dict]:
+        """{} se assente; None se presente ma illeggibile (fail-closed per il chiamante). M153: istantanea del
+        proprietario (formato precedente a chiavi sparse letto come stato)."""
+        return RuntimeController._owner(self).journal_read(self)
+
+    def _journal_safety_state(self, payload: dict) -> bool:
+        """M151/M152 + M153 (CX-M1): stato non durevole nel giornale, scritto SOLO dal proprietario sotto il suo lock
+        (istantanea con `seq`, mai riscritto se illeggibile)."""
+        return RuntimeController._owner(self).journal_merge(
+            self, payload, reader=lambda: RuntimeController._read_safety_journal(self))
+
+    def _drop_safety_journal(self, keys) -> bool:
+        """M153 (C02): chiavi tolte dal giornale SOLO dal proprietario sotto il suo lock: una rimozione non cancella mai
+        un Emergency Stop riscritto nel frattempo."""
+        return RuntimeController._owner(self).journal_drop(
+            self, keys, reader=lambda: RuntimeController._read_safety_journal(self))
+
+    def _persist_db_emergency_marker(self, *, active: bool, reason: str = "", live_exposure: bool = False,
+                                     scope: Optional[str] = None, es_seq: Optional[int] = None) -> str:
         """Scrive SOLO su db il marker di emergenza (senza mutare lo stato
         in-memory), cosi' il successivo emergency_stop esegue comunque il
         lockdown completo. Usato per persistere DUREVOLMENTE un breach daily-loss
         PRIMA dell'I/O di rete del bankroll-sync: se il processo muore mentre
         get_account_funds() e' lento/bloccato in quella finestra, il reload
         fail-closed al riavvio ricarica l'emergenza (lo stato monitor/risk-desk
-        in-memory andrebbe perso). Ritorna '' o l'errore (mai raise)."""
+        in-memory andrebbe perso). Ritorna '' o l'errore (mai raise).
+
+        M153 P7 (`withdraw_pending_es`, C13): la rimozione (`active=False`) si scrive SOLO sotto il lock del proprietario,
+        se nessun Emergency Stop e' attivo e nessuno e' stato dichiarato dopo l'apertura del settlement (`es_seq`
+        catturato all'apertura == `es_seq` del proprietario); altrimenti nessuna scrittura: un ES manuale dichiarato nel
+        frattempo non viene mai cancellato dal settlement. Senza `es_seq` la rimozione non si scrive (fail-closed)."""
         if not hasattr(self.db, "save_settings"):
             return "db_save_settings_unavailable"
+        if active and live_exposure:
+            RuntimeController._bind_live_account(self, scope)     # N6: conto del superamento, prima del marker
+        owner = RuntimeController._owner(self)
         try:
-            self.db.save_settings({
+            with owner.lock:
+                if not active and (self._emergency_stopped or es_seq is None or owner.es_seq != es_seq):
+                    logger.warning("M153 P7: rimozione del marker dell'ES non scritta (ES dichiarato nel frattempo)")
+                    return ""
+                return RuntimeController._write_db_emergency_marker(self, owner, active, reason, live_exposure)
+        except Exception as exc:
+            logger.exception("daily-loss: durable db emergency marker persist failed")
+            return str(exc)
+
+    def _write_db_emergency_marker(self, owner: SafetyStateOwner, active: bool, reason: str,
+                                   live_exposure: bool) -> str:
+        try:
+            owner.save(self, {
                 "emergency_stopped": "1" if active else "0",
                 "emergency_stopped_at": datetime.utcnow().isoformat() if active else self._emergency_stopped_at,
                 "emergency_reason": reason if active else self._emergency_reason,
+                # Ciclo 12: il marker di un superamento LIVE (o non verificabile) registra la sede LIVE anche col
+                # runtime in SIM, cosi' al riavvio la riconciliazione riguarda gli ordini LIVE (stessa causa di C1).
                 "emergency_settlement_source": (
-                    (getattr(self, "_settlement_source_before_emergency", "")
-                     or ("SIM" if self.simulation_mode else "LIVE")) if active
+                    ("LIVE" if live_exposure else (getattr(self, "_settlement_source_before_emergency", "")
+                                                   or ("SIM" if self.simulation_mode else "LIVE"))) if active
                     else getattr(self, "_settlement_source_before_emergency", "") or ""),
             })
             return ""
@@ -2252,7 +4578,7 @@ class RuntimeController:
             logger.exception("daily-loss: durable db emergency marker persist failed")
             return str(exc)
 
-    def emergency_stop(self, reason: str = "") -> dict:
+    def emergency_stop(self, reason: str = "", live_exposure: bool = False, scope: Optional[str] = None) -> dict:
         """
         Global emergency stop.
 
@@ -2269,19 +4595,44 @@ class RuntimeController:
         To resume trading after an emergency stop you MUST call reset_emergency()
         first, then start() again.
         """
+        # M153: dichiarazione sotto il lock FOGLIA del proprietario (stesso dominio di reset, registro e giornale)
+        with RuntimeController._owner(self).lock:
+            persist_error = RuntimeController._declare_emergency_locked(self, reason, live_exposure, scope)
+        return RuntimeController._emergency_stop_after_declare(self, persist_error)
+
+    def _declare_emergency_locked(self, reason: str, live_exposure: bool, scope: Optional[str]) -> str:
+        """M151 (K1): dichiarazione dell'Emergency Stop (flag, provenienza, conto, persistenza durevole) serializzata
+        col reset: memoria e disco non divergono mai per un interleaving ES || reset."""
         triggered_at = datetime.utcnow().isoformat()
-        self._emergency_stopped = True
-        self._emergency_stopped_at = triggered_at
-        self._emergency_reason = reason or "EMERGENCY_STOP"
         # PF-ALL-F027: da dove arrivano i settlement delle posizioni aperte prima del flip a SIM. Fissata PRIMA
         # del salvataggio, che la persiste col flag (Codex r4311806886: in sola memoria un riavvio la perdeva).
-        if not getattr(self, "_settlement_source_before_emergency", ""):
-            self._settlement_source_before_emergency = "SIM" if self.simulation_mode else "LIVE"
+        # C1 (Codex su 60c772fe): un'emergenza nata da un'esposizione LIVE (superamento di un ambito LIVE o non
+        # verificabile) agisce sulla sede LIVE QUALUNQUE sia la modalita' corrente del runtime: in SIM leggerebbe e
+        # cancellerebbe solo il broker simulato, lasciando aperti gli ordini LIVE. Conto LIVE irraggiungibile =>
+        # emergenza non risolta (`manual_action_required`), mai una cancellazione dichiarata riuscita.
+        source = str(getattr(self, "_settlement_source_before_emergency", "") or "")
+        if live_exposure:
+            source = "LIVE"
+        elif not source:
+            source = "SIM" if self.simulation_mode else "LIVE"
+        # N7: l'Emergency Stop cancella sempre gli ordini del bot. Solo in memoria (nessuna scrittura prima del flag
+        # dell'emergenza, che deve essere il primo salvataggio); dopo un riavvio con l'emergenza attiva la sola verifica
+        # salvata e' comunque ignorata (`_reconcile_restored_emergency`).
+        RuntimeController._owner(self).apply(
+            self, "declare_es", _emergency_stopped=True, _emergency_stopped_at=triggered_at,
+            _emergency_reason=reason or "EMERGENCY_STOP", _settlement_source_before_emergency=source,
+            _live_verify_only=False)
+        if self._settlement_source_before_emergency != "SIM":
+            # N6 (owner M134): l'emergenza LIVE e' legata al conto che l'ha generata (ambito del superamento, o il
+            # conto LIVE configurato), salvato PRIMA del flag: solo quel conto potra' certificarne la chiusura.
+            RuntimeController._bind_live_account(self, scope)
 
         # Persist SUBITO (prima del cancel): anche se il processo muore
         # durante il cancel-all, il riavvio riparte in emergenza.
-        persist_error = self._persist_emergency_state()
+        return self._persist_emergency_state()
 
+    def _emergency_stop_after_declare(self, persist_error: str) -> dict:
+        triggered_at = self._emergency_stopped_at
         # Hard-close live gate
         self.live_enabled = False
         
@@ -2309,7 +4660,11 @@ class RuntimeController:
         # Provenienza ignota (UNKNOWN, marker legacy ripristinato) = LIVE: fail-closed (Codex su c8338ef3).
         was_live = (getattr(self, "_settlement_source_before_emergency", "") or
                     ("SIM" if self.simulation_mode else "LIVE")) != "SIM"
-        sweep = self._emergency_cancel_and_verify(was_live=was_live)
+        if was_live:
+            # Codex P1 su b902eca3: nessuna verifica LIVE precedente vale per questo stop (lo sweep sotto la riscrive)
+            RuntimeController._invalidate_live_exposure(self, source="EMERGENCY_STOP")
+        with RuntimeController._live_sweep_lock(self):     # M115: mai in parallelo a riconciliazione/recovery
+            sweep = self._emergency_cancel_and_verify(was_live=was_live)
         cancel_errors.extend(sweep.pop("cancel_errors"))
         pending = sweep.pop("candidates")
         by_market = sweep.pop("markets")
@@ -2336,6 +4691,13 @@ class RuntimeController:
         if persist_error:
             # Stato d'emergenza non persistito: al riavvio il blocco potrebbe perdersi (Sol su c1db40c3).
             result["manual_action_required"] = True
+        if was_live:
+            RuntimeController._record_live_exposure(self, result, source="EMERGENCY_STOP")   # R1
+            if result.get("manual_action_required"):
+                # M115: esito LIVE non verificato o esposizione residua => riconciliazione ritentata nello stesso
+                # processo dal recovery dedicato (mai solo al riavvio o al prossimo evento)
+                RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
+                RuntimeController._ensure_live_recovery(self)
         if result.get("manual_action_required"):
             logger.critical("EMERGENCY STOP: INTERVENTO MANUALE RICHIESTO (verifica=%s, ordini ancora aperti=%d, "
                             "non attribuiti=%d, errori=%d)", result.get("verification"),
@@ -2416,7 +4778,8 @@ class RuntimeController:
                 out.append({"source": "orders", "order_id": str(item.get("id") or ""),
                             "market_id": str(payload.get("market_id") or payload.get("marketId") or "").strip(),
                             "bet_id": self.db._order_bet_id(response) if response else "",
-                            "customer_ref": ms_ref or str(item.get("customer_ref") or ""), "status": status})
+                            "customer_ref": ms_ref or str(item.get("customer_ref") or ""), "status": status,
+                            "protective": RuntimeController._is_protective_order(status, payload)})
         except Exception as exc:
             logger.exception("emergency_stop: lettura della tabella orders fallita")
             cancel_errors.append({"stage": "read_orders", "error": str(exc)})
@@ -2437,6 +4800,29 @@ class RuntimeController:
     # Rifiuto PRE-invio (TradingEngine: risk gate su una riga INFLIGHT mai trasmessa; la macchina a stati ammette DENIED
     # solo da INFLIGHT, mai da SUBMITTED o AMBIGUOUS). Chiuso solo senza alcuna traccia di trasmissione.
     _EMERGENCY_PRE_SEND_STATUSES = frozenset({"DENIED"})
+
+    @staticmethod
+    def _is_protective_order(status: str, payload: dict) -> bool:
+        """M151 (K3): copertura protettiva del cashout (hedge): riga HEDGE_PLACED o richiesta col ruolo HEDGE."""
+        payload = payload if isinstance(payload, dict) else {}
+        return (str(status or "").upper() == "HEDGE_PLACED" or str(payload.get("role") or "").upper() == "HEDGE"
+                or "HEDGE" in str(payload.get("order_origin") or "").upper())
+
+    def _hedge_guard_active(self) -> bool:
+        """M151 (owner, decisione 1) + M151-bis (CX-K1): protezione delle coperture attiva se e' attiva la sola verifica
+        LIVE (in memoria o salvata) o la protezione propria `_hedge_guard` (armata con la sola verifica, mai azzerata
+        dall'Emergency Stop, salvata con la sola verifica e con l'ES: una sola verifica non durevole non rende mai
+        cancellabile una copertura). Lettura fallita => attiva (fail-closed)."""
+        if self.__dict__.get("_live_verify_only") or self.__dict__.get("_hedge_guard"):
+            return True
+        try:
+            settings = self.db.get_settings() if hasattr(self.db, "get_settings") else {}
+            settings = settings or {}
+            return str(settings.get(RuntimeController._LIVE_VERIFY_ONLY_KEY) or "").strip() == "1" \
+                or str(settings.get(RuntimeController._HEDGE_GUARD_KEY) or "").strip() == "1"
+        except Exception:
+            logger.exception("M151: protezione delle coperture non verificabile (attiva, fail-closed)")
+            return True
 
     def _emergency_transmission_evidence(self, response) -> bool:
         """Traccia persistente che l'ordine possa essere arrivato all'exchange: betId, esito ignoto o ref Microstake."""
@@ -2595,6 +4981,14 @@ class RuntimeController:
         return self._emergency_call(client.cancel_orders, **kwargs)
 
     @staticmethod
+    def _order_limit_price(order: dict):
+        """Quota limite di un ordine Betfair (`priceSize.price` o `price`); None se assente."""
+        price = order.get("price")
+        if price is None and isinstance(order.get("priceSize"), dict):
+            price = order["priceSize"].get("price")
+        return price
+
+    @staticmethod
     def _exchange_open(order: dict) -> bool:
         try:
             remaining = float(order.get("sizeRemaining") or 0.0)
@@ -2602,7 +4996,7 @@ class RuntimeController:
             remaining = 0.0
         return str(order.get("status") or "").upper() == "EXECUTABLE" and remaining > 0.0
 
-    def _emergency_cancel_and_verify(self, *, was_live: bool) -> dict:
+    def _emergency_cancel_and_verify(self, *, was_live: bool, cancel: bool = True) -> dict:
         """Cancel-all verificato (P0 AUD-BF-016).
 
         1. candidati locali (`orders` + `order_saga`) e fotografia dell'exchange PRIMA (tutti i mercati);
@@ -2624,6 +5018,30 @@ class RuntimeController:
         except Exception as exc:
             logger.warning("emergency_stop: client %s non disponibile: %s", venue, exc)
             cancel_errors.append({"stage": "get_client", "venue": venue, "error": str(exc)})
+        read_scope, mismatch = "", None
+        if was_live:
+            # M154-bis + CX-N1 (P2): l'identita' della verifica e' quella ATTESTATA dallo STESSO client che legge e
+            # cancella, presa qui prima di ogni lettura e ricontrollata dopo; mai quella connessa alla fine. Client
+            # senza identita' attestata o diversa dall'autorizzata => nessuna lettura ne' cancellazione (fail-closed).
+            read_scope, identity_error = RuntimeController._live_identity_check(self, client)
+            if identity_error:
+                authorized, _err = RuntimeController._authorized_live_identity(self)
+                mismatch = {"required_accounts": [financial_scope.runtime_scope(simulated=False, live_account=authorized)]
+                            if authorized else [], "connected_account": read_scope, "error": identity_error}
+            else:
+                mismatch = RuntimeController._live_account_mismatch(self, read_scope)
+        if mismatch is not None:
+            # N6 (owner M134): il conto connesso non e' quello che ha generato lo stop. Nessuna lettura ne'
+            # cancellazione qui (B non certifica A, e non si toccano ordini di un altro conto alla cieca): esposizione
+            # irrisolta, intervento manuale; si riprende quando il conto originario torna connesso.
+            logger.critical("N6: conto LIVE connesso diverso da quello dello stop (%s): nessuna verifica",
+                            mismatch.get("required_accounts"))
+            return {"client": None, "candidates": candidates, "markets": {}, "cancel_results": [],
+                    "cancelled_count": 0, "error_count": 0, "cancel_errors": cancel_errors, "venue": venue,
+                    "verification": "ACCOUNT_MISMATCH", "verification_errors": [dict(mismatch)],
+                    "order_outcomes": [], "open_after_cancel": [], "unattributed_open_orders": [],
+                    "matched_positions": [], "unresolved_submissions": [], "authority_lost": [],
+                    "account_mismatch": dict(mismatch), "manual_action_required": True, "read_scope": read_scope}
 
         candidate_bets = {c["bet_id"] for c in candidates if c["bet_id"]}
         known_bets = candidate_bets | exposure_bets   # identita' del bot; gli esiti per ordine restano sui candidati
@@ -2661,16 +5079,31 @@ class RuntimeController:
 
         cancel_results, cancelled_count, error_count = [], 0, 0
         blind = before is None           # exchange illeggibile: si cancellano solo i betId noti del bot (Sol su 7094b1a6)
+        # M151 (owner, decisione 1; K3): con la protezione delle coperture attiva (sola verifica LIVE corrente, salvata o
+        # vincolata all'ES) nessuno sweep cancella una COPERTURA PROTETTIVA, di qualunque conto; gli ingressi del bot
+        # si cancellano come prima. Le coperture restano esposizione aperta da riconciliare (intervento manuale).
+        protected_bets: set = set()
+        if was_live and RuntimeController._hedge_guard_active(self):
+            protected_refs = {c["customer_ref"] for c in candidates if c.get("protective") and c["customer_ref"]}
+            protected_bets = {c["bet_id"] for c in candidates if c.get("protective") and c["bet_id"]}
+            for o in before or []:
+                if str(o.get("customerOrderRef") or o.get("customer_ref") or "") in protected_refs:
+                    protected_bets.add(str(o.get("betId") or o.get("bet_id") or ""))
+            protected_bets.discard("")
+            for mid in list(targets):
+                targets[mid] = [b for b in targets[mid] if b not in protected_bets]
         if markets and client is None:
             cancel_errors.append({"stage": "cancel", "venue": venue, "error": "client non disponibile"})
             error_count = sum(max(1, len(v)) for v in markets.values())
-        elif client is not None:
+        elif client is not None and cancel:
+            # N7: `cancel=False` = sola verifica (RISK_STOP col runtime LIVE: la chiusura la fa il CASHOUT_ALL, uno
+            # sweep che cancellasse ne annullerebbe le coperture non ancora abbinate)
             for market_id, orders in markets.items():
                 # Exchange illeggibile: mai il cancel dell'intero mercato, che toccherebbe ordini manuali o di altri
                 # programmi; si cancellano i betId del bot noti nel ledger, il resto (invii senza betId) resta
                 # all'operatore come invio irrisolto, con esito UNVERIFIED (Sol su 7094b1a6).
-                bet_ids = (sorted({o["bet_id"] for o in orders if o["bet_id"]}) if blind
-                           else targets.get(market_id, []))
+                bet_ids = (sorted({o["bet_id"] for o in orders if o["bet_id"] and o["bet_id"] not in protected_bets})
+                           if blind else targets.get(market_id, []))
                 if bet_ids == []:
                     continue             # nessun betId del bot da cancellare su questo mercato: solo verifica
                 market_block = self._authority_definitively_lost()   # Sol su 9a80162: prima di ogni mercato
@@ -2748,15 +5181,20 @@ class RuntimeController:
             return str(o.get("betId") or "") in known_bets or str(o.get("betId") or "") in bot_remote or \
                 bool(ref and ref in known_refs)
         # Dopo il cancel contano gli ordini del BOT ancora aperti; quelli estranei restano in `unattributed`.
+        # R1 liability (owner): lato e quota limite per la liability della parte ancora eseguibile
         open_after = [{"bet_id": str(o.get("betId") or ""), "market_id": str(o.get("marketId") or ""),
-                       "size_remaining": o.get("sizeRemaining")}
+                       "size_remaining": o.get("sizeRemaining"), "side": o.get("side"),
+                       "price": RuntimeController._order_limit_price(o)}
                       for o in (after or []) if self._exchange_open(o) and _is_bot(o)]
         # Ordini non attribuibili sullo stato FINALE quando c'e' (Sol su d85a62ff): uno comparso dopo la prima
         # fotografia non sfugge all'operatore. Anche a lettura iniziale fallita: non sono stati cancellati
         # (nessun cancel di mercato, Sol su 7094b1a6) e restano all'operatore.
         if after is not None:
             unattributed = [{"bet_id": str(o.get("betId") or ""), "market_id": str(o.get("marketId") or ""),
-                             "size_remaining": o.get("sizeRemaining")}
+                             "size_remaining": o.get("sizeRemaining"), "side": o.get("side"),
+                             "price": RuntimeController._order_limit_price(o),
+                             "size_matched": o.get("sizeMatched"),
+                             "average_price_matched": o.get("averagePriceMatched")}
                             for o in after if self._exchange_open(o) and not _is_bot(o)]
         open_after_ids = {o["bet_id"] for o in open_after}
 
@@ -2788,6 +5226,27 @@ class RuntimeController:
                                           "size_matched": matched,
                                           "average_price_matched": pre.get("averagePriceMatched")})
             outcomes.append({"bet_id": bid, "outcome": outcome})
+        # N3 (owner M136, P1): una posizione ESTRANEA gia' interamente abbinata (non piu' eseguibile) resta
+        # un'esposizione LIVE. Si elenca con origine ESTRANEA e si conta nella liability (solo visibilita': mai nel P&L
+        # o nel bankroll del bot), senza cancellarla ne' coprirla. Un estraneo ancora eseguibile e' gia' in
+        # `unattributed` (residuo e abbinato nella stessa voce): mai contato due volte. Abbinato illeggibile => voce
+        # con importo non verificabile (liability SCONOSCIUTA), mai esclusa.
+        for o in (after or []):
+            if _is_bot(o) or self._exchange_open(o):
+                continue
+            raw_matched = o.get("sizeMatched")
+            try:
+                foreign_matched = float(raw_matched)
+            except (TypeError, ValueError):
+                foreign_matched = None
+            if foreign_matched is not None and math.isfinite(foreign_matched) and foreign_matched <= 0.0:
+                continue                      # nessuna parte abbinata: ordine estraneo chiuso senza esposizione
+            matched_positions.append({"bet_id": str(o.get("betId") or ""), "market_id": str(o.get("marketId") or ""),
+                                      "selection_id": o.get("selectionId"), "side": o.get("side"),
+                                      "size_matched": foreign_matched if foreign_matched is not None
+                                      and math.isfinite(foreign_matched) else None,
+                                      "origin": "ESTRANEA",
+                                      "average_price_matched": o.get("averagePriceMatched")})
         by_ref = {str(o.get("customerOrderRef") or ""): str(o.get("betId") or "")
                   for o in list(bot_remote.values()) + list(final_bot.values()) if o.get("customerOrderRef")}
         bets_by_ref: dict = {}
@@ -2832,7 +5291,13 @@ class RuntimeController:
             verification = "SUBMISSIONS_UNRESOLVED"
         else:
             verification = "VERIFIED"
-        return {
+        identity_changed = was_live and not RuntimeController._read_identity_unchanged(self, client, read_scope)
+        if identity_changed:
+            # CX-N1: l'identita' del client che ha letto, o quella connessa, e' cambiata durante lo sweep: l'esito non
+            # e' attribuibile a nessun conto (nessuna certificazione), intervento manuale
+            logger.critical("M154: identita' LIVE cambiata durante lo sweep: esito non attribuito")
+            verification = "IDENTITY_CHANGED"
+        result = {
             "client": client, "candidates": candidates, "markets": markets, "cancel_results": cancel_results,
             "cancelled_count": cancelled_count, "error_count": error_count, "cancel_errors": cancel_errors,
             "venue": venue, "verification": verification, "verification_errors": verification_errors,
@@ -2842,23 +5307,169 @@ class RuntimeController:
             # Perdita dell'autorita' durante l'arresto: incidente distinto, registrato anche se la lettura finale mostra
             # gli ordini cancellati, e mai compatibile con VERIFIED (direttiva owner PF-OWNER-ESTOP-B5-BATCH-AUDIT).
             "authority_lost": [e for e in cancel_errors if e.get("stage") == "runtime_authority"],
-            "manual_action_required": verification != "VERIFIED" or bool(unattributed),
+            # Codex P1 su afbd5c89: la cancellazione non chiude una posizione abbinata => resta all'operatore
+            "manual_action_required": verification != "VERIFIED" or bool(unattributed) or bool(matched_positions),
+            "read_scope": read_scope, "identity_changed": bool(identity_changed),
         }
+        if was_live:
+            RuntimeController._settle_live_account(self, result)     # N6: stato del conto verificato
+        return result
+
+    def _live_obligation_recorded(self) -> bool:
+        """M149 (C): evidenza durevole di un obbligo LIVE dell'Emergency Stop, nessuna fonte nuova: la sede salvata nello
+        stesso salvataggio del flag dell'ES (`emergency_settlement_source`, PF-ALL-F027) oppure, per gli ES salvati
+        prima, l'esito LIVE irrisolto su disco. Lettura fallita => obbligo presunto (fail-closed). Mai raise."""
+        try:
+            if str(self.__dict__.get("_settlement_source_before_emergency") or "").upper() == "LIVE":
+                return True
+            settings = self.db.get_settings() if hasattr(self.db, "get_settings") else {}
+            if str((settings or {}).get("emergency_settlement_source") or "").strip().upper() == "LIVE":
+                return True
+            record = RuntimeController._live_exposure_record_now(self)
+            return bool(record) and not record.get("resolved")
+        except Exception:
+            logger.exception("M149: obbligo LIVE dell'Emergency Stop non verificabile (fail-closed)")
+            return True
 
     def reset_emergency(self) -> dict:
         """
         Clear the emergency-stopped flag so the runtime can be restarted.
         Does NOT restart the runtime — call start() after this.
+
+        M147 (owner, R6): rifiutato finche' un conto LIVE del registro e' PENDING o il registro e' illeggibile
+        (`esposizione_live_irrisolta`, con i conti in sospeso). M147-D1: se resta un RISK_STOP globale, le
+        verifiche dei conti e l'esito LIVE verificato NON si cancellano (servono a quello stop).
         """
-        self._emergency_stopped = False
-        self._emergency_stopped_at = ""
-        self._emergency_reason = ""
-        self._settlement_source_before_emergency = ""
-        with self._daily_loss_stop_lock:
-            self._daily_loss_pending_stop = False
-        persist_error = self._persist_emergency_state()
+        # M151 (K1, I8): serializzato con la dichiarazione dell'Emergency Stop; dichiarato riuscito SOLO se lo stato
+        # azzerato e' riletto dal db. Reset non durevole => l'ES resta (in memoria e su disco), esito False.
+        # M153 (P1, P6, CX-M2, C12): precondizioni e scrittura in UNA sezione critica del proprietario; il reset tocca
+        # SOLO l'Emergency Stop: mai la barriera di sessione C3 ne' il pending-stop giornaliero (si tolgono nel
+        # settlement che li ha armati). Senza ES: nessuna scrittura, esito esatto di sempre.
+        not_ready = RuntimeController._owner_not_ready(self)
+        if not_ready:
+            return {"emergency_reset": False, "reason": not_ready, "persist_error": ""}
+        with RuntimeController._owner(self).lock:
+            out = RuntimeController._reset_emergency_locked(self)
+        if not out.get("emergency_reset"):
+            return out
+        risk_reason = str(self.__dict__.get("_risk_stop_reason") or "")
+        if not (risk_reason and not RuntimeController._risk_stop_scope(risk_reason)):
+            RuntimeController._clear_resolved_live_exposure(self)     # Codex P1 su b902eca3
         self.bus.publish("EMERGENCY_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
-        return {"emergency_reset": True, "persist_error": persist_error}
+        return out
+
+    def _reset_emergency_locked(self) -> dict:
+        if not self._emergency_stopped:
+            # M153 (C04/C12): nessun Emergency Stop attivo => nessuna scrittura (ne' sul db, dove un marker pre-sync di un
+            # settlement in corso deve restare, ne' sulle barriere); esito identico a quello di sempre
+            return {"emergency_reset": True, "persist_error": ""}
+        accounts = RuntimeController._live_bound_accounts(self)
+        pending = sorted(k for k, v in (accounts or {}).items() if v != "VERIFIED") if accounts is not None else ["?"]
+        # M151-bis (CX-K2): un obbligo LIVE in sospeso (non ancora scritto nel registro) e' sempre irrisolto
+        pending = sorted(set(pending) | set(self.__dict__.get("_pending_live_bindings") or {}))
+        state = RuntimeController._live_exposure_status(self).get("state")
+        # obbligo LIVE dei CONTI INTERESSATI (R6): un conto del registro ancora PENDING, o il registro illeggibile
+        # (sentinella PENDING / lettura fallita). Un Emergency Stop senza conti registrati si toglie come prima (R10)
+        if self._emergency_stopped and pending:
+            logger.critical("M147: reset dell'Emergency Stop rifiutato: esposizione LIVE irrisolta (%s, %s)",
+                            state, pending)
+            return {"emergency_reset": False, "reason": "esposizione_live_irrisolta", "accounts_pending": pending,
+                    "exposure_state": state}
+        # M149 (owner, C): un obbligo LIVE ha sempre almeno una voce nel registro (conto reale o sentinella). Registro
+        # vuoto con un ES LIVE (fonte durevole salvata col flag dell'ES) o con un esito LIVE irrisolto su disco =
+        # incoerenza => fail-closed, mai «nessun vincolo». Un ES solo SIM non ha obbligo LIVE: si toglie come prima.
+        if self._emergency_stopped and accounts is not None and not accounts \
+                and RuntimeController._live_obligation_recorded(self):
+            logger.critical("M149: reset dell'Emergency Stop rifiutato: obbligo LIVE con registro dei conti vuoto")
+            return {"emergency_reset": False, "reason": "registro_incoerente_obbligo_live", "accounts_pending": [],
+                    "exposure_state": state}
+        identity_block = RuntimeController._live_reset_identity_blocker(self, accounts) \
+            if self._emergency_stopped else ""
+        if identity_block:
+            logger.critical("M154: reset dell'Emergency Stop rifiutato: %s", identity_block)
+            return {"emergency_reset": False, "reason": identity_block, "accounts_pending": [],
+                    "exposure_state": state}
+        cleared = {"emergency_stopped": "0", "emergency_stopped_at": "", "emergency_reason": "",
+                   "emergency_settlement_source": ""}
+        error = RuntimeController._durable_save_settings(self, cleared) if hasattr(self.db, "save_settings") \
+            else "db_save_settings_unavailable"
+        if error:
+            if self._emergency_stopped:
+                # il db potrebbe essere stato scritto a meta': si ri-persiste lo stato attivo (giornale se serve)
+                RuntimeController._persist_emergency_state(self)
+            logger.critical("M151: reset dell'Emergency Stop NON durevole (%s): l'Emergency Stop resta", error)
+            return {"emergency_reset": False, "reason": "reset_non_durevole", "persist_error": error,
+                    "exposure_state": state}
+        RuntimeController._owner(self).apply(self, "reset_es", _emergency_stopped=False, _emergency_stopped_at="",
+                                             _emergency_reason="", _settlement_source_before_emergency="")
+        return {"emergency_reset": True, "persist_error": ""}
+
+    @staticmethod
+    def _settlement_realization_unproven(effect: Optional[dict], pnl: float) -> bool:
+        """Stessa regola del blocco di realizzazione (#461 PR29-c): una consegna duplicata/non verificabile o
+        rielaborata non rientra nel realizzato se e' una vincita (una perdita si', fail-closed)."""
+        effect = effect or {}
+        replay = effect.get("outcome") in ("duplicate", "unverifiable") or bool(effect.get("replayed"))
+        return bool(replay) and not float(pnl) < 0.0
+
+    def _settlement_projections(self, pnl: float, attribution: dict) -> list:
+        """Proiezioni del settlement: ambito attribuito e, per una perdita non attribuibile, ogni ambito esistente
+        (Codex su d86404ef; stesso calcolo nel ramo recovery fail-closed, Sol su 8a6c4cbb)."""
+        projections = [self._projected_daily_loss_breach(pnl, attribution)]
+        if attribution.get("kind") == "unattributed_loss":
+            for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
+                if other != str(attribution["scope"]):
+                    projections.append(self._projected_daily_loss_breach(
+                        pnl, {"scope": other, "kind": "unattributed_loss"}))
+        return projections
+
+    def _register_live_breaches(self, states: list, pnl: float = 0.0, source: str = "settlement") -> None:
+        """M147 (owner, registro unico dei superamenti LIVE): ogni ambito LIVE (o non verificabile) che OGGI ha superato
+        il limite giornaliero entra nel registro dei conti, QUALUNQUE sia lo stato degli stop (Emergency Stop o
+        RISK_STOP gia' attivi compresi): un superamento non e' mai nascosto da uno stop preesistente di un altro conto.
+        Superamento nuovo (chiave idempotente per giorno e ambito) => conto PENDING, esito LIVE precedente invalidato,
+        riconciliazione in attesa: la verifica di un conto non certifica mai un altro. Mai raise."""
+        try:
+            today = datetime.utcnow().date().isoformat()
+            nuovi = False
+            for state in states or []:
+                scope = str((state or {}).get("financial_scope") or "")
+                if not ((state or {}).get("breached") is True and str(state.get("day_utc") or "") == today
+                        and financial_scope.escalates_globally(scope)):
+                    continue
+                before = dict(RuntimeController._live_bound_accounts(self) or {})
+                bound = RuntimeController._bind_live_account(self, scope, breach={
+                    "key": f"daily|{scope}|{today}", "kind": "daily",
+                    "limit": self._safe_daily_loss_threshold(),
+                    "loss": float(state.get("daily_loss_amount", 0.0) or 0.0),
+                    "risk_session_id": str((self.__dict__.get("_risk_session") or {}).get("id") or ""),
+                    "source": source})
+                if bound and (bound not in before or before.get(bound) != "PENDING"):
+                    nuovi = True
+            if nuovi:
+                RuntimeController._invalidate_live_exposure(self, source="SUPERAMENTO_LIVE_REGISTRATO")
+                RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
+                RuntimeController._ensure_live_recovery(self)
+        except Exception:
+            logger.exception("M147: superamento LIVE non registrato (fail-closed: il blocco resta)")
+
+    def _escalate_stopped_live_breach(self, states: list) -> None:
+        """PR-04a (Codex su 8a6c4cbb): un settlement che fa superare il limite a un ambito LIVE (o non verificabile)
+        mentre il runtime e' fermo (STOPPED/LOCKDOWN: l'enforce non scatta) arma comunque l'Emergency Stop globale
+        DUREVOLE, come il ramo recovery fail-closed: un avvio successivo in SIM o con un altro conto non riapre gli
+        ingressi. Un superamento SIM resta locale. Solo dal percorso del settlement (mai da una lettura di stato)."""
+        if self._emergency_stopped or self.mode in (RuntimeMode.ACTIVE, RuntimeMode.PAUSED):
+            return
+        for state in states:
+            if state.get("breached") and financial_scope.escalates_globally(str(state.get("financial_scope") or "")):
+                amount = float(state.get("daily_loss_amount", 0.0) or 0.0)
+                with self._daily_loss_stop_lock:
+                    if not self._emergency_stopped:
+                        logger.critical("DAILY_LOSS_BREACH (runtime fermo) -> emergency_stop (%s, %s)",
+                                        state.get("financial_scope"), amount)
+                        self.emergency_stop(reason=f"DAILY_LOSS_BREACH_STOPPED:{amount}", live_exposure=True,
+                                            scope=str(state.get("financial_scope") or ""))
+                return
 
     def _enforce_daily_loss_hard_stop(self, breach_state: dict) -> bool:
         """Kill-switch SINCRONO da perdita giornaliera. Ritorna True se lo stop
@@ -2881,6 +5492,11 @@ class RuntimeController:
           atomico)."""
         if not breach_state.get("breached"):
             return False
+        # PR-04a (PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116): il superamento di una SIM verificata resta locale
+        # (blocco dei soli ingressi di quell'ambito, `_limits_block_reason`): nessuna emergenza, nessuna cancellazione
+        # di ordini LIVE, nessun LOCKDOWN globale. LIVE o ambito non verificabile => Emergency Stop globale.
+        if not financial_scope.escalates_globally(str(breach_state.get("financial_scope") or "")):
+            return False
         # Ferma se il runtime GESTISCE posizioni live (ACTIVE o PAUSED): un
         # settlement che sfonda il limite mentre si e' in pausa e' un evento
         # reale e deve hard-stoppare (impedendo anche un resume() successivo).
@@ -2897,7 +5513,8 @@ class RuntimeController:
                 "DAILY_LOSS_BREACH -> emergency_stop (daily_loss_amount=%s)",
                 amount,
             )
-            self.emergency_stop(reason=f"DAILY_LOSS_BREACH:{amount}")
+            self.emergency_stop(reason=f"DAILY_LOSS_BREACH:{amount}", live_exposure=True,
+                                scope=str(breach_state.get("financial_scope") or ""))
             return True
 
     # =========================================================
@@ -2996,7 +5613,8 @@ class RuntimeController:
         live_readiness_ok: Optional[bool] = None,
     ) -> dict:
         self.reload_config(reset_session=True)
-        self._session_pnl_baseline = float(self.risk_desk.realized_pnl)
+        # F1 (owner M134): la sessione di rischio aperta riprende (mai azzerata da un riavvio o da stop/start)
+        RuntimeController._open_or_resume_risk_session(self)
         self._session_loss_alerted = False
         self.reset_risk_stop(at_start=True)  # P38: mai riapertura implicita
 
@@ -3030,7 +5648,8 @@ class RuntimeController:
         # impedisce che un start() successivo riprenda a fare trading live nello
         # stesso giorno. Il day-rollover del monitor azzera al nuovo giorno.
         if requested_execution_mode == "LIVE":
-            daily_loss_start = self._monitor_daily_loss_breach(source="RUNTIME_START")
+            daily_loss_start = self._monitor_daily_loss_breach(
+                source="RUNTIME_START", scope=RuntimeController._financial_scope_for(self, False))
             if daily_loss_start.get("breached"):
                 # Sincronizza lo stato a SIMULATION: stop() flippa solo `mode`,
                 # quindi senza questo il controller resterebbe live-capable
@@ -3254,7 +5873,8 @@ class RuntimeController:
 
         status = self.get_status()
         self.bus.publish("RUNTIME_STARTED", status)
-        if getattr(self, "_risk_stop_reason", "") and not self._daily_loss_entry_blocked():  # P38: ritenta dopo riavvio
+        if (getattr(self, "_risk_stop_reason", "") and not self._daily_loss_entry_blocked()
+                and RuntimeController._risk_stop_applies(self)):  # P38: ritenta dopo riavvio; PR-04a: solo nel suo ambito
             self._route_cashout_signal(stop_rules.cashout_all_signal(self._risk_stop_reason))
 
         return {
@@ -3412,6 +6032,9 @@ class RuntimeController:
         fermo, LOCKDOWN del runtime o del desk), anche con l'autorizzazione tecnica ancora valida. M65: ``request`` (la richiesta al punto
         d'invio) porta la sessione d'ammissione annotata dal controllo del fence: diversa dalla corrente => negato, anche
         per un invio eseguito in ritardo dall'esecutore dopo STOP -> START."""
+        not_ready = RuntimeController._owner_not_ready(self)          # M153 P8: ricostruzione all'avvio in corso
+        if not_ready:
+            return not_ready
         with RuntimeController._drawdown_eval_lock:
             stop = RuntimeController._hard_stop(self)
             if not stop.state_reliable():
@@ -3435,6 +6058,19 @@ class RuntimeController:
             if (isinstance(request, dict) and "admission_session" in request
                     and request.get("admission_session") != RuntimeController._entry_session(self)):
                 return "ingresso_di_sessione_precedente"
+            # PR-04a (Codex su c5dd0bab): lo stop locale della perdita giornaliera dell'ambito corrente vale anche per
+            # gli ingressi gia' in coda; per la SIM resta locale (nessuna emergenza globale ripristinata qui).
+            scope_reason = RuntimeController._scope_daily_loss_block_reason(self)
+            if scope_reason:
+                return scope_reason
+            # M154-bis: nessun ingresso LIVE parte se il client connesso non e' l'identita' attestata autorizzata (solo
+            # confronto qui: l'associazione avviene all'ammissione o nello sweep, mai sotto `_drawdown_eval_lock`)
+            identity_reason = RuntimeController._live_identity_block_reason(self, associate=False)
+            if identity_reason:
+                return identity_reason
+            # C3 (Codex su 60c772fe): perdita di sessione globale in attesa dello stop (finestra del sync)
+            if self.__dict__.get("_session_loss_pending_global"):
+                return "session_loss_breached:in_attesa_dello_stop_globale"
             # Ciclo 26 (PF-OWNER-PR631-C26-ZERO-FAILCLOSED-20261116, Sol su 7852e457): l'ultima lettura del conto
             # applicata decide anche per gli ingressi gia' in coda. Contratto Phase 2 (`_apply_funds_reading`): lettura
             # non valida (C), disponibile 0 verificato senza impegnato (B, patrimonio zero) o con impegnato (A) => cassa
@@ -4370,6 +7006,7 @@ class RuntimeController:
             })
 
     def _on_signal_received(self, signal: dict) -> None:
+        RuntimeController._reconcile_restored_emergency(self, trigger="signal")   # ciclo 12: ritento, no-op se nulla
         signal_type = str((signal or {}).get("signal_type") or "").strip().upper()
         if signal_type in {"CASHOUT", "CASHOUT_ALL"}:
             with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
@@ -5394,6 +8031,11 @@ class RuntimeController:
         # identita'. Stesso messaggio riconsegnato = stesso ref = doppione
         # bloccato. Due messaggi dal contenuto identico nella stessa chat sono
         # trattati come lo stesso intento (fail-closed: mai una puntata doppia).
+        # PR-04a: ambito finanziario dell'ingresso, persistito con la request (F018 lo ricostruisce dopo un riavvio)
+        payload["financial_scope"] = RuntimeController._current_financial_scope(self)
+        # F1 (owner M134): sessione di rischio dell'ingresso, persistita con la request: il suo settlement tardivo torna
+        # alla sessione d'origine anche dopo che e' stata chiusa
+        payload["risk_session_id"] = str((self.__dict__.get("_risk_session") or {}).get("id") or "")
         payload["customer_ref"] = resolve_customer_ref(
             signal_upstream_customer_ref(signal),
             "sig",
@@ -5453,6 +8095,10 @@ class RuntimeController:
                 "price": payload["price"],
                 "simulation_mode": payload["simulation_mode"],
                 "customer_ref": payload["customer_ref"],          # #461 PR28-e: correlazione esito-riserva
+                # PR-04a: ambito finanziario della scommessa, per attribuirle il P&L del suo settlement
+                # (modalita' del runtime: e' quella del servizio Betfair che esegue l'ordine)
+                "financial_scope": payload["financial_scope"],
+                "risk_session_id": payload["risk_session_id"],      # F1: sessione di rischio della scommessa
             },
         )
         # #461 PR29-c: l'identita' della riserva viaggia con la request (persistita in `orders`): dopo un riavvio
@@ -5875,7 +8521,8 @@ class RuntimeController:
                 # event_id/event_identity (#505): identita' dell'evento per il cap evento dopo il riavvio;
                 # assenti negli ordini salvati prima => None, resta il confronto per nome.
                 "meta": {k: p.get(k) for k in ("event_name", "event_id", "event_identity", "market_name",
-                                               "runner_name", "bet_type", "price", "simulation_mode")},
+                                               "runner_name", "bet_type", "price", "simulation_mode",
+                                               "financial_scope", "risk_session_id")},  # PR-04a/F1: assente => legacy
             }
             # #461 PR29-c: il tavolo ricostruito porta l'identita' della riserva (intento e riserva persistiti),
             # cosi' il settlement della sua bet lo riconosce dopo il riavvio.
@@ -6174,8 +8821,21 @@ class RuntimeController:
             return {"outcome": "unverifiable", "applied": False, "realized_already": False}
         upgrade = existing is not None and str(existing.get("outcome") or "") == "held"
         if existing is not None and not upgrade:
-            return {"outcome": "duplicate", "applied": False,
-                    "realized_already": bool(existing.get("realized_applied"))}
+            out = {"outcome": "duplicate", "applied": False,
+                   "realized_already": bool(existing.get("realized_applied"))}
+            out["customer_ref"] = str(existing.get("customer_ref") or "")      # F1: sessione di rischio della bet
+            if not out["realized_already"] and str(existing.get("customer_ref") or ""):
+                # Codex P1 su b902eca3: rilascio gia' registrato ma P&L non applicato (crash fra i due). La riserva non
+                # c'e' piu' (F018 la esclude, nessun hint): l'ambito si recupera dall'identita' registrata nell'effetto
+                # (request persistita in `orders`), '' => quarantena; mai l'ambito corrente per supposizione.
+                try:
+                    out["financial_scope"] = RuntimeController._settled_bet_scope(
+                        self, int(existing.get("table_id") or 0), str(existing.get("event_key") or ""),
+                        str(existing.get("customer_ref") or ""))
+                except Exception:
+                    logger.exception("Settlement %s: ambito della scommessa non recuperabile (quarantena)", key)
+                    out["financial_scope"] = ""
+            return out
         why: list = []
         owner = self._resolve_settlement_reservation(payload, table_id=table_id, why=why)
         if upgrade:
@@ -6197,6 +8857,11 @@ class RuntimeController:
         record.update(owner)
         tm = self.table_manager
         tid, ev, ref = int(owner["table_id"]), owner["event_key"], owner["customer_ref"]
+        bet_scope = RuntimeController._settled_bet_scope(self, tid, ev, ref)
+        bet_table = self.table_manager.get_table(int(tid))
+        bet_session = (str(((bet_table.meta if bet_table else None) or {}).get("risk_session_id") or "")
+                       if bet_table is not None and bet_table.current_event_key == str(ev or "")
+                       and str(((bet_table.meta or {}).get("customer_ref")) or "") == str(ref or "") else "")
         with tm.locked():
             snapshot = tm.snapshot_table(tid)
             try:
@@ -6250,8 +8915,32 @@ class RuntimeController:
                     " (riconciliato da held)" if upgrade else "")
         if upgrade:
             return {"outcome": outcome, "applied": True, "replayed": True,
-                    "realized_already": bool(existing.get("realized_applied"))}
-        return {"outcome": outcome, "applied": True, "realized_already": False}
+                    "realized_already": bool(existing.get("realized_applied")), "financial_scope": bet_scope,
+                    "customer_ref": ref, "risk_session_id": bet_session}
+        return {"outcome": outcome, "applied": True, "realized_already": False, "financial_scope": bet_scope,
+                "customer_ref": ref, "risk_session_id": bet_session}
+
+    def _settled_bet_scope(self, table_id: int, event_key: str, customer_ref: str) -> str:
+        """PR-04a (Codex su 38979e59): ambito della scommessa REGOLATA, mai dell'occupante attuale del tavolo. Dal tavolo
+        solo se porta ancora la stessa riserva (evento + customer_ref); altrimenti dalla request persistita in
+        ``orders``; '' (=> quarantena, origine non verificabile) se l'identita' non e' recuperabile."""
+        table = self.table_manager.get_table(int(table_id))
+        meta = (table.meta if table else None) or {}
+        if (table is not None and table.current_event_key == str(event_key or "")
+                and str(meta.get("customer_ref") or "") == str(customer_ref or "")):
+            return str(meta.get("financial_scope") or "")
+        ref = str(customer_ref or "")
+        if not ref:
+            return ""
+        try:
+            rows = self.db._execute("SELECT payload_json FROM orders WHERE customer_ref = ? ORDER BY id DESC",
+                                    (ref,), fetch=True, commit=False) or []
+            scopes = {str((json.loads(dict(r).get("payload_json") or "{}") or {}).get("financial_scope") or "")
+                      for r in rows}
+        except Exception:
+            logger.warning("PR-04a: ambito dell'ordine %s non leggibile (quarantena)", ref, exc_info=True)
+            return ""
+        return scopes.pop() if len(scopes) == 1 else ""
 
     def _reconcile_held_after_rebuild(self, rebuild: dict) -> dict:
         """#461 PR29-c, all'avvio e alla ripresa: tavoli ricostruiti (F018 riuscito) => i settlement trattenuti si
@@ -6348,7 +9037,7 @@ class RuntimeController:
         return self._build_bankroll_sync_key(payload or {})
 
     #: Lock di riserva per i RuntimeController costruiti senza `__init__` (doppi di test).
-    _fallback_settlement_lock = threading.RLock()
+    _fallback_settlement_lock = TrackedLock("settlement_consumer", threading.RLock())
 
     def _settlement_consumer_lock(self):
         """#461 PR29-c: i settlement di questo processo si consumano uno alla volta (esito equivalente a una
@@ -6930,20 +9619,131 @@ class RuntimeController:
             return {"env": "LIVE", "account": RuntimeController._live_account_identity(self)}
         return {"env": "UNTAGGED", "account": "untagged"}
 
-    def _live_account_identity(self) -> str:
-        """Identita' stabile del conto Betfair LIVE: hash dello username di login del client connesso (o della
-        configurazione Betfair). '' se non determinabile con certezza (fail-closed a valle)."""
-        service = getattr(self, "betfair_service", None)
-        username = getattr(getattr(service, "client", None), "username", None)
-        if not (isinstance(username, str) and username.strip()):
-            try:
-                username = getattr(service.settings_service.load_betfair_config(), "username", None)
-            except Exception:
-                username = None
+    _NO_CLIENT = object()
+
+    @staticmethod
+    def _identity_hash(username: Any) -> str:
+        """Identita' stabile di uno username Betfair: `betfair:<sha256(username normalizzato)[:24]>`, mai il nome in
+        chiaro. '' se lo username non e' una stringa non vuota."""
         if not (isinstance(username, str) and username.strip()):
             return ""
         digest = hashlib.sha256(username.strip().lower().encode("utf-8")).hexdigest()
         return f"betfair:{digest[:24]}"
+
+    def _live_account_identity(self, client: Any = _NO_CLIENT) -> str:
+        """M154-bis (owner, single-account): identita' ATTESTATA del client LIVE (di default quello connesso), letta
+        SOLO da `client.authenticated_identity()` (username del login Betfair riuscito di quella sessione). Nessun
+        ripiego su `client.username` (input di configurazione) ne' sulla configurazione: senza una sessione provata
+        l'identita' e' '' (non verificabile, fail-closed a valle). Mai raise."""
+        if client is RuntimeController._NO_CLIENT:
+            client = getattr(getattr(self, "betfair_service", None), "client", None)
+        attest = getattr(client, "authenticated_identity", None)
+        if not callable(attest):
+            return ""
+        try:
+            return RuntimeController._identity_hash(attest())
+        except Exception:
+            logger.exception("M154: identita' attestata del client LIVE non leggibile (fail-closed)")
+            return ""
+
+    # M154-bis (owner, single-account): UN solo conto Betfair per installazione. Identita' autorizzata = hash dello
+    # username configurato, associato UNA volta all'identita' attestata dal primo login LIVE riuscito; mai riscritta.
+    _AUTHORIZED_IDENTITY_KEY = "betfair_authorized_identity"
+    _IDENTITY_FORMAT = re.compile(r"^betfair:[0-9a-f]{24}$")
+
+    def _configured_betfair_username(self) -> str:
+        """Username Betfair CONFIGURATO (servizio Betfair, poi impostazioni del runtime). '' se non leggibile."""
+        for owner in (getattr(getattr(self, "betfair_service", None), "settings_service", None),
+                      getattr(self, "settings_service", None)):
+            loader = getattr(owner, "load_betfair_config", None)
+            if not callable(loader):
+                continue
+            try:
+                cfg = loader()
+            except Exception:
+                logger.exception("M154: configurazione Betfair non leggibile")
+                continue
+            username = cfg.get("username") if isinstance(cfg, dict) else getattr(cfg, "username", None)
+            if isinstance(username, str) and username.strip():
+                return username
+        return ""
+
+    def _authorized_live_identity(self) -> tuple:
+        """M154-bis: (identita' autorizzata, errore). ('', '') = nessuna associazione ancora; valore presente ma non
+        valido o db illeggibile => errore (fail-closed, mai riscritto). Mai raise."""
+        try:
+            settings = self.db.get_settings() if hasattr(self.db, "get_settings") else None
+            if not isinstance(settings, dict):
+                raise OSError("impostazioni non leggibili")
+        except Exception:
+            logger.exception("M154: identita' autorizzata non leggibile (fail-closed)")
+            return "", "identita_autorizzata_illeggibile"
+        raw = settings.get(RuntimeController._AUTHORIZED_IDENTITY_KEY)
+        value = str(raw or "").strip()
+        if not value:
+            return "", ""
+        if not RuntimeController._IDENTITY_FORMAT.match(value):
+            logger.critical("M154: identita' autorizzata corrotta: LIVE bloccato (procedura dell'operatore)")
+            return "", "identita_autorizzata_illeggibile"
+        return value, ""
+
+    def _associate_live_identity(self, attested: str) -> tuple:
+        """M154-bis, prima connessione LIVE verificata: associa l'identita' attestata come autorizzata SOLO se
+        coincide con lo username configurato e il registro dei conti LIVE non contiene un conto reale diverso; salvata
+        e riletta. Mai sovrascritta (rilettura sotto il lock del registro). (identita', errore). Mai raise."""
+        try:
+            with RuntimeController._owner(self).lock:
+                current, error = RuntimeController._authorized_live_identity(self)
+                if error or current:
+                    return current, error
+                configured = RuntimeController._identity_hash(RuntimeController._configured_betfair_username(self))
+                if not configured:
+                    return "", "username_configurato_assente"
+                if configured != attested:
+                    return "", "identita_diversa_dalla_configurata"
+                accounts = RuntimeController._live_bound_accounts(self)
+                if accounts is None or RuntimeController._LIVE_ACCOUNTS_UNREADABLE in accounts:
+                    return "", "registro_conti_illeggibile"
+                own = financial_scope.runtime_scope(simulated=False, live_account=attested)
+                others = sorted(k for k in accounts if k != own and "<" not in financial_scope.parts(k)[2])
+                if others:
+                    logger.critical("M154: il registro contiene conti LIVE diversi: nessuna associazione automatica "
+                                    "(procedura dell'operatore)")
+                    return "", "registro_con_altri_conti"
+                RuntimeController._owner(self).save(self, {RuntimeController._AUTHORIZED_IDENTITY_KEY: attested})
+                saved, error = RuntimeController._authorized_live_identity(self)
+                if error or saved != attested:
+                    return "", error or "identita_autorizzata_non_salvata"
+                logger.warning("M154: conto Betfair autorizzato associato alla prima connessione LIVE verificata")
+                return saved, ""
+        except Exception:
+            logger.exception("M154: associazione dell'identita' autorizzata fallita (fail-closed)")
+            return "", "identita_autorizzata_non_salvata"
+
+    def _live_identity_check(self, client: Any = _NO_CLIENT, associate: bool = True) -> tuple:
+        """M154-bis: (ambito LIVE attestato del client, errore). Errore se il client non ha un'identita' attestata o se
+        l'identita' attestata non e' quella autorizzata (o non associabile). Mai raise."""
+        attested = RuntimeController._live_account_identity(self, client)
+        scope = financial_scope.runtime_scope(simulated=False, live_account=attested) if attested else ""
+        if not attested:
+            return scope, "identita_non_attestata"
+        authorized, error = RuntimeController._authorized_live_identity(self)
+        if not error and not authorized and associate:
+            authorized, error = RuntimeController._associate_live_identity(self, attested)
+        if error:
+            return scope, error
+        if not authorized:
+            return scope, "identita_non_associata"
+        if authorized != attested:
+            return scope, "identita_non_autorizzata"
+        return scope, ""
+
+    def _live_identity_block_reason(self, associate: bool = True) -> str:
+        """M154-bis: gate d'ingresso LIVE. '' in SIM o con l'identita' attestata = autorizzata; altrimenti il motivo."""
+        if bool(getattr(self, "simulation_mode", False)):
+            return ""
+        _scope, error = RuntimeController._live_identity_check(self, associate=associate)
+        return f"live_identity:{error}" if error else ""
 
     def _declare_drawdown_scope(self, funds: Any) -> Optional[dict]:
         """S18-1: dichiara all'hard-stop l'ambito della lettura appena fatta (per i gate d'ingresso); lo restituisce per
@@ -7386,6 +10186,7 @@ class RuntimeController:
         monotonic d'inizio della lettura (#461 PR28-e: le riserve confermate a mercato dopo restano pendenti)."""
         account = self._account_from_funds(funds)
         account["source"] = source
+        account["financial_scope"] = RuntimeController._financial_scope_of_funds(self, funds)   # PR-04a
         if isinstance(funds, dict) and funds.get("error"):
             # #461 PR28-e: errore del servizio (lettura fallita, campo mancante): lo snapshot lo conserva e il gate
             # dei fondi dell'auto-next lo tratta come fondi non verificabili.
@@ -7416,7 +10217,9 @@ class RuntimeController:
         account = self._account_from_funds(funds)
         baseline = float(account["cash_equity"]) if account["ok"] and account["cash_equity"] > 0.0 else None
         return {"baseline": baseline, "reason": str(reason), "set_at": datetime.utcnow().isoformat(),
-                "set_at_ts": float(set_at_ts) if set_at_ts is not None else time.time()}
+                "set_at_ts": float(set_at_ts) if set_at_ts is not None else time.time(),
+                # PR-04a: la baseline vale solo nell'ambito finanziario del conto su cui e' stata letta
+                "financial_scope": RuntimeController._financial_scope_of_funds(self, funds)}
 
     def _start_expansion_cycle(self, reason: str, funds: Any = None, *, set_at_ts: Optional[float] = None) -> bool:
         """F032 (decisione owner): baseline del ciclo = equita' di cassa REGOLATA (disponibile + impegnato,
@@ -7433,12 +10236,14 @@ class RuntimeController:
             logger.error("F032: baseline del ciclo non persistita (%s): nessuna espansione", exc)
             baseline = None
         self._expansion_baseline = baseline
+        self._expansion_baseline_scope = state.get("financial_scope")
         return baseline is not None
 
     def _load_expansion_baseline(self) -> bool:
         """F032: la baseline persistita sopravvive al riavvio. Assente => False (il chiamante apre il ciclo);
         illeggibile => nessuna baseline (nessuna espansione) finche' una transizione esplicita non la fissa."""
         self._expansion_baseline = None
+        self._expansion_baseline_scope = None
         try:
             raw = (self.db.get_settings() or {}).get(self._EXPANSION_KEY)
         except Exception as exc:
@@ -7468,6 +10273,8 @@ class RuntimeController:
             self._expansion_baseline = None
             return True
         self._expansion_baseline = value if value is not None and value > 0.0 else None
+        # PR-04a: baseline senza ambito (legacy) => ambito ignoto => nessuna espansione finche' un nuovo ciclo non la fissa
+        self._expansion_baseline_scope = parsed.get("financial_scope") if isinstance(parsed, dict) else None
         return True
 
     _CYCLE_RESET_KEY = "roserpina.cycle_reset_state"
@@ -7496,6 +10303,11 @@ class RuntimeController:
         baseline = getattr(self, "_expansion_baseline", None)
         account = getattr(self, "_account_snapshot", None) or {}
         if baseline is None or baseline <= 0.0 or not account.get("ok"):
+            return None
+        # PR-04a: crescita solo nello STESSO ambito finanziario verificato della baseline (mai la baseline SIM per il
+        # LIVE, mai quella di un altro conto); senza baseline verificabile dell'ambito, nessun aumento di stake.
+        base_scope = str(getattr(self, "_expansion_baseline_scope", None) or "")
+        if not financial_scope.is_verified(base_scope) or str(account.get("financial_scope") or "") != base_scope:
             return None
         if self._uncertain_reservations_map():
             return None
@@ -7676,6 +10488,7 @@ class RuntimeController:
         self._pending_cycle_reset = None                                    # reset (se c'era) ora durevole
         if context.get("expansion_state") is not None:
             self._expansion_baseline = context["expansion_state"].get("baseline")
+            self._expansion_baseline_scope = context["expansion_state"].get("financial_scope")
 
     def _recovery_persist_aborted(self, context: dict, exc: Exception) -> None:
         logger.error("RSR-12: stato dei tavoli di recovery non persistito (%s)", exc)
@@ -8415,6 +11228,7 @@ class RuntimeController:
         economico (tavolo, recovery, chiave, P&L realizzato) si applica una sola volta per ``settlement_key``."""
         if not isinstance(payload, dict):
             return
+        RuntimeController._reconcile_restored_emergency(self, trigger="settlement")   # ciclo 12: ritento
         with self._settlement_consumer_lock():
             self._on_close_position_locked(payload)
 
@@ -8478,6 +11292,7 @@ class RuntimeController:
             return
 
         settlement_key = self._settlement_effect_key(payload)
+        scope_hint = RuntimeController._reservation_scope_hint(self, payload)   # PR-04a: prima del rilascio
         # PF-ALL-F026 / F2 / #461 PR29-c: effetto sul tavolo della riserva identificata, una sola volta.
         effect = self._release_settled_tables(payload, table_id=table_id, pnl=pnl, settlement_key=settlement_key)
         # #461 PR29-c: un settlement senza effetto non cambia i tavoli: si riscrive lo stato solo per ritentare una
@@ -8526,14 +11341,24 @@ class RuntimeController:
             # sfonderebbe comunque il limite giornaliero si hard-stoppa lo stesso
             # (proiezione read-only). Un eventuale falso positivo da duplicato e'
             # piu' sicuro di un kill-switch mancato.
-            projected_recovery = self._projected_daily_loss_breach(pnl)
+            recovery_projections = RuntimeController._settlement_projections(
+                self, pnl, RuntimeController._settlement_attribution(self, pnl, effect, payload, scope_hint))
+            breached_projections = [pr for pr in recovery_projections if pr.get("breached")]
+            # prima un superamento che sale al globale, se c'e' (Sol su 8a6c4cbb: anche negli altri ambiti)
+            breached_projections.sort(key=lambda pr: not financial_scope.escalates_globally(
+                str(pr.get("financial_scope") or "")))
+            projected_recovery = breached_projections[0] if breached_projections else recovery_projections[0]
+            for other_projection in breached_projections[1:]:
+                self._record_pending_daily_loss_breach(other_projection)
             stopped = self._enforce_daily_loss_hard_stop(projected_recovery)
             if projected_recovery.get("breached"):
                 # Persisti il breach nello stato del monitor (in-memory) cosi' un
                 # successivo start()/resume() in LIVE lo rifiuta ed emette il
                 # primo TRIGGERED.
                 self._record_pending_daily_loss_breach(projected_recovery)
-                if not stopped and not self._emergency_stopped:
+                if (not stopped and not self._emergency_stopped
+                        and financial_scope.escalates_globally(str(projected_recovery.get("financial_scope") or ""))):
+                    # PR-04a: solo LIVE / ambito non verificabile (una SIM resta locale).
                     # Se il runtime e' STOPPED l'enforce non ferma (gate
                     # ACTIVE/PAUSED) e il solo stato monitor in-memory andrebbe
                     # perso a un riavvio prima di start()/resume(), riaprendo il
@@ -8541,7 +11366,8 @@ class RuntimeController:
                     # breach REALE settlement-driven: emergency_stop DUREVOLE
                     # (persist su db, ricaricato fail-closed al riavvio).
                     amount = float(projected_recovery.get("daily_loss_amount", 0.0) or 0.0)
-                    self.emergency_stop(reason=f"DAILY_LOSS_BREACH_RECOVERY_FAILCLOSED:{amount}")
+                    self.emergency_stop(reason=f"DAILY_LOSS_BREACH_RECOVERY_FAILCLOSED:{amount}", live_exposure=True,
+                                        scope=str(projected_recovery.get("financial_scope") or ""))
             fail_result = self._build_fail_closed_recovery_result(payload=payload, probe=recovery_probe)
             sync_result = {
                 "correlation_id": str(payload.get("correlation_id") or payload.get("event_key") or ""),
@@ -8575,22 +11401,92 @@ class RuntimeController:
         # ogni SIGNAL_RECEIVED concorrente (dispatch multi-worker) e' rifiutato,
         # chiudendo la finestra tra apply-PnL e emergency_stop in cui altrimenti
         # vedrebbe _emergency_stopped ancora False e piazzerebbe un ordine.
-        projected_close = self._projected_daily_loss_breach(pnl)
-        arm_pending = bool(projected_close.get("breached")) and self.mode in (
+        RuntimeController._ensure_risk_session_durable(self)        # F1: prima di ogni effetto del settlement
+        attribution = RuntimeController._settlement_attribution(self, pnl, effect, payload, scope_hint)
+        attribution["risk_session_id"] = RuntimeController._settlement_risk_session(self, effect, payload)
+        # Codex su d86404ef: la perdita non attribuibile conta per ogni ambito esistente: si proietta su tutti, cosi'
+        # le barriere (globale o locale SIM) sono armate prima dell'I/O del sync anche per gli altri ambiti.
+        projections = RuntimeController._settlement_projections(self, pnl, attribution)
+        projected_close = projections[0]
+        # PR-04a: il pending-stop (globale) si arma solo se il superamento sale all'Emergency Stop globale
+        will_realize = bool(
+            settlement_key and settlement_key not in self._processed_realized_pnl_keys
+            and not effect.get("realized_already")
+            and not RuntimeController._settlement_realization_unproven(effect, pnl))
+        # R2 (owner, ciclo 12): un settlement gia' contabilizzato non si somma di nuovo alla perdita proiettata; il
+        # pending-stop e il suo marker durevole (che scrive il motivo dell'emergenza) nascono solo per un settlement
+        # che verra' davvero realizzato, come `stopped_marker` (prima una riconsegna scriveva 35+15=50 nel motivo).
+        arm_pending = will_realize and any(bool(pr.get("breached")) and financial_scope.escalates_globally(
+            str(pr.get("financial_scope") or "")) for pr in projections) and self.mode in (
             RuntimeMode.ACTIVE,
             RuntimeMode.PAUSED,
         )
+        # Sol su 3c1ff9e4: a runtime fermo (STOPPED/LOCKDOWN) un superamento che sale al globale si rende durevole come
+        # emergenza (marker) PRIMA di salvare lo stato: un crash fra le due scritture riapre in emergenza, mai con il
+        # solo superamento registrato. Rimosso sotto se l'emergenza non subentra.
+        # M153 P7: dichiarazioni dell'ES viste all'apertura di questo settlement (la rimozione del marker pre-sync non
+        # cancella mai un ES dichiarato dopo)
+        es_seq_open = RuntimeController._owner(self).es_seq
+        stopped_marker = bool(will_realize and not self._emergency_stopped and self.mode not in (
+            RuntimeMode.ACTIVE, RuntimeMode.PAUSED) and any(
+            bool(pr.get("breached")) and financial_scope.escalates_globally(str(pr.get("financial_scope") or ""))
+            for pr in projections))
+        if arm_pending or stopped_marker:
+            projected_close = next(pr for pr in projections if pr.get("breached") and financial_scope.escalates_globally(
+                str(pr.get("financial_scope") or "")))
+        if stopped_marker:
+            self._persist_db_emergency_marker(
+                active=True, reason=f"DAILY_LOSS_BREACH_PENDING:{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}",
+                live_exposure=True, scope=str(projected_close.get("financial_scope") or ""))
+        # Codex su 1587e3cf: superamento SIM proiettato => barriera d'ingresso LOCALE (solo quell'ambito) prima
+        # dell'I/O del sync, senza pending-stop ne' marker globali; si toglie quando lo stato breached e' scritto.
+        local_pending = {str(pr["financial_scope"]) for pr in projections
+                         if pr.get("breached") and not financial_scope.escalates_globally(
+                             str(pr.get("financial_scope") or ""))}
+        if local_pending:
+            with self._daily_loss_stop_lock:
+                self.__dict__.setdefault("_daily_loss_scope_pending", set()).update(local_pending)
+            # Sol su b02ebcf0: il superamento SIM proiettato si registra e si salva PRIMA dell'I/O del sync (blocco SIM
+            # durevole anche con un crash nel sync), senza pending-stop ne' marker globali.
+            # Codex su 3c1ff9e4: solo per un settlement che verra' davvero realizzato (stesso predicato del sotto),
+            # mai per una consegna gia' realizzata (un duplicato non crea uno stop giornaliero).
+            for pr in projections:
+                if will_realize and str(pr.get("financial_scope") or "") in local_pending:
+                    self._record_pending_daily_loss_breach(pr)
         if arm_pending:
             with self._daily_loss_stop_lock:
-                self._daily_loss_pending_stop = True
+                RuntimeController._owner(self).apply(self, "daily_pending_stop", _daily_loss_pending_stop=True)
             # Persisti DUREVOLMENTE il breach su db PRIMA dell'I/O di rete del
             # sync (il pending-stop e' solo in-memory): se il processo muore
             # mentre get_account_funds() e' lento/bloccato, al riavvio il reload
             # fail-closed ricarica l'emergenza invece di perdere l'hard-stop.
             # NON muta _emergency_stopped in-memory, cosi' il sync usa ancora il
             # client live e l'emergency_stop sotto esegue il lockdown completo.
-            self._persist_db_emergency_marker(active=True, reason=f"DAILY_LOSS_BREACH_PENDING:{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}")
+            self._persist_db_emergency_marker(active=True, reason=f"DAILY_LOSS_BREACH_PENDING:{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}",
+                live_exposure=True, scope=str(projected_close.get("financial_scope") or ""))
         realized_now = False
+        settlement_completed = False
+        session_pending = False
+        session_reason, session_scope = (RuntimeController._projected_session_breach(self, pnl, attribution)
+                                         if will_realize else ("", ""))
+        if session_reason:
+            # S-a/S-b (Sol su b643d348): barriera d'ingresso globale armata SOTTO LOCK prima che il P&L diventi visibile
+            # (letta da ammissione e controllo finale d'invio) e decisione di stop resa durevole PRIMA della chiave del
+            # settlement: un crash in qualunque punto successivo ripristina lo stop globale al riavvio.
+            with self._daily_loss_stop_lock:
+                RuntimeController._owner(self).apply(self, "session_barrier", _session_loss_pending_global=True)
+            session_pending = True
+            try:
+                RuntimeController._owner(self).save(self, {RuntimeController._SESSION_STOP_MARKER: json.dumps(
+                    {"reason": session_reason, "scope": session_scope, "at": datetime.utcnow().isoformat(),
+                     # M146 (CX-H1): modalita' dello sweep LIVE dello stop, ricostruibile anche se il processo muore
+                     # prima di salvarla (runtime LIVE => sola verifica)
+                     "runtime_live": not bool(getattr(self, "simulation_mode", False))})})
+            except Exception:
+                # Codex P1 su b902eca3: senza marker la decisione di stop deve diventare durevole PRIMA del P&L e della
+                # chiave del settlement, altrimenti un crash lascerebbe il settlement registrato senza stop obbligatorio.
+                logger.exception("S-b: marker dello stop di sessione non salvato: RISK_STOP globale persistito subito")
+                RuntimeController._persist_session_stop_now(self, session_reason, session_scope)
         try:
             # #461 PR29-c: P&L realizzato una sola volta per settlement, nel processo (set in memoria, sotto il lock
             # del consumer) e dopo un riavvio (flag `realized_applied` del registro). Quando la registrazione non e'
@@ -8602,7 +11498,7 @@ class RuntimeController:
                         and float(pnl) >= 0.0)
             if (settlement_key and settlement_key not in self._processed_realized_pnl_keys
                     and not effect.get("realized_already") and not unproven):
-                self._apply_realized_pnl_without_mutating_bankroll(pnl)
+                RuntimeController._apply_and_attribute_realized_pnl(self, pnl, attribution, settlement_key)
                 self._processed_realized_pnl_keys.add(settlement_key)
                 realized_now = True
             # Bankroll sync PRIMA dell'enforce: emergency_stop flippa il service a
@@ -8627,22 +11523,153 @@ class RuntimeController:
             # Daily-loss hard stop SINCRONO (persist + cancel-all + lockdown) dopo
             # il sync ma PRIMA dell'auto-trade: l'auto-trade sotto e' bloccato da
             # _risk_allows_auto_trade e nessun ordine parte dopo il breach.
-            daily_loss_state = self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload)
+            # Sol su b02ebcf0: per una perdita non attribuibile ambito attribuito e altri ambiti si aggiornano senza
+            # salvare, poi UN SOLO salvataggio del libro (mai quarantena aggiornata con un ambito ancora vecchio).
+            shared_loss = bool(realized_now and attribution.get("kind") == "unattributed_loss")
+            daily_loss_state = self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload,
+                                                               scope=str(attribution["scope"]),
+                                                               persist=not shared_loss)
+            # Codex su 1587e3cf: una perdita non attribuibile conta per OGNI ambito; ogni stato esistente la
+            # registra e la persiste PRIMA della marcatura del settlement (Sol su d86404ef: un crash fra le due
+            # scritture non deve lasciare un ambito senza la perdita; al riavvio la quarantena si combina col minimo).
+            touched = [str(attribution["scope"])]
+            other_states = []
+            if realized_now and attribution.get("kind") == "unattributed_loss":
+                for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
+                    if other != str(attribution["scope"]):
+                        touched.append(other)
+                        other_states.append(self._monitor_daily_loss_breach(
+                            source="RUNTIME_CLOSE_POSITION_UNATTRIBUTED", payload=payload, scope=other,
+                            persist=False))
+            if shared_loss:
+                with self._daily_loss_state_lock:
+                    RuntimeController._promote_settled_keys_locked(self, keys=(settlement_key,))
+                    RuntimeController._persist_daily_loss_book(self)
             if realized_now:
+                # Sol su 38979e59: l'escalation a runtime fermo (Emergency Stop durevole) PRIMA della marcatura: un
+                # crash fra le due puo' solo far riapplicare la perdita al riavvio (fail-closed), mai perdere lo stop.
+                # M147: superamenti LIVE nel registro unico PRIMA di ogni decisione condizionata dallo stato degli stop
+                RuntimeController._register_live_breaches(self, [daily_loss_state, *other_states], pnl)
+                RuntimeController._escalate_stopped_live_breach(self, [daily_loss_state, *other_states])
                 # Dopo il monitor della perdita giornaliera: un crash fra le due scritture puo' solo far contare
                 # la perdita di piu' dopo il riavvio (fail-closed), mai perderla.
                 self._mark_settlement_realized(settlement_key)
             self._enforce_daily_loss_hard_stop(daily_loss_state)
-            self._publish_session_loss_breach()
+            for state in other_states:
+                self._enforce_daily_loss_hard_stop(state)
+            for key in touched:   # Sol su d86404ef: perdita di sessione in ogni ambito interessato
+                self._publish_session_loss_breach(scope=key)
+            if realized_now:
+                late_reason, late_scope = RuntimeController._late_session_breach(self, pnl, attribution, applied=True)
+                if late_reason:
+                    # F1 (owner M134): perdita tardiva oltre il limite di una sessione precedente (o non attribuibile a
+                    # una sessione verificabile) => protezione PERSISTENTE sul conto interessato (LIVE: globale, legata
+                    # al conto; SIM: locale), senza attribuirla alla sessione nuova
+                    logger.critical("F1: %s (ambito %s)", late_reason, late_scope)
+                    self.risk_stop(late_reason, scope=late_scope or None)
+                RuntimeController._flush_archive_pending(self)     # G2: tardivi nell'archivio durevole
+            settlement_completed = True
         finally:
             # Disarma il bridge se NON e' subentrato l'emergency_stop definitivo
             # (es. il breach non si e' materializzato): evita un pending-stop
             # appiccicato che bloccherebbe i segnali leciti fino al reset, e
             # ripulisci il marker durevole speculativo scritto prima del sync.
-            if arm_pending and not self._emergency_stopped:
+            keep_global_marker = False
+            global_breach_marker = bool(arm_pending or stopped_marker)   # M115: marker scritto per un superamento
+            if not settlement_completed and realized_now and arm_pending:
+                # S1 (Sol su 60c772fe): superamento globale proiettato ed effetto gia' applicato e salvato, ma il
+                # settlement si e' interrotto prima dell'enforce: marker durevole e pending-stop RESTANO (al riavvio
+                # l'Emergency Stop si ripristina dal marker anche se la chiave salvata fa saltare la riconsegna).
+                keep_global_marker = True
+            if session_pending:
+                if (settlement_completed and RuntimeController._durable_global_stop_confirmed(self)
+                        and not self.__dict__.get("_live_binding_failed")         # CX-G1: anche il conto, durevole
+                        and not self.__dict__.get("_live_verify_only_failed")):  # M146: e la sola verifica
+                    try:                              # S-b: lo stop globale, RILETTO dal disco, e' durevole
+                        RuntimeController._owner(self).save(self, {RuntimeController._SESSION_STOP_MARKER: ""})
+                    except Exception:
+                        logger.exception("S-b: marker dello stop di sessione non rimosso (resta fail-closed)")
+                elif settlement_completed:
+                    # M130 N5 (invariante): settlement registrato ma nessuno stop globale riletto come durevole
+                    # (persistenza fallita con `False` o eccezione). Il marker resta: e' l'unica decisione durevole e al
+                    # riavvio ripristina lo stop; nel processo lo stop resta in memoria con la riconciliazione LIVE.
+                    logger.critical("S-b: stop di sessione non durevole dopo il settlement: marker conservato")
+                    with self._risk_stop_lock:
+                        current = self.__dict__.get("_risk_stop_reason") or ""
+                        if not current or RuntimeController._risk_stop_scope(current):
+                            RuntimeController._owner(self).apply(self, "set_risk_stop", _risk_stop_reason=session_reason)
+                    RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
+                    RuntimeController._ensure_live_recovery(self)
+                else:
+                    # interruzione: lo stop globale si ripristina SUBITO dal marker (persistito), con riconciliazione LIVE
+                    RuntimeController._restore_session_stop_marker(self)
+                    # M115: la riconciliazione LIVE parte ora, nello stesso processo (poi recovery dedicato se irrisolta)
+                    RuntimeController._reconcile_restored_emergency(self, trigger="settlement_interrotto")
                 with self._daily_loss_stop_lock:
-                    self._daily_loss_pending_stop = False
-                self._persist_db_emergency_marker(active=False)
+                    RuntimeController._owner(self).apply(self, "session_barrier", _session_loss_pending_global=False)
+            if (not settlement_completed and realized_now and attribution.get("kind") == "unattributed_loss"
+                    and settlement_key in (self.__dict__.get("_daily_loss_settle_staged") or {})):
+                # Interruzione dopo l'applicazione: l'effetto e' gia' in memoria; si completa il libro (tutti gli ambiti,
+                # quarantena e chiave insieme) per non lasciare i salvataggi rinviati. D su 4e1ff71b (M114): se un
+                # ambito LIVE (o non verificabile) risulta superato, il marker durevole dell'Emergency Stop scritto
+                # prima del sync RESTA (con il pending-stop armato): al riavvio l'emergenza globale si ripristina,
+                # perche' la chiave ormai salvata impedisce alla riconsegna di rifare l'escalation.
+                try:
+                    completed_states = []
+                    for other in list(self.__dict__.get("_daily_loss_scopes") or {}):
+                        completed_states.append(self._monitor_daily_loss_breach(
+                            source="RUNTIME_CLOSE_POSITION_UNATTRIBUTED", payload=payload, scope=other, persist=False))
+                    keep_global_marker = any(
+                        st.get("breached") and financial_scope.escalates_globally(str(st.get("financial_scope") or ""))
+                        for st in completed_states)
+                    if keep_global_marker and not (arm_pending or stopped_marker):
+                        for st in completed_states:          # N6: ogni conto LIVE superato resta vincolato
+                            if st.get("breached") and financial_scope.escalates_globally(
+                                    str(st.get("financial_scope") or "")):
+                                RuntimeController._bind_live_account(self, str(st.get("financial_scope") or ""))
+                        self._persist_db_emergency_marker(active=True, reason="DAILY_LOSS_BREACH_PENDING:interrotto",
+                                                          live_exposure=True)
+                    global_breach_marker = global_breach_marker or keep_global_marker
+                    with self._daily_loss_state_lock:
+                        RuntimeController._promote_settled_keys_locked(self, keys=(settlement_key,))
+                        RuntimeController._persist_daily_loss_book(self)
+                except Exception:
+                    # Sol su 4e1ff71b: anche il completamento e' fallito. La perdita non resta in attesa (rinvierebbe ogni
+                    # salvataggio successivo in silenzio): si toglie dall'attesa, il gate segnala lo stato non salvato
+                    # (nessun nuovo ingresso finche' un salvataggio riesce) e il marker globale resta (fail-closed).
+                    logger.exception("PR-04a: libro giornaliero non completato dopo l'interruzione del settlement")
+                    with self._daily_loss_state_lock:
+                        # S2 (Sol su 60c772fe): la chiave NON esce dall'attesa (un salvataggio successivo scriverebbe un
+                        # libro parziale: sottostima negli ambiti vecchi, doppio conteggio dopo la riconsegna). Il
+                        # prossimo salvataggio completa il libro (`_complete_pending_unattributed`) e solo allora scrive.
+                        self._daily_loss_full_refresh_key = settlement_key
+                        last = getattr(self, "_daily_loss_persisted", None)
+                        self._daily_loss_persisted = {loss_limits.PERSIST_FAILED_KEY: True,
+                                                      "seq": (last or {}).get("seq") if isinstance(last, dict) else None}
+                    keep_global_marker = True
+            if local_pending:
+                with self._daily_loss_stop_lock:
+                    self.__dict__.setdefault("_daily_loss_scope_pending", set()).difference_update(local_pending)
+            if arm_pending and not self._emergency_stopped and not keep_global_marker:
+                with self._daily_loss_stop_lock:
+                    RuntimeController._owner(self).apply(self, "daily_pending_stop", _daily_loss_pending_stop=False)
+                self._persist_db_emergency_marker(active=False, es_seq=es_seq_open)
+            elif stopped_marker and settlement_completed and not self._emergency_stopped:
+                # solo a settlement completato: un'interruzione a meta' lascia l'emergenza durevole (fail-closed)
+                self._persist_db_emergency_marker(active=False, es_seq=es_seq_open)
+            if not settlement_completed and realized_now and keep_global_marker and global_breach_marker:
+                # M115 (owner): il processo continua dopo l'errore. Si applica SUBITO lo stop che il riavvio ripristinerebbe
+                # dal marker, con la cancellazione verificata sulla sede LIVE; mai dipendere dal riavvio o da un evento.
+                RuntimeController._recover_interrupted_global_stop(
+                    self, "DAILY_LOSS_BREACH_INTERRUPTED:"
+                          f"{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}",
+                    scope=str(projected_close.get("financial_scope") or ""))
+            if arm_pending and self._emergency_stopped:
+                # M153 P6: il pending-stop giornaliero e' il ponte fino all'Emergency Stop; con l'ES attivo il blocco e'
+                # l'ES stesso. Si toglie QUI, nel settlement che l'ha armato, non piu' da reset_emergency() (C12): un reset
+                # concorrente nella finestra non riapre mai gli ingressi
+                with self._daily_loss_stop_lock:
+                    RuntimeController._owner(self).apply(self, "daily_pending_stop", _daily_loss_pending_stop=False)
         if unrecorded:
             # nessun ordine successivo su un settlement il cui effetto non e' registrato (fail-closed)
             auto_trade_result = {"auto_trade_status": "AUTO_TRADE_SKIPPED_EFFECT_UNRECORDED",
@@ -9446,6 +12473,8 @@ class RuntimeController:
                     "simulation_mode": bool(submit_payload.get("simulation_mode", self.simulation_mode)),
                     "auto_trade_source": submit_payload.get("auto_trade_source") or "",
                     "customer_ref": str(submit_payload.get("customer_ref") or ""),  # PR28-e: esito-riserva
+                    "financial_scope": submit_payload.setdefault(          # PR-04a, persistito con la request
+                        "financial_scope", RuntimeController._current_financial_scope(self)),
                 },
             )
             # #461 PR29-c (Codex su 29903af): il tavolo e la riserva dell'auto-next viaggiano con la request
@@ -9740,6 +12769,10 @@ class RuntimeController:
             "batch_id": str(normalized_signal.get("batch_id") or ""),
             "auto_trade_source": "settlement_mm_gate",
         }
+        session_id = str((self.__dict__.get("_risk_session") or {}).get("id") or "")
+        if session_id:
+            # M144 (radice di CX-E2): anche l'ingresso automatico porta la sua sessione di rischio nella request
+            payload["risk_session_id"] = session_id
         table_id = normalized_signal.get("table_id")
         if table_id is not None:
             payload["table_id"] = int(table_id)
@@ -9824,6 +12857,30 @@ class RuntimeController:
         data["auto_trade_mm"] = dict(self._last_auto_trade_result or {})
         data["cycle_executor"] = dict(self._last_cycle_executor_result or {})
         data["daily_loss_monitor"] = self._monitor_daily_loss_breach(source="RUNTIME_STATUS_SNAPSHOT")
+        # R1 (owner, ciclo 12): esposizione LIVE esplicita e persistente, distinta da `total_exposure` (tavoli locali)
+        data["live_exposure"] = RuntimeController._live_exposure_status(self)
+        try:
+            # M147: stato per conto del registro unico dei superamenti LIVE (osservabile pubblico)
+            accounts = RuntimeController._live_bound_accounts(self)
+            history = self.__dict__.get("_live_breaches") or {}
+            data["live_exposure"]["accounts"] = {
+                scope: {"state": state, "breaches": [dict(b) for b in history.get(scope) or []]}
+                for scope, state in sorted((accounts or {}).items())}
+            data["live_exposure"]["registry_not_durable"] = bool(self.__dict__.get("_live_binding_failed"))
+            if accounts is None:
+                data["live_exposure"]["registry_unreadable"] = True
+        except Exception:
+            logger.exception("M147: stato del registro dei conti non leggibile per get_status")
+        # R1: indicatori piatti per i consumatori che leggono solo il primo livello (headless, Control API, oracoli):
+        # vero finche' l'esposizione LIVE non e' NESSUNA/VERIFICATA (SCONOSCIUTA compresa, mai «nessun rischio»)
+        data["live_exposure_unresolved"] = data["live_exposure"]["state"] not in ("NESSUNA", "VERIFICATA")
+        data["live_exposure_manual_action_required"] = bool(data["live_exposure"]["manual_action_required"])
+        # PR-04a: stato per ambito finanziario (sola lettura), oltre alla vista dell'ambito corrente
+        data["daily_loss_scopes"] = {
+            str(k): {"day_utc": v.get("day_utc"), "daily_loss_amount": v.get("daily_loss_amount"),
+                     "breached": bool(v.get("breached")),
+                     "global_escalation": financial_scope.escalates_globally(str(k))}
+            for k, v in dict(self.__dict__.get("_daily_loss_scopes") or {}).items()}
         if self.streaming_feed is not None:
             try:
                 data["streaming_feed"] = self.streaming_feed.status()

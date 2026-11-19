@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import types
+
 import pytest
 
 from core.runtime_controller import RuntimeController
@@ -484,6 +486,8 @@ def test_gambe_dutching_winners_first_niente_kill_switch_transitorio():
             {"bet_id": "202", "market_id": "1.600", "event_name": "E"},
         ],
     )
+    # PR-04a: conto LIVE identificato; con un conto non identificabile la vincita non si accredita (fail-closed)
+    rc.betfair_service.client = types.SimpleNamespace(username="conto-poller@example.invalid")
 
     rc._poll_cleared_settlements()
 

@@ -42,6 +42,11 @@ class _FakeRuntimeReady:
         self.boot_flags.append(boot)
         return _status(True, [])
 
+    def _live_exposure_status(self):
+        # Contratto R1 (PR #638): il runtime reale espone lo stato dell'esposizione LIVE; qui nessuna esposizione.
+        # Un runtime che non lo espone rende il preflight NON PRONTO (fail-closed, test R1 in tests/d1).
+        return {"state": "NESSUNA", "amount": 0.0, "amount_display": "0.00", "manual_action_required": False}
+
 
 class _FakeRuntimeBlocked:
     def __init__(self, **kwargs):
