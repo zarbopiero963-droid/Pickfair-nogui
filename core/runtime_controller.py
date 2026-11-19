@@ -20,6 +20,7 @@ from typing import Any, Optional
 from core import financial_scope, liquidity, loss_limits, validators
 from core import risk_stop as stop_rules
 from core import risk_session_ledger
+from core.safety_state import SafetyStateOwner, TrackedLock, tracked as _tracked_lock
 from core.duplication_guard import DuplicationGuard
 from core.hedge_ref import is_hedge_order_ref
 from core.dutching_batch_manager import DutchingBatchManager
@@ -313,17 +314,18 @@ class RuntimeController:
         }
 
         # Emergency stop state — set by emergency_stop(), cleared only by reset_emergency()
-        self._emergency_stopped: bool = False
-        self._emergency_stopped_at: str = ""
-        self._emergency_reason: str = ""
+        # M153 (owner, opzione B): stato di sicurezza posseduto da SafetyStateOwner (core/safety_state.py), che nasce NON
+        # inizializzato (P8: ingressi, reset e sweep rifiutati) finche' la ricostruzione all'avvio non e' completa.
         # PF-ALL-F027: provenienza dei settlement prima del flip a SIM ("", "SIM", "LIVE", "UNKNOWN"); persistita
-        self._settlement_source_before_emergency: str = ""
+        SafetyStateOwner.install(self).apply(
+            self, "init", _emergency_stopped=False, _emergency_stopped_at="", _emergency_reason="",
+            _settlement_source_before_emergency="")
         # Mercati con un comando di cashout/hedge (registro durevole, verifica indipendente r4303297587)
         self._hedged_markets: dict = {}
         self._hedged_markets_unreliable: bool = False
         # Serializza il trigger della kill-switch da daily-loss: rende atomico
         # il check-and-stop dell'handler sotto dispatch EventBus concorrente.
-        self._daily_loss_stop_lock = threading.Lock()
+        self._daily_loss_stop_lock = TrackedLock("daily_loss_stop", threading.Lock())
         # Grace auto-green OPT-IN (G5): mappa chiave-target -> Timer in volo, per
         # sopprimere un secondo grace sullo stesso target (il dedup del bridge e'
         # 2.0s < grace 2.5s => non basta) E poter CANCELLARE i grace pendenti
@@ -342,7 +344,7 @@ class RuntimeController:
         # settlement che sfonderebbe il limite, cosi' un SIGNAL_RECEIVED
         # concorrente (dispatch multi-worker) non piazza un ordine nella finestra
         # tra apply-PnL e emergency_stop. Bridge: superato da _emergency_stopped.
-        self._daily_loss_pending_stop: bool = False
+        RuntimeController._owner(self).apply(self, "init", _daily_loss_pending_stop=False)
         # Serializza il read-modify-write su _daily_loss_monitor_state tra
         # _monitor_daily_loss_breach e _record_pending_daily_loss_breach (chiamati
         # da worker EventBus + status-poll concorrenti): senza, un update
@@ -350,7 +352,7 @@ class RuntimeController:
         # restart LIVE in giornata. Lock SEPARATO da _daily_loss_stop_lock per
         # evitare inversioni d'ordine (l'enforce tiene lo stop-lock e poi, via
         # emergency_stop->get_status, ricalcola il monitor).
-        self._daily_loss_state_lock = threading.Lock()
+        self._daily_loss_state_lock = TrackedLock("daily_loss_state", threading.Lock())
         self._io_observations: dict[str, Any] = {
             "last_operation": "",
             "last_status": "UNKNOWN",
@@ -364,7 +366,7 @@ class RuntimeController:
         self._processed_bankroll_sync_keys: set[str] = set()
         self._processed_realized_pnl_keys: set[str] = set()
         # #461 PR29-c: consumo seriale dei settlement nel processo (vedi `_settlement_consumer_lock`)
-        self._settlement_lock = threading.RLock()
+        self._settlement_lock = TrackedLock("settlement_consumer", threading.RLock())
         self._lifecycle_lock = threading.RLock()   # #461 PR29-c (Sol su e3fe4d7): start/stop serializzati
         self.runtime_authority: Optional[RuntimeAuthority] = None   # #536: lock OS + identita' file + lease/fencing
         self._authority_lost_reason = ""
@@ -441,8 +443,8 @@ class RuntimeController:
         }
         self._session_pnl_baseline: Optional[float] = None  # P37, da start()
         self._session_loss_alerted = False
-        self._risk_stop_lock = threading.RLock()  # P38: transizione + persistenza atomiche
-        self._risk_stop_reason = stop_rules.restore_risk_stop(self.db)
+        self._risk_stop_lock = TrackedLock("risk_stop", threading.RLock())  # P38: transizione + persistenza atomiche
+        RuntimeController._owner(self).apply(self, "init", _risk_stop_reason=stop_rules.restore_risk_stop(self.db))
         self._daily_loss_persisted = None
         RuntimeController._restore_daily_loss_book(self)  # F4, PR-04a: per ambito, legacy in quarantena
         # D-1 (P0): picco di cassa dell'hard-stop `max_drawdown_abs`, persistente e mai ribasato
@@ -463,6 +465,8 @@ class RuntimeController:
         RuntimeController._restore_session_stop_marker(self)        # S-b: stop di sessione rimasto in sospeso
         RuntimeController._restore_live_exposure_pending(self)      # Codex P1 su afbd5c89
         RuntimeController._restore_breached_live_scope_stop(self)   # M130 (matrice D): blocco dal libro superato
+        # M153 P8: ricostruzione completa => il proprietario e' inizializzato; solo ora ingressi, reset, sweep e recovery
+        RuntimeController._owner(self).mark_initialized()
         RuntimeController._reconcile_restored_emergency(self, trigger="startup")
 
     @property
@@ -1635,8 +1639,8 @@ class RuntimeController:
             reason = "session_loss_breached:sessione_di_rischio_illeggibile"
             with self._risk_stop_lock:
                 if not self._risk_stop_reason or RuntimeController._risk_stop_scope(self._risk_stop_reason):
-                    self._risk_stop_reason = reason
-                    stop_rules.persist_risk_stop(self.db, reason)
+                    RuntimeController._owner(self).apply(self, "set_risk_stop", _risk_stop_reason=reason)
+                    RuntimeController._owner(self).persist_risk_stop(self, reason)
             logger.critical("F1: sessione di rischio illeggibile: stop di sessione globale fino al reset esplicito")
 
     def _open_or_resume_risk_session(self) -> None:
@@ -2307,12 +2311,12 @@ class RuntimeController:
             with self._risk_stop_lock:
                 current = self._risk_stop_reason
                 if not current or RuntimeController._risk_stop_scope(current):   # vuoto o solo locale SIM
-                    self._risk_stop_reason = reason
+                    RuntimeController._owner(self).apply(self, "set_risk_stop", _risk_stop_reason=reason)
                 elif not RuntimeController._durable_global_stop_confirmed(self):
                     reason = current       # M130: uno stop globale solo IN MEMORIA si rende durevole, non si presume
                 if not RuntimeController._durable_global_stop_confirmed(self):
-                    stop_rules.persist_risk_stop(self.db, reason)
-            self._emergency_reconcile_pending = True
+                    RuntimeController._owner(self).persist_risk_stop(self, reason)
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
             if (not RuntimeController._durable_global_stop_confirmed(self) or self.__dict__.get("_live_binding_failed")
                     or self.__dict__.get("_live_verify_only_failed")):
                 # M130 (invariante): il marker si toglie SOLO con uno stop globale riletto come durevole; CX-G1: e col
@@ -2320,7 +2324,7 @@ class RuntimeController:
                 logger.critical("S-b: RISK_STOP di sessione o vincolo del conto non durevoli: marker conservato (%s)",
                                 reason)
                 return
-            self.db.save_settings({RuntimeController._SESSION_STOP_MARKER: ""})
+            RuntimeController._owner(self).save(self, {RuntimeController._SESSION_STOP_MARKER: ""})
             logger.critical("S-b: RISK_STOP di sessione ripristinato dal marker durevole (%s)", reason)
         except Exception:
             # M128 N2: impostazioni o marker non leggibili => stesso fail-closed: barriera globale (in memoria, e durevole
@@ -2330,11 +2334,11 @@ class RuntimeController:
                 with self._risk_stop_lock:
                     current = self.__dict__.get("_risk_stop_reason") or ""
                     if not current or RuntimeController._risk_stop_scope(current):
-                        self._risk_stop_reason = "session_loss_breached:marker_illeggibile"
-                        stop_rules.persist_risk_stop(self.db, self._risk_stop_reason)
+                        RuntimeController._owner(self).apply(self, "set_risk_stop", _risk_stop_reason="session_loss_breached:marker_illeggibile")
+                        RuntimeController._owner(self).persist_risk_stop(self, self._risk_stop_reason)
             except Exception:
                 logger.exception("S-b: RISK_STOP fail-closed non persistito (resta in memoria)")
-            self._emergency_reconcile_pending = True
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
 
     def _durable_global_stop_confirmed(self) -> bool:
         """M130 (invariante owner): True solo se una RILETTURA dal disco conferma uno stop globale durevole: RISK_STOP
@@ -2361,7 +2365,7 @@ class RuntimeController:
         try:
             current = self._risk_stop_reason
             if current and not RuntimeController._risk_stop_scope(current):
-                durable = bool(stop_rules.persist_risk_stop(self.db, current))   # gia' globale: riconferma
+                durable = bool(RuntimeController._owner(self).persist_risk_stop(self, current))   # gia' globale: riconferma
             else:
                 result = self.risk_stop(reason, scope=scope or None)
                 durable = bool(result.get("persisted"))
@@ -2396,7 +2400,8 @@ class RuntimeController:
         stopped = getattr(self, "_risk_stop_reason", "")
         if stopped and not RuntimeController._risk_stop_applies(self):
             stopped = ""                     # PR-04a: RISK_STOP di un altro ambito SIM, non di quello corrente
-        return (self._limits_block_reason() or (f"risk_stop_active:{stopped}" if stopped else "")
+        return (RuntimeController._owner_not_ready(self)
+                or self._limits_block_reason() or (f"risk_stop_active:{stopped}" if stopped else "")
                 or RuntimeController._live_identity_block_reason(self)
                 or self._recovery_persist_block_reason()
                 or RuntimeController._drawdown_persist_block_reason(self))
@@ -2503,7 +2508,7 @@ class RuntimeController:
             else:
                 extra_account = False
         if extra_account:
-            self._emergency_reconcile_pending = True
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
             RuntimeController._ensure_live_recovery(self)
             result = {"risk_stopped": True, "reason": current, "bound_account": str(scope)}
             if bool(getattr(self, "simulation_mode", False)):
@@ -2528,8 +2533,8 @@ class RuntimeController:
                 # CASHOUT_ALL ("1" col runtime LIVE, "0" in SIM); se non si salva, al riavvio vale la sola verifica
                 RuntimeController._set_live_verify_only(
                     self, not bool(getattr(self, "simulation_mode", False)), explicit=True)
-            self._risk_stop_reason = reason
-            persisted = stop_rules.persist_risk_stop(self.db, reason)
+            RuntimeController._owner(self).apply(self, "set_risk_stop", _risk_stop_reason=reason)
+            persisted = RuntimeController._owner(self).persist_risk_stop(self, reason)
         cashout = not self._daily_loss_entry_blocked() and RuntimeController._risk_stop_applies(self)
         result = {"risk_stopped": True, "reason": reason, "cashout_attempted": cashout, "persisted": persisted}
         if cashout:
@@ -2539,7 +2544,7 @@ class RuntimeController:
             # (invalidata sopra) deve essere VERIFICATA sul conto: riconciliazione in attesa e recovery dedicato
             # (ritenta a intervalli, conto irraggiungibile compreso), in sola lettura per non annullare le coperture del
             # cashout. Il blocco resta finche' il reset ammesso dal ricontrollo completo non lo toglie.
-            self._emergency_reconcile_pending = True                 # sola verifica gia' salvata (sopra)
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)                 # sola verifica gia' salvata (sopra)
             RuntimeController._ensure_live_recovery(self)
         if scope and financial_scope.escalates_globally(str(scope)) and bool(getattr(self, "simulation_mode", False)):
             # Ciclo 12 (N2, Codex+Grok): stop globale nato da un ambito LIVE (o non verificabile) col runtime in SIM:
@@ -2561,6 +2566,9 @@ class RuntimeController:
         dell'azione (append-only, riletto) il reset non avviene. Vale per GUI, headless e API: e' l'unico ingresso."""
         if not getattr(self, "_risk_stop_reason", ""):
             return {"risk_stop_reset": True, "reason": ""}
+        not_ready = RuntimeController._owner_not_ready(self)
+        if not_ready:
+            return {"risk_stop_reset": False, "reason": not_ready}
         with self._risk_stop_lock:
             if not at_start and RuntimeController._finish_completed_reset(self):
                 # M144 (G1e): reset G1 gia' committato (RESET_COMPLETED) il cui stop non era ancora stato tolto
@@ -2595,11 +2603,21 @@ class RuntimeController:
                     confirm_again=confirm_again)
                 if outcome:
                     return {"risk_stop_reset": False, "reason": outcome}
-            self._session_loss_pending_global = False    # C3: la barriera di sessione segue lo stop che anticipa
-            if not stop_rules.persist_risk_stop(self.db, ""):  # nuova versione PRIMA di riaprire
-                return {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
-            self._risk_stop_reason = ""
-            RuntimeController._set_live_verify_only(self, False)
+            owner = RuntimeController._owner(self)
+            with owner.lock:
+                # M153 P1: l'obbligo LIVE si ricontrolla nella STESSA sezione critica della scrittura (un binding entrato
+                # dopo il primo controllo blocca qui)
+                live_blocker = RuntimeController._live_reset_blocker(self) if (
+                    not at_start and (session_breached or not RuntimeController._risk_stop_scope(
+                        str(self._risk_stop_reason or "")))) else ""
+                if live_blocker:
+                    return {"risk_stop_reset": False, "reason": live_blocker}
+                # C3: la barriera di sessione segue lo stop che anticipa
+                owner.apply(self, "session_barrier", _session_loss_pending_global=False)
+                if not owner.persist_risk_stop(self, ""):  # nuova versione PRIMA di riaprire
+                    return {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
+                owner.apply(self, "reset_risk_stop", _risk_stop_reason="")
+                RuntimeController._set_live_verify_only(self, False)
             if session_breached:
                 # G2, DOPO il commit (RESET_COMPLETED) e lo stop tolto: la sessione chiusa entra nell'archivio; se non si
                 # scrive resta nella finestra e si ritenta (all'avvio o alla prossima chiusura)
@@ -2806,16 +2824,19 @@ class RuntimeController:
         losses = [float(delta.get("desk") or 0.0)] + [float(v) for v in (delta.get("scopes") or {}).values()]
         if limit is not None and any(validators.reaches_limit(-x, float(limit)) for x in losses if x < 0.0):
             return False
-        if RuntimeController._live_reset_blocker(self):
-            # M152 (CX-L2): un obbligo LIVE nato o rimasto irrisolto dopo il RESET_COMPLETED invalida il completamento:
-            # lo stop, la sola verifica e la protezione delle coperture restano
-            logger.critical("M152: completamento del reset %s rifiutato: obbligo LIVE irrisolto", entry.get("operation_id"))
-            return False
-        with self._risk_stop_lock:
-            if not stop_rules.persist_risk_stop(self.db, ""):
+        owner = RuntimeController._owner(self)
+        with self._risk_stop_lock, owner.lock:
+            # M153 P1: controllo dell'obbligo LIVE e scrittura nella STESSA sezione critica del proprietario: un binding
+            # concorrente non entra fra il controllo e la riapertura
+            if RuntimeController._live_reset_blocker(self):
+                # M152 (CX-L2): un obbligo LIVE nato o rimasto irrisolto dopo il RESET_COMPLETED invalida il
+                # completamento: lo stop, la sola verifica e la protezione delle coperture restano
+                logger.critical("M152: completamento del reset %s rifiutato: obbligo LIVE irrisolto",
+                                entry.get("operation_id"))
                 return False
-            self._risk_stop_reason = ""
-            self._session_loss_pending_global = False
+            if not owner.persist_risk_stop(self, ""):
+                return False
+            owner.apply(self, "reset_risk_stop", _risk_stop_reason="", _session_loss_pending_global=False)
             RuntimeController._set_live_verify_only(self, False)
         logger.critical("M144: reset %s gia' committato: stop di sessione tolto (operatore %s)",
                         entry.get("operation_id"), entry.get("operator"))
@@ -3629,18 +3650,17 @@ class RuntimeController:
             flag = str((settings or {}).get("emergency_stopped", "")).strip().lower()
             if flag not in {"1", "true"}:
                 return
-            self._emergency_stopped = True
-            self._emergency_stopped_at = str(settings.get("emergency_stopped_at") or "")
-            self._emergency_reason = str(
-                settings.get("emergency_reason") or "RESTORED_AFTER_RESTART"
-            )
             # PF-ALL-F027 / Codex r4311806886: provenienza dei settlement ripristinata; assente (stato legacy) o
             # non valida => UNKNOWN, trattata come LIVE (registro SIM mai usato per posizioni di origine ignota).
             source = str(settings.get("emergency_settlement_source") or "").strip().upper()
-            self._settlement_source_before_emergency = source if source in {"SIM", "LIVE"} else "UNKNOWN"
+            source = source if source in {"SIM", "LIVE"} else "UNKNOWN"
             # Ciclo 12 (M117): un'emergenza di provenienza LIVE (o ignota) ripristinata al riavvio ha ancora da
             # riconciliare gli ordini LIVE del bot: la postura da sola non legge, non cancella e non segnala nulla.
-            self._emergency_reconcile_pending = self._settlement_source_before_emergency != "SIM"
+            RuntimeController._owner(self).apply(
+                self, "restore_es", _emergency_stopped=True,
+                _emergency_stopped_at=str(settings.get("emergency_stopped_at") or ""),
+                _emergency_reason=str(settings.get("emergency_reason") or "RESTORED_AFTER_RESTART"),
+                _settlement_source_before_emergency=source, _emergency_reconcile_pending=source != "SIM")
         except Exception:
             # Fail-closed: se NON si riesce a leggere lo stato persistito non
             # si puo' PROVARE che non ci fosse un'emergenza in corso => si
@@ -3650,11 +3670,10 @@ class RuntimeController:
                 "emergency_state: reload from settings failed — fail-closed, "
                 "riparto in emergenza"
             )
-            self._emergency_stopped = True
-            self._emergency_stopped_at = datetime.utcnow().isoformat()
-            self._emergency_reason = "EMERGENCY_STATE_UNREADABLE"
-            self._settlement_source_before_emergency = "UNKNOWN"
-            self._emergency_reconcile_pending = True
+            RuntimeController._owner(self).apply(
+                self, "restore_es", _emergency_stopped=True, _emergency_stopped_at=datetime.utcnow().isoformat(),
+                _emergency_reason="EMERGENCY_STATE_UNREADABLE", _settlement_source_before_emergency="UNKNOWN",
+                _emergency_reconcile_pending=True)
 
         # Postura COMPLETA, non solo il flag: senza lockdown/live-gate anche
         # i percorsi che non leggono il flag (es. mode-based) resterebbero
@@ -3693,24 +3712,29 @@ class RuntimeController:
     def _live_bound_accounts(self) -> Optional[dict]:
         """N6: conti LIVE vincolati agli stop globali. Cache in memoria; lettura fallita => None (non in cache: si
         ritenta, e intanto nessun conto puo' certificare nulla); contenuto illeggibile => vincolo che nessun conto
-        soddisfa (intervento manuale, fail-closed). Vuoto = nessun vincolo registrato (stato precedente a N6)."""
+        soddisfa (intervento manuale, fail-closed). Vuoto = nessun vincolo registrato (stato precedente a N6).
+        M153: lettura dal disco e aggiornamento della cache nella STESSA sezione critica del proprietario: una lettura
+        fatta prima di una scrittura del registro non si riscrive mai in cache dopo di essa (cache mai vecchia)."""
         accounts = self.__dict__.get("_emergency_live_accounts")
         if isinstance(accounts, dict):
             return accounts
-        try:
-            raw = (self.db.get_settings() or {}).get(RuntimeController._LIVE_ACCOUNTS_KEY) \
-                if hasattr(self.db, "get_settings") else ""
-        except Exception:
-            logger.exception("N6: conti LIVE dello stop non leggibili (nessuna certificazione finche' non si leggono)")
-            return None
-        try:
-            accounts, breaches = RuntimeController._parse_live_registry(raw)
-        except Exception:
-            logger.critical("N6: vincolo dei conti LIVE illeggibile: nessun conto puo' certificare l'esposizione")
-            accounts, breaches = {RuntimeController._LIVE_ACCOUNTS_UNREADABLE: "PENDING"}, {}
-        self._emergency_live_accounts = accounts
-        self._live_breaches = breaches
-        return accounts
+        with RuntimeController._owner(self).lock:
+            accounts = self.__dict__.get("_emergency_live_accounts")
+            if isinstance(accounts, dict):
+                return accounts
+            try:
+                raw = (self.db.get_settings() or {}).get(RuntimeController._LIVE_ACCOUNTS_KEY) \
+                    if hasattr(self.db, "get_settings") else ""
+            except Exception:
+                logger.exception("N6: conti LIVE dello stop non leggibili (nessuna certificazione finche' non si leggono)")
+                return None
+            try:
+                accounts, breaches = RuntimeController._parse_live_registry(raw)
+            except Exception:
+                logger.critical("N6: vincolo dei conti LIVE illeggibile: nessun conto puo' certificare l'esposizione")
+                accounts, breaches = {RuntimeController._LIVE_ACCOUNTS_UNREADABLE: "PENDING"}, {}
+            RuntimeController._owner(self).apply(self, "registry", _emergency_live_accounts=accounts, _live_breaches=breaches)
+            return accounts
 
     def _live_registry_for_update(self) -> Optional[dict]:
         """M151 (CX-J1, operatore || runtime): base FRESCA di ogni lettura-modifica-scrittura del registro, riletta dal
@@ -3718,26 +3742,27 @@ class RuntimeController:
         PENDING prevale su VERIFIED, la storia dei superamenti si unisce per chiave. Lettura fallita due volte => None:
         il chiamante NON scrive (mai un registro ricostruito dal nulla che cancelli conti sul disco). Chiamare col
         lock del registro."""
+        owner = RuntimeController._owner(self)
         mem_accounts = self.__dict__.get("_emergency_live_accounts")
         mem_accounts = dict(mem_accounts) if isinstance(mem_accounts, dict) else {}
         mem_history = {k: list(v or []) for k, v in (self.__dict__.get("_live_breaches") or {}).items()}
         fresh = None
         for _ in range(2):
-            self.__dict__.pop("_emergency_live_accounts", None)
+            owner.apply(self, "registry", _emergency_live_accounts=None)       # cache invalidata: rilettura dal disco
             fresh = RuntimeController._live_bound_accounts(self)
             if fresh is not None:
                 break
         if fresh is None:
             if mem_accounts or "_live_breaches" in self.__dict__:
-                self._emergency_live_accounts = mem_accounts      # cache ripristinata, nessuna scrittura
+                owner.apply(self, "registry", _emergency_live_accounts=mem_accounts)   # cache ripristinata, nessuna scrittura
             logger.critical("M151: registro dei conti LIVE non rileggibile: nessuna scrittura (fail-closed)")
             return None
         merged = dict(fresh)
         if RuntimeController._LIVE_ACCOUNTS_UNREADABLE in merged:
             return merged
+        history = {k: list(v or []) for k, v in (self.__dict__.get("_live_breaches") or {}).items()}
         for scope, items in (self.__dict__.get("_pending_live_bindings") or {}).items():
             merged[scope] = "PENDING"                    # M151-bis (CX-K2): obbligo in sospeso, mai VERIFIED da qui
-            history = self.__dict__.setdefault("_live_breaches", {})
             known = list(history.get(scope) or [])
             keys = {str(b.get("key")) for b in known}
             known.extend(dict(b) for b in items if str(b.get("key")) not in keys)
@@ -3745,13 +3770,12 @@ class RuntimeController:
         for scope, state in mem_accounts.items():
             if scope not in merged or state == "PENDING":
                 merged[scope] = state if scope not in merged else "PENDING"
-        history = self.__dict__.setdefault("_live_breaches", {})
         for scope, items in mem_history.items():
             known = list(history.get(scope) or [])
             keys = {str(b.get("key")) for b in known}
             known.extend(b for b in items if str(b.get("key")) not in keys)
             history[scope] = known
-        self._emergency_live_accounts = merged
+        owner.apply(self, "registry", _emergency_live_accounts=merged, _live_breaches=history)
         return dict(merged)
 
     @staticmethod
@@ -3782,26 +3806,25 @@ class RuntimeController:
     def _save_live_bound_accounts(self, accounts: dict) -> bool:
         """N6 + CX-G1: vincolo dei conti salvato e RILETTO. False (e `_live_binding_failed`) se non e' durevole: resta
         in memoria e il marker dello stop di sessione non si toglie (al riavvio il vincolo si ricrea). Mai raise."""
-        self._emergency_live_accounts = dict(accounts)
-        history = self.__dict__.setdefault("_live_breaches", {})
-        for scope in list(history):
-            if scope not in accounts:
-                history.pop(scope, None)                     # conto uscito dal registro (reset riuscito)
+        owner = RuntimeController._owner(self)
+        # conto uscito dal registro (reset riuscito) => la sua storia esce con lui
+        history = {k: list(v or []) for k, v in (self.__dict__.get("_live_breaches") or {}).items() if k in accounts}
+        owner.apply(self, "registry", _emergency_live_accounts=dict(accounts), _live_breaches=history)
         payload = json.dumps({"version": 2, "accounts": {
             scope: {"state": state, "breaches": list(history.get(scope) or [])}
             for scope, state in sorted(accounts.items())}}, sort_keys=True) if accounts else ""
         try:
             if hasattr(self.db, "save_settings"):
-                self.db.save_settings({RuntimeController._LIVE_ACCOUNTS_KEY: payload})
+                owner.save(self, {RuntimeController._LIVE_ACCOUNTS_KEY: payload})
                 readback = self.db.get_settings() if hasattr(self.db, "get_settings") else None
                 if not isinstance(readback, dict) or str(readback.get(RuntimeController._LIVE_ACCOUNTS_KEY) or "") != payload:
                     raise OSError("vincolo dei conti non riletto")
-            self._live_binding_failed = False
+            owner.apply(self, "registry", _live_binding_failed=False)
             RuntimeController._settle_deferred_live_bindings(self, accounts)
             return True
         except Exception:
             logger.exception("N6: vincolo dei conti LIVE non salvato (resta in memoria; marker di sessione conservato)")
-            self._live_binding_failed = True
+            owner.apply(self, "registry", _live_binding_failed=True)
             return False
 
     def _bind_live_account(self, scope: Optional[str] = None, breach: Optional[dict] = None,
@@ -3828,26 +3851,27 @@ class RuntimeController:
                     return ""
                 logger.critical("M149: obbligo LIVE con conto non identificabile: sentinella PENDING (procedura M148)")
                 target = RuntimeController._LIVE_ACCOUNT_UNIDENTIFIED
-            with self.__dict__.setdefault("_live_accounts_lock", threading.RLock()):
+            with RuntimeController._owner(self).lock:
                 accounts = RuntimeController._live_registry_for_update(self)
                 if accounts is None:
                     # M151 (CX-J1): registro non rileggibile => nessuna scrittura (mai un registro dal nulla).
                     # M151-bis (CX-K2): l'obbligo NON si perde: resta in sospeso (memoria + giornale di sicurezza), si
                     # unisce a ogni rilettura riuscita del registro e, finche' non e' scritto, blocca certificazione e reset
-                    self._live_binding_failed = True
+                    RuntimeController._owner(self).apply(self, "registry", _live_binding_failed=True)
                     RuntimeController._defer_live_binding(self, target, breach)
                     return target
                 if RuntimeController._LIVE_ACCOUNTS_UNREADABLE in accounts:
                     # registro illeggibile: resta tale (nessun conto certifica), mai sovrascritto da una registrazione
                     logger.critical("M147: registro dei conti illeggibile: superamento di %s non registrabile", target)
                     return target
-                history = self.__dict__.setdefault("_live_breaches", {})
+                history = {k: list(v or []) for k, v in (self.__dict__.get("_live_breaches") or {}).items()}
                 known = list(history.get(target) or [])
                 if breach and str(breach.get("key") or ""):
                     if any(str(b.get("key")) == str(breach["key"]) for b in known) and target in accounts:
                         return target                       # stesso superamento gia' registrato: idempotente
                     known.append(dict(breach, at=datetime.utcnow().isoformat()))
                     history[target] = known
+                    RuntimeController._owner(self).apply(self, "registry", _live_breaches=history)
                 accounts[target] = "PENDING"
                 RuntimeController._save_live_bound_accounts(self, accounts)
             return target
@@ -3860,11 +3884,12 @@ class RuntimeController:
     def _defer_live_binding(self, target: str, breach: Optional[dict]) -> None:
         """M151-bis (CX-K2): obbligo LIVE non scrivibile nel registro (rilettura fallita) => in sospeso in memoria e nel
         giornale di sicurezza (sopravvive al riavvio). Mai raise."""
-        pending = self.__dict__.setdefault("_pending_live_bindings", {})
-        items = pending.setdefault(str(target), [])
-        if breach and str(breach.get("key") or "") and not any(
-                str(b.get("key")) == str(breach["key"]) for b in items):
-            items.append(dict(breach, at=datetime.utcnow().isoformat()))
+        def aggiungi(pending: dict) -> None:
+            items = pending.setdefault(str(target), [])
+            if breach and str(breach.get("key") or "") and not any(
+                    str(b.get("key")) == str(breach["key"]) for b in items):
+                items.append(dict(breach, at=datetime.utcnow().isoformat()))
+        pending = RuntimeController._owner(self).update_dict(self, "defer_binding", "_pending_live_bindings", aggiungi)
         logger.critical("M151-bis: obbligo LIVE di %s in sospeso (registro non rileggibile): certificazione e reset "
                         "bloccati finche' non e' scritto", target)
         RuntimeController._journal_safety_state(self, {
@@ -3876,8 +3901,8 @@ class RuntimeController:
         pending = self.__dict__.get("_pending_live_bindings") or {}
         if not pending:
             return
-        for scope in [k for k in pending if k in saved_accounts]:
-            pending.pop(scope, None)
+        pending = {k: v for k, v in pending.items() if k not in saved_accounts}
+        RuntimeController._owner(self).apply(self, "defer_binding", _pending_live_bindings=pending)
         if pending:
             RuntimeController._journal_safety_state(self, {
                 RuntimeController._PENDING_BINDINGS_KEY: json.dumps(pending, sort_keys=True)})
@@ -3895,11 +3920,12 @@ class RuntimeController:
             data = json.loads(raw) if raw else None
             if not isinstance(data, dict) or any(not isinstance(v, list) for v in data.values()):
                 raise ValueError("obblighi in sospeso illeggibili")
-            self._pending_live_bindings = {str(k): [dict(b) for b in v if isinstance(b, dict)]
-                                           for k, v in data.items()}
+            RuntimeController._owner(self).apply(self, "defer_binding", _pending_live_bindings={
+                str(k): [dict(b) for b in v if isinstance(b, dict)] for k, v in data.items()})
         except Exception:
             logger.critical("M151-bis: obblighi LIVE in sospeso illeggibili: vincolo illeggibile (fail-closed)")
-            self._pending_live_bindings = {RuntimeController._LIVE_ACCOUNTS_UNREADABLE: []}
+            RuntimeController._owner(self).apply(self, "defer_binding",
+                                                 _pending_live_bindings={RuntimeController._LIVE_ACCOUNTS_UNREADABLE: []})
 
     _UNIDENTIFIED_ATTRIBUTED_KEY = "emergency_live_unidentified_attributed_through"
 
@@ -3949,7 +3975,7 @@ class RuntimeController:
         """N6: esito di uno sweep sul conto connesso (vincolato) => stato di quel conto. Restano conti vincolati non
         ancora verificati => esposizione non chiusa (`accounts_pending`), intervento manuale."""
         try:
-            with self.__dict__.setdefault("_live_accounts_lock", threading.RLock()):
+            with RuntimeController._owner(self).lock:
                 accounts = RuntimeController._live_registry_for_update(self)
                 if accounts is None:
                     result["manual_action_required"] = True     # M151: registro non rileggibile, nulla si certifica
@@ -4001,7 +4027,7 @@ class RuntimeController:
     def _clear_verified_live_accounts(self) -> None:
         """N6: al reset di uno stop i conti verificati escono dal vincolo; quelli ancora PENDING restano."""
         try:
-            with self.__dict__.setdefault("_live_accounts_lock", threading.RLock()):
+            with RuntimeController._owner(self).lock:
                 accounts = RuntimeController._live_registry_for_update(self)
                 if not accounts:
                     return
@@ -4027,9 +4053,9 @@ class RuntimeController:
                 if current and not current.get("resolved"):
                     record = dict(current, account_mismatch=result.get("account_mismatch"), resolved=False,
                                   at=datetime.utcnow().isoformat())
-                    self._live_exposure_record = record
+                    RuntimeController._owner(self).apply(self, "exposure", _live_exposure_record=record)
                     if hasattr(self.db, "save_settings"):
-                        self.db.save_settings({RuntimeController._LIVE_EXPOSURE_KEY: json.dumps(record, default=str)})
+                        RuntimeController._owner(self).save(self, {RuntimeController._LIVE_EXPOSURE_KEY: json.dumps(record, default=str)})
                     return
             resolved = not result.get("manual_action_required")
             record = {"source": str(source), "verification": result.get("verification"),
@@ -4041,12 +4067,12 @@ class RuntimeController:
                       "account_mismatch": result.get("account_mismatch"),
                       "connected_account": result.get("connected_account"),
                       "at": datetime.utcnow().isoformat()}
-            self._live_exposure_record = record
+            RuntimeController._owner(self).apply(self, "exposure", _live_exposure_record=record)
             if hasattr(self.db, "save_settings"):
-                self.db.save_settings({RuntimeController._LIVE_EXPOSURE_KEY: json.dumps(record, default=str)})
+                RuntimeController._owner(self).save(self, {RuntimeController._LIVE_EXPOSURE_KEY: json.dumps(record, default=str)})
         except Exception:
             logger.exception("R1: esposizione LIVE non salvata (resta segnalata come SCONOSCIUTA)")
-            self._live_exposure_record = {"verification": "UNKNOWN", "resolved": False, "source": str(source)}
+            RuntimeController._owner(self).apply(self, "exposure", _live_exposure_record={"verification": "UNKNOWN", "resolved": False, "source": str(source)})
 
     def _invalidate_live_exposure(self, source: str) -> None:
         """Codex P1 su b902eca3: all'inizio di un nuovo stop globale l'esito LIVE precedente non vale piu'. Se era
@@ -4060,7 +4086,7 @@ class RuntimeController:
                 self, {"verification": "IN_ATTESA_DI_VERIFICA", "manual_action_required": True}, source=source)
         except Exception:
             logger.exception("R1: esposizione LIVE non invalidata")
-            self._live_exposure_record = {"verification": "UNKNOWN", "resolved": False, "source": str(source)}
+            RuntimeController._owner(self).apply(self, "exposure", _live_exposure_record={"verification": "UNKNOWN", "resolved": False, "source": str(source)})
 
     def _clear_resolved_live_exposure(self) -> None:
         """Reset di uno stop: un esito LIVE VERIFICATO appartiene allo stop chiuso e si toglie (la vista torna NESSUNA);
@@ -4070,8 +4096,8 @@ class RuntimeController:
             current = RuntimeController._live_exposure_record_now(self)
             if current and current.get("resolved") and not current.get("matched_positions"):
                 if hasattr(self.db, "save_settings"):
-                    self.db.save_settings({RuntimeController._LIVE_EXPOSURE_KEY: ""})
-                self._live_exposure_record = None
+                    RuntimeController._owner(self).save(self, {RuntimeController._LIVE_EXPOSURE_KEY: ""})
+                RuntimeController._owner(self).apply(self, "exposure", _live_exposure_record=None)
         except Exception:
             logger.exception("R1: esito LIVE verificato non rimosso al reset (resta mostrato)")
 
@@ -4107,11 +4133,9 @@ class RuntimeController:
             for scope in breached:                       # N6: conti LIVE superati vincolati allo stop ricostruito
                 RuntimeController._bind_live_account(self, scope, breach={
                     "key": f"daily|{scope}|{today}", "kind": "daily", "source": "avvio_libro"})
-            self._emergency_stopped = True
-            self._emergency_stopped_at = datetime.utcnow().isoformat()
-            self._emergency_reason = reason
-            self._settlement_source_before_emergency = "LIVE"
-            self._emergency_reconcile_pending = True
+            RuntimeController._owner(self).apply(
+                self, "restore_es", _emergency_stopped=True, _emergency_stopped_at=datetime.utcnow().isoformat(),
+                _emergency_reason=reason, _settlement_source_before_emergency="LIVE", _emergency_reconcile_pending=True)
             persist_error = self._persist_emergency_state()
             if persist_error:
                 logger.critical("M130: Emergency Stop dal libro non persistito (%s): resta in memoria", persist_error)
@@ -4140,15 +4164,15 @@ class RuntimeController:
         cancellazione degli ordini del bot ammessa (stop nato col runtime in SIM, `explicit`); "" = nessuna modalita'
         (nessuno stop). Al riavvio una modalita' mancante con uno stop globale attivo vale SOLA VERIFICA (opzione A
         owner M146): un salvataggio fallito non fa mai cancellare una copertura. Ritorna True se riletta. Mai raise."""
-        self._live_verify_only = bool(value)
         # M151-bis (CX-K1): la protezione delle coperture segue la sola verifica ma e' uno stato proprio, che l'Emergency
         # Stop non azzera (N7 azzera solo `_live_verify_only`) e che viaggia anche nel salvataggio dell'ES
-        self._hedge_guard = bool(value)
+        owner = RuntimeController._owner(self)
+        owner.apply(self, "set_verify_only", _live_verify_only=bool(value), _hedge_guard=bool(value))
         payload = "1" if value else ("0" if explicit else "")
         try:
             if hasattr(self.db, "save_settings"):
-                self.db.save_settings({RuntimeController._LIVE_VERIFY_ONLY_KEY: payload,
-                                       RuntimeController._HEDGE_GUARD_KEY: "1" if value else ""})
+                owner.save(self, {RuntimeController._LIVE_VERIFY_ONLY_KEY: payload,
+                                  RuntimeController._HEDGE_GUARD_KEY: "1" if value else ""})
                 readback = self.db.get_settings() if hasattr(self.db, "get_settings") else None
                 if not isinstance(readback, dict) or str(
                         readback.get(RuntimeController._LIVE_VERIFY_ONLY_KEY) or "") != payload:
@@ -4169,25 +4193,26 @@ class RuntimeController:
                 if hasattr(self.db, "get_settings") else ""
             raw = "" if raw is None else str(raw)
             if raw == "1":
-                self._live_verify_only = True
+                RuntimeController._owner(self).apply(self, "set_verify_only", _live_verify_only=True)
             elif raw == "0":
-                self._live_verify_only = False
+                RuntimeController._owner(self).apply(self, "set_verify_only", _live_verify_only=False)
             elif raw == "":
                 # M146 (CX-H1, opzione A): stop globale attivo ma modalita' non salvata (doppio guasto) => la
                 # riconciliazione riparte in SOLA LETTURA: nessuna cancellazione ne' cashout alla cieca; esposizione
                 # irrisolta e intervento manuale finche' il riscontro dell'exchange non la chiude
                 reason = str(self.__dict__.get("_risk_stop_reason") or "")
-                self._live_verify_only = bool(reason and not RuntimeController._risk_stop_scope(reason)
-                                              and not self.__dict__.get("_emergency_stopped"))
+                RuntimeController._owner(self).apply(self, "set_verify_only", _live_verify_only=bool(
+                    reason and not RuntimeController._risk_stop_scope(reason)
+                    and not self.__dict__.get("_emergency_stopped")))
                 self._live_verify_only_inferred = self._live_verify_only     # dedotta, non salvata
                 if self._live_verify_only:
                     logger.critical("N7/M146: stop globale senza modalita' salvata: riconciliazione in sola lettura")
             else:
-                self._live_verify_only = True
+                RuntimeController._owner(self).apply(self, "set_verify_only", _live_verify_only=True)
                 logger.critical("N7: modalita' di sola verifica illeggibile (%r): sola verifica", raw[:40])
         except Exception:
             logger.exception("N7: modalita' di sola verifica non leggibile all'avvio: sola verifica")
-            self._live_verify_only = True
+            RuntimeController._owner(self).apply(self, "set_verify_only", _live_verify_only=True)
         RuntimeController._restore_hedge_guard(self)
 
     _HEDGE_GUARD_KEY = "emergency_hedge_guard"
@@ -4200,11 +4225,11 @@ class RuntimeController:
                 if hasattr(self.db, "get_settings") else ""
             journal = RuntimeController._read_safety_journal(self)
             journaled = journal is None or str((journal or {}).get(RuntimeController._HEDGE_GUARD_KEY) or "") == "1"
-            self._hedge_guard = bool(self.__dict__.get("_live_verify_only")) or str(raw or "").strip() == "1" \
-                or journaled
+            RuntimeController._owner(self).apply(self, "set_verify_only", _hedge_guard=bool(
+                self.__dict__.get("_live_verify_only")) or str(raw or "").strip() == "1" or journaled)
         except Exception:
             logger.exception("M151-bis: protezione delle coperture non leggibile all'avvio: attiva (fail-closed)")
-            self._hedge_guard = True
+            RuntimeController._owner(self).apply(self, "set_verify_only", _hedge_guard=True)
 
     def _restore_live_exposure_pending(self) -> None:
         """Codex P1 su afbd5c89: un'esposizione LIVE irrisolta registrata in modo durevole (record R1 non risolto o
@@ -4218,10 +4243,10 @@ class RuntimeController:
             record = json.loads(raw)
             # record legacy (scritto prima della correzione Codex) risolto ma con posizioni abbinate: NON risolto
             if not (isinstance(record, dict) and record.get("resolved") and not record.get("matched_positions")):
-                self._emergency_reconcile_pending = True
+                RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
         except Exception:
             logger.exception("R1: record dell'esposizione LIVE illeggibile al riavvio (riconciliazione in attesa)")
-            self._emergency_reconcile_pending = True
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
 
     def _live_exposure_status(self) -> dict:
         """R1: stato esplicito dell'esposizione LIVE per `get_status`, la GUI e headless. Stati:
@@ -4230,15 +4255,20 @@ class RuntimeController:
         L'importo e' None ('SCONOSCIUTO') quando non e' verificabile: mai zero per un valore sconosciuto."""
         record = self.__dict__.get("_live_exposure_record")
         if record is None:
-            try:
-                raw = (self.db.get_settings() or {}).get(RuntimeController._LIVE_EXPOSURE_KEY) \
-                    if hasattr(self.db, "get_settings") else ""
-                record = json.loads(raw) if raw else None
-            except Exception:
-                record = {"verification": "UNKNOWN", "resolved": False, "source": "record_illeggibile"}
-            if isinstance(record, dict) and "resolved" not in record:     # record del ciclo 12 (solo irrisolto)
-                record = dict(record, resolved=False)
-            self._live_exposure_record = record
+            # M153: lettura dal disco e cache nella STESSA sezione critica del proprietario (mai una lettura vecchia
+            # rimessa in cache dopo uno sweep che ha scritto un esito nuovo)
+            with RuntimeController._owner(self).lock:
+                record = self.__dict__.get("_live_exposure_record")
+                if record is None:
+                    try:
+                        raw = (self.db.get_settings() or {}).get(RuntimeController._LIVE_EXPOSURE_KEY) \
+                            if hasattr(self.db, "get_settings") else ""
+                        record = json.loads(raw) if raw else None
+                    except Exception:
+                        record = {"verification": "UNKNOWN", "resolved": False, "source": "record_illeggibile"}
+                    if isinstance(record, dict) and "resolved" not in record:   # record del ciclo 12 (irrisolto)
+                        record = dict(record, resolved=False)
+                    RuntimeController._owner(self).apply(self, "exposure", _live_exposure_record=record)
         pending = bool(self.__dict__.get("_emergency_reconcile_pending"))
         global_stop = bool(self._emergency_stopped or (
             self._risk_stop_reason and not RuntimeController._risk_stop_scope(self._risk_stop_reason)))
@@ -4297,7 +4327,7 @@ class RuntimeController:
             logger.critical("RISK STOP (LIVE da runtime SIM): esposizione LIVE non riconciliata (verifica=%s)",
                             result.get("verification"))
             self.bus.publish("EMERGENCY_STOP_MANUAL_ACTION_REQUIRED", dict(result, source="RISK_STOP"))
-            self._emergency_reconcile_pending = True          # M115: ritentata dal recovery dedicato
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)          # M115: ritentata dal recovery dedicato
             RuntimeController._ensure_live_recovery(self)
         return {k: result.get(k) for k in ("verification", "manual_action_required", "cancelled_count",
                                            "live_client_available")}
@@ -4310,6 +4340,8 @@ class RuntimeController:
         (settlement, segnale) finche' la verifica riesce. Mai raise."""
         if not self.__dict__.get("_emergency_reconcile_pending"):
             return None
+        if RuntimeController._owner_not_ready(self):
+            return None              # M153 P8: nessuno sweep prima della ricostruzione completa (il recovery ritenta)
         risk_reason = self.__dict__.get("_risk_stop_reason") or ""
         global_stop = bool(self.__dict__.get("_emergency_stopped")) or bool(
             risk_reason and not RuntimeController._risk_stop_scope(risk_reason))
@@ -4326,7 +4358,7 @@ class RuntimeController:
             result.update(trigger=str(trigger), live_client_available=client is not None,
                           reason=self._emergency_reason or risk_reason, verify_only=verify_only)
             resolved = not result.get("manual_action_required")
-            self._emergency_reconcile_pending = not resolved
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=not resolved)
             RuntimeController._record_live_exposure(self, result, source="RESTART_RECONCILE")
             self.bus.publish("EMERGENCY_STOP_RECONCILED", dict(result))
             if not resolved:
@@ -4350,7 +4382,17 @@ class RuntimeController:
     def _live_sweep_lock(self):
         """Lock (rientrante) degli sweep verificati sulla sede LIVE: Emergency Stop, riconciliazione e recovery dedicato
         non cancellano mai in parallelo. `setdefault` del dict e' atomico: niente doppio lock su istanze `__new__`."""
-        return self.__dict__.setdefault("_live_sweep_rlock", threading.RLock())
+        return _tracked_lock(self, "_live_sweep_rlock", threading.RLock, "live_sweep")
+
+    @staticmethod
+    def _owner(rc: Any) -> SafetyStateOwner:
+        """M153: l'unico proprietario dello stato di sicurezza di questo runtime (creato una volta, anche su istanze
+        costruite con `__new__`)."""
+        return SafetyStateOwner.of(rc)
+
+    def _owner_not_ready(self) -> str:
+        """M153 P8: motivo di rifiuto finche' la ricostruzione all'avvio non e' completa; '' se inizializzato."""
+        return "" if RuntimeController._owner(self).initialized else "stato_di_sicurezza_non_inizializzato"
 
     def _live_recovery_active(self) -> bool:
         thread = self.__dict__.get("_live_recovery_thread")
@@ -4415,14 +4457,14 @@ class RuntimeController:
         abbinati ed esiti non verificati registrati e segnalati), poi recovery dedicato se resta irrisolto. Mai raise."""
         try:
             if self._emergency_stopped:
-                self._emergency_reconcile_pending = True
+                RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
                 RuntimeController._reconcile_restored_emergency(self, trigger="settlement_interrotto")
                 return
             self.emergency_stop(reason, live_exposure=True, scope=scope)
         except BaseException:
             logger.exception("M115: Emergency Stop dopo il settlement interrotto non completato (recovery dedicato)")
-            self._emergency_stopped = True
-            self._emergency_reconcile_pending = True
+            RuntimeController._owner(self).apply(self, "restore_es", _emergency_stopped=True)
+            RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
             RuntimeController._ensure_live_recovery(self)
 
     def _emergency_state_payload(self) -> dict:
@@ -4445,6 +4487,10 @@ class RuntimeController:
         db, o non avviene (`reset_emergency`)."""
         if not hasattr(self.db, "save_settings"):
             return "db_save_settings_unavailable"
+        if not self._emergency_stopped:
+            # M153 (C13): lo stato si persiste solo con un ES attivo; lo spegnimento ("0") lo scrive SOLO reset_es
+            # (`_reset_emergency_locked`), mai un persist che troverebbe l'ES gia' spento da un'altra transizione
+            return ""
         payload = RuntimeController._emergency_state_payload(self)
         error = RuntimeController._durable_save_settings(self, payload)
         if not error:
@@ -4458,101 +4504,65 @@ class RuntimeController:
     _SAFETY_JOURNAL_SUFFIX = ".safety_pending.json"
 
     def _safety_journal_path(self) -> str:
-        try:
-            path = os.fspath(getattr(self.db, "db_path", None))
-        except TypeError:
-            return ""
-        if not isinstance(path, str) or path in ("", ":memory:"):
-            return ""
-        return path + RuntimeController._SAFETY_JOURNAL_SUFFIX
+        return SafetyStateOwner.journal_path(self)
 
     def _durable_save_settings(self, data: dict) -> str:
         """M151 (I8): salva e RILEGGE; '' se ogni chiave e' sul db identica, altrimenti l'errore. Mai raise. Una
-        scrittura durevole delle chiavi dell'emergenza ne toglie le copie dal giornale di sicurezza."""
-        try:
-            self.db.save_settings(dict(data))
-            readback = self.db.get_settings() if hasattr(self.db, "get_settings") else None
-            if not isinstance(readback, dict):
-                raise OSError("rilettura non disponibile")
-            diverse = sorted(k for k, v in data.items() if str(readback.get(k) or "") != str(v or ""))
-            if diverse:
-                raise OSError(f"chiavi non rilette: {diverse}")
-        except Exception as exc:
-            return str(exc) or exc.__class__.__name__
-        return "" if RuntimeController._drop_safety_journal(self, data) else "giornale di sicurezza non ripulito"
+        scrittura durevole delle chiavi dell'emergenza ne toglie le copie dal giornale di sicurezza. M153: dal
+        proprietario, sotto il suo lock."""
+        return RuntimeController._owner(self).durable_save(
+            self, data, drop=lambda keys: RuntimeController._drop_safety_journal(self, keys))
 
     def _read_safety_journal(self) -> Optional[dict]:
-        """{} se assente; None se presente ma illeggibile (fail-closed per il chiamante)."""
-        path = RuntimeController._safety_journal_path(self)
-        if not path or not os.path.exists(path):
-            return {}
-        try:
-            with open(path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            return data if isinstance(data, dict) else None
-        except Exception:
-            logger.exception("M151: giornale di sicurezza illeggibile")
-            return None
+        """{} se assente; None se presente ma illeggibile (fail-closed per il chiamante). M153: istantanea del
+        proprietario (formato precedente a chiavi sparse letto come stato)."""
+        return RuntimeController._owner(self).journal_read(self)
 
     def _journal_safety_state(self, payload: dict) -> bool:
-        from core.atomic_io import atomic_write_text
-        path = RuntimeController._safety_journal_path(self)
-        if not path:
-            return False
-        try:
-            current = RuntimeController._read_safety_journal(self)
-            if current is None:
-                current = RuntimeController._read_safety_journal(self)      # una lettura transitoria si ritenta
-            if current is None:
-                # M152 (CX-L1, I8): giornale presente ma illeggibile => MAI riscritto (conterrebbe solo il nuovo stato e
-                # cancellerebbe un Emergency Stop gia' dichiarato). Il file resta: all'avvio un giornale illeggibile vale
-                # emergenza e vincolo LIVE illeggibile (fail-closed). Il nuovo stato resta in memoria, non durevole.
-                logger.critical("M152: giornale di sicurezza illeggibile: nessuna riscrittura (stato solo in memoria)")
-                return False
-            current.update({k: str(v or "") for k, v in payload.items()})
-            atomic_write_text(path, json.dumps(current, sort_keys=True))
-            logger.critical("M151: stato di sicurezza non durevole sul db: scritto nel giornale %s", path)
-            return True
-        except Exception:
-            logger.exception("M151: giornale di sicurezza non scrivibile (stato solo in memoria)")
-            return False
+        """M151/M152 + M153 (CX-M1): stato non durevole nel giornale, scritto SOLO dal proprietario sotto il suo lock
+        (istantanea con `seq`, mai riscritto se illeggibile)."""
+        return RuntimeController._owner(self).journal_merge(
+            self, payload, reader=lambda: RuntimeController._read_safety_journal(self))
 
     def _drop_safety_journal(self, keys) -> bool:
-        from core.atomic_io import atomic_write_text
-        path = RuntimeController._safety_journal_path(self)
-        if not path or not os.path.exists(path):
-            return True
-        try:
-            current = RuntimeController._read_safety_journal(self)
-            if current is None:
-                return False                             # illeggibile: resta (fail-closed all'avvio)
-            remaining = {k: v for k, v in current.items() if k not in set(keys)}
-            if remaining == current:
-                return True
-            if remaining:
-                atomic_write_text(path, json.dumps(remaining, sort_keys=True))
-            else:
-                os.remove(path)
-            return True
-        except Exception:
-            logger.exception("M151: giornale di sicurezza non ripulito")
-            return False
+        """M153 (C02): chiavi tolte dal giornale SOLO dal proprietario sotto il suo lock: una rimozione non cancella mai
+        un Emergency Stop riscritto nel frattempo."""
+        return RuntimeController._owner(self).journal_drop(
+            self, keys, reader=lambda: RuntimeController._read_safety_journal(self))
 
     def _persist_db_emergency_marker(self, *, active: bool, reason: str = "", live_exposure: bool = False,
-                                     scope: Optional[str] = None) -> str:
+                                     scope: Optional[str] = None, es_seq: Optional[int] = None) -> str:
         """Scrive SOLO su db il marker di emergenza (senza mutare lo stato
         in-memory), cosi' il successivo emergency_stop esegue comunque il
         lockdown completo. Usato per persistere DUREVOLMENTE un breach daily-loss
         PRIMA dell'I/O di rete del bankroll-sync: se il processo muore mentre
         get_account_funds() e' lento/bloccato in quella finestra, il reload
         fail-closed al riavvio ricarica l'emergenza (lo stato monitor/risk-desk
-        in-memory andrebbe perso). Ritorna '' o l'errore (mai raise)."""
+        in-memory andrebbe perso). Ritorna '' o l'errore (mai raise).
+
+        M153 P7 (`withdraw_pending_es`, C13): la rimozione (`active=False`) si scrive SOLO sotto il lock del proprietario,
+        se nessun Emergency Stop e' attivo e nessuno e' stato dichiarato dopo l'apertura del settlement (`es_seq`
+        catturato all'apertura == `es_seq` del proprietario); altrimenti nessuna scrittura: un ES manuale dichiarato nel
+        frattempo non viene mai cancellato dal settlement. Senza `es_seq` la rimozione non si scrive (fail-closed)."""
         if not hasattr(self.db, "save_settings"):
             return "db_save_settings_unavailable"
         if active and live_exposure:
             RuntimeController._bind_live_account(self, scope)     # N6: conto del superamento, prima del marker
+        owner = RuntimeController._owner(self)
         try:
-            self.db.save_settings({
+            with owner.lock:
+                if not active and (self._emergency_stopped or es_seq is None or owner.es_seq != es_seq):
+                    logger.warning("M153 P7: rimozione del marker dell'ES non scritta (ES dichiarato nel frattempo)")
+                    return ""
+                return RuntimeController._write_db_emergency_marker(self, owner, active, reason, live_exposure)
+        except Exception as exc:
+            logger.exception("daily-loss: durable db emergency marker persist failed")
+            return str(exc)
+
+    def _write_db_emergency_marker(self, owner: SafetyStateOwner, active: bool, reason: str,
+                                   live_exposure: bool) -> str:
+        try:
+            owner.save(self, {
                 "emergency_stopped": "1" if active else "0",
                 "emergency_stopped_at": datetime.utcnow().isoformat() if active else self._emergency_stopped_at,
                 "emergency_reason": reason if active else self._emergency_reason,
@@ -4585,7 +4595,8 @@ class RuntimeController:
         To resume trading after an emergency stop you MUST call reset_emergency()
         first, then start() again.
         """
-        with self.__dict__.setdefault("_safety_state_lock", threading.RLock()):
+        # M153: dichiarazione sotto il lock FOGLIA del proprietario (stesso dominio di reset, registro e giornale)
+        with RuntimeController._owner(self).lock:
             persist_error = RuntimeController._declare_emergency_locked(self, reason, live_exposure, scope)
         return RuntimeController._emergency_stop_after_declare(self, persist_error)
 
@@ -4593,23 +4604,24 @@ class RuntimeController:
         """M151 (K1): dichiarazione dell'Emergency Stop (flag, provenienza, conto, persistenza durevole) serializzata
         col reset: memoria e disco non divergono mai per un interleaving ES || reset."""
         triggered_at = datetime.utcnow().isoformat()
-        self._emergency_stopped = True
-        self._emergency_stopped_at = triggered_at
-        self._emergency_reason = reason or "EMERGENCY_STOP"
         # PF-ALL-F027: da dove arrivano i settlement delle posizioni aperte prima del flip a SIM. Fissata PRIMA
         # del salvataggio, che la persiste col flag (Codex r4311806886: in sola memoria un riavvio la perdeva).
         # C1 (Codex su 60c772fe): un'emergenza nata da un'esposizione LIVE (superamento di un ambito LIVE o non
         # verificabile) agisce sulla sede LIVE QUALUNQUE sia la modalita' corrente del runtime: in SIM leggerebbe e
         # cancellerebbe solo il broker simulato, lasciando aperti gli ordini LIVE. Conto LIVE irraggiungibile =>
         # emergenza non risolta (`manual_action_required`), mai una cancellazione dichiarata riuscita.
+        source = str(getattr(self, "_settlement_source_before_emergency", "") or "")
         if live_exposure:
-            self._settlement_source_before_emergency = "LIVE"
-        elif not getattr(self, "_settlement_source_before_emergency", ""):
-            self._settlement_source_before_emergency = "SIM" if self.simulation_mode else "LIVE"
+            source = "LIVE"
+        elif not source:
+            source = "SIM" if self.simulation_mode else "LIVE"
         # N7: l'Emergency Stop cancella sempre gli ordini del bot. Solo in memoria (nessuna scrittura prima del flag
         # dell'emergenza, che deve essere il primo salvataggio); dopo un riavvio con l'emergenza attiva la sola verifica
         # salvata e' comunque ignorata (`_reconcile_restored_emergency`).
-        self._live_verify_only = False
+        RuntimeController._owner(self).apply(
+            self, "declare_es", _emergency_stopped=True, _emergency_stopped_at=triggered_at,
+            _emergency_reason=reason or "EMERGENCY_STOP", _settlement_source_before_emergency=source,
+            _live_verify_only=False)
         if self._settlement_source_before_emergency != "SIM":
             # N6 (owner M134): l'emergenza LIVE e' legata al conto che l'ha generata (ambito del superamento, o il
             # conto LIVE configurato), salvato PRIMA del flag: solo quel conto potra' certificarne la chiusura.
@@ -4684,7 +4696,7 @@ class RuntimeController:
             if result.get("manual_action_required"):
                 # M115: esito LIVE non verificato o esposizione residua => riconciliazione ritentata nello stesso
                 # processo dal recovery dedicato (mai solo al riavvio o al prossimo evento)
-                self._emergency_reconcile_pending = True
+                RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
                 RuntimeController._ensure_live_recovery(self)
         if result.get("manual_action_required"):
             logger.critical("EMERGENCY STOP: INTERVENTO MANUALE RICHIESTO (verifica=%s, ordini ancora aperti=%d, "
@@ -5330,12 +5342,16 @@ class RuntimeController:
         """
         # M151 (K1, I8): serializzato con la dichiarazione dell'Emergency Stop; dichiarato riuscito SOLO se lo stato
         # azzerato e' riletto dal db. Reset non durevole => l'ES resta (in memoria e su disco), esito False.
-        with self.__dict__.setdefault("_safety_state_lock", threading.RLock()):
+        # M153 (P1, P6, CX-M2, C12): precondizioni e scrittura in UNA sezione critica del proprietario; il reset tocca
+        # SOLO l'Emergency Stop: mai la barriera di sessione C3 ne' il pending-stop giornaliero (si tolgono nel
+        # settlement che li ha armati). Senza ES: nessuna scrittura, esito esatto di sempre.
+        not_ready = RuntimeController._owner_not_ready(self)
+        if not_ready:
+            return {"emergency_reset": False, "reason": not_ready, "persist_error": ""}
+        with RuntimeController._owner(self).lock:
             out = RuntimeController._reset_emergency_locked(self)
         if not out.get("emergency_reset"):
             return out
-        with self._daily_loss_stop_lock:
-            self._daily_loss_pending_stop = False
         risk_reason = str(self.__dict__.get("_risk_stop_reason") or "")
         if not (risk_reason and not RuntimeController._risk_stop_scope(risk_reason)):
             RuntimeController._clear_resolved_live_exposure(self)     # Codex P1 su b902eca3
@@ -5343,6 +5359,10 @@ class RuntimeController:
         return out
 
     def _reset_emergency_locked(self) -> dict:
+        if not self._emergency_stopped:
+            # M153 (C04/C12): nessun Emergency Stop attivo => nessuna scrittura (ne' sul db, dove un marker pre-sync di un
+            # settlement in corso deve restare, ne' sulle barriere); esito identico a quello di sempre
+            return {"emergency_reset": True, "persist_error": ""}
         accounts = RuntimeController._live_bound_accounts(self)
         pending = sorted(k for k, v in (accounts or {}).items() if v != "VERIFIED") if accounts is not None else ["?"]
         # M151-bis (CX-K2): un obbligo LIVE in sospeso (non ancora scritto nel registro) e' sempre irrisolto
@@ -5380,11 +5400,8 @@ class RuntimeController:
             logger.critical("M151: reset dell'Emergency Stop NON durevole (%s): l'Emergency Stop resta", error)
             return {"emergency_reset": False, "reason": "reset_non_durevole", "persist_error": error,
                     "exposure_state": state}
-        self._emergency_stopped = False
-        self._emergency_stopped_at = ""
-        self._emergency_reason = ""
-        self._settlement_source_before_emergency = ""
-        self._session_loss_pending_global = False
+        RuntimeController._owner(self).apply(self, "reset_es", _emergency_stopped=False, _emergency_stopped_at="",
+                                             _emergency_reason="", _settlement_source_before_emergency="")
         return {"emergency_reset": True, "persist_error": ""}
 
     @staticmethod
@@ -5431,7 +5448,7 @@ class RuntimeController:
                     nuovi = True
             if nuovi:
                 RuntimeController._invalidate_live_exposure(self, source="SUPERAMENTO_LIVE_REGISTRATO")
-                self._emergency_reconcile_pending = True
+                RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
                 RuntimeController._ensure_live_recovery(self)
         except Exception:
             logger.exception("M147: superamento LIVE non registrato (fail-closed: il blocco resta)")
@@ -6015,6 +6032,9 @@ class RuntimeController:
         fermo, LOCKDOWN del runtime o del desk), anche con l'autorizzazione tecnica ancora valida. M65: ``request`` (la richiesta al punto
         d'invio) porta la sessione d'ammissione annotata dal controllo del fence: diversa dalla corrente => negato, anche
         per un invio eseguito in ritardo dall'esecutore dopo STOP -> START."""
+        not_ready = RuntimeController._owner_not_ready(self)          # M153 P8: ricostruzione all'avvio in corso
+        if not_ready:
+            return not_ready
         with RuntimeController._drawdown_eval_lock:
             stop = RuntimeController._hard_stop(self)
             if not stop.state_reliable():
@@ -9017,7 +9037,7 @@ class RuntimeController:
         return self._build_bankroll_sync_key(payload or {})
 
     #: Lock di riserva per i RuntimeController costruiti senza `__init__` (doppi di test).
-    _fallback_settlement_lock = threading.RLock()
+    _fallback_settlement_lock = TrackedLock("settlement_consumer", threading.RLock())
 
     def _settlement_consumer_lock(self):
         """#461 PR29-c: i settlement di questo processo si consumano uno alla volta (esito equivalente a una
@@ -9672,7 +9692,7 @@ class RuntimeController:
         coincide con lo username configurato e il registro dei conti LIVE non contiene un conto reale diverso; salvata
         e riletta. Mai sovrascritta (rilettura sotto il lock del registro). (identita', errore). Mai raise."""
         try:
-            with self.__dict__.setdefault("_live_accounts_lock", threading.RLock()):
+            with RuntimeController._owner(self).lock:
                 current, error = RuntimeController._authorized_live_identity(self)
                 if error or current:
                     return current, error
@@ -9690,7 +9710,7 @@ class RuntimeController:
                     logger.critical("M154: il registro contiene conti LIVE diversi: nessuna associazione automatica "
                                     "(procedura dell'operatore)")
                     return "", "registro_con_altri_conti"
-                self.db.save_settings({RuntimeController._AUTHORIZED_IDENTITY_KEY: attested})
+                RuntimeController._owner(self).save(self, {RuntimeController._AUTHORIZED_IDENTITY_KEY: attested})
                 saved, error = RuntimeController._authorized_live_identity(self)
                 if error or saved != attested:
                     return "", error or "identita_autorizzata_non_salvata"
@@ -11404,6 +11424,9 @@ class RuntimeController:
         # Sol su 3c1ff9e4: a runtime fermo (STOPPED/LOCKDOWN) un superamento che sale al globale si rende durevole come
         # emergenza (marker) PRIMA di salvare lo stato: un crash fra le due scritture riapre in emergenza, mai con il
         # solo superamento registrato. Rimosso sotto se l'emergenza non subentra.
+        # M153 P7: dichiarazioni dell'ES viste all'apertura di questo settlement (la rimozione del marker pre-sync non
+        # cancella mai un ES dichiarato dopo)
+        es_seq_open = RuntimeController._owner(self).es_seq
         stopped_marker = bool(will_realize and not self._emergency_stopped and self.mode not in (
             RuntimeMode.ACTIVE, RuntimeMode.PAUSED) and any(
             bool(pr.get("breached")) and financial_scope.escalates_globally(str(pr.get("financial_scope") or ""))
@@ -11432,7 +11455,7 @@ class RuntimeController:
                     self._record_pending_daily_loss_breach(pr)
         if arm_pending:
             with self._daily_loss_stop_lock:
-                self._daily_loss_pending_stop = True
+                RuntimeController._owner(self).apply(self, "daily_pending_stop", _daily_loss_pending_stop=True)
             # Persisti DUREVOLMENTE il breach su db PRIMA dell'I/O di rete del
             # sync (il pending-stop e' solo in-memory): se il processo muore
             # mentre get_account_funds() e' lento/bloccato, al riavvio il reload
@@ -11451,10 +11474,10 @@ class RuntimeController:
             # (letta da ammissione e controllo finale d'invio) e decisione di stop resa durevole PRIMA della chiave del
             # settlement: un crash in qualunque punto successivo ripristina lo stop globale al riavvio.
             with self._daily_loss_stop_lock:
-                self._session_loss_pending_global = True
+                RuntimeController._owner(self).apply(self, "session_barrier", _session_loss_pending_global=True)
             session_pending = True
             try:
-                self.db.save_settings({RuntimeController._SESSION_STOP_MARKER: json.dumps(
+                RuntimeController._owner(self).save(self, {RuntimeController._SESSION_STOP_MARKER: json.dumps(
                     {"reason": session_reason, "scope": session_scope, "at": datetime.utcnow().isoformat(),
                      # M146 (CX-H1): modalita' dello sweep LIVE dello stop, ricostruibile anche se il processo muore
                      # prima di salvarla (runtime LIVE => sola verifica)
@@ -11563,7 +11586,7 @@ class RuntimeController:
                         and not self.__dict__.get("_live_binding_failed")         # CX-G1: anche il conto, durevole
                         and not self.__dict__.get("_live_verify_only_failed")):  # M146: e la sola verifica
                     try:                              # S-b: lo stop globale, RILETTO dal disco, e' durevole
-                        self.db.save_settings({RuntimeController._SESSION_STOP_MARKER: ""})
+                        RuntimeController._owner(self).save(self, {RuntimeController._SESSION_STOP_MARKER: ""})
                     except Exception:
                         logger.exception("S-b: marker dello stop di sessione non rimosso (resta fail-closed)")
                 elif settlement_completed:
@@ -11574,8 +11597,8 @@ class RuntimeController:
                     with self._risk_stop_lock:
                         current = self.__dict__.get("_risk_stop_reason") or ""
                         if not current or RuntimeController._risk_stop_scope(current):
-                            self._risk_stop_reason = session_reason
-                    self._emergency_reconcile_pending = True
+                            RuntimeController._owner(self).apply(self, "set_risk_stop", _risk_stop_reason=session_reason)
+                    RuntimeController._owner(self).apply(self, "reconcile_pending", _emergency_reconcile_pending=True)
                     RuntimeController._ensure_live_recovery(self)
                 else:
                     # interruzione: lo stop globale si ripristina SUBITO dal marker (persistito), con riconciliazione LIVE
@@ -11583,7 +11606,7 @@ class RuntimeController:
                     # M115: la riconciliazione LIVE parte ora, nello stesso processo (poi recovery dedicato se irrisolta)
                     RuntimeController._reconcile_restored_emergency(self, trigger="settlement_interrotto")
                 with self._daily_loss_stop_lock:
-                    self._session_loss_pending_global = False
+                    RuntimeController._owner(self).apply(self, "session_barrier", _session_loss_pending_global=False)
             if (not settlement_completed and realized_now and attribution.get("kind") == "unattributed_loss"
                     and settlement_key in (self.__dict__.get("_daily_loss_settle_staged") or {})):
                 # Interruzione dopo l'applicazione: l'effetto e' gia' in memoria; si completa il libro (tutti gli ambiti,
@@ -11629,11 +11652,11 @@ class RuntimeController:
                     self.__dict__.setdefault("_daily_loss_scope_pending", set()).difference_update(local_pending)
             if arm_pending and not self._emergency_stopped and not keep_global_marker:
                 with self._daily_loss_stop_lock:
-                    self._daily_loss_pending_stop = False
-                self._persist_db_emergency_marker(active=False)
+                    RuntimeController._owner(self).apply(self, "daily_pending_stop", _daily_loss_pending_stop=False)
+                self._persist_db_emergency_marker(active=False, es_seq=es_seq_open)
             elif stopped_marker and settlement_completed and not self._emergency_stopped:
                 # solo a settlement completato: un'interruzione a meta' lascia l'emergenza durevole (fail-closed)
-                self._persist_db_emergency_marker(active=False)
+                self._persist_db_emergency_marker(active=False, es_seq=es_seq_open)
             if not settlement_completed and realized_now and keep_global_marker and global_breach_marker:
                 # M115 (owner): il processo continua dopo l'errore. Si applica SUBITO lo stop che il riavvio ripristinerebbe
                 # dal marker, con la cancellazione verificata sulla sede LIVE; mai dipendere dal riavvio o da un evento.
@@ -11641,6 +11664,12 @@ class RuntimeController:
                     self, "DAILY_LOSS_BREACH_INTERRUPTED:"
                           f"{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}",
                     scope=str(projected_close.get("financial_scope") or ""))
+            if arm_pending and self._emergency_stopped:
+                # M153 P6: il pending-stop giornaliero e' il ponte fino all'Emergency Stop; con l'ES attivo il blocco e'
+                # l'ES stesso. Si toglie QUI, nel settlement che l'ha armato, non piu' da reset_emergency() (C12): un reset
+                # concorrente nella finestra non riapre mai gli ingressi
+                with self._daily_loss_stop_lock:
+                    RuntimeController._owner(self).apply(self, "daily_pending_stop", _daily_loss_pending_stop=False)
         if unrecorded:
             # nessun ordine successivo su un settlement il cui effetto non e' registrato (fail-closed)
             auto_trade_result = {"auto_trade_status": "AUTO_TRADE_SKIPPED_EFFECT_UNRECORDED",

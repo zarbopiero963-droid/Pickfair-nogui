@@ -132,3 +132,20 @@ def _m154_client_finti_legacy(request):
         yield
     finally:
         mp.undo()
+
+
+# M153: tracciatore dell'ordine dei lock dello stato di sicurezza attivo in tutta la suite. Un lock tracciato acquisito
+# mentre si tiene il lock FOGLIA del SafetyStateOwner (rischio di deadlock) fa fallire il test che lo produce.
+@pytest.fixture(autouse=True)
+def _m153_ordine_dei_lock():
+    try:
+        from core import safety_state
+    except Exception:
+        yield
+        return
+    safety_state.LOCK_ORDER_CHECK = True
+    prima = len(safety_state.VIOLATIONS)
+    yield
+    nuove = safety_state.VIOLATIONS[prima:]
+    del safety_state.VIOLATIONS[prima:]
+    assert not nuove, f"M153: ordine dei lock violato: {nuove[:3]}"

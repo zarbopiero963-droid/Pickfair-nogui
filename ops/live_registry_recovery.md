@@ -35,7 +35,7 @@ Ognuno di questi è un aggiramento dello stop, non una procedura.
 | Inventare superamenti, perdite, sessioni, settlement o identità di conto | La storia si ricostruisce solo da fonti che la dimostrano |
 | Modificare `daily_loss_state`, lo stato dello stop di rischio o la catena `audit_events` per accorciare il blocco | Il libro illeggibile resta un superamento fino al nuovo giorno UTC, per progetto |
 | Usare l'API `reset_emergency()` prima del passo 8 | |
-| Cancellare o modificare il giornale di sicurezza `<db>.safety_pending.json` (M151) | Contiene un Emergency Stop dichiarato che il db non ha reso durevole, la protezione delle coperture e gli obblighi LIVE in sospeso (`emergency_live_pending_bindings`, M151-bis): all'avvio prevale sul db. È un'evidenza e un blocco, non un file temporaneo |
+| Cancellare o modificare il giornale di sicurezza `<db>.safety_pending.json` (M151) | Contiene un Emergency Stop dichiarato che il db non ha reso durevole, la protezione delle coperture e gli obblighi LIVE in sospeso (`emergency_live_pending_bindings`, M151-bis): all'avvio prevale sul db. È un'evidenza e un blocco, non un file temporaneo. Da M153 lo scrive solo il proprietario dello stato di sicurezza, come istantanea completa con la chiave `journal_seq` (stesso formato a chiavi in piano) |
 | Modificare `emergency_settlement_source` o `emergency_unresolved_exposure` | Sono l'evidenza dell'obbligo LIVE (M149): cancellarle insieme al registro è l'unico aggiramento che l'app non rileva |
 | Scrivere la data di attribuzione (passo 4.4) senza inventario firmato o con una data futura | La data scioglie i superamenti non identificati: senza prove è un'attribuzione inventata |
 

@@ -1116,6 +1116,19 @@ Decisione owner `PF-OWNER-PR04A-LIVE-GLOBAL-SIM-LOCAL-20261116` (opzione 1, LIVE
       PENDING: direzione fail-closed). Regressione d'uso dichiarata: un keep-alive fallito, anche per un timeout
       transitorio, blocca il LIVE finche' un nuovo login non riesce. Procedura dell'operatore per chiave illeggibile o
       registro con altri conti: `ops/live_registry_recovery.md` (sezione M154).
+    - *M153 (owner M155, commit 2, SafetyStateOwner, P1-P8 di Claude D, matrice M153 congelata):* lo stato di
+      sicurezza (Emergency Stop, stop di rischio, sola verifica e protezione delle coperture, barriera C3, pending-stop
+      giornaliero, registro dei conti e obblighi in sospeso, riconciliazione in attesa, esito LIVE) ha UN solo proprietario
+      (`core/safety_state.py`): un lock rientrante FOGLIA (dentro solo I/O su db e file; mai rete, eventi o altri lock),
+      che e' lo stesso oggetto dei nomi storici `_safety_state_lock` e `_live_accounts_lock`; ogni scrittura passa da una
+      transizione dichiarata (`declare_es`, `reset_es`, `restore_es`, `set/reset_risk_stop`, `set_verify_only`,
+      `registry`, `defer_binding`, `session_barrier`, `daily_pending_stop`, `reconcile_pending`, `exposure`) e la guardia
+      AST fallisce su ogni scrittura diretta. Il giornale `<db>.safety_pending.json` si legge, scrive e rimuove solo sotto
+      quel lock, come istantanea completa con `journal_seq` (formato su disco invariato: un giornale M151/M152 si legge
+      com'e' e si riscrive per intero solo alla scrittura successiva o dopo il salvataggio durevole dell'ES). Il reset
+      dell'Emergency Stop tocca solo l'ES (CX-M2, C12); senza ES non scrive nulla (C04). P7: `active=False` del marker
+      pre-sync si scrive solo se nessun ES e' stato dichiarato dopo l'apertura del settlement. P8: durante la ricostruzione
+      all'avvio ingressi, reset e sweep sono rifiutati. Rollback: solo procedura B (`ops/rollback_single_account.md`).
   - *G2 — archivio delle sessioni chiuse (owner M139).* Le ultime 20 chiuse restano nel libro come finestra operativa;
     l'archivio durevole è il registro append-only (`SESSION_CLOSED`: id, apertura e chiusura, P&L per ambito, conti,
     limite), senza eliminazione automatica, verificato dalla catena di hash a ogni lettura. Una sessione esce dalla

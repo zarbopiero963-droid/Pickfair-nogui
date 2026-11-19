@@ -431,8 +431,10 @@ def test_pending_stop_blocks_concurrent_signal_during_sync_window():
     # a fine ciclo l'emergency stop definitivo e' scattato
     assert rc._emergency_stopped is True
     assert rc.mode == RuntimeMode.LOCKDOWN
-    # pending-stop resta coperto da _emergency_stopped (entrambi bloccano l'entry)
-    assert rc._daily_loss_pending_stop is True
+    # M153 P6 (owner M155): il pending-stop e' il ponte fino all'Emergency Stop e si toglie nel settlement che l'ha
+    # armato appena l'ES e' attivo (non piu' da reset_emergency(), C12); l'entry resta bloccata dall'ES stesso
+    assert rc._daily_loss_pending_stop is False
+    assert rc._daily_loss_entry_blocked() is True
 
 
 @pytest.mark.integration

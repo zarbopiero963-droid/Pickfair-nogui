@@ -1562,7 +1562,8 @@ class HeadlessApp:
             if not global_stop or state in ("NESSUNA", "VERIFICATA"):
                 return
             rc.betfair_service.connect(password=password, simulation_mode=False)
-            rc._emergency_reconcile_pending = True
+            # M153: lo stato di sicurezza si scrive solo tramite il proprietario (transizione dichiarata)
+            RuntimeController._owner(rc).apply(rc, "reconcile_pending", _emergency_reconcile_pending=True)
             esito = RuntimeController._reconcile_restored_emergency(rc, trigger="cli_risk_session_reset") or {}
             logger.warning("RESET SESSIONE DI RISCHIO: verifica dell'esposizione LIVE prima del reset: %s",
                            {k: esito.get(k) for k in ("verification", "manual_action_required", "connected_account",
